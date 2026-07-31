@@ -5,7 +5,9 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import AuditLog from './AuditLog';
 import { useAdminAuth } from '../context/AdminAuthContext';
+import { mockAdminAuthState } from '../test/mockAdminAuth';
 import { adminAuditApi } from '../api/endpoints';
+import { pagedResponse } from '../test/pagedResponse';
 
 vi.mock('../context/AdminAuthContext', () => ({
   useAdminAuth: vi.fn(),
@@ -28,20 +30,17 @@ function renderPage() {
 // AdminLayout always renders Sidebar, which reads `permissions` off this same hook, so every
 // mock here must supply it (see MerchantIntelligence.test.tsx's bug-fix comment for why).
 function mockAuth(permissions: string[]) {
-  vi.mocked(useAdminAuth).mockReturnValue({
+  vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({
     hasPermission: (p: string) => permissions.includes(p),
     permissions,
     fullName: 'Support Admin',
     logout: vi.fn(),
-  } as ReturnType<typeof useAdminAuth>);
+  }));
 }
 
-function pagedResponse(content: unknown[], overrides: Partial<Record<string, unknown>> = {}) {
-  return {
-    content, page: 0, size: 25, totalElements: content.length, totalPages: 1,
-    ...overrides,
-  };
-}
+// pagedResponse() is imported from ../test/pagedResponse -- see that file's own doc comment for
+// why this was a per-file duplicate before (and, in this file specifically, wrong: it hardcoded
+// `content: unknown[]` instead of being generic).
 
 const NO_FILTERS = { q: undefined, dateFrom: undefined, dateTo: undefined, sortDir: 'desc' };
 

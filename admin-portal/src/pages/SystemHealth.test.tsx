@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import SystemHealth from './SystemHealth';
 import { useAdminAuth } from '../context/AdminAuthContext';
+import { mockAdminAuthState } from '../test/mockAdminAuth';
 import { adminSystemApi } from '../api/endpoints';
 
 vi.mock('../context/AdminAuthContext', () => ({
@@ -26,12 +27,12 @@ function renderPage() {
 
 // AdminLayout always renders Sidebar, which reads `permissions` off this same hook.
 function mockAuth(permissions: string[]) {
-  vi.mocked(useAdminAuth).mockReturnValue({
+  vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({
     hasPermission: (p: string) => permissions.includes(p),
     permissions,
     fullName: 'Support Admin',
     logout: vi.fn(),
-  } as ReturnType<typeof useAdminAuth>);
+  }));
 }
 
 const HEALTHY = {

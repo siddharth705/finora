@@ -131,7 +131,10 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+// Same reasoning as AuditFilterValues in AuditLog.tsx: the explicit index signature is required
+// for this to satisfy useSavedViews<T>/FilterBar<T>'s Record<string, string> constraint.
 interface UserFilterValues {
+  [key: string]: string;
   q: string;
   status: string;
 }

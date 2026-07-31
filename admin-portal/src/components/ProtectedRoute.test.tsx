@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { ProtectedRoute, RequirePermission } from './ProtectedRoute';
 import { useAdminAuth } from '../context/AdminAuthContext';
+import { mockAdminAuthState } from '../test/mockAdminAuth';
 
 vi.mock('../context/AdminAuthContext', () => ({
   useAdminAuth: vi.fn(),
@@ -32,7 +33,7 @@ describe('ProtectedRoute', () => {
   });
 
   it('shows a loading state instead of redirecting while the access check is in flight', () => {
-    vi.mocked(useAdminAuth).mockReturnValue({ token: 'tok', loading: true } as ReturnType<typeof useAdminAuth>);
+    vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({ token: 'tok', loading: true }));
 
     renderProtected();
 
@@ -42,7 +43,7 @@ describe('ProtectedRoute', () => {
   });
 
   it('redirects to /login once loading has finished and there is no token', () => {
-    vi.mocked(useAdminAuth).mockReturnValue({ token: null, loading: false } as ReturnType<typeof useAdminAuth>);
+    vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({ token: null, loading: false }));
 
     renderProtected();
 
@@ -50,7 +51,7 @@ describe('ProtectedRoute', () => {
   });
 
   it('renders the protected content once loading has finished and a token is present', () => {
-    vi.mocked(useAdminAuth).mockReturnValue({ token: 'tok', loading: false } as ReturnType<typeof useAdminAuth>);
+    vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({ token: 'tok', loading: false }));
 
     renderProtected();
 
@@ -64,9 +65,9 @@ describe('RequirePermission', () => {
   });
 
   it('shows an access-denied message when the account lacks the required permission', () => {
-    vi.mocked(useAdminAuth).mockReturnValue({
+    vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({
       hasPermission: (p: string) => p !== 'USER_VIEW',
-    } as ReturnType<typeof useAdminAuth>);
+    }));
 
     render(
       <RequirePermission permission="USER_VIEW">
@@ -79,9 +80,9 @@ describe('RequirePermission', () => {
   });
 
   it('renders the section content when the account holds the required permission', () => {
-    vi.mocked(useAdminAuth).mockReturnValue({
+    vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({
       hasPermission: (p: string) => p === 'USER_VIEW',
-    } as ReturnType<typeof useAdminAuth>);
+    }));
 
     render(
       <RequirePermission permission="USER_VIEW">

@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { useAdminAuth } from '../context/AdminAuthContext';
+import { mockAdminAuthState } from '../test/mockAdminAuth';
 
 // Sidebar.visibleLinks filters the nav purely off `permissions` + `fullName` + `logout` from
 // useAdminAuth -- mocking the hook lets this test drive that filtering directly instead of
@@ -12,11 +13,11 @@ vi.mock('../context/AdminAuthContext', () => ({
 }));
 
 function renderSidebar(permissions: string[]) {
-  vi.mocked(useAdminAuth).mockReturnValue({
+  vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({
     fullName: 'Support Admin',
     permissions,
     logout: vi.fn(),
-  } as ReturnType<typeof useAdminAuth>);
+  }));
 
   return render(
     <MemoryRouter>

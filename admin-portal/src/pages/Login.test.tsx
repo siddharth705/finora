@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import Login from './Login';
 import { useAdminAuth } from '../context/AdminAuthContext';
+import { mockAdminAuthState } from '../test/mockAdminAuth';
 import { setupApi } from '../api/endpoints';
 
 vi.mock('../context/AdminAuthContext', () => ({
@@ -27,7 +28,7 @@ function renderLogin() {
 
 describe('Login', () => {
   beforeEach(() => {
-    vi.mocked(useAdminAuth).mockReturnValue({ token: null, login: vi.fn() } as unknown as ReturnType<typeof useAdminAuth>);
+    vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({ token: null, login: vi.fn() }));
     vi.mocked(setupApi.status).mockReset();
   });
 
@@ -59,7 +60,7 @@ describe('Login', () => {
 
   it('redirects straight to the dashboard when already signed in and verified', async () => {
     vi.mocked(setupApi.status).mockResolvedValue({ setupRequired: false, installationKeyAvailable: true });
-    vi.mocked(useAdminAuth).mockReturnValue({ token: 'existing-token', phoneVerified: true, login: vi.fn() } as unknown as ReturnType<typeof useAdminAuth>);
+    vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({ token: 'existing-token', phoneVerified: true, login: vi.fn() }));
 
     renderLogin();
 
@@ -68,7 +69,7 @@ describe('Login', () => {
 
   it('redirects to phone verification when signed in but not yet verified', async () => {
     vi.mocked(setupApi.status).mockResolvedValue({ setupRequired: false, installationKeyAvailable: true });
-    vi.mocked(useAdminAuth).mockReturnValue({ token: 'existing-token', phoneVerified: false, login: vi.fn() } as unknown as ReturnType<typeof useAdminAuth>);
+    vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({ token: 'existing-token', phoneVerified: false, login: vi.fn() }));
 
     renderLogin();
 

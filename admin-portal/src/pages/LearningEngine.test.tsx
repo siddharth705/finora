@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import LearningEngine from './LearningEngine';
 import { useAdminAuth } from '../context/AdminAuthContext';
+import { mockAdminAuthState } from '../test/mockAdminAuth';
 import { adminLearningApi } from '../api/endpoints';
 
 vi.mock('../context/AdminAuthContext', () => ({
@@ -28,12 +29,12 @@ function renderPage() {
 // reads `permissions` off the same useAdminAuth() hook -- every mock below must supply it (see
 // the bug fix on MerchantIntelligence.test.tsx, which used to omit it and crash on render).
 function mockAuth(permissions: string[]) {
-  vi.mocked(useAdminAuth).mockReturnValue({
+  vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({
     hasPermission: (p: string) => permissions.includes(p),
     permissions,
     fullName: 'Support Admin',
     logout: vi.fn(),
-  } as ReturnType<typeof useAdminAuth>);
+  }));
 }
 
 describe('LearningEngine', () => {

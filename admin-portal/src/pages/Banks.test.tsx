@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Banks from './Banks';
 import { useAdminAuth } from '../context/AdminAuthContext';
+import { mockAdminAuthState } from '../test/mockAdminAuth';
 import { adminBanksApi } from '../api/endpoints';
 import type { BankDto } from '../types';
 
@@ -28,12 +29,12 @@ function renderPage() {
 
 // AdminLayout always renders Sidebar, which reads `permissions` off this same hook.
 function mockAuth(permissions: string[]) {
-  vi.mocked(useAdminAuth).mockReturnValue({
+  vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({
     hasPermission: (p: string) => permissions.includes(p),
     permissions,
     fullName: 'Support Admin',
     logout: vi.fn(),
-  } as ReturnType<typeof useAdminAuth>);
+  }));
 }
 
 const HDFC: BankDto = {

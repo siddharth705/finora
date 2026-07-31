@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import MerchantIntelligence from './MerchantIntelligence';
 import { useAdminAuth } from '../context/AdminAuthContext';
+import { mockAdminAuthState } from '../test/mockAdminAuth';
 import { adminMerchantsApi } from '../api/endpoints';
 
 vi.mock('../context/AdminAuthContext', () => ({
@@ -31,7 +32,7 @@ describe('MerchantIntelligence', () => {
   });
 
   it('shows an access-denied message when the account lacks MERCHANT_MANAGE', () => {
-    vi.mocked(useAdminAuth).mockReturnValue({
+    vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({
       hasPermission: () => false,
       // Bug fix: AdminLayout always renders Sidebar regardless of this page's own permission
       // gate, and Sidebar destructures `permissions` off this same hook and calls
@@ -41,7 +42,7 @@ describe('MerchantIntelligence', () => {
       permissions: [],
       fullName: 'Support Admin',
       logout: vi.fn(),
-    } as ReturnType<typeof useAdminAuth>);
+    }));
     vi.mocked(adminMerchantsApi.platformStats).mockResolvedValue([]);
 
     renderPage();
@@ -50,12 +51,12 @@ describe('MerchantIntelligence', () => {
   });
 
   it('renders the platform catalog for an account with MERCHANT_MANAGE', async () => {
-    vi.mocked(useAdminAuth).mockReturnValue({
+    vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({
       hasPermission: (p: string) => p === 'MERCHANT_MANAGE',
       permissions: ['MERCHANT_MANAGE'],
       fullName: 'Support Admin',
       logout: vi.fn(),
-    } as ReturnType<typeof useAdminAuth>);
+    }));
     vi.mocked(adminMerchantsApi.platformStats).mockResolvedValue([
       { canonicalName: 'Swiggy', userCount: 42, rowCount: 45 },
     ]);
@@ -68,12 +69,12 @@ describe('MerchantIntelligence', () => {
   });
 
   it('shows the empty message when the platform has no merchants yet', async () => {
-    vi.mocked(useAdminAuth).mockReturnValue({
+    vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({
       hasPermission: (p: string) => p === 'MERCHANT_MANAGE',
       permissions: ['MERCHANT_MANAGE'],
       fullName: 'Support Admin',
       logout: vi.fn(),
-    } as ReturnType<typeof useAdminAuth>);
+    }));
     vi.mocked(adminMerchantsApi.platformStats).mockResolvedValue([]);
 
     renderPage();

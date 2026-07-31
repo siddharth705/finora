@@ -22,7 +22,7 @@ const ADMIN_PORTAL_PERMISSIONS = [
   'PLATFORM_DIAGNOSTICS_VIEW',
 ];
 
-interface AdminAuthState {
+export interface AdminAuthState {
   token: string | null;
   email: string | null;
   fullName: string | null;

@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import PlatformAnalytics from './PlatformAnalytics';
 import { useAdminAuth } from '../context/AdminAuthContext';
+import { mockAdminAuthState } from '../test/mockAdminAuth';
 import { adminPlatformAnalyticsApi } from '../api/endpoints';
 
 vi.mock('../context/AdminAuthContext', () => ({
@@ -27,12 +28,12 @@ function renderPage() {
 // See LearningEngine.test.tsx's mockAuth comment -- AdminLayout always renders Sidebar, which
 // reads `permissions` off this same hook, so every mock here must supply it.
 function mockAuth(permissions: string[]) {
-  vi.mocked(useAdminAuth).mockReturnValue({
+  vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({
     hasPermission: (p: string) => permissions.includes(p),
     permissions,
     fullName: 'Support Admin',
     logout: vi.fn(),
-  } as ReturnType<typeof useAdminAuth>);
+  }));
 }
 
 describe('PlatformAnalytics', () => {

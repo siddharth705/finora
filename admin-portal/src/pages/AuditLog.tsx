@@ -100,7 +100,12 @@ function TimelineEntry({ log }: { log: AuditLogDto }) {
   );
 }
 
+// The explicit index signature (not just named string properties) is required for this to
+// satisfy useSavedViews<T>/FilterBar<T>'s `T extends Record<string, string>` constraint --
+// TypeScript doesn't consider a plain interface with all-string named properties structurally
+// assignable to an index-signature type without one.
 interface AuditFilterValues {
+  [key: string]: string;
   q: string;
   dateFrom: string;
   dateTo: string;

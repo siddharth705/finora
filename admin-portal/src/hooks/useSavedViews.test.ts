@@ -3,6 +3,7 @@ import { renderHook, act } from '@testing-library/react';
 import { useSavedViews } from './useSavedViews';
 
 interface Filters {
+  [key: string]: string;
   q: string;
   status: string;
 }
