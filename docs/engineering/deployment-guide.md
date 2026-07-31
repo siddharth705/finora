@@ -43,6 +43,7 @@ to leave at its default: local dev defaults, or must be explicitly set.
 | `JWT_REFRESH_EXPIRATION_MS` | No | `2592000000` (30 days) | Refresh token lifetime | Yes |
 | `CORS_ORIGINS` | Yes | both local dev ports | Comma-separated allowed origins (`CorsConfig`) | **No** — must list your real deployed frontend origin(s), no wildcard |
 | `APP_BASE_URL` | Yes | `http://localhost:5173` | Base URL used to build links in emails (password reset, etc. — see `EmailConfig`) | **No** — must be your real deployed frontend's URL, or generated links point at localhost |
+| `ADMIN_APP_BASE_URL` | Recommended | `http://localhost:5174` | Same purpose as `APP_BASE_URL`, but for the admin portal specifically — see `EmailProperties.resolveBaseUrl()`. The user frontend and admin portal are separate deployed apps at separate origins, each with its own `/reset-password` page, but there's no separate admin auth service; without this set, an admin's "Forgot Password" links to the *user* app's reset page instead of the admin portal's own. Picked automatically from the request's `Origin` header — no frontend changes needed either way. | Leave unset only if you're fine with admin password resets linking to the wrong app |
 | `RESEND_API_KEY` | Yes (to send real email) | empty | Resend API key; empty falls back to `NoOpEmailService` (logs the link instead of sending) | No — leaving this unset means no real emails ever get sent |
 | `EMAIL_FROM` | No | `onboarding@resend.dev` | "From" address for outgoing email | Only if you have your own verified sender |
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM_NUMBER` | Yes (to send real SMS) | empty | Twilio credentials for OTP SMS; empty falls back to logging the OTP instead of sending it | No — same reasoning as `RESEND_API_KEY` |
@@ -91,12 +92,17 @@ DB_NAME=<Railway Postgres database name>
 DB_USER=<Railway Postgres username>
 DB_PASSWORD=<Railway Postgres password>
 JWT_SECRET=<a real random 32+ character value — generate one, don't reuse any example>
-CORS_ORIGINS=https://finora-frontend.siddharthtiwari155.workers.dev
-APP_BASE_URL=https://finora-frontend.siddharthtiwari155.workers.dev
+CORS_ORIGINS=https://finora-cng.pages.dev,https://finora-admin.pages.dev
+APP_BASE_URL=https://finora-cng.pages.dev
+ADMIN_APP_BASE_URL=https://finora-admin.pages.dev
 RESEND_API_KEY=<your real Resend API key>
 EMAIL_FROM=<your verified sender address>
 TRUST_PROXY_HEADERS=true
 ```
+
+`CORS_ORIGINS` must list **both** frontend origins, comma-separated, no spaces around the comma
+(or trim them — `CorsConfig` already trims each entry) — a mismatch here is exactly what produces
+a "blocked by CORS policy" browser error on whichever app isn't listed.
 
 Railway sets `PORT` itself — don't set it manually. The four Railway Postgres `DB_*` values are
 available directly from the Postgres service's own "Connect" tab once you've provisioned it and

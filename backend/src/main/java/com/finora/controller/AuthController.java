@@ -28,8 +28,10 @@ public class AuthController {
     }
 
     @PostMapping("/forgot-password")
-    public ResponseEntity<ApiResponse<ForgotPasswordResponse>> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
-        return ResponseEntity.ok(ApiResponse.ok(authService.forgotPassword(request)));
+    public ResponseEntity<ApiResponse<ForgotPasswordResponse>> forgotPassword(
+            @Valid @RequestBody ForgotPasswordRequest request,
+            @RequestHeader(value = "Origin", required = false) String origin) {
+        return ResponseEntity.ok(ApiResponse.ok(authService.forgotPassword(request, origin)));
     }
 
     @PostMapping("/reset-password/request-otp")

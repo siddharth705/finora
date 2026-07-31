@@ -104,6 +104,13 @@ app:
     api-key: ${RESEND_API_KEY:}
     from-address: ${EMAIL_FROM:onboarding@resend.dev}
     app-base-url: ${APP_BASE_URL:http://localhost:5173}
+    # Optional -- the user frontend and admin portal are two separate deployed apps at two
+    # different origins, each with its own /reset-password page, but there's no separate admin
+    # auth service (admin "Forgot Password" goes through this exact same forgotPassword() method).
+    # Left unset, every reset link still falls back to app-base-url above, exactly as before this
+    # setting existed -- see EmailProperties.resolveBaseUrl()'s own doc comment for the real bug
+    # this fixes once it IS set. Local dev default (5174) matches CORS_ORIGINS' own default above.
+    admin-app-base-url: ${ADMIN_APP_BASE_URL:http://localhost:5174}
   sms:
     # Empty by default — falls back to logging the OTP server-side instead of sending it via
     # SMS (dev convenience, same pattern as email). Set all three TWILIO_* vars to switch to

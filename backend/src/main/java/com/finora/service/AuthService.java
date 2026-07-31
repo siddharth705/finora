@@ -301,7 +301,7 @@ public class AuthService {
      * delivery is in place, and this becomes a normal "check your email" response.
      */
     @Transactional
-    public ForgotPasswordResponse forgotPassword(ForgotPasswordRequest request) {
+    public ForgotPasswordResponse forgotPassword(ForgotPasswordRequest request, String requestOrigin) {
         String genericMessage = emailService.isConfigured()
                 ? "If an account exists for that email, we've sent a password reset link."
                 : "If an account exists for that email, a reset link has been issued.";
@@ -320,7 +320,14 @@ public class AuthService {
         prt.setExpiresAt(Instant.now().plusSeconds(RESET_TOKEN_TTL_MINUTES * 60));
         resetTokenRepository.save(prt);
 
-        String base = emailProperties.getAppBaseUrl() != null ? emailProperties.getAppBaseUrl() : "";
+        // Bug fix: this used to always build the link from the single user-frontend base URL,
+        // regardless of which app the request actually came from -- the user frontend and admin
+        // portal are two separate deployed apps, each with its own /reset-password page, and
+        // there's no separate admin auth service (admin accounts go through this exact same
+        // shared method). An admin using "Forgot Password" got an email linking to the wrong
+        // app's reset-password page. resolveBaseUrl() picks the right one from the request's own
+        // Origin header -- see EmailProperties' own doc comment for the full story.
+        String base = emailProperties.resolveBaseUrl(requestOrigin);
         String resetLink = base + "/reset-password?token=" + rawToken;
 
         if (emailService.isConfigured()) {

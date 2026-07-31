@@ -1,62 +1,63 @@
-# Register/login failure — root cause and fix
+# Answer: yes, you need separate base URLs — and it's an active bug, not just a future concern
 
-Your screenshot showed the actual failing request:
+Checked the actual code rather than answering from first principles. Short version: **yes, add
+`ADMIN_APP_BASE_URL`** — and this isn't a "nice to have for later," it's fixing something that's
+broken right now.
+
+## What I found
+
+- `APP_BASE_URL` has exactly one consumer in the whole backend: `AuthService.forgotPassword()`,
+  which builds the password-reset link every "Forgot Password" email/response uses.
+- There is **no separate admin auth service** — admin accounts authenticate through the exact
+  same shared `AuthController`/`AuthService`, just gated by role/permission afterward.
+- The admin portal **does** have its own `/reset-password` and `/forgot-password` pages, as a
+  completely separate deployed app at a different origin (`finora-admin.pages.dev`).
+
+Put together: right now, if an admin uses "Forgot Password," the email links to
+`https://finora-cng.pages.dev/reset-password?token=...` — the **user app**, not the admin portal
+where their own reset page actually lives. This isn't hypothetical; it's the current, live
+behavior, just not yet noticed because nobody's tried it in production yet.
+
+## The fix
+
+- **`EmailProperties`** — added `adminAppBaseUrl` (backed by new `ADMIN_APP_BASE_URL` env var,
+  optional) alongside the existing `appBaseUrl`. New `resolveBaseUrl(requestOrigin)` picks the
+  right one.
+- **`AuthController`** — `forgotPassword` now reads the request's `Origin` header and passes it
+  through.
+- **`AuthService.forgotPassword()`** — uses `resolveBaseUrl()` instead of unconditionally using
+  the single user-frontend URL.
+
+**No frontend changes needed at all** — both apps already call the exact same shared
+`/auth/forgot-password` endpoint, and a browser always sets the `Origin` header on a cross-origin
+request itself (JS can't override it), so the backend can tell which app is calling for free.
+
+## What you need to do
+
+Add to Railway:
 ```
-Access to XMLHttpRequest at 'https://confident-wonder-dev.up.railway.app/auth/register'
-from origin 'https://finora-cng.pages.dev' has been blocked by CORS policy...
+ADMIN_APP_BASE_URL=https://finora-admin.pages.dev
 ```
+Leaving it unset costs nothing — every existing behavior (including everything for the user app)
+stays exactly as it is today, since `resolveBaseUrl()` falls back to the current `APP_BASE_URL`
+whenever the admin one isn't set or doesn't match.
 
-Two things stack together here, both traceable directly from that one URL.
+Also corrected `CORS_ORIGINS` and `APP_BASE_URL`'s example values in the deployment guide to use
+your actual real domains (`finora-cng.pages.dev` / `finora-admin.pages.dev`) instead of the
+placeholder `.workers.dev` one from before we knew the real deployment domains — and made sure
+the `CORS_ORIGINS` example explicitly includes **both** origins, not just the user app's.
 
-## 1. The `/api/v1` path segment is missing — this is on me
+## Tests
 
-Every backend route lives under `/api/v1` (`AuthController` is `@RequestMapping("/api/v1/auth")`,
-confirmed) — but the failing request went to `.../auth/register`, not `.../api/v1/auth/register`.
-
-Here's why: `client.ts` had `const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'` —
-when `VITE_API_BASE_URL` is set, it **replaces** the base entirely rather than adding to it. If it
-got set to just the bare Railway origin (`https://confident-wonder-dev.up.railway.app`, no
-`/api/v1` suffix), the `/api/v1` prefix is silently lost, and the relative call `api.post('/auth/register', ...)`
-resolves to exactly the broken URL in your screenshot.
-
-My earlier instruction — "set `VITE_API_BASE_URL` to your Railway backend's public URL" — never
-said whether `/api/v1` needed to be included. That ambiguity is exactly what caused this. Fixed
-two ways:
-
-- **Code hardened, not just documented better:** both `frontend/src/api/client.ts` and
-  `admin-portal/src/api/client.ts` now run the value through `normalizeApiBase()`, which produces
-  the same correct result whether `VITE_API_BASE_URL` is set to the bare origin or already
-  includes `/api/v1` — this exact misconfiguration can't silently break every API call again.
-  Added `client.test.ts` (new for the user frontend, extended for admin-portal) covering both
-  input forms plus trailing-slash variants.
-- **Deployment guide corrected** to state this explicitly, and to reflect that the actual
-  deployment is Cloudflare **Pages** (`finora-cng.pages.dev`), not Workers as I'd written before.
-
-## 2. Possibly also `CORS_ORIGINS` — worth checking regardless
-
-Even with the path fixed, the browser error is specifically a **CORS** failure (no
-`Access-Control-Allow-Origin` header on the preflight response) — the exact symptom you'd also
-get if the Railway backend's `CORS_ORIGINS` env var doesn't list `https://finora-cng.pages.dev`
-verbatim (scheme, host, no trailing slash). My earlier deployment guide used
-`finora-frontend.siddharthtiwari155.workers.dev` as the example — the actual deployment ended up
-on a different domain entirely (Cloudflare Pages, not Workers), so if `CORS_ORIGINS` was ever set
-using that example rather than the real domain, that's a second, independent thing to fix.
-
-**Please check Railway's `CORS_ORIGINS` value now and confirm it includes exactly
-`https://finora-cng.pages.dev`** (or your actual production Pages domain, if different from what's
-in this screenshot).
-
-## What to do
-
-1. Redeploy the frontend with the fixed `client.ts` (this bundle).
-2. In Cloudflare Pages' env config, `VITE_API_BASE_URL` can now be either form — but I'd still set
-   it to `https://confident-wonder-dev.up.railway.app/api/v1` explicitly, since that's the
-   unambiguous, correct value going forward.
-3. Confirm Railway's `CORS_ORIGINS` includes `https://finora-cng.pages.dev` exactly.
-4. Try register/login again.
+- `EmailPropertiesTest.java` **(new)** — 6 cases directly on `resolveBaseUrl()`: admin match, user
+  match, case/trailing-slash insensitivity, null origin, unconfigured admin URL, origin matching
+  neither.
+- `AuthServiceEmailTest.java` — updated the 3 existing calls for the new method signature, added
+  4 new tests covering the same logic end-to-end through `forgotPassword()` itself (admin origin,
+  user origin, admin URL never configured, missing Origin header).
 
 ## Verification
 
-`tsc -b` clean on both `frontend/` and `admin-portal/`. Couldn't run the actual test suite myself
-(no matching native Vitest binary in this sandbox, same constraint as every frontend round) —
-please run `npm test` in both and confirm the new `normalizeApiBase` tests pass.
+Same constraint as always — no Maven in this sandbox. Reasoned through this by hand against the
+real code (confirmed via direct inspection: single call site, no separate admin auth service,
+admin portal's own reset-password page, shared endpoint). Please run `mvn test`.

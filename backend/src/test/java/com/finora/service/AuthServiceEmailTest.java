@@ -60,7 +60,7 @@ class AuthServiceEmailTest {
     void forgotPassword_sendsRealEmail_andOmitsLinkFromResponse_whenEmailServiceConfigured() {
         when(emailService.isConfigured()).thenReturn(true);
 
-        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com"));
+        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com"), null);
 
         verify(emailService).sendPasswordResetEmail(eq("test@example.com"), contains("/reset-password?token="));
         assertThat(response.devResetLink()).isNull();
@@ -70,7 +70,7 @@ class AuthServiceEmailTest {
     void forgotPassword_returnsLinkDirectly_andDoesNotSendEmail_whenNoProviderConfigured() {
         when(emailService.isConfigured()).thenReturn(false);
 
-        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com"));
+        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com"), null);
 
         verify(emailService, never()).sendPasswordResetEmail(any(), any());
         assertThat(response.devResetLink()).contains("/reset-password?token=");
@@ -81,10 +81,60 @@ class AuthServiceEmailTest {
         when(userRepository.findByEmail("nobody@example.com")).thenReturn(Optional.empty());
         when(emailService.isConfigured()).thenReturn(true);
 
-        var response = authService.forgotPassword(new ForgotPasswordRequest("nobody@example.com"));
+        var response = authService.forgotPassword(new ForgotPasswordRequest("nobody@example.com"), null);
 
         verify(emailService, never()).sendPasswordResetEmail(any(), any());
         assertThat(response.devResetLink()).isNull();
         assertThat(response.message()).isEqualTo("If an account exists for that email, we've sent a password reset link.");
+    }
+
+    /**
+     * Bug fix: the user frontend and admin portal are two separate deployed apps at two
+     * different origins, each with its own /reset-password page -- but there's no separate admin
+     * auth service, so an admin's "Forgot Password" went through this exact same method. It used
+     * to build every reset link from the single user-frontend base URL unconditionally, so an
+     * admin got an email linking to the wrong app's reset-password page entirely.
+     */
+    @Test
+    void forgotPassword_linksToTheAdminPortal_whenTheRequestOriginatedFromIt() {
+        emailProperties.setAdminAppBaseUrl("http://localhost:5174");
+        when(emailService.isConfigured()).thenReturn(false);
+
+        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com"), "http://localhost:5174");
+
+        assertThat(response.devResetLink()).startsWith("http://localhost:5174/reset-password?token=");
+    }
+
+    @Test
+    void forgotPassword_stillLinksToTheUserFrontend_whenTheRequestOriginatedFromIt() {
+        emailProperties.setAdminAppBaseUrl("http://localhost:5174");
+        when(emailService.isConfigured()).thenReturn(false);
+
+        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com"), "http://localhost:5173");
+
+        assertThat(response.devResetLink()).startsWith("http://localhost:5173/reset-password?token=");
+    }
+
+    @Test
+    void forgotPassword_fallsBackToTheUserFrontend_whenAdminAppBaseUrlWasNeverConfigured() {
+        // ADMIN_APP_BASE_URL is optional -- an unconfigured deployment must keep behaving exactly
+        // as it did before this fix, not start failing or linking somewhere blank.
+        when(emailService.isConfigured()).thenReturn(false);
+
+        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com"), "http://localhost:5174");
+
+        assertThat(response.devResetLink()).startsWith("http://localhost:5173/reset-password?token=");
+    }
+
+    @Test
+    void forgotPassword_fallsBackToTheUserFrontend_whenTheOriginHeaderIsMissing() {
+        // A same-origin request (or any client that doesn't send Origin) has no way to signal
+        // which app it is -- default to the user frontend rather than erroring.
+        emailProperties.setAdminAppBaseUrl("http://localhost:5174");
+        when(emailService.isConfigured()).thenReturn(false);
+
+        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com"), null);
+
+        assertThat(response.devResetLink()).startsWith("http://localhost:5173/reset-password?token=");
     }
 }
