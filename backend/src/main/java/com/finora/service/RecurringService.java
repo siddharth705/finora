@@ -60,9 +60,9 @@ public class RecurringService {
                 .toList();
 
         Map<String, List<Transaction>> byMerchant = new HashMap<>();
-        active.forEach(t -> byMerchant.computeIfAbsent(
-                Optional.ofNullable(t.getMerchant()).filter(m -> !m.isBlank()).orElse("unknown"),
-                k -> new ArrayList<>()).add(t));
+        active.stream()
+                .filter(t -> t.getMerchant() != null && !t.getMerchant().isBlank())
+                .forEach(t -> byMerchant.computeIfAbsent(t.getMerchant(), k -> new ArrayList<>()).add(t));
 
         // Reset first — a merchant that used to look recurring but no longer does (e.g. a
         // cancelled subscription with no new charges) shouldn't keep a stale badge forever.

@@ -85,6 +85,29 @@ class RecurringServiceTest {
         assertThat(txns.get(0).isRecurring()).isFalse();
     }
 
+    /**
+     * Bug fix: transactions with no merchant identified used to all get bucketed together under
+     * the literal string "unknown" for pattern grouping -- so two entirely UNRELATED transactions
+     * with no merchant (manual cash entries, say) that happen to land at a roughly regular
+     * interval with a similar amount could get falsely flagged as a recurring merchant literally
+     * named "unknown". There's no real merchant pattern to detect without a merchant at all, so
+     * these must be excluded from grouping entirely rather than defaulting into a shared bucket.
+     */
+    @Test
+    void doesNotFalselyGroupUnrelatedTransactionsWithNoMerchantUnderAFakeUnknownMerchant() {
+        List<Transaction> txns = List.of(
+                expense(null, LocalDate.of(2026, 5, 5), BigDecimal.valueOf(500)),
+                expense(null, LocalDate.of(2026, 6, 4), BigDecimal.valueOf(500)),
+                expense("", LocalDate.of(2026, 7, 5), BigDecimal.valueOf(510))
+        );
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        var results = recurringService.detectForUser(userId);
+
+        assertThat(results).isEmpty();
+        assertThat(txns).noneMatch(Transaction::isRecurring);
+    }
+
     @Test
     void doesNotFlagIrregularSpendingFromTheSameMerchant() {
         // Same merchant (e.g. a grocery store visited whenever), but no regular interval.

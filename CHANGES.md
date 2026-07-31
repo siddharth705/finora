@@ -1,77 +1,59 @@
-# Login/Register UX fixes
+# Thorough bug-fix pass — files not previously touched
 
-## 1. Finora logo now links back to the landing page
+Read in full, none touched before this session: `JwtService`, `RefreshTokenService`,
+`OtpService`, `NetWorthService`, `RecurringService`, `WorkspaceDashboardService`,
+`BankManagementService`, `WorkspaceSettingsService`.
 
-Both `Login.tsx` and `Register.tsx` — the logo/wordmark was a plain `<div>`, not a link. Wrapped
-both instances in each file (the desktop marketing-panel one and the mobile-only one) in
-`<Link to="/">`.
+## Real bug found and fixed
 
-## 2. Invisible typed text in dark mode — root cause fixed globally, not patched per-field
+### `RecurringService` — false "recurring" flag on unrelated no-merchant transactions
 
-This wasn't actually about Finora's own light/dark toggle — it's a real, separate browser
-behavior: an `<input>` with no explicit background/text color of its own falls back to the
-browser's **native auto-dark rendering** whenever the visitor's OS/browser prefers dark
-(`prefers-color-scheme: dark`), independent of what Finora's own toggle is set to. Chromium
-browsers apply this inconsistently — an auto-injected light text color, but not necessarily a
-matching dark background — which is exactly "invisible white-on-white while typing."
+Transactions with no merchant identified (manual cash entries, anything the categorization
+pipeline couldn't extract a merchant from) were all bucketed together under the literal string
+`"unknown"` for pattern-based recurring detection. That means two entirely **unrelated**
+transactions with no merchant — say, two separate manual cash withdrawals — that happen to land
+at a roughly regular interval with a similar amount could get falsely flagged as a recurring
+merchant literally named "unknown," which would then show up as a nonsense entry in Reports/the
+Financial Intelligence Workspace.
 
-**Fixed at the root, in `index.css`:**
-```css
-input, textarea, select {
-  color-scheme: light;
-}
-```
-This opts every native form control in the app out of that browser-level auto-restyling — the
-app's own theme is handled explicitly elsewhere (Tailwind classes, the CSS variables above), not
-left to the browser to guess independently. Fixes this for every current *and future* input in
-the app, not just the two pages you noticed it on.
+There's no real merchant pattern to detect without a merchant at all, so these are now excluded
+from grouping entirely rather than defaulted into a shared bucket. They still go through the
+separate `MARK_SUBSCRIPTION` rule-based pass unaffected (that one matches on description text, not
+merchant, so it doesn't have this problem).
 
-**Also fixed directly** on every input across `Login.tsx`, `Register.tsx`, and `PasswordInput`'s
-own default styling (`bg-white text-gray-900` explicitly) — belt-and-suspenders alongside the
-global fix, and consistent with the white-pill-input look already used everywhere in the
-screenshots.
+**Added a regression test** — this class had test coverage before, but nothing exercised the
+no-merchant case at all.
 
-## 3. Mobile number — 10 digits only, with a fixed 🇮🇳 +91 prefix
+## Clean bill of health
 
-Previously accepted 10-15 digits with an optional typed `+` — now:
-- The `+91` and 🇮🇳 flag are a **fixed, non-editable prefix** next to the field, not something
-  typed (with `pointer-events-none` so clicking it still focuses the actual input right next to
-  it).
-- The field itself only ever holds the 10-digit local number, auto-stripped of anything
-  non-numeric as you type, capped at 10 characters.
-- **Paste handling**: if you paste a full number that already includes the country code
-  (`+919876543210`, `919876543210`, with spaces/dashes either way), it strips the leading `91` so
-  you land on just the 10-digit local part — but a genuine 10-digit number that happens to
-  legitimately start with `91` (e.g. `9187654321`) is left alone, since the strip only fires when
-  there'd otherwise be more than 10 digits.
-- **Validation**: real Indian mobile numbers always start 6–9 — added that check (not just the
-  length), so an obviously-wrong number like `1234567890` gets caught before it ever reaches the
-  backend.
-- `+91` is prepended once, at the moment of actual submission — not stored in state with it.
-
-**No backend changes needed** — the backend's own pattern (`^\+?[0-9]{10,15}$`) already accepts
-`+91` followed by 10 digits (12 digits total after the `+`), so this was purely a frontend
-tightening.
-
-## Tests
-
-New `Register.test.tsx` (this page had no test file before) — 8 tests: non-digit stripping,
-10-digit cap, paste-strips-country-code, paste-doesn't-strip-a-genuine-91-prefix, the fixed
-prefix always rendering, the actual submitted value having `+91` prepended correctly, the
-6-9-leading-digit validation, and the logo link.
+- **`JwtService`** — token generation/validation, expiry check. Correct.
+- **`RefreshTokenService`** — rotation + reuse-detection (revoke-all-sessions on a replayed
+  token) is a genuinely well-implemented security feature, correctly done.
+- **`OtpService`** — attempt-limiting, expiry, replay protection via `verifiedAt`. Correct. (The
+  "only the latest OTP is checkable" behavior looked worth a second look, but it's explicitly the
+  intended design per the class's own doc comment — a resend intentionally invalidates the
+  previous code — not a bug.)
+- **`NetWorthService`** — already carries its own documented fixes (timezone, a save-snapshot
+  race condition); nothing further found.
+- **`WorkspaceDashboardService`** — thorough, honest about which health signals are real vs.
+  placeholder. Nothing found.
+- **`BankManagementService`** — one thing double-checked and ruled out: `search()` passes the raw
+  (non-pre-normalized) query into `BankRegistry.search()`, which looked suspicious at a glance,
+  but `BankRegistry.search()` does its own internal trim/lowercase normalization — redundant, not
+  incorrect.
+- **`WorkspaceSettingsService`** — small, correct, honest about what isn't wired up yet.
 
 ## Verification
 
-`tsc -b` clean. Couldn't run the actual test suite myself (same native Vitest binary constraint
-as every frontend round this session) — please run `npm test` in `frontend/` and confirm.
+Same constraint as every backend round — no Maven in this sandbox. Traced the fix and its test by
+hand against the actual repository logic. Please run `mvn test`.
 
-## About the `git commit` request
+## About the `git commit` command
 
-I can't run this in a way that touches your actual repository — my sandbox is a separate,
-disconnected copy of the code you uploaded, not a live connection to your GitHub repo or local
-machine. Once you've applied this bundle to your real checkout, here's a commit message that
-actually describes what's in it:
+Same as last time — I can't run this against your actual repository from here; my sandbox is a
+disconnected copy of the uploaded code, not a live connection to your machine or GitHub. Once
+you've applied this bundle to your real checkout:
 
 ```
-git commit -m "fix(auth): logo links to landing page, fix invisible input text in dark mode, restrict mobile number to 10 digits with fixed +91 prefix"
+git commit -m "fix(recurring): exclude no-merchant transactions from pattern grouping to prevent false recurring flags"
 ```
