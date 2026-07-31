@@ -1,5 +1,7 @@
 package com.finora.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -8,7 +10,6 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.*;
 
 /**
@@ -20,6 +21,15 @@ import static org.mockito.Mockito.*;
  * would let anyone spoof any IP and bypass rate limiting entirely.
  */
 class RateLimitFilterTest {
+
+    /** Mirrors what Spring Boot's own JacksonAutoConfiguration actually gives the managed
+     *  ObjectMapper bean (JavaTimeModule registered, among other things) -- a bare `new
+     *  ObjectMapper()` here would reproduce the exact bug this filter used to have. */
+    private RateLimitFilter newFilter() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        objectMapper.registerModule(new JavaTimeModule());
+        return new RateLimitFilter(objectMapper);
+    }
 
     private HttpServletRequest requestFor(String path, String remoteAddr, String forwardedFor) {
         HttpServletRequest request = mock(HttpServletRequest.class);
@@ -46,7 +56,7 @@ class RateLimitFilterTest {
 
     @Test
     void resolvesToRemoteAddr_whenProxyHeadersAreNotTrusted_evenIfForwardedForIsPresent() throws Exception {
-        RateLimitFilter filter = new RateLimitFilter();
+        RateLimitFilter filter = newFilter();
         ReflectionTestUtils.setField(filter, "trustProxyHeaders", false);
 
         // Two different callers, both claiming (via a spoofable header) to be the same
@@ -66,7 +76,7 @@ class RateLimitFilterTest {
 
     @Test
     void resolvesToForwardedForsFirstEntry_whenProxyHeadersAreTrusted() throws Exception {
-        RateLimitFilter filter = new RateLimitFilter();
+        RateLimitFilter filter = newFilter();
         ReflectionTestUtils.setField(filter, "trustProxyHeaders", true);
 
         // Every request "arrives from" the same proxy IP (getRemoteAddr()), the way it actually
@@ -86,7 +96,7 @@ class RateLimitFilterTest {
 
     @Test
     void fallsBackToRemoteAddr_whenTrustedButForwardedForIsMissing() throws Exception {
-        RateLimitFilter filter = new RateLimitFilter();
+        RateLimitFilter filter = newFilter();
         ReflectionTestUtils.setField(filter, "trustProxyHeaders", true);
 
         HttpServletRequest request = requestFor("/api/v1/auth/login", "10.0.0.5", null);

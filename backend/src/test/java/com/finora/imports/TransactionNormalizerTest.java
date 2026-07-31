@@ -96,6 +96,27 @@ class TransactionNormalizerTest {
         assertThat(result.description()).isEmpty();
     }
 
+    /**
+     * Regression test: this exact fallback existed, was accidentally dropped when
+     * TransactionNormalizer.normalize() was later edited for the remarks/DR-CR fix above, and the
+     * only thing that caught it was an unrelated PDF integration test's row count silently
+     * dropping from 6 to 4 -- a confusing way to discover a one-line regression in a completely
+     * different class. This test exists so a regression here fails loudly and specifically
+     * instead.
+     */
+    @Test
+    void normalize_resolvesAmountFromABalanceColumn_whenNoAmountDebitOrCreditColumnExistsAtAll() {
+        // A PDF statement's OPENING BALANCE / CLOSING BALANCE row: no Debit, no Credit, no
+        // Amount column at all -- only a Balance column and a date, exactly like
+        // PdfPreviewGeneratorTest's golden fixture uses for those two rows.
+        Map<String, String> row = rowOf("Date", "01/07/2026", "Description", "OPENING BALANCE", "Balance", "50000.00");
+
+        StagedRow result = normalizer.normalize(userId, row);
+
+        assertThat(result).isNotNull();
+        assertThat(result.amount()).isEqualByComparingTo("50000.00");
+    }
+
     // --- DR/CR type-column recognition (unified Amount + Type layout) ---
 
     @Test

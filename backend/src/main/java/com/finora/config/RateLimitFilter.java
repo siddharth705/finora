@@ -54,10 +54,22 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // generous for legitimate use (re-staging after fixing a file, trying a few statements) while
     // still bounding that.
     private final RateLimiter importStageLimiter = new RateLimiter(10, 600);
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    // Bug fix: this used to be `new ObjectMapper()` -- a second, freshly-constructed mapper with
+    // none of the auto-configuration Spring Boot's own JacksonAutoConfiguration applies to its
+    // managed ObjectMapper bean (in particular, no JavaTimeModule). ApiResponse.timestamp is a
+    // java.time.Instant, so the moment any rate limit actually tripped, serializing the 429 body
+    // below threw InvalidDefinitionException instead of returning the intended "too many
+    // requests" response -- discovered via this class's own new test suite actually exercising
+    // the trip-the-limiter path for the first time. Injecting the real bean fixes it and removes
+    // a redundant, differently-configured mapper instance.
+    private final ObjectMapper objectMapper;
 
     @org.springframework.beans.factory.annotation.Value("${app.security.trust-proxy-headers:false}")
     private boolean trustProxyHeaders;
+
+    public RateLimitFilter(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
 
     @Override
     protected void doFilterInternal(@NonNull HttpServletRequest request,

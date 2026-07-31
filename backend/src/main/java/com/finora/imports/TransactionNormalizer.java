@@ -32,9 +32,18 @@ public class TransactionNormalizer {
      *  date or amount column value) — callers should skip such rows rather than fail the import. */
     public StagedRow normalize(UUID userId, Map<String, String> row) {
         String dateRaw = CsvParser.firstNonBlank(row, "date", "transaction_date", "txn date", "transaction date", "value date");
+        // "balance" is last-resort on purpose: a PDF statement's OPENING BALANCE/CLOSING BALANCE
+        // rows (see PdfPreviewGenerator/PdfTableLocator) carry no debit or credit value at all --
+        // only a Balance column -- so without this fallback those two rows have a date but no
+        // recognizable amount and get silently dropped here, before PdfPreviewGenerator's own
+        // balancePoints logic ever sees them. (This fallback previously existed and was lost in a
+        // later edit to this same method -- restored here, and now covered by
+        // TransactionNormalizerTest so a regression like this fails loudly next time instead of
+        // only surfacing as a silent row-count mismatch in an unrelated PDF test.)
         String amountRaw = CsvParser.firstNonBlank(row, "amount", "debit", "credit",
                 "dr amount", "cr amount", "debit amount", "credit amount",
-                "withdrawal amt", "withdrawal amount", "deposit amt", "deposit amount");
+                "withdrawal amt", "withdrawal amount", "deposit amt", "deposit amount",
+                "balance", "running balance", "closing balance");
         if (dateRaw == null || amountRaw == null) return null;
 
         LocalDate date = CsvParser.parseDate(dateRaw.trim());

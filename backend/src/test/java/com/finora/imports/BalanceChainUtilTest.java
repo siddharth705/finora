@@ -83,13 +83,22 @@ class BalanceChainUtilTest {
     }
 
     @Test
-    void first_withNoCleanChain_fallsBackToTheEarliestImpliedStartingPoint() {
-        // Two observations that don't actually link to each other at all (not a real same-day
-        // chain) -- every candidate "has no predecessor," so the fallback must pick deterministically
-        // rather than throw.
-        Link x = new Link(new BigDecimal("-100"), new BigDecimal("900"));  // implied before: 1000
-        Link y = new Link(new BigDecimal("-50"), new BigDecimal("450"));   // implied before: 500
+    void first_whenEveryCandidateAppearsToHaveAPredecessor_fallsBackToTheEarliestImpliedStartingPoint() {
+        // A genuine 3-way cycle -- not a real same-day chain, but constructed so every candidate's
+        // implied pre-transaction balance matches some OTHER candidate's balanceAfter, meaning the
+        // main loop's "who has no predecessor" search never finds one and falls through to the
+        // fallback. (Two candidates that simply don't relate to each other, tried first, does NOT
+        // exercise this branch -- whichever of the two has no predecessor gets returned
+        // immediately by the main loop, correctly, without ever reaching the fallback.)
+        Link a = new Link(new BigDecimal("-100"), new BigDecimal("900"));   // implied before: 1000
+        Link b = new Link(new BigDecimal("50"), new BigDecimal("1000"));   // implied before: 950
+        Link c = new Link(new BigDecimal("50"), new BigDecimal("950"));    // implied before: 900
+        // a's implied-before (1000) matches b's balanceAfter -> a has a predecessor (b).
+        // b's implied-before (950) matches c's balanceAfter -> b has a predecessor (c).
+        // c's implied-before (900) matches a's balanceAfter -> c has a predecessor (a).
+        // Every candidate has a predecessor -- the fallback must fire, picking the smallest
+        // implied-before (900, c's).
 
-        assertThat(BalanceChainUtil.first(List.of(x, y))).isSameAs(y); // 500 < 1000
+        assertThat(BalanceChainUtil.first(List.of(a, b, c))).isSameAs(c);
     }
 }
