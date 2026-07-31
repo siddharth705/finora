@@ -49,17 +49,3 @@ Thumbs.db
 # --- Logs ----------------------------------------------------------------------------------
 *.log
 npm-debug.log*
-
-# --- Node / Vite ---
-node_modules/
-dist/
-dist-ssr/
-.vite/
-*.local
-*.tsbuildinfo
-
-# --- Cloudflare Wrangler ---
-.wrangler/
-
-# --- Maven ---
-.mvn/timing.properties

@@ -1,5 +1,28 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { api } from './client';
+import { api, normalizeApiBase } from './client';
+
+/**
+ * Regression coverage for a real production bug: VITE_API_BASE_URL got set to the bare Railway
+ * origin without the /api/v1 path segment every backend route actually lives under -- see the
+ * user frontend's identical client.test.ts for the full story (same fix, same root cause,
+ * discovered on that app first).
+ */
+describe('normalizeApiBase', () => {
+  it('appends /api/v1 when the raw base is just the bare origin', () => {
+    expect(normalizeApiBase('https://confident-wonder-dev.up.railway.app'))
+      .toBe('https://confident-wonder-dev.up.railway.app/api/v1');
+  });
+
+  it('does not double up /api/v1 when the raw base already includes it', () => {
+    expect(normalizeApiBase('https://confident-wonder-dev.up.railway.app/api/v1'))
+      .toBe('https://confident-wonder-dev.up.railway.app/api/v1');
+  });
+
+  it('strips a trailing slash before checking/appending, either form', () => {
+    expect(normalizeApiBase('https://example.com/')).toBe('https://example.com/api/v1');
+    expect(normalizeApiBase('https://example.com/api/v1/')).toBe('https://example.com/api/v1');
+  });
+});
 
 // No HTTP-mocking library (msw, axios-mock-adapter) is set up in this project, so this test
 // invokes axios's registered response-interceptor rejection handler directly rather than mocking

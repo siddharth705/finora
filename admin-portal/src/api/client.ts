@@ -3,12 +3,25 @@ import axios from 'axios';
 // Bug fix (production-readiness pass): same issue as the user frontend's client.ts (see that
 // file's own doc comment for the full story) -- vite.config.ts's server.proxy only applies to
 // `vite dev`, never to the actual production build, so a bare relative '/api/v1' silently stops
-// working the moment this is built and deployed to its own origin (Cloudflare Workers, in
-// Finora's current deployment) separate from the Railway backend. This app already has
+// working the moment this is built and deployed to its own origin (Cloudflare, in Finora's
+// current deployment) separate from the Railway backend. This app already has
 // VITE_BACKEND_ORIGIN for Diagnostics.tsx's direct Swagger/Actuator links (which can't use the
 // proxy either) -- this is the same gap, just for the axios client itself rather than a couple
 // of manually-constructed links.
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+//
+// Second bug fix, caught from an actual production CORS error on the user-frontend side of this
+// same class: VITE_API_BASE_URL got set to the bare Railway origin without the /api/v1 backend
+// routes actually live under, so every request silently lost that path segment. normalizeApiBase
+// makes this correct either way -- whether the env var is the bare origin or already includes
+// /api/v1, the result always has exactly one /api/v1 suffix.
+export function normalizeApiBase(rawBase: string): string {
+  const trimmed = rawBase.replace(/\/+$/, '');
+  return trimmed.endsWith('/api/v1') ? trimmed : `${trimmed}/api/v1`;
+}
+
+const BASE_URL = import.meta.env.VITE_API_BASE_URL
+  ? normalizeApiBase(import.meta.env.VITE_API_BASE_URL)
+  : '/api/v1';
 
 export const api = axios.create({ baseURL: BASE_URL });
 

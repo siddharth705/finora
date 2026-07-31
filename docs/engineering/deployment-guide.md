@@ -1,7 +1,7 @@
 # Deployment Guide
 
 Covers running Finora's backend and both frontends (`frontend/`, the user app; `admin-portal/`,
-the admin app) locally, in Docker, on Railway (backend + Postgres), and on Cloudflare Workers
+the admin app) locally, in Docker, on Railway (backend + Postgres), and on Cloudflare (Pages or Workers)
 (both frontends). Written as part of the production-readiness pass moving Finora from a purely
 local setup to a real cloud deployment (Railway + Cloudflare).
 
@@ -15,7 +15,7 @@ from an environment variable, never a hardcoded value in source.
 2. [Local development](#local-development)
 3. [Docker (docker-compose)](#docker-docker-compose)
 4. [Railway (backend + Postgres)](#railway-backend--postgres)
-5. [Cloudflare Workers (both frontends)](#cloudflare-workers-both-frontends)
+5. [Cloudflare (both frontends)](#cloudflare-both-frontends)
 6. [Frontend environment variables](#frontend-environment-variables)
 
 ---
@@ -111,25 +111,45 @@ insecure default) if `JWT_SECRET` or `DB_PASSWORD` are still their local-dev pla
 while `SPRING_PROFILES_ACTIVE=prod` — this is intentional and is the safety net for forgetting to
 set one of the two most security-critical variables above.
 
-## Cloudflare Workers (both frontends)
+## Cloudflare (both frontends)
 
-Both `frontend/` and `admin-portal/` build as static Vite apps. Whatever your Cloudflare Workers
-build pipeline uses for env injection (Wrangler's `[vars]`, a dashboard-configured build
-environment variable, etc.), set:
+Both `frontend/` and `admin-portal/` build as static Vite apps. As actually deployed, that's
+Cloudflare Pages (not Workers — update this section if that changes). Whatever your Cloudflare
+build pipeline uses for env injection (a Pages project's Settings → Environment variables, or
+Wrangler's `[vars]` if using Workers instead), set:
 
 ```
 VITE_API_BASE_URL=https://<your Railway backend's public domain>
 ```
 
-for both apps (each has its own Cloudflare Workers deployment target). This is the fix for the
-frontend not being able to reach the backend at all in the current deployment — see
+**The value can be either the bare origin or the origin with `/api/v1` already appended — both
+now work correctly** (see `normalizeApiBase()` in `frontend/src/api/client.ts` /
+`admin-portal/src/api/client.ts`). This is a fix, not just a clarification: the bare-origin form
+is what actually got set in production once, and every API call silently lost the `/api/v1`
+segment every backend route lives under — `register`/`login` (and everything else) hit
+`<origin>/auth/register` instead of `<origin>/api/v1/auth/register`, a route that doesn't exist,
+which the browser reported as a CORS failure rather than a 404 (the OPTIONS preflight itself
+never matched a route to succeed against). `normalizeApiBase()` now produces the same correct
+result either way, so this specific misconfiguration can't silently break every API call again —
+but there's no reason not to just include `/api/v1` explicitly when setting this.
+
+This is the fix for the frontend not being able to reach the backend at all — see
 `frontend/src/api/client.ts`'s own doc comment for the full explanation: the relative `/api/v1`
 path this used to hardcode only ever worked through Vite's *dev-server* proxy, which has no
 effect at all on the built, deployed static output.
 
 `admin-portal/` additionally has `VITE_BACKEND_ORIGIN`, used only for a couple of direct
 human-facing links (Swagger/Actuator) that can't go through the API client at all — set it to the
-same Railway backend URL as `VITE_API_BASE_URL` above.
+same Railway backend URL as `VITE_API_BASE_URL` above (bare origin, no `/api/v1` — this one really
+is just the origin, used to build a Swagger UI link directly).
+
+**Also verify `CORS_ORIGINS` on the Railway backend matches your ACTUAL deployed frontend
+origin(s) exactly** — scheme, host, no trailing slash. Cloudflare Pages assigns its own
+`<project-name>.pages.dev` domain (and a different one per preview deployment) — confirm the
+production domain in the Cloudflare dashboard rather than assuming it matches whatever was
+planned or referenced elsewhere, and update `CORS_ORIGINS` to match it exactly. A mismatch here
+produces the same "blocked by CORS policy" browser error as the `/api/v1` bug above, so if
+requests still fail after fixing `VITE_API_BASE_URL`, this is the next thing to check.
 
 ## Frontend environment variables
 
