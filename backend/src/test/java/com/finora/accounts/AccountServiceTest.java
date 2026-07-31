@@ -1,0 +1,195 @@
+package com.finora.accounts;
+
+import com.finora.entity.Account;
+import com.finora.entity.StatementImport;
+import com.finora.repository.AccountRepository;
+import com.finora.repository.StatementImportRepository;
+import com.finora.repository.TransactionRepository;
+import com.finora.service.AuditService;
+import com.finora.service.BankManagementService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+/**
+ * Locks in a real bug found during a full-application review: update() previously called
+ * a.setBalance(req.balance()) unconditionally. Setup.tsx's "Rename Account" action sends a
+ * partial payload ({name, accountType} only), so req.balance() would be null -- and since
+ * `balance` is NOT NULL at the DB level (V1__init_schema.sql), accountRepository.save() would
+ * have thrown a constraint violation on every rename. Same reasoning applies to creditLimit/
+ * dueDate, which is why all three are asserted here.
+ */
+class AccountServiceTest {
+
+    private AccountRepository accountRepository;
+    private StatementImportRepository statementImportRepository;
+    private TransactionRepository transactionRepository;
+    private AccountService accountService;
+    private final UUID userId = UUID.randomUUID();
+    private final UUID accountId = UUID.randomUUID();
+
+    @BeforeEach
+    void setUp() {
+        accountRepository = mock(AccountRepository.class);
+        statementImportRepository = mock(StatementImportRepository.class);
+        transactionRepository = mock(TransactionRepository.class);
+        // Default: no transactions for anyone, unless a specific test overrides this. Mockito
+        // returns null (not an empty list) for an unstubbed method returning List<T>, which
+        // would NPE inside listForUser's Collectors.toMap(...) -- every test that reaches
+        // listForUser needs this stubbed, so it's set here rather than repeated per-test.
+        when(transactionRepository.countByAccountForUser(any())).thenReturn(List.of());
+        // bankManagementService.resolve(...) is what listForUser/create/update use to attach each
+        // account's BankDto -- stubbed to fall back through to the real static registry (the same
+        // resolution BankManagementService.resolve() itself does for a non-custom bankId) so
+        // existing bank-name assertions in this suite (e.g. "Punjab National Bank") keep working
+        // without this test needing to know about custom banks at all.
+        BankManagementService bankManagementService = mock(BankManagementService.class);
+        when(bankManagementService.resolve(any())).thenAnswer(invocation ->
+                AccountDto.BankDto.from(com.finora.util.BankRegistry.get(invocation.getArgument(0))));
+
+        accountService = new AccountService(accountRepository, statementImportRepository,
+                transactionRepository, mock(AuditService.class), bankManagementService);
+    }
+
+    private Account existingAccount() {
+        Account a = new Account();
+        ReflectionTestUtils.setField(a, "id", accountId);
+        a.setUserId(userId);
+        a.setName("Punjab National Bank");
+        a.setAccountType(Account.Type.SAVINGS);
+        a.setBalance(BigDecimal.valueOf(15000));
+        a.setCreditLimit(BigDecimal.valueOf(50000));
+        a.setDueDate(LocalDate.of(2026, 8, 5));
+        a.setBankId("PNB");
+        return a;
+    }
+
+    @Test
+    void update_withOnlyNameAndAccountType_doesNotWipeOutBalanceCreditLimitOrDueDate() {
+        // Exactly the payload Setup.tsx's rename action sends.
+        when(accountRepository.findById(accountId)).thenReturn(java.util.Optional.of(existingAccount()));
+        when(accountRepository.save(any(Account.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AccountDto.CreateRequest renameOnly = new AccountDto.CreateRequest(
+                "Salary Account", "SAVINGS", null, null, null, null, null, null, null, null, null);
+
+        AccountDto result = accountService.update(userId, accountId, renameOnly);
+
+        assertThat(result.name()).isEqualTo("Salary Account");
+        assertThat(result.balance()).isEqualByComparingTo(BigDecimal.valueOf(15000));
+        assertThat(result.creditLimit()).isEqualByComparingTo(BigDecimal.valueOf(50000));
+        assertThat(result.dueDate()).isEqualTo(LocalDate.of(2026, 8, 5));
+        // bankId isn't part of AccountDto directly -- resolved bank metadata is -- but confirms
+        // the identity wasn't reset to OTHER by a rename that never mentioned it.
+        assertThat(result.bank().id()).isEqualTo("PNB");
+    }
+
+    @Test
+    void update_withAnExplicitNewBalance_actuallyUpdatesIt() {
+        when(accountRepository.findById(accountId)).thenReturn(java.util.Optional.of(existingAccount()));
+        when(accountRepository.save(any(Account.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AccountDto.CreateRequest balanceEdit = new AccountDto.CreateRequest(
+                "Punjab National Bank", "SAVINGS", BigDecimal.valueOf(20000), null, null, null, null, null, null, null, null);
+
+        AccountDto result = accountService.update(userId, accountId, balanceEdit);
+
+        assertThat(result.balance()).isEqualByComparingTo(BigDecimal.valueOf(20000));
+    }
+
+    @Test
+    void create_withAnUnrecognizedBankId_fallsBackToOtherRatherThanThrowing() {
+        when(accountRepository.save(any(Account.class))).thenAnswer(inv -> {
+            Account a = inv.getArgument(0);
+            ReflectionTestUtils.setField(a, "id", UUID.randomUUID());
+            return a;
+        });
+
+        AccountDto.CreateRequest req = new AccountDto.CreateRequest(
+                "My Wallet", "WALLET", BigDecimal.ZERO, null, null, null, null, null, "NOT_A_REAL_BANK", null, null);
+
+        AccountDto result = accountService.create(userId, req);
+
+        assertThat(result.bank().id()).isEqualTo("OTHER");
+    }
+
+    @Test
+    void create_withBranchAndIfsc_persistsBothOnTheAccount() {
+        when(accountRepository.save(any(Account.class))).thenAnswer(inv -> {
+            Account a = inv.getArgument(0);
+            ReflectionTestUtils.setField(a, "id", UUID.randomUUID());
+            return a;
+        });
+
+        AccountDto.CreateRequest req = new AccountDto.CreateRequest(
+                "Salary Account", "SAVINGS", BigDecimal.ZERO, null, null, null, null, null, "PNB",
+                "MG Road Branch", "PUNB0123456");
+
+        AccountDto result = accountService.create(userId, req);
+
+        assertThat(result.branchName()).isEqualTo("MG Road Branch");
+        assertThat(result.ifscCode()).isEqualTo("PUNB0123456");
+    }
+
+    @Test
+    void listForUser_attachesEachAccountsMostRecentStatementImport() {
+        Account acct = existingAccount();
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(acct));
+
+        StatementImport older = statementImport(accountId, Instant.parse("2026-06-01T00:00:00Z"));
+        StatementImport newer = statementImport(accountId, Instant.parse("2026-07-01T00:00:00Z"));
+        // Returned newest-first, matching the real repository method's contract.
+        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of(newer, older));
+
+        List<AccountDto> result = accountService.listForUser(userId);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).lastImportedAt()).isEqualTo(newer.getImportedAt());
+        // Two statements on file for this account -- both older and newer belong to it.
+        assertThat(result.get(0).statementsCount()).isEqualTo(2);
+    }
+
+    @Test
+    void listForUser_withNoStatementImportsAtAll_leavesLastImportedFieldsNull() {
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(existingAccount()));
+        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of());
+
+        List<AccountDto> result = accountService.listForUser(userId);
+
+        assertThat(result.get(0).lastImportedAt()).isNull();
+        assertThat(result.get(0).lastStatementPeriodStart()).isNull();
+        assertThat(result.get(0).statementsCount()).isEqualTo(0);
+    }
+
+    @Test
+    void listForUser_attachesTheAccountsTransactionCount() {
+        when(accountRepository.findByUserId(userId)).thenReturn(List.of(existingAccount()));
+        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of());
+
+        TransactionRepository.AccountTransactionCount countRow = mock(TransactionRepository.AccountTransactionCount.class);
+        when(countRow.getAccountId()).thenReturn(accountId);
+        when(countRow.getCount()).thenReturn(42L);
+        when(transactionRepository.countByAccountForUser(userId)).thenReturn(List.of(countRow));
+
+        List<AccountDto> result = accountService.listForUser(userId);
+
+        assertThat(result.get(0).transactionsCount()).isEqualTo(42L);
+    }
+
+    private StatementImport statementImport(UUID accountId, Instant importedAt) {
+        StatementImport si = new StatementImport();
+        ReflectionTestUtils.setField(si, "accountId", accountId);
+        ReflectionTestUtils.setField(si, "importedAt", importedAt);
+        return si;
+    }
+}

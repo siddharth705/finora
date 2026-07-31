@@ -1,0 +1,85 @@
+package com.finora.entity;
+
+import jakarta.persistence.*;
+
+import java.time.Instant;
+import java.util.UUID;
+
+/**
+ * Persisted staged-review state (ADR-0002) -- the gap this closes: previously, everything
+ * between /import/csv/stage and /import/csv/confirm lived only in the frontend's memory and the
+ * HTTP round-trip; a dropped browser session lost all review progress and required re-uploading
+ * the file from scratch. Now the staged rows, detected account info, and the original file bytes
+ * are persisted here at staging time, so a resumed session (same account, different device, or
+ * just a reloaded tab) can pick back up without re-uploading anything.
+ *
+ * stagedRowsJson/detectedAccountJson are Jackson-serialized ImportDto.StagedRow list / DetectedAccountInfo
+ * -- stored as JSON text rather than new normalized tables, matching this row's actual lifecycle:
+ * it's a transient staging artifact (deleted or marked CONFIRMED once the real transactions/
+ * StatementImport rows exist), not permanent financial data that needs to be queried in its own
+ * right the way transactions do.
+ *
+ * No @Scheduled cleanup job -- this codebase has no background job infrastructure yet (see
+ * SystemHealth's own doc comments on why). Expired sessions are opportunistically deleted the
+ * next time that same user starts a new import (ImportSessionService.createSession) rather than
+ * via a platform-wide sweep; a user who uploads once and never returns leaves one row (with file
+ * bytes) sitting until they use import again. Acceptable for a v1, called out explicitly rather
+ * than silently left as unbounded growth -- see ADR-0002.
+ */
+@Entity
+@Table(name = "import_sessions")
+public class ImportSession {
+
+    public static final String STATUS_STAGED = "STAGED";
+    public static final String STATUS_CONFIRMED = "CONFIRMED";
+
+    @Id
+    @GeneratedValue
+    private UUID id;
+
+    @Column(name = "user_id", nullable = false)
+    private UUID userId;
+
+    @Column(name = "file_name", nullable = false)
+    private String fileName;
+
+    @Column(name = "file_content", nullable = false)
+    private byte[] fileContent;
+
+    @Column(name = "staged_rows_json", nullable = false, columnDefinition = "TEXT")
+    private String stagedRowsJson;
+
+    @Column(name = "detected_account_json", nullable = false, columnDefinition = "TEXT")
+    private String detectedAccountJson;
+
+    @Column(nullable = false)
+    private String status = STATUS_STAGED;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private Instant createdAt = Instant.now();
+
+    @Column(name = "expires_at", nullable = false)
+    private Instant expiresAt;
+
+    @Column(name = "confirmed_at")
+    private Instant confirmedAt;
+
+    public UUID getId() { return id; }
+    public UUID getUserId() { return userId; }
+    public void setUserId(UUID userId) { this.userId = userId; }
+    public String getFileName() { return fileName; }
+    public void setFileName(String fileName) { this.fileName = fileName; }
+    public byte[] getFileContent() { return fileContent; }
+    public void setFileContent(byte[] fileContent) { this.fileContent = fileContent; }
+    public String getStagedRowsJson() { return stagedRowsJson; }
+    public void setStagedRowsJson(String stagedRowsJson) { this.stagedRowsJson = stagedRowsJson; }
+    public String getDetectedAccountJson() { return detectedAccountJson; }
+    public void setDetectedAccountJson(String detectedAccountJson) { this.detectedAccountJson = detectedAccountJson; }
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+    public Instant getCreatedAt() { return createdAt; }
+    public Instant getExpiresAt() { return expiresAt; }
+    public void setExpiresAt(Instant expiresAt) { this.expiresAt = expiresAt; }
+    public Instant getConfirmedAt() { return confirmedAt; }
+    public void setConfirmedAt(Instant confirmedAt) { this.confirmedAt = confirmedAt; }
+}

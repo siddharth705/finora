@@ -1,0 +1,91 @@
+# Base configuration shared by every profile. Profile-specific files
+# (application-dev.yml / application-test.yml / application-prod.yml) override
+# individual keys as needed — this file should never contain anything that's
+# actually a secret, only sane defaults and structure.
+spring:
+  application:
+    name: finora-backend
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:finora}
+    username: ${DB_USER:finora}
+    password: ${DB_PASSWORD:finora}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      # Flyway owns the schema; Hibernate only validates it matches at startup.
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc:
+          time_zone: UTC
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+app:
+  jwt:
+    # 32+ char secret required for HS256. Override via env var in every real deployment —
+    # never commit a real secret; this default is only safe because it's obviously a placeholder.
+    secret: ${JWT_SECRET:change-this-to-a-long-random-secret-in-your-env-file-min-32-chars}
+    # Access tokens are short-lived by design — 15 minutes, not 24 hours — because a leaked
+    # access token that expires quickly limits the damage window. Long-lived sessions are handled
+    # by the refresh token instead, which can be individually revoked (the access token can't).
+    expiration-ms: ${JWT_EXPIRATION_MS:900000}          # 15 min
+    refresh-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:2592000000}  # 30 days
+  cors:
+    # Both frontends by default: the user app (frontend/, port 5173) and the admin portal
+    # (admin-portal/, port 5174) -- see CorsConfig, which .trim()s each entry, so the comma
+    # here doesn't need surrounding spaces to work correctly.
+    allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:5174}
+  email:
+    # Empty by default — falls back to logging + returning the reset link in the API response
+    # (dev convenience). Set RESEND_API_KEY to switch to sending real emails via Resend.
+    api-key: ${RESEND_API_KEY:}
+    from-address: ${EMAIL_FROM:onboarding@resend.dev}
+    app-base-url: ${APP_BASE_URL:http://localhost:5173}
+  sms:
+    # Empty by default — falls back to logging the OTP server-side instead of sending it via
+    # SMS (dev convenience, same pattern as email). Set all three TWILIO_* vars to switch to
+    # sending real SMS via Twilio.
+    account-sid: ${TWILIO_ACCOUNT_SID:}
+    auth-token: ${TWILIO_AUTH_TOKEN:}
+    from-number: ${TWILIO_FROM_NUMBER:}
+  setup:
+    # Empty by default — BootstrapService generates a random key and writes it to
+    # .finora/installation.key for local/dev use (see docker-compose.yml's bind mount for that path).
+    # Set FINORA_SETUP_KEY in any deployment where an operator supplies the key themselves
+    # (deployment config, a secret manager) instead of one being generated or written anywhere —
+    # see RFC-BOOTSTRAP-01 in docs/bootstrap-setup-future-work.md for the full production story.
+    key: ${FINORA_SETUP_KEY:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never   # never leak DB/disk details on a publicly-reachable health endpoint
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+
+logging:
+  pattern:
+    # [%X{requestId}] pulls the correlation ID that CorrelationIdFilter puts into MDC —
+    # every log line for a given request carries the same ID, so grepping one ID out of
+    # a log file gives you that request's entire story, not just the line that errored.
+    console: "%d{yyyy-MM-dd HH:mm:ss} %-5level [%X{requestId:-no-request-id}] %logger{36} - %msg%n"

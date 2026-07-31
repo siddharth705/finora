@@ -1,0 +1,480 @@
+package com.finora.service;
+
+import com.finora.entity.Transaction;
+import com.finora.repository.TransactionRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+class ReconciliationServiceTest {
+
+    private TransactionRepository transactionRepository;
+    private RelationshipService relationshipService;
+    private AuditService auditService;
+    private ReconciliationService reconciliationService;
+    private final UUID userId = UUID.randomUUID();
+
+    @BeforeEach
+    void setUp() {
+        transactionRepository = mock(TransactionRepository.class);
+        // Unstubbed -- Mockito's default boolean/List return is false/empty, so every existing
+        // test here (none of which are about relationship-assisted matching -- see the dedicated
+        // relationship tests below) preserves the original plain amount+date+"payment"-heuristic
+        // behavior unchanged.
+        relationshipService = mock(RelationshipService.class);
+        auditService = mock(AuditService.class);
+        reconciliationService = new ReconciliationService(transactionRepository, relationshipService, auditService);
+    }
+
+    private Transaction txn(UUID id, UUID accountId, LocalDate date, BigDecimal amount,
+                            Transaction.Type type, String description, Instant createdAt) {
+        Transaction t = new Transaction();
+        ReflectionTestUtils.setField(t, "id", id);
+        ReflectionTestUtils.setField(t, "createdAt", createdAt);
+        t.setUserId(userId);
+        t.setAccountId(accountId);
+        t.setTxnDate(date);
+        t.setAmount(amount);
+        t.setTxnType(type);
+        t.setDescription(description);
+        t.setReconciliationStatus(Transaction.ReconciliationStatus.OK);
+        return t;
+    }
+
+    // --- Duplicates (in-memory grouping, replacing the old per-transaction
+    // findPotentialDuplicates() query -- see ReconciliationService's class comment) ---
+
+    @Test
+    void reconcileForUser_flagsNewerIdenticalTransactionAsDuplicate() {
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 10);
+
+        Transaction original = txn(UUID.randomUUID(), accountId, date, new BigDecimal("486.00"),
+                Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:00:00Z"));
+        Transaction duplicate = txn(UUID.randomUUID(), accountId, date, new BigDecimal("486.00"),
+                Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:05:00Z"));
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(original, duplicate));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(original.getIsDuplicateOf()).isNull();
+        assertThat(duplicate.getIsDuplicateOf()).isEqualTo(original.getId());
+        assertThat(duplicate.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.DUPLICATE);
+    }
+
+    @Test
+    void reconcileForUser_doesNotFlagDistinctTransactionsAsDuplicates() {
+        UUID accountId = UUID.randomUUID();
+        Transaction a = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 10), new BigDecimal("486.00"),
+                Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:00:00Z"));
+        Transaction b = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 11), new BigDecimal("612.00"),
+                Transaction.Type.EXPENSE, "ZOMATO ORDER 771", Instant.parse("2026-07-11T10:00:00Z"));
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(a, b));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(a.getIsDuplicateOf()).isNull();
+        assertThat(b.getIsDuplicateOf()).isNull();
+    }
+
+    @Test
+    void reconcileForUser_matchesDuplicatesRegardlessOfAmountScale() {
+        // stripTrailingZeros().toPlainString() normalization -- "486.00" and "486.0" must be
+        // treated as the same numeric amount for grouping, exactly like the original query's
+        // SQL numeric equality did (100 = 100.00 is true in SQL, unlike naive string equality).
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 10);
+
+        Transaction original = txn(UUID.randomUUID(), accountId, date, new BigDecimal("486.00"),
+                Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:00:00Z"));
+        Transaction duplicate = txn(UUID.randomUUID(), accountId, date, new BigDecimal("486.0"),
+                Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:05:00Z"));
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(original, duplicate));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(duplicate.getIsDuplicateOf()).isEqualTo(original.getId());
+    }
+
+    @Test
+    void reconcileForUser_neverGroupsTwoNullDescriptionTransactionsAsDuplicatesOfEachOther() {
+        // Faithful to the original query's SQL semantics: `t.description = :description` with a
+        // null bind parameter is never true, not even against another null row. Two
+        // no-description transactions must stay ungrouped, matching that.
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 10);
+
+        Transaction a = txn(UUID.randomUUID(), accountId, date, new BigDecimal("100.00"),
+                Transaction.Type.EXPENSE, null, Instant.parse("2026-07-10T10:00:00Z"));
+        Transaction b = txn(UUID.randomUUID(), accountId, date, new BigDecimal("100.00"),
+                Transaction.Type.EXPENSE, null, Instant.parse("2026-07-10T10:05:00Z"));
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(a, b));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(a.getIsDuplicateOf()).isNull();
+        assertThat(b.getIsDuplicateOf()).isNull();
+    }
+
+    // --- Transfers ---
+
+    @Test
+    void reconcileForUser_matchesCreditCardPaymentAsInternalTransfer() {
+        UUID savingsAccount = UUID.randomUUID();
+        UUID cardAccount = UUID.randomUUID();
+
+        Transaction debitFromSavings = txn(UUID.randomUUID(), savingsAccount, LocalDate.of(2026, 7, 10),
+                new BigDecimal("18500.00"), Transaction.Type.EXPENSE, "NEFT Payment to Card", Instant.now());
+        Transaction creditOnCard = txn(UUID.randomUUID(), cardAccount, LocalDate.of(2026, 7, 11),
+                new BigDecimal("18500.00"), Transaction.Type.INCOME, "Payment Received - Thank You", Instant.now());
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(debitFromSavings, creditOnCard));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(debitFromSavings.isTransfer()).isTrue();
+        assertThat(creditOnCard.isTransfer()).isTrue();
+        assertThat(debitFromSavings.getTransferPairId()).isEqualTo(creditOnCard.getId());
+        assertThat(creditOnCard.getTransferPairId()).isEqualTo(debitFromSavings.getId());
+        assertThat(debitFromSavings.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.TRANSFER);
+    }
+
+    @Test
+    void reconcileForUser_doesNotMatchTransferAcrossMoreThanFourDays() {
+        UUID savingsAccount = UUID.randomUUID();
+        UUID cardAccount = UUID.randomUUID();
+
+        Transaction debit = txn(UUID.randomUUID(), savingsAccount, LocalDate.of(2026, 7, 1),
+                new BigDecimal("18500.00"), Transaction.Type.EXPENSE, "Payment to card", Instant.now());
+        Transaction credit = txn(UUID.randomUUID(), cardAccount, LocalDate.of(2026, 7, 20),
+                new BigDecimal("18500.00"), Transaction.Type.INCOME, "Payment received", Instant.now());
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(debit, credit));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(debit.isTransfer()).isFalse();
+        assertThat(credit.isTransfer()).isFalse();
+    }
+
+    @Test
+    void reconcileForUser_doesNotMatchTransferOnSameAccount() {
+        UUID accountId = UUID.randomUUID();
+        Transaction debit = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 10),
+                new BigDecimal("500.00"), Transaction.Type.EXPENSE, "Payment sent", Instant.now());
+        Transaction credit = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 11),
+                new BigDecimal("500.00"), Transaction.Type.INCOME, "Payment received", Instant.now());
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(debit, credit));
+
+        reconciliationService.reconcileForUser(userId);
+
+        // Same account on both legs isn't a transfer between accounts — it's just two transactions.
+        assertThat(debit.isTransfer()).isFalse();
+        assertThat(credit.isTransfer()).isFalse();
+    }
+
+    @Test
+    void reconcileForUser_doesNotTreatASalaryCreditAsATransfer_evenWhenDescriptionSaysPayment() {
+        // Real-world pattern: "NEFT SALARY PAYMENT XYZ CORP" contains the word "payment" and
+        // could otherwise false-positive-match the transfer heuristic against an unrelated
+        // same-amount expense. Salary is external income, never an internal transfer.
+        UUID salaryAccount = UUID.randomUUID();
+        UUID otherAccount = UUID.randomUUID();
+
+        Transaction salaryCredit = txn(UUID.randomUUID(), salaryAccount, LocalDate.of(2026, 7, 1),
+                new BigDecimal("75000.00"), Transaction.Type.INCOME, "NEFT SALARY PAYMENT XYZ CORP", Instant.now());
+        Transaction unrelatedExpense = txn(UUID.randomUUID(), otherAccount, LocalDate.of(2026, 7, 2),
+                new BigDecimal("75000.00"), Transaction.Type.EXPENSE, "Payment to landlord", Instant.now());
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(salaryCredit, unrelatedExpense));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(salaryCredit.isTransfer()).isFalse();
+        assertThat(unrelatedExpense.isTransfer()).isFalse();
+        assertThat(salaryCredit.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.OK);
+    }
+
+    // --- Relationship-assisted transfer matching (docs/rule-engine-relationship-engine-eds.md
+    // §4: a known OWN_ACCOUNT relationship identifier widens the matching window rather than
+    // replacing the existing amount+date+"payment"-wording heuristic) ---
+
+    @Test
+    void reconcileForUser_widensMatchWindowPastFourDays_whenAnOwnAccountRelationshipMatches() {
+        UUID savingsAccount = UUID.randomUUID();
+        UUID cardAccount = UUID.randomUUID();
+
+        Transaction debit = txn(UUID.randomUUID(), savingsAccount, LocalDate.of(2026, 7, 1),
+                new BigDecimal("18500.00"), Transaction.Type.EXPENSE, "Payment to XX4802", Instant.now());
+        Transaction credit = txn(UUID.randomUUID(), cardAccount, LocalDate.of(2026, 7, 8), // 7 days apart -- beyond the default 4-day window
+                new BigDecimal("18500.00"), Transaction.Type.INCOME, "Payment received", Instant.now());
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(debit, credit));
+        when(relationshipService.ownAccountIdentifierValues(userId)).thenReturn(List.of("4802"));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(debit.isTransfer()).isTrue();
+        assertThat(credit.isTransfer()).isTrue();
+    }
+
+    @Test
+    void reconcileForUser_stillRespectsTenDayOuterWindow_evenWithARelationshipMatch() {
+        UUID savingsAccount = UUID.randomUUID();
+        UUID cardAccount = UUID.randomUUID();
+
+        Transaction debit = txn(UUID.randomUUID(), savingsAccount, LocalDate.of(2026, 7, 1),
+                new BigDecimal("18500.00"), Transaction.Type.EXPENSE, "Payment to XX4802", Instant.now());
+        Transaction credit = txn(UUID.randomUUID(), cardAccount, LocalDate.of(2026, 7, 20), // 19 days apart -- beyond even the widened window
+                new BigDecimal("18500.00"), Transaction.Type.INCOME, "Payment received", Instant.now());
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(debit, credit));
+        when(relationshipService.ownAccountIdentifierValues(userId)).thenReturn(List.of("4802"));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(debit.isTransfer()).isFalse();
+        assertThat(credit.isTransfer()).isFalse();
+    }
+
+    @Test
+    void reconcileForUser_relationshipMatchAloneCanTriggerPairing_withoutPaymentWordingInDescription() {
+        // Neither description contains "payment" -- previously this pair would never even be
+        // considered (looksLikeTransfer gated on that keyword). A relationship identifier match
+        // is independent evidence and can trigger evaluation on its own.
+        UUID savingsAccount = UUID.randomUUID();
+        UUID otherAccount = UUID.randomUUID();
+
+        Transaction debit = txn(UUID.randomUUID(), savingsAccount, LocalDate.of(2026, 7, 10),
+                new BigDecimal("5000.00"), Transaction.Type.EXPENSE, "UPI TO SELF XX4802", Instant.now());
+        Transaction credit = txn(UUID.randomUUID(), otherAccount, LocalDate.of(2026, 7, 11),
+                new BigDecimal("5000.00"), Transaction.Type.INCOME, "UPI CREDIT RECEIVED", Instant.now());
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(debit, credit));
+        when(relationshipService.ownAccountIdentifierValues(userId)).thenReturn(List.of("4802"));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(debit.isTransfer()).isTrue();
+        assertThat(credit.isTransfer()).isTrue();
+    }
+
+    // --- Refunds ---
+
+    @Test
+    void reconcileForUser_linksARefundKeywordCreditBackToTheOriginalSameAccountExpense() {
+        UUID accountId = UUID.randomUUID();
+
+        Transaction purchase = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 1),
+                new BigDecimal("2499.00"), Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.now());
+        Transaction refund = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 9),
+                new BigDecimal("2499.00"), Transaction.Type.INCOME, "AMAZON REFUND 4471", Instant.now());
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, refund));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(refund.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.REFUND);
+        assertThat(refund.getRefundOfTransactionId()).isEqualTo(purchase.getId());
+    }
+
+    @Test
+    void reconcileForUser_linksAPartialRefundByMerchantMatch_withoutRefundKeyword() {
+        UUID accountId = UUID.randomUUID();
+
+        Transaction purchase = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 1),
+                new BigDecimal("3000.00"), Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.now());
+        purchase.setMerchant("swiggy ordr");
+        Transaction partialCredit = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 3),
+                new BigDecimal("500.00"), Transaction.Type.INCOME, "SWIGGY CREDIT ADJ", Instant.now());
+        partialCredit.setMerchant("swiggy ordr");
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, partialCredit));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(partialCredit.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.REFUND);
+        assertThat(partialCredit.getRefundOfTransactionId()).isEqualTo(purchase.getId());
+    }
+
+    @Test
+    void reconcileForUser_doesNotLinkARefundAcrossDifferentAccounts() {
+        UUID accountA = UUID.randomUUID();
+        UUID accountB = UUID.randomUUID();
+
+        Transaction purchase = txn(UUID.randomUUID(), accountA, LocalDate.of(2026, 7, 1),
+                new BigDecimal("2499.00"), Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.now());
+        Transaction refund = txn(UUID.randomUUID(), accountB, LocalDate.of(2026, 7, 9),
+                new BigDecimal("2499.00"), Transaction.Type.INCOME, "AMAZON REFUND 4471", Instant.now());
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, refund));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(refund.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.OK);
+        assertThat(refund.getRefundOfTransactionId()).isNull();
+    }
+
+    @Test
+    void reconcileForUser_doesNotLinkARefundExceedingTheOriginalPurchaseAmount() {
+        UUID accountId = UUID.randomUUID();
+
+        Transaction purchase = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 1),
+                new BigDecimal("1000.00"), Transaction.Type.EXPENSE, "AMAZON ORDER 55", Instant.now());
+        Transaction credit = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 5),
+                new BigDecimal("1500.00"), Transaction.Type.INCOME, "AMAZON REFUND 55", Instant.now());
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, credit));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(credit.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.OK);
+        assertThat(credit.getRefundOfTransactionId()).isNull();
+    }
+
+    @Test
+    void reconcileForUser_doesNotLinkARefundOutsideTheWindow() {
+        UUID accountId = UUID.randomUUID();
+
+        Transaction purchase = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 1, 1),
+                new BigDecimal("2499.00"), Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.now());
+        Transaction refund = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 20), // > 180 days later
+                new BigDecimal("2499.00"), Transaction.Type.INCOME, "AMAZON REFUND 4471", Instant.now());
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, refund));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(refund.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.OK);
+        assertThat(refund.getRefundOfTransactionId()).isNull();
+    }
+
+    @Test
+    void reconcileForUser_prefersExactAmountMatchOverMerchantOnlyMatch_whenBothAreCandidates() {
+        UUID accountId = UUID.randomUUID();
+
+        Transaction earlierPartialMatch = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 6, 1),
+                new BigDecimal("5000.00"), Transaction.Type.EXPENSE, "AMAZON ORDER 1", Instant.now());
+        earlierPartialMatch.setMerchant("amazon order");
+        Transaction exactMatch = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 1),
+                new BigDecimal("999.00"), Transaction.Type.EXPENSE, "AMAZON ORDER 2", Instant.now());
+        exactMatch.setMerchant("amazon order");
+        Transaction refund = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 5),
+                new BigDecimal("999.00"), Transaction.Type.INCOME, "AMAZON REFUND", Instant.now());
+        refund.setMerchant("amazon order");
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(earlierPartialMatch, exactMatch, refund));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(refund.getRefundOfTransactionId()).isEqualTo(exactMatch.getId());
+    }
+
+    @Test
+    void reconcileForUser_doesNotLinkARefundWithNoKeywordAndNoMerchantMatch() {
+        UUID accountId = UUID.randomUUID();
+
+        Transaction purchase = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 1),
+                new BigDecimal("2499.00"), Transaction.Type.EXPENSE, "AMAZON ORDER 4471", Instant.now());
+        Transaction unrelatedIncome = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 5),
+                new BigDecimal("2499.00"), Transaction.Type.INCOME, "FREELANCE PAYOUT", Instant.now());
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, unrelatedIncome));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(unrelatedIncome.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.OK);
+        assertThat(unrelatedIncome.getRefundOfTransactionId()).isNull();
+    }
+
+    // --- RECONCILIATION_RUN audit summary (Financial Intelligence Workspace, Reconciliation
+    // Monitor module -- see ReconciliationService.reconcileForUser's own doc comment on the
+    // counters) ---
+
+    @Test
+    void reconcileForUser_recordsASummaryAuditEntry_withCountsFromThisRunOnly() {
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 10);
+
+        Transaction original = txn(UUID.randomUUID(), accountId, date, new BigDecimal("486.00"),
+                Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:00:00Z"));
+        Transaction duplicate = txn(UUID.randomUUID(), accountId, date, new BigDecimal("486.00"),
+                Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:05:00Z"));
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(original, duplicate));
+
+        reconciliationService.reconcileForUser(userId);
+
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> metadataCaptor = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        org.mockito.Mockito.verify(auditService).record(
+                org.mockito.ArgumentMatchers.eq(userId), org.mockito.ArgumentMatchers.eq("RECONCILIATION_RUN"),
+                org.mockito.ArgumentMatchers.eq("Transaction"), org.mockito.ArgumentMatchers.isNull(),
+                metadataCaptor.capture());
+
+        assertThat(metadataCaptor.getValue())
+                .containsEntry("transactionsProcessed", 2)
+                .containsEntry("duplicatesFound", 1)
+                .containsEntry("transfersMatched", 0)
+                .containsEntry("refundsMatched", 0);
+    }
+
+    @Test
+    void reconcileForUser_countsOneTransferMatchPerPair_notPerRow() {
+        UUID accountA = UUID.randomUUID();
+        UUID accountB = UUID.randomUUID();
+
+        Transaction payment = txn(UUID.randomUUID(), accountA, LocalDate.of(2026, 7, 10), new BigDecimal("5000.00"),
+                Transaction.Type.EXPENSE, "PAYMENT TO SAVINGS", Instant.now());
+        Transaction credit = txn(UUID.randomUUID(), accountB, LocalDate.of(2026, 7, 11), new BigDecimal("5000.00"),
+                Transaction.Type.INCOME, "CREDIT FROM CHECKING", Instant.now());
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(payment, credit));
+
+        reconciliationService.reconcileForUser(userId);
+
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> metadataCaptor = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        org.mockito.Mockito.verify(auditService).record(
+                org.mockito.ArgumentMatchers.eq(userId), org.mockito.ArgumentMatchers.eq("RECONCILIATION_RUN"),
+                org.mockito.ArgumentMatchers.eq("Transaction"), org.mockito.ArgumentMatchers.isNull(),
+                metadataCaptor.capture());
+
+        // Two transactions became transfers, but that's ONE match event, not two.
+        assertThat(metadataCaptor.getValue()).containsEntry("transfersMatched", 1);
+    }
+
+    @Test
+    void reconcileForUser_recordsTheSummary_evenWhenNothingMatched() {
+        Transaction lone = txn(UUID.randomUUID(), UUID.randomUUID(), LocalDate.of(2026, 7, 10),
+                new BigDecimal("100.00"), Transaction.Type.EXPENSE, "ONE-OFF PURCHASE", Instant.now());
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(lone));
+
+        reconciliationService.reconcileForUser(userId);
+
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> metadataCaptor = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        org.mockito.Mockito.verify(auditService).record(
+                org.mockito.ArgumentMatchers.eq(userId), org.mockito.ArgumentMatchers.eq("RECONCILIATION_RUN"),
+                org.mockito.ArgumentMatchers.eq("Transaction"), org.mockito.ArgumentMatchers.isNull(),
+                metadataCaptor.capture());
+
+        assertThat(metadataCaptor.getValue())
+                .containsEntry("transactionsProcessed", 1)
+                .containsEntry("duplicatesFound", 0)
+                .containsEntry("transfersMatched", 0)
+                .containsEntry("refundsMatched", 0);
+    }
+}

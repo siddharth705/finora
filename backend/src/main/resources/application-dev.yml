@@ -1,0 +1,13 @@
+server:
+  port: 8080
+
+spring:
+  jpa:
+    show-sql: true
+
+logging:
+  level:
+    root: INFO
+    com.finora: DEBUG
+    org.springframework.security: DEBUG
+    org.hibernate.SQL: DEBUG

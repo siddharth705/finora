@@ -1,0 +1,149 @@
+package com.finora.imports;
+
+import com.finora.accounts.AccountDto;
+import com.finora.dto.ImportDto.DetectedAccountInfo;
+import com.finora.dto.ImportDto.StagedRow;
+import com.finora.util.BankRegistry;
+import org.springframework.stereotype.Component;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+
+/**
+ * Detects account- and bank-level signals from a statement: which bank issued it, whether it
+ * looks like a credit card vs. a savings/current account, and best-effort opening/closing
+ * balance, masked account number, holder name, branch, IFSC, credit limit, and due date.
+ *
+ * Every field on {@link DetectedAccountInfo} is nullable and genuinely IS null when the file
+ * didn't contain enough signal to derive it — nothing here is guessed just to fill the field.
+ */
+@Component
+public class StatementValidator {
+
+    /** Accumulates account-level signal across a whole file's rows. One instance per import;
+     *  callers scan each row via {@link #scanRow} and pass the accumulator to
+     *  {@link #buildDetectedAccountInfo} once the file has been fully read. */
+    public static class AccountSignalAccumulator {
+        String accountNumberMasked;
+        String accountHolderName;
+        String branchName;
+        String ifscCode;
+        BigDecimal creditLimit;
+        LocalDate dueDate;
+        boolean creditCardSignals;
+        final List<BalanceObservation> balanceObservations = new ArrayList<>();
+    }
+
+    /** One row's running-balance observation, kept alongside its transaction date so opening/
+     *  closing balance can be derived by actual date order rather than file position — correct
+     *  whether the statement lists transactions oldest-first or newest-first. */
+    private record BalanceObservation(LocalDate date, BigDecimal signedAmount, BigDecimal balance) {}
+
+    /**
+     * Scans one row for account-level fields. These can show up on rows even when other columns
+     * on that same row are otherwise unremarkable, so this runs on every row regardless of
+     * whether it parsed as a transaction (parsedRow is null when it didn't).
+     */
+    public void scanRow(Map<String, String> row, StagedRow parsedRow, AccountSignalAccumulator acc) {
+        if (parsedRow != null) {
+            String balanceRaw = CsvParser.firstNonBlank(row, "balance", "running balance", "closing balance");
+            BigDecimal balance = CsvParser.parseNumeric(balanceRaw);
+            if (balance != null) {
+                BigDecimal signedAmount = "INCOME".equals(parsedRow.type()) ? parsedRow.amount() : parsedRow.amount().negate();
+                acc.balanceObservations.add(new BalanceObservation(parsedRow.date(), signedAmount, balance));
+            }
+        }
+
+        if (acc.accountNumberMasked == null) {
+            String acctNoRaw = CsvParser.firstNonBlank(row, "account number", "account no", "card number");
+            if (acctNoRaw != null && !acctNoRaw.isBlank()) acc.accountNumberMasked = CsvParser.maskAccountNumber(acctNoRaw);
+        }
+        if (acc.accountHolderName == null) {
+            String holderRaw = CsvParser.firstNonBlank(row, "account holder", "account holder name", "customer name", "holder name");
+            if (holderRaw != null && !holderRaw.isBlank()) acc.accountHolderName = holderRaw.trim();
+        }
+        if (acc.branchName == null) {
+            String branchRaw = CsvParser.firstNonBlank(row, "branch", "branch name", "home branch");
+            if (branchRaw != null && !branchRaw.isBlank()) acc.branchName = branchRaw.trim();
+        }
+        if (acc.ifscCode == null) {
+            String ifscRaw = CsvParser.firstNonBlank(row, "ifsc", "ifsc code");
+            if (ifscRaw != null && !ifscRaw.isBlank()) acc.ifscCode = ifscRaw.trim().toUpperCase(Locale.ROOT);
+        }
+        if (acc.creditLimit == null) {
+            BigDecimal limit = CsvParser.parseNumeric(CsvParser.firstNonBlank(row, "credit limit"));
+            if (limit != null) { acc.creditLimit = limit; acc.creditCardSignals = true; }
+        }
+        if (acc.dueDate == null) {
+            String dueRaw = CsvParser.firstNonBlank(row, "due date", "payment due date");
+            if (dueRaw != null) acc.dueDate = CsvParser.parseDate(dueRaw.trim());
+        }
+        if (CsvParser.hasHeaderMatch(row, "card number", "minimum due", "minimum amount due")) {
+            acc.creditCardSignals = true;
+        }
+    }
+
+    public DetectedAccountInfo buildDetectedAccountInfo(
+            String filename, List<String[]> allRows, int headerIdx,
+            List<StagedRow> staged, AccountSignalAccumulator acc) {
+
+        LocalDate statementStart = staged.stream().map(StagedRow::date).min(LocalDate::compareTo).orElse(null);
+        LocalDate statementEnd = staged.stream().map(StagedRow::date).max(LocalDate::compareTo).orElse(null);
+
+        BigDecimal openingBalance = null;
+        BigDecimal closingBalance = null;
+        if (!acc.balanceObservations.isEmpty()) {
+            BalanceObservation earliest = null;
+            BalanceObservation latest = null;
+            for (BalanceObservation obs : acc.balanceObservations) {
+                if (earliest == null || obs.date().isBefore(earliest.date())) earliest = obs;
+                // >= (not just >) so that among same-day ties, the LAST one in file order wins --
+                // paired with earliest's strict "<" above (first-in-file wins ties there), this
+                // is correct however the file orders same-day rows.
+                if (latest == null || !obs.date().isBefore(latest.date())) latest = obs;
+            }
+            openingBalance = earliest.balance().subtract(earliest.signedAmount());
+            closingBalance = latest.balance();
+        }
+
+        List<String> bankTextHints = collectBankTextHints(allRows, headerIdx);
+        BankRegistry.BankInfo bank = BankRegistry.detect(filename, bankTextHints);
+
+        return new DetectedAccountInfo(
+                suggestedAccountName(bank),
+                acc.creditCardSignals ? "CREDIT_CARD" : "SAVINGS",
+                openingBalance, closingBalance, statementStart, statementEnd,
+                acc.accountNumberMasked, acc.creditLimit, acc.dueDate, acc.accountHolderName,
+                acc.branchName, acc.ifscCode,
+                AccountDto.BankDto.from(bank)
+        );
+    }
+
+    /** Real bank exports commonly carry the bank's name in the letterhead/metadata rows that sit
+     *  above the transaction table (the same rows the header-detection skips over) -- e.g. "PNB
+     *  ONE Statement" or "State Bank of India" printed as a plain cell before the header row.
+     *  Scanning those cells alongside the filename gives BankRegistry.detect a second, more
+     *  reliable signal than the filename alone (a user can rename a file to anything; the bank's
+     *  own letterhead text in the file itself is a stronger signal that they didn't write). */
+    private List<String> collectBankTextHints(List<String[]> allRows, int headerIdx) {
+        int limit = headerIdx >= 0 ? Math.min(headerIdx + 1, allRows.size()) : Math.min(allRows.size(), 30);
+        List<String> hints = new ArrayList<>();
+        for (int i = 0; i < limit; i++) {
+            for (String cell : allRows.get(i)) {
+                if (cell != null && !cell.isBlank()) hints.add(cell);
+            }
+        }
+        return hints;
+    }
+
+    private String suggestedAccountName(BankRegistry.BankInfo bank) {
+        // Never the raw filename -- that was the reported bug ("Pnbone Stmt Xx4802
+        // 23072026.csv" showing up as the account name verbatim). A recognized bank's official
+        // name is used instead, or this clean, honest fallback when nothing was recognized.
+        return bank.officialName() != null ? bank.officialName() : "Bank Statement Import";
+    }
+}

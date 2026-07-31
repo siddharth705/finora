@@ -1,0 +1,157 @@
+package com.finora.service;
+
+import com.finora.dto.AdminDtos.AdminUpdateUserRequest;
+import com.finora.entity.User;
+import com.finora.exception.ApiException;
+import com.finora.repository.AccountRepository;
+import com.finora.repository.TransactionRepository;
+import com.finora.repository.UserRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.util.Optional;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
+
+/**
+ * Unit-level coverage for AdminUserService's suspend/reactivate state machine -- the parts that
+ * don't need a real database (permission gating and the actual HTTP contract are covered by
+ * AdminUserControllerIT instead). Focuses on the two invariants that matter most for an action
+ * this consequential: an admin can never lock themselves out, and re-applying the same action
+ * twice is a safe no-op rather than an error or a duplicate audit entry.
+ */
+class AdminUserServiceTest {
+
+    private UserRepository userRepository;
+    private AuditService auditService;
+    private AdminUserService adminUserService;
+    private final UUID adminId = UUID.randomUUID();
+    private final UUID targetId = UUID.randomUUID();
+
+    @BeforeEach
+    void setUp() {
+        userRepository = mock(UserRepository.class);
+        auditService = mock(AuditService.class);
+        adminUserService = new AdminUserService(
+                userRepository, mock(AccountRepository.class), mock(TransactionRepository.class), auditService,
+                mock(AuthService.class));
+    }
+
+    private User user(UUID id, String status) {
+        User u = new User();
+        ReflectionTestUtils.setField(u, "id", id);
+        u.setEmail("target@example.com");
+        u.setFullName("Target User");
+        u.setStatus(status);
+        return u;
+    }
+
+    @Test
+    void suspend_rejectsAnAdminSuspendingTheirOwnAccount() {
+        try {
+            adminUserService.suspend(adminId, adminId);
+        } catch (ApiException e) {
+            assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+            verify(userRepository, never()).save(any());
+            verifyNoInteractions(auditService);
+            return;
+        }
+        throw new AssertionError("Expected suspend() to reject a self-suspend attempt");
+    }
+
+    @Test
+    void suspend_setsStatusAndRecordsAuditEntry_forAnActiveUser() {
+        User target = user(targetId, "ACTIVE");
+        when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
+
+        adminUserService.suspend(targetId, adminId);
+
+        assertThat(target.getStatus()).isEqualTo("SUSPENDED");
+        verify(userRepository).save(target);
+        verify(auditService).record(eq(targetId), eq("ACCOUNT_SUSPENDED"), eq("User"), eq(targetId), any());
+    }
+
+    @Test
+    void suspend_isIdempotent_forAnAlreadySuspendedUser() {
+        User target = user(targetId, "SUSPENDED");
+        when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
+
+        adminUserService.suspend(targetId, adminId);
+
+        // No state change, no save, no duplicate audit entry -- a double-click or a stale admin
+        // UI retrying the same action shouldn't write a second "just suspended" event.
+        verify(userRepository, never()).save(any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void reactivate_setsStatusAndRecordsAuditEntry_forASuspendedUser() {
+        User target = user(targetId, "SUSPENDED");
+        when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
+
+        adminUserService.reactivate(targetId, adminId);
+
+        assertThat(target.getStatus()).isEqualTo("ACTIVE");
+        verify(userRepository).save(target);
+        verify(auditService).record(eq(targetId), eq("ACCOUNT_REACTIVATED"), eq("User"), eq(targetId), any());
+    }
+
+    @Test
+    void suspend_throws404_whenUserDoesNotExist() {
+        when(userRepository.findById(targetId)).thenReturn(Optional.empty());
+
+        try {
+            adminUserService.suspend(targetId, adminId);
+        } catch (ApiException e) {
+            assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+            return;
+        }
+        throw new AssertionError("Expected suspend() to throw for an unknown user");
+    }
+
+    // --- Support-assisted profile edit (updateProfile / AdminUpdateUserRequest) -- the
+    // phone-uniqueness guard is the one piece of real logic here beyond field assignment, so it's
+    // the part worth locking in at the unit level (the HTTP contract itself is AdminUserControllerIT's
+    // job). ---
+
+    @Test
+    void updateProfile_rejectsAPhoneNumberAlreadyUsedByAnotherAccount() {
+        User target = user(targetId, "ACTIVE");
+        target.setPhoneNumber("+919876500001");
+        when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
+        when(userRepository.existsByPhoneNumber("+919876500099")).thenReturn(true);
+
+        try {
+            adminUserService.updateProfile(adminId, targetId, new AdminUpdateUserRequest(null, "+919876500099", null, null));
+        } catch (ApiException e) {
+            assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+            verify(userRepository, never()).save(any());
+            assertThat(target.getPhoneNumber()).isEqualTo("+919876500001");
+            return;
+        }
+        throw new AssertionError("Expected updateProfile() to reject a phone number already in use");
+    }
+
+    @Test
+    void updateProfile_updatesOnlyTheSuppliedFields() {
+        User target = user(targetId, "ACTIVE");
+        target.setPhoneNumber("+919876500001");
+        target.setTimezone("Asia/Kolkata");
+        when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
+
+        adminUserService.updateProfile(adminId, targetId, new AdminUpdateUserRequest("New Name", null, null, null));
+
+        assertThat(target.getFullName()).isEqualTo("New Name");
+        // Untouched fields (phoneNumber wasn't supplied) must survive exactly as they were.
+        assertThat(target.getPhoneNumber()).isEqualTo("+919876500001");
+        assertThat(target.getTimezone()).isEqualTo("Asia/Kolkata");
+        verify(userRepository).save(target);
+        verify(auditService).record(eq(targetId), eq("USER_PROFILE_UPDATED_BY_ADMIN"), eq("User"), eq(targetId), any());
+    }
+}

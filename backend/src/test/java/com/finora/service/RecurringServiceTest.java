@@ -1,0 +1,263 @@
+package com.finora.service;
+
+import com.finora.entity.CategoryRule;
+import com.finora.entity.Transaction;
+import com.finora.repository.FeatureFlagRepository;
+import com.finora.repository.TransactionRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
+
+class RecurringServiceTest {
+
+    private TransactionRepository transactionRepository;
+    private RuleEngineService ruleEngineService;
+    private AuditService auditService;
+    private FeatureFlagRepository featureFlagRepository;
+    private RecurringService recurringService;
+    private final UUID userId = UUID.randomUUID();
+
+    @BeforeEach
+    void setUp() {
+        transactionRepository = mock(TransactionRepository.class);
+        // Unstubbed -- Mockito defaults a List-returning method to an empty list, so every
+        // existing test here (none of which are about rule-driven subscriptions -- see the
+        // dedicated tests below) is unaffected by this dependency's addition.
+        ruleEngineService = mock(RuleEngineService.class);
+        auditService = mock(AuditService.class);
+        featureFlagRepository = mock(FeatureFlagRepository.class);
+        // Admin Portal Phase 8 -- default the flag on so every pre-existing test here keeps
+        // exercising the real detection logic unchanged; the flag-off behavior gets its own
+        // dedicated tests below.
+        when(featureFlagRepository.isEnabled("RECURRING_DETECTION_ENABLED")).thenReturn(true);
+        recurringService = new RecurringService(transactionRepository, ruleEngineService, auditService,
+                featureFlagRepository);
+    }
+
+    private Transaction expense(String merchant, LocalDate date, BigDecimal amount) {
+        Transaction t = new Transaction();
+        ReflectionTestUtils.setField(t, "id", UUID.randomUUID());
+        t.setUserId(userId);
+        t.setMerchant(merchant);
+        t.setTxnDate(date);
+        t.setAmount(amount);
+        t.setTxnType(Transaction.Type.EXPENSE);
+        return t;
+    }
+
+    @Test
+    void detectsMonthlySubscriptionWithConsistentAmountAndSpacing() {
+        List<Transaction> txns = List.of(
+                expense("netflix", LocalDate.of(2026, 5, 5), BigDecimal.valueOf(649)),
+                expense("netflix", LocalDate.of(2026, 6, 5), BigDecimal.valueOf(649)),
+                expense("netflix", LocalDate.of(2026, 7, 6), BigDecimal.valueOf(649))
+        );
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        var results = recurringService.detectForUser(userId);
+
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0).merchant()).isEqualTo("netflix");
+        assertThat(results.get(0).label()).isEqualTo("Monthly");
+        assertThat(txns).allMatch(Transaction::isRecurring);
+    }
+
+    @Test
+    void doesNotFlagAOneOffPurchase() {
+        List<Transaction> txns = List.of(
+                expense("amazon", LocalDate.of(2026, 6, 1), BigDecimal.valueOf(1200))
+        );
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        var results = recurringService.detectForUser(userId);
+
+        assertThat(results).isEmpty();
+        assertThat(txns.get(0).isRecurring()).isFalse();
+    }
+
+    @Test
+    void doesNotFlagIrregularSpendingFromTheSameMerchant() {
+        // Same merchant (e.g. a grocery store visited whenever), but no regular interval.
+        List<Transaction> txns = List.of(
+                expense("bigbasket", LocalDate.of(2026, 5, 2), BigDecimal.valueOf(1500)),
+                expense("bigbasket", LocalDate.of(2026, 5, 4), BigDecimal.valueOf(800)),
+                expense("bigbasket", LocalDate.of(2026, 6, 20), BigDecimal.valueOf(2200))
+        );
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        var results = recurringService.detectForUser(userId);
+
+        assertThat(results).isEmpty();
+    }
+
+    @Test
+    void doesNotFlagRegularIntervalWithInconsistentAmounts() {
+        List<Transaction> txns = List.of(
+                expense("random-shop", LocalDate.of(2026, 5, 5), BigDecimal.valueOf(500)),
+                expense("random-shop", LocalDate.of(2026, 6, 5), BigDecimal.valueOf(5000)), // wildly different
+                expense("random-shop", LocalDate.of(2026, 7, 5), BigDecimal.valueOf(300))
+        );
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        var results = recurringService.detectForUser(userId);
+
+        assertThat(results).isEmpty();
+    }
+
+    @Test
+    void resetsStaleRecurringFlag_whenPatternNoLongerHolds() {
+        Transaction t = expense("old-subscription", LocalDate.of(2026, 1, 1), BigDecimal.valueOf(299));
+        t.setRecurring(true); // simulate a stale flag from a previous run
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(t));
+
+        recurringService.detectForUser(userId);
+
+        assertThat(t.isRecurring()).isFalse();
+    }
+
+    // --- MARK_SUBSCRIPTION rule-driven recurring flag ---
+
+    private CategoryRule markSubscriptionRule() {
+        CategoryRule r = new CategoryRule();
+        ReflectionTestUtils.setField(r, "id", UUID.randomUUID());
+        r.setScope(CategoryRule.Scope.GLOBAL);
+        r.setActionType(CategoryRule.ActionType.MARK_SUBSCRIPTION);
+        return r;
+    }
+
+    @Test
+    void flagsATransactionAsRecurring_onASingleOccurrence_whenAMarkSubscriptionRuleMatches() {
+        // The whole point of a MARK_SUBSCRIPTION rule: doesn't need to wait for 2+ occurrences
+        // with a regular gap the way organic pattern detection (tested above) does.
+        Transaction t = expense("NETFLIX.COM", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(649));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(t));
+        // Bug fix: expense() (the shared fixture above) never sets a description, only a merchant
+        // -- so t.getDescription() is null here. anyString() looks like it should match anything,
+        // but Mockito's anyString() explicitly excludes null (a well-known gotcha; any() is the
+        // one that matches null too). The stub silently never matched, the mock fell back to its
+        // unstubbed empty-list default, and the "did a MARK_SUBSCRIPTION rule match" check always
+        // saw zero matches regardless of what was configured above -- the test was asserting on
+        // behavior it wasn't actually exercising.
+        when(ruleEngineService.evaluateSideEffectRules(eq(userId), any(), any(), any(), any()))
+                .thenReturn(List.of(new RuleEngineService.RuleMatch(markSubscriptionRule())));
+
+        recurringService.detectForUser(userId);
+
+        assertThat(t.isRecurring()).isTrue();
+    }
+
+    @Test
+    void doesNotOverrideAnAlreadyPatternDetectedRecurringTransaction_withARedundantRuleCheck() {
+        // Pattern detection already flagged this group true before the rule-check loop runs --
+        // the rule stub below is irrelevant here since evaluateSideEffectRules should never even
+        // be consulted for a transaction already recurring=true (see the `if (t.isRecurring())
+        // continue;` guard).
+        List<Transaction> txns = List.of(
+                expense("spotify", LocalDate.of(2026, 5, 1), BigDecimal.valueOf(119)),
+                expense("spotify", LocalDate.of(2026, 6, 1), BigDecimal.valueOf(119)),
+                expense("spotify", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(119))
+        );
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        recurringService.detectForUser(userId);
+
+        assertThat(txns).allSatisfy(t -> assertThat(t.isRecurring()).isTrue());
+        verify(ruleEngineService, never()).evaluateSideEffectRules(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void doesNotFlagRecurring_whenNoPatternAndNoRuleMatch() {
+        Transaction t = expense("one-off-purchase", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(2000));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(t));
+        // ruleEngineService.evaluateSideEffectRules unstubbed -- defaults to empty list.
+
+        recurringService.detectForUser(userId);
+
+        assertThat(t.isRecurring()).isFalse();
+    }
+
+    // --- RECURRING_DETECTION_RUN audit summary (Financial Intelligence Workspace,
+    // Reconciliation Monitor module -- see detectForUser's own doc comment on the counters) ---
+
+    @Test
+    void detectForUser_recordsASummaryAuditEntry() {
+        List<Transaction> txns = List.of(
+                expense("netflix", LocalDate.of(2026, 5, 1), BigDecimal.valueOf(499)),
+                expense("netflix", LocalDate.of(2026, 6, 1), BigDecimal.valueOf(499)),
+                expense("netflix", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(499))
+        );
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        recurringService.detectForUser(userId);
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> metadataCaptor =
+                org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(auditService).record(eq(userId), eq("RECURRING_DETECTION_RUN"), eq("Transaction"),
+                org.mockito.ArgumentMatchers.isNull(), metadataCaptor.capture());
+
+        assertThat(metadataCaptor.getValue())
+                .containsEntry("transactionsProcessed", 3)
+                .containsEntry("recurringGroupsFound", 1)
+                .containsEntry("recurringTransactionsFlagged", 3L);
+    }
+
+    @Test
+    void detectForUser_recordsTheSummary_evenWhenNothingIsRecurring() {
+        Transaction t = expense("one-off-purchase", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(2000));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(t));
+
+        recurringService.detectForUser(userId);
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> metadataCaptor =
+                org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(auditService).record(eq(userId), eq("RECURRING_DETECTION_RUN"), eq("Transaction"),
+                org.mockito.ArgumentMatchers.isNull(), metadataCaptor.capture());
+
+        assertThat(metadataCaptor.getValue())
+                .containsEntry("transactionsProcessed", 1)
+                .containsEntry("recurringGroupsFound", 0)
+                .containsEntry("recurringTransactionsFlagged", 0L);
+    }
+
+    // --- Admin Portal Phase 8: RECURRING_DETECTION_ENABLED feature flag gate ---
+
+    @Test
+    void detectForUser_isANoOp_whenTheFeatureFlagIsDisabled() {
+        when(featureFlagRepository.isEnabled("RECURRING_DETECTION_ENABLED")).thenReturn(false);
+        Transaction t = expense("netflix", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(649));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(t));
+
+        var results = recurringService.detectForUser(userId);
+
+        assertThat(results).isEmpty();
+        verify(transactionRepository, never()).saveAll(any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void detectForUser_doesNotClearAnExistingRecurringFlag_whenTheFeatureFlagIsDisabled() {
+        // Disabling the flag pauses new detection -- it must not silently wipe a badge a prior,
+        // enabled run already set. See detectForUser's own doc comment on why this distinction
+        // matters for an admin flipping the flag off mid-incident.
+        when(featureFlagRepository.isEnabled("RECURRING_DETECTION_ENABLED")).thenReturn(false);
+        Transaction t = expense("netflix", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(649));
+        t.setRecurring(true);
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(t));
+
+        recurringService.detectForUser(userId);
+
+        assertThat(t.isRecurring()).isTrue();
+    }
+}

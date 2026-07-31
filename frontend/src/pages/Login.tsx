@@ -1,0 +1,167 @@
+import { useState, type FormEvent } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import {
+  Sparkles, ShieldCheck, UploadCloud, TrendingUp, PiggyBank, Target, LineChart,
+  Wallet, PieChart as PieChartIcon, BarChart3, ArrowRight,
+} from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { PasswordInput } from '../components/PasswordInput';
+
+// Mirrors Register.tsx's marketing panel exactly -- same feature list, same layout, same
+// decorative flourish -- so the two auth screens read as one continuous product rather than
+// two different apps stitched together.
+const FEATURES = [
+  { icon: ShieldCheck, iconBg: 'bg-blue-100', iconColor: 'text-blue-600', title: 'Secure & Private', desc: 'Your data is encrypted and bank-level secure.' },
+  { icon: UploadCloud, iconBg: 'bg-green-100', iconColor: 'text-green-600', title: 'Auto Statement Import', desc: 'Import bank & credit card statements in seconds.' },
+  { icon: TrendingUp, iconBg: 'bg-orange-100', iconColor: 'text-orange-600', title: 'AI Financial Insights', desc: 'AI-powered insights to help you save more.' },
+  { icon: PiggyBank, iconBg: 'bg-purple-100', iconColor: 'text-purple-600', title: 'Budget Tracking', desc: 'Set budgets and stay effortlessly on track.' },
+  { icon: Target, iconBg: 'bg-blue-100', iconColor: 'text-blue-600', title: 'Goal Management', desc: 'Plan and reach your financial goals faster.' },
+  { icon: LineChart, iconBg: 'bg-teal-100', iconColor: 'text-teal-600', title: 'Investment Tracking', desc: 'Track your portfolio and net worth growth.' },
+];
+
+export default function Login() {
+  const { login } = useAuth();
+  const navigate = useNavigate();
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  // Deliberately no format-restricting regex here (unlike Register's phone/email fields) --
+  // this single field has to accept either a full email address or a mobile number, so it
+  // can't be validated against one narrow pattern. Presence + trimming is all that's enforced
+  // client-side; the backend resolves whichever form was typed (see resolveEmailForLogin).
+  const identifierValid = identifier.trim().length > 0;
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (!identifierValid) { setError('Enter your email or mobile number.'); return; }
+    if (password.length === 0) { setError('Enter your password.'); return; }
+    setLoading(true);
+    try {
+      const phoneVerified = await login(identifier.trim(), password);
+      navigate(phoneVerified ? '/app' : '/verify-phone');
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? 'Login failed. Check your credentials.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-bg flex flex-col items-center justify-center p-4 lg:p-8 gap-6">
+      <div className="w-full max-w-6xl grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
+        {/* Marketing panel — hidden below lg, identical to Register.tsx's so the two screens
+            feel like one continuous flow rather than a redesigned page next to a stale one. */}
+        <div className="hidden lg:block">
+          <div className="flex items-center gap-2.5 mb-8">
+            <span className="w-9 h-9 rounded-lg bg-gradient-to-br from-indigo-400 to-primary-dark flex items-center justify-center">
+              <Sparkles size={18} className="text-white" strokeWidth={2.5} />
+            </span>
+            <span className="font-extrabold tracking-wide text-ink text-xl">FINORA</span>
+          </div>
+
+          <span className="inline-block bg-primary-light text-primary text-xs font-medium px-3 py-1 rounded-full mb-4">
+            Welcome back
+          </span>
+          <h1 className="text-4xl font-bold text-ink leading-tight mb-4">
+            Pick up right where you <span className="text-primary">left off</span>
+          </h1>
+          <p className="text-muted text-base mb-8 max-w-md">
+            Sign in to see your latest transactions, budgets, goals and AI-powered insights —
+            all in one place.
+          </p>
+
+          <div className="space-y-5 mb-10">
+            {FEATURES.map((f) => (
+              <div key={f.title} className="flex items-start gap-3">
+                <div className={`w-10 h-10 rounded-lg ${f.iconBg} flex items-center justify-center flex-shrink-0`}>
+                  <f.icon size={18} className={f.iconColor} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-ink">{f.title}</p>
+                  <p className="text-xs text-muted">{f.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-4 opacity-70">
+            <div className="w-14 h-14 rounded-2xl bg-primary-light flex items-center justify-center">
+              <Wallet size={22} className="text-primary" />
+            </div>
+            <div className="w-14 h-14 rounded-2xl bg-green-100 flex items-center justify-center -translate-y-2">
+              <PieChartIcon size={22} className="text-green-600" />
+            </div>
+            <div className="w-14 h-14 rounded-2xl bg-orange-100 flex items-center justify-center">
+              <BarChart3 size={22} className="text-orange-600" />
+            </div>
+          </div>
+        </div>
+
+        {/* Sign-in card */}
+        <form onSubmit={handleSubmit} noValidate className="bg-card rounded-xl2 p-8 w-full shadow-soft border border-border">
+          <div className="flex items-center gap-2 mb-6 lg:hidden">
+            <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-400 to-primary-dark flex items-center justify-center">
+              <Sparkles size={14} className="text-white" strokeWidth={2.5} />
+            </span>
+            <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+          </div>
+
+          <h2 className="text-2xl font-bold text-ink mb-1">Sign in</h2>
+          <p className="text-sm text-muted mb-6">Enter your details to access your account</p>
+
+          {error && <p className="text-danger text-sm mb-4">{error}</p>}
+
+          {/* Accepts either identifier -- users shouldn't have to remember which one they
+              registered with. See AuthService.resolveEmailForLogin on the backend. */}
+          <label className="block text-xs font-medium text-muted mb-1">Email or mobile number</label>
+          <input
+            type="text"
+            required
+            autoComplete="username"
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
+            placeholder="you@example.com or +91XXXXXXXXXX"
+            className="w-full border border-border rounded-lg px-3 py-2.5 mb-4 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+
+          <label className="block text-xs font-medium text-muted mb-1">Password</label>
+          <PasswordInput
+            value={password}
+            onChange={setPassword}
+            required
+            autoComplete="current-password"
+            className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 mb-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+          <p className="text-right mb-6">
+            <Link to="/forgot-password" className="text-xs text-primary font-medium">Forgot password?</Link>
+          </p>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-primary hover:bg-primary-dark text-white rounded-lg py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
+          >
+            {loading ? 'Signing in…' : 'Sign in'}
+            {!loading && <ArrowRight size={15} />}
+          </button>
+
+          <div className="flex items-start gap-2.5 bg-primary-light rounded-lg p-3 mt-6">
+            <ShieldCheck size={16} className="text-primary flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-ink">Your financial data is encrypted and securely protected.</p>
+          </div>
+
+          <p className="text-sm mt-4 text-center text-muted">
+            No account? <Link to="/register" className="text-primary font-medium">Register</Link>
+          </p>
+        </form>
+      </div>
+
+      <p className="text-xs text-muted flex items-center gap-2">
+        <ShieldCheck size={13} /> Trusted by 10,000+ users across India
+      </p>
+    </div>
+  );
+}

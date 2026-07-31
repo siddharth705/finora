@@ -1,0 +1,24 @@
+#!/bin/sh
+# Keeps this fast and non-blocking for backend-only changes: frontend lint/format only runs
+# when frontend/ or admin-portal/ files are staged; backend compile check only runs when
+# backend/ files are staged. Full test suites stay in CI (see .github/workflows/ci.yml) rather
+# than here, since a pre-commit hook that takes minutes gets bypassed with --no-verify in practice.
+
+staged=$(git diff --cached --name-only)
+
+if echo "$staged" | grep -qE '^(frontend|admin-portal)/'; then
+  if echo "$staged" | grep -q '^frontend/'; then
+    (cd frontend && npx eslint --fix $(echo "$staged" | grep '^frontend/' | sed 's#^frontend/##') 2>/dev/null || true)
+  fi
+  if echo "$staged" | grep -q '^admin-portal/'; then
+    (cd admin-portal && npx eslint --fix $(echo "$staged" | grep '^admin-portal/' | sed 's#^admin-portal/##') 2>/dev/null || true)
+  fi
+  git add $(echo "$staged" | grep -E '^(frontend|admin-portal)/')
+fi
+
+if echo "$staged" | grep -q '^backend/'; then
+  (cd backend && ./mvnw -q -o compile) || {
+    echo "Backend fails to compile — commit blocked. Run 'cd backend && ./mvnw compile' for details." >&2
+    exit 1
+  }
+fi

@@ -1,0 +1,127 @@
+import { useEffect, useState, type FormEvent } from 'react';
+import { Navigate, useNavigate, Link } from 'react-router-dom';
+import { ShieldAlert } from 'lucide-react';
+import { useAdminAuth } from '../context/AdminAuthContext';
+import { setupApi } from '../api/endpoints';
+
+/**
+ * The only two post-login destinations that exist today. Deliberately a plain function over a
+ * string union rather than a richer AuthState/NextStep type -- there's no third *routable*
+ * outcome yet to justify one (a failed login throws and is handled separately in handleSubmit's
+ * catch; that's an error path, not a destination, so it doesn't belong in this function's
+ * return type). Revisit this once a second verification factor (TOTP, etc.) actually exists --
+ * see docs/adr/0001-administrator-verification-strategy.md -- at which point a real NextStep
+ * union (dashboard | verify-phone | verify-totp | enroll-totp | ...) earns its keep.
+ */
+function nextRouteFor(phoneVerified: boolean): '/' | '/verify-phone' {
+  return phoneVerified ? '/' : '/verify-phone';
+}
+
+export default function Login() {
+  const { token, phoneVerified, login } = useAdminAuth();
+  const navigate = useNavigate();
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [setupRequired, setSetupRequired] = useState(false);
+  const [checkingSetup, setCheckingSetup] = useState(true);
+
+  useEffect(() => {
+    // Checked once, unauthenticated -- lets a fresh install land on /setup automatically instead
+    // of requiring anyone to already know that URL exists. Failure (backend unreachable, etc.)
+    // is treated as "not required" so this never traps the normal login form from rendering.
+    // checkingSetup gates the form itself (not just this redirect) so there's no window where a
+    // fast or automated submission could reach the real login attempt before this resolves.
+    setupApi.status()
+      .then((status) => setSetupRequired(status.setupRequired))
+      .catch(() => {})
+      .finally(() => setCheckingSetup(false));
+  }, []);
+
+  if (setupRequired) return <Navigate to="/setup" replace />;
+
+  // Already signed in (e.g. hit /login directly with a valid session) -- bounce straight to the
+  // dashboard, UNLESS verification is still pending, in which case that's genuinely where this
+  // session needs to go next rather than a dashboard it can't actually load permissions for.
+  if (token) return <Navigate to={nextRouteFor(phoneVerified)} replace />;
+
+  if (checkingSetup) {
+    return (
+      <div className="min-h-screen bg-bg flex items-center justify-center">
+        <p className="text-sm text-muted">Loading…</p>
+      </div>
+    );
+  }
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      const verified = await login(identifier, password);
+      navigate(nextRouteFor(verified));
+    } catch (err: any) {
+      setError(err?.message ?? 'Sign in failed. Check your credentials and try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-bg flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        <div className="flex items-center gap-2.5 justify-center mb-8">
+          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-rose-400 to-primary-dark flex items-center justify-center">
+            <ShieldAlert size={18} className="text-white" strokeWidth={2.5} />
+          </div>
+          <span className="font-extrabold tracking-wide text-xl text-ink">FINORA ADMIN</span>
+        </div>
+
+        <form onSubmit={handleSubmit} className="bg-card border border-border rounded-xl2 shadow-soft p-6 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-ink mb-1.5">Email or phone</label>
+            <input
+              type="text"
+              required
+              autoFocus
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
+              className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-sm font-medium text-ink">Password</label>
+              <Link to="/forgot-password" className="text-xs text-primary font-medium">Forgot password?</Link>
+            </div>
+            <input
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
+
+          {error && (
+            <p className="text-sm text-danger bg-danger-bg rounded-lg px-3.5 py-2.5">{error}</p>
+          )}
+
+          <button
+            type="submit"
+            disabled={submitting}
+            className="w-full bg-primary hover:bg-primary-dark text-white font-semibold rounded-lg py-2.5 text-sm disabled:opacity-50"
+          >
+            {submitting ? 'Signing in…' : 'Sign in'}
+          </button>
+        </form>
+
+        <p className="text-center text-xs text-muted mt-6">
+          This portal is for accounts with admin permissions only. Regular users should use the
+          main Finora app.
+        </p>
+      </div>
+    </div>
+  );
+}

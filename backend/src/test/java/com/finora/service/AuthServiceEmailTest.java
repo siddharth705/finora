@@ -1,0 +1,90 @@
+package com.finora.service;
+
+import com.finora.config.EmailProperties;
+import com.finora.dto.AuthDtos.ForgotPasswordRequest;
+import com.finora.entity.User;
+import com.finora.repository.CategoryRepository;
+import com.finora.repository.PasswordResetTokenRepository;
+import com.finora.repository.UserRepository;
+import com.finora.security.JwtService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.util.Optional;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+/**
+ * Locks in forgotPassword()'s email-vs-devlink branching: with a configured EmailService, the
+ * real email gets sent and the link is NOT exposed in the API response (it would be a needless
+ * leak once real delivery exists); with no provider configured, the dev-convenience fallback
+ * (returning the link directly) still works exactly as before.
+ */
+class AuthServiceEmailTest {
+
+    private UserRepository userRepository;
+    private PasswordResetTokenRepository resetTokenRepository;
+    private EmailService emailService;
+    private EmailProperties emailProperties;
+    private AuthService authService;
+    private final UUID userId = UUID.randomUUID();
+
+    @BeforeEach
+    void setUp() {
+        userRepository = mock(UserRepository.class);
+        resetTokenRepository = mock(PasswordResetTokenRepository.class);
+        emailService = mock(EmailService.class);
+        emailProperties = new EmailProperties();
+        emailProperties.setAppBaseUrl("http://localhost:5173");
+
+        User user = new User();
+        ReflectionTestUtils.setField(user, "id", userId);
+        user.setEmail("test@example.com");
+        when(userRepository.findByEmail("test@example.com")).thenReturn(Optional.of(user));
+
+        authService = new AuthService(
+                userRepository, mock(CategoryRepository.class), resetTokenRepository,
+                mock(PasswordEncoder.class), mock(JwtService.class), mock(AuthenticationManager.class),
+                mock(AuditService.class), mock(RefreshTokenService.class), emailService, emailProperties,
+                mock(OtpService.class), mock(PlatformSettingsService.class)
+        );
+    }
+
+    @Test
+    void forgotPassword_sendsRealEmail_andOmitsLinkFromResponse_whenEmailServiceConfigured() {
+        when(emailService.isConfigured()).thenReturn(true);
+
+        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com"));
+
+        verify(emailService).sendPasswordResetEmail(eq("test@example.com"), contains("/reset-password?token="));
+        assertThat(response.devResetLink()).isNull();
+    }
+
+    @Test
+    void forgotPassword_returnsLinkDirectly_andDoesNotSendEmail_whenNoProviderConfigured() {
+        when(emailService.isConfigured()).thenReturn(false);
+
+        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com"));
+
+        verify(emailService, never()).sendPasswordResetEmail(any(), any());
+        assertThat(response.devResetLink()).contains("/reset-password?token=");
+    }
+
+    @Test
+    void forgotPassword_doesNotSendEmailOrLeakWhetherAccountExists_forUnknownEmail() {
+        when(userRepository.findByEmail("nobody@example.com")).thenReturn(Optional.empty());
+        when(emailService.isConfigured()).thenReturn(true);
+
+        var response = authService.forgotPassword(new ForgotPasswordRequest("nobody@example.com"));
+
+        verify(emailService, never()).sendPasswordResetEmail(any(), any());
+        assertThat(response.devResetLink()).isNull();
+        assertThat(response.message()).isEqualTo("If an account exists for that email, we've sent a password reset link.");
+    }
+}

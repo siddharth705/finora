@@ -1,0 +1,19 @@
+spring:
+  jpa:
+    show-sql: false
+
+logging:
+  level:
+    root: WARN
+    com.finora: INFO
+    org.springframework.security: WARN
+
+# API docs are disabled by default in production — a public /swagger-ui.html or /v3/api-docs
+# is reconnaissance material for an attacker on a financial API. Re-enable deliberately
+# (e.g. behind a separate auth-gated route, or only for an internal network) if you need it,
+# rather than leaving the framework default of "on" unexamined.
+springdoc:
+  swagger-ui:
+    enabled: false
+  api-docs:
+    enabled: false

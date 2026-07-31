@@ -1,0 +1,12 @@
+-- Transactions module overhaul: full CRUD (Edit/Delete from the Ledger page) means a category
+-- can now be corrected long after the "Ask Once, Learn Forever" review queue already resolved
+-- it, or set explicitly at manual-entry time — and users should be able to see, at a glance,
+-- whether the category shown is the engine's own guess or something they deliberately chose.
+-- False by default (an engine guess) — flipped to true by TransactionService.updateCategory(),
+-- bulkRecategorize(), the new update() edit endpoint whenever categoryName is supplied, and
+-- TransactionService.create() when the caller supplies an explicit categoryName rather than
+-- asking the suggestion engine. CSV-imported rows stay false: CsvImportService.confirm() always
+-- goes through categorizationService's suggestion path (see ConfirmedRow.categorySource, which
+-- already distinguishes "learned"/"rule"/"default"/"file" — none of those are a human sitting at
+-- the review screen making a fresh decision about THIS transaction specifically).
+ALTER TABLE transactions ADD COLUMN category_manually_set BOOLEAN NOT NULL DEFAULT false;

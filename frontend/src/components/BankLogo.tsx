@@ -1,0 +1,148 @@
+import { useEffect, useRef, useState } from 'react';
+import { Landmark } from 'lucide-react';
+import type { BankInfo } from '../types';
+
+interface BankLogoProps {
+  bank: BankInfo;
+  size?: number;
+  className?: string;
+}
+
+// Vite's import.meta.glob, resolved at build time, not per-render -- every real SVG file that
+// exists under src/assets/banks/ at build time shows up here as a URL (eager + `import: 'default'`
+// gives back the resolved asset URL directly, not a lazy loader). This directory ships EMPTY in
+// this build (see src/assets/banks/README.md) unless you've dropped files in yourself.
+const LOGO_FILES = import.meta.glob<string>('../assets/banks/*.svg', { eager: true, import: 'default' });
+
+function resolveLocalLogoUrl(logoPath: string): string | null {
+  // logoPath from the backend looks like "/assets/banks/pnb.svg" -- glob keys look like
+  // "../assets/banks/pnb.svg" (relative to this file). Comparing by filename alone keeps this
+  // resilient to either path convention rather than requiring an exact string match.
+  const filename = logoPath.split('/').pop();
+  if (!filename) return null;
+  for (const [key, url] of Object.entries(LOGO_FILES)) {
+    if (key.endsWith('/' + filename)) return url;
+  }
+  return null;
+}
+
+const BRANDFETCH_CLIENT_ID = import.meta.env.VITE_BRANDFETCH_CLIENT_ID;
+// A bit more generous than the "1-2 seconds" asked for -- long enough that a normal CDN response
+// isn't cut off early, short enough that a slow/unreachable Brandfetch never leaves a user
+// staring at an empty spot on the page.
+const BRANDFETCH_TIMEOUT_MS = 1500;
+
+function extractDomain(websiteUrl: string | null): string | null {
+  if (!websiteUrl) return null;
+  try {
+    return new URL(websiteUrl).hostname.replace(/^www\./, '');
+  } catch {
+    return null; // a malformed websiteUrl in the registry shouldn't ever throw at render time
+  }
+}
+
+function brandfetchUrl(domain: string | null, sizePx: number): string | null {
+  if (!BRANDFETCH_CLIENT_ID || !domain) return null;
+  return `https://cdn.brandfetch.io/${domain}/w/${sizePx}/h/${sizePx}/logo?c=${BRANDFETCH_CLIENT_ID}`;
+}
+
+type Stage = 'brandfetch' | 'local' | 'initials';
+
+/**
+ * Provider-chain logo resolution, per the brief: Brandfetch (a real, always-current official
+ * logo, via their free Logo API) -> a locally dropped-in SVG (see src/assets/banks/README.md)
+ * -> a colored-initials badge. Every page just renders <BankLogo bank={x.bank} /> exactly as
+ * before -- which provider actually served the pixels is entirely this component's business, so
+ * no page needs its own logo-loading logic.
+ *
+ * `bank` (not a bare `bankId`) stays the prop here rather than resolving metadata from an id
+ * internally: every caller already has the full, server-resolved BankInfo sitting on the
+ * Account/DetectedAccountInfo/etc. object it's rendering (see AccountDto.BankDto on the
+ * backend) -- that's the app's actual single source of truth for a bank's name/color/domain.
+ * Accepting a bare id here would mean duplicating that same registry data into a second,
+ * client-side cache just to look it back up, which is more moving parts for no real benefit.
+ *
+ * Brandfetch is opt-in via VITE_BRANDFETCH_CLIENT_ID (see .env.example). Their Logo API is free
+ * (500k requests/month, no attribution required) but does mean a runtime call to a third-party
+ * CDN -- a real change from this app's previous "everything local" posture, called out
+ * explicitly since it's not something to slip in unannounced. Without a client ID configured,
+ * this stage is skipped entirely and the component behaves exactly as it did before Brandfetch
+ * existed (local asset, then initials) -- nothing breaks for anyone who hasn't set it up.
+ */
+export function BankLogo({ bank, size = 40, className = '' }: BankLogoProps) {
+  const isUnknown = bank.id === 'OTHER' || !bank.officialName;
+  const domain = !isUnknown ? extractDomain(bank.websiteUrl) : null;
+  // Fetched at 2x the rendered size (min 64px) so it stays crisp on high-DPI screens without
+  // the caller having to think about it.
+  const sizePx = Math.max(64, Math.round(size * 2));
+  const brandfetchSrc = brandfetchUrl(domain, sizePx);
+
+  const [stage, setStage] = useState<Stage>(() => (brandfetchSrc ? 'brandfetch' : 'local'));
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Reset to the top of the provider chain whenever the bank itself changes -- e.g. scrolling
+  // through a list of account cards, each a different bank -- otherwise a card that previously
+  // fell all the way back to "initials" for one bank would incorrectly start there for the next.
+  useEffect(() => {
+    setStage(brandfetchSrc ? 'brandfetch' : 'local');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bank.id]);
+
+  // Brandfetch timeout: if it hasn't loaded (or failed) within BRANDFETCH_TIMEOUT_MS, don't keep
+  // the user waiting on a slow/unreachable third-party CDN -- move on to the local/initials
+  // fallback. Cleared by onLoad/onError below if Brandfetch responds first either way.
+  useEffect(() => {
+    if (stage !== 'brandfetch') return undefined;
+    timeoutRef.current = setTimeout(() => setStage('local'), BRANDFETCH_TIMEOUT_MS);
+    return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
+  }, [stage, bank.id]);
+
+  function clearBrandfetchTimeout() {
+    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+  }
+
+  if (stage === 'brandfetch' && brandfetchSrc) {
+    return (
+      <img
+        src={brandfetchSrc}
+        alt={bank.officialName ?? bank.shortName}
+        title={bank.officialName ?? bank.shortName}
+        className={`rounded-xl object-contain flex-shrink-0 ${className}`}
+        style={{ width: size, height: size }}
+        onLoad={clearBrandfetchTimeout}
+        onError={() => { clearBrandfetchTimeout(); setStage('local'); }}
+      />
+    );
+  }
+
+  if (stage !== 'initials' && !isUnknown) {
+    const localUrl = resolveLocalLogoUrl(bank.logoPath);
+    if (localUrl) {
+      return (
+        <img
+          src={localUrl}
+          alt={bank.officialName ?? bank.shortName}
+          title={bank.officialName ?? bank.shortName}
+          className={`rounded-xl object-contain flex-shrink-0 ${className}`}
+          style={{ width: size, height: size }}
+          onError={() => setStage('initials')}
+        />
+      );
+    }
+  }
+
+  return (
+    <div
+      className={`rounded-xl flex items-center justify-center flex-shrink-0 font-bold text-white ${className}`}
+      style={{
+        width: size,
+        height: size,
+        background: isUnknown ? '#64748B' : bank.colorHex,
+        fontSize: Math.max(10, size * 0.34),
+      }}
+      title={bank.officialName ?? 'Bank not recognized'}
+    >
+      {isUnknown ? <Landmark size={size * 0.5} /> : bank.initials}
+    </div>
+  );
+}

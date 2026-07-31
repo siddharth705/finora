@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: finora
+      POSTGRES_USER: finora
+      POSTGRES_PASSWORD: finora
+    ports:
+      - "5432:5432"
+    volumes:
+      - finora_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finora"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: finora
+      DB_USER: finora
+      DB_PASSWORD: finora
+      # Override this with a real random 32+ char value in production - never reuse this default.
+      JWT_SECRET: local-dev-secret-change-me-before-any-real-deployment
+      # Both frontends run natively against this container (see Priority 3 of the engineering
+      # directive) -- the user app on 5173 (frontend/) and the admin portal on 5174
+      # (admin-portal/), each its own Vite dev server, each proxying /api to this backend.
+      CORS_ORIGINS: http://localhost:5173,http://localhost:5174
+    ports:
+      - "8080:8080"
+    volumes:
+      # BootstrapService (V33__bootstrap_admin.sql / SetupService) writes the one-time
+      # installation key to .finora/installation.key on first startup. A bind mount, not a named volume
+      # -- the whole point is that this file needs to be directly readable from the host project
+      # directory (see .gitignore), not something you'd need `docker compose exec` to inspect.
+      - ./.finora:/app/.finora
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+volumes:
+  finora_pgdata:

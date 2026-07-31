@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Same theme palette as the user frontend's src/index.css (kept in sync deliberately -- this is
+ * the same product, viewed through an admin-only lens, not a different visual product). No
+ * landing-page animation keyframes here since this app has no marketing/public pages at all --
+ * everything behind AdminProtectedRoute requires a login first.
+ */
+:root {
+  --color-sidebar: #1f1420;
+  --color-sidebar-hover: #2b1c2c;
+
+  --color-bg: #f4f5fb;
+  --color-card: #ffffff;
+  --color-border: #e7e8f2;
+
+  --color-ink: 27 30 43;
+  --color-muted: #6b7280;
+
+  --color-primary: 99 102 241;
+  --color-primary-dark: #4f46e5;
+  --color-primary-light: #eef0fd;
+
+  --color-success: #16a34a;
+  --color-success-bg: #dcfce7;
+  --color-danger: #dc2626;
+  --color-danger-bg: #fee2e2;
+  --color-warning: #d97706;
+  --color-warning-bg: #fef3c7;
+}
+
+.dark {
+  --color-sidebar: #1f1420;
+  --color-sidebar-hover: #2b1c2c;
+
+  --color-bg: #0d0e1a;
+  --color-card: #171933;
+  --color-border: #2a2d4d;
+
+  --color-ink: 232 233 243;
+  --color-muted: #8b8fa8;
+
+  --color-primary: 129 140 248;
+  --color-primary-dark: #6366f1;
+  --color-primary-light: #22254a;
+
+  --color-success: #22c55e;
+  --color-success-bg: #12301f;
+  --color-danger: #f87171;
+  --color-danger-bg: #3a1518;
+  --color-warning: #fbbf24;
+  --color-warning-bg: #3a2a0a;
+}
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background-color: var(--color-bg);
+  color: rgb(var(--color-ink));
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+/* Operational Dashboard's health banner -- a literal pulse line for "is Finora healthy," the
+   one signature visual element on this app's home screen. Two copies of the same waveform unit
+   side by side, scrolled left by exactly one unit-width for a seamless loop (see the inline SVG
+   in Dashboard.tsx for the path itself). */
+@keyframes heartbeat-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.animate-heartbeat {
+  animation: heartbeat-scroll 2.4s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-heartbeat {
+    animation: none;
+  }
+}

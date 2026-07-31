@@ -1,0 +1,322 @@
+import { useMemo, useState, type FormEvent } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import {
+  Sparkles, ShieldCheck, UploadCloud, TrendingUp, PiggyBank, Target, LineChart,
+  User, Mail, Phone, CheckCircle2, ArrowRight, Wallet, PieChart as PieChartIcon, BarChart3,
+} from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { PasswordInput } from '../components/PasswordInput';
+
+const FEATURES = [
+  { icon: ShieldCheck, iconBg: 'bg-blue-100', iconColor: 'text-blue-600', title: 'Secure & Private', desc: 'Your data is encrypted and bank-level secure.' },
+  { icon: UploadCloud, iconBg: 'bg-green-100', iconColor: 'text-green-600', title: 'Auto Statement Import', desc: 'Import bank & credit card statements in seconds.' },
+  { icon: TrendingUp, iconBg: 'bg-orange-100', iconColor: 'text-orange-600', title: 'AI Financial Insights', desc: 'AI-powered insights to help you save more.' },
+  { icon: PiggyBank, iconBg: 'bg-purple-100', iconColor: 'text-purple-600', title: 'Budget Tracking', desc: 'Set budgets and stay effortlessly on track.' },
+  { icon: Target, iconBg: 'bg-blue-100', iconColor: 'text-blue-600', title: 'Goal Management', desc: 'Plan and reach your financial goals faster.' },
+  { icon: LineChart, iconBg: 'bg-teal-100', iconColor: 'text-teal-600', title: 'Investment Tracking', desc: 'Track your portfolio and net worth growth.' },
+];
+
+// Simple, honest heuristic — four independent signals (length, mixed case, a digit, a symbol),
+// no external library. Purely a nudge for the user, never a submission gate: the backend's own
+// 8-character minimum is the actual requirement being enforced.
+function passwordStrength(pw: string): { score: number; label: string; color: string } {
+  let score = 0;
+  if (pw.length >= 8) score++;
+  if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) score++;
+  if (/[0-9]/.test(pw)) score++;
+  if (/[^A-Za-z0-9]/.test(pw)) score++;
+  const labels = ['Too short', 'Weak', 'Fair', 'Good', 'Strong'];
+  const colors = ['bg-gray-300', 'bg-danger', 'bg-warning', 'bg-blue-500', 'bg-success'];
+  return { score, label: labels[score], color: colors[score] };
+}
+
+// Digits only, with a single optional leading '+' for a country code. This runs on every
+// keystroke and every paste, so it's structurally impossible for a letter, '@', space, or any
+// other character to ever land in this field's state -- not just a submit-time check that a
+// user could route around (the exact gap that was reported: an email address was accepted here).
+function sanitizePhoneInput(raw: string): string {
+  const hasLeadingPlus = raw.trimStart().startsWith('+');
+  const digitsOnly = raw.replace(/[^0-9]/g, '');
+  return (hasLeadingPlus ? '+' : '') + digitsOnly.slice(0, 15);
+}
+
+// Mirrors the backend's own RegisterRequest.phoneNumber @Pattern exactly -- 10-15 digits, with
+// an optional leading '+' for an international country code.
+const PHONE_PATTERN = /^\+?[0-9]{10,15}$/;
+
+// Letters (including accented/Unicode letters for names outside the ASCII range), spaces,
+// hyphens, apostrophes, and periods -- covers "Jean-Luc", "O'Brien", "Md. Rahman", "José" while
+// still rejecting digits, symbols, and email-like input. Must start and end with a letter so
+// leading/trailing spaces or punctuation don't slip through.
+const FULL_NAME_PATTERN = /^[\p{L}][\p{L}\s.'-]{0,98}[\p{L}]$/u;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export default function Register() {
+  const { register } = useAuth();
+  const navigate = useNavigate();
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  // Only start showing field-level errors once the user has actually left a field -- otherwise
+  // every field flashes red the instant the empty form mounts, which reads as broken rather
+  // than helpful.
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+
+  const trimmedName = fullName.trim();
+  const fullNameValid = trimmedName.length >= 2 && FULL_NAME_PATTERN.test(trimmedName);
+  const emailValid = EMAIL_PATTERN.test(email.trim());
+  const phoneValid = PHONE_PATTERN.test(phoneNumber);
+  const passwordLongEnough = password.length >= 8;
+  const strength = useMemo(() => passwordStrength(password), [password]);
+  const passwordsMatch = confirmPassword.length > 0 && confirmPassword === password;
+
+  const formValid =
+    fullNameValid && emailValid && phoneValid && passwordLongEnough && passwordsMatch && agreedToTerms;
+
+  function markTouched(field: string) {
+    setTouched((t) => ({ ...t, [field]: true }));
+  }
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setTouched({ fullName: true, email: true, phoneNumber: true, password: true, confirmPassword: true });
+
+    if (!fullNameValid) { setError('Enter your full name using letters, spaces, hyphens, or apostrophes only.'); return; }
+    if (!emailValid) { setError('Enter a valid email address.'); return; }
+    if (!phoneValid) { setError('Enter a valid mobile number (10-15 digits, optional + country code).'); return; }
+    if (!passwordLongEnough) { setError('Password must be at least 8 characters.'); return; }
+    if (!passwordsMatch) { setError('Passwords do not match.'); return; }
+    if (!agreedToTerms) { setError('Please agree to the Terms & Conditions to continue.'); return; }
+
+    setLoading(true);
+    try {
+      // Trimmed here too (not just visually) so the account is never created with stray
+      // leading/trailing whitespace baked into the name or email.
+      const { phoneVerified, devOtp } = await register(email.trim(), password, trimmedName, phoneNumber);
+      // The OTP issued during registration comes back on this same response — pass it through
+      // via router state so VerifyPhone can show it immediately instead of requiring the user
+      // to click "Resend" just to see a code for the first time.
+      navigate(phoneVerified ? '/app' : '/verify-phone', { state: { devOtp } });
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? 'Registration failed.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-bg flex flex-col items-center justify-center p-4 lg:p-8 gap-6">
+      <div className="w-full max-w-6xl grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
+        {/* Marketing panel — hidden below lg so the registration card stays the priority on
+            small screens rather than pushing it below a long feature list. */}
+        <div className="hidden lg:block">
+          <div className="flex items-center gap-2.5 mb-8">
+            <span className="w-9 h-9 rounded-lg bg-gradient-to-br from-indigo-400 to-primary-dark flex items-center justify-center">
+              <Sparkles size={18} className="text-white" strokeWidth={2.5} />
+            </span>
+            <span className="font-extrabold tracking-wide text-ink text-xl">FINORA</span>
+          </div>
+
+          <span className="inline-block bg-primary-light text-primary text-xs font-medium px-3 py-1 rounded-full mb-4">
+            Your finances, finally in one place
+          </span>
+          <h1 className="text-4xl font-bold text-ink leading-tight mb-4">
+            Take control of your money with <span className="text-primary">Finora</span>
+          </h1>
+          <p className="text-muted text-base mb-8 max-w-md">
+            Import statements, track spending, set budgets and get AI-powered insights to build a
+            better financial future.
+          </p>
+
+          <div className="space-y-5 mb-10">
+            {FEATURES.map((f) => (
+              <div key={f.title} className="flex items-start gap-3">
+                <div className={`w-10 h-10 rounded-lg ${f.iconBg} flex items-center justify-center flex-shrink-0`}>
+                  <f.icon size={18} className={f.iconColor} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-ink">{f.title}</p>
+                  <p className="text-xs text-muted">{f.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* A light decorative flourish rather than a literal illustration asset — keeps the
+              panel from ending abruptly after the feature list without inventing fake imagery. */}
+          <div className="flex items-center gap-4 opacity-70">
+            <div className="w-14 h-14 rounded-2xl bg-primary-light flex items-center justify-center">
+              <Wallet size={22} className="text-primary" />
+            </div>
+            <div className="w-14 h-14 rounded-2xl bg-green-100 flex items-center justify-center -translate-y-2">
+              <PieChartIcon size={22} className="text-green-600" />
+            </div>
+            <div className="w-14 h-14 rounded-2xl bg-orange-100 flex items-center justify-center">
+              <BarChart3 size={22} className="text-orange-600" />
+            </div>
+          </div>
+        </div>
+
+        {/* Registration card */}
+        <form onSubmit={handleSubmit} noValidate className="bg-card rounded-xl2 p-8 w-full shadow-soft border border-border">
+          <div className="flex items-center gap-2 mb-6 lg:hidden">
+            <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-400 to-primary-dark flex items-center justify-center">
+              <Sparkles size={14} className="text-white" strokeWidth={2.5} />
+            </span>
+            <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+          </div>
+
+          <h2 className="text-2xl font-bold text-ink mb-1">Create your account</h2>
+          <p className="text-sm text-muted mb-6">Start your journey towards financial clarity</p>
+
+          {error && <p className="text-danger text-sm mb-4">{error}</p>}
+
+          <label className="block text-xs font-medium text-muted mb-1">Full name</label>
+          <div className="relative mb-1">
+            <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+            <input
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              onBlur={() => markTouched('fullName')}
+              required
+              placeholder="Enter your full name"
+              className="w-full border border-border rounded-lg pl-9 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
+          <p className="text-[11px] mb-3 h-3.5">
+            {touched.fullName && !fullNameValid && (
+              <span className="text-danger">Letters, spaces, hyphens, and apostrophes only — no numbers or symbols.</span>
+            )}
+          </p>
+
+          <label className="block text-xs font-medium text-muted mb-1">Email</label>
+          <div className="relative mb-1">
+            <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onBlur={() => markTouched('email')}
+              required
+              placeholder="you@example.com"
+              className="w-full border border-border rounded-lg pl-9 pr-9 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+            {emailValid && (
+              <CheckCircle2 size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-success" />
+            )}
+          </div>
+          <p className="text-[11px] mb-3 h-3.5">
+            {touched.email && !emailValid && <span className="text-danger">Enter a valid email address.</span>}
+          </p>
+
+          <label className="block text-xs font-medium text-muted mb-1">Mobile number</label>
+          <div className="relative mb-1">
+            <Phone size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+            <input
+              type="tel"
+              inputMode="tel"
+              value={phoneNumber}
+              onChange={(e) => setPhoneNumber(sanitizePhoneInput(e.target.value))}
+              onPaste={(e) => {
+                e.preventDefault();
+                setPhoneNumber((prev) => sanitizePhoneInput(prev + e.clipboardData.getData('text')));
+              }}
+              onBlur={() => markTouched('phoneNumber')}
+              required
+              placeholder="+91 XXXXXXXXXX"
+              title="10-15 digits, optional + country code"
+              className="w-full border border-border rounded-lg pl-9 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
+          <p className="text-[11px] mb-3 h-3.5">
+            {touched.phoneNumber && !phoneValid && (
+              <span className="text-danger">Enter 10-15 digits, optional + country code — no letters or symbols.</span>
+            )}
+          </p>
+
+          <label className="block text-xs font-medium text-muted mb-1">Password (min 8 characters)</label>
+          <PasswordInput
+            value={password}
+            onChange={setPassword}
+            onBlur={() => markTouched('password')}
+            required
+            minLength={8}
+            maxLength={72}
+            className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+          {password.length > 0 && (
+            <div className="mt-2 mb-1">
+              <div className="flex gap-1 mb-1">
+                {[0, 1, 2, 3].map((i) => (
+                  <div key={i} className={`h-1 flex-1 rounded-full ${i < strength.score ? strength.color : 'bg-gray-200'}`} />
+                ))}
+              </div>
+              <p className="text-[11px] text-muted">{strength.label}</p>
+            </div>
+          )}
+          <p className="text-[11px] mb-3 h-3.5">
+            {touched.password && !passwordLongEnough && password.length === 0 && (
+              <span className="text-danger">Password is required.</span>
+            )}
+          </p>
+
+          <label className="block text-xs font-medium text-muted mb-1">Confirm password</label>
+          <PasswordInput
+            value={confirmPassword}
+            onChange={setConfirmPassword}
+            onBlur={() => markTouched('confirmPassword')}
+            required
+            className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+          {touched.confirmPassword && !passwordsMatch && (
+            <p className="text-danger text-xs mt-1">Passwords don't match.</p>
+          )}
+
+          <label className="flex items-start gap-2 mt-4 mb-4 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={agreedToTerms}
+              onChange={(e) => setAgreedToTerms(e.target.checked)}
+              className="mt-0.5 rounded border-border"
+            />
+            <span className="text-xs text-muted">
+              I agree to Finora's <Link to="/terms" target="_blank" className="text-primary font-medium">Terms of Service</Link> and{' '}
+              <Link to="/privacy" target="_blank" className="text-primary font-medium">Privacy Policy</Link>.
+            </span>
+          </label>
+
+          <div className="flex items-start gap-2.5 bg-primary-light rounded-lg p-3 mb-6">
+            <ShieldCheck size={16} className="text-primary flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-ink">
+              Your financial data is encrypted and securely protected.{' '}
+              <Link to="/privacy" target="_blank" className="text-primary font-medium">Read our Privacy Policy</Link>
+            </p>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading || !formValid}
+            className="w-full bg-primary hover:bg-primary-dark text-white rounded-lg py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
+          >
+            {loading ? 'Creating account…' : 'Create account'}
+            {!loading && <ArrowRight size={15} />}
+          </button>
+
+          <p className="text-sm mt-4 text-center text-muted">
+            Already have an account? <Link to="/login" className="text-primary font-medium">Sign in</Link>
+          </p>
+        </form>
+      </div>
+
+      <p className="text-xs text-muted flex items-center gap-2">
+        <ShieldCheck size={13} /> Trusted by 10,000+ users across India
+      </p>
+    </div>
+  );
+}
