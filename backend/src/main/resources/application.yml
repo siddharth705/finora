@@ -2,17 +2,58 @@
 # (application-dev.yml / application-test.yml / application-prod.yml) override
 # individual keys as needed — this file should never contain anything that's
 # actually a secret, only sane defaults and structure.
+
+# Bug fix (production-readiness pass): there was no server.port configuration anywhere at all,
+# in any profile -- Spring Boot silently falls back to its own built-in default (8080)
+# regardless. That's fine for local/Docker use, but Railway (like Heroku and most PaaS
+# platforms) assigns its own dynamic port via the PORT env var and routes external traffic
+# specifically to whatever port the app actually binds to -- there's no guarantee it happens to
+# be 8080. An app that ignores $PORT and always binds to a fixed port is a well-known, easy way
+# for a Railway deployment to build and start successfully while still being completely
+# unreachable, since Railway's networking layer never learns to route to the port the app
+# picked. ${PORT:8080} keeps every existing local/Docker workflow byte-for-byte identical
+# (nothing sets PORT there, so it falls back to 8080 exactly as before) while actually working
+# on Railway.
+server:
+  port: ${PORT:8080}
+  # Production-readiness pass: gzip was off (Spring Boot's own default) -- a real, easy win for a
+  # JSON API serving report/transaction-list payloads to a browser over the actual internet
+  # (Railway <-> Cloudflare-hosted frontend), not just localhost. min-response-size stays at the
+  # framework default (2KB) -- most of this API's responses are well above that.
+  compression:
+    enabled: true
+    mime-types: application/json,text/plain
+  # Graceful shutdown (Spring Boot 2.3+): Railway sends SIGTERM to the running container on every
+  # deploy (this repo's own auto-deploy-on-push-to-main setup means that's routine, not rare) --
+  # without this, an in-flight request gets its connection abruptly cut rather than allowed to
+  # finish. spring.lifecycle.timeout-per-shutdown-phase below bounds how long Spring Boot will
+  # wait for in-flight requests before giving up and shutting down anyway.
+  shutdown: graceful
+
 spring:
   application:
     name: finora-backend
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
 
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:finora}
     username: ${DB_USER:finora}
     password: ${DB_PASSWORD:finora}
     driver-class-name: org.postgresql.Driver
+    # Production-readiness pass: this ran entirely on HikariCP's own defaults (10 max, no explicit
+    # connection timeout) -- fine for local dev against a Postgres with no other real load, but
+    # worth setting deliberately for a real deployment: a smaller Railway Postgres plan has its
+    # own real connection ceiling shared across however many services/replicas talk to it, so an
+    # explicit, modest pool size here is a deliberate choice, not an accident of whatever the
+    # framework happened to default to. connection-timeout fails fast (10s) rather than letting a
+    # request hang indefinitely if the database is briefly unreachable.
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:10}
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+      connection-timeout: 10000
 
   jpa:
     hibernate:
@@ -31,6 +72,16 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+
+  # Production-readiness pass: multipart uploads (CSV/PDF statement import) ran on Spring Boot's
+  # own defaults (1MB max file size, 10MB max request size) -- unexamined, not a deliberate
+  # choice, and 1MB is genuinely too small for some real multi-page bank statement PDFs/a full
+  # year of CSV transactions. RateLimitFilter's importStageLimiter already bounds how often this
+  # endpoint can be called at all; this bounds how large any single call can be.
+  servlet:
+    multipart:
+      max-file-size: ${UPLOAD_MAX_FILE_SIZE:10MB}
+      max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:10MB}
 
 app:
   jwt:
@@ -67,6 +118,18 @@ app:
     # (deployment config, a secret manager) instead of one being generated or written anywhere —
     # see RFC-BOOTSTRAP-01 in docs/bootstrap-setup-future-work.md for the full production story.
     key: ${FINORA_SETUP_KEY:}
+  security:
+    # RateLimitFilter's own doc comment already flagged this: request.getRemoteAddr() only
+    # returns the real client IP when nothing sits between the client and this app. Railway (like
+    # any PaaS with an edge proxy/load balancer in front of your container) means every request
+    # actually arrives from Railway's own internal proxy -- getRemoteAddr() returns THAT IP for
+    # every single request, so every user on the platform would silently share one rate-limit
+    # bucket. False by default (safe for local dev and any deployment NOT behind a real proxy,
+    # where trusting a client-supplied X-Forwarded-For would let anyone spoof any IP and bypass
+    # rate limiting entirely) -- set TRUST_PROXY_HEADERS=true specifically when actually deployed
+    # behind Railway (or any other trusted reverse proxy) so RateLimitFilter reads the real client
+    # IP from X-Forwarded-For instead.
+    trust-proxy-headers: ${TRUST_PROXY_HEADERS:false}
 
 management:
   endpoints:

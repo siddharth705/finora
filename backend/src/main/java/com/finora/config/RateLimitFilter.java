@@ -28,10 +28,15 @@ import java.io.IOException;
  * different, heavier decision (needs per-endpoint tuning) than protecting specifically the
  * endpoints with a concrete cost.
  *
- * IP extraction uses request.getRemoteAddr() directly — this assumes the app isn't (yet) behind
- * a reverse proxy that would require trusting X-Forwarded-For instead. Add that parsing when an
- * Nginx/ALB actually sits in front of this in production; trusting X-Forwarded-For today, with
- * no proxy configured, would let a client simply set that header to bypass the entire limiter.
+ * IP extraction uses request.getRemoteAddr() directly by default — correct when nothing sits
+ * between the client and this app, wrong the moment a reverse proxy (Railway's own edge proxy,
+ * an ALB, Nginx, ...) actually does, since every request would then arrive from THAT proxy's own
+ * IP regardless of who the real client is, collapsing every user onto one shared rate-limit
+ * bucket. Reads the real client IP from X-Forwarded-For instead specifically when
+ * app.security.trust-proxy-headers is enabled (TRUST_PROXY_HEADERS=true) -- never unconditionally,
+ * since blindly trusting a client-supplied header with no proxy actually in front to have set it
+ * would let any caller spoof any IP and bypass this filter entirely. See application.yml's own
+ * comment on that property for when to turn it on.
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 1) // right after CorrelationIdFilter, before Spring Security
@@ -51,12 +56,15 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final RateLimiter importStageLimiter = new RateLimiter(10, 600);
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    @org.springframework.beans.factory.annotation.Value("${app.security.trust-proxy-headers:false}")
+    private boolean trustProxyHeaders;
+
     @Override
     protected void doFilterInternal(@NonNull HttpServletRequest request,
                                      @NonNull HttpServletResponse response,
                                      @NonNull FilterChain filterChain) throws ServletException, IOException {
         String path = request.getRequestURI();
-        String ip = request.getRemoteAddr();
+        String ip = resolveClientIp(request);
 
         RateLimiter limiter = switch (path) {
             case "/api/v1/auth/login" -> loginLimiter;
@@ -82,5 +90,19 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    /** X-Forwarded-For can carry a comma-separated chain (client, proxy1, proxy2, ...) when
+     *  requests hop through more than one proxy -- the FIRST entry is the original client,
+     *  everything after it is intermediate infrastructure. Falls back to getRemoteAddr() if the
+     *  header is missing/blank even when trust is enabled, rather than resolving to null/empty. */
+    private String resolveClientIp(HttpServletRequest request) {
+        if (trustProxyHeaders) {
+            String forwardedFor = request.getHeader("X-Forwarded-For");
+            if (forwardedFor != null && !forwardedFor.isBlank()) {
+                return forwardedFor.split(",")[0].trim();
+            }
+        }
+        return request.getRemoteAddr();
     }
 }
