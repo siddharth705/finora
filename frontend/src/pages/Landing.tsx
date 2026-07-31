@@ -5,22 +5,46 @@ import {
   Play, ShieldCheck, Lock, RefreshCcw, Gauge, ScrollText, PhoneCall,
   Eye, PiggyBank, Target, TrendingUp, Sparkles as SparkleIcon, Check, Star, Users,
   Upload, Cpu, LineChart, ChevronDown, ArrowRight, Twitter, Linkedin, Youtube,
-  Tags, Cloud, BarChart3, Brain, Plus, Minus, X, FileText, Building2,
+  Tags, Cloud, BarChart3, Brain, Plus, Minus, X, FileText, Building2, Sun, Moon,
 } from 'lucide-react';
 import { useScrollReveal } from '../hooks/useScrollReveal';
+import { useTheme } from '../context/ThemeContext';
 
 /* ------------------------------------------------------------------ */
 /*  Shared bits                                                        */
 /* ------------------------------------------------------------------ */
 
-function Logo({ light = false }: { light?: boolean }) {
+function Logo() {
   return (
     <span className="flex items-center gap-2">
       <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-400 to-primary-dark flex items-center justify-center text-white font-black text-sm">
         F
       </span>
-      <span className={`font-extrabold tracking-wide ${light ? 'text-ink' : 'text-white'}`}>Finora</span>
+      <span className="font-extrabold tracking-wide text-ink">Finora</span>
     </span>
+  );
+}
+
+/** Reuses the same ThemeProvider/useTheme() the rest of the app (post-login) uses — the doc
+ *  comment on ThemeProvider itself already notes it's mounted on the public pages (Landing,
+ *  Login, Register) precisely so a choice made here persists to localStorage immediately and
+ *  syncs to the account once the visitor signs in, rather than this needing its own separate
+ *  mechanism. Cycles light <-> dark directly (skipping "system" here) since a two-state toggle
+ *  is the expected interaction on a marketing page; "system" is still available from within the
+ *  app's own Settings once signed in. */
+function ThemeToggle() {
+  const { resolvedTheme, setTheme } = useTheme();
+  const isDark = resolvedTheme === 'dark';
+  return (
+    <button
+      type="button"
+      onClick={() => setTheme(isDark ? 'light' : 'dark')}
+      aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+      title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+      className="w-9 h-9 rounded-lg flex items-center justify-center text-muted hover:text-ink hover:bg-card border border-border transition-colors"
+    >
+      {isDark ? <Sun size={16} /> : <Moon size={16} />}
+    </button>
   );
 }
 
@@ -83,11 +107,11 @@ function AnimatedCounter({ value, suffix = '' }: { value: number; suffix?: strin
 
 function FlowChip({ icon, label, sub }: { icon: ReactNode; label: string; sub: string }) {
   return (
-    <div className="flex items-center gap-2 bg-[#12142a] border border-white/10 rounded-xl px-3.5 py-2.5">
-      <span className="w-8 h-8 rounded-lg bg-primary/15 text-indigo-300 flex items-center justify-center flex-shrink-0">{icon}</span>
+    <div className="flex items-center gap-2 bg-card border border-border rounded-xl px-3.5 py-2.5">
+      <span className="w-8 h-8 rounded-lg bg-primary/15 text-indigo-600 dark:text-indigo-300 flex items-center justify-center flex-shrink-0">{icon}</span>
       <div className="leading-tight">
-        <p className="text-xs font-semibold text-white">{label}</p>
-        <p className="text-[10px] text-gray-400">{sub}</p>
+        <p className="text-xs font-semibold text-ink">{label}</p>
+        <p className="text-[10px] text-gray-500">{sub}</p>
       </div>
     </div>
   );
@@ -305,11 +329,11 @@ const FEATURE_SECTIONS: FeatureSpec[] = [
 function FeatureRow({ feature, index }: { feature: FeatureSpec; index: number }) {
   const reversed = index % 2 === 1;
   return (
-    <Reveal className={`grid md:grid-cols-2 gap-12 items-center py-14 ${index !== 0 ? 'border-t border-white/5' : ''}`}>
+    <Reveal className={`grid md:grid-cols-2 gap-12 items-center py-14 ${index !== 0 ? 'border-t border-border' : ''}`}>
       <div className={reversed ? 'md:order-2' : ''}>
         <div className={`w-11 h-11 rounded-xl flex items-center justify-center mb-5 ${feature.chip}`}>{feature.icon}</div>
-        <h3 className="text-2xl font-bold text-white mb-3">{feature.title}</h3>
-        <p className="text-gray-400 leading-relaxed max-w-md">{feature.body}</p>
+        <h3 className="text-2xl font-bold text-ink mb-3">{feature.title}</h3>
+        <p className="text-gray-600 dark:text-gray-400 leading-relaxed max-w-md">{feature.body}</p>
       </div>
       <div className={`flex justify-center ${reversed ? 'md:order-1 md:justify-start' : 'md:justify-end'}`}>
         <FeatureIllustrationCard kind={feature.illustration} />
@@ -378,36 +402,37 @@ export default function Landing() {
   }
 
   return (
-    <div className="bg-[#0a0b16] text-gray-200">
+    <div className="bg-bg text-gray-700 dark:text-gray-200">
       {/* ---------------- NAV ---------------- */}
-      <header className={`sticky top-0 z-30 border-b transition-colors duration-300 ${scrolled ? 'bg-[#0a0b16]/95 backdrop-blur border-white/10 shadow-lg shadow-black/20' : 'bg-[#0a0b16]/80 backdrop-blur border-white/5'}`}>
+      <header className={`sticky top-0 z-30 border-b transition-colors duration-300 ${scrolled ? 'bg-bg/95 backdrop-blur border-border shadow-lg shadow-black/5 dark:shadow-black/20' : 'bg-bg/80 backdrop-blur border-border/60'}`}>
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <Logo />
-          <nav className="hidden md:flex items-center gap-7 text-sm text-gray-300">
-            <a href="#features" className="hover:text-white transition-colors">Features</a>
-            <a href="#how" className="hover:text-white transition-colors">How It Works</a>
-            <a href="#security" className="hover:text-white transition-colors">Security</a>
-            <a href="#pricing" className="hover:text-white transition-colors">Pricing</a>
+          <nav className="hidden md:flex items-center gap-7 text-sm text-gray-600 dark:text-gray-300">
+            <a href="#features" className="hover:text-ink transition-colors">Features</a>
+            <a href="#how" className="hover:text-ink transition-colors">How It Works</a>
+            <a href="#security" className="hover:text-ink transition-colors">Security</a>
+            <a href="#pricing" className="hover:text-ink transition-colors">Pricing</a>
             <div
               className="relative"
               onMouseEnter={() => setResourcesOpen(true)}
               onMouseLeave={() => setResourcesOpen(false)}
             >
-              <button className="flex items-center gap-1 hover:text-white transition-colors">
+              <button className="flex items-center gap-1 hover:text-ink transition-colors">
                 Resources <ChevronDown size={14} />
               </button>
               {resourcesOpen && (
                 <div className="absolute top-full left-0 pt-2 w-40">
-                  <div className="bg-[#12142a] border border-white/10 rounded-lg shadow-2xl py-1.5">
-                    <a href="#faq" className="block px-3.5 py-2 text-xs text-gray-300 hover:text-white hover:bg-white/5">FAQ</a>
-                    <Link to="/help" className="block px-3.5 py-2 text-xs text-gray-300 hover:text-white hover:bg-white/5">Help Center</Link>
+                  <div className="bg-card border border-border rounded-lg shadow-2xl py-1.5">
+                    <a href="#faq" className="block px-3.5 py-2 text-xs text-gray-600 dark:text-gray-300 hover:text-ink hover:bg-bg">FAQ</a>
+                    <Link to="/help" className="block px-3.5 py-2 text-xs text-gray-600 dark:text-gray-300 hover:text-ink hover:bg-bg">Help Center</Link>
                   </div>
                 </div>
               )}
             </div>
           </nav>
           <div className="flex items-center gap-4">
-            <Link to="/login" className="text-sm text-gray-300 hover:text-white transition-colors">Sign in</Link>
+            <ThemeToggle />
+            <Link to="/login" className="text-sm text-gray-600 dark:text-gray-300 hover:text-ink transition-colors">Sign in</Link>
             <Link to="/register" className="bg-primary hover:bg-primary-dark text-white text-sm font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5 transition-all hover:shadow-lg hover:shadow-primary/30 hover:-translate-y-0.5">
               Get Started Free <ArrowRight size={14} />
             </Link>
@@ -421,10 +446,10 @@ export default function Landing() {
         <div className="relative max-w-6xl mx-auto px-6 pt-20 pb-16">
           <div className="grid lg:grid-cols-2 gap-14 items-center">
             <div>
-              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-300 bg-indigo-500/10 border border-indigo-400/20 rounded-full px-3 py-1 mb-6">
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-300 bg-indigo-500/10 border border-indigo-400/20 rounded-full px-3 py-1 mb-6">
                 <SparkleIcon size={12} /> Smart Categorization · Bank-Grade Security · Built for India
               </span>
-              <h1 className="text-4xl md:text-5xl font-extrabold text-white leading-[1.12] mb-5">
+              <h1 className="text-4xl md:text-5xl font-extrabold text-ink leading-[1.12] mb-5">
                 Your{' '}
                 <span className="animated-gradient-text bg-gradient-to-r from-indigo-400 via-violet-400 to-indigo-400 bg-clip-text text-transparent">
                   AI-Powered
@@ -432,7 +457,7 @@ export default function Landing() {
                 <br />
                 Financial Operating System
               </h1>
-              <p className="text-gray-400 text-lg leading-relaxed mb-8 max-w-md">
+              <p className="text-gray-600 dark:text-gray-400 text-lg leading-relaxed mb-8 max-w-md">
                 Import statements, let Finora learn how you categorize spend, and see your whole
                 financial picture update in real time — no spreadsheets required.
               </p>
@@ -440,12 +465,12 @@ export default function Landing() {
                 <Link to="/register" className="bg-primary hover:bg-primary-dark text-white font-semibold px-6 py-3 rounded-lg flex items-center gap-2 transition-all hover:shadow-lg hover:shadow-primary/30 hover:-translate-y-0.5">
                   Get Started Free <ArrowRight size={16} />
                 </Link>
-                <a href="#how" className="flex items-center gap-2 text-white text-sm font-medium group">
-                  <span className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center transition-transform group-hover:scale-110"><Play size={14} /></span>
+                <a href="#how" className="flex items-center gap-2 text-ink text-sm font-medium group">
+                  <span className="w-9 h-9 rounded-full bg-gray-100 dark:bg-white/10 flex items-center justify-center transition-transform group-hover:scale-110"><Play size={14} /></span>
                   See how it works
                 </a>
               </div>
-              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-gray-400">
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-gray-600 dark:text-gray-400">
                 <span className="flex items-center gap-1.5"><ShieldCheck size={14} /> Encrypted end to end</span>
                 <span className="flex items-center gap-1.5"><RefreshCcw size={14} /> Learns from every correction</span>
                 <span className="flex items-center gap-1.5">🇮🇳 Built for India</span>
@@ -466,32 +491,32 @@ export default function Landing() {
       </section>
 
       {/* ---------------- SECURITY STRIP ---------------- */}
-      <section id="security" className="border-y border-white/5 bg-[#0d0f1f]">
+      <section id="security" className="border-y border-border bg-gray-50 dark:bg-[#0d0f1f]">
         <div className="max-w-6xl mx-auto px-6 py-8">
           <p className="text-center text-xs text-gray-500 mb-6">Built on real security practices, not just a badge</p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
             <div className="flex flex-col items-center gap-1.5">
-              <Lock size={18} className="text-indigo-300" />
-              <span className="text-xs font-medium text-gray-300">Passwords hashed, tokens rotated</span>
+              <Lock size={18} className="text-indigo-600 dark:text-indigo-300" />
+              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Passwords hashed, tokens rotated</span>
             </div>
             <div className="flex flex-col items-center gap-1.5">
-              <Gauge size={18} className="text-indigo-300" />
-              <span className="text-xs font-medium text-gray-300">Rate-limited auth endpoints</span>
+              <Gauge size={18} className="text-indigo-600 dark:text-indigo-300" />
+              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Rate-limited auth endpoints</span>
             </div>
             <div className="flex flex-col items-center gap-1.5">
-              <PhoneCall size={18} className="text-indigo-300" />
-              <span className="text-xs font-medium text-gray-300">Phone OTP verification</span>
+              <PhoneCall size={18} className="text-indigo-600 dark:text-indigo-300" />
+              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Phone OTP verification</span>
             </div>
             <div className="flex flex-col items-center gap-1.5">
-              <ScrollText size={18} className="text-indigo-300" />
-              <span className="text-xs font-medium text-gray-300">Immutable audit trail</span>
+              <ScrollText size={18} className="text-indigo-600 dark:text-indigo-300" />
+              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Immutable audit trail</span>
             </div>
           </div>
         </div>
       </section>
 
       {/* ---------------- STATS ---------------- */}
-      <section className="border-b border-white/5">
+      <section className="border-b border-border">
         <div className="max-w-6xl mx-auto px-6 py-16">
           <Reveal className="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
             {[
@@ -501,9 +526,9 @@ export default function Landing() {
               { icon: <Target size={18} />, value: 5700, suffix: '+', label: 'Financial Goals Created' },
             ].map((s) => (
               <div key={s.label} className="flex flex-col items-center">
-                <span className="w-10 h-10 rounded-full bg-indigo-500/10 text-indigo-300 flex items-center justify-center mb-3">{s.icon}</span>
-                <p className="text-3xl font-extrabold text-white mb-1"><AnimatedCounter value={s.value} suffix={s.suffix} /></p>
-                <p className="text-xs text-gray-400">{s.label}</p>
+                <span className="w-10 h-10 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 flex items-center justify-center mb-3">{s.icon}</span>
+                <p className="text-3xl font-extrabold text-ink mb-1"><AnimatedCounter value={s.value} suffix={s.suffix} /></p>
+                <p className="text-xs text-gray-500">{s.label}</p>
               </div>
             ))}
           </Reveal>
@@ -511,9 +536,11 @@ export default function Landing() {
       </section>
 
       {/* ---------------- ABOUT (phone mockup) ---------------- */}
-      <section id="why" className="border-b border-white/5">
+      <section id="why" className="border-b border-border">
         <div className="max-w-6xl mx-auto px-6 py-20 grid md:grid-cols-2 gap-16 items-center">
           <Reveal className="flex justify-center order-2 md:order-1">
+            {/* Deliberately always-dark, like a fixed product screenshot -- see DashboardPreview's
+                own comment for the same reasoning; not meant to flip with the page's theme. */}
             <div className="bg-[#0d0f1f] rounded-[2rem] p-4 w-64 shadow-2xl border border-white/10 transition-transform duration-500 hover:-translate-y-1">
               <div className="bg-[#12142a] rounded-2xl p-4">
                 <p className="text-white text-sm mb-3">Hello, Siddharth 👋</p>
@@ -533,9 +560,9 @@ export default function Landing() {
             </div>
           </Reveal>
           <Reveal delayMs={100} className="order-1 md:order-2">
-            <span className="text-xs font-semibold text-indigo-300 uppercase tracking-wide mb-2 block">About Finora</span>
-            <h2 className="text-3xl font-bold text-white mb-4">Your All-in-One <span className="text-indigo-300">Personal Finance Partner</span></h2>
-            <p className="text-gray-400 leading-relaxed mb-6">
+            <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-300 uppercase tracking-wide mb-2 block">About Finora</span>
+            <h2 className="text-3xl font-bold text-ink mb-4">Your All-in-One <span className="text-indigo-600 dark:text-indigo-300">Personal Finance Partner</span></h2>
+            <p className="text-gray-600 dark:text-gray-400 leading-relaxed mb-6">
               Finora is a smart personal finance platform designed to help you manage your money better.
               From tracking expenses to planning goals and investments, everything you need for a healthier
               financial life is right here.
@@ -543,29 +570,29 @@ export default function Landing() {
             <div className="space-y-4">
               <div className="flex gap-3">
                 <div className="w-9 h-9 rounded-lg bg-indigo-500/10 flex items-center justify-center flex-shrink-0">
-                  <Eye size={16} className="text-indigo-300" />
+                  <Eye size={16} className="text-indigo-600 dark:text-indigo-300" />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-sm text-white mb-0.5">Track everything</h3>
-                  <p className="text-xs text-gray-400 leading-relaxed">Connect your accounts, track expenses, and see where your money goes.</p>
+                  <h3 className="font-semibold text-sm text-ink mb-0.5">Track everything</h3>
+                  <p className="text-xs text-gray-500 leading-relaxed">Connect your accounts, track expenses, and see where your money goes.</p>
                 </div>
               </div>
               <div className="flex gap-3">
                 <div className="w-9 h-9 rounded-lg bg-indigo-500/10 flex items-center justify-center flex-shrink-0">
-                  <Target size={16} className="text-indigo-300" />
+                  <Target size={16} className="text-indigo-600 dark:text-indigo-300" />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-sm text-white mb-0.5">Plan your future</h3>
-                  <p className="text-xs text-gray-400 leading-relaxed">Set goals, create budgets, and take control of your financial future.</p>
+                  <h3 className="font-semibold text-sm text-ink mb-0.5">Plan your future</h3>
+                  <p className="text-xs text-gray-500 leading-relaxed">Set goals, create budgets, and take control of your financial future.</p>
                 </div>
               </div>
               <div className="flex gap-3">
                 <div className="w-9 h-9 rounded-lg bg-indigo-500/10 flex items-center justify-center flex-shrink-0">
-                  <TrendingUp size={16} className="text-indigo-300" />
+                  <TrendingUp size={16} className="text-indigo-600 dark:text-indigo-300" />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-sm text-white mb-0.5">Make smarter decisions</h3>
-                  <p className="text-xs text-gray-400 leading-relaxed">Get insights and recommendations to save more and invest better.</p>
+                  <h3 className="font-semibold text-sm text-ink mb-0.5">Make smarter decisions</h3>
+                  <p className="text-xs text-gray-500 leading-relaxed">Get insights and recommendations to save more and invest better.</p>
                 </div>
               </div>
             </div>
@@ -574,13 +601,13 @@ export default function Landing() {
       </section>
 
       {/* ---------------- FEATURE SECTIONS (alternating) ---------------- */}
-      <section id="features" className="bg-[#0d0f1f] border-b border-white/5">
+      <section id="features" className="bg-gray-50 dark:bg-[#0d0f1f] border-b border-border">
         <div className="max-w-6xl mx-auto px-6 py-20">
           <Reveal className="text-center mb-4">
-            <p className="text-xs font-semibold text-indigo-300 uppercase tracking-wide mb-2">All-in-one platform</p>
-            <h2 className="text-3xl font-bold text-white">Everything you need to manage your finances</h2>
+            <p className="text-xs font-semibold text-indigo-600 dark:text-indigo-300 uppercase tracking-wide mb-2">All-in-one platform</p>
+            <h2 className="text-3xl font-bold text-ink">Everything you need to manage your finances</h2>
           </Reveal>
-          <div className="divide-y divide-white/5">
+          <div className="divide-y divide-border">
             {FEATURE_SECTIONS.map((f, i) => (
               <FeatureRow key={f.title} feature={f} index={i} />
             ))}
@@ -589,23 +616,23 @@ export default function Landing() {
       </section>
 
       {/* ---------------- HOW IT WORKS ---------------- */}
-      <section id="how" className="border-b border-white/5">
+      <section id="how" className="border-b border-border">
         <div className="max-w-6xl mx-auto px-6 py-20">
           <Reveal className="text-center mb-14">
-            <p className="text-xs font-semibold text-indigo-300 uppercase tracking-wide mb-2">Simple, fast, intelligent</p>
-            <h2 className="text-3xl font-bold text-white">How Finora works</h2>
+            <p className="text-xs font-semibold text-indigo-600 dark:text-indigo-300 uppercase tracking-wide mb-2">Simple, fast, intelligent</p>
+            <h2 className="text-3xl font-bold text-ink">How Finora works</h2>
           </Reveal>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-8">
             {HOW_IT_WORKS_STEPS.map((step, i) => (
-              <Reveal key={step.title} delayMs={i * 60} className="relative bg-[#12142a] border border-white/5 rounded-xl p-6 transition-all duration-300 hover:border-indigo-400/30 hover:-translate-y-1 hover:shadow-xl hover:shadow-black/30">
+              <Reveal key={step.title} delayMs={i * 60} className="relative bg-card border border-border rounded-xl p-6 transition-all duration-300 hover:border-indigo-400/30 hover:-translate-y-1 hover:shadow-xl hover:shadow-black/10 dark:hover:shadow-black/30">
                 <div className="flex items-center gap-3 mb-3">
-                  <div className="w-10 h-10 rounded-full bg-[#0d0f1f] border border-indigo-400/30 text-indigo-300 flex items-center justify-center flex-shrink-0">
+                  <div className="w-10 h-10 rounded-full bg-gray-50 dark:bg-[#0d0f1f] border border-indigo-400/30 text-indigo-600 dark:text-indigo-300 flex items-center justify-center flex-shrink-0">
                     {step.icon}
                   </div>
-                  <span className="text-xs font-bold text-indigo-300">STEP {i + 1}</span>
+                  <span className="text-xs font-bold text-indigo-600 dark:text-indigo-300">STEP {i + 1}</span>
                 </div>
-                <h3 className="font-semibold text-white mb-1.5">{step.title}</h3>
-                <p className="text-sm text-gray-400 leading-relaxed">{step.body}</p>
+                <h3 className="font-semibold text-ink mb-1.5">{step.title}</h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">{step.body}</p>
               </Reveal>
             ))}
           </div>
@@ -613,23 +640,23 @@ export default function Landing() {
       </section>
 
       {/* ---------------- WHY CHOOSE FINORA ---------------- */}
-      <section className="bg-[#0d0f1f] border-b border-white/5">
+      <section className="bg-gray-50 dark:bg-[#0d0f1f] border-b border-border">
         <div className="max-w-4xl mx-auto px-6 py-20">
           <Reveal className="text-center mb-12">
-            <p className="text-xs font-semibold text-indigo-300 uppercase tracking-wide mb-2">The difference</p>
-            <h2 className="text-3xl font-bold text-white">Why choose Finora</h2>
+            <p className="text-xs font-semibold text-indigo-600 dark:text-indigo-300 uppercase tracking-wide mb-2">The difference</p>
+            <h2 className="text-3xl font-bold text-ink">Why choose Finora</h2>
           </Reveal>
-          <Reveal className="bg-[#12142a] border border-white/10 rounded-2xl overflow-hidden">
-            <div className="grid grid-cols-3 text-xs font-semibold text-gray-400 border-b border-white/10">
+          <Reveal className="bg-card border border-border rounded-2xl overflow-hidden">
+            <div className="grid grid-cols-3 text-xs font-semibold text-gray-600 dark:text-gray-400 border-b border-border">
               <div className="px-5 py-4">Capability</div>
               <div className="px-5 py-4 text-center">Spreadsheets</div>
-              <div className="px-5 py-4 text-center text-indigo-300 bg-indigo-500/5">Finora</div>
+              <div className="px-5 py-4 text-center text-indigo-600 dark:text-indigo-300 bg-indigo-500/5">Finora</div>
             </div>
             {COMPARISON_ROWS.map((row) => (
-              <div key={row} className="grid grid-cols-3 text-sm border-b border-white/5 last:border-b-0">
-                <div className="px-5 py-4 text-gray-300">{row}</div>
-                <div className="px-5 py-4 flex items-center justify-center"><X size={16} className="text-gray-600" /></div>
-                <div className="px-5 py-4 flex items-center justify-center bg-indigo-500/5"><Check size={16} className="text-indigo-300" /></div>
+              <div key={row} className="grid grid-cols-3 text-sm border-b border-border last:border-b-0">
+                <div className="px-5 py-4 text-gray-700 dark:text-gray-300">{row}</div>
+                <div className="px-5 py-4 flex items-center justify-center"><X size={16} className="text-gray-400" /></div>
+                <div className="px-5 py-4 flex items-center justify-center bg-indigo-500/5"><Check size={16} className="text-indigo-600 dark:text-indigo-300" /></div>
               </div>
             ))}
           </Reveal>
@@ -637,25 +664,25 @@ export default function Landing() {
       </section>
 
       {/* ---------------- PRICING ---------------- */}
-      <section id="pricing" className="border-b border-white/5">
+      <section id="pricing" className="border-b border-border">
         <div className="max-w-6xl mx-auto px-6 py-20">
           <Reveal className="text-center mb-4">
-            <p className="text-xs font-semibold text-indigo-300 uppercase tracking-wide mb-2">Pricing</p>
-            <h2 className="text-3xl font-bold text-white mb-4">Simple pricing. Maximum value.</h2>
-            <p className="text-gray-400 mb-8">Start for free and upgrade anytime as you grow.</p>
+            <p className="text-xs font-semibold text-indigo-600 dark:text-indigo-300 uppercase tracking-wide mb-2">Pricing</p>
+            <h2 className="text-3xl font-bold text-ink mb-4">Simple pricing. Maximum value.</h2>
+            <p className="text-gray-600 dark:text-gray-400 mb-8">Start for free and upgrade anytime as you grow.</p>
           </Reveal>
 
           <div className="flex justify-center mb-12">
-            <div className="inline-flex items-center bg-[#12142a] border border-white/10 rounded-full p-1 text-sm">
+            <div className="inline-flex items-center bg-card border border-border rounded-full p-1 text-sm">
               <button
                 onClick={() => setBilling('monthly')}
-                className={`px-4 py-1.5 rounded-full font-medium transition-colors ${billing === 'monthly' ? 'bg-primary text-white' : 'text-gray-400'}`}
+                className={`px-4 py-1.5 rounded-full font-medium transition-colors ${billing === 'monthly' ? 'bg-primary text-white' : 'text-gray-500'}`}
               >
                 Monthly
               </button>
               <button
                 onClick={() => setBilling('yearly')}
-                className={`px-4 py-1.5 rounded-full font-medium transition-colors ${billing === 'yearly' ? 'bg-primary text-white' : 'text-gray-400'}`}
+                className={`px-4 py-1.5 rounded-full font-medium transition-colors ${billing === 'yearly' ? 'bg-primary text-white' : 'text-gray-500'}`}
               >
                 Yearly <span className="text-[10px] opacity-80">(Save 20%)</span>
               </button>
@@ -670,7 +697,7 @@ export default function Landing() {
             ].map((plan, i) => (
               <Reveal key={plan.name} delayMs={i * 80}>
                 <div
-                  className={`bg-[#12142a] rounded-xl p-7 relative border transition-all duration-300 hover:-translate-y-1.5 h-full ${plan.popular ? 'border-2 border-primary shadow-[0_0_40px_-10px_rgba(99,102,241,0.5)] hover:shadow-[0_0_55px_-8px_rgba(99,102,241,0.65)]' : 'border-white/10 hover:border-white/20 hover:shadow-xl hover:shadow-black/30'}`}
+                  className={`bg-card rounded-xl p-7 relative border transition-all duration-300 hover:-translate-y-1.5 h-full ${plan.popular ? 'border-2 border-primary shadow-[0_0_40px_-10px_rgba(99,102,241,0.5)] hover:shadow-[0_0_55px_-8px_rgba(99,102,241,0.65)]' : 'border-border hover:border-gray-300 dark:hover:border-white/20 hover:shadow-xl hover:shadow-black/5 dark:hover:shadow-black/30'}`}
                 >
                   {plan.popular && (
                     <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-white text-[10px] font-semibold px-3 py-1 rounded-full">
@@ -678,23 +705,23 @@ export default function Landing() {
                     </span>
                   )}
                   <div className="flex items-center justify-between mb-1">
-                    <p className="text-sm text-gray-400">{plan.name}</p>
-                    <span className="text-[9px] uppercase tracking-wide text-gray-500 border border-white/10 rounded-full px-2 py-0.5">{plan.tag}</span>
+                    <p className="text-sm text-gray-500">{plan.name}</p>
+                    <span className="text-[9px] uppercase tracking-wide text-gray-500 border border-border rounded-full px-2 py-0.5">{plan.tag}</span>
                   </div>
-                  <p className="text-3xl font-bold text-white mb-5">
+                  <p className="text-3xl font-bold text-ink mb-5">
                     ₹{billing === 'monthly' ? plan.monthly : yearlyPrice(plan.monthly)}
-                    <span className="text-sm font-normal text-gray-400">{plan.monthly === 0 ? '/month' : billing === 'monthly' ? '/month' : '/year'}</span>
+                    <span className="text-sm font-normal text-gray-500">{plan.monthly === 0 ? '/month' : billing === 'monthly' ? '/month' : '/year'}</span>
                   </p>
                   <ul className="space-y-2.5 mb-6">
                     {plan.features.map((f) => (
-                      <li key={f} className="flex items-start gap-2 text-sm text-gray-300">
-                        <Check size={15} className="text-indigo-300 mt-0.5 flex-shrink-0" /> {f}
+                      <li key={f} className="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300">
+                        <Check size={15} className="text-indigo-600 dark:text-indigo-300 mt-0.5 flex-shrink-0" /> {f}
                       </li>
                     ))}
                   </ul>
                   <Link
                     to="/register"
-                    className={`block text-center rounded-lg py-2.5 text-sm font-semibold transition-colors ${plan.popular ? 'bg-primary hover:bg-primary-dark text-white' : 'border border-white/15 text-white hover:bg-white/5'}`}
+                    className={`block text-center rounded-lg py-2.5 text-sm font-semibold transition-colors ${plan.popular ? 'bg-primary hover:bg-primary-dark text-white' : 'border border-border text-ink hover:bg-gray-50 dark:hover:bg-white/5'}`}
                   >
                     {plan.monthly === 0 ? 'Get Started' : 'Join the Waitlist'}
                   </Link>
@@ -708,11 +735,11 @@ export default function Landing() {
 
       {/* ---------------- TESTIMONIALS ---------------- */}
       {/* Placeholder quotes for layout purposes — swap in real user feedback before launch. */}
-      <section className="bg-[#0d0f1f] border-b border-white/5">
+      <section className="bg-gray-50 dark:bg-[#0d0f1f] border-b border-border">
         <div className="max-w-6xl mx-auto px-6 py-20">
           <Reveal className="text-center mb-12">
-            <p className="text-xs font-semibold text-indigo-300 uppercase tracking-wide mb-2">Early feedback</p>
-            <h2 className="text-3xl font-bold text-white">What early users are saying</h2>
+            <p className="text-xs font-semibold text-indigo-600 dark:text-indigo-300 uppercase tracking-wide mb-2">Early feedback</p>
+            <h2 className="text-3xl font-bold text-ink">What early users are saying</h2>
           </Reveal>
           <div className="grid md:grid-cols-3 gap-6">
             {[
@@ -721,15 +748,15 @@ export default function Landing() {
               ['R', 'Founder, Mumbai', 'Finally a finance app that understands Indian bank statement formats without a fight.'],
             ].map(([initial, role, quote], i) => (
               <Reveal key={role} delayMs={i * 80}>
-                <div className="bg-[#12142a] rounded-xl p-6 border border-white/5 h-full transition-all duration-300 hover:-translate-y-1 hover:border-white/15 hover:shadow-xl hover:shadow-black/30">
-                  <div className="flex items-center gap-1 mb-4 text-amber-400">
+                <div className="bg-card rounded-xl p-6 border border-border h-full transition-all duration-300 hover:-translate-y-1 hover:border-gray-300 dark:hover:border-white/15 hover:shadow-xl hover:shadow-black/5 dark:hover:shadow-black/30">
+                  <div className="flex items-center gap-1 mb-4 text-amber-500 dark:text-amber-400">
                     {Array.from({ length: 5 }).map((_, si) => <Star key={si} size={13} fill="currentColor" />)}
                   </div>
-                  <p className="text-sm text-gray-300 leading-relaxed mb-5">&ldquo;{quote}&rdquo;</p>
+                  <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed mb-5">&ldquo;{quote}&rdquo;</p>
                   <div className="flex items-center gap-3">
-                    <span className="w-9 h-9 rounded-full bg-indigo-500/20 text-indigo-200 flex items-center justify-center text-xs font-semibold">{initial}</span>
+                    <span className="w-9 h-9 rounded-full bg-indigo-500/20 text-indigo-700 dark:text-indigo-200 flex items-center justify-center text-xs font-semibold">{initial}</span>
                     <div>
-                      <p className="text-xs font-semibold text-white">Early user</p>
+                      <p className="text-xs font-semibold text-ink">Early user</p>
                       <p className="text-[11px] text-gray-500">{role}</p>
                     </div>
                   </div>
@@ -737,40 +764,40 @@ export default function Landing() {
               </Reveal>
             ))}
           </div>
-          <div className="flex items-center justify-center gap-6 text-xs text-gray-400 mt-12">
-            <span className="flex items-center gap-1.5"><Users size={14} className="text-indigo-300" /> Growing user base</span>
-            <span className="flex items-center gap-1.5"><Star size={14} className="text-indigo-300" /> Built from real feedback</span>
-            <span className="flex items-center gap-1.5"><ShieldCheck size={14} className="text-indigo-300" /> Your data, never sold</span>
+          <div className="flex items-center justify-center gap-6 text-xs text-gray-600 dark:text-gray-400 mt-12">
+            <span className="flex items-center gap-1.5"><Users size={14} className="text-indigo-600 dark:text-indigo-300" /> Growing user base</span>
+            <span className="flex items-center gap-1.5"><Star size={14} className="text-indigo-600 dark:text-indigo-300" /> Built from real feedback</span>
+            <span className="flex items-center gap-1.5"><ShieldCheck size={14} className="text-indigo-600 dark:text-indigo-300" /> Your data, never sold</span>
           </div>
         </div>
       </section>
 
       {/* ---------------- FAQ ---------------- */}
-      <section id="faq" className="border-b border-white/5">
+      <section id="faq" className="border-b border-border">
         <div className="max-w-3xl mx-auto px-6 py-20">
           <Reveal className="text-center mb-10">
-            <p className="text-xs font-semibold text-indigo-300 uppercase tracking-wide mb-2">FAQ</p>
-            <h2 className="text-3xl font-bold text-white">Questions people actually ask</h2>
+            <p className="text-xs font-semibold text-indigo-600 dark:text-indigo-300 uppercase tracking-wide mb-2">FAQ</p>
+            <h2 className="text-3xl font-bold text-ink">Questions people actually ask</h2>
           </Reveal>
           <div className="space-y-3">
             {FAQ_ITEMS.map(([q, a], i) => {
               const open = openFaq === i;
               return (
-                <div key={q} className="border border-white/10 rounded-xl overflow-hidden bg-[#12142a]">
+                <div key={q} className="border border-border rounded-xl overflow-hidden bg-card">
                   <button
                     type="button"
                     onClick={() => setOpenFaq(open ? null : i)}
                     className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left"
                   >
-                    <span className="font-semibold text-white text-sm">{q}</span>
-                    <span className="text-indigo-300 flex-shrink-0">{open ? <Minus size={16} /> : <Plus size={16} />}</span>
+                    <span className="font-semibold text-ink text-sm">{q}</span>
+                    <span className="text-indigo-600 dark:text-indigo-300 flex-shrink-0">{open ? <Minus size={16} /> : <Plus size={16} />}</span>
                   </button>
                   <div
                     className="grid transition-[grid-template-rows] duration-300 ease-out"
                     style={{ gridTemplateRows: open ? '1fr' : '0fr' }}
                   >
                     <div className="overflow-hidden">
-                      <p className="text-sm text-gray-400 leading-relaxed px-5 pb-4">{a}</p>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed px-5 pb-4">{a}</p>
                     </div>
                   </div>
                 </div>
@@ -805,7 +832,7 @@ export default function Landing() {
       </section>
 
       {/* ---------------- FOOTER ---------------- */}
-      <footer className="bg-[#0a0b16] border-t border-white/5 text-sm">
+      <footer className="bg-gray-50 dark:bg-[#0a0b16] border-t border-border text-sm">
         <div className="max-w-6xl mx-auto px-6 py-14 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-10">
           <div className="col-span-2">
             <Logo />
@@ -813,43 +840,43 @@ export default function Landing() {
               Your AI-powered financial operating system — track, understand, and grow your money.
             </p>
             <div className="flex items-center gap-3 mt-4">
-              <a href="#" aria-label="Twitter" className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-gray-400 hover:text-white transition-colors"><Twitter size={14} /></a>
-              <a href="#" aria-label="LinkedIn" className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-gray-400 hover:text-white transition-colors"><Linkedin size={14} /></a>
-              <a href="#" aria-label="YouTube" className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-gray-400 hover:text-white transition-colors"><Youtube size={14} /></a>
+              <a href="#" aria-label="Twitter" className="w-8 h-8 rounded-lg bg-gray-100 dark:bg-white/5 flex items-center justify-center text-gray-500 hover:text-ink transition-colors"><Twitter size={14} /></a>
+              <a href="#" aria-label="LinkedIn" className="w-8 h-8 rounded-lg bg-gray-100 dark:bg-white/5 flex items-center justify-center text-gray-500 hover:text-ink transition-colors"><Linkedin size={14} /></a>
+              <a href="#" aria-label="YouTube" className="w-8 h-8 rounded-lg bg-gray-100 dark:bg-white/5 flex items-center justify-center text-gray-500 hover:text-ink transition-colors"><Youtube size={14} /></a>
             </div>
           </div>
 
           <div>
-            <p className="text-white font-semibold text-xs mb-3">Product</p>
+            <p className="text-ink font-semibold text-xs mb-3">Product</p>
             <ul className="space-y-2 text-xs text-gray-500">
-              <li><a href="#features" className="hover:text-gray-300">Features</a></li>
-              <li><a href="#how" className="hover:text-gray-300">How It Works</a></li>
-              <li><a href="#pricing" className="hover:text-gray-300">Pricing</a></li>
-              <li><a href="#security" className="hover:text-gray-300">Security</a></li>
+              <li><a href="#features" className="hover:text-gray-700 dark:hover:text-gray-300">Features</a></li>
+              <li><a href="#how" className="hover:text-gray-700 dark:hover:text-gray-300">How It Works</a></li>
+              <li><a href="#pricing" className="hover:text-gray-700 dark:hover:text-gray-300">Pricing</a></li>
+              <li><a href="#security" className="hover:text-gray-700 dark:hover:text-gray-300">Security</a></li>
             </ul>
           </div>
 
           <div>
-            <p className="text-white font-semibold text-xs mb-3">Company</p>
+            <p className="text-ink font-semibold text-xs mb-3">Company</p>
             <ul className="space-y-2 text-xs text-gray-500">
-              <li><Link to="/about" className="hover:text-gray-300">About Us</Link></li>
-              <li><Link to="/careers" className="hover:text-gray-300">Careers</Link></li>
-              <li><a href="mailto:support@finora.app" className="hover:text-gray-300">Contact Us</a></li>
+              <li><Link to="/about" className="hover:text-gray-700 dark:hover:text-gray-300">About Us</Link></li>
+              <li><Link to="/careers" className="hover:text-gray-700 dark:hover:text-gray-300">Careers</Link></li>
+              <li><a href="mailto:support@finora.app" className="hover:text-gray-700 dark:hover:text-gray-300">Contact Us</a></li>
             </ul>
           </div>
 
           <div>
-            <p className="text-white font-semibold text-xs mb-3">Resources</p>
+            <p className="text-ink font-semibold text-xs mb-3">Resources</p>
             <ul className="space-y-2 text-xs text-gray-500">
-              <li><a href="#faq" className="hover:text-gray-300">FAQ</a></li>
-              <li><Link to="/help" className="hover:text-gray-300">Help Center</Link></li>
+              <li><a href="#faq" className="hover:text-gray-700 dark:hover:text-gray-300">FAQ</a></li>
+              <li><Link to="/help" className="hover:text-gray-700 dark:hover:text-gray-300">Help Center</Link></li>
             </ul>
           </div>
 
           <div>
-            <p className="text-white font-semibold text-xs mb-3">Stay Updated</p>
+            <p className="text-ink font-semibold text-xs mb-3">Stay Updated</p>
             {subscribed ? (
-              <p className="text-xs text-green-400">Thanks — noted locally (no mailing list is wired up yet).</p>
+              <p className="text-xs text-green-600 dark:text-green-400">Thanks — noted locally (no mailing list is wired up yet).</p>
             ) : (
               <form onSubmit={handleNewsletterSubmit} className="flex items-center gap-1.5">
                 <input
@@ -858,7 +885,7 @@ export default function Landing() {
                   value={newsletterEmail}
                   onChange={(e) => setNewsletterEmail(e.target.value)}
                   placeholder="you@email.com"
-                  className="w-full min-w-0 bg-white/5 border border-white/10 rounded-lg px-2.5 py-2 text-xs text-white placeholder:text-gray-500 focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full min-w-0 bg-gray-100 dark:bg-white/5 border border-border rounded-lg px-2.5 py-2 text-xs text-ink placeholder:text-gray-500 focus:outline-none focus:ring-1 focus:ring-primary"
                 />
                 <button type="submit" className="bg-primary hover:bg-primary-dark text-white rounded-lg px-2.5 py-2 flex-shrink-0 transition-transform hover:scale-105">
                   <ArrowRight size={14} />
@@ -867,12 +894,12 @@ export default function Landing() {
             )}
           </div>
         </div>
-        <div className="border-t border-white/5">
+        <div className="border-t border-border">
           <div className="max-w-6xl mx-auto px-6 py-5 flex flex-col sm:flex-row justify-between items-center gap-2 text-xs text-gray-500">
             <span>© {new Date().getFullYear()} Finora. Not a bank. Not investment advice.</span>
             <div className="flex items-center gap-4">
-              <Link to="/terms" className="hover:text-gray-300">Terms</Link>
-              <Link to="/privacy" className="hover:text-gray-300">Privacy</Link>
+              <Link to="/terms" className="hover:text-gray-700 dark:hover:text-gray-300">Terms</Link>
+              <Link to="/privacy" className="hover:text-gray-700 dark:hover:text-gray-300">Privacy</Link>
             </div>
           </div>
         </div>
