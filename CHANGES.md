@@ -1,59 +1,54 @@
-# Thorough bug-fix pass — files not previously touched
+# Brandfetch fix
 
-Read in full, none touched before this session: `JwtService`, `RefreshTokenService`,
-`OtpService`, `NetWorthService`, `RecurringService`, `WorkspaceDashboardService`,
-`BankManagementService`, `WorkspaceSettingsService`.
+## What was actually wrong
 
-## Real bug found and fixed
+Checked against Brandfetch's **current, official documentation** (fetched live — API URL formats
+aren't something to assume from memory, and this one has a "legacy" vs. "recommended" distinction
+worth getting right). Two real problems with the constructed URL:
 
-### `RecurringService` — false "recurring" flag on unrelated no-merchant transactions
+1. **Size parameters were in the wrong order.** Every single documented example —
+   basic sizing, retina, combined with type or theme — uses `/h/{height}/w/{width}/`, height
+   before width. The code had `/w/{size}/h/{size}/`, reversed. Since this component only ever
+   requests a square logo (width always equals height), this specific ordering bug wouldn't have
+   been visible in the actual rendered pixels — but there was never any confirmation the API's
+   parser is order-independent, so it's worth matching the documented order exactly rather than
+   relying on that.
 
-Transactions with no merchant identified (manual cash entries, anything the categorization
-pipeline couldn't extract a merchant from) were all bucketed together under the literal string
-`"unknown"` for pattern-based recurring detection. That means two entirely **unrelated**
-transactions with no merchant — say, two separate manual cash withdrawals — that happen to land
-at a roughly regular interval with a similar amount could get falsely flagged as a recurring
-merchant literally named "unknown," which would then show up as a nonsense entry in Reports/the
-Financial Intelligence Workspace.
+2. **Missing the explicit `domain/` type prefix.** Brandfetch's current docs: *"To avoid potential
+   naming collisions between identifier types, you can use explicit type routes with the pattern
+   `{type}/{identifier}`."* The code used a bare domain (`cdn.brandfetch.io/{domain}/...`), which
+   still works today via their auto-detection fallback (domain is checked first, before ticker/
+   ISIN/crypto) — explicitly called out in their own docs as the **legacy** format, not what they
+   currently recommend.
 
-There's no real merchant pattern to detect without a merchant at all, so these are now excluded
-from grouping entirely rather than defaulted into a shared bucket. They still go through the
-separate `MARK_SUBSCRIPTION` rule-based pass unaffected (that one matches on description text, not
-merchant, so it doesn't have this problem).
+Fixed both — the URL is now built exactly per their current documented format:
+```
+https://cdn.brandfetch.io/domain/{domain}/h/{size}/w/{size}/logo?c={clientId}
+```
 
-**Added a regression test** — this class had test coverage before, but nothing exercised the
-no-merchant case at all.
+## Also worth checking on your end
 
-## Clean bill of health
+Brandfetch is opt-in in this app — if `VITE_BRANDFETCH_CLIENT_ID` was never actually set in your
+Cloudflare Pages build environment, this whole stage is silently skipped by design (falls straight
+to the local-SVG-then-colored-initials fallback, which is exactly what "not working" would look
+like from the outside, even with a perfectly correct URL). **Please confirm that env var is
+actually set** — if you don't have a client ID yet, they're free to register for at
+[developers.brandfetch.com/register](https://developers.brandfetch.com/register).
 
-- **`JwtService`** — token generation/validation, expiry check. Correct.
-- **`RefreshTokenService`** — rotation + reuse-detection (revoke-all-sessions on a replayed
-  token) is a genuinely well-implemented security feature, correctly done.
-- **`OtpService`** — attempt-limiting, expiry, replay protection via `verifiedAt`. Correct. (The
-  "only the latest OTP is checkable" behavior looked worth a second look, but it's explicitly the
-  intended design per the class's own doc comment — a resend intentionally invalidates the
-  previous code — not a bug.)
-- **`NetWorthService`** — already carries its own documented fixes (timezone, a save-snapshot
-  race condition); nothing further found.
-- **`WorkspaceDashboardService`** — thorough, honest about which health signals are real vs.
-  placeholder. Nothing found.
-- **`BankManagementService`** — one thing double-checked and ruled out: `search()` passes the raw
-  (non-pre-normalized) query into `BankRegistry.search()`, which looked suspicious at a glance,
-  but `BankRegistry.search()` does its own internal trim/lowercase normalization — redundant, not
-  incorrect.
-- **`WorkspaceSettingsService`** — small, correct, honest about what isn't wired up yet.
+## Refactor for testability
+
+`brandfetchUrl()` used to read the client ID from module-scope state (computed once from
+`import.meta.env` at module load) — made it a pure function taking `clientId` as an explicit
+parameter instead, so it (and `extractDomain()`) can be tested directly without fighting Vite's
+env-var mocking. Both are now exported from `BankLogo.tsx`.
+
+## New: `BankLogo.test.tsx`
+
+This component had **no test coverage at all** before. 8 tests: the corrected URL format exactly,
+both null-return guard clauses (no client ID, no domain), domain extraction, `www.` stripping,
+and a malformed-URL case not throwing.
 
 ## Verification
 
-Same constraint as every backend round — no Maven in this sandbox. Traced the fix and its test by
-hand against the actual repository logic. Please run `mvn test`.
-
-## About the `git commit` command
-
-Same as last time — I can't run this against your actual repository from here; my sandbox is a
-disconnected copy of the uploaded code, not a live connection to your machine or GitHub. Once
-you've applied this bundle to your real checkout:
-
-```
-git commit -m "fix(recurring): exclude no-merchant transactions from pattern grouping to prevent false recurring flags"
-```
+`tsc -b` clean. Couldn't run the actual test suite myself (same native Vitest binary constraint as
+every frontend round this session) — please run `npm test` in `frontend/` to confirm.

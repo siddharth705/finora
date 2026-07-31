@@ -32,7 +32,7 @@ const BRANDFETCH_CLIENT_ID = import.meta.env.VITE_BRANDFETCH_CLIENT_ID;
 // staring at an empty spot on the page.
 const BRANDFETCH_TIMEOUT_MS = 1500;
 
-function extractDomain(websiteUrl: string | null): string | null {
+export function extractDomain(websiteUrl: string | null): string | null {
   if (!websiteUrl) return null;
   try {
     return new URL(websiteUrl).hostname.replace(/^www\./, '');
@@ -41,9 +41,20 @@ function extractDomain(websiteUrl: string | null): string | null {
   }
 }
 
-function brandfetchUrl(domain: string | null, sizePx: number): string | null {
-  if (!BRANDFETCH_CLIENT_ID || !domain) return null;
-  return `https://cdn.brandfetch.io/${domain}/w/${sizePx}/h/${sizePx}/logo?c=${BRANDFETCH_CLIENT_ID}`;
+export function brandfetchUrl(domain: string | null, sizePx: number, clientId: string | undefined): string | null {
+  if (!clientId || !domain) return null;
+  // Bug fix: verified against Brandfetch's current docs (docs.brandfetch.com/logo-api/overview).
+  // Two things were off from their actual, current URL format:
+  // 1. Missing the explicit `domain/` type prefix -- their docs: "To avoid potential naming
+  //    collisions between identifier types, you can use explicit type routes with the pattern
+  //    {type}/{identifier}." A bare domain still works today via their auto-detection fallback
+  //    (domain is checked first), but isn't the format they actually recommend.
+  // 2. `/w/{size}/h/{size}/` had width before height -- every single documented example
+  //    (sizing, retina, combined with type/theme) uses `/h/{h}/w/{w}/`, never the reverse. Since
+  //    this app always requests a square logo (w === h), a positional parser bug here wouldn't
+  //    have been visible in the actual pixels either way -- but there's no reason to rely on
+  //    order-independence that was never actually confirmed, when the documented order is known.
+  return `https://cdn.brandfetch.io/domain/${domain}/h/${sizePx}/w/${sizePx}/logo?c=${clientId}`;
 }
 
 type Stage = 'brandfetch' | 'local' | 'initials';
@@ -75,7 +86,7 @@ export function BankLogo({ bank, size = 40, className = '' }: BankLogoProps) {
   // Fetched at 2x the rendered size (min 64px) so it stays crisp on high-DPI screens without
   // the caller having to think about it.
   const sizePx = Math.max(64, Math.round(size * 2));
-  const brandfetchSrc = brandfetchUrl(domain, sizePx);
+  const brandfetchSrc = brandfetchUrl(domain, sizePx, BRANDFETCH_CLIENT_ID);
 
   const [stage, setStage] = useState<Stage>(() => (brandfetchSrc ? 'brandfetch' : 'local'));
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
