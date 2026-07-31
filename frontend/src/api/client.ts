@@ -5,14 +5,30 @@ import axios from 'axios';
 // server.proxy, matching '/api' -> http://localhost:8080) forwards it to the backend — but
 // vite.config.ts's `server.proxy` ONLY applies to `vite dev`; it has zero effect on the actual
 // production build (`vite build` just produces static files, with nothing left to do any
-// proxying). Deployed as-is to a static host on its own origin (Cloudflare Workers, in Finora's
-// current deployment), '/api/v1/...' resolves against THAT origin, not the separate Railway
-// backend -- there is no route there for it to hit. This is almost certainly why the deployed
-// frontend can't reach the backend at all right now, and it's also exactly why CORS_ORIGINS was
-// already configured on the backend for cross-origin access in the first place (see CorsConfig)
-// -- that setup only makes sense if the frontend is meant to call the backend's own absolute
-// origin directly, cross-origin, not through a same-origin relative path.
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+// proxying). Deployed as-is to a static host on its own origin (Cloudflare, in Finora's current
+// deployment), '/api/v1/...' resolves against THAT origin, not the separate Railway backend --
+// there is no route there for it to hit. This is almost certainly why the deployed frontend
+// can't reach the backend at all right now, and it's also exactly why CORS_ORIGINS was already
+// configured on the backend for cross-origin access in the first place (see CorsConfig) -- that
+// setup only makes sense if the frontend is meant to call the backend's own absolute origin
+// directly, cross-origin, not through a same-origin relative path.
+//
+// Second bug fix, caught from an actual production CORS error: VITE_API_BASE_URL got set to the
+// bare Railway origin (e.g. https://confident-wonder-dev.up.railway.app) without the /api/v1
+// backend routes actually live under -- every request silently lost that path segment, so
+// register/login (and everything else) hit "<origin>/auth/register" instead of
+// "<origin>/api/v1/auth/register", a route that doesn't exist. normalizeApiBase() below makes
+// this correct either way: whether the env var is set to the bare origin or already includes
+// /api/v1, the result always has exactly one /api/v1 suffix, so this specific misconfiguration
+// can't silently break every API call again.
+export function normalizeApiBase(rawBase: string): string {
+  const trimmed = rawBase.replace(/\/+$/, ''); // strip trailing slash(es), if any
+  return trimmed.endsWith('/api/v1') ? trimmed : `${trimmed}/api/v1`;
+}
+
+const BASE_URL = import.meta.env.VITE_API_BASE_URL
+  ? normalizeApiBase(import.meta.env.VITE_API_BASE_URL)
+  : '/api/v1';
 
 export const api = axios.create({ baseURL: BASE_URL });
 
