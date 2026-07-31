@@ -67,6 +67,24 @@ body {
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 
+/* Bug fix: typed text in form inputs could become invisible (white-on-white) whenever the
+   visitor's OS/browser preferred dark mode -- independent of Finora's own light/dark toggle.
+   Root cause: an <input>/<textarea>/<select> with no explicit background/text color of its own
+   falls back to the browser's native auto-dark rendering for form controls when
+   prefers-color-scheme: dark matches, and Chromium browsers apply that inconsistently (an
+   auto-injected light text color, but not necessarily a matching dark background) -- producing
+   exactly this "I can't see what I'm typing" symptom on an input that still visually renders
+   with a white/light background per the page's own CSS. `color-scheme: light` opts every native
+   form control in the app out of that browser-level auto-restyling; the app's own light/dark
+   theme is handled explicitly via the CSS variables above and Tailwind's dark: classes, not left
+   to the browser to guess independently. Scoped to form controls specifically, not the whole
+   document, so this doesn't fight the app's own dark-mode theming for anything else (scrollbars,
+   etc. can still follow it).
+   */
+input, textarea, select {
+  color-scheme: light;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Landing page animation primitives                                  */
 /*  Kept here (not Tailwind config) since these are @keyframes, which  */

@@ -2,7 +2,7 @@ import { useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Sparkles, ShieldCheck, UploadCloud, TrendingUp, PiggyBank, Target, LineChart,
-  User, Mail, Phone, CheckCircle2, ArrowRight, Wallet, PieChart as PieChartIcon, BarChart3,
+  User, Mail, CheckCircle2, ArrowRight, Wallet, PieChart as PieChartIcon, BarChart3,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { PasswordInput } from '../components/PasswordInput';
@@ -30,19 +30,30 @@ function passwordStrength(pw: string): { score: number; label: string; color: st
   return { score, label: labels[score], color: colors[score] };
 }
 
-// Digits only, with a single optional leading '+' for a country code. This runs on every
-// keystroke and every paste, so it's structurally impossible for a letter, '@', space, or any
-// other character to ever land in this field's state -- not just a submit-time check that a
-// user could route around (the exact gap that was reported: an email address was accepted here).
-function sanitizePhoneInput(raw: string): string {
-  const hasLeadingPlus = raw.trimStart().startsWith('+');
-  const digitsOnly = raw.replace(/[^0-9]/g, '');
-  return (hasLeadingPlus ? '+' : '') + digitsOnly.slice(0, 15);
+// Digits only, capped at 10 -- the country code is now a fixed "+91" prefix shown next to the
+// field rather than something typed into it (see the Mobile number field below), so this only
+// ever needs to sanitize the 10-digit local number itself.
+function sanitizeLocalPhoneNumber(raw: string): string {
+  return raw.replace(/[^0-9]/g, '').slice(0, 10);
 }
 
-// Mirrors the backend's own RegisterRequest.phoneNumber @Pattern exactly -- 10-15 digits, with
-// an optional leading '+' for an international country code.
-const PHONE_PATTERN = /^\+?[0-9]{10,15}$/;
+// If someone pastes a full number that already includes the country code (copied as
+// "+919876543210", "919876543210", or with spaces/dashes in either form), strip the leading "91"
+// so the field still ends up with just the 10-digit local part instead of the country code
+// eating into it. Only strips it when there'd otherwise be more than 10 digits -- a genuine
+// 10-digit number that happens to start with "91" (i.e. any number starting 910-919) must NOT
+// have those two digits eaten.
+function sanitizePastedPhoneNumber(raw: string): string {
+  const digitsOnly = raw.replace(/[^0-9]/g, '');
+  const local = digitsOnly.length > 10 && digitsOnly.startsWith('91') ? digitsOnly.slice(2) : digitsOnly;
+  return local.slice(0, 10);
+}
+
+// Real Indian mobile numbers always start 6-9 -- rejecting anything else at validation time
+// (not input time -- see sanitizeLocalPhoneNumber, which still allows typing any digit so the
+// field doesn't reject a keystroke before the person's even finished typing) catches an
+// obviously-wrong number before it ever reaches the backend.
+const PHONE_PATTERN = /^[6-9][0-9]{9}$/;
 
 // Letters (including accented/Unicode letters for names outside the ASCII range), spaces,
 // hyphens, apostrophes, and periods -- covers "Jean-Luc", "O'Brien", "Md. Rahman", "José" while
@@ -89,7 +100,7 @@ export default function Register() {
 
     if (!fullNameValid) { setError('Enter your full name using letters, spaces, hyphens, or apostrophes only.'); return; }
     if (!emailValid) { setError('Enter a valid email address.'); return; }
-    if (!phoneValid) { setError('Enter a valid mobile number (10-15 digits, optional + country code).'); return; }
+    if (!phoneValid) { setError('Enter a valid 10-digit mobile number.'); return; }
     if (!passwordLongEnough) { setError('Password must be at least 8 characters.'); return; }
     if (!passwordsMatch) { setError('Passwords do not match.'); return; }
     if (!agreedToTerms) { setError('Please agree to the Terms & Conditions to continue.'); return; }
@@ -98,7 +109,10 @@ export default function Register() {
     try {
       // Trimmed here too (not just visually) so the account is never created with stray
       // leading/trailing whitespace baked into the name or email.
-      const { phoneVerified, devOtp } = await register(email.trim(), password, trimmedName, phoneNumber);
+      // phoneNumber only ever holds the 10-digit local number now (see the Mobile number field
+      // below) -- +91 is prepended here, once, at the actual submission boundary, rather than
+      // being stored in state at all.
+      const { phoneVerified, devOtp } = await register(email.trim(), password, trimmedName, `+91${phoneNumber}`);
       // The OTP issued during registration comes back on this same response — pass it through
       // via router state so VerifyPhone can show it immediately instead of requiring the user
       // to click "Resend" just to see a code for the first time.
@@ -116,12 +130,12 @@ export default function Register() {
         {/* Marketing panel — hidden below lg so the registration card stays the priority on
             small screens rather than pushing it below a long feature list. */}
         <div className="hidden lg:block">
-          <div className="flex items-center gap-2.5 mb-8">
+          <Link to="/" className="flex items-center gap-2.5 mb-8 w-fit">
             <span className="w-9 h-9 rounded-lg bg-gradient-to-br from-indigo-400 to-primary-dark flex items-center justify-center">
               <Sparkles size={18} className="text-white" strokeWidth={2.5} />
             </span>
             <span className="font-extrabold tracking-wide text-ink text-xl">FINORA</span>
-          </div>
+          </Link>
 
           <span className="inline-block bg-primary-light text-primary text-xs font-medium px-3 py-1 rounded-full mb-4">
             Your finances, finally in one place
@@ -166,10 +180,12 @@ export default function Register() {
         {/* Registration card */}
         <form onSubmit={handleSubmit} noValidate className="bg-card rounded-xl2 p-8 w-full shadow-soft border border-border">
           <div className="flex items-center gap-2 mb-6 lg:hidden">
-            <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-400 to-primary-dark flex items-center justify-center">
-              <Sparkles size={14} className="text-white" strokeWidth={2.5} />
-            </span>
-            <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+            <Link to="/" className="flex items-center gap-2 w-fit">
+              <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-400 to-primary-dark flex items-center justify-center">
+                <Sparkles size={14} className="text-white" strokeWidth={2.5} />
+              </span>
+              <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+            </Link>
           </div>
 
           <h2 className="text-2xl font-bold text-ink mb-1">Create your account</h2>
@@ -186,7 +202,7 @@ export default function Register() {
               onBlur={() => markTouched('fullName')}
               required
               placeholder="Enter your full name"
-              className="w-full border border-border rounded-lg pl-9 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="w-full border border-border rounded-lg pl-9 pr-3 py-2.5 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
           </div>
           <p className="text-[11px] mb-3 h-3.5">
@@ -205,7 +221,7 @@ export default function Register() {
               onBlur={() => markTouched('email')}
               required
               placeholder="you@example.com"
-              className="w-full border border-border rounded-lg pl-9 pr-9 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="w-full border border-border rounded-lg pl-9 pr-9 py-2.5 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
             {emailValid && (
               <CheckCircle2 size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-success" />
@@ -217,26 +233,35 @@ export default function Register() {
 
           <label className="block text-xs font-medium text-muted mb-1">Mobile number</label>
           <div className="relative mb-1">
-            <Phone size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+            {/* Fixed, non-editable prefix -- the country code is no longer something typed into
+                the field at all (see sanitizeLocalPhoneNumber's own comment), so there's nothing
+                for a stray keystroke to corrupt here. pointer-events-none so a click on this
+                prefix still focuses the actual input right next to it, not a dead zone. */}
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5 text-sm text-ink pointer-events-none select-none">
+              <span aria-hidden="true">🇮🇳</span>
+              <span>+91</span>
+              <span className="w-px h-4 bg-border" />
+            </div>
             <input
               type="tel"
-              inputMode="tel"
+              inputMode="numeric"
               value={phoneNumber}
-              onChange={(e) => setPhoneNumber(sanitizePhoneInput(e.target.value))}
+              onChange={(e) => setPhoneNumber(sanitizeLocalPhoneNumber(e.target.value))}
               onPaste={(e) => {
                 e.preventDefault();
-                setPhoneNumber((prev) => sanitizePhoneInput(prev + e.clipboardData.getData('text')));
+                setPhoneNumber(sanitizePastedPhoneNumber(e.clipboardData.getData('text')));
               }}
               onBlur={() => markTouched('phoneNumber')}
               required
-              placeholder="+91 XXXXXXXXXX"
-              title="10-15 digits, optional + country code"
-              className="w-full border border-border rounded-lg pl-9 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              placeholder="XXXXXXXXXX"
+              maxLength={10}
+              title="10-digit mobile number"
+              className="w-full border border-border rounded-lg pl-[4.75rem] pr-3 py-2.5 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
           </div>
           <p className="text-[11px] mb-3 h-3.5">
             {touched.phoneNumber && !phoneValid && (
-              <span className="text-danger">Enter 10-15 digits, optional + country code — no letters or symbols.</span>
+              <span className="text-danger">Enter a valid 10-digit mobile number (no leading 0-5).</span>
             )}
           </p>
 
@@ -248,7 +273,7 @@ export default function Register() {
             required
             minLength={8}
             maxLength={72}
-            className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
           {password.length > 0 && (
             <div className="mt-2 mb-1">
@@ -272,7 +297,7 @@ export default function Register() {
             onChange={setConfirmPassword}
             onBlur={() => markTouched('confirmPassword')}
             required
-            className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
           {touched.confirmPassword && !passwordsMatch && (
             <p className="text-danger text-xs mt-1">Passwords don't match.</p>

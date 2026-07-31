@@ -55,12 +55,12 @@ export default function Login() {
         {/* Marketing panel — hidden below lg, identical to Register.tsx's so the two screens
             feel like one continuous flow rather than a redesigned page next to a stale one. */}
         <div className="hidden lg:block">
-          <div className="flex items-center gap-2.5 mb-8">
+          <Link to="/" className="flex items-center gap-2.5 mb-8 w-fit">
             <span className="w-9 h-9 rounded-lg bg-gradient-to-br from-indigo-400 to-primary-dark flex items-center justify-center">
               <Sparkles size={18} className="text-white" strokeWidth={2.5} />
             </span>
             <span className="font-extrabold tracking-wide text-ink text-xl">FINORA</span>
-          </div>
+          </Link>
 
           <span className="inline-block bg-primary-light text-primary text-xs font-medium px-3 py-1 rounded-full mb-4">
             Welcome back
@@ -103,10 +103,12 @@ export default function Login() {
         {/* Sign-in card */}
         <form onSubmit={handleSubmit} noValidate className="bg-card rounded-xl2 p-8 w-full shadow-soft border border-border">
           <div className="flex items-center gap-2 mb-6 lg:hidden">
-            <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-400 to-primary-dark flex items-center justify-center">
-              <Sparkles size={14} className="text-white" strokeWidth={2.5} />
-            </span>
-            <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+            <Link to="/" className="flex items-center gap-2 w-fit">
+              <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-400 to-primary-dark flex items-center justify-center">
+                <Sparkles size={14} className="text-white" strokeWidth={2.5} />
+              </span>
+              <span className="font-extrabold tracking-wide text-ink">FINORA</span>
+            </Link>
           </div>
 
           <h2 className="text-2xl font-bold text-ink mb-1">Sign in</h2>
@@ -124,7 +126,7 @@ export default function Login() {
             value={identifier}
             onChange={(e) => setIdentifier(e.target.value)}
             placeholder="you@example.com or +91XXXXXXXXXX"
-            className="w-full border border-border rounded-lg px-3 py-2.5 mb-4 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            className="w-full border border-border rounded-lg px-3 py-2.5 mb-4 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
 
           <label className="block text-xs font-medium text-muted mb-1">Password</label>
@@ -133,7 +135,7 @@ export default function Login() {
             onChange={setPassword}
             required
             autoComplete="current-password"
-            className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 mb-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            className="w-full border border-border rounded-lg px-3 py-2.5 pr-10 mb-2 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
           <p className="text-right mb-6">
             <Link to="/forgot-password" className="text-xs text-primary font-medium">Forgot password?</Link>
