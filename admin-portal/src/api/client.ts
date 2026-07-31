@@ -1,6 +1,14 @@
 import axios from 'axios';
 
-const BASE_URL = '/api/v1';
+// Bug fix (production-readiness pass): same issue as the user frontend's client.ts (see that
+// file's own doc comment for the full story) -- vite.config.ts's server.proxy only applies to
+// `vite dev`, never to the actual production build, so a bare relative '/api/v1' silently stops
+// working the moment this is built and deployed to its own origin (Cloudflare Workers, in
+// Finora's current deployment) separate from the Railway backend. This app already has
+// VITE_BACKEND_ORIGIN for Diagnostics.tsx's direct Swagger/Actuator links (which can't use the
+// proxy either) -- this is the same gap, just for the axios client itself rather than a couple
+// of manually-constructed links.
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
 export const api = axios.create({ baseURL: BASE_URL });
 

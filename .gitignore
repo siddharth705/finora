@@ -1,34 +1,65 @@
-# Frontend
-frontend/node_modules/
-frontend/dist/
-frontend/.wrangler/
+# Nothing in this repo had a .gitignore anywhere (checked root and every sub-project) despite
+# node_modules/ and target/ already existing as real build output, and .finora/installation.key
+# holding a real bootstrap secret in the repo root -- all of that was one `git add .` away from
+# being committed. This exists to close that gap; see the deployment-readiness discussion this
+# was written alongside for the full context ("no production values should exist inside source
+# code" applies just as much to what accidentally ends up in git history as to what's hardcoded
+# in application.yml).
 
-# Admin Portal
-admin-portal/node_modules/
-admin-portal/dist/
-admin-portal/.wrangler/
-
-# Backend
-backend/target/
-*.jar
-*.war
-*.class
-
-# IDE
-.vscode/
-.idea/
-
-# Environment
+# --- Secrets -----------------------------------------------------------------------------
+# BootstrapService writes a real one-time installation key here for local/dev setup (see
+# RFC-BOOTSTRAP-01 in docs/bootstrap-setup-future-work.md) -- never committed, regardless of
+# environment.
+.finora/
+*.env
 .env
-.env.*
+.env.local
+.env.*.local
+.env.development
+.env.production
+# The checked-in template is the one exception -- it never holds a real value.
 !.env.example
 
-# Logs
-*.log
+# --- Java / Maven (backend/) --------------------------------------------------------------
+backend/target/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+hs_err_pid*.log
 
-# OS
+# --- Node / Vite (frontend/, admin-portal/) -------------------------------------------------
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# --- IDE / editor (kept minimal -- .vscode/settings.json here is shared team config, not
+# per-developer, so it stays tracked; only ignore genuinely machine-specific IDE state) -------
+.idea/
+*.iml
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# --- OS ------------------------------------------------------------------------------------
 .DS_Store
 Thumbs.db
 
-# TypeScript
+# --- Logs ----------------------------------------------------------------------------------
+*.log
+npm-debug.log*
+
+# --- Node / Vite ---
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
 *.tsbuildinfo
+
+# --- Cloudflare Wrangler ---
+.wrangler/
+
+# --- Maven ---
+.mvn/timing.properties

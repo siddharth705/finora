@@ -1,6 +1,18 @@
 import axios from 'axios';
 
-const BASE_URL = '/api/v1';
+// Bug fix (production-readiness pass): this was a hardcoded relative path with no env-driven
+// override at all. That's fine in local dev, where Vite's own dev-server proxy (vite.config.ts's
+// server.proxy, matching '/api' -> http://localhost:8080) forwards it to the backend — but
+// vite.config.ts's `server.proxy` ONLY applies to `vite dev`; it has zero effect on the actual
+// production build (`vite build` just produces static files, with nothing left to do any
+// proxying). Deployed as-is to a static host on its own origin (Cloudflare Workers, in Finora's
+// current deployment), '/api/v1/...' resolves against THAT origin, not the separate Railway
+// backend -- there is no route there for it to hit. This is almost certainly why the deployed
+// frontend can't reach the backend at all right now, and it's also exactly why CORS_ORIGINS was
+// already configured on the backend for cross-origin access in the first place (see CorsConfig)
+// -- that setup only makes sense if the frontend is meant to call the backend's own absolute
+// origin directly, cross-origin, not through a same-origin relative path.
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
 export const api = axios.create({ baseURL: BASE_URL });
 
