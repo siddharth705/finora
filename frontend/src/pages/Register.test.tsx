@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Register from './Register';
@@ -67,24 +67,22 @@ describe('Register — mobile number field', () => {
     expect(phoneInput.value).toBe('9876543210');
   });
 
-  it('strips a leading "91" country code when a full number is pasted', async () => {
+  it('strips a leading "91" country code when a full number is pasted', () => {
     renderRegister();
     const phoneInput = screen.getByPlaceholderText('XXXXXXXXXX') as HTMLInputElement;
 
-    const pasteEvent = new Event('paste', { bubbles: true, cancelable: true }) as any;
-    pasteEvent.clipboardData = { getData: () => '+91 98765 43210' };
-    phoneInput.dispatchEvent(pasteEvent);
+    fireEvent.paste(phoneInput, { clipboardData: { getData: () => '+91 98765 43210' } });
 
     expect(phoneInput.value).toBe('9876543210');
   });
 
-  it('does NOT strip "91" from a genuine 10-digit number that happens to start with it', async () => {
+  it('does NOT strip "91" from a genuine 10-digit number that happens to start with it', () => {
     renderRegister();
     const phoneInput = screen.getByPlaceholderText('XXXXXXXXXX') as HTMLInputElement;
 
-    const pasteEvent = new Event('paste', { bubbles: true, cancelable: true }) as any;
-    pasteEvent.clipboardData = { getData: () => '9198765432' }; // exactly 10 digits already
-    phoneInput.dispatchEvent(pasteEvent);
+    // exactly 10 digits already -- must survive untouched, not have "91" mistaken for a
+    // country-code prefix and stripped down to 8 digits
+    fireEvent.paste(phoneInput, { clipboardData: { getData: () => '9198765432' } });
 
     expect(phoneInput.value).toBe('9198765432');
   });
