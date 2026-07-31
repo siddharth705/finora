@@ -40,7 +40,7 @@ public class AdminTransactionController {
     public ApiResponse<List<TransactionDto>> list(@PathVariable UUID userId) {
         var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null,
                 0, 50, "txnDate", "DESC");
-        return ApiResponse.ok(transactionService.search(userId, filter));
+        return ApiResponse.ok(transactionService.search(userId, filter).content());
     }
 
     @DeleteMapping("/{transactionId}")

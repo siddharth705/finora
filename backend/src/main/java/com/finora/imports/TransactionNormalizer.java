@@ -32,15 +32,9 @@ public class TransactionNormalizer {
      *  date or amount column value) — callers should skip such rows rather than fail the import. */
     public StagedRow normalize(UUID userId, Map<String, String> row) {
         String dateRaw = CsvParser.firstNonBlank(row, "date", "transaction_date", "txn date", "transaction date", "value date");
-        // "balance" is last-resort on purpose: a PDF statement's OPENING BALANCE/CLOSING BALANCE
-        // rows (see PdfPreviewGenerator/PdfTableLocator) carry no debit or credit value at all --
-        // only a Balance column -- so without this fallback those two rows have a date but no
-        // recognizable amount and get silently dropped here, before PdfPreviewGenerator's own
-        // balancePoints logic ever sees them.
         String amountRaw = CsvParser.firstNonBlank(row, "amount", "debit", "credit",
                 "dr amount", "cr amount", "debit amount", "credit amount",
-                "withdrawal amt", "withdrawal amount", "deposit amt", "deposit amount",
-                "balance", "running balance", "closing balance");
+                "withdrawal amt", "withdrawal amount", "deposit amt", "deposit amount");
         if (dateRaw == null || amountRaw == null) return null;
 
         LocalDate date = CsvParser.parseDate(dateRaw.trim());
@@ -54,10 +48,33 @@ public class TransactionNormalizer {
         // value is blank), so what actually indicates income is a *non-blank* value in the
         // credit column, not just the column's presence.
         String creditRaw = CsvParser.firstNonBlank(row, "credit", "cr amount", "credit amount", "deposit amt", "deposit amount");
-        boolean isIncome = (typeRaw != null && typeRaw.toLowerCase().contains("income")) || creditRaw != null;
+        // Bug fix: a unified Amount + Type column layout (one amount column, a separate Type
+        // column holding literally "DR"/"CR" -- e.g. PNB ONE's PDF/CSV exports) has neither a
+        // "credit" column nor a Type value containing the literal word "income", so every row
+        // silently fell through to the `creditRaw != null` check, which is always null for this
+        // layout -- every credit transaction on a real PNB-style statement was misclassified as
+        // an EXPENSE (with the sign flattened to positive by the .abs() above, so it displayed as
+        // a debit in the ledger). Checked ahead of the credit-column-presence fallback since it's
+        // the more specific, more authoritative signal when a Type column exists at all.
+        boolean isIncome;
+        String typeNormalized = typeRaw == null ? null : typeRaw.trim().toLowerCase();
+        if ("cr".equals(typeNormalized) || "credit".equals(typeNormalized)) {
+            isIncome = true;
+        } else if ("dr".equals(typeNormalized) || "debit".equals(typeNormalized)) {
+            isIncome = false;
+        } else {
+            isIncome = (typeRaw != null && typeRaw.toLowerCase().contains("income")) || creditRaw != null;
+        }
         String type = isIncome ? "INCOME" : "EXPENSE";
 
-        String description = Optional.ofNullable(CsvParser.firstNonBlank(row, "description", "narration")).orElse("");
+        // "remarks"/"particulars" are the transaction-detail column name on several real Indian
+        // bank exports (PNB ONE among them -- see CsvParser's own doc comment) that don't use
+        // "description" or "narration" at all. Without these, every row on such a statement
+        // staged with an empty description, which CategorizationService.suggest() has nothing to
+        // work with, and CategoryRules.extractMerchant("") falls back to the literal string
+        // "unknown" -- which is what actually showed up in the ledger's Description column
+        // (Ledger.tsx falls back to `t.merchant` when `t.description` is empty).
+        String description = Optional.ofNullable(CsvParser.firstNonBlank(row, "description", "narration", "remarks", "particulars")).orElse("");
         String fileCategory = CsvParser.firstNonBlank(row, "category");
 
         // Bug fix: every credit/income row used to be hardcoded to "Salary" regardless of what it

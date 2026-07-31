@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { Pencil, Trash2, X } from 'lucide-react';
+import { Pencil, Trash2, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { transactionsApi, categoriesApi, type TransactionFilters, type UpdateTransactionPayload } from '../api/endpoints';
 import { AskOnceCard } from '../components/AskOnceCard';
 import type { Transaction } from '../types';
@@ -29,7 +29,7 @@ export default function Ledger() {
   // pressing Enter up there actually lands here with the term already applied rather than
   // just navigating to an empty ledger.
   const [searchParams] = useSearchParams();
-  const [filters, setFilters] = useState<TransactionFilters>({ page: 0, size: 20, sortField: 'date', sortDir: 'desc' });
+  const [filters, setFilters] = useState<TransactionFilters>({ page: 0, size: 10, sortField: 'date', sortDir: 'desc' });
   const [keywordInput, setKeywordInput] = useState(() => searchParams.get('q') ?? '');
   const debouncedKeyword = useDebouncedValue(keywordInput, 300);
   const queryClient = useQueryClient();
@@ -46,13 +46,36 @@ export default function Ledger() {
     if (q !== null) setKeywordInput(q);
   }, [searchParams]);
 
+  // Every other filter control already resets to page 0 on change (see the type/date filters
+  // below) -- the search box was the one gap, since it goes through the debounce above rather
+  // than a plain onChange. Without this, searching while on page 3 of the unfiltered list could
+  // land on a now out-of-range page of the filtered one.
+  useEffect(() => {
+    setFilters((f) => (f.page === 0 ? f : { ...f, page: 0 }));
+    // Only when the search term itself actually changes, not on every filters update (that would
+    // fight with the other filters' own `page: 0` resets and the Previous/Next handlers below).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedKeyword]);
+
   const activeFilters = { ...filters, keyword: debouncedKeyword || undefined };
 
-  const { data: txns, isLoading, isFetching } = useQuery({
+  const { data: page, isLoading, isFetching } = useQuery({
     queryKey: ['transactions', activeFilters],
     queryFn: () => transactionsApi.search(activeFilters),
     placeholderData: keepPreviousData, // keep showing the old page while the new one loads, no flash-to-empty
   });
+  const txns = page?.content ?? [];
+
+  // Deleting a transaction can shrink the total below the page currently being viewed (e.g. the
+  // only row left on the last page) -- without this, that page would just render empty with no
+  // way back except manually clicking Previous. Keyed off the server's own totalPages/page in the
+  // response, not local `filters.page`, so this only fires once the backend has actually confirmed
+  // the current page no longer exists.
+  useEffect(() => {
+    if (page && page.totalPages > 0 && page.page > 0 && page.page >= page.totalPages) {
+      setFilters((f) => ({ ...f, page: page.totalPages - 1 }));
+    }
+  }, [page]);
 
   // Editing/deleting a transaction can shift its own category totals, its account's balance,
   // budget progress, goals funded from it, and any AI insight built from spend patterns — same
@@ -122,7 +145,7 @@ export default function Ledger() {
           <tbody>
             {isLoading ? (
               <tr><td colSpan={6} className="p-4 text-center text-gray-500">Loading…</td></tr>
-            ) : !txns || txns.length === 0 ? (
+            ) : txns.length === 0 ? (
               <tr><td colSpan={6} className="p-4 text-center text-gray-500 italic">No transactions match these filters.</td></tr>
             ) : (
               txns.map((t) => (
@@ -177,6 +200,37 @@ export default function Ledger() {
           </tbody>
         </table>
       </div>
+
+      {page && page.totalElements > 0 && (
+        <div className="flex items-center justify-between text-xs text-muted px-1">
+          <p>
+            Showing <span className="text-ink font-medium">{page.page * page.size + 1}</span>
+            {'–'}
+            <span className="text-ink font-medium">{Math.min((page.page + 1) * page.size, page.totalElements)}</span>
+            {' of '}
+            <span className="text-ink font-medium">{page.totalElements.toLocaleString('en-IN')}</span>
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setFilters((f) => ({ ...f, page: Math.max(0, (f.page ?? 0) - 1) }))}
+              disabled={page.page === 0 || isFetching}
+              className="w-7 h-7 rounded border border-border flex items-center justify-center text-muted hover:text-ink hover:bg-bg disabled:opacity-40"
+            >
+              <ChevronLeft size={14} />
+            </button>
+            <span className="text-ink">Page {page.page + 1} of {Math.max(1, page.totalPages)}</span>
+            <button
+              type="button"
+              onClick={() => setFilters((f) => ({ ...f, page: (f.page ?? 0) + 1 }))}
+              disabled={page.page + 1 >= page.totalPages || isFetching}
+              className="w-7 h-7 rounded border border-border flex items-center justify-center text-muted hover:text-ink hover:bg-bg disabled:opacity-40"
+            >
+              <ChevronRight size={14} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {editing && (
         <EditTransactionModal

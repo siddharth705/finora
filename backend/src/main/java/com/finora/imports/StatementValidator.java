@@ -38,10 +38,18 @@ public class StatementValidator {
         final List<BalanceObservation> balanceObservations = new ArrayList<>();
     }
 
-    /** One row's running-balance observation, kept alongside its transaction date so opening/
-     *  closing balance can be derived by actual date order rather than file position — correct
-     *  whether the statement lists transactions oldest-first or newest-first. */
-    private record BalanceObservation(LocalDate date, BigDecimal signedAmount, BigDecimal balance) {}
+    /** One row's running-balance observation, kept alongside its transaction date and signed
+     *  amount so the day's true first/last transaction can be reconstructed from the balance
+     *  chain itself (see {@link BalanceChainUtil}) rather than assumed from file position -- a
+     *  real bank export's line order within a single calendar day does NOT reliably tell you
+     *  which one happened first, and guessing wrong silently produces a wrong opening/closing
+     *  balance (confirmed against a real PNB ONE statement: a 7-transaction same-day cluster on
+     *  the statement's earliest date, where "first line for that date" was actually the day's
+     *  LAST transaction, not its first). */
+    private record BalanceObservation(LocalDate date, BigDecimal signedAmount,
+                                       BigDecimal balance) implements BalanceChainUtil.ChainLink {
+        @Override public BigDecimal balanceAfter() { return balance; }
+    }
 
     /**
      * Scans one row for account-level fields. These can show up on rows even when other columns
@@ -97,17 +105,15 @@ public class StatementValidator {
         BigDecimal openingBalance = null;
         BigDecimal closingBalance = null;
         if (!acc.balanceObservations.isEmpty()) {
-            BalanceObservation earliest = null;
-            BalanceObservation latest = null;
-            for (BalanceObservation obs : acc.balanceObservations) {
-                if (earliest == null || obs.date().isBefore(earliest.date())) earliest = obs;
-                // >= (not just >) so that among same-day ties, the LAST one in file order wins --
-                // paired with earliest's strict "<" above (first-in-file wins ties there), this
-                // is correct however the file orders same-day rows.
-                if (latest == null || !obs.date().isBefore(latest.date())) latest = obs;
-            }
-            openingBalance = earliest.balance().subtract(earliest.signedAmount());
-            closingBalance = latest.balance();
+            LocalDate minDate = acc.balanceObservations.stream().map(BalanceObservation::date).min(LocalDate::compareTo).orElseThrow();
+            LocalDate maxDate = acc.balanceObservations.stream().map(BalanceObservation::date).max(LocalDate::compareTo).orElseThrow();
+            List<BalanceObservation> minDateGroup = acc.balanceObservations.stream().filter(o -> o.date().equals(minDate)).toList();
+            List<BalanceObservation> maxDateGroup = acc.balanceObservations.stream().filter(o -> o.date().equals(maxDate)).toList();
+
+            BalanceObservation trueFirstOfDay = BalanceChainUtil.first(minDateGroup);
+            BalanceObservation trueLastOfDay = BalanceChainUtil.last(maxDateGroup);
+            openingBalance = trueFirstOfDay.balance().subtract(trueFirstOfDay.signedAmount());
+            closingBalance = trueLastOfDay.balance();
         }
 
         List<String> bankTextHints = collectBankTextHints(allRows, headerIdx);

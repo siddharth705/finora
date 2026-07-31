@@ -753,4 +753,30 @@ class TransactionServiceTest {
         assertThat(bankIdsCaptor.getValue()).isNotEmpty();
         assertThat(bankIdsCaptor.getValue()).doesNotContain("PNB", "SBI", "HDFC");
     }
+
+    /**
+     * Bug fix: search() used to call page.getContent() and hand back a bare List, discarding the
+     * totalElements/totalPages Spring Data's Page<Transaction> already computed as part of the
+     * same query -- leaving the frontend with no way to know whether a next page of results
+     * existed at all (see PagedResponse's own doc comment). Locks in that the real total now
+     * survives all the way out, not just the current page's own (smaller) content size.
+     */
+    @Test
+    void search_returnsTheRepositorysRealTotalElementsAndTotalPages_notJustThisPagesContentSize() {
+        List<Transaction> pageContent = List.of(ownedTransaction(UUID.randomUUID(), userId), ownedTransaction(UUID.randomUUID(), userId));
+        // 2 transactions on this page, but 45 total across the full result set at size 10 --
+        // exactly the distinction a bare `.size()` on the returned list could never make.
+        Page<Transaction> page = new PageImpl<>(pageContent, org.springframework.data.domain.PageRequest.of(0, 10), 45);
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(page);
+
+        var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null, 0, 10, null, null);
+        var result = transactionService.search(userId, filter);
+
+        assertThat(result.content()).hasSize(2);
+        assertThat(result.totalElements()).isEqualTo(45);
+        assertThat(result.totalPages()).isEqualTo(5);
+        assertThat(result.page()).isEqualTo(0);
+        assertThat(result.size()).isEqualTo(10);
+    }
 }

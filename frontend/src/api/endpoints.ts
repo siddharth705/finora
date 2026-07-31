@@ -83,6 +83,17 @@ export interface TransactionFilters {
   sortDir?: string;
 }
 
+// Mirrors the backend's com.finora.dto.PagedResponse<T> -- a real total, not just "however many
+// rows came back on this page," so the Ledger can show "Showing 1-10 of 4,213" and disable
+// Previous/Next correctly at either end instead of guessing from result count vs. page size.
+export interface PagedResponse<T> {
+  content: T[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+}
+
 // Full-edit payload for the Transactions page's Edit action. All fields optional/nullable —
 // only send what actually changed (see TransactionDto.UpdateRequest, which the backend applies
 // as "update this field if non-null"). Deliberately no accountId — see that DTO's doc comment.
@@ -99,7 +110,7 @@ export interface UpdateTransactionPayload {
 
 export const transactionsApi = {
   search: (filters: TransactionFilters) =>
-    api.get<Transaction[]>('/transactions', { params: filters }).then((r) => r.data),
+    api.get<PagedResponse<Transaction>>('/transactions', { params: filters }).then((r) => r.data),
   needsReview: () => api.get<Transaction[]>('/transactions/needs-review').then((r) => r.data),
   create: (body: unknown) => api.post<Transaction>('/transactions', body).then((r) => r.data),
   update: (id: string, body: UpdateTransactionPayload) =>

@@ -1,6 +1,6 @@
 package com.finora.controller;
 
-import com.finora.dto.AdminDtos.PagedResponse;
+import com.finora.dto.PagedResponse;
 import com.finora.dto.ApiResponse;
 import com.finora.dto.AuditLogDto;
 import com.finora.repository.AuditLogRepository;

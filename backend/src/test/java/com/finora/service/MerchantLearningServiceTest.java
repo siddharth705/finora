@@ -215,6 +215,28 @@ class MerchantLearningServiceTest {
     }
 
     /**
+     * Bug fix: undo()'s "nothing well-defined to revert" guard only checked for UNDONE/MERGED,
+     * not RESET -- even though a RESET has that exact same property (worse, actually: reset()
+     * deletes the entire distribution unconditionally, and always audits newCategoryId=null, so
+     * there's no single pair for undo() to find and no confirmation count to give back). Before
+     * the fix, this slipped past the guard and silently wrote a fresh, misleading UNDONE audit
+     * entry that reverted nothing at all.
+     */
+    @Test
+    void undo_afterAReset_throwsRatherThanSilentlyNoOpingWithAMisleadingUndoneEntry() {
+        service.confirm(userId, merchantId, shoppingCategoryId);
+        service.reset(userId, merchantId);
+
+        assertThatThrownBy(() -> service.undo(userId, merchantId))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("can't be undone");
+
+        // The failed attempt must not have written a spurious UNDONE entry on top of the RESET.
+        assertThat(auditHistory).hasSize(2); // LEARNED (from confirm), then RESET -- nothing more
+        assertThat(auditHistory.get(auditHistory.size() - 1).getAction()).isEqualTo(MerchantLearningAudit.Action.RESET);
+    }
+
+    /**
      * Regression test for a real cross-tenant data leak found during review:
      * MerchantLearningAuditRepository previously exposed findByMerchantIdOrderByCreatedAtDesc
      * with no userId scoping at all, so undo() for one user could read (and revert against)

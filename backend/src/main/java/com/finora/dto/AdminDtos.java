@@ -48,26 +48,6 @@ public class AdminDtos {
             long transactionCount
     ) {}
 
-    /**
-     * Generic paginated envelope for admin list endpoints. Not reused from anywhere in the
-     * existing API -- every current list endpoint (Ledger's transaction search included) returns
-     * a bare array and lets the frontend infer "more pages exist" heuristically from result count
-     * vs. page size. The admin Users directory needs a real total (for "Showing 1-20 of 4,213"
-     * and computing total page count up front), so this carries that explicitly instead.
-     */
-    public record PagedResponse<T>(
-            List<T> content,
-            int page,
-            int size,
-            long totalElements,
-            int totalPages
-    ) {
-        public static <T> PagedResponse<T> of(org.springframework.data.domain.Page<T> page) {
-            return new PagedResponse<>(page.getContent(), page.getNumber(), page.getSize(),
-                    page.getTotalElements(), page.getTotalPages());
-        }
-    }
-
     /** Aggregate, platform-wide (not per-user) counts for the admin Dashboard's stat tiles.
      *  Gated by PLATFORM_STATS_VIEW -- see V24__admin_platform_stats_permission.sql. */
     public record PlatformStatsDto(

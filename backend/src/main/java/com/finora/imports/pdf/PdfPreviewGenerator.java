@@ -25,12 +25,13 @@ import java.util.UUID;
  * Reuses {@link TransactionNormalizer} directly and unmodified -- it already operates on a
  * generic {@code Map<String,String>} row, with nothing CSV-specific baked in, so once
  * {@link PdfTableLocator} produces that same row shape, normalization is identical regardless of
- * source format. Does NOT reuse {@code StatementValidator} -- its balance-observation
+ * source format. Does NOT reuse {@code StatementValidator} itself (its balance-observation
  * accumulator is package-private with no accessors, and widening that just for this would be a
- * cross-package change to existing, already-hardened CSV code that this milestone's own
- * guardrails say to avoid. Opening/closing balance is instead derived locally, by the same
- * earliest/latest-by-date logic, small enough that duplicating it here is more honest than
- * reaching into another package's internals to avoid ten lines of arithmetic.
+ * cross-package change to existing, already-hardened CSV code) -- but DOES share
+ * {@link com.finora.imports.BalanceChainUtil} with it for the actual opening/closing-balance
+ * reconstruction, after that logic's own local copy here turned out to have the same file-order
+ * bug StatementValidator's copy did, undetected for exactly as long as the two copies existed
+ * independently. See that class's own doc comment for the full story.
  */
 @Component
 public class PdfPreviewGenerator {
@@ -63,7 +64,10 @@ public class PdfPreviewGenerator {
 
             BigDecimal balance = com.finora.imports.CsvParser.parseNumeric(
                     com.finora.imports.CsvParser.firstNonBlank(row, "balance", "running balance", "closing balance"));
-            if (balance != null) balancePoints.add(new BalancePoint(parsed.date(), balance));
+            if (balance != null) {
+                BigDecimal signedAmount = "INCOME".equals(parsed.type()) ? parsed.amount() : parsed.amount().negate();
+                balancePoints.add(new BalancePoint(parsed.date(), signedAmount, balance, parsed.description()));
+            }
         }
 
         int dupCount = (int) staged.stream().filter(StagedRow::likelyDuplicate).count();
@@ -71,7 +75,10 @@ public class PdfPreviewGenerator {
         return new StagingResponse(staged, staged.size(), dupCount, detected);
     }
 
-    private record BalancePoint(LocalDate date, BigDecimal balance) {}
+    private record BalancePoint(LocalDate date, BigDecimal signedAmount, BigDecimal balance,
+                                 String description) implements com.finora.imports.BalanceChainUtil.ChainLink {
+        @Override public BigDecimal balanceAfter() { return balance; }
+    }
 
     private DetectedAccountInfo buildDetectedAccountInfo(String filename, List<String> preTableLines,
                                                            List<StagedRow> staged, List<BalancePoint> balancePoints) {
@@ -85,19 +92,34 @@ public class PdfPreviewGenerator {
         BigDecimal openingBalance = null;
         BigDecimal closingBalance = null;
         if (!balancePoints.isEmpty()) {
-            BalancePoint earliest = balancePoints.get(0);
-            BalancePoint latest = balancePoints.get(0);
-            for (BalancePoint p : balancePoints) {
-                if (p.date().isBefore(earliest.date())) earliest = p;
-                if (!p.date().isBefore(latest.date())) latest = p;
-            }
-            // Opening balance = the earliest row's own reported balance -- unlike CSV's
-            // StatementValidator (which subtracts that row's signed transaction amount to get
-            // the balance BEFORE it), a PDF statement conventionally includes an explicit
-            // "OPENING BALANCE" row with no transaction amount of its own -- see the golden
-            // fixture -- so the earliest reported balance already IS the opening balance.
-            openingBalance = earliest.balance();
-            closingBalance = latest.balance();
+            LocalDate minDate = balancePoints.stream().map(BalancePoint::date).min(LocalDate::compareTo).orElseThrow();
+            LocalDate maxDate = balancePoints.stream().map(BalancePoint::date).max(LocalDate::compareTo).orElseThrow();
+            List<BalancePoint> minDateGroup = balancePoints.stream().filter(p -> p.date().equals(minDate)).toList();
+            List<BalancePoint> maxDateGroup = balancePoints.stream().filter(p -> p.date().equals(maxDate)).toList();
+
+            // Bug fix: this used to just take whichever balance point appeared first/last in
+            // table.rows() for the statement's boundary dates -- exactly the same file-position
+            // assumption StatementValidator's CSV path had, and just as wrong: verified against a
+            // real PNB ONE PDF statement (no CSV involved) with a multi-transaction same-day
+            // cluster on its earliest date, listed newest-first. Delegates to the same
+            // BalanceChainUtil the CSV path now uses, specifically so this doesn't drift out of
+            // sync with that fix again the way it silently did the first time.
+            BalancePoint trueFirstOfDay = com.finora.imports.BalanceChainUtil.first(minDateGroup);
+            BalancePoint trueLastOfDay = com.finora.imports.BalanceChainUtil.last(maxDateGroup);
+
+            // Bug fix, compounding the one above: this unconditionally used the earliest point's
+            // own reported balance as-is, on the assumption every PDF statement carries an
+            // explicit "OPENING BALANCE" row (true for the golden fixture, false for a real PNB
+            // ONE export, which has no such row at all -- just ordinary transactions against a
+            // running balance column). Only skip the signed-amount subtraction when the row
+            // actually IS that kind of explicit label row; otherwise back out its own transaction
+            // amount to recover the balance that existed BEFORE it, same as CSV's StatementValidator.
+            boolean isExplicitOpeningRow = trueFirstOfDay.description() != null
+                    && trueFirstOfDay.description().toLowerCase(java.util.Locale.ROOT).contains("opening balance");
+            openingBalance = isExplicitOpeningRow
+                    ? trueFirstOfDay.balance()
+                    : trueFirstOfDay.balance().subtract(trueFirstOfDay.signedAmount());
+            closingBalance = trueLastOfDay.balance();
         }
 
         List<String> bankTextHints = new ArrayList<>(preTableLines);

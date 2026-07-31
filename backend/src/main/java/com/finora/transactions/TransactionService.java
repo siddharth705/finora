@@ -1,5 +1,6 @@
 package com.finora.transactions;
 
+import com.finora.dto.PagedResponse;
 import com.finora.entity.Account;
 import com.finora.entity.Category;
 import com.finora.entity.Transaction;
@@ -61,7 +62,12 @@ public class TransactionService {
     private static final String NO_BANK_MATCH_SENTINEL = "__NO_BANK_MATCH__";
 
     @Transactional(readOnly = true)
-    public List<TransactionDto> search(UUID userId, TransactionDto.FilterRequest f) {
+    // Bug fix: the repository call below already returns a Spring Data Page<Transaction>, which
+    // computes totalElements/totalPages as part of the same query -- this used to throw that
+    // metadata away and hand back a bare List, leaving the frontend with no way to know whether a
+    // next page existed (see PagedResponse's own doc comment; the admin Users directory hit this
+    // exact gap first and got a real fix, this endpoint didn't). Now returns the same envelope.
+    public PagedResponse<TransactionDto> search(UUID userId, TransactionDto.FilterRequest f) {
         Sort sort = Sort.by(Sort.Direction.fromString(f.sortDir() == null ? "DESC" : f.sortDir()),
                 f.sortField() == null ? "txnDate" : mapSortField(f.sortField()));
         // Bank-aware search (PRD's "Improve Search"): a keyword like "Punjab National" should
@@ -80,9 +86,7 @@ public class TransactionService {
                 PageRequest.of(f.page(), f.size() > 0 ? f.size() : 20, sort)
         );
         Map<UUID, String> namesById = categoryNamesById(userId);
-        return page.getContent().stream()
-                .map(t -> TransactionDto.from(t, namesById.getOrDefault(t.getCategoryId(), "Uncategorized")))
-                .toList();
+        return PagedResponse.of(page.map(t -> TransactionDto.from(t, namesById.getOrDefault(t.getCategoryId(), "Uncategorized"))));
     }
 
     private Map<UUID, String> categoryNamesById(UUID userId) {

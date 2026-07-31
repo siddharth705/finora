@@ -1,7 +1,7 @@
 package com.finora.service;
 
 import com.finora.dto.AdminDtos.AdminUpdateUserRequest;
-import com.finora.dto.AdminDtos.PagedResponse;
+import com.finora.dto.PagedResponse;
 import com.finora.dto.AdminDtos.UserDetailDto;
 import com.finora.dto.AdminDtos.UserSummaryDto;
 import com.finora.dto.AuthDtos.RegisterRequest;

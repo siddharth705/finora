@@ -106,7 +106,7 @@ export default function Dashboard() {
   const loading = summaryQ.isLoading || accountsQ.isLoading || recentTxnsQ.isLoading || goalsQ.isLoading;
   const summary = summaryQ.data;
   const accounts = (accountsQ.data ?? []).filter((acc) => acc.accountType !== 'INVESTMENT').slice(0, 4);
-  const recentTxns = recentTxnsQ.data ?? [];
+  const recentTxns = recentTxnsQ.data?.content ?? [];
   const goals = (goalsQ.data ?? []).slice(0, 2);
   const budgets = (budgetsQ.data ?? []).slice(0, 3);
   const sentences = insightsQ.data?.sentences ?? [];

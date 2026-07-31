@@ -1,6 +1,7 @@
 package com.finora.transactions;
 
 import com.finora.dto.ApiResponse;
+import com.finora.dto.PagedResponse;
 import com.finora.security.CurrentUser;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -25,7 +26,7 @@ public class TransactionController {
 
     /** Backs the Ledger page's filter bar — every query param is optional. */
     @GetMapping
-    public ApiResponse<List<TransactionDto>> search(
+    public ApiResponse<PagedResponse<TransactionDto>> search(
             @RequestParam(required = false) UUID accountId,
             @RequestParam(required = false) UUID categoryId,
             @RequestParam(required = false) String type,

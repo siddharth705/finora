@@ -139,10 +139,18 @@ public class MerchantLearningService {
         MerchantLearningAudit mostRecent = history.stream().findFirst()
                 .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, "No learning history to undo for this merchant."));
 
+        // Bug fix: this used to only reject UNDONE/MERGED, but a RESET entry has the exact same
+        // "nothing well-defined to revert" property -- worse, actually, since reset() deletes the
+        // merchant's ENTIRE distribution unconditionally (not one pair), and always writes
+        // newCategoryId=null (see reset()). Before this fix, calling undo() right after a reset()
+        // slipped past this guard, then looked up a pair matching categoryId=null (never found
+        // one), silently changed nothing, and still wrote a fresh UNDONE audit entry -- misleading
+        // the user into thinking their reset had been reverted when nothing was.
         if (mostRecent.getAction() == MerchantLearningAudit.Action.UNDONE
-                || mostRecent.getAction() == MerchantLearningAudit.Action.MERGED) {
+                || mostRecent.getAction() == MerchantLearningAudit.Action.MERGED
+                || mostRecent.getAction() == MerchantLearningAudit.Action.RESET) {
             throw new ApiException(HttpStatus.BAD_REQUEST,
-                    "The most recent action for this merchant can't be undone (it was itself an undo or a merge).");
+                    "The most recent action for this merchant can't be undone (it was itself an undo, a merge, or a reset).");
         }
 
         UUID categoryToRevert = mostRecent.getNewCategoryId();
