@@ -85,6 +85,6 @@ class CapabilityActivationPreviewGeneratorTest {
         assertThat(metadata.parser()).isEqualTo("PreviewGenerator");
         assertThat(metadata.tables()).isEqualTo(1);
         assertThat(metadata.headers()).containsExactly("Date", "Description", "Amount", "Type");
-        assertThat(result.documentContext().buildFingerprint()).startsWith("FP-");
+        assertThat(result.documentContext().buildFingerprint()).matches("FP-1-[0-9A-F]{8}");
     }
 }

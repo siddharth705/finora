@@ -84,12 +84,41 @@ public class DocumentContext {
                 List.copyOf(headers), unknownHeaders);
     }
 
+    // The fingerprint is a deterministic LOOKUP KEY, not a permanent identity -- "FP-<version>-
+    // <hash>" deliberately encodes which SPECIFICATION produced it (not just which hash function --
+    // a future version may change the canonical inputs, the hash algorithm, or both). Bump this
+    // constant, never silently change what buildFingerprint() computes under the same version
+    // number -- without that discipline, an old and a new fingerprint for the SAME real layout
+    // would look identical in format but never compare equal, and there'd be no way to tell which
+    // rows in layout_fingerprint need re-deriving after a spec change. This is the seam a future
+    // LayoutProfile (a canonical record mapping one display name to one or more fingerprint
+    // versions) would sit on top of -- not built yet, no evidence it's needed (see "Evidence
+    // Before Capability"), but the version prefix is what makes that mapping possible later
+    // without having to migrate every already-stored fingerprint.
+    //
+    // Version 1 spec -- what changing this number means signing up to re-derive:
+    //   Inputs:  sourceFormat ("PDF"/"CSV") + header COUNT + the SET of normalized header names
+    //            (CsvParser.normalizeHeaderCell'd, deduplicated, sorted alphabetically).
+    //   Excludes: header/column ORDER, x-position/spacing, page count, table count, parser name,
+    //             and anything about the data rows themselves -- none of it feeds the hash. Two
+    //             documents with the same header set in a different order, or the same headers at
+    //             different x-coordinates, produce the SAME v1 fingerprint on purpose (see
+    //             buildFingerprint()'s own doc comment for why order-independence is intentional).
+    //   Hash:    SHA-256 of "{sourceFormat}|{headerCount}|{sortedNormalizedHeaders joined by ,}",
+    //            first 8 hex characters, uppercased.
+    // A v2 that incorporates column x-positions/spacing, or narrows/widens what counts as "the same
+    // layout" in any other way, is a new spec -- increment here, document the new spec above this
+    // line (don't overwrite what v1 meant), and leave already-stored "FP-1-..." values as-is.
+    private static final int LAYOUT_FINGERPRINT_VERSION = 1;
+
     /** Deterministic layout ID: the same sourceFormat + column count + normalized header set
-     *  always hashes to the same "FP-XXXXXXXX" string, so "have we seen this layout before" is an
-     *  equality check against this string later, not a JSON diff against the full metadata. Header
-     *  order doesn't affect the fingerprint (a sorted set is hashed, not the raw list) since the
-     *  same logical layout can have header cells extracted in a slightly different order between
-     *  runs (PDFBox text-run ordering) without actually being a different layout. */
+     *  always hashes to the same "FP-{@link #LAYOUT_FINGERPRINT_VERSION}-XXXXXXXX" string, so
+     *  "have we seen this layout before" is an equality check against this string later, not a
+     *  JSON diff against the full metadata. Header order doesn't affect the fingerprint (a sorted
+     *  set is hashed, not the raw list) since the same logical layout can have header cells
+     *  extracted in a slightly different order between runs (PDFBox text-run ordering) without
+     *  actually being a different layout -- see {@link #LAYOUT_FINGERPRINT_VERSION}'s own doc
+     *  comment for the exact, versioned spec of what feeds this hash. */
     public String buildFingerprint() {
         Set<String> normalizedHeaders = new LinkedHashSet<>();
         for (String h : headers) normalizedHeaders.add(CsvParser.normalizeHeaderCell(h));
@@ -102,7 +131,7 @@ public class DocumentContext {
             byte[] hash = digest.digest(canonical.getBytes(StandardCharsets.UTF_8));
             StringBuilder hex = new StringBuilder();
             for (byte b : hash) hex.append(String.format(Locale.ROOT, "%02x", b));
-            return "FP-" + hex.substring(0, 8).toUpperCase(Locale.ROOT);
+            return "FP-" + LAYOUT_FINGERPRINT_VERSION + "-" + hex.substring(0, 8).toUpperCase(Locale.ROOT);
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 unavailable", e);
         }

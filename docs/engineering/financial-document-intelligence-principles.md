@@ -450,7 +450,8 @@ does Finora support."
 pipelines and records three things per parse run, deliberately facts-only per "Build data before
 dashboards" below: **`FinancialDocumentMetadata`** (structural facts — page/table/column counts,
 the header list, and which headers no capability recognized), a deterministic **`LayoutFingerprint`**
-(a short hashed ID — e.g. `FP-A3F9C1` — so "have we seen this exact layout before" is an equality
+(a short hashed ID — e.g. `FP-1-A3F9C1E2`, where `1` is the fingerprint algorithm version, not
+part of the hash itself — so "have we seen this exact layout before" is an equality
 check against `statement_imports.layout_fingerprint`/`import_sessions.layout_fingerprint`, not a
 JSON diff), and **`CapabilityActivation`** events (`{capability, status}` — which capabilities
 actually fired on a given document, not just which ones exist in the registry below). This is

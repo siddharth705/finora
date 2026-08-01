@@ -71,7 +71,18 @@ class DocumentContextTest {
         second.recordHeaders(List.of("Date", "Description", "Amount", "Balance"));
 
         assertThat(first.buildFingerprint()).isEqualTo(second.buildFingerprint());
-        assertThat(first.buildFingerprint()).startsWith("FP-");
+    }
+
+    @Test
+    void buildFingerprint_matchesTheVersionedFormat_FP_dash_version_dash_8HexChars() {
+        DocumentContext ctx = new DocumentContext("PDF", "PdfPreviewGenerator");
+        ctx.recordHeaders(List.of("Date", "Amount"));
+
+        // "FP-1-A3F9C1E2": the "1" is the LAYOUT_FINGERPRINT_VERSION (the spec that produced this
+        // value, not just the hash function) -- asserted as a literal "1" deliberately, not a
+        // wildcard digit, since a real bump of that constant should make this test fail and force
+        // a conscious update, not silently keep passing against whatever version happens to be set.
+        assertThat(ctx.buildFingerprint()).matches("FP-1-[0-9A-F]{8}");
     }
 
     @Test

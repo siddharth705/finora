@@ -129,7 +129,7 @@ class CapabilityActivationPdfPreviewGeneratorTest {
         assertThat(metadata.parser()).isEqualTo("PdfPreviewGenerator");
         assertThat(metadata.pages()).isEqualTo(2);
         assertThat(metadata.tables()).isEqualTo(1);
-        assertThat(result.documentContext().buildFingerprint()).startsWith("FP-");
+        assertThat(result.documentContext().buildFingerprint()).matches("FP-1-[0-9A-F]{8}");
     }
 
     @Test
