@@ -113,12 +113,12 @@ class ImportServiceSessionTest {
 
     private ConfirmedRow confirmedRow() {
         return new ConfirmedRow(LocalDate.of(2026, 7, 1), "Coffee Shop", new BigDecimal("150.00"),
-                "EXPENSE", "Food & Dining", true, "rule", null, false);
+                "EXPENSE", "Food & Dining", true, "rule", null, false, null, null);
     }
 
     private StagedRow stagedRow() {
         return new StagedRow(LocalDate.of(2026, 7, 1), "Coffee Shop", new BigDecimal("150.00"),
-                "EXPENSE", "Food & Dining", "rule", null, false);
+                "EXPENSE", "Food & Dining", "rule", null, false, null, null);
     }
 
     @Test
@@ -174,5 +174,48 @@ class ImportServiceSessionTest {
         // what actually flips the session to CONFIRMED, atomically, as the first thing this
         // method does -- see ImportSessionRepository.claimForConfirmation's own doc comment.
         verify(importSessionService).claimForConfirmation(userId, sessionId);
+    }
+
+    @Test
+    void confirmSession_copiesTheSessionsLayoutMetadataFingerprintAndCapabilities_ontoTheStatementImport() throws Exception {
+        // Phase 1 "capture facts" (docs/engineering/financial-document-intelligence-principles.md):
+        // confirm() has no access to the original DocumentContext (only the reviewed ConfirmedRow
+        // list) -- these three fields must be copied verbatim from the session, not recomputed.
+        UUID sessionId = UUID.randomUUID();
+        ImportSession session = sessionWith(sessionId, "date,description,amount\n".getBytes(), ImportSession.STATUS_STAGED);
+        session.setLayoutMetadataJson("{\"sourceFormat\":\"CSV\"}");
+        session.setLayoutFingerprint("FP-ABCD1234");
+        session.setActivatedCapabilitiesJson("[{\"capability\":\"DR_CR_SUFFIX\",\"status\":\"SUCCESS\"}]");
+        when(importSessionService.claimForConfirmation(userId, sessionId)).thenReturn(session);
+        when(importSessionService.readStagedRows(session)).thenReturn(List.of(stagedRow()));
+
+        var request = new ConfirmRequest(sessionId, List.of(confirmedRow()), accountId, null, null, null);
+        importService.confirmSession(userId, request);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(com.finora.entity.StatementImport.class);
+        verify(getStatementImportRepository()).save(captor.capture());
+        assertThat(captor.getValue().getLayoutMetadataJson()).isEqualTo("{\"sourceFormat\":\"CSV\"}");
+        assertThat(captor.getValue().getLayoutFingerprint()).isEqualTo("FP-ABCD1234");
+        assertThat(captor.getValue().getActivatedCapabilitiesJson())
+                .isEqualTo("[{\"capability\":\"DR_CR_SUFFIX\",\"status\":\"SUCCESS\"}]");
+    }
+
+    @Test
+    void confirm_withNoSession_leavesLayoutFieldsNull() {
+        // The byte-array confirm() overload (used by StatementImportService.confirmReimport(),
+        // which replays already-stored bytes rather than a fresh staged session) has no
+        // DocumentContext to copy from -- best-effort, same as every other nullable field here.
+        var request = new ConfirmRequest(null, List.of(confirmedRow()), accountId, null, null, null);
+        importService.confirm(userId, "statement.csv", "date,description,amount\n".getBytes(), request);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(com.finora.entity.StatementImport.class);
+        verify(getStatementImportRepository()).save(captor.capture());
+        assertThat(captor.getValue().getLayoutMetadataJson()).isNull();
+        assertThat(captor.getValue().getLayoutFingerprint()).isNull();
+        assertThat(captor.getValue().getActivatedCapabilitiesJson()).isNull();
+    }
+
+    private StatementImportRepository getStatementImportRepository() {
+        return (StatementImportRepository) ReflectionTestUtils.getField(importService, "statementImportRepository");
     }
 }

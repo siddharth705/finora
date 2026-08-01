@@ -125,6 +125,18 @@ public class Transaction extends BaseEntity {
     @Column(name = "refund_of_transaction_id")
     private UUID refundOfTransactionId;
 
+    // Phase 1 "capture facts" (docs/engineering/financial-document-intelligence-principles.md):
+    // best-effort, nullable, never guessed -- see StagedRow.referenceNumber/balanceAfter for the
+    // exact staging-time extraction these two are copied from at confirm() time. referenceNumber
+    // covers reference number, cheque number, and instrument ID alike -- every real statement
+    // seen so far uses exactly one of those labels for what is structurally the same column, not
+    // two distinct ones on the same file.
+    @Column(name = "reference_number")
+    private String referenceNumber;
+
+    @Column(name = "balance_after")
+    private BigDecimal balanceAfter;
+
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
     public UUID getAccountId() { return accountId; }
@@ -173,4 +185,8 @@ public class Transaction extends BaseEntity {
     public void setDecisionRuleId(UUID decisionRuleId) { this.decisionRuleId = decisionRuleId; }
     public UUID getRefundOfTransactionId() { return refundOfTransactionId; }
     public void setRefundOfTransactionId(UUID refundOfTransactionId) { this.refundOfTransactionId = refundOfTransactionId; }
+    public String getReferenceNumber() { return referenceNumber; }
+    public void setReferenceNumber(String referenceNumber) { this.referenceNumber = referenceNumber; }
+    public BigDecimal getBalanceAfter() { return balanceAfter; }
+    public void setBalanceAfter(BigDecimal balanceAfter) { this.balanceAfter = balanceAfter; }
 }

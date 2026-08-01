@@ -45,6 +45,21 @@ public class StatementImport extends BaseEntity {
     @Column(name = "source_section_index")
     private Integer sourceSectionIndex;
 
+    // Phase 1 "capture facts" (docs/engineering/financial-document-intelligence-principles.md):
+    // copied verbatim from the ImportSession this confirm came from -- see
+    // ImportService.confirm()'s trailing parameters. Null whenever this row was confirmed through
+    // a path with no session available (e.g. StatementImportService.confirmReimport(), which
+    // replays already-stored bytes rather than a fresh staged session) -- best-effort, same as
+    // every other nullable field on this pipeline, never recomputed after the fact.
+    @Column(name = "layout_metadata_json", columnDefinition = "TEXT")
+    private String layoutMetadataJson;
+
+    @Column(name = "layout_fingerprint", length = 20)
+    private String layoutFingerprint;
+
+    @Column(name = "activated_capabilities_json", columnDefinition = "TEXT")
+    private String activatedCapabilitiesJson;
+
     // Raw CSV bytes — kept so "Re-import Statement" can replay the exact file and "Download
     // Original File" has something to serve. Lazy-fetched: every list/history view only needs
     // the metadata columns, not the file bytes, so this shouldn't ride along on those queries.
@@ -90,6 +105,12 @@ public class StatementImport extends BaseEntity {
     public void setSourceFormat(String sourceFormat) { this.sourceFormat = sourceFormat; }
     public Integer getSourceSectionIndex() { return sourceSectionIndex; }
     public void setSourceSectionIndex(Integer sourceSectionIndex) { this.sourceSectionIndex = sourceSectionIndex; }
+    public String getLayoutMetadataJson() { return layoutMetadataJson; }
+    public void setLayoutMetadataJson(String layoutMetadataJson) { this.layoutMetadataJson = layoutMetadataJson; }
+    public String getLayoutFingerprint() { return layoutFingerprint; }
+    public void setLayoutFingerprint(String layoutFingerprint) { this.layoutFingerprint = layoutFingerprint; }
+    public String getActivatedCapabilitiesJson() { return activatedCapabilitiesJson; }
+    public void setActivatedCapabilitiesJson(String activatedCapabilitiesJson) { this.activatedCapabilitiesJson = activatedCapabilitiesJson; }
     public byte[] getFileContent() { return fileContent; }
     public void setFileContent(byte[] fileContent) { this.fileContent = fileContent; }
     public LocalDate getStatementPeriodStart() { return statementPeriodStart; }

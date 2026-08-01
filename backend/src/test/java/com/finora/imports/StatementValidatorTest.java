@@ -26,7 +26,7 @@ class StatementValidatorTest {
     private final StatementValidator validator = new StatementValidator();
 
     private StagedRow row(String date, BigDecimal amount, String type) {
-        return new StagedRow(LocalDate.parse(date), "txn", amount, type, "Other", "default", null, false);
+        return new StagedRow(LocalDate.parse(date), "txn", amount, type, "Other", "default", null, false, null, null);
     }
 
     private Map<String, String> balanceRow(String balance) {

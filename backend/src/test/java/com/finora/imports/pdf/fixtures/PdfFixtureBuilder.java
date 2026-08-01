@@ -184,6 +184,34 @@ public final class PdfFixtureBuilder {
     }
 
     /**
+     * A savings-account statement layout with both a running balance AND a populated reference
+     * number column on every row -- Phase 1 "capture facts"
+     * (docs/engineering/financial-document-intelligence-principles.md), modeled on a real Canara
+     * Bank statement's "Reference / Cheque No." column, but not specific to it. Distinct from
+     * {@link #buildReverseChronologicalRunningBalanceSample} on purpose: that fixture's
+     * Instrument ID column is always blank (matching the real PNB file it's modeled on), so it
+     * can't exercise referenceNumber capture at all.
+     */
+    public static byte[] buildReferenceNumberAndBalanceSample() throws IOException {
+        // Wider gap between the Reference and Amount columns than other fixtures use -- a
+        // 14-digit reference value (e.g. "61821112386186") at FONT_SIZE runs wide enough to reach
+        // a too-narrow next column's anchor and get merged into it by PdfTableLocator's
+        // nearest-x bucketing, which every other fixture's shorter/blank Instrument ID values
+        // never exercised.
+        float[] col = {LEFT_MARGIN, 115f, 320f, 460f, 530f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("CANARA BANK")
+                .blankLine()
+                .row(col, "Date", "Particulars", "Reference No", "Amount", "Balance")
+                .row(col, "01/07/2026", "UPI/DR/103564825690/NSE ZERO", "103564825690", "-1000.00", "114238.60")
+                .row(col, "01/07/2026", "MOB-IMPS/CR/MANAS CHAT", "61821112386186", "1000.00", "115238.60")
+                .row(col, "02/07/2026", "UPI/DR/618211147923/RAJA", "618211147923", "-150.00", "115088.60");
+
+        return render(List.of(page));
+    }
+
+    /**
      * A multi-section "composite statement" layout: one PDF bundling a savings-account section
      * and a credit-card section, each introduced by its own account-type marker line and each
      * with its own, differently-shaped header/table -- the multi-section case

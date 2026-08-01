@@ -232,6 +232,8 @@ export default function Import() {
         // staged ruleId is echoed back here, same as categorySource already was.
         ruleId: r.ruleId,
         likelyDuplicate: r.likelyDuplicate,
+        referenceNumber: r.referenceNumber,
+        balanceAfter: r.balanceAfter,
       }));
 
       const existingAccountId = accountChoice === 'existing' ? selectedAccountId : null;
@@ -301,6 +303,8 @@ export default function Import() {
           categorySource: r.categorySource,
           ruleId: r.ruleId,
           likelyDuplicate: r.likelyDuplicate,
+          referenceNumber: r.referenceNumber,
+          balanceAfter: r.balanceAfter,
         }));
         const existingAccountId = s.accountChoice === 'existing' ? s.selectedAccountId : null;
         const newAccount =

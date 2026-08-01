@@ -110,8 +110,10 @@ public class ImportService {
     public StagingSessionResponse parseAndStageWithSession(UUID userId, MultipartFile file) throws IOException {
         byte[] fileContent = file.getBytes();
         String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "statement.csv";
-        StagingResponse staged = parseAndStage(userId, fileName, new java.io.ByteArrayInputStream(fileContent));
-        var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount());
+        var result = previewGenerator.generateWithContext(userId, fileName, new java.io.ByteArrayInputStream(fileContent));
+        StagingResponse staged = result.response();
+        var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount(),
+                result.documentContext());
         return new StagingSessionResponse(session.getId(), staged);
     }
 
@@ -128,7 +130,8 @@ public class ImportService {
     public PdfStagingSessionResponse parseAndStagePdfWithSession(UUID userId, MultipartFile file) throws IOException {
         byte[] fileContent = file.getBytes();
         String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "statement.pdf";
-        List<StagedAccountSection> sections = pdfPreviewGenerator.generateSections(userId, fileName, fileContent);
+        var result = pdfPreviewGenerator.generateSectionsWithContext(userId, fileName, fileContent);
+        List<StagedAccountSection> sections = result.sections();
 
         if (sections.size() <= 1) {
             // The common case (and the only case a CSV upload can ever produce): behaves exactly
@@ -136,11 +139,12 @@ public class ImportService {
             StagingResponse staged = sections.isEmpty()
                     ? new StagingResponse(List.of(), 0, 0, null, List.of())
                     : toStagingResponse(sections.get(0));
-            var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount());
+            var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount(),
+                    result.documentContext());
             return new PdfStagingSessionResponse(session.getId(), false, staged, null);
         }
 
-        var session = importSessionService.createMultiSection(userId, fileName, fileContent, sections);
+        var session = importSessionService.createMultiSection(userId, fileName, fileContent, sections, result.documentContext());
         return new PdfStagingSessionResponse(session.getId(), true, null, sections);
     }
 
@@ -239,7 +243,8 @@ public class ImportService {
                     null, // this section's ConfirmRequest doesn't carry its own sessionId -- the session is claimed once, above, for the whole multi-account request
                     sectionConfirm.rows(), sectionConfirm.existingAccountId(), sectionConfirm.newAccount(),
                     sectionConfirm.statementOpeningBalance(), sectionConfirm.statementClosingBalance());
-            responses.add(confirm(userId, session.getFileName(), session.getFileContent(), perAccountRequest, i));
+            responses.add(confirm(userId, session.getFileName(), session.getFileContent(), perAccountRequest, i,
+                    session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson()));
         }
         return new MultiAccountConfirmResponse(responses);
     }
@@ -276,18 +281,22 @@ public class ImportService {
                     "The reviewed rows don't match what was staged for this import session -- try staging again.");
         }
 
-        return confirm(userId, session.getFileName(), session.getFileContent(), request);
+        return confirm(userId, session.getFileName(), session.getFileContent(), request, null,
+                session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson());
     }
 
     /**
      * Filename + raw bytes rather than MultipartFile so StatementImportService.confirmReimport()
      * can drive this from a stored StatementImport's file_content column without needing a fake
      * MultipartFile implementation just to satisfy the type — same reasoning as the
-     * parseAndStage(userId, filename, InputStream) split above.
+     * parseAndStage(userId, filename, InputStream) split above. No ImportSession is available on
+     * this path (confirmReimport() replays already-stored bytes, not a fresh staged session), so
+     * the layout metadata/fingerprint/capabilities trio is left null here -- same "best-effort,
+     * never recomputed after the fact" discipline as every other nullable field on this pipeline.
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request) {
-        return confirm(userId, fileName, fileContent, request, null);
+        return confirm(userId, fileName, fileContent, request, null, null, null, null);
     }
 
     /**
@@ -299,6 +308,21 @@ public class ImportService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request, Integer sourceSectionIndex) {
+        return confirm(userId, fileName, fileContent, request, sourceSectionIndex, null, null, null);
+    }
+
+    /**
+     * Phase 1 "capture facts" (docs/engineering/financial-document-intelligence-principles.md):
+     * layoutMetadataJson/layoutFingerprint/activatedCapabilitiesJson are copied verbatim from the
+     * ImportSession this confirm came from (confirmSession()/confirmMultiSection() both read
+     * theirs before calling down to this method) -- never recomputed here, since this method has
+     * no access to the original StagedRow/DetectedAccountInfo/DocumentContext, only the reviewed
+     * ConfirmedRow list. All three nullable -- a caller with no session (see the byte-array
+     * overload above) simply leaves them unset.
+     */
+    @Transactional
+    public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request, Integer sourceSectionIndex,
+                                    String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson) {
         long startedAtMs = System.currentTimeMillis();
         List<String> accountsCreated = new ArrayList<>();
 
@@ -337,6 +361,8 @@ public class ImportService {
             t.setAmount(row.amount());
             t.setTxnType(Transaction.Type.valueOf(row.type()));
             t.setSource(Transaction.Source.CSV_IMPORT);
+            t.setReferenceNumber(row.referenceNumber());
+            t.setBalanceAfter(row.balanceAfter());
             t.setNeedsCategoryReview(isUnresolvedGuess);
             // See CategorizationService.decisionSourceFor -- categorySource/ruleId are carried
             // through from staging (StagedRow -> ConfirmedRow) unchanged by review, same as
@@ -381,6 +407,9 @@ public class ImportService {
         // StatementImportService.reimport()'s own comment for why that was a real fragility).
         statementImport.setSourceFormat(fileName != null && fileName.toLowerCase().endsWith(".pdf") ? "PDF" : "CSV");
         statementImport.setSourceSectionIndex(sourceSectionIndex);
+        statementImport.setLayoutMetadataJson(layoutMetadataJson);
+        statementImport.setLayoutFingerprint(layoutFingerprint);
+        statementImport.setActivatedCapabilitiesJson(activatedCapabilitiesJson);
         statementImport.setFileContent(fileContent);
         statementImport.setStatementPeriodStart(minDate);
         statementImport.setStatementPeriodEnd(maxDate);

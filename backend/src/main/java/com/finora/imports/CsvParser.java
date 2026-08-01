@@ -196,6 +196,23 @@ public class CsvParser {
         return null;
     }
 
+    /** DR_CR_SUFFIX capability signal (see the Capability Registry in
+     *  docs/engineering/financial-document-intelligence-principles.md) -- true when {@code raw}
+     *  carries a trailing Dr/Cr marker, bare or parenthesized, in either case. Shares
+     *  TRAILING_DR/TRAILING_CR with {@link #detectSignFromRawAmount}/{@link #parseNumeric} so the
+     *  three can never drift out of sync on what counts as "has this marker." */
+    public static boolean hasTrailingDrCrMarker(String raw) {
+        if (raw == null) return false;
+        String s = raw.trim();
+        return !s.isEmpty() && (TRAILING_DR.matcher(s).find() || TRAILING_CR.matcher(s).find());
+    }
+
+    /** DATE_TIME_COLUMN capability signal -- true when {@code raw} carries a trailing time-of-day
+     *  component {@link #parseDate} strips before parsing (see TRAILING_TIME's own doc comment). */
+    public static boolean hasDateTimeComponent(String raw) {
+        return raw != null && TRAILING_TIME.matcher(raw).find();
+    }
+
     /**
      * Cleans a raw numeric cell into a BigDecimal, or null if it can't be parsed. Handles the
      * formatting quirks real bank exports throw at us: thousands separators, ₹/Rs/INR prefixes,

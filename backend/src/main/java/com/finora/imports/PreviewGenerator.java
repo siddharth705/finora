@@ -35,6 +35,21 @@ public class PreviewGenerator {
     }
 
     public StagingResponse generate(UUID userId, String filename, InputStream contentStream) throws IOException {
+        return generateWithContext(userId, filename, contentStream).response();
+    }
+
+    /** One {@link DocumentContext}'s worth of recorded structural facts and capability
+     *  activations for this CSV file (Phase 1 "capture facts" -- see
+     *  docs/engineering/financial-document-intelligence-principles.md), alongside the same
+     *  {@link StagingResponse} {@link #generate} has always returned. */
+    public record CsvGenerationResult(StagingResponse response, DocumentContext documentContext) {}
+
+    /** Same as {@link #generate}, but also returns the {@link DocumentContext} built while
+     *  parsing -- the entry point {@code ImportService} uses when it needs to persist that
+     *  context (a fresh CSV upload); {@link #generate} stays the plain, context-discarding
+     *  wrapper every existing caller already depends on. */
+    public CsvGenerationResult generateWithContext(UUID userId, String filename, InputStream contentStream) throws IOException {
+        DocumentContext ctx = new DocumentContext("CSV", "PreviewGenerator");
         List<StagedRow> staged = new ArrayList<>();
         // "Never lose information" (see the engineering principles doc) -- a row that fails to
         // normalize is reported with WHY, not just silently absent from the row count. A blank
@@ -60,9 +75,11 @@ public class PreviewGenerator {
                 unparseable.add(new UnparseableRow(raw, "No column header row was recognized anywhere in this file"));
             }
             DetectedAccountInfo empty = statementValidator.buildDetectedAccountInfo(filename, allRows, -1, staged, signals);
-            return new StagingResponse(staged, 0, 0, empty, unparseable);
+            return new CsvGenerationResult(new StagingResponse(staged, 0, 0, empty, unparseable), ctx);
         }
         String[] headerRow = allRows.get(headerIdx);
+        ctx.recordTables(1);
+        ctx.recordHeaders(List.of(headerRow));
 
         for (int i = headerIdx + 1; i < allRows.size(); i++) {
             String[] cells = allRows.get(i);
@@ -70,7 +87,7 @@ public class PreviewGenerator {
 
             Map<String, String> row = csvParser.zipRow(headerRow, cells);
 
-            StagedRow parsed = transactionNormalizer.normalize(userId, row);
+            StagedRow parsed = transactionNormalizer.normalize(userId, row, ctx);
             if (parsed != null) {
                 staged.add(parsed);
             } else {
@@ -84,6 +101,6 @@ public class PreviewGenerator {
 
         int dupCount = (int) staged.stream().filter(StagedRow::likelyDuplicate).count();
         DetectedAccountInfo detected = statementValidator.buildDetectedAccountInfo(filename, allRows, headerIdx, staged, signals);
-        return new StagingResponse(staged, staged.size(), dupCount, detected, unparseable);
+        return new CsvGenerationResult(new StagingResponse(staged, staged.size(), dupCount, detected, unparseable), ctx);
     }
 }

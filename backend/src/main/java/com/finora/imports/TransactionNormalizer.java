@@ -56,6 +56,21 @@ public class TransactionNormalizer {
     private static final String[] DESCRIPTION_HINTS =
             {"description", "narration", "remarks", "particulars", "transaction description", "transaction details"};
     private static final String[] CATEGORY_HINTS = {"category"};
+    // Phase 1 "capture facts" (docs/engineering/financial-document-intelligence-principles.md):
+    // evidenced by a real Canara Bank statement's "Reference / Cheque No." column, silently
+    // discarded until now even on rows that otherwise parsed successfully -- CsvParser.zipRow and
+    // PdfTableLocator.bucketRow already capture every column into the row map, this was simply
+    // never read back out. "instrument id" was already a PdfTableLocator.HEADER_HINTS entry used
+    // only to detect a header row, never to capture a value -- same underlying gap, same fix.
+    private static final String[] REFERENCE_HINTS =
+            {"reference number", "ref no", "reference no", "cheque no", "chq no", "chq/ref no",
+                    "instrument id", "reference", "reference / cheque no.", "reference / cheque no"};
+    // Deliberately separate from AMOUNT_HINTS, even though the literal column names overlap:
+    // AMOUNT_HINTS' "balance"/"running balance"/"closing balance" entries exist as a last-resort
+    // fallback AMOUNT for a summary row with no debit/credit column at all (see AMOUNT_HINTS' own
+    // comment). This is a second, independent read of the same column for a different purpose --
+    // an ordinary transaction row's running balance AFTER that transaction, not its amount.
+    private static final String[] BALANCE_HINTS = {"balance", "running balance", "closing balance"};
 
     public TransactionNormalizer(CategorizationService categorizationService, DuplicateDetector duplicateDetector) {
         this.categorizationService = categorizationService;
@@ -73,7 +88,8 @@ public class TransactionNormalizer {
      */
     public static Set<String> recognizedColumnNames() {
         Set<String> names = new LinkedHashSet<>();
-        for (String[] hints : new String[][]{DATE_HINTS, AMOUNT_HINTS, CREDIT_HINTS, TYPE_HINTS, DESCRIPTION_HINTS, CATEGORY_HINTS}) {
+        for (String[] hints : new String[][]{DATE_HINTS, AMOUNT_HINTS, CREDIT_HINTS, TYPE_HINTS,
+                DESCRIPTION_HINTS, CATEGORY_HINTS, REFERENCE_HINTS, BALANCE_HINTS}) {
             for (String hint : hints) names.add(hint);
         }
         return names;
@@ -126,9 +142,20 @@ public class TransactionNormalizer {
     /** Returns null when the row doesn't have enough signal to be a transaction (no recognizable
      *  date or amount column value) — callers should skip such rows rather than fail the import. */
     public StagedRow normalize(UUID userId, Map<String, String> row) {
+        return normalize(userId, row, null);
+    }
+
+    /** Same as {@link #normalize(UUID, Map)}, plus records capability activations (Phase 1
+     *  "capture facts" -- docs/engineering/financial-document-intelligence-principles.md) onto
+     *  {@code ctx} as they fire. {@code ctx} is nullable -- callers that don't have a
+     *  DocumentContext in scope (or don't care) get exactly the old behavior. */
+    public StagedRow normalize(UUID userId, Map<String, String> row, DocumentContext ctx) {
         String dateRaw = CsvParser.firstNonBlank(row, DATE_HINTS);
         String amountRaw = firstParseableAmount(row, AMOUNT_HINTS);
         if (dateRaw == null || amountRaw == null) return null;
+
+        if (ctx != null && CsvParser.hasDateTimeComponent(dateRaw)) ctx.record("DATE_TIME_COLUMN");
+        if (ctx != null && CsvParser.hasTrailingDrCrMarker(amountRaw)) ctx.record("DR_CR_SUFFIX");
 
         LocalDate date = CsvParser.parseDate(dateRaw.trim());
         BigDecimal parsedAmount = CsvParser.parseNumeric(amountRaw);
@@ -170,7 +197,14 @@ public class TransactionNormalizer {
         } else if (creditRaw != null) {
             isIncome = true;
         } else {
-            isIncome = Boolean.TRUE.equals(CsvParser.detectSignFromRawAmount(amountRaw));
+            Boolean signFromAmount = CsvParser.detectSignFromRawAmount(amountRaw);
+            if (ctx != null && signFromAmount != null) {
+                // Distinguishes the two real shapes detectSignFromRawAmount covers: a trailing
+                // Dr/Cr marker already recorded DR_CR_SUFFIX above if present on this exact cell,
+                // so a "+"-prefixed amount with no such marker is the OTHER capability.
+                ctx.record(amountRaw.trim().startsWith("+") ? "LEADING_PLUS_CREDIT" : "DR_CR_SUFFIX");
+            }
+            isIncome = Boolean.TRUE.equals(signFromAmount);
         }
         String type = isIncome ? "INCOME" : "EXPENSE";
 
@@ -211,6 +245,15 @@ public class TransactionNormalizer {
 
         boolean likelyDuplicate = duplicateDetector.isLikelyDuplicate(userId, date, amount, description);
 
-        return new StagedRow(date, description, amount, type, suggestedCategory, source, ruleId, likelyDuplicate);
+        String referenceNumber = CsvParser.firstNonBlank(row, REFERENCE_HINTS);
+        String balanceRaw = firstParseableAmount(row, BALANCE_HINTS);
+        BigDecimal balanceAfter = CsvParser.parseNumeric(balanceRaw);
+        if (ctx != null && balanceAfter != null) {
+            ctx.record("RUNNING_BALANCE");
+            if (CsvParser.hasTrailingDrCrMarker(balanceRaw)) ctx.record("DR_CR_SUFFIX");
+        }
+
+        return new StagedRow(date, description, amount, type, suggestedCategory, source, ruleId,
+                likelyDuplicate, referenceNumber, balanceAfter);
     }
 }

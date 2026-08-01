@@ -133,7 +133,7 @@ class ImportServiceAskOnceTest {
     @Test
     void confirm_doesNotLearn_whenLowConfidenceGuessLeftUnresolvedAsOther() throws Exception {
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "UNKNOWN MERCHANT XYZ",
-                BigDecimal.valueOf(500), "EXPENSE", "Other", true, "default", null, false);
+                BigDecimal.valueOf(500), "EXPENSE", "Other", true, "default", null, false, null, null);
 
         importService.confirm(userId, dummyFile(), requestWith(row));
 
@@ -148,7 +148,7 @@ class ImportServiceAskOnceTest {
     @Test
     void confirm_learns_whenRuleEngineWasConfident() throws Exception {
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
-                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false);
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
 
         importService.confirm(userId, dummyFile(), requestWith(row));
 
@@ -163,7 +163,7 @@ class ImportServiceAskOnceTest {
     @Test
     void confirm_learns_whenOtherWasAConfidentRuleMatch_notAnUnresolvedDefault() throws Exception {
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "ATM WITHDRAWAL FEE",
-                BigDecimal.valueOf(20), "EXPENSE", "Other", true, "rule", null, false);
+                BigDecimal.valueOf(20), "EXPENSE", "Other", true, "rule", null, false, null, null);
 
         importService.confirm(userId, dummyFile(), requestWith(row));
 
@@ -179,7 +179,7 @@ class ImportServiceAskOnceTest {
         // doc comment.
         UUID ruleId = UUID.randomUUID();
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
-                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "user_rule", ruleId, false);
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "user_rule", ruleId, false, null, null);
 
         importService.confirm(userId, dummyFile(), requestWith(row));
 
@@ -189,7 +189,7 @@ class ImportServiceAskOnceTest {
     @Test
     void confirm_noRuleBehindTheSuggestion_recordsNothing() throws Exception {
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
-                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "learned", null, false);
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "learned", null, false, null, null);
 
         importService.confirm(userId, dummyFile(), requestWith(row));
 
@@ -202,7 +202,7 @@ class ImportServiceAskOnceTest {
         when(categorizationService.resolveMerchantId(eq(userId), eq("SWIGGY*ORDR9182 BLR"))).thenReturn(resolvedMerchantId);
 
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
-                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false);
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
 
         importService.confirm(userId, dummyFile(), requestWith(row));
 
@@ -215,7 +215,7 @@ class ImportServiceAskOnceTest {
     @Test
     void confirm_runsReconciliation_afterImportingAtLeastOneTransaction() throws Exception {
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
-                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false);
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
 
         importService.confirm(userId, dummyFile(), requestWith(row));
 
@@ -225,7 +225,7 @@ class ImportServiceAskOnceTest {
     @Test
     void confirm_skipsReconciliation_whenNothingWasActuallyImported() throws Exception {
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
-                BigDecimal.valueOf(486), "EXPENSE", "Dining", false, "rule", null, false);
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", false, "rule", null, false, null, null);
 
         var response = importService.confirm(userId, dummyFile(), requestWith(row));
 
@@ -240,7 +240,7 @@ class ImportServiceAskOnceTest {
         // rule match (or a completed pattern spanning this import) must take effect immediately,
         // not only once the user happens to open the Recurring page.
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "NETFLIX.COM",
-                BigDecimal.valueOf(649), "EXPENSE", "Dining", true, "rule", null, false); // category is irrelevant to this test -- reusing the pre-stubbed one from setUp()
+                BigDecimal.valueOf(649), "EXPENSE", "Dining", true, "rule", null, false, null, null); // category is irrelevant to this test -- reusing the pre-stubbed one from setUp()
 
         importService.confirm(userId, dummyFile(), requestWith(row));
 
@@ -250,7 +250,7 @@ class ImportServiceAskOnceTest {
     @Test
     void confirm_skipsRecurringDetection_whenNothingWasActuallyImported() throws Exception {
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
-                BigDecimal.valueOf(486), "EXPENSE", "Dining", false, "rule", null, false);
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", false, "rule", null, false, null, null);
 
         importService.confirm(userId, dummyFile(), requestWith(row));
 
@@ -267,7 +267,7 @@ class ImportServiceAskOnceTest {
                         0, 0L, "ACTIVE"));
 
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
-                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false);
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
         var newAccount = new NewAccountRequest("HDFC Savings", "SAVINGS", BigDecimal.valueOf(15000), null, null, null, null, null, null, null);
         var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null);
 
@@ -285,7 +285,7 @@ class ImportServiceAskOnceTest {
     @Test
     void confirm_throws_whenNeitherExistingAccountNorNewAccountIsProvided() {
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
-                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false);
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
         var request = new ConfirmRequest(null, List.of(row), null, null, null, null);
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> importService.confirm(userId, dummyFile(), request))
@@ -299,7 +299,7 @@ class ImportServiceAskOnceTest {
                 .thenReturn(List.of(new Merchant(), new Merchant())); // "after" snapshot: 2 new merchants
 
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
-                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false);
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
 
         var response = importService.confirm(userId, dummyFile(), requestWith(row));
 
@@ -309,9 +309,9 @@ class ImportServiceAskOnceTest {
     @Test
     void confirm_tallysCategoriesAssigned_acrossTheImportedBatch() throws Exception {
         var row1 = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
-                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false);
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
         var row2 = new ConfirmedRow(LocalDate.of(2026, 7, 11), "ZOMATO ORDER",
-                BigDecimal.valueOf(300), "EXPENSE", "Dining", true, "rule", null, false);
+                BigDecimal.valueOf(300), "EXPENSE", "Dining", true, "rule", null, false, null, null);
         var request = new ConfirmRequest(null, List.of(row1, row2), accountId, null, null, null);
 
         var response = importService.confirm(userId, dummyFile(), request);
@@ -338,7 +338,7 @@ class ImportServiceAskOnceTest {
         when(categorizationService.applySideEffectRules(eq(userId), any(Transaction.class))).thenReturn(investments);
 
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SIP MUTUAL FUND DEDUCTION",
-                BigDecimal.valueOf(5000), "EXPENSE", "Shopping", true, "rule", null, false);
+                BigDecimal.valueOf(5000), "EXPENSE", "Shopping", true, "rule", null, false, null, null);
         var request = new ConfirmRequest(null, List.of(row), accountId, null, null, null);
 
         var response = importService.confirm(userId, dummyFile(), request);
@@ -525,7 +525,7 @@ class ImportServiceAskOnceTest {
                         0, 0L, "ACTIVE"));
 
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
-                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false);
+                BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
         var newAccount = new com.finora.dto.ImportDto.NewAccountRequest(
                 "SBI Savings", "SAVINGS", BigDecimal.valueOf(25000), null, null,
                 "Siddharth Tiwari", "4587", "SBI", null, null);

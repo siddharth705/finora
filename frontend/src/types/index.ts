@@ -130,6 +130,13 @@ export interface StagedRow {
   // on Transaction.decisionRuleId (see Import.tsx's confirmImport).
   ruleId: string | null;
   likelyDuplicate: boolean;
+  // Phase 1 "capture facts" (docs/engineering/financial-document-intelligence-principles.md):
+  // best-effort, nullable, never guessed -- only set when the source statement actually carried
+  // a recognizable reference/cheque/instrument-ID column or running-balance column. No UI
+  // consumes these yet (that's Phase 2); this just stops them from being silently dropped
+  // between staging and the ledger.
+  referenceNumber: string | null;
+  balanceAfter: number | null;
 }
 
 // Best-effort fields pulled from the statement itself. Every field is nullable and genuinely

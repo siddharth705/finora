@@ -65,6 +65,21 @@ public class ImportSession {
     @Column(name = "sections_json", columnDefinition = "TEXT")
     private String sectionsJson;
 
+    // Phase 1 "capture facts" (docs/engineering/financial-document-intelligence-principles.md):
+    // one DocumentContext's worth of recorded structural facts + deterministic layout ID +
+    // activated-capability events for the WHOLE uploaded document (all sections of a multi-account
+    // PDF share one set -- they came from the same file). Nullable: a session created before this
+    // column existed, or a session whose staging path didn't build a DocumentContext, simply has
+    // none -- never guessed or backfilled.
+    @Column(name = "layout_metadata_json", columnDefinition = "TEXT")
+    private String layoutMetadataJson;
+
+    @Column(name = "layout_fingerprint", length = 20)
+    private String layoutFingerprint;
+
+    @Column(name = "activated_capabilities_json", columnDefinition = "TEXT")
+    private String activatedCapabilitiesJson;
+
     @Column(name = "session_kind", nullable = false)
     private String sessionKind = KIND_SINGLE_ACCOUNT;
 
@@ -93,6 +108,12 @@ public class ImportSession {
     public void setDetectedAccountJson(String detectedAccountJson) { this.detectedAccountJson = detectedAccountJson; }
     public String getSectionsJson() { return sectionsJson; }
     public void setSectionsJson(String sectionsJson) { this.sectionsJson = sectionsJson; }
+    public String getLayoutMetadataJson() { return layoutMetadataJson; }
+    public void setLayoutMetadataJson(String layoutMetadataJson) { this.layoutMetadataJson = layoutMetadataJson; }
+    public String getLayoutFingerprint() { return layoutFingerprint; }
+    public void setLayoutFingerprint(String layoutFingerprint) { this.layoutFingerprint = layoutFingerprint; }
+    public String getActivatedCapabilitiesJson() { return activatedCapabilitiesJson; }
+    public void setActivatedCapabilitiesJson(String activatedCapabilitiesJson) { this.activatedCapabilitiesJson = activatedCapabilitiesJson; }
     public String getSessionKind() { return sessionKind; }
     public void setSessionKind(String sessionKind) { this.sessionKind = sessionKind; }
     public String getStatus() { return status; }

@@ -23,7 +23,15 @@ public class ImportDto {
      */
     public record UnparseableRow(Map<String, String> raw, String reason) {}
 
-    /** One parsed CSV row, auto-categorized and ready for user review before commit. */
+    /** One parsed CSV row, auto-categorized and ready for user review before commit.
+     *
+     *  referenceNumber/balanceAfter (Phase 1 "capture facts" — see
+     *  docs/engineering/financial-document-intelligence-principles.md) are best-effort, nullable,
+     *  and never guessed: referenceNumber is only set when the source row had a recognizable
+     *  reference/cheque/instrument-ID column (see TransactionNormalizer.REFERENCE_HINTS);
+     *  balanceAfter is only set when the row had a recognizable running-balance value (see
+     *  TransactionNormalizer.BALANCE_HINTS) — distinct from amount, which is this transaction's
+     *  own value, not the account's balance after it. */
     public record StagedRow(
             LocalDate date,
             String description,
@@ -32,8 +40,37 @@ public class ImportDto {
             String suggestedCategory,
             String categorySource,   // "learned" | "rule" | "user_rule" | "global_rule" | "default" | "file"
             UUID ruleId,             // set only when categorySource is "user_rule" or "global_rule"
-            boolean likelyDuplicate
+            boolean likelyDuplicate,
+            String referenceNumber,  // best-effort, null when the source had no recognizable reference/cheque column
+            BigDecimal balanceAfter  // best-effort, null when the source had no recognizable running-balance column
     ) {}
+
+    /**
+     * Phase 1 "capture facts" (docs/engineering/financial-document-intelligence-principles.md):
+     * the structural facts about one parsed document/section -- page/table/column counts and the
+     * header list, split from {@link com.finora.imports.DocumentContext#buildFingerprint()} on
+     * purpose so "have we seen this layout before" is an equality check against the fingerprint
+     * string, not a JSON diff against this record. unknownHeaders is the subset of headers not
+     * matched by any recognized hint list (see TransactionNormalizer.recognizedColumnNames()) --
+     * this is the "never lose information" principle extended from rows to columns.
+     */
+    public record FinancialDocumentMetadata(
+            String sourceFormat,       // "PDF" | "CSV"
+            String parser,             // simple class name of the parser that produced this, e.g. "PdfPreviewGenerator"
+            int pages,
+            int tables,
+            int columns,
+            List<String> headers,
+            List<String> unknownHeaders
+    ) {}
+
+    /**
+     * One capability firing during a single parse run. status is always "SUCCESS" today -- the
+     * pipeline only ever reports a capability that fired, not one attempted-but-failed -- kept as
+     * an event shape (not a bare capability-name string) specifically so confidence/duration/
+     * warnings/version can be added later without a schema change (see DocumentContext).
+     */
+    public record CapabilityActivation(String capability, String status) {}
 
     /**
      * Best-effort account-level fields pulled from the statement itself, alongside the parsed
@@ -148,7 +185,9 @@ public class ImportDto {
             String category, boolean include,
             String categorySource,   // "learned" | "rule" | "user_rule" | "global_rule" | "default" | "file" — carried from staging
             UUID ruleId,             // carried from staging — see StagedRow.ruleId
-            boolean likelyDuplicate  // carried from staging, so the summary can report it honestly
+            boolean likelyDuplicate, // carried from staging, so the summary can report it honestly
+            String referenceNumber,  // carried from staging — see StagedRow.referenceNumber
+            BigDecimal balanceAfter  // carried from staging — see StagedRow.balanceAfter
     ) {}
 
     /** Everything the PRD's "Import Summary" step asks for, computed from what actually happened

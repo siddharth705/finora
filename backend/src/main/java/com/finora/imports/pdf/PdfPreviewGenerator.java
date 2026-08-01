@@ -7,6 +7,7 @@ import com.finora.dto.ImportDto.StagedRow;
 import com.finora.dto.ImportDto.StagingResponse;
 import com.finora.dto.ImportDto.UnparseableRow;
 import com.finora.imports.CsvParser;
+import com.finora.imports.DocumentContext;
 import com.finora.imports.TransactionNormalizer;
 import com.finora.util.BankRegistry;
 import org.springframework.stereotype.Component;
@@ -66,7 +67,7 @@ public class PdfPreviewGenerator {
      *  detect and stage multiple accounts from one upload (see
      *  {@code ImportService.parseAndStagePdfWithSession}) call {@link #generateSections} instead. */
     public StagingResponse generate(UUID userId, String filename, byte[] fileBytes) throws IOException {
-        StagedAccountSection first = generateSections(userId, filename, fileBytes).get(0);
+        StagedAccountSection first = generateSectionsWithContext(userId, filename, fileBytes).sections().get(0);
         return new StagingResponse(first.rows(), first.totalParsed(), first.flaggedDuplicates(), first.detectedAccount(), first.unparseableRows());
     }
 
@@ -76,8 +77,24 @@ public class PdfPreviewGenerator {
      *  single-section path has always followed), so a bank recognizable purely from letterhead
      *  text still gets suggested even when nothing parsed as a transaction. */
     public List<StagedAccountSection> generateSections(UUID userId, String filename, byte[] fileBytes) throws IOException {
+        return generateSectionsWithContext(userId, filename, fileBytes).sections();
+    }
+
+    /** One {@link DocumentContext}'s worth of recorded structural facts and capability
+     *  activations for the WHOLE document -- every section of a multi-account PDF (e.g. HSBC's
+     *  composite statement) shares one, since they came from the same file (Phase 1 "capture
+     *  facts" -- docs/engineering/financial-document-intelligence-principles.md). */
+    public record PdfGenerationResult(List<StagedAccountSection> sections, DocumentContext documentContext) {}
+
+    /** Same as {@link #generateSections}, but also returns the {@link DocumentContext} built
+     *  while parsing -- the entry point {@code ImportService} uses when it needs to persist that
+     *  context (a fresh upload); {@link #generateSections}/{@link #generate} stay the plain,
+     *  context-discarding wrappers every existing caller (including every capability's own
+     *  regression test) already depends on. */
+    public PdfGenerationResult generateSectionsWithContext(UUID userId, String filename, byte[] fileBytes) throws IOException {
+        DocumentContext ctx = new DocumentContext("PDF", "PdfPreviewGenerator");
         List<PositionedText> positioned = textExtractor.extract(fileBytes);
-        PdfTableLocator.LocatedDocument doc = tableLocator.locateAll(positioned);
+        PdfTableLocator.LocatedDocument doc = tableLocator.locateAll(positioned, ctx);
 
         if (doc.sections().isEmpty()) {
             // "Never lose information" (see the engineering principles doc) applies at the
@@ -85,20 +102,21 @@ public class PdfPreviewGenerator {
             // response -- indistinguishable from a genuinely blank PDF. Every non-blank line of
             // extracted text is surfaced here instead, since without a recognized table there's no
             // header to key a structured row by.
-            PdfTableLocator.LocatedTable empty = tableLocator.locate(positioned);
+            PdfTableLocator.LocatedTable empty = tableLocator.locate(positioned, ctx);
             StagedAccountSection section = buildSection(userId, filename,
-                    new PdfTableLocator.LocatedSection(empty.preTableLines(), List.of()));
-            return List.of(surfaceUnrecognizedText(section, empty.preTableLines()));
+                    new PdfTableLocator.LocatedSection(empty.preTableLines(), List.of()), ctx);
+            return new PdfGenerationResult(List.of(surfaceUnrecognizedText(section, empty.preTableLines())), ctx);
         }
 
         List<StagedAccountSection> result = new ArrayList<>();
         for (PdfTableLocator.LocatedSection section : doc.sections()) {
-            result.add(buildSection(userId, filename, section));
+            result.add(buildSection(userId, filename, section, ctx));
         }
-        return result;
+        return new PdfGenerationResult(result, ctx);
     }
 
-    private StagedAccountSection buildSection(UUID userId, String filename, PdfTableLocator.LocatedSection section) {
+    private StagedAccountSection buildSection(UUID userId, String filename, PdfTableLocator.LocatedSection section,
+                                               DocumentContext ctx) {
         List<StagedRow> staged = new ArrayList<>();
         // "Never lose information" (see the engineering principles doc) -- a row that fails to
         // normalize is reported with WHY, not just silently absent from the row count. Real cost
@@ -114,7 +132,7 @@ public class PdfPreviewGenerator {
         // persisted anywhere, discarded once this method returns.
         List<BalancePoint> balancePoints = new ArrayList<>();
         for (Map<String, String> row : section.rows()) {
-            StagedRow parsed = transactionNormalizer.normalize(userId, row);
+            StagedRow parsed = transactionNormalizer.normalize(userId, row, ctx);
             if (parsed == null) {
                 unparseable.add(new UnparseableRow(row, transactionNormalizer.explainFailure(row)));
                 continue;
@@ -137,7 +155,7 @@ public class PdfPreviewGenerator {
         staged.sort(Comparator.comparing(StagedRow::date));
 
         int dupCount = (int) staged.stream().filter(StagedRow::likelyDuplicate).count();
-        DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, staged, balancePoints);
+        DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, staged, balancePoints, ctx);
         return new StagedAccountSection(detected, staged, staged.size(), dupCount, unparseable);
     }
 
@@ -158,8 +176,9 @@ public class PdfPreviewGenerator {
     }
 
     private DetectedAccountInfo buildDetectedAccountInfo(String filename, PdfTableLocator.LocatedSection section,
-                                                           List<StagedRow> staged, List<BalancePoint> balancePoints) {
-        PdfMetadataExtractor.ExtractedMetadata metadata = metadataExtractor.extract(section.auxiliaryText());
+                                                           List<StagedRow> staged, List<BalancePoint> balancePoints,
+                                                           DocumentContext ctx) {
+        PdfMetadataExtractor.ExtractedMetadata metadata = metadataExtractor.extract(section.auxiliaryText(), ctx);
 
         LocalDate statementStart = metadata.statementPeriodStart() != null ? metadata.statementPeriodStart()
                 : staged.stream().map(StagedRow::date).min(LocalDate::compareTo).orElse(null);
@@ -211,6 +230,7 @@ public class PdfPreviewGenerator {
         boolean creditCardSignals = section.rows().stream().anyMatch(row ->
                 CsvParser.hasHeaderMatch(row, "card number", "minimum due", "minimum amount due"))
                 || section.auxiliaryText().stream().anyMatch(this::containsCreditCardTextSignal);
+        if (ctx != null && creditCardSignals) ctx.record("CREDIT_CARD_SUMMARY_SIGNAL");
 
         return new DetectedAccountInfo(
                 suggestedName,

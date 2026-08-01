@@ -46,6 +46,18 @@ public class ImportSessionService {
     @Transactional
     public ImportSession createSession(UUID userId, String fileName, byte[] fileContent,
                                         List<StagedRow> rows, DetectedAccountInfo detectedAccount) {
+        return createSession(userId, fileName, fileContent, rows, detectedAccount, null);
+    }
+
+    /** Same as {@link #createSession(UUID, String, byte[], List, DetectedAccountInfo)}, plus
+     *  persists the {@link DocumentContext}'s structural metadata/fingerprint/capability
+     *  activations recorded while staging (Phase 1 "capture facts" -- see
+     *  docs/engineering/financial-document-intelligence-principles.md). {@code documentContext}
+     *  is nullable -- a caller with none simply leaves those three columns null. */
+    @Transactional
+    public ImportSession createSession(UUID userId, String fileName, byte[] fileContent,
+                                        List<StagedRow> rows, DetectedAccountInfo detectedAccount,
+                                        DocumentContext documentContext) {
         // Opportunistic cleanup: this user's own expired sessions get deleted the next time they
         // start a new import, rather than via a platform-wide @Scheduled sweep -- this codebase
         // has no background job infrastructure yet (see ImportSession's own doc comment). Scoped
@@ -61,6 +73,7 @@ public class ImportSessionService {
         session.setStagedRowsJson(writeJson(rows));
         session.setDetectedAccountJson(writeJson(detectedAccount));
         session.setExpiresAt(Instant.now().plus(SESSION_TTL));
+        applyDocumentContext(session, documentContext);
         return importSessionRepository.save(session);
     }
 
@@ -72,6 +85,17 @@ public class ImportSessionService {
     @Transactional
     public ImportSession createMultiSection(UUID userId, String fileName, byte[] fileContent,
                                              List<StagedAccountSection> sections) {
+        return createMultiSection(userId, fileName, fileContent, sections, null);
+    }
+
+    /** Same as {@link #createMultiSection(UUID, String, byte[], List)}, plus persists the
+     *  {@link DocumentContext} recorded while staging -- one context for the WHOLE document,
+     *  shared by every section (they came from the same file). See
+     *  {@link #createSession(UUID, String, byte[], List, DetectedAccountInfo, DocumentContext)}'s
+     *  own doc comment. */
+    @Transactional
+    public ImportSession createMultiSection(UUID userId, String fileName, byte[] fileContent,
+                                             List<StagedAccountSection> sections, DocumentContext documentContext) {
         importSessionRepository.deleteAll(
                 importSessionRepository.findByUserIdAndExpiresAtBefore(userId, Instant.now()));
 
@@ -82,7 +106,15 @@ public class ImportSessionService {
         session.setSessionKind(ImportSession.KIND_MULTI_ACCOUNT);
         session.setSectionsJson(writeJson(sections));
         session.setExpiresAt(Instant.now().plus(SESSION_TTL));
+        applyDocumentContext(session, documentContext);
         return importSessionRepository.save(session);
+    }
+
+    private void applyDocumentContext(ImportSession session, DocumentContext documentContext) {
+        if (documentContext == null) return;
+        session.setLayoutMetadataJson(writeJson(documentContext.buildMetadata()));
+        session.setLayoutFingerprint(documentContext.buildFingerprint());
+        session.setActivatedCapabilitiesJson(writeJson(documentContext.capabilities()));
     }
 
     /** Throws (not Optional) -- every real caller needs a valid, owned, still-staged session to

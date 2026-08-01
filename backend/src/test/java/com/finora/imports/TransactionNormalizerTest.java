@@ -252,6 +252,98 @@ class TransactionNormalizerTest {
         assertThat(normalizer.normalize(userId, debitRow).amount()).isEqualByComparingTo(new BigDecimal("680.0"));
     }
 
+    // --- Phase 1 "capture facts" (docs/engineering/financial-document-intelligence-principles.md):
+    // referenceNumber/balanceAfter -- previously computed nowhere, now captured whenever a
+    // recognized column is present, and null otherwise (never guessed). ---
+
+    @Test
+    void normalize_capturesReferenceNumber_fromARecognizedColumn() {
+        Map<String, String> row = rowOf(
+                "Date", "01/07/2026", "Amount", "500", "Type", "DR", "Remarks", "x",
+                "Reference Number", "REF123456789");
+
+        StagedRow result = normalizer.normalize(userId, row);
+
+        assertThat(result.referenceNumber()).isEqualTo("REF123456789");
+    }
+
+    @Test
+    void normalize_capturesReferenceNumber_fromAnInstrumentIdColumn_thePnbOneLayout() {
+        // Same real PNB ONE layout this test class's own class doc describes -- "Instrument ID"
+        // was already a header-detection hint (PdfTableLocator.HEADER_HINTS) but its value was
+        // never captured until now.
+        Map<String, String> row = rowOf(
+                "Date", "31/07/2026", "Instrument ID", "UPI2607315823",
+                "Amount(INR)", "680.0", "Type", "DR", "Balance", "7025.86",
+                "Remarks", "UPI/DR/657880538392/Google I/UTIB/gpay-utility@ok/");
+
+        StagedRow result = normalizer.normalize(userId, row);
+
+        assertThat(result.referenceNumber()).isEqualTo("UPI2607315823");
+    }
+
+    @Test
+    void normalize_capturesReferenceNumber_fromTheRealCanaraBankColumnHeaderVerbatim() {
+        // The exact header text a real Canara Bank statement uses -- verified directly against
+        // the row map (not a rendered PDF) since PdfFixtureBuilder's synthetic PDFBox rendering
+        // has its own column-width quirks unrelated to whether this hint match itself works.
+        Map<String, String> row = rowOf(
+                "Date", "01/07/2026", "Particulars", "UPI/DR/103564825690/NSE ZERO",
+                "Reference / Cheque No.", "103564825690", "Amount", "-1000.00", "Balance", "114238.60");
+
+        StagedRow result = normalizer.normalize(userId, row);
+
+        assertThat(result.referenceNumber()).isEqualTo("103564825690");
+    }
+
+    @Test
+    void normalize_referenceNumberIsNull_whenNoRecognizedColumnIsPresent() {
+        Map<String, String> row = rowOf("Date", "01/07/2026", "Amount", "500", "Type", "DR", "Remarks", "x");
+
+        StagedRow result = normalizer.normalize(userId, row);
+
+        assertThat(result.referenceNumber()).isNull();
+    }
+
+    @Test
+    void normalize_capturesBalanceAfter_fromARunningBalanceColumn() {
+        Map<String, String> row = rowOf(
+                "Date", "31/07/2026", "Amount(INR)", "680.0", "Type", "DR",
+                "Balance", "7025.86", "Remarks", "x");
+
+        StagedRow result = normalizer.normalize(userId, row);
+
+        assertThat(result.balanceAfter()).isEqualByComparingTo(new BigDecimal("7025.86"));
+    }
+
+    @Test
+    void normalize_balanceAfterIsNull_whenNoBalanceColumnIsPresent() {
+        Map<String, String> row = rowOf("Date", "01/07/2026", "Amount", "500", "Type", "DR", "Remarks", "x");
+
+        StagedRow result = normalizer.normalize(userId, row);
+
+        assertThat(result.balanceAfter()).isNull();
+    }
+
+    /** AMOUNT_HINTS' own existing fallback (an OPENING/CLOSING BALANCE summary row with no
+     *  debit/credit column at all, so "balance" is the only usable amount) must keep working
+     *  exactly as before -- balanceAfter is a second, independent read of the same column, not a
+     *  replacement for it. */
+    @Test
+    void normalize_balanceColumnStillWorksAsTheAmountFallback_forASummaryRowWithNoDebitCreditColumn() {
+        Map<String, String> row = rowOf("Date", "01/07/2026", "Balance", "115238.60", "Remarks", "OPENING BALANCE");
+
+        StagedRow result = normalizer.normalize(userId, row);
+
+        assertThat(result).isNotNull();
+        assertThat(result.amount()).isEqualByComparingTo(new BigDecimal("115238.60"));
+        // And the SAME column also populates balanceAfter now -- both readings of "balance" are
+        // legitimate simultaneously for this row shape: it's this row's only usable amount AND
+        // its post-transaction balance (they happen to be the same value for an opening-balance
+        // summary row specifically).
+        assertThat(result.balanceAfter()).isEqualByComparingTo(new BigDecimal("115238.60"));
+    }
+
     // --- explainFailure() -- "Never lose information": a row normalize() rejects still gets a
     // specific, actionable reason surfaced to the user instead of just vanishing from the count. ---
 

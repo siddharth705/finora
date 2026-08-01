@@ -1,6 +1,7 @@
 package com.finora.imports.pdf;
 
 import com.finora.imports.CsvParser;
+import com.finora.imports.DocumentContext;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -122,7 +123,11 @@ public class PdfTableLocator {
      *  document (see {@link com.finora.imports.pdf.PdfPreviewGenerator#generateSections}) call
      *  {@link #locateAll} directly instead. */
     public LocatedTable locate(List<PositionedText> positionedText) {
-        LocatedDocument doc = locateAll(positionedText);
+        return locate(positionedText, null);
+    }
+
+    public LocatedTable locate(List<PositionedText> positionedText, DocumentContext ctx) {
+        LocatedDocument doc = locateAll(positionedText, ctx);
         if (doc.sections().isEmpty()) {
             return new LocatedTable(List.of(), rowsToLines(groupIntoRows(positionedText)));
         }
@@ -142,6 +147,20 @@ public class PdfTableLocator {
      * header at all) is collected as that section's {@code auxiliaryText} rather than data.
      */
     public LocatedDocument locateAll(List<PositionedText> positionedText) {
+        return locateAll(positionedText, null);
+    }
+
+    /** Same as {@link #locateAll(List)}, plus records structural facts (headers, page/table
+     *  counts) and capability activations (REPEATED_HEADER, PAGE_BOUNDARY_ISOLATION,
+     *  COMPOSITE_STATEMENT, WRAPPED_DESCRIPTION, LEADING_NARRATION_CONTINUATION,
+     *  OFFSET_COLUMN_ANCHORS) onto {@code ctx} as they fire (Phase 1 "capture facts" --
+     *  docs/engineering/financial-document-intelligence-principles.md). {@code ctx} is nullable. */
+    public LocatedDocument locateAll(List<PositionedText> positionedText, DocumentContext ctx) {
+        if (ctx != null) {
+            int maxPageIndex = -1;
+            for (PositionedText t : positionedText) maxPageIndex = Math.max(maxPageIndex, t.pageIndex());
+            ctx.recordPages(maxPageIndex + 1);
+        }
         List<List<PositionedText>> rows = groupIntoRows(positionedText);
 
         List<LocatedSection> sections = new ArrayList<>();
@@ -167,6 +186,7 @@ public class PdfTableLocator {
                 if (currentRows != null) {
                     flushPendingLeading(currentRows, pendingLeading);
                     sections.add(new LocatedSection(pendingAuxiliary, currentRows));
+                    if (ctx != null) ctx.record("COMPOSITE_STATEMENT");
                 }
                 pendingAuxiliary = new ArrayList<>();
                 currentRows = null;
@@ -183,6 +203,7 @@ public class PdfTableLocator {
             if (looksLikeHeaderRow(row)) {
                 Set<String> signature = headerSignature(row);
                 if (currentRows != null && signature.equals(currentHeaderSignature)) {
+                    if (ctx != null) ctx.record("REPEATED_HEADER");
                     continue; // repeated header of the table already in progress -- not a data row
                 }
                 if (currentRows != null) {
@@ -190,6 +211,7 @@ public class PdfTableLocator {
                     // for a new section in a document without a banner line.
                     flushPendingLeading(currentRows, pendingLeading);
                     sections.add(new LocatedSection(pendingAuxiliary, currentRows));
+                    if (ctx != null) ctx.record("COMPOSITE_STATEMENT");
                     pendingAuxiliary = new ArrayList<>();
                 }
                 headerNames = new ArrayList<>();
@@ -198,6 +220,7 @@ public class PdfTableLocator {
                     headerNames.add(t.text().trim());
                     headerAnchors.add(t.x());
                 }
+                if (ctx != null) ctx.recordHeaders(headerNames);
                 currentHeaderSignature = signature;
                 currentRows = new ArrayList<>();
                 lastRowPage = null;
@@ -209,9 +232,10 @@ public class PdfTableLocator {
             if (currentRows == null) {
                 pendingAuxiliary.add(rowLine);
             } else if (PAGE_FOOTER.matcher(rowLine).find()) {
+                if (ctx != null) ctx.record("PAGE_BOUNDARY_ISOLATION");
                 continue; // a page-number line is never a transaction or a continuation of one
             } else {
-                Map<String, String> bucketed = bucketRow(row, headerNames, headerAnchors);
+                Map<String, String> bucketed = bucketRow(row, headerNames, headerAnchors, ctx);
                 if (bucketed.isEmpty()) continue;
 
                 // Bug fix: a description that wraps onto a second visual row (HDFC's layout --
@@ -261,6 +285,7 @@ public class PdfTableLocator {
                     trailingCountSinceLastAnchor = MAX_TRAILING_CONTINUATION_ROWS;
                 } else if (samePage && trailingCountSinceLastAnchor < MAX_TRAILING_CONTINUATION_ROWS) {
                     mergeInto(currentRows.get(currentRows.size() - 1), bucketed);
+                    if (ctx != null) ctx.record("WRAPPED_DESCRIPTION");
                     trailingCountSinceLastAnchor++;
                     lastRowPage = row.get(0).pageIndex();
                 } else {
@@ -272,6 +297,7 @@ public class PdfTableLocator {
                     // -- verified against the real Canara statement this capability is modeled on.
                     if (pendingLeading == null) pendingLeading = new LinkedHashMap<>();
                     mergeInto(pendingLeading, bucketed);
+                    if (ctx != null) ctx.record("LEADING_NARRATION_CONTINUATION");
                     lastRowPage = row.isEmpty() ? lastRowPage : row.get(0).pageIndex();
                 }
             }
@@ -280,6 +306,7 @@ public class PdfTableLocator {
             flushPendingLeading(currentRows, pendingLeading);
             sections.add(new LocatedSection(pendingAuxiliary, currentRows));
         }
+        if (ctx != null) ctx.recordTables(sections.size());
         return new LocatedDocument(sections);
     }
 
@@ -398,7 +425,8 @@ public class PdfTableLocator {
         return signature;
     }
 
-    private Map<String, String> bucketRow(List<PositionedText> row, List<String> headerNames, List<Float> headerAnchors) {
+    private Map<String, String> bucketRow(List<PositionedText> row, List<String> headerNames, List<Float> headerAnchors,
+                                           DocumentContext ctx) {
         Map<String, String> result = new LinkedHashMap<>();
         for (PositionedText t : row) {
             int nearest = nearestColumn(t.x(), headerAnchors);
@@ -422,6 +450,7 @@ public class PdfTableLocator {
                 nearest = nearest + 1;
                 columnName = headerNames.get(nearest);
                 existing = result.get(columnName);
+                if (ctx != null) ctx.record("OFFSET_COLUMN_ANCHORS");
             }
             // Same shape as the date redirect above, for the opposite end of the row: an amount
             // (a plain number, optionally Dr/Cr-suffixed) that would otherwise be appended onto an
@@ -437,6 +466,7 @@ public class PdfTableLocator {
                     nearest = laterAmountColumn;
                     columnName = headerNames.get(nearest);
                     existing = result.get(columnName);
+                    if (ctx != null) ctx.record("OFFSET_COLUMN_ANCHORS");
                 }
             }
             // Two text runs landing in the same column on the same row (e.g. a multi-word
@@ -444,8 +474,8 @@ public class PdfTableLocator {
             // the second one silently overwriting the first.
             result.put(columnName, existing == null ? t.text() : existing + " " + t.text());
         }
-        splitTrailingAmountIfMissing(result, headerNames);
-        splitLeadingAmountFromBalanceIfMissing(result, headerNames);
+        splitTrailingAmountIfMissing(result, headerNames, ctx);
+        splitLeadingAmountFromBalanceIfMissing(result, headerNames, ctx);
         return result;
     }
 
@@ -462,7 +492,7 @@ public class PdfTableLocator {
     private static final List<String> CREDIT_HINTS = List.of("deposit", "deposits", "credit", "cr amount", "credit amount");
     private static final List<String> DEBIT_HINTS = List.of("withdrawal", "withdrawals", "debit", "dr amount", "debit amount");
 
-    private void splitLeadingAmountFromBalanceIfMissing(Map<String, String> result, List<String> headerNames) {
+    private void splitLeadingAmountFromBalanceIfMissing(Map<String, String> result, List<String> headerNames, DocumentContext ctx) {
         String balanceColumn = headerNames.stream()
                 .filter(h -> CsvParser.normalizeHeaderCell(h).equals("balance"))
                 .findFirst().orElse(null);
@@ -484,6 +514,7 @@ public class PdfTableLocator {
 
         result.put(balanceColumn, m.group(2));
         result.put(targetColumn, m.group(1));
+        if (ctx != null) ctx.record("OFFSET_COLUMN_ANCHORS");
     }
 
     // Handles the case the two redirects above can't: some rows in a real statement render a
@@ -494,7 +525,7 @@ public class PdfTableLocator {
     // "amount" column (the DR_CR_SUFFIX capability's shape specifically -- see AMOUNT_COLUMN_HINTS'
     // broader definition, deliberately not reused here) came back with no value at all, and only
     // ever pulls off a trailing amount, never touches a column that already has one.
-    private void splitTrailingAmountIfMissing(Map<String, String> result, List<String> headerNames) {
+    private void splitTrailingAmountIfMissing(Map<String, String> result, List<String> headerNames, DocumentContext ctx) {
         String amountColumn = headerNames.stream()
                 .filter(h -> CsvParser.normalizeHeaderCell(h).equals("amount"))
                 .findFirst().orElse(null);
@@ -504,6 +535,7 @@ public class PdfTableLocator {
             if (m.matches()) {
                 result.put(column, m.group(1));
                 result.put(amountColumn, m.group(2));
+                if (ctx != null) ctx.record("OFFSET_COLUMN_ANCHORS");
                 return;
             }
         }

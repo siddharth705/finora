@@ -1,5 +1,6 @@
 package com.finora.imports.pdf;
 
+import com.finora.imports.DocumentContext;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
@@ -104,6 +105,14 @@ public class PdfMetadataExtractor {
     ) {}
 
     public ExtractedMetadata extract(List<String> preTableLines) {
+        return extract(preTableLines, null);
+    }
+
+    /** Same as {@link #extract(List)}, plus records GRID_METADATA_FALLBACK/
+     *  GRID_METADATA_TRAILING_LABEL capability activations onto {@code ctx} as they fire (Phase 1
+     *  "capture facts" -- docs/engineering/financial-document-intelligence-principles.md).
+     *  {@code ctx} is nullable -- callers with no DocumentContext in scope get the old behavior. */
+    public ExtractedMetadata extract(List<String> preTableLines, DocumentContext ctx) {
         String accountHolderName = null;
         String accountNumberMasked = null;
         String branchName = null;
@@ -147,6 +156,7 @@ public class PdfMetadataExtractor {
 
             if (paymentDueDate == null && GRID_DUE_DATE_LABEL.matcher(line).matches()) {
                 paymentDueDate = findGridDueDate(preTableLines, i);
+                if (ctx != null && paymentDueDate != null) ctx.record("GRID_METADATA_FALLBACK");
                 continue;
             }
 
@@ -157,6 +167,7 @@ public class PdfMetadataExtractor {
                 Matcher acctNoMatch = ACCOUNT_NUMBER_TRAILING_LABEL.matcher(line);
                 if (acctNoMatch.matches()) {
                     accountNumberMasked = com.finora.imports.CsvParser.maskAccountNumber(acctNoMatch.group(1));
+                    if (ctx != null) ctx.record("GRID_METADATA_TRAILING_LABEL");
                     continue;
                 }
             }
@@ -164,6 +175,7 @@ public class PdfMetadataExtractor {
                 Matcher holderMatch = ACCOUNT_NAME_TRAILING_LABEL.matcher(line);
                 if (holderMatch.find()) {
                     accountHolderName = holderMatch.group(1).trim();
+                    if (ctx != null) ctx.record("GRID_METADATA_TRAILING_LABEL");
                     continue;
                 }
             }
@@ -171,6 +183,7 @@ public class PdfMetadataExtractor {
                 Matcher ifscMatch = IFSC_SHAPE.matcher(line);
                 if (ifscMatch.find()) {
                     ifscCode = ifscMatch.group().toUpperCase();
+                    if (ctx != null) ctx.record("GRID_METADATA_TRAILING_LABEL");
                     continue;
                 }
             }
@@ -180,6 +193,7 @@ public class PdfMetadataExtractor {
                     LocalDate[] parsed = parsePeriod(periodMatch.group(1).trim());
                     periodStart = parsed[0];
                     periodEnd = parsed[1];
+                    if (ctx != null) ctx.record("GRID_METADATA_TRAILING_LABEL");
                     continue;
                 }
             }

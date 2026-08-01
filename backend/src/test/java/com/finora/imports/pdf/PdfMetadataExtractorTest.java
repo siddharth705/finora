@@ -1,5 +1,6 @@
 package com.finora.imports.pdf;
 
+import com.finora.imports.DocumentContext;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -78,5 +79,23 @@ class PdfMetadataExtractorTest {
         var metadata = extractor.extract(List.of("Branch Address Statement Details"));
 
         assertThat(metadata.branchName()).isNull();
+    }
+
+    @Test
+    void extract_recordsGridMetadataTrailingLabel_onDocumentContext_whenATrailingLabelLineMatches() {
+        DocumentContext ctx = new DocumentContext("PDF", "PdfMetadataExtractor");
+
+        extractor.extract(List.of("317002010038811 Account Number"), ctx);
+
+        assertThat(ctx.capabilities()).extracting(a -> a.capability()).contains("GRID_METADATA_TRAILING_LABEL");
+    }
+
+    @Test
+    void extract_doesNotRecordGridMetadataTrailingLabel_forTheOrdinaryLabelFirstShape() {
+        DocumentContext ctx = new DocumentContext("PDF", "PdfMetadataExtractor");
+
+        extractor.extract(List.of("Account Holder Name: JOHN DOE"), ctx);
+
+        assertThat(ctx.capabilities()).extracting(a -> a.capability()).doesNotContain("GRID_METADATA_TRAILING_LABEL");
     }
 }

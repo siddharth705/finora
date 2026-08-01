@@ -47,7 +47,7 @@ class ImportSessionServiceTest {
 
     private StagedRow sampleRow() {
         return new StagedRow(LocalDate.of(2026, 7, 1), "Coffee Shop", new BigDecimal("150.00"),
-                "EXPENSE", "Food & Dining", "rule", null, false);
+                "EXPENSE", "Food & Dining", "rule", null, false, null, null);
     }
 
     private DetectedAccountInfo sampleDetected() {

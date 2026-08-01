@@ -444,12 +444,29 @@ This list moves whenever a capability changes stage. It is the actual measure of
 document keeps insisting on (see "How progress is actually measured" below) — never "which banks
 does Finora support."
 
+### Instrumentation: recording facts, not yet analyzing them
+
+`DocumentContext` (`com.finora.imports.DocumentContext`) is threaded through both the PDF and CSV
+pipelines and records three things per parse run, deliberately facts-only per "Build data before
+dashboards" below: **`FinancialDocumentMetadata`** (structural facts — page/table/column counts,
+the header list, and which headers no capability recognized), a deterministic **`LayoutFingerprint`**
+(a short hashed ID — e.g. `FP-A3F9C1` — so "have we seen this exact layout before" is an equality
+check against `statement_imports.layout_fingerprint`/`import_sessions.layout_fingerprint`, not a
+JSON diff), and **`CapabilityActivation`** events (`{capability, status}` — which capabilities
+actually fired on a given document, not just which ones exist in the registry below). This is
+explicitly the format-agnostic entry point for both pipelines, not a PDF-specific mechanism — the
+same recorder is used whether the source document was a PDF or a CSV. No scoring, no confidence,
+no dashboard, no learning consumes this yet — see "Build data before dashboards" and Phase 5's own
+entry criteria, none of which are met. This is the data those future systems would eventually
+read, recorded now so it isn't retroactively unavailable once (if) that gate is actually met.
+
 ### Capability Registry
 
 The single source of truth for every capability the engine understands. `Coverage`/`Confidence`
-as live, queryable metrics need real instrumentation that doesn't exist yet (see Phase 3); until
-then, "Regression tests" is the honest proxy for confidence a capability actually works — no test,
-no claim.
+as live, queryable metrics need real instrumentation that doesn't exist yet (see Phase 3) — raw
+per-document activation *events* now exist (see "Instrumentation" above), but nothing aggregates
+or scores them yet, so the distinction still holds. Until it does, "Regression tests" is the
+honest proxy for confidence a capability actually works — no test, no claim.
 
 #### `RUNNING_BALANCE` / `BALANCE_CHAIN_RECONSTRUCTION`
 - **Purpose:** reconstruct which transaction happened first when a statement lists a running
