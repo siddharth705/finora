@@ -13,6 +13,9 @@ interface ThemeState {
 
 const ThemeContext = createContext<ThemeState | null>(null);
 const STORAGE_KEY = 'finora_theme';
+// Dispatched by AuthContext after a successful login/register, since ThemeProvider wraps
+// AuthProvider (App.tsx) and so can't consume useAuth()'s reactive token directly.
+export const AUTH_CHANGED_EVENT = 'finora:auth-changed';
 
 // The backend's User.theme column predates this feature and defaulted to "ledger" (see V9
 // migration) — anything that isn't one of our three real settings falls back to "system"
@@ -46,19 +49,30 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return () => mql.removeEventListener('change', handler);
   }, []);
 
-  // Pull the account's saved preference once so the choice follows the user across devices —
-  // only when actually signed in, since /users/me would otherwise 401 on the public pages
-  // (Landing/Login/Register) that also mount this provider.
+  // Pull the account's saved preference so the choice follows the user across devices — only
+  // when actually signed in, since /users/me would otherwise 401 on the public pages
+  // (Landing/Login/Register) that also mount this provider. ThemeProvider wraps AuthProvider
+  // (see App.tsx), so it can't call useAuth() to react to login/logout directly -- it instead
+  // re-runs this sync on the AUTH_CHANGED_EVENT AuthContext dispatches after login/register,
+  // not just once on mount. Without this, a theme saved from another device was only ever
+  // pulled in if the tab happened to load fresh with a token already present -- logging in
+  // during the same SPA session left the theme on whatever it was pre-login until a full
+  // page reload.
   useEffect(() => {
-    if (!localStorage.getItem('finora_token')) return;
-    userApi
-      .get()
-      .then((u) => {
-        const remote = normalize(u.theme);
-        setThemeState(remote);
-        localStorage.setItem(STORAGE_KEY, remote);
-      })
-      .catch(() => {});
+    function syncFromServer() {
+      if (!localStorage.getItem('finora_token')) return;
+      userApi
+        .get()
+        .then((u) => {
+          const remote = normalize(u.theme);
+          setThemeState(remote);
+          localStorage.setItem(STORAGE_KEY, remote);
+        })
+        .catch(() => {});
+    }
+    syncFromServer();
+    window.addEventListener(AUTH_CHANGED_EVENT, syncFromServer);
+    return () => window.removeEventListener(AUTH_CHANGED_EVENT, syncFromServer);
   }, []);
 
   function setTheme(next: ThemeSetting) {

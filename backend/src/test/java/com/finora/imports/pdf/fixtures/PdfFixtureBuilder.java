@@ -370,4 +370,42 @@ public final class PdfFixtureBuilder {
 
         return render(List.of(page));
     }
+
+    /**
+     * A layout where each transaction's narration wraps across several lines BEFORE its own date
+     * and amount row, not after -- the reverse of {@code buildWrappedDescriptionCreditCardSample}'s
+     * shape. A transaction here reads, top to bottom: 2 narration lines with no date, then the
+     * date+amount+balance row itself, then exactly 2 trailing detail lines (a transaction
+     * time+reference line, then a "Chq: &lt;number&gt;" line) -- also with no date -- before the
+     * NEXT transaction's own leading narration begins. Modeled on a real Canara Bank statement, but
+     * the underlying capability -- narration that precedes its transaction's date row instead of
+     * following it -- isn't specific to that bank.
+     */
+    public static byte[] buildLeadingNarrationContinuationSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 150f, 300f, 380f, 460f};
+        float particularsX = col[1];
+
+        PageBuilder page = new PageBuilder();
+        page.row(col, "Date", "Particulars", "Deposits", "Withdrawals", "Balance")
+                // Opening Balance: no date of its own, and must never absorb the narration that
+                // follows it -- see MAX_TRAILING_CONTINUATION_ROWS's own doc comment for why a
+                // summary row like this is closed to trailing continuation immediately.
+                .row(col, null, null, "Opening Balance", null, "10000.00")
+                // Transaction 1's leading narration -- two lines, no date on either.
+                .row(new float[]{particularsX}, "UPI/CR/123456789012/JOHN DOE")
+                .row(new float[]{particularsX}, "/BANK0001234/PAYMENT")
+                .row(col, "15-07-2026", null, "500.00", null, "10500.00")
+                // Transaction 1's trailing detail -- exactly 2 lines (the cap this capability is
+                // sized to), no date on either.
+                .row(new float[]{particularsX}, "14:30:00/REF123456")
+                .row(new float[]{particularsX}, "Chq: REF123456")
+                // Transaction 2's leading narration.
+                .row(new float[]{particularsX}, "UPI/DR/987654321098/JANE SMITH")
+                .row(new float[]{particularsX}, "/BANK0005678/PAYMENT")
+                .row(col, "16-07-2026", null, null, "200.00", "10300.00")
+                .row(new float[]{particularsX}, "09:15:00/REF789012")
+                .row(new float[]{particularsX}, "Chq: REF789012");
+
+        return render(List.of(page));
+    }
 }

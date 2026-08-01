@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -47,6 +48,26 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleBadCredentials(BadCredentialsException ex) {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                 .body(ApiResponse.error("Invalid credentials", "UNAUTHORIZED"));
+    }
+
+    /**
+     * Bug fix: a failed {@code @PreAuthorize} check (every Admin*Controller endpoint) throws
+     * Spring Security's AccessDeniedException from INSIDE the AOP-proxied controller-method call
+     * -- i.e. during DispatcherServlet handler dispatch, not from the security filter chain. With
+     * no handler for it here, it fell through to the catch-all Exception handler below: every
+     * authenticated-but-unauthorized admin request returned 500 "Unexpected error" / INTERNAL_ERROR
+     * instead of 403, and got logged as log.error("Unhandled exception", ...) — polluting error
+     * logs/alerting with what's actually routine, expected authorization enforcement, not a real
+     * failure. SecurityConfig's own AccessDeniedException handling (ExceptionTranslationFilter,
+     * wired via RestAuthenticationEntryPoint's 401-vs-403 split) only ever sees this exception when
+     * it's thrown from within the filter chain itself (e.g. a path-based authorizeHttpRequests
+     * rule) -- never from a method-level @PreAuthorize check, which is exactly the mechanism every
+     * admin controller in this codebase actually uses.
+     */
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAccessDenied(AccessDeniedException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiResponse.error("You don't have permission to do that", "AUTH_003"));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

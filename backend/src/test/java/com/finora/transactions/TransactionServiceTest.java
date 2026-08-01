@@ -74,6 +74,14 @@ class TransactionServiceTest {
         dummyCategory.setName("Dining");
         when(transactionRepository.save(any(Transaction.class))).thenAnswer(inv -> inv.getArgument(0));
         when(accountRepository.save(any(Account.class))).thenAnswer(inv -> inv.getArgument(0));
+        // create() now verifies the request's accountId is owned by userId before doing anything
+        // else (see TransactionService's own bug-fix comment on that check) -- most tests below
+        // build their CreateRequest with a throwaway UUID.randomUUID() accountId and don't care
+        // about account specifics, so this generic stub lets ownership resolve for any of them.
+        // Tests that DO care what account.findById returns (balance-direction tests, mainly)
+        // already register their own more specific when(accountRepository.findById(accountId))
+        // stub for their own known id, which Mockito matches ahead of this any()-matcher fallback.
+        when(accountRepository.findById(any())).thenReturn(Optional.of(account(UUID.randomUUID(), Account.Type.SAVINGS, BigDecimal.ZERO)));
     }
 
     private Transaction ownedTransaction(UUID id, UUID owner) {
@@ -670,6 +678,44 @@ class TransactionServiceTest {
         assertThatThrownBy(() -> transactionService.create(userId, negativeReq))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("greater than zero");
+
+        verify(transactionRepository, never()).save(any());
+    }
+
+    // --- Account ownership on create() (previously: req.accountId() went straight onto the
+    // transaction with no check it belonged to the caller -- any authenticated user could POST
+    // with another user's accountId and both plant a transaction against it AND silently move
+    // that victim's real account balance via adjustAccountBalance()) ---
+
+    @Test
+    void create_rejectsAnAccountIdThatBelongsToAnotherUser() {
+        UUID otherUsersAccountId = UUID.randomUUID();
+        Account othersAccount = account(otherUsersAccountId, Account.Type.SAVINGS, BigDecimal.valueOf(1000));
+        othersAccount.setUserId(otherUserId);
+        when(accountRepository.findById(otherUsersAccountId)).thenReturn(Optional.of(othersAccount));
+
+        var req = new TransactionDto.CreateRequest(otherUsersAccountId, "Dining", LocalDate.now(),
+                "Swiggy order", BigDecimal.valueOf(486), "EXPENSE", List.of());
+
+        assertThatThrownBy(() -> transactionService.create(userId, req))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("does not belong to you");
+
+        verify(transactionRepository, never()).save(any());
+        verify(accountRepository, never()).save(any());
+    }
+
+    @Test
+    void create_rejectsAnAccountIdThatDoesNotExistAtAll() {
+        UUID missingAccountId = UUID.randomUUID();
+        when(accountRepository.findById(missingAccountId)).thenReturn(Optional.empty());
+
+        var req = new TransactionDto.CreateRequest(missingAccountId, "Dining", LocalDate.now(),
+                "Swiggy order", BigDecimal.valueOf(486), "EXPENSE", List.of());
+
+        assertThatThrownBy(() -> transactionService.create(userId, req))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("Account not found");
 
         verify(transactionRepository, never()).save(any());
     }

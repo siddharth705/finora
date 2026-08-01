@@ -93,6 +93,18 @@ public class PdfTableLocator {
     // themselves, not just an isolated quirk this pattern needs to special-case digit-by-digit).
     private static final Pattern PAGE_FOOTER = Pattern.compile("(?i)\\bpage\\b.*\\bof\\b");
 
+    // LEADING_NARRATION_CONTINUATION: how many dateless rows immediately after a transaction's
+    // date row are still trusted to be genuinely TRAILING continuations of that same transaction,
+    // before a further dateless row is instead treated as the LEADING narration of the NEXT
+    // transaction (buffered forward -- see pendingLeading in locateAll()). Sized from two real,
+    // independently-discovered layouts, not picked arbitrarily: HDFC's WRAPPED_DESCRIPTION needs
+    // exactly 1 (a single description-wrap line); a real Canara Bank statement needs exactly 2 (a
+    // transaction-time-plus-reference line, then a separate "Chq: <number>" line) -- its narration
+    // wraps across several lines BEFORE its own date row, then closes with exactly these two
+    // trailing detail lines before the NEXT transaction's leading narration begins. Set to the
+    // larger of the two real requirements seen so far; revisit if a real document needs more.
+    private static final int MAX_TRAILING_CONTINUATION_ROWS = 2;
+
     public record LocatedTable(List<Map<String, String>> rows, List<String> preTableLines) {}
 
     /** One detected account/table within a document -- {@code auxiliaryText} is the free-standing
@@ -139,12 +151,21 @@ public class PdfTableLocator {
         List<Float> headerAnchors = null;
         Set<String> currentHeaderSignature = null;
         Integer lastRowPage = null; // page index of the most recently added row in currentRows
+        int trailingCountSinceLastAnchor = 0;
+        // LEADING_NARRATION_CONTINUATION: dateless rows that arrive once trailingCountSinceLastAnchor
+        // has hit its cap -- narration for a transaction whose OWN date row hasn't been seen yet
+        // (a real Canara Bank statement's layout; see MAX_TRAILING_CONTINUATION_ROWS's own doc
+        // comment). Buffered here, in encounter order, until the next date-bearing row arrives and
+        // claims it as its leading part -- see mergeLeadingInto's own doc comment for why that's a
+        // prepend, not the ordinary append mergeInto does for trailing continuations.
+        Map<String, String> pendingLeading = null;
 
         for (List<PositionedText> row : rows) {
             String rowLine = lineOf(row);
 
             if (SECTION_MARKER.matcher(rowLine).find()) {
                 if (currentRows != null) {
+                    flushPendingLeading(currentRows, pendingLeading);
                     sections.add(new LocatedSection(pendingAuxiliary, currentRows));
                 }
                 pendingAuxiliary = new ArrayList<>();
@@ -153,6 +174,8 @@ public class PdfTableLocator {
                 headerAnchors = null;
                 currentHeaderSignature = null;
                 lastRowPage = null;
+                trailingCountSinceLastAnchor = 0;
+                pendingLeading = null;
                 pendingAuxiliary.add(rowLine);
                 continue;
             }
@@ -165,6 +188,7 @@ public class PdfTableLocator {
                 if (currentRows != null) {
                     // A different header shape with no explicit marker line -- fallback signal
                     // for a new section in a document without a banner line.
+                    flushPendingLeading(currentRows, pendingLeading);
                     sections.add(new LocatedSection(pendingAuxiliary, currentRows));
                     pendingAuxiliary = new ArrayList<>();
                 }
@@ -177,6 +201,8 @@ public class PdfTableLocator {
                 currentHeaderSignature = signature;
                 currentRows = new ArrayList<>();
                 lastRowPage = null;
+                trailingCountSinceLastAnchor = 0;
+                pendingLeading = null;
                 continue;
             }
 
@@ -211,18 +237,61 @@ public class PdfTableLocator {
                 // of a transaction, so this is scoped to same-page rows only, same spirit as never
                 // crossing a header/section boundary above.
                 boolean samePage = lastRowPage != null && !row.isEmpty() && row.get(0).pageIndex() == lastRowPage;
-                if (!hasDateValue(bucketed) && !currentRows.isEmpty() && samePage) {
-                    mergeInto(currentRows.get(currentRows.size() - 1), bucketed);
-                } else {
+
+                if (hasDateValue(bucketed)) {
+                    // A new transaction anchor. Any leading narration buffered since the last
+                    // anchor belongs to THIS one -- claim it first (prepended, so it reads in the
+                    // order it actually appeared), then this row becomes the new anchor, open to
+                    // its own (capped) trailing continuations.
+                    if (pendingLeading != null) {
+                        mergeLeadingInto(bucketed, pendingLeading);
+                        pendingLeading = null;
+                    }
                     currentRows.add(bucketed);
+                    lastRowPage = row.get(0).pageIndex();
+                    trailingCountSinceLastAnchor = 0;
+                } else if (currentRows.isEmpty()) {
+                    // Nothing to attach to at all yet (e.g. an "Opening Balance" summary line
+                    // before any real transaction) -- stands on its own, same as before. Closed to
+                    // trailing continuation immediately: a summary row isn't a transaction, and
+                    // narration that follows it belongs to the FIRST real transaction as leading
+                    // content, not to this row as trailing content.
+                    currentRows.add(bucketed);
+                    lastRowPage = row.isEmpty() ? lastRowPage : row.get(0).pageIndex();
+                    trailingCountSinceLastAnchor = MAX_TRAILING_CONTINUATION_ROWS;
+                } else if (samePage && trailingCountSinceLastAnchor < MAX_TRAILING_CONTINUATION_ROWS) {
+                    mergeInto(currentRows.get(currentRows.size() - 1), bucketed);
+                    trailingCountSinceLastAnchor++;
+                    lastRowPage = row.get(0).pageIndex();
+                } else {
+                    // Past the trailing cap (or on a new page with nothing to trail into) -- this
+                    // is leading narration for a transaction whose date row hasn't appeared yet.
+                    // Not gated on samePage the way the trailing branch above is: unlike a page
+                    // footer or repeated title banner (which must never cross a page boundary into
+                    // the wrong row), genuine leading narration legitimately can span a page break
+                    // -- verified against the real Canara statement this capability is modeled on.
+                    if (pendingLeading == null) pendingLeading = new LinkedHashMap<>();
+                    mergeInto(pendingLeading, bucketed);
                     lastRowPage = row.isEmpty() ? lastRowPage : row.get(0).pageIndex();
                 }
             }
         }
         if (currentRows != null) {
+            flushPendingLeading(currentRows, pendingLeading);
             sections.add(new LocatedSection(pendingAuxiliary, currentRows));
         }
         return new LocatedDocument(sections);
+    }
+
+    /** A pending leading-narration buffer that never found a date-bearing row to attach to before
+     *  its section ended (trailing boilerplate after the last real transaction, most commonly) --
+     *  surfaced as its own row rather than silently discarded, consistent with "Never lose
+     *  information": it still won't parse as a transaction (no date), but it'll be reported with a
+     *  specific reason instead of just vanishing. */
+    private void flushPendingLeading(List<Map<String, String>> currentRows, Map<String, String> pendingLeading) {
+        if (pendingLeading != null && !pendingLeading.isEmpty()) {
+            currentRows.add(pendingLeading);
+        }
     }
 
     private boolean hasDateValue(Map<String, String> bucketed) {
@@ -238,6 +307,18 @@ public class PdfTableLocator {
             if (e.getValue() == null || e.getValue().isBlank()) continue;
             String existing = target.get(e.getKey());
             target.put(e.getKey(), (existing == null || existing.isBlank()) ? e.getValue() : existing + " " + e.getValue());
+        }
+    }
+
+    /** Same column-merge semantics as {@link #mergeInto}, but PREPENDS instead of appending --
+     *  used only for {@code pendingLeading} (see {@link #locateAll}): a leading narration buffer's
+     *  text chronologically precedes whatever the new anchor row's own bucketed values already
+     *  hold, so it has to read before them, not after. */
+    private void mergeLeadingInto(Map<String, String> target, Map<String, String> leading) {
+        for (Map.Entry<String, String> e : leading.entrySet()) {
+            if (e.getValue() == null || e.getValue().isBlank()) continue;
+            String existing = target.get(e.getKey());
+            target.put(e.getKey(), (existing == null || existing.isBlank()) ? e.getValue() : e.getValue() + " " + existing);
         }
     }
 

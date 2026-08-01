@@ -20,7 +20,7 @@ export default function Goals() {
   const queryClient = useQueryClient();
 
   function load() {
-    goalsApi.list().then(setGoals);
+    goalsApi.list().then(setGoals).catch(() => setError('Could not load goals.'));
   }
   useEffect(load, []);
 
@@ -31,8 +31,8 @@ export default function Goals() {
   // until the cache aged out on its own -- stale numbers on a page whose whole pitch is "watch it
   // update in real time." 'dashboard-summary' goes too since goal progress feeds it.
   function invalidateSharedCaches() {
-    queryClient.invalidateQueries({ queryKey: ['goals'] });
-    queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+    void queryClient.invalidateQueries({ queryKey: ['goals'] });
+    void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
   }
 
   async function addGoal() {

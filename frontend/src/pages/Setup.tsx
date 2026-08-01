@@ -105,7 +105,7 @@ export default function Setup() {
   const [renameValue, setRenameValue] = useState('');
 
   function load() {
-    accountsApi.list().then(setAccounts);
+    accountsApi.list().then(setAccounts).catch(() => setError('Could not load accounts.'));
   }
   useEffect(load, []);
   useEffect(() => { banksApi.list().then(setBanks).catch(() => setBanks([])); }, []);
@@ -222,7 +222,7 @@ export default function Setup() {
                         value={renameValue}
                         onChange={(e) => setRenameValue(e.target.value)}
                         onBlur={() => submitRename(a.id)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') submitRename(a.id); if (e.key === 'Escape') cancelRename(); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') void submitRename(a.id); if (e.key === 'Escape') cancelRename(); }}
                         className="bg-card text-ink border border-primary/40 rounded-lg px-2 py-1 text-sm font-semibold w-full max-w-xs"
                       />
                     ) : (

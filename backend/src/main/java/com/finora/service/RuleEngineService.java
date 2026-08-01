@@ -3,6 +3,7 @@ package com.finora.service;
 import com.finora.entity.CategoryRule;
 import com.finora.exception.ApiException;
 import com.finora.repository.CategoryRuleRepository;
+import com.finora.util.MoneyMath;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -159,34 +160,41 @@ public class RuleEngineService {
 
         return switch (rule.getOperator()) {
             case CONTAINS -> actual.toLowerCase().contains(rule.getComparisonValue().toLowerCase());
-            case EQUALS -> actual.equalsIgnoreCase(rule.getComparisonValue());
+            // Bug fix: AMOUNT+EQUALS used to fall through to the plain string-equality branch
+            // below, comparing amount.toPlainString() (DB-column-scaled, e.g. "1500.00") against
+            // whatever an admin/user typed as the comparison value (e.g. "1500") -- a scale-2
+            // stored amount essentially never string-equals a plainly-typed integer, so this rule
+            // combination silently never matched anything, with no error anywhere to reveal it.
+            // Nothing in CategoryRule/RuleService.validateRule/RuleController actually restricts
+            // which Operator can pair with Field.AMOUNT, so this was a real, creatable, silently
+            // broken rule shape, not just a theoretical one. See MoneyMath's class doc for why
+            // that fix is a shared utility rather than a private method here.
+            case EQUALS -> rule.getField() == CategoryRule.Field.AMOUNT
+                    ? MoneyMath.equalsValue(amount, parseAmount(rule.getComparisonValue()))
+                    : actual.equalsIgnoreCase(rule.getComparisonValue());
             case STARTS_WITH -> actual.toLowerCase().startsWith(rule.getComparisonValue().toLowerCase());
-            case GT -> compareAmount(amount, rule.getComparisonValue()) > 0;
-            case LT -> compareAmount(amount, rule.getComparisonValue()) < 0;
+            case GT -> MoneyMath.isGreaterThan(amount, parseAmount(rule.getComparisonValue()));
+            case LT -> MoneyMath.isLessThan(amount, parseAmount(rule.getComparisonValue()));
             case BETWEEN -> matchesBetween(amount, rule.getComparisonValue());
         };
     }
 
-    private int compareAmount(BigDecimal amount, String comparisonValue) {
-        if (amount == null) return 0; // GT/LT against a null amount can't be satisfied -- see the null actual == null return false above, this path is unreachable for AMOUNT field but kept defensive for other fields misconfigured with a numeric operator
+    /** {@code null} for missing/malformed rule data -- every MoneyMath comparison already fails
+     *  closed on a null operand, so a malformed comparisonValue never matches rather than
+     *  throwing mid-import. */
+    private BigDecimal parseAmount(String value) {
+        if (value == null) return null;
         try {
-            return amount.compareTo(new BigDecimal(comparisonValue.trim()));
+            return new BigDecimal(value.trim());
         } catch (NumberFormatException e) {
-            return 0; // malformed rule data -- fail closed (no match) rather than throw mid-import
+            return null;
         }
     }
 
     /** comparisonValue for BETWEEN is "low,high" -- e.g. "1000,5000". */
     private boolean matchesBetween(BigDecimal amount, String comparisonValue) {
-        if (amount == null) return false;
         String[] parts = comparisonValue.split(",");
         if (parts.length != 2) return false;
-        try {
-            BigDecimal low = new BigDecimal(parts[0].trim());
-            BigDecimal high = new BigDecimal(parts[1].trim());
-            return amount.compareTo(low) >= 0 && amount.compareTo(high) <= 0;
-        } catch (NumberFormatException e) {
-            return false;
-        }
+        return MoneyMath.isBetweenInclusive(amount, parseAmount(parts[0]), parseAmount(parts[1]));
     }
 }

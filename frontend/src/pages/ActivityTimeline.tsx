@@ -26,7 +26,7 @@ export default function ActivityTimeline() {
   const [entries, setEntries] = useState<AuditLogEntry[] | null>(null);
 
   useEffect(() => {
-    activityApi.list().then(setEntries);
+    activityApi.list().then(setEntries).catch(() => setEntries([]));
   }, []);
 
   return (

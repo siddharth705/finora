@@ -8,6 +8,7 @@ import com.finora.exception.ApiException;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.TransactionRepository;
+import com.finora.security.OwnershipGuard;
 import com.finora.service.AuditService;
 import com.finora.service.BankManagementService;
 import com.finora.service.CategorizationService;
@@ -130,9 +131,17 @@ public class TransactionService {
 
     @Transactional
     public TransactionDto create(UUID userId, TransactionDto.CreateRequest req) {
+        // Bug fix: req.accountId() used to go straight onto the transaction with no check that it
+        // actually belongs to userId -- every other entry point into an Account (AccountService's
+        // own getOwned, and this class's own getOwned for transactions) verifies ownership before
+        // acting; this was the one place that didn't. Without it, any authenticated user could
+        // POST here with another user's accountId and both plant a transaction pointed at it AND
+        // silently move that victim's real account balance via adjustAccountBalance() below.
+        Account account = getOwnedAccount(userId, req.accountId());
+
         Transaction t = new Transaction();
         t.setUserId(userId);
-        t.setAccountId(req.accountId());
+        t.setAccountId(account.getId());
         t.setTxnDate(req.date());
         t.setDescription(req.description());
         t.setMerchant(CategoryRules.extractMerchant(req.description()));
@@ -425,11 +434,15 @@ public class TransactionService {
     }
 
     private Transaction getOwned(UUID userId, UUID txnId) {
-        Transaction t = transactionRepository.findById(txnId)
-                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Transaction not found"));
-        if (!t.getUserId().equals(userId)) {
-            throw new ApiException(HttpStatus.FORBIDDEN, "This transaction does not belong to you");
-        }
-        return t;
+        return OwnershipGuard.requireOwned(
+                transactionRepository.findById(txnId), Transaction::getUserId, userId, "Transaction");
+    }
+
+    /** The same check AccountService applies -- both now route through {@link OwnershipGuard}
+     *  rather than each keeping its own copy. This method survives only as a named shorthand for
+     *  the label/getter pair; the security logic itself lives in exactly one place. */
+    private Account getOwnedAccount(UUID userId, UUID accountId) {
+        return OwnershipGuard.requireOwned(
+                accountRepository.findById(accountId), Account::getUserId, userId, "Account");
     }
 }

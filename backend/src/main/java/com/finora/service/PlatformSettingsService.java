@@ -64,16 +64,27 @@ public class PlatformSettingsService {
         return repository.findById(SINGLETON_ID).orElseGet(PlatformSettings::new);
     }
 
-    /** Called once, by SetupService.completeSetup(), in the same transaction that creates the
-     *  first real SUPER_ADMIN and locks the bootstrap account -- see V33__bootstrap_admin.sql.
-     *  No audit entry here: SetupService already records SETUP_COMPLETED with the acting user, and
-     *  this method has no separate caller or actor of its own to attribute one to. */
+    /**
+     * Bug fix: SetupService.completeSetup() used to check isSetupRequired() (a plain read) at the
+     * START of its transaction, then only call this method (a plain read-modify-write) at the
+     * END, after already creating a new SUPER_ADMIN. Under READ_COMMITTED (the default), two
+     * overlapping completeSetup() calls -- a double-click on the setup wizard's submit button, or
+     * a client retry after a slow/timed-out first response, both realistic given this endpoint's
+     * one-time nature -- could both pass the initial check before either transaction committed,
+     * each creating its own SUPER_ADMIN account. This method replaces that check-then-write
+     * pattern with a single atomic UPDATE ... WHERE setup_completed = false: the database itself
+     * guarantees only one caller's UPDATE can ever match that WHERE clause and actually flip the
+     * row, no matter how many callers race it -- there's no window between "check" and "write" for
+     * a second caller to slip through, because there IS no separate check. Called first thing in
+     * SetupService.completeSetup(), before any admin is created, specifically so a losing caller
+     * is rejected immediately rather than discovering the conflict only after already doing the
+     * work. Returns whether THIS call was the one that won the race (false means setup was
+     * already completed, by this call or a concurrent one) -- the caller is expected to abort
+     * immediately when it gets false.
+     */
     @Transactional
-    public void markSetupCompleted() {
-        PlatformSettings settings = getEntity();
-        settings.setSetupCompleted(true);
-        settings.setUpdatedAt(Instant.now());
-        repository.save(settings);
+    public boolean tryMarkSetupCompleted() {
+        return repository.markSetupCompletedIfNotAlready() == 1;
     }
 
     private PlatformSettingsDto toDto(PlatformSettings s) {

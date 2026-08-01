@@ -12,6 +12,7 @@ import com.finora.repository.CategoryRepository;
 import com.finora.repository.RelationshipIdentifierRepository;
 import com.finora.repository.RelationshipRepository;
 import com.finora.repository.TransactionRepository;
+import com.finora.security.OwnershipGuard;
 import com.finora.util.CategoryRules;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -206,12 +207,8 @@ public class RelationshipService {
         if (accountId == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "An OWN_ACCOUNT relationship needs linkedAccountId.");
         }
-        Account account = accountRepository.findById(accountId)
-                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Account not found"));
-        if (!account.getUserId().equals(userId)) {
-            throw new ApiException(HttpStatus.FORBIDDEN, "This account does not belong to you");
-        }
-        return accountId;
+        return OwnershipGuard.requireOwned(
+                accountRepository.findById(accountId), Account::getUserId, userId, "Account").getId();
     }
 
     private void saveIdentifiers(UUID relationshipId, List<RelationshipDto.IdentifierRequest> requests) {
@@ -264,12 +261,8 @@ public class RelationshipService {
     }
 
     private Relationship getOwned(UUID userId, UUID relationshipId) {
-        Relationship r = relationshipRepository.findById(relationshipId)
-                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Relationship not found"));
-        if (!userId.equals(r.getUserId())) {
-            throw new ApiException(HttpStatus.FORBIDDEN, "This relationship does not belong to you");
-        }
-        return r;
+        return OwnershipGuard.requireOwned(
+                relationshipRepository.findById(relationshipId), Relationship::getUserId, userId, "Relationship");
     }
 
     // Both parse methods below guard against null explicitly rather than relying solely on the

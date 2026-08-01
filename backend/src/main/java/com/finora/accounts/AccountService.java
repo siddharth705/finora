@@ -6,6 +6,7 @@ import com.finora.exception.ApiException;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
+import com.finora.security.OwnershipGuard;
 import com.finora.service.AuditService;
 import com.finora.service.BankManagementService;
 import org.springframework.http.HttpStatus;
@@ -70,7 +71,7 @@ public class AccountService {
         Account a = new Account();
         a.setUserId(userId);
         a.setName(req.name());
-        a.setAccountType(Account.Type.valueOf(req.accountType()));
+        a.setAccountType(parseAccountType(req.accountType()));
         a.setBalance(req.balance() != null ? req.balance() : java.math.BigDecimal.ZERO);
         a.setCreditLimit(req.creditLimit());
         a.setDueDate(req.dueDate());
@@ -124,11 +125,23 @@ public class AccountService {
     }
 
     private Account getOwned(UUID userId, UUID accountId) {
-        Account a = accountRepository.findById(accountId)
-                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Account not found"));
-        if (!a.getUserId().equals(userId)) {
-            throw new ApiException(HttpStatus.FORBIDDEN, "This account does not belong to you");
+        return OwnershipGuard.requireOwned(
+                accountRepository.findById(accountId), Account::getUserId, userId, "Account");
+    }
+
+    // Bug fix: CreateRequest.accountType() has no Bean Validation and the controller doesn't use
+    // @Valid, so Account.Type.valueOf() used to run directly on whatever the caller sent --
+    // missing/blank/unrecognized values threw NullPointerException/IllegalArgumentException,
+    // neither of which GlobalExceptionHandler has a specific handler for, so both fell through to
+    // its generic Exception handler and came back as an opaque 500 instead of a real 400.
+    private Account.Type parseAccountType(String accountType) {
+        if (accountType == null || accountType.isBlank()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "accountType is required");
         }
-        return a;
+        try {
+            return Account.Type.valueOf(accountType);
+        } catch (IllegalArgumentException e) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Unrecognized accountType: " + accountType);
+        }
     }
 }

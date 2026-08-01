@@ -34,6 +34,10 @@ export function AskOnceCard() {
         setItems(txns);
         setCategories(cats.map((c) => c.name));
       })
+      // A failed fetch here just leaves items/categories at their default [] -- the widget
+      // already renders nothing when items.length === 0, so this "no card" fallback for a
+      // Dashboard nice-to-have is preferable to surfacing an error banner for it.
+      .catch(() => {})
       .finally(() => setLoading(false));
   }
   useEffect(load, []);
@@ -64,11 +68,13 @@ export function AskOnceCard() {
       // category's spentThisMonth, which the Dashboard's Budget Progress card reads. Deliberately
       // not invalidating 'report'/'report-months': a category-only edit doesn't change a
       // transaction's income/expense total, which is all that chart is built from.
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['recent-transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['insights'] });
-      queryClient.invalidateQueries({ queryKey: ['budgets'] });
+      // Deliberately fire-and-forget: invalidateQueries()'s promise resolves once the background
+      // refetch of active queries completes, which nothing here needs to wait on.
+      void queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      void queryClient.invalidateQueries({ queryKey: ['recent-transactions'] });
+      void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['insights'] });
+      void queryClient.invalidateQueries({ queryKey: ['budgets'] });
     } finally {
       setResolving(null);
     }

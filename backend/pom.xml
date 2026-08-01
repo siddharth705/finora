@@ -161,6 +161,15 @@
       <version>1.20.1</version>
       <scope>test</scope>
     </dependency>
+    <!-- Architecture tests: encode invariants (e.g. "every admin-path controller method is
+         @PreAuthorize-guarded") as a reusable diagnostic that fails the build the next time the
+         invariant is violated, instead of relying on another manual audit to catch it. -->
+    <dependency>
+      <groupId>com.tngtech.archunit</groupId>
+      <artifactId>archunit-junit5</artifactId>
+      <version>1.3.0</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>

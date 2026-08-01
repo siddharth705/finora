@@ -9,6 +9,7 @@ import com.finora.dto.ImportDto.StagedRow;
 import com.finora.entity.ImportSession;
 import com.finora.exception.ApiException;
 import com.finora.repository.ImportSessionRepository;
+import com.finora.security.OwnershipGuard;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -90,11 +91,8 @@ public class ImportSessionService {
      *  written out three times instead of once here. */
     @Transactional(readOnly = true)
     public ImportSession getOwnedSession(UUID userId, UUID sessionId) {
-        ImportSession session = importSessionRepository.findById(sessionId)
-                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Import session not found."));
-        if (!session.getUserId().equals(userId)) {
-            throw new ApiException(HttpStatus.FORBIDDEN, "This import session does not belong to you.");
-        }
+        ImportSession session = OwnershipGuard.requireOwned(importSessionRepository.findById(sessionId),
+                ImportSession::getUserId, userId, "Import session");
         if (session.getExpiresAt().isBefore(Instant.now())) {
             throw new ApiException(HttpStatus.BAD_REQUEST,
                     "This import session has expired -- upload the statement again to continue.");

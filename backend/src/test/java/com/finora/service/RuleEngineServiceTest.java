@@ -185,6 +185,30 @@ class RuleEngineServiceTest {
         assertThat(ruleEngineService.evaluateCategoryRule(userId, "desc", BigDecimal.valueOf(9000), null, null)).isEmpty();
     }
 
+    // Bug fix: AMOUNT+EQUALS used to compare amount.toPlainString() (e.g. "2500.00", DB-column
+    // scale) against the raw comparisonValue string (e.g. "2500" as typed) -- a scale-2 stored
+    // amount essentially never string-equals a plainly-typed integer, so this rule shape silently
+    // never matched anything real.
+    @Test
+    void matches_equals_onAmount_comparesNumericValue_notFormattedString() {
+        CategoryRule r = rule(CategoryRule.Scope.GLOBAL, CategoryRule.Field.AMOUNT, CategoryRule.Operator.EQUALS,
+                "2500", CategoryRule.ActionType.ASSIGN_CATEGORY, "Exact Amount", 100);
+        stub(List.of(), List.of(r));
+
+        assertThat(ruleEngineService.evaluateCategoryRule(userId, "desc", BigDecimal.valueOf(2500), null, null)).isPresent();
+        assertThat(ruleEngineService.evaluateCategoryRule(userId, "desc", new BigDecimal("2500.00"), null, null)).isPresent();
+        assertThat(ruleEngineService.evaluateCategoryRule(userId, "desc", BigDecimal.valueOf(2501), null, null)).isEmpty();
+    }
+
+    @Test
+    void matches_equals_onAmount_failsClosed_whenComparisonValueIsMalformed() {
+        CategoryRule r = rule(CategoryRule.Scope.GLOBAL, CategoryRule.Field.AMOUNT, CategoryRule.Operator.EQUALS,
+                "not-a-number", CategoryRule.ActionType.ASSIGN_CATEGORY, "Broken Rule", 100);
+        stub(List.of(), List.of(r));
+
+        assertThat(ruleEngineService.evaluateCategoryRule(userId, "desc", BigDecimal.valueOf(2500), null, null)).isEmpty();
+    }
+
     @Test
     void disabledRules_areNeverConsidered() {
         // Repository methods used by RuleEngineService are the ...EnabledTrue... variants, so a

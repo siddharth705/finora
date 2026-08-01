@@ -44,7 +44,7 @@ export default function ResetPassword() {
 
   useEffect(() => {
     if (!token) return;
-    requestOtp();
+    void requestOtp();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 

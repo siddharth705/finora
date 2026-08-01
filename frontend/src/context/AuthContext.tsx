@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, type ReactNode } from 'react';
 import { authApi } from '../api/endpoints';
+import { AUTH_CHANGED_EVENT } from './ThemeContext';
 
 interface AuthState {
   token: string | null;
@@ -36,6 +37,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setEmail(data.email);
     setFullName(data.fullName);
     setPhoneVerifiedState(data.phoneVerified);
+    // Lets ThemeProvider (mounted above AuthProvider, so it can't consume this state directly)
+    // re-pull the account's saved theme now that a token exists, instead of only ever checking
+    // for one once on its own initial mount.
+    window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
   }
 
   // Returns whether the phone is already verified — callers use this to decide whether to

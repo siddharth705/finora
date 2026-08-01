@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Store, X, History, GitMerge, Pencil, Check } from 'lucide-react';
 import { merchantsApi } from '../api/endpoints';
 import type { Merchant, MerchantAuditEntry } from '../types';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 function confidenceColor(confidence: number | null) {
   // Color-coding per docs/financial-intelligence-engine-spec.md §6.1: green >=90%, amber
@@ -29,6 +30,9 @@ export default function Merchants() {
   const [auditEntries, setAuditEntries] = useState<MerchantAuditEntry[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [undoing, setUndoing] = useState(false);
+  // Guards against a slower, earlier audit-drawer request overwriting the entries now on screen
+  // for a merchant the user has since switched away from.
+  const { beginRequest } = useAsyncGuard();
 
   function load() {
     setLoading(true);
@@ -80,10 +84,17 @@ export default function Merchants() {
   function openAudit(m: Merchant) {
     setAuditFor(m);
     setAuditLoading(true);
+    const isCurrent = beginRequest();
     merchantsApi.audit(m.id)
-      .then(setAuditEntries)
-      .catch(() => setAuditEntries([]))
-      .finally(() => setAuditLoading(false));
+      .then((entries) => {
+        if (isCurrent()) setAuditEntries(entries);
+      })
+      .catch(() => {
+        if (isCurrent()) setAuditEntries([]);
+      })
+      .finally(() => {
+        if (isCurrent()) setAuditLoading(false);
+      });
   }
 
   const canUndo = auditEntries.length > 0

@@ -1,9 +1,8 @@
 package com.finora.goals;
 
 import com.finora.entity.User;
-import com.finora.exception.ApiException;
 import com.finora.repository.UserRepository;
-import org.springframework.http.HttpStatus;
+import com.finora.security.OwnershipGuard;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -80,10 +79,7 @@ public class GoalService {
     }
 
     private Goal getOwned(UUID userId, UUID goalId) {
-        Goal g = goalRepository.findById(goalId)
-                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Goal not found"));
-        if (!g.getUserId().equals(userId)) throw new ApiException(HttpStatus.FORBIDDEN, "This goal does not belong to you");
-        return g;
+        return OwnershipGuard.requireOwned(goalRepository.findById(goalId), Goal::getUserId, userId, "Goal");
     }
 
     /** Same defensive-fallback contract as DashboardService.safeZoneId() / NetWorthService's own

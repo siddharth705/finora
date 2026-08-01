@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -139,6 +140,40 @@ class AccountServiceTest {
 
         assertThat(result.branchName()).isEqualTo("MG Road Branch");
         assertThat(result.ifscCode()).isEqualTo("PUNB0123456");
+    }
+
+    /**
+     * Bug fix regression tests: create() used to call Account.Type.valueOf(req.accountType())
+     * directly. A missing or unrecognized accountType threw NullPointerException/
+     * IllegalArgumentException, which GlobalExceptionHandler has no specific handler for -- both
+     * fell through to its generic Exception handler and came back as an opaque 500 instead of a
+     * real 400 explaining what was wrong.
+     */
+    @Test
+    void create_withAnUnrecognizedAccountType_throwsABadRequestApiException() {
+        AccountDto.CreateRequest req = new AccountDto.CreateRequest(
+                "My Wallet", "NOT_A_REAL_TYPE", BigDecimal.ZERO, null, null, null, null, null, null, null, null);
+
+        assertThatThrownBy(() -> accountService.create(userId, req))
+                .isInstanceOf(com.finora.exception.ApiException.class)
+                .hasMessageContaining("accountType")
+                .extracting(ex -> ((com.finora.exception.ApiException) ex).getStatus())
+                .isEqualTo(org.springframework.http.HttpStatus.BAD_REQUEST);
+
+        verifyNoInteractions(accountRepository);
+    }
+
+    @Test
+    void create_withAMissingAccountType_throwsABadRequestApiException() {
+        AccountDto.CreateRequest req = new AccountDto.CreateRequest(
+                "My Wallet", null, BigDecimal.ZERO, null, null, null, null, null, null, null, null);
+
+        assertThatThrownBy(() -> accountService.create(userId, req))
+                .isInstanceOf(com.finora.exception.ApiException.class)
+                .extracting(ex -> ((com.finora.exception.ApiException) ex).getStatus())
+                .isEqualTo(org.springframework.http.HttpStatus.BAD_REQUEST);
+
+        verifyNoInteractions(accountRepository);
     }
 
     @Test

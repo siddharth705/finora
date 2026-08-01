@@ -15,6 +15,9 @@ export default function Insights() {
   useEffect(() => {
     Promise.all([insightsApi.get(), recurringApi.list()])
       .then(([insights, rec]) => { setData(insights); setRecurring(rec); })
+      // `data` stays null on failure, which the existing `if (!data) return null` below already
+      // renders as gracefully as this page currently distinguishes "still loading" from "failed".
+      .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 

@@ -40,7 +40,7 @@ function RulesTab() {
 
   function load() {
     setLoading(true);
-    rulesApi.list().then(setRules).finally(() => setLoading(false));
+    rulesApi.list().then(setRules).catch(() => setError('Could not load rules.')).finally(() => setLoading(false));
   }
   useEffect(load, []);
 
@@ -206,7 +206,7 @@ function RelationshipsTab() {
 
   function load() {
     setLoading(true);
-    relationshipsApi.list().then(setRelationships).finally(() => setLoading(false));
+    relationshipsApi.list().then(setRelationships).catch(() => setError('Could not load relationships.')).finally(() => setLoading(false));
   }
   useEffect(load, []);
 
@@ -493,7 +493,7 @@ function RelationshipTransactionsModal({ relationship, onClose }: { relationship
   const [transactions, setTransactions] = useState<Transaction[] | null>(null);
 
   useEffect(() => {
-    relationshipsApi.transactions(relationship.id).then(setTransactions);
+    relationshipsApi.transactions(relationship.id).then(setTransactions).catch(() => setTransactions([]));
   }, [relationship.id]);
 
   return (

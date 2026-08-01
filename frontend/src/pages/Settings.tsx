@@ -44,6 +44,9 @@ export default function Settings() {
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [saveError, setSaveError] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     userApi.get().then((u) => {
@@ -51,6 +54,9 @@ export default function Settings() {
       setFullName(u.fullName);
       setLowBalanceThreshold(String(u.lowBalanceThreshold));
       setTimezone(u.timezone);
+      setLoading(false);
+    }).catch(() => {
+      setLoadError(true);
       setLoading(false);
     });
     workspaceApi.getSettings().then((s) => {
@@ -60,9 +66,17 @@ export default function Settings() {
   }, []);
 
   async function savePreferences() {
-    await userApi.update({ lowBalanceThreshold: parseFloat(lowBalanceThreshold), timezone });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setSaving(true);
+    setSaveError(false);
+    try {
+      await userApi.update({ lowBalanceThreshold: parseFloat(lowBalanceThreshold), timezone });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch {
+      setSaveError(true);
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function saveWorkspaceSettings() {
@@ -78,6 +92,8 @@ export default function Settings() {
   }
 
   if (loading) return <p className="text-muted">Loading…</p>;
+
+  if (loadError) return <p className="text-muted">Couldn't load your settings — please try again later.</p>;
 
   return (
     <div className="space-y-6">
@@ -128,10 +144,11 @@ export default function Settings() {
             <p className="text-[11px] text-gray-400 mt-1">Used for the Dashboard's "Good morning/afternoon/evening" greeting.</p>
           </div>
         </div>
-        <button onClick={savePreferences} className="mt-4 bg-primary text-white hover:bg-primary-dark rounded px-4 py-2 text-xs uppercase">
-          Save preferences
+        <button onClick={savePreferences} disabled={saving} className="mt-4 bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded px-4 py-2 text-xs uppercase">
+          {saving ? 'Saving…' : 'Save preferences'}
         </button>
         {saved && <span className="ml-3 text-success text-sm">Saved.</span>}
+        {saveError && <span className="ml-3 text-danger text-sm">Couldn't save — please try again.</span>}
         <p className="text-xs text-gray-400 mt-2">
           The low balance threshold and timezone save when you click Save — theme applies and syncs to your account instantly when changed above.
         </p>

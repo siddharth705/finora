@@ -18,10 +18,10 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Global Search (AdminSearchController) -- proves the endpoint is reachable by any authenticated
- *  account (no narrow @PreAuthorize gate, see the controller's class comment for why), rejects
- *  requests with no token at all, and that a real created User and a real created custom Bank
- *  both surface in the fanned-out results for a query that matches them. */
+/** Global Search (AdminSearchController) -- proves the endpoint rejects requests with no token at
+ *  all, rejects a plain (non-admin) user with 403 -- see the controller's own bug-fix comment for
+ *  why this gate exists now -- and that an authorized (USER_VIEW) caller still gets correct
+ *  fanned-out results for a real created User and a real created custom Bank. */
 class AdminSearchControllerIT extends AbstractIntegrationTest {
 
     @Autowired private TestRestTemplate restTemplate;
@@ -30,13 +30,13 @@ class AdminSearchControllerIT extends AbstractIntegrationTest {
     @Autowired private JwtService jwtService;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    private User createUser(String fullName) {
+    private User createUser(String role, String fullName) {
         User user = new User();
         user.setEmail("admin-search-it-" + UUID.randomUUID() + "@example.com");
         user.setPasswordHash("irrelevant-for-this-test");
         user.setFullName(fullName);
-        user.setRole("USER");
-        user.setPhoneVerified(true);
+        user.setRole(role);
+        user.setPhoneVerified(true); // see AdminRbacIT for why this must be set
         return userRepository.save(user);
     }
 
@@ -59,12 +59,21 @@ class AdminSearchControllerIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void search_anyAuthenticatedAccount_canReachIt_evenWithNoAdminPermissions() throws Exception {
-        String uniqueName = "Zephyr Global Search Target " + UUID.randomUUID();
-        User plainUser = createUser("Plain User");
-        User target = createUser(uniqueName);
+    void search_plainUserWithNoUserViewAuthority_isForbidden() {
+        User plainUser = createUser("USER", "Plain User");
 
-        ResponseEntity<String> response = search(uniqueName, bearerFor(plainUser));
+        ResponseEntity<String> response = search("anything", bearerFor(plainUser));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void search_anAuthorizedAdmin_findsARealUserByFullName() throws Exception {
+        String uniqueName = "Zephyr Global Search Target " + UUID.randomUUID();
+        User admin = createUser("ADMIN", "Search Admin");
+        User target = createUser("USER", uniqueName);
+
+        ResponseEntity<String> response = search(uniqueName, bearerFor(admin));
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         JsonNode data = mapper.readTree(response.getBody()).get("data");
@@ -81,7 +90,7 @@ class AdminSearchControllerIT extends AbstractIntegrationTest {
 
     @Test
     void search_findsARealCustomBankByShortName() throws Exception {
-        User admin = createUser("Search Admin");
+        User admin = createUser("ADMIN", "Search Admin");
         String uniqueShortName = "ZBANK" + UUID.randomUUID().toString().substring(0, 8);
 
         Bank bank = new Bank();
@@ -107,7 +116,7 @@ class AdminSearchControllerIT extends AbstractIntegrationTest {
 
     @Test
     void search_blankQuery_returnsEmptyList() throws Exception {
-        User admin = createUser("Search Admin Two");
+        User admin = createUser("ADMIN", "Search Admin Two");
         ResponseEntity<String> response = search("", bearerFor(admin));
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);

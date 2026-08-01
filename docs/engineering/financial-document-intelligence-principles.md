@@ -1,9 +1,10 @@
 # Financial Document Intelligence Engine — Principles & Roadmap
 
 **Status:** Phase 0 is in effect immediately — it governs how code is written from this point
-forward. Phases 1–2 describe near-term, concrete work. Phases 3–4 are a documented *direction*,
-not a commitment — see "Why Phases 3–4 stay a direction, not a roadmap item" before starting
-anything in them.
+forward. Phases 1–2 describe near-term, concrete work. Phases 3–6 and the Admin Portal Control
+Center are a documented *direction*, not a commitment — see "Why Phases 3–4 stay a direction, not
+a roadmap item" before starting anything in them; the same reasoning gates Phases 5–6 and the
+Admin Portal.
 
 **Relationship to other docs:** this is an engineering-practice document (naming, layering,
 testing, sequencing) — the sibling to `CODING_STANDARDS.md` in this same folder, scoped to the
@@ -47,6 +48,33 @@ PR that touches statement import, ask:
 
 If the answer to (4) is no, the abstraction isn't right yet — go back to the Golden Rule before
 writing more code, not after.
+
+---
+
+## The Capability Rule
+
+> **Every code change to this pipeline should leave the engine knowing more than it did before.**
+
+The Golden Rule governs *what a capability is named and shaped like*. The Capability Rule governs
+*whether a given change was worth making at all*. A parser-related change should produce at least
+one of:
+
+- a new capability
+- a stronger (more general, more robust) existing capability
+- a better diagnostic
+- a better regression fixture
+- better validation
+- better confidence signal (once confidence exists — see Phase 5)
+- better documentation
+
+If a change produces none of these, that's worth pausing on: is this actually improving the
+engine, or just patching a symptom in a way that will need patching again the next time a
+similarly-shaped real document shows up? Every real fix in this codebase's own history satisfies
+this rule by construction — `OFFSET_COLUMN_ANCHORS`, the singular `"deposit"`/`"withdrawal"`
+hint fix, the closing-balance amount fallback, `GRID_METADATA_TRAILING_LABEL`,
+`LEADING_NARRATION_CONTINUATION` each left behind a named capability and a regression test, not
+just a fixed file. A change that only makes one specific real file's specific upload succeed, with
+nothing of that shape surviving in the codebase afterward, hasn't actually followed this rule yet.
 
 ---
 
@@ -213,6 +241,29 @@ debugging a new real document. It replaced what would otherwise have been a seco
 bank-named throwaway, and is the intended answer to "no developer should need to debug by reading
 parser code."
 
+### The engine should explain itself
+
+Not just "transaction imported" or "row dropped" — every parser decision should be traceable to
+*why*. This already exists in narrow form today, in exactly the two places listed just above:
+`TransactionNormalizer.explainFailure()` gives a specific reason a row was rejected, and
+`PdfPipelineDiagnostic` reports which capabilities activated for a section. The target is the same
+idea applied to *every* decision, not only rejections — `"imported because: running balance
+matched, header confidence 97%, offset anchors activated, trailing amount detected, validation
+passed"` is exactly as informative as `"rejected because: header confidence too low, no valid
+date, balance chain inconsistent"` — and neither should ever require reading source code to
+reconstruct after the fact.
+
+This is the underlying reason the Admin Portal vision (Phase 5, below) is designed as a
+per-document explainability page rather than a pass/fail status: an engine that can explain its
+own reasoning is dramatically easier to debug, test, and improve than one that only produces a
+final result. Not itself something that needs Phase 5's gate to start on, though — the
+diagnostic-level version already exists today and should keep getting more complete as ordinary
+capability work happens (see the PR Checklist's "does `PdfPipelineDiagnostic` expose the new
+behavior" question, which is this principle enforced one PR at a time). It's specifically the
+*full* per-decision explainability surface, wired into a real UI end users and support engineers
+see, that needs Phase 5's confidence instrumentation to exist first — without it, that surface
+would be explaining reasoning the engine doesn't actually have yet.
+
 ### Capability lifecycle (how a real document becomes a permanent capability)
 
 ```
@@ -245,6 +296,76 @@ numbers). They are useful for debugging exactly once, interactively, and are nev
 5. Build the synthetic fixture and regression test from what was just learned (see "No-regression
    rule" above) — this is the step that turns a one-off fix into a permanent capability.
 6. Delete the scratch copy. It never becomes a permanent test fixture.
+
+### Evidence before capability
+
+> A capability may only be introduced when at least one real document demonstrates a structural
+> pattern that cannot already be represented using existing capabilities.
+
+Synthetic fixtures *validate* a capability once it exists — the "Capability lifecycle" above
+builds one from the Synthetic Fixture stage onward. Only a real document *justifies creating* one
+in the first place; that's the whole reason the lifecycle starts at "Real Document," not at
+"Discovery." Stated here explicitly, as an actual rule, so it's never skipped under time pressure
+or enthusiasm for an elegant abstraction: no capability gets written on the strength of "we'll
+probably need this eventually" — that's exactly the premature abstraction this whole document
+exists to prevent, aimed at capabilities themselves instead of infrastructure.
+
+### One capability, many documents
+
+Before a new capability lands, its PR (see the PR Checklist below) should be able to answer three
+questions:
+
+1. Which existing real documents would benefit from this, right now?
+2. Which plausible *future* documents would benefit from this — structurally, not speculatively?
+3. What structural pattern does this represent — not which bank's export motivated it?
+
+If the honest answer to the first two is "only one specific bank's file," it isn't a capability
+yet. It's either a real capability without enough real evidence behind it yet (see "Evidence
+before capability" above — wait for a second real document, or generalize from the one you have
+and say so honestly in the PR), or it's a one-off that belongs inline in the layer it's fixing,
+named for what it does structurally, not for what it's for.
+
+### Capabilities must compose
+
+A capability never depends on which *other* capabilities happen to be present for a specific
+document — it composes with whichever generic building blocks that document needs, as peers the
+pipeline assembles, never as a chain of document-specific parsers calling each other:
+
+```
+Document
+    │
+Capability A  +  Capability C  +  Capability G  +  Capability M   -- composition, from generics
+```
+
+not
+
+```
+Union Bank Parser -- calls --> Canara Parser -- calls --> Kotak Parser   -- a parser chain
+```
+
+This is "Build for replaceability" (above) applied one level down: that section protects the
+*boundary* between `com.finora.imports.pdf` and everything outside it; this protects the
+relationships *inside* that boundary from calcifying into the same kind of institution-specific
+coupling the boundary exists to prevent in the first place. A capability that only makes sense
+wired to one other specific capability, for one specific document's shape, has failed the Golden
+Rule's fourth question ("would this still make sense with the bank's name deleted from it") just
+as surely as a class literally named after a bank would.
+
+### Prefer generalization over accumulation
+
+A capability set that grows by addition — `AXIS_AMOUNT`, `KOTAK_AMOUNT`, `CANARA_AMOUNT`, each a
+near-duplicate of the last — instead of by generalization (`SIGNED_AMOUNT_DETECTION`, covering all
+three) has already violated the Golden Rule; it just took three PRs to notice instead of one.
+Whenever a new capability looks structurally close to an existing one, the correct move is usually
+to widen the *existing* capability's real-document coverage and regression tests, not add a
+sibling next to it. `DR_CR_SUFFIX`'s own history in this codebase is the model to follow: found
+first as a bare `"37.94 Dr"` suffix, then rediscovered as a parenthesized `"1627.00(Dr)"` suffix
+on a different real file — the second discovery widened the *same* capability's pattern and test
+coverage, and it never became `PARENTHESIZED_DR_CR` sitting alongside a separate `BARE_DR_CR`.
+Periodically re-reading the Capability Registry (Phase 1) with one question in mind — "do any two
+of these rows actually describe the same underlying pattern, just discovered on different files" —
+is cheap. A capability set that's quietly become five overlapping variants of one real idea is
+expensive to untangle later, and gets more expensive the longer it's left.
 
 ### Never lose information
 
@@ -310,9 +431,9 @@ Done
 ✓ Metadata Grid (trailing label -- value precedes its label on the same line)
 ✓ Never Lose Information (unparseable rows surfaced with a reason, not dropped)
 ✓ Offset Column Anchors (header labels not aligned with their own column's data)
+✓ Leading Narration Continuation (transaction description wraps before the date/amount row, not after)
 
 Planned
-• Leading Narration Continuation (transaction description wraps before the date/amount row, not after)
 • Excel
 • Scanned PDFs / OCR
 • Images
@@ -531,36 +652,34 @@ no claim.
   (no honorific), holder name from `ACCOUNT_NAME_TRAILING_LABEL` was judged a better outcome than
   none — a genuinely null branch name was judged better than another guess.
 
-#### `LEADING_NARRATION_CONTINUATION` — Planned, not yet attempted
+#### `LEADING_NARRATION_CONTINUATION`
 - **Purpose:** a transaction whose narration/description text wraps across multiple lines
-  *before* its own date+amount row, rather than after it (the shape every existing continuation
-  capability — `WRAPPED_DESCRIPTION` — assumes). A real Canara Bank statement's layout renders
-  each transaction as: 2-3 narration lines (no date) → the date+amount+balance line (with a
-  fragment of narration mixed in) → 1-2 trailing detail lines (transaction time + reference,
-  then a cheque number — also no date).
-- **Supported layouts:** not yet implemented.
-- **Implementation:** none yet — deliberately not attempted this pass. `PdfTableLocator.locateAll`'s
-  continuation-merge is structurally single-directional (a dateless row always merges *backward*
-  into whatever row came before it), which is exactly right for `WRAPPED_DESCRIPTION` but exactly
-  wrong for leading narration: on the real file, every transaction's leading lines merged into the
-  *previous* transaction's row instead (or, for the very first transaction, into the statement's
-  own "Opening Balance" summary row) — silently attaching the wrong narration to the wrong
-  transaction — until a page boundary happened to break the chain, at which point the leading
-  lines surfaced as an orphaned, undated `UnparseableRow` instead (still not attached to the
-  transaction they belong to, just visibly so instead of silently).
-- **Regression tests:** none yet.
-- **Maturity:** Planned / blocked, deliberately.
-- **Known limitations:** a real general fix needs the merge logic to buffer dateless rows and
-  resolve them against *either* the previous or the next date-bearing row, not always the
-  previous one — and doing that safely requires distinguishing "leading narration" from
-  `WRAPPED_DESCRIPTION`'s existing "trailing narration" shape without breaking the already-
-  validated capability (`WrappedDescriptionCreditCardPdfPreviewGeneratorTest` and every other
-  fixture depending on backward-only merging). A narrow content-pattern signal (Canara's trailing
-  detail lines are recognizably shaped — a `HH:MM:SS/<reference>` line, then a `Chq: <number>`
-  line) could distinguish "this dateless row is definitely trailing" from "buffer it forward" —
-  but that needs to be designed and tested deliberately against this real file, not bolted on
-  under time pressure in the middle of fixing three *other* real files' bugs. Left open rather
-  than risking a regression to a working capability.
+  *before* its own date+amount row, rather than after it (the shape `WRAPPED_DESCRIPTION` already
+  handles). A real Canara Bank statement's layout renders each transaction as: 2–3 narration lines
+  (no date) → the date+amount+balance line (with a fragment of narration mixed in) → exactly 2
+  trailing detail lines (a transaction time+reference line, then a `Chq: <number>` line — also no
+  date) → the next transaction's own leading narration begins.
+- **Supported layouts:** any table where a transaction's narration can appear either before or
+  after its date row, including the case where BOTH happen for the same transaction (Canara's own
+  shape) and the case where only trailing occurs (`WRAPPED_DESCRIPTION`'s shape — this capability
+  doesn't replace that one, it composes with it).
+- **Implementation:** `PdfTableLocator.locateAll` — a dateless row merges *backward* (unchanged
+  `WRAPPED_DESCRIPTION` behavior) into the last row as long as fewer than
+  `MAX_TRAILING_CONTINUATION_ROWS` (2) trailing rows have already been claimed by it; beyond that
+  cap, a further dateless row is instead buffered into `pendingLeading` and merged *forward*,
+  prepended, into the next date-bearing row once it appears — genuinely can cross a page boundary,
+  unlike trailing continuation, which is deliberately still page-scoped (see `PAGE_FOOTER`'s own
+  reasoning). A row added via the "nothing to attach to yet" path (an Opening Balance-style summary
+  line, the very first row of a section) is closed to trailing continuation immediately, so it can
+  never absorb the first real transaction's leading narration the way it did before this fix.
+- **Regression tests:** `LeadingNarrationContinuationPdfPreviewGeneratorTest`.
+- **Maturity:** Beta.
+- **Known limitations:** `MAX_TRAILING_CONTINUATION_ROWS` is sized from the two real layouts seen
+  so far (HDFC needs 1, Canara needs 2) — a real document needing 3+ genuine trailing continuation
+  lines for one transaction would currently see the 3rd+ misclassified as the next transaction's
+  leading narration instead. Revisit the constant, not the algorithm, if that real document shows
+  up (see "Prefer generalization over accumulation" — widen this capability's own test coverage
+  first, rather than reaching for a second, competing mechanism).
 
 #### Excel, Scanned PDFs / OCR, Images, Handwritten Statements — Planned
 - **Purpose:** additional document formats, each requiring a new implementation of the early
@@ -592,17 +711,50 @@ same process as Phase 1.
 
 ---
 
-## Why Phases 3–4 stay a direction, not a roadmap item
+## Why Phases 3–6 and the Admin Portal stay a direction, not a roadmap item
 
-Layout Profiles, per-field confidence, a corrections-and-metrics data layer, and eventually AI-
-driven extraction are sound ideas, worth having written down precisely so they don't get
-reinvented differently each time someone thinks about this problem again. They should **not** be
-built now. The honest trigger for starting Phase 3 is *real correction volume across many real
-documents* — not architectural elegance, and not because the idea is appealing. Right now this
-pipeline has processed a handful of real files, several of which needed real bug fixes found by
-reading actual extracted text by hand. Building a knowledge base, a confidence-scoring UI, or an
-AI extraction layer around that little data would be exactly the premature abstraction this whole
-document exists to prevent — just aimed at infrastructure instead of a bank name.
+Layout Profiles, per-field confidence, a corrections-and-metrics data layer, a capability registry
+in code, layout fingerprinting, and eventually AI-driven extraction are sound ideas, worth having
+written down precisely so they don't get reinvented differently each time someone thinks about
+this problem again. They should **not** be built now. The honest trigger for starting Phase 3 (and,
+by the same reasoning, Phase 5's instrumentation) is *real correction volume and real capability
+count across many real documents* — not architectural elegance, and not because the idea is
+appealing. Right now this pipeline has processed a handful of real files, several of which needed
+real bug fixes found by reading actual extracted text by hand, and has a dozen or so capabilities —
+small enough that "read the source" is still the honest way to answer "is this capability worth
+its cost." Building a knowledge base, a confidence-scoring UI, a metrics pipeline, or an AI
+extraction layer around that little data and that few capabilities would be exactly the premature
+abstraction this whole document exists to prevent — just aimed at infrastructure instead of a bank
+name. The same test applies to every phase below: not "would this be valuable eventually" (yes,
+obviously) but "does the *current* scale of the problem actually need it yet."
+
+### Build data before dashboards
+
+The specific order Phase 5 and the Admin Portal must follow, once triggered — stated as its own
+principle because it's easy to build in the appealing order (a dashboard first, since it's the
+visible, demoable part) instead of the correct one:
+
+```
+Collect deterministic outputs   -- the pipeline already produces these; just start recording them
+        │
+Store metrics                    -- durable, queryable, not yet trusted
+        │
+Validate metrics                    -- confirm the numbers are actually correct against known cases
+        │                              before anyone makes a decision from them
+Build dashboards                       -- only once the data behind them is trustworthy
+        │
+Use dashboards for decisions              -- auto-review thresholds, prioritization, capability
+                                             retirement -- only once the dashboard has been live
+                                             long enough to have earned that trust
+```
+
+A dashboard built on unvalidated metrics is worse than no dashboard — it looks authoritative and
+isn't, and a wrong "94% confidence" is more dangerous than an honest "we don't know yet," the same
+way a garbled branch name was judged worse than a null one (`GRID_METADATA_TRAILING_LABEL`'s known
+limitations, Phase 1). This is the same discipline as everywhere else in this document, restated
+for the observability track specifically: don't build abstractions before they're needed, don't
+build AI before deterministic capabilities exist, don't build learning before validation exists,
+don't build dashboards before the data behind them has earned trust.
 
 ## Phase 3 — Collect Knowledge (direction, gated)
 
@@ -690,10 +842,169 @@ surprise, and so nobody mistakes existing categorization for having already solv
 
 ---
 
+## Phase 5 — Observability & Capability Governance (direction, gated)
+
+Everything in Phase 1–2 makes capabilities *work*. Nothing yet makes them *measurable*. Right now
+"is `OFFSET_COLUMN_ANCHORS` actually pulling its weight" has one honest answer: read the source
+and the regression test. That doesn't scale past a handful of capabilities, and it's the thing
+that makes Phase 3 ("Collect Knowledge") more than a slogan — you can't collect knowledge about a
+capability's real-world behavior if nothing records that behavior.
+
+**Entry criteria — start Phase 5 only once ALL of the following are true**, not when any one of
+them first becomes true, and not because the idea is appealing:
+
+- 25+ stable (Phase 1's registry maturity, not Beta) document capabilities
+- 20+ distinct layout fingerprints observed (informally — Phase 6's actual fingerprinting doesn't
+  exist yet at this point, so this means "20+ recognizably different real-document shapes seen,"
+  judged the same honest way `PdfPipelineDiagnostic` is read today)
+- 10,000+ imported documents
+- multiple developers actively working on the document engine (a single-developer team has no
+  coordination problem for a registry to solve)
+- manual debugging of import issues consumes noticeable, recurring engineering time — not a single
+  memorable bad afternoon, a pattern
+- confidence decisions have started affecting product UX (auto-review vs. manual review), so
+  confidence scoring stops being speculative infrastructure and starts being something a real
+  feature depends on
+
+Below this line, "read the source" is still the correct, sufficient answer — building any of the
+below earlier would be exactly the premature abstraction this whole document exists to prevent,
+just aimed at infrastructure instead of a bank name. Only once every box above is checked does it
+become worthwhile to build:
+
+- **Per-capability metrics.** Times evaluated, times matched, times rejected, average confidence
+  (once confidence exists — see below), which documents/fingerprints actually exercised it. Turns
+  "is this capability worth its maintenance cost" from a guess into a number.
+- **A Capability Registry *in code*, not just in this document.** This doc's own registry table
+  above is deliberately the source of truth *today* — hand-maintained is honest and sufficient at
+  the current scale. The code version is what replaces it once capability count and document
+  volume make hand-maintenance itself the bottleneck: name, description, owner, status, confidence,
+  dependencies, regression tests, known limitations, version — queryable, not just readable.
+- **Confidence at every pipeline stage, not one score per document.** Layout, metadata, table
+  detection, field extraction, balance-chain reconstruction each produce their own confidence;
+  "96% overall" is an average that hides exactly the field that needs a second look. This is what
+  makes an auto-review-vs-ask-the-user threshold in the review UI meaningful instead of arbitrary.
+- **Unknown becomes first-class data, not a debugging session.** `PdfPipelineDiagnostic`'s
+  `[UNKNOWN FIELDS]` reporting (Phase 1) is the seed of this — today it prints to a console and
+  disappears. Stored instead: unknown header, unknown metadata label, unknown table shape, unknown
+  section marker, unknown symbol/currency, unknown layout — accumulated across real documents
+  rather than rediscovered fresh every time someone happens to run the diagnostic by hand. This is
+  the concrete mechanism behind "unknown today may become tomorrow's capability" (Capability
+  lifecycle, Phase 0) — right now that sentence is aspirational; stored unknowns are what would
+  make it literally true.
+- **Every capability declares its dependencies.** `RUNNING_BALANCE` depends on amount + date +
+  balance; `COMPOSITE_STATEMENT` depends on section detection + header detection + table
+  detection. Lets the engine (and a developer) answer "why did this fail" by walking a dependency
+  graph instead of re-deriving it from the code each time.
+- **Capability versioning and an explicit lifecycle.** A capability evolves (`WRAPPED_DESCRIPTION`
+  v1 "simple continuation" → v2 "page boundary support," in this codebase's own real history) —
+  regression tests should be able to say which version introduced which behavior. Lifecycle:
+  Observed → Diagnosed → Implemented → Regression Tested → Validated → Production → Learning →
+  Optimized. This document's own "Capability lifecycle" (Phase 0) is stages 1–4 of this; stages
+  5–8 don't exist yet because nothing downstream of "regression tested" is instrumented.
+- **Technical debt tracked per capability, not globally.** Confidence below threshold, high
+  manual-correction rate, frequent regression failures, high maintenance effort, known
+  limitations — a per-capability view is what lets prioritization follow actual impact instead of
+  whichever bug report arrived most recently.
+
+**What this deliberately is not, yet:** a mandate to build a metrics pipeline, a database schema,
+or a registry service this sprint. Every one of the above is real work, and per the entry criteria
+above, none of it should be built until every one of those boxes is actually checked — the same
+discipline that's kept Phase 3–4 honest applies here without exception.
+
+## Phase 6 — Learn From Every Import, Not Just Failures (direction, gated on Phase 5's instrumentation existing)
+
+Phase 3 ("Collect Knowledge") already establishes recording-not-learning and the Layout Profile
+concept. This phase makes both concrete.
+
+**Entry criteria — start Phase 6 only once ALL of the following are true:**
+
+- Phase 5's instrumentation already exists and is live (Phase 6 has nothing to learn from without
+  it — this is a hard dependency, not just a suggested order)
+- 100,000+ successful imports
+- thousands of validated user corrections
+- sufficient diversity of layouts that recurring patterns are actually identifiable, not just a
+  handful of one-off documents
+- a documented privacy and governance model for any learning derived from user data — see this
+  phase's own "learning dataset" point below and Phase 3's "what gets shared across users" point;
+  this criterion is not satisfied by an "anonymized" label, only by an actual resolved design
+
+Below this line, Phase 3's recording-not-learning discipline is still the right amount of
+ambition. Only once every box above is checked should the below be considered:
+
+- **Layout Fingerprint**: a structural signature of a document — metadata strategy (leading-label
+  vs. trailing-label vs. grid), table strategy (single amount column vs. separate debit/credit),
+  header strategy (repeated vs. once), date format, amount format, section count, running balance
+  present or not, which capabilities activated — independent of which bank issued it. Two
+  completely different banks producing the *same* fingerprint is the concrete proof this document
+  keeps insisting on: the engine is learning layouts, not institutions.
+- **A gold-standard set from perfect imports, not only from corrections.** Every successfully
+  imported document already has a rich signal sitting unused: which fingerprint, which
+  capabilities fired, what confidence resulted, how many corrections the user needed (zero, for a
+  clean import), whether validation passed. Phase 3 as written focuses on capturing *failures and
+  corrections*; this adds capturing *success* as data too, since a document that needed zero
+  corrections is exactly the kind of example a future model would need to learn what "confident
+  and correct" looks like — not just what "wrong" looks like.
+- **The learning dataset is fingerprints and capabilities, never raw documents or bank names.**
+  Same privacy discipline Phase 3 already states explicitly for cross-user sharing (layout
+  knowledge, never customer data) — restated here because Phase 6 is where that discipline would
+  actually get exercised at scale, not just declared.
+- **The self-improving-engine questions**, once Phase 5–6 both exist: has this fingerprint been
+  seen before; which already-known capabilities solve most of this document; which sections are
+  low-confidence; is a mismatch a new capability or a variation of an existing one; can the
+  unknown portion be isolated without touching the rest of a document that otherwise parsed
+  cleanly. Only the genuinely novel remainder should ever need a human. This is the same "AI
+  proposes, deterministic code validates" boundary (Phase 4, "What AI can never do") applied to
+  the question "does this document need new code" instead of "is this transaction real" — the
+  answer is still never AI's to act on unilaterally.
+
+## The Admin Portal as the Engine's Control Center (direction, gated on Phase 5 existing to power it)
+
+Every diagnostic idea above needs a surface a human actually looks at — `PdfPipelineDiagnostic`'s
+console output (Phase 0) is the developer-only, one-document-at-a-time version of this; the target
+is the same explainability, generalized: every processed document gets a full "why did this
+succeed or fail" page, and no one on the team — developer, QA, or support — should need to read
+backend logs to answer that question.
+
+Organized the same way the underlying engine is layered, not as a grab-bag of screens:
+
+- **Overview** — import volume, confidence trends, capability usage across the whole system.
+- **Documents** — per-document drill-down: pipeline stage-by-stage status (🟢/🟡/🔴), the layout
+  fingerprint, which capabilities activated and which didn't (and why — "not required" vs.
+  "attempted, failed"), the full confidence breakdown by stage, metadata extraction with its
+  *source* shown per field (which capability produced it, not just the value), and the "Never lose
+  information" view made concrete: every dropped row, its reason, and — once Phase 5's suggestion
+  mechanism exists — which capability might explain it.
+- **Capabilities** — the code-level registry (Phase 5) rendered: status, confidence, dependencies,
+  version history, a usage heatmap (which capabilities actually matter vs. which fire on 4% of
+  documents), and the capability timeline (which version is live).
+- **Diagnostics** — parser decisions and warnings in plain language ("header confidence low: 13
+  detected cells, expected ~5, suggests `HEADER_SANITY`") instead of a stack trace, plus the
+  Unknown Patterns view Phase 5's stored-unknowns feed directly.
+- **Learning** — Phase 6's surface: documents imported, unique fingerprints, capabilities learned
+  this period, manual corrections, confidence trend over time. Once real (Phase 4), an AI
+  Recommendation panel belongs here specifically — *proposing* a new capability with its own
+  confidence and evidence ("seen in 5 documents"), never implementing one. A human still decides
+  and writes the code; this is a suggestion queue, not an autopilot.
+- **Regression** — the same `mvn test` result (619 passing as of this writing) rendered per
+  capability instead of as one pass/fail number, so "which capability's coverage changed in this
+  deploy" is visible without reading a diff.
+- **Performance** — per-stage timing (extraction, layout detection, metadata, table detection,
+  validation), since a capability that's technically correct but pathologically slow is its own
+  kind of technical debt (see Phase 5's per-capability debt tracking).
+
+Same caveat as Phase 5: this is a real, multi-week UI effort, not a next-sprint item. It's recorded
+here in full because a dashboard built piecemeal without this shape in mind tends to end up as
+disconnected screens bolted onto whatever happened to be easiest to query that week — writing the
+target shape down now is what keeps it a *deliberate* rollout later, one section at a time, each
+gated on the underlying engine capability (Phase 5's metrics, Phase 6's fingerprints) actually
+existing to power it — not a screen built ahead of the data that would make it honest.
+
+---
+
 ## PR Checklist
 
 The Golden Rule's four questions (above) are the philosophical check. This is the concrete one —
-every parser-related PR should be able to answer all ten before merging:
+every parser-related PR should be able to answer all twelve before merging:
 
 1. What capability is being added?
 2. Can another institution reuse it, unchanged?
@@ -703,12 +1014,16 @@ every parser-related PR should be able to answer all ten before merging:
 5. Is there a synthetic regression fixture (`PdfFixtureBuilder`)?
 6. Is there a regression test, capability-named, run against the *whole* suite?
 7. Does `PdfPipelineDiagnostic` expose the new behavior (a new capability signal, a new metadata
-   field, a new drop reason)?
+   field, a new drop reason)? (See "The engine should explain itself.")
 8. Are unparseable rows preserved, not silently dropped (see "Never lose information")?
 9. Does AI remain advisory rather than authoritative, if this PR touches anything AI-adjacent (see
    "What AI can never do")?
 10. Does this move the engine closer to understanding documents in general, rather than adding
     another institution-specific parser?
+11. Is there real-document evidence behind this specific capability, not just plausible future
+    benefit (see "Evidence before capability")?
+12. Does this generalize an existing capability's coverage instead of adding a near-duplicate
+    sibling next to it (see "Prefer generalization over accumulation")?
 
 If the honest answer to any of these is "no" or "not applicable in a way that's actually fine,"
 that's worth writing down in the PR description — not skipped silently.
@@ -740,10 +1055,24 @@ Phase 1: Strengthen the Generic Engine -- concrete, in progress
     │
 Phase 2: More Capabilities & Formats     -- added as real documents/needs motivate them
     │
+Phase 5: Observability & Capability Governance -- direction only, gated on capability
+    │                                              count/document volume making
+    │                                              hand-maintenance the bottleneck
 Phase 3: Collect Knowledge      -- direction only, gated on real correction volume
+    │                              (and made concrete by Phase 5's instrumentation)
+Phase 6: Learn From Every Import  -- direction only, gated on Phase 5 existing
     │
-Phase 4: Evaluate Training         -- direction only, gated on Phase 3's data existing
+Phase 4: Evaluate Training         -- direction only, gated on Phase 3/6's data existing
+    │
+Admin Portal Control Center          -- direction only, gated on Phase 5/6 existing
+                                         to power it
 ```
+
+Phase 5 is drawn alongside Phase 3 deliberately, not strictly after it — it's the instrumentation
+that makes Phase 3 more than a slogan, so in practice they'd likely be worked on together once
+either is triggered. Phase 6 gates on Phase 5, not on Phase 3 directly, since fingerprinting and
+learning-from-success both need the same underlying metrics/confidence substrate Phase 3's
+correction-recording needs too.
 
 Capability-driven work naturally produces bank *coverage* as a side effect — it is never the goal
 being optimized for.

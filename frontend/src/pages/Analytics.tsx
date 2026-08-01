@@ -60,12 +60,15 @@ export default function Analytics() {
   const [learningGrowth, setLearningGrowth] = useState<LearningGrowthPoint[] | null>(null);
 
   useEffect(() => {
-    analyticsApi.topMerchants().then(setTopMerchants);
-    analyticsApi.trend().then(setTrend);
-    analyticsApi.categoryConfidence().then(setCategoryConfidence);
-    analyticsApi.topCategories().then(setTopCategories);
-    analyticsApi.importStatistics().then(setImportStats);
-    analyticsApi.learningGrowth().then(setLearningGrowth);
+    // Each card's null-vs-[] distinction is "still loading" vs "no data yet" -- on a failed
+    // fetch, falling back to [] resolves the card to its existing empty-state message instead of
+    // leaving it stuck on "Loading…" forever.
+    analyticsApi.topMerchants().then(setTopMerchants).catch(() => setTopMerchants([]));
+    analyticsApi.trend().then(setTrend).catch(() => setTrend([]));
+    analyticsApi.categoryConfidence().then(setCategoryConfidence).catch(() => setCategoryConfidence([]));
+    analyticsApi.topCategories().then(setTopCategories).catch(() => setTopCategories([]));
+    analyticsApi.importStatistics().then(setImportStats).catch(() => {});
+    analyticsApi.learningGrowth().then(setLearningGrowth).catch(() => setLearningGrowth([]));
   }, []);
 
   const maxMerchantSpend = Math.max(1, ...(topMerchants ?? []).map((m) => m.totalSpend));

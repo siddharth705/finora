@@ -49,8 +49,8 @@ export default function LearningEngine() {
   const [error, setError] = useState<string | null>(null);
 
   function load() {
-    learningApi.summary().then(setSummary);
-    learningApi.timeline().then(setTimeline);
+    learningApi.summary().then(setSummary).catch(() => setError('Could not load the learning summary.'));
+    learningApi.timeline().then(setTimeline).catch(() => setTimeline([]));
   }
   useEffect(load, []);
 

@@ -21,6 +21,8 @@ export default function Investments() {
   const [value, setValue] = useState('');
   const [kind, setKind] = useState('Mutual Fund');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
 
   function load() {
     setLoading(true);
@@ -29,21 +31,33 @@ export default function Investments() {
         setHoldings(accounts.filter((a) => a.accountType === 'INVESTMENT'));
         setNetWorth(nw);
       })
+      .catch(() => setError('Could not load investments.'))
       .finally(() => setLoading(false));
   }
   useEffect(load, []);
 
   async function addHolding() {
     if (!name || !value) return;
-    await accountsApi.create({ name, accountType: 'INVESTMENT', balance: parseFloat(value), investmentKind: kind });
-    setName(''); setValue('');
-    load();
+    setAdding(true);
+    try {
+      await accountsApi.create({ name, accountType: 'INVESTMENT', balance: parseFloat(value), investmentKind: kind });
+      setName(''); setValue('');
+      load();
+    } catch {
+      setError('Could not add this holding.');
+    } finally {
+      setAdding(false);
+    }
   }
 
   async function removeHolding(id: string) {
     if (!confirm('Delete this holding?')) return;
-    await accountsApi.remove(id);
-    load();
+    try {
+      await accountsApi.remove(id);
+      load();
+    } catch {
+      setError('Could not delete this holding.');
+    }
   }
 
   async function saveSnapshot() {
@@ -57,6 +71,12 @@ export default function Investments() {
 
   return (
     <div className="space-y-6">
+      {error && (
+        <div className="bg-danger/10 text-danger text-sm rounded p-3 flex justify-between items-center">
+          <span>{error}</span>
+          <button onClick={() => setError(null)}>×</button>
+        </div>
+      )}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <div className="bg-card rounded p-4 shadow border-l-4 border-primary">
           <p className="text-[10px] uppercase text-gray-500 mb-1">Total Investments</p>
@@ -135,7 +155,7 @@ export default function Investments() {
               <option>Mutual Fund</option><option>Stocks</option><option>FD</option><option>PPF/NPS</option><option>Other</option>
             </select>
           </div>
-          <button onClick={addHolding} className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded text-xs uppercase">Add</button>
+          <button onClick={addHolding} disabled={adding} className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 px-4 py-2 rounded text-xs uppercase">{adding ? 'Adding…' : 'Add'}</button>
         </div>
 
         {holdings.length === 0 ? (

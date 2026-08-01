@@ -3,6 +3,7 @@ package com.finora.rules;
 import com.finora.entity.CategoryRule;
 import com.finora.exception.ApiException;
 import com.finora.repository.CategoryRuleRepository;
+import com.finora.security.OwnershipGuard;
 import com.finora.service.AuditService;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -115,18 +116,15 @@ public class RuleService {
     }
 
     /** 404 if the rule doesn't exist at all, 403 if it's GLOBAL scope or owned by a different
-     *  user -- same not-found-vs-forbidden distinction RoleService/StatementImportService use
-     *  elsewhere (see their getOwned() methods). */
+     *  user -- the GLOBAL check runs before {@link OwnershipGuard} since a GLOBAL rule has no
+     *  meaningful single owner to compare against. */
     private CategoryRule getOwnedUserRule(UUID userId, UUID ruleId) {
         CategoryRule rule = categoryRuleRepository.findById(ruleId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Rule not found"));
         if (rule.getScope() == CategoryRule.Scope.GLOBAL) {
             throw new ApiException(HttpStatus.FORBIDDEN, "Global rules can't be modified by users.");
         }
-        if (!userId.equals(rule.getUserId())) {
-            throw new ApiException(HttpStatus.FORBIDDEN, "This rule does not belong to you");
-        }
-        return rule;
+        return OwnershipGuard.requireOwnedBy(rule, CategoryRule::getUserId, userId, "Rule");
     }
 
     private CategoryRule.Field parseField(String v) {

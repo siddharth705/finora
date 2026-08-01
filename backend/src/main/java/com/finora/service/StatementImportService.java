@@ -14,6 +14,7 @@ import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.accounts.AccountDto;
 import com.finora.imports.ImportService;
+import com.finora.security.OwnershipGuard;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -247,11 +248,7 @@ public class StatementImportService {
     }
 
     private StatementImport getOwned(UUID userId, UUID statementImportId) {
-        StatementImport si = statementImportRepository.findById(statementImportId)
-                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Statement import not found"));
-        if (!si.getUserId().equals(userId)) {
-            throw new ApiException(HttpStatus.FORBIDDEN, "This statement import does not belong to you");
-        }
-        return si;
+        return OwnershipGuard.requireOwned(statementImportRepository.findById(statementImportId),
+                StatementImport::getUserId, userId, "Statement import");
     }
 }

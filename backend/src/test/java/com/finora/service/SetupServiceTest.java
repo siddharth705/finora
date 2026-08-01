@@ -61,7 +61,7 @@ class SetupServiceTest {
 
     @Test
     void completeSetup_createsTheRealAdmin_locksBootstrap_andMarksSetupComplete() throws Exception {
-        when(platformSettingsService.getEntity()).thenReturn(settingsWith(false));
+        when(platformSettingsService.tryMarkSetupCompleted()).thenReturn(true);
         RegisterRequest request = new RegisterRequest(
                 "admin@example.com", "correct-horse-battery-staple", "Real Admin", "+919876543210");
         UUID newAdminId = UUID.randomUUID();
@@ -86,7 +86,7 @@ class SetupServiceTest {
         verify(roleService).revokeRole(bootstrapUserId, "BOOTSTRAP_ADMIN");
         verify(userRepository, never()).delete(any());
         verify(userRepository, never()).deleteById(any());
-        verify(platformSettingsService).markSetupCompleted();
+        verify(platformSettingsService).tryMarkSetupCompleted();
         verify(auditService).record(eq(bootstrapUserId), eq("SETUP_COMPLETED"), eq("User"), eq(newAdminId), any());
         // Best-effort cleanup of the installation-key file BootstrapService wrote (dev mode) --
         // a silent no-op if FINORA_SETUP_KEY was used instead, since no file would exist.
@@ -98,7 +98,7 @@ class SetupServiceTest {
         // Per the design discussion: "if deletion fails, don't fail the setup ... log a warning."
         // A file permission hiccup at cleanup time must never undo (or even be perceived as
         // failing) a setup that already succeeded and committed to the database.
-        when(platformSettingsService.getEntity()).thenReturn(settingsWith(false));
+        when(platformSettingsService.tryMarkSetupCompleted()).thenReturn(true);
         RegisterRequest request = new RegisterRequest(
                 "admin@example.com", "correct-horse-battery-staple", "Real Admin", "+919876543210");
         UUID newAdminId = UUID.randomUUID();
@@ -113,13 +113,16 @@ class SetupServiceTest {
 
         setupService.completeSetup(bootstrapUserId, request); // must not throw
 
-        verify(platformSettingsService).markSetupCompleted();
+        verify(platformSettingsService).tryMarkSetupCompleted();
         verify(auditService).record(eq(bootstrapUserId), eq("SETUP_COMPLETED"), eq("User"), eq(newAdminId), any());
     }
 
     @Test
     void completeSetup_refusesToRunAgain_onceSetupIsAlreadyComplete() {
-        when(platformSettingsService.getEntity()).thenReturn(settingsWith(true));
+        // false = the atomic claim didn't win -- either a previous call already completed setup,
+        // or (the bug this replaced a plain check-then-write with) a concurrent call is racing
+        // this one. Either way, completeSetup() must reject immediately and do nothing else.
+        when(platformSettingsService.tryMarkSetupCompleted()).thenReturn(false);
         RegisterRequest request = new RegisterRequest(
                 "admin@example.com", "correct-horse-battery-staple", "Real Admin", "+919876543210");
 
@@ -128,7 +131,7 @@ class SetupServiceTest {
                 .hasMessageContaining("already been completed");
 
         verifyNoInteractions(authService);
-        verify(platformSettingsService, never()).markSetupCompleted();
+        verifyNoInteractions(auditService);
     }
 
     @Test

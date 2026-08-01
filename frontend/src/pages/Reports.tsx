@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { reportsApi, type ReportData } from '../api/endpoints';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 function fmt(n: number) {
   // Negative amounts (e.g. a month where spend exceeded income) must render as "-₹500",
@@ -28,21 +29,35 @@ export default function Reports() {
   const [month, setMonth] = useState<string>('');
   const [report, setReport] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const { beginRequest } = useAsyncGuard();
 
   useEffect(() => {
     reportsApi.availableMonths().then((m) => {
       setMonths(m);
       if (m.length > 0) setMonth(m[m.length - 1]);
       setLoading(false);
+    }).catch(() => {
+      setError(true);
+      setLoading(false);
     });
   }, []);
 
   useEffect(() => {
     if (!month) return;
-    reportsApi.forMonth(month).then(setReport);
-  }, [month]);
+    // Guards against a slower response for a month the user already navigated away from
+    // overwriting the report for the month currently on screen.
+    const isCurrent = beginRequest();
+    reportsApi.forMonth(month).then((r) => {
+      if (isCurrent()) setReport(r);
+    }).catch(() => {
+      if (isCurrent()) setError(true);
+    });
+  }, [month, beginRequest]);
 
   if (loading) return <p className="text-muted">Loading…</p>;
+
+  if (error) return <p className="text-muted">Couldn't load reports — please try again later.</p>;
 
   if (months.length === 0) {
     return <p className="text-muted">No transactions yet — add some in the Ledger or Import a statement to see reports.</p>;

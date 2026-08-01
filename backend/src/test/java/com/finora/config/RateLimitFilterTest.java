@@ -75,16 +75,19 @@ class RateLimitFilterTest {
     }
 
     @Test
-    void resolvesToForwardedForsFirstEntry_whenProxyHeadersAreTrusted() throws Exception {
+    void resolvesToForwardedForsLastEntry_whenProxyHeadersAreTrusted() throws Exception {
         RateLimitFilter filter = newFilter();
         ReflectionTestUtils.setField(filter, "trustProxyHeaders", true);
 
         // Every request "arrives from" the same proxy IP (getRemoteAddr()), the way it actually
-        // would behind Railway's edge proxy -- but each carries a DIFFERENT real client IP as the
-        // first X-Forwarded-For entry. With trust enabled, these must be rate-limited
-        // independently by that real client IP, not collapsed onto the shared proxy IP.
-        HttpServletRequest clientA = requestFor("/api/v1/auth/login", "10.0.0.1", "203.0.113.1, 10.0.0.1");
-        HttpServletRequest clientB = requestFor("/api/v1/auth/login", "10.0.0.1", "203.0.113.2, 10.0.0.1");
+        // would behind Railway's edge proxy -- a reverse proxy APPENDS the IP it observed to
+        // whatever X-Forwarded-For it received from upstream, so with exactly one trusted proxy
+        // in front of this app, the LAST entry is the one that proxy itself appended (trustworthy)
+        // and everything before it is whatever the original request already carried (not). Each
+        // request here carries a DIFFERENT real client IP as the LAST entry -- these must be
+        // rate-limited independently by it, not collapsed onto the shared proxy IP.
+        HttpServletRequest clientA = requestFor("/api/v1/auth/login", "10.0.0.1", "203.0.113.1");
+        HttpServletRequest clientB = requestFor("/api/v1/auth/login", "10.0.0.1", "203.0.113.2");
 
         assertThat(tripsRateLimitAfterManyRequests(filter, clientA)).isTrue();
 
@@ -92,6 +95,37 @@ class RateLimitFilterTest {
         MockHttpServletResponse response = new MockHttpServletResponse();
         filter.doFilterInternal(clientB, response, chain);
         assertThat(response.getStatus()).isNotEqualTo(429);
+    }
+
+    /**
+     * Bug fix regression test: this used to take the FIRST X-Forwarded-For entry, on the
+     * (backwards) theory that "the first entry is the original client." A request that includes
+     * its own X-Forwarded-For header arrives here as "&lt;whatever the client sent&gt;, &lt;real
+     * address the trusted proxy actually appended&gt;" -- taking the first entry let an attacker
+     * bypass every rate limiter in this class by sending a fresh, different spoofed value on
+     * every single request, since each one landed in its own bucket. Only the LAST entry (the
+     * trusted proxy's own hop) may ever be trusted.
+     */
+    @Test
+    void bugFix_ignoresAClientSuppliedLeadingHop_andUsesOnlyTheProxyAppendedLastEntry() throws Exception {
+        RateLimitFilter filter = newFilter();
+        ReflectionTestUtils.setField(filter, "trustProxyHeaders", true);
+        FilterChain chain = mock(FilterChain.class);
+
+        boolean tripped = false;
+        for (int i = 0; i < 15; i++) {
+            // A different spoofed leading hop on every request, but the SAME real address (the
+            // one the trusted proxy actually appended) every time.
+            HttpServletRequest request = requestFor("/api/v1/auth/login", "10.0.0.1",
+                    "spoofed-" + i + ".attacker.example, 198.51.100.9");
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            filter.doFilterInternal(request, response, chain);
+            if (response.getStatus() == 429) tripped = true;
+        }
+
+        assertThat(tripped)
+                .as("a fresh spoofed leading X-Forwarded-For hop on every request must not bypass the limiter")
+                .isTrue();
     }
 
     @Test

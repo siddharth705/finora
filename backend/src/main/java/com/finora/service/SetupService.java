@@ -90,12 +90,16 @@ public class SetupService {
      */
     @Transactional
     public void completeSetup(UUID bootstrapUserId, RegisterRequest request) {
-        if (!isSetupRequired()) {
-            // Defense in depth, not the primary gate -- SetupController's @PreAuthorize already
-            // means only the bootstrap account can ever reach this, and once this method runs
-            // once, that account is suspended below and setup_completed flips true, so it can't
-            // reach here a second time either. Matches Gap 7's concern: this must never silently
-            // re-run against an already-initialized platform.
+        // Bug fix: this used to be a plain isSetupRequired() read-check here, with the actual
+        // flag flip (platformSettingsService.markSetupCompleted()) not happening until the very
+        // end of this method, after the new SUPER_ADMIN was already created. Under
+        // READ_COMMITTED, two overlapping completeSetup() calls (a double-click on the setup
+        // wizard's submit button, or a client retry after a slow/timed-out first response) could
+        // both pass that check before either transaction committed, each creating its own
+        // SUPER_ADMIN. tryMarkSetupCompleted() closes that window with a single atomic
+        // UPDATE ... WHERE setup_completed = false -- see its own doc comment -- called first,
+        // before any work happens, so a losing caller is rejected immediately.
+        if (!platformSettingsService.tryMarkSetupCompleted()) {
             throw new ApiException(HttpStatus.CONFLICT, "Setup has already been completed.");
         }
 
@@ -118,7 +122,8 @@ public class SetupService {
         // immediately, not just "until this token's 15-minute expiry" (application.yml).
         roleService.revokeRole(bootstrapUserId, "BOOTSTRAP_ADMIN");
 
-        platformSettingsService.markSetupCompleted();
+        // setup_completed was already flipped atomically at the top of this method -- see
+        // tryMarkSetupCompleted's own doc comment for why it moved there.
         deleteSetupKeyFileIfPresent();
 
         auditService.record(bootstrapUserId, "SETUP_COMPLETED", "User", newAdmin.getId(),

@@ -19,7 +19,7 @@ export default function Budgets() {
   const queryClient = useQueryClient();
 
   function load() {
-    budgetsApi.list().then(setBudgets);
+    budgetsApi.list().then(setBudgets).catch(() => setError('Could not load budgets.'));
   }
   useEffect(load, []);
 
@@ -44,8 +44,8 @@ export default function Budgets() {
       // without invalidating that cache too, a limit set/changed here wouldn't show up on the
       // Dashboard's Budget Progress widget until the cache aged out on its own. 'dashboard-summary'
       // also gets invalidated since budget overspend feeds its notifications/health score.
-      queryClient.invalidateQueries({ queryKey: ['budgets'] });
-      queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['budgets'] });
+      void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
     } catch (e: any) {
       setError(e.response?.data?.message ?? 'Could not save this budget. Try again.');
     } finally {

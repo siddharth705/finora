@@ -32,10 +32,15 @@ public class ProductionConfigValidator implements ApplicationRunner {
 
     private final Environment environment;
     private final JwtProperties jwtProperties;
+    private final EmailProperties emailProperties;
+    private final SmsProperties smsProperties;
 
-    public ProductionConfigValidator(Environment environment, JwtProperties jwtProperties) {
+    public ProductionConfigValidator(Environment environment, JwtProperties jwtProperties,
+                                      EmailProperties emailProperties, SmsProperties smsProperties) {
         this.environment = environment;
         this.jwtProperties = jwtProperties;
+        this.emailProperties = emailProperties;
+        this.smsProperties = smsProperties;
     }
 
     @Override
@@ -57,6 +62,31 @@ public class ProductionConfigValidator implements ApplicationRunner {
         if (DEFAULT_DB_PASSWORD.equals(dbPassword)) {
             problems.append("- DB_PASSWORD is unset or still the local-dev default (\"finora\"). ")
                     .append("Set the real database password.\n");
+        }
+
+        // Bug fix: JWT_SECRET/DB_PASSWORD were the only two settings this validator checked, even
+        // though EmailConfig/SmsConfig each have their own silent "convenience default" -- no
+        // RESEND_API_KEY falls back to NoOpEmailService, and AuthService.forgotPassword() branches
+        // on emailService.isConfigured() to decide whether to actually send the reset email or
+        // just return the raw, valid reset link directly in the API response body instead (the
+        // same dev-environment convenience CorsConfig's own class doc calls out this validator as
+        // existing specifically to catch reaching production). Omitting RESEND_API_KEY from a real
+        // deployment -- an easy operator mistake, since every OTHER secret here fails loudly and
+        // this one didn't -- turned "forgot password" into a full account-takeover primitive for
+        // anyone who knows a victim's email address, no email access required at all. Missing
+        // Twilio credentials (NoOpSmsService) is the same category of gap for OTP delivery, lower
+        // severity only because it requires server log access rather than a single unauthenticated
+        // API call, not because it's actually acceptable in production either.
+        if (emailProperties.getApiKey() == null || emailProperties.getApiKey().isBlank()) {
+            problems.append("- RESEND_API_KEY is unset. Without it, password-reset links are ")
+                    .append("returned directly in the API response instead of emailed -- anyone who ")
+                    .append("knows a user's email address could take over their account.\n");
+        }
+        boolean smsConfigured = smsProperties.getAccountSid() != null && !smsProperties.getAccountSid().isBlank()
+                && smsProperties.getAuthToken() != null && !smsProperties.getAuthToken().isBlank();
+        if (!smsConfigured) {
+            problems.append("- TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN are unset. Without them, OTP codes ")
+                    .append("are only logged server-side, never actually sent to the user's phone.\n");
         }
 
         if (!problems.isEmpty()) {

@@ -12,6 +12,7 @@ import com.finora.repository.MerchantRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.accounts.AccountService;
+import com.finora.security.OwnershipGuard;
 import com.finora.service.CategorizationService;
 import com.finora.service.RecurringService;
 import com.finora.service.ReconciliationService;
@@ -460,12 +461,8 @@ public class ImportService {
 
     private UUID resolveTargetAccount(UUID userId, ConfirmRequest request, List<String> accountsCreated) {
         if (request.existingAccountId() != null) {
-            Account account = accountRepository.findById(request.existingAccountId())
-                    .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Account not found"));
-            if (!account.getUserId().equals(userId)) {
-                throw new ApiException(HttpStatus.FORBIDDEN, "This account does not belong to you");
-            }
-            return account.getId();
+            return OwnershipGuard.requireOwned(accountRepository.findById(request.existingAccountId()),
+                    Account::getUserId, userId, "Account").getId();
         }
         if (request.newAccount() != null) {
             NewAccountRequest na = request.newAccount();

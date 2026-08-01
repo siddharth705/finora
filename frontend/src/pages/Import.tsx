@@ -65,16 +65,16 @@ function fmt(n: number | null) {
 // fed by this data) should refresh automatically once an import completes, regardless of whether
 // it went into one account or several. Mirrors StatementHistory.tsx's own invalidation set.
 function invalidateImportRelatedQueries(queryClient: QueryClient) {
-  queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
-  queryClient.invalidateQueries({ queryKey: ['accounts'] });
-  queryClient.invalidateQueries({ queryKey: ['transactions'] });
-  queryClient.invalidateQueries({ queryKey: ['recent-transactions'] });
-  queryClient.invalidateQueries({ queryKey: ['goals'] });
-  queryClient.invalidateQueries({ queryKey: ['insights'] });
-  queryClient.invalidateQueries({ queryKey: ['statement-imports'] });
-  queryClient.invalidateQueries({ queryKey: ['budgets'] });
-  queryClient.invalidateQueries({ queryKey: ['report-months'] });
-  queryClient.invalidateQueries({ queryKey: ['report'] });
+  void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+  void queryClient.invalidateQueries({ queryKey: ['accounts'] });
+  void queryClient.invalidateQueries({ queryKey: ['transactions'] });
+  void queryClient.invalidateQueries({ queryKey: ['recent-transactions'] });
+  void queryClient.invalidateQueries({ queryKey: ['goals'] });
+  void queryClient.invalidateQueries({ queryKey: ['insights'] });
+  void queryClient.invalidateQueries({ queryKey: ['statement-imports'] });
+  void queryClient.invalidateQueries({ queryKey: ['budgets'] });
+  void queryClient.invalidateQueries({ queryKey: ['report-months'] });
+  void queryClient.invalidateQueries({ queryKey: ['report'] });
 }
 
 export default function Import() {
@@ -368,7 +368,7 @@ export default function Import() {
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault();
-            if (uploadProgress === null && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+            if (uploadProgress === null && e.dataTransfer.files[0]) void handleFile(e.dataTransfer.files[0]);
           }}
         >
           {uploadProgress !== null ? (

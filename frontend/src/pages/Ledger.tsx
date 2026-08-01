@@ -54,7 +54,8 @@ export default function Ledger() {
     setFilters((f) => (f.page === 0 ? f : { ...f, page: 0 }));
     // Only when the search term itself actually changes, not on every filters update (that would
     // fight with the other filters' own `page: 0` resets and the Previous/Next handlers below).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Safe to depend on debouncedKeyword alone: setFilters uses the functional-updater form
+    // above, so it never needs `filters` itself in this array.
   }, [debouncedKeyword]);
 
   const activeFilters = { ...filters, keyword: debouncedKeyword || undefined };
@@ -85,7 +86,7 @@ export default function Ledger() {
     // since Ledger doesn't render that chart itself, but an edit/delete here changes exactly
     // the per-month totals that chart is built from.
     ['transactions', 'dashboard-summary', 'accounts', 'recent-transactions', 'budgets', 'goals', 'insights', 'report-months', 'report']
-      .forEach((key) => queryClient.invalidateQueries({ queryKey: [key] }));
+      .forEach((key) => { void queryClient.invalidateQueries({ queryKey: [key] }); });
   }
 
   async function handleDelete(t: Transaction) {
@@ -266,7 +267,7 @@ function EditTransactionModal({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    categoriesApi.list().then((cats) => setCategories(cats.map((c) => c.name)));
+    categoriesApi.list().then((cats) => setCategories(cats.map((c) => c.name))).catch(() => {});
   }, []);
 
   async function save() {

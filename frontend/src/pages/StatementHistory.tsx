@@ -56,7 +56,7 @@ export default function StatementHistory() {
     // exactly the same downstream data a fresh import would, including the Dashboard's Cash Flow
     // Overview chart ('report'/'report-months').
     ['statement-imports', 'dashboard-summary', 'accounts', 'transactions', 'recent-transactions', 'goals', 'insights', 'budgets', 'report-months', 'report']
-      .forEach((key) => queryClient.invalidateQueries({ queryKey: [key] }));
+      .forEach((key) => { void queryClient.invalidateQueries({ queryKey: [key] }); });
   }
 
   async function handleReimport(statement: StatementSummary) {
