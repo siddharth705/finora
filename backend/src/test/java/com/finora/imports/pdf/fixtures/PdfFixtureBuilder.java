@@ -299,4 +299,44 @@ public final class PdfFixtureBuilder {
 
         return render(List.of(page));
     }
+
+    /**
+     * A layout where the header row's own column labels don't align with where each column's
+     * DATA actually starts -- the header cells sit at one set of x-positions (as if centered over
+     * a wide column) while the data rows' own values sit at a different, closer-together set.
+     * Modeled on a real Axis Bank "Neo Rupay" statement (the exact coordinates that motivated this
+     * -- header "TRANSACTION DETAILS" at x=183.5 vs. that column's own data starting at x=90.25,
+     * much nearer the DATE column's anchor of 49.5 -- are documented on
+     * {@code PdfTableLocator.bucketRow}'s own doc comment), but the underlying capability --
+     * column data that doesn't line up with its own header label's x position -- isn't specific to
+     * that statement; any bank's PDF generator could render headers and data with this kind of
+     * offset. Also includes a fee line rendered as a single combined text run (its label and
+     * trailing amount in one PDFBox {@code showText} call, not two, as some real fee/charge lines
+     * are), and a wrapped fine-print paragraph broken into many small runs -- two of which happen
+     * to be the bare words "amount" and "date" -- that must not be misread as a second table's
+     * header and wrongly split this into two account sections.
+     */
+    public static byte[] buildOffsetColumnAnchorsSample() throws IOException {
+        float[] headerCol = {LEFT_MARGIN, 183.5f, 386.5f, 514f};
+        float[] dataCol = {35f, 90f, 372f, 500f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Neo Rupay Credit Card Statement")
+                .blankLine()
+                .row(headerCol, "DATE", "TRANSACTION DETAILS", "MERCHANT CATEGORY", "AMOUNT (Rs.)")
+                .row(dataCol, "24/06/2026", "UPI/TOBOX VENTURES PRIVATE L/GOKHANA.PAYU@AXISB", "MISC STORE", "37.94 Dr")
+                .row(dataCol, "02/07/2026", "UPI/DR AGARWALS HEALTH CARE", "MEDICAL", "500.00 Dr")
+                // Fee line: a separate date cell (as usual), then the description AND its trailing
+                // amount as ONE combined cell -- no separate merchant-category or amount run at
+                // all -- exactly the shape a per-run redirect can't catch, since there's only one
+                // run to begin with; only the trailing-amount split recovers this row's amount.
+                .row(new float[]{35f, 90f}, "04/07/2026", "FUEL SURCHARGE                                  10.00 Dr");
+
+        // Fine print: a wrapped paragraph broken into 10 small runs, two of which are the bare
+        // words "amount" and "date" -- ordinary English, not a real header.
+        float[] proseCol = {35f, 90f, 145f, 200f, 255f, 310f, 365f, 420f, 475f, 530f};
+        page.row(proseCol, "Interest", "on", "the", "outstanding", "amount", "is", "levied", "after", "the", "date");
+
+        return render(List.of(page));
+    }
 }

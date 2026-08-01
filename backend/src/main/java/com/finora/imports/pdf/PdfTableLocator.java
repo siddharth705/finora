@@ -9,6 +9,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -63,6 +64,16 @@ public class PdfTableLocator {
     // checked first.
     private static final Pattern SECTION_MARKER = Pattern.compile(
             "(?i)\\b(SAVINGS|CURRENT|CREDIT\\s+CARD|DEPOSIT|LOAN)\\s+ACCOUNT\\b.*\\d{4,}");
+
+    // A trailing amount (optionally Dr/Cr-suffixed) embedded at the end of an otherwise-ordinary
+    // cell's text, e.g. "FUEL SURCHARGE                                  10.00 Dr" or
+    // "MEDICAL 500.00 Dr" -- see splitTrailingAmountIfMissing's own doc comment for why this comes
+    // up at all (some rows in a real statement render a fee/charge line's label and its amount as
+    // ONE combined PDFBox text run, not the usual two separate ones bucketRow's per-run logic
+    // expects). Requires two decimal places, matching every amount format already handled
+    // elsewhere in this pipeline.
+    private static final Pattern TRAILING_AMOUNT = Pattern.compile(
+            "(?i)^(.*\\S)\\s+([\\d,]+\\.\\d{2}\\s*(?:dr|cr)?\\.?)\\s*$");
 
     // A page-footer/page-number line ("Page 1 of 2") has no date of its own, same as a genuine
     // continuation line -- but it isn't one, and merging it into the last real row on that page
@@ -260,7 +271,20 @@ public class PdfTableLocator {
         return rows;
     }
 
+    // No real statement header seen so far (across every capability this class handles) has more
+    // than 6 columns -- a generous ceiling, not a tight fit to any one layout. Bug fix, found
+    // against a real Axis Bank credit-card statement's fine-print "Schedule of Charges" boilerplate:
+    // wrapped paragraph text gets split into many small PDFBox text runs (one or two words each),
+    // and a long enough paragraph has decent odds of containing two of them that happen to be bare
+    // HEADER_HINTS words ("date", "amount") purely as ordinary English, at which point the old
+    // hasDate+matches>=2 check alone misread an entire sentence as a new table's header -- closing
+    // the real transaction section early and opening a second, bogus one (fine print masquerading
+    // as a second account). A genuine header row is a short, deliberate list of column names; a
+    // 13-cell row is prose, not a header, regardless of what two of its words happen to be.
+    private static final int MAX_HEADER_ROW_CELLS = 8;
+
     private boolean looksLikeHeaderRow(List<PositionedText> row) {
+        if (row.size() > MAX_HEADER_ROW_CELLS) return false;
         int matches = 0;
         for (PositionedText t : row) {
             String normalized = CsvParser.normalizeHeaderCell(t.text());
@@ -291,12 +315,89 @@ public class PdfTableLocator {
             int nearest = nearestColumn(t.x(), headerAnchors);
             String columnName = headerNames.get(nearest);
             String existing = result.get(columnName);
+            // Bug fix, found against a real Axis Bank credit-card statement: a date cell holds
+            // exactly one value, so once it already has one that fully parses as a date, a FURTHER
+            // run whose x happens to be nearest to that same column doesn't actually belong there
+            // -- it belongs in the next column over. That statement's "TRANSACTION DETAILS" header
+            // cell sits at x=183.5, but the column's own description data starts at x=90.25 (this
+            // layout centers header labels over a wide column while data is left-aligned within
+            // it) -- much nearer to the DATE column's anchor (49.5) than to its own, so plain
+            // nearest-anchor silently swallowed every description into the DATE cell, and every
+            // row was dropped downstream for having an unparseable date. Deliberately narrow
+            // (date-specific, not a general "advance past a full column" rule for every column):
+            // unlike a date, an amount or description column can legitimately receive more than
+            // one text run on the same row (PDFBox splitting one multi-word cell into several
+            // runs), so a general rule would risk breaking that instead.
+            if (existing != null && isDateColumn(columnName) && CsvParser.parseDate(existing.trim()) != null
+                    && nearest + 1 < headerNames.size()) {
+                nearest = nearest + 1;
+                columnName = headerNames.get(nearest);
+                existing = result.get(columnName);
+            }
+            // Same shape as the date redirect above, for the opposite end of the row: an amount
+            // (a plain number, optionally Dr/Cr-suffixed) that would otherwise be appended onto an
+            // already-non-blank description or merchant-category cell almost certainly overshot
+            // its own, later, amount-shaped column instead -- e.g. a short amount like "500.00 Dr"
+            // sitting nearer to a short merchant-category word like "MEDICAL" than to the amount
+            // column's own header anchor. Redirects forward to the nearest LATER amount-shaped
+            // column, never backward, and never into an otherwise-empty cell (a genuinely blank
+            // merchant-category column with just a number in it is left alone).
+            if (existing != null && !isAmountColumn(columnName) && CsvParser.parseNumeric(t.text().trim()) != null) {
+                int laterAmountColumn = nextAmountColumn(headerNames, nearest);
+                if (laterAmountColumn >= 0) {
+                    nearest = laterAmountColumn;
+                    columnName = headerNames.get(nearest);
+                    existing = result.get(columnName);
+                }
+            }
             // Two text runs landing in the same column on the same row (e.g. a multi-word
             // description PDFBox split into separate runs) get joined with a space rather than
             // the second one silently overwriting the first.
             result.put(columnName, existing == null ? t.text() : existing + " " + t.text());
         }
+        splitTrailingAmountIfMissing(result, headerNames);
         return result;
+    }
+
+    // Handles the case the two redirects above can't: some rows in a real statement render a
+    // fee/charge line's label and its amount as ONE combined PDFBox text run to begin with (e.g.
+    // "FUEL SURCHARGE                                  10.00 Dr" as a single run, internal spacing
+    // baked in to visually right-align the number) rather than the usual two separate runs -- so
+    // there's no separate run for the per-run redirects to catch. Only acts when this row's single
+    // "amount" column (the DR_CR_SUFFIX capability's shape specifically -- see AMOUNT_COLUMN_HINTS'
+    // broader definition, deliberately not reused here) came back with no value at all, and only
+    // ever pulls off a trailing amount, never touches a column that already has one.
+    private void splitTrailingAmountIfMissing(Map<String, String> result, List<String> headerNames) {
+        String amountColumn = headerNames.stream()
+                .filter(h -> CsvParser.normalizeHeaderCell(h).equals("amount"))
+                .findFirst().orElse(null);
+        if (amountColumn == null || result.containsKey(amountColumn)) return;
+        for (String column : List.copyOf(result.keySet())) {
+            Matcher m = TRAILING_AMOUNT.matcher(result.get(column));
+            if (m.matches()) {
+                result.put(column, m.group(1));
+                result.put(amountColumn, m.group(2));
+                return;
+            }
+        }
+    }
+
+    private boolean isDateColumn(String columnName) {
+        String normalized = CsvParser.normalizeHeaderCell(columnName);
+        return normalized.equals("date") || normalized.equals("date & time");
+    }
+
+    private static final List<String> AMOUNT_COLUMN_HINTS = List.of("amount", "debit", "credit", "balance");
+
+    private boolean isAmountColumn(String columnName) {
+        return AMOUNT_COLUMN_HINTS.contains(CsvParser.normalizeHeaderCell(columnName));
+    }
+
+    private int nextAmountColumn(List<String> headerNames, int afterIndex) {
+        for (int i = afterIndex + 1; i < headerNames.size(); i++) {
+            if (isAmountColumn(headerNames.get(i))) return i;
+        }
+        return -1;
     }
 
     private int nearestColumn(float x, List<Float> anchors) {

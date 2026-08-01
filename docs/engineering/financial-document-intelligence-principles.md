@@ -308,6 +308,7 @@ Done
 ✓ Credit Card Summary Signal
 ✓ Metadata Grid (2-row)
 ✓ Never Lose Information (unparseable rows surfaced with a reason, not dropped)
+✓ Offset Column Anchors (header labels not aligned with their own column's data)
 
 In Progress
 • Metadata Grid (4-column)
@@ -438,7 +439,13 @@ no claim.
   naming a destination account) could in principle be misread as a section boundary and diverted
   out of the transaction table entirely, bypassing even `TransactionNormalizer`/
   `explainFailure()`'s "Never lose information" safety net. Narrow and not yet seen in a real
-  document; noted here rather than fixed speculatively.
+  document; noted here rather than fixed speculatively. Separately: the header-signature-difference
+  fallback (no marker line) used to be vulnerable to the same false-positive class `looksLikeHeaderRow`
+  had (see `OFFSET_COLUMN_ANCHORS` below) — a wrapped fine-print paragraph, split into many small
+  runs, could satisfy the "date + 2 header hints" check purely by incidentally containing the words
+  "date" and "amount," misreading an entire sentence as a second table's header and wrongly
+  splitting one account into two. Fixed by `MAX_HEADER_ROW_CELLS`, found and verified against a
+  real Axis Bank statement whose "Schedule of Charges" fine print did exactly this.
 
 #### `CREDIT_CARD_SUMMARY_SIGNAL`
 - **Purpose:** detect a credit-card account from free-text payment-summary wording ("Total Payment
@@ -452,6 +459,34 @@ no claim.
 - **Maturity:** Stable.
 - **Known limitations:** matches a fixed list of English-language phrases; a statement using
   different wording for the same concept won't trigger this signal until that phrase is added.
+
+#### `OFFSET_COLUMN_ANCHORS`
+- **Purpose:** correctly bucket a row's text into columns even when a column's header LABEL
+  doesn't sit anywhere near where that column's own DATA actually starts -- plain nearest-x
+  bucketing silently mis-assigns data to the wrong column whenever this happens.
+- **Supported layouts:** any table where (a) a header label is positioned well away from its own
+  column's data (e.g. centered over a wide column while data is left-aligned within it), (b) a
+  short value (like a one-word merchant category) sits nearer a neighboring short amount than that
+  amount's own header anchor, and/or (c) a fee/charge line's label and its trailing amount are
+  extracted as a single combined text run instead of two separate ones.
+- **Implementation:** `PdfTableLocator.bucketRow` -- a date-column-overflow redirect (a date cell
+  holds exactly one value; once it has one, a further run nearest to it advances to the next
+  column instead), an amount-column redirect (an amount-shaped run that would otherwise append
+  onto an already-non-blank earlier cell advances to the nearest later amount-hint column
+  instead), and `splitTrailingAmountIfMissing` (splits a trailing amount off a combined cell when
+  the row's dedicated amount column came back with no value at all).
+- **Regression tests:** `OffsetColumnAnchorsPdfPreviewGeneratorTest`.
+- **Maturity:** Stable.
+- **Known limitations:** the date- and amount-redirects are deliberately narrow (content-type-
+  specific, not a general "advance past a full column" rule for every column) — a date or amount
+  column is known structurally to hold exactly one value, but a description column can
+  legitimately receive more than one run on the same row (PDFBox splitting one multi-word cell),
+  so a general rule would risk breaking that instead. Found and fixed against a real Axis Bank
+  "Neo Rupay" credit-card statement (see `PdfTableLocator.bucketRow`'s own doc comment for the
+  exact coordinates) — every transaction row in that file was being dropped for having an
+  unparseable date before this fix, and every upload of it was incorrectly detected as two
+  separate accounts (see `COMPOSITE_STATEMENT`'s "Known limitations" above for that half of the
+  same underlying discovery).
 
 #### `GRID_METADATA_FALLBACK` (2-row grid)
 - **Purpose:** extract account-level metadata (e.g. a Due Date field) from a payment-summary block
