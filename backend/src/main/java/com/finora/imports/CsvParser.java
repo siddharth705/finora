@@ -102,11 +102,23 @@ public class CsvParser {
      * amount/balance headers, and an exact-string match against the header hints above would
      * silently reject those headers, staging zero rows even though every transaction line was
      * well-formed.
+     *
+     * Bug fix: verified against a real Union Bank of India statement -- a PDF header cell like
+     * "Amount(₹)" doesn't always survive extraction as one contiguous string. When the ₹ glyph
+     * itself extracts as nothing (a font-encoding gap, same class of quirk as the Rupee-as-"C"
+     * bug found in CsvParser.parseNumeric elsewhere), PDFBox can hand back "Amount(" and ")" as
+     * two SEPARATE text runs/header tokens -- "Amount(" alone has no matching close paren, so the
+     * strip above never fires, "amount(" never equals the "amount" hint, and every row on the
+     * statement silently failed to normalize (no amount column ever recognized) even though the
+     * values themselves were bucketed correctly. Stripped as a second pass, after the
+     * closed-parenthetical case above, so a genuinely empty trailing "(" left dangling at the end
+     * of a header cell is also treated as noise.
      */
     public static String normalizeHeaderCell(String cell) {
         if (cell == null) return "";
         String s = cell.trim().toLowerCase();
         s = s.replaceAll("\\s*\\([^)]*\\)\\s*$", "").trim();
+        s = s.replaceAll("\\s*\\(\\s*$", "").trim();
         return s;
     }
 
@@ -144,6 +156,14 @@ public class CsvParser {
     private static final java.util.regex.Pattern TRAILING_TIME = java.util.regex.Pattern.compile(
             "(?i)[\\s|]+\\d{1,2}:\\d{2}(:\\d{2})?\\s*(am|pm)?$");
 
+    // A trailing Dr/Cr marker on an amount cell shows up in at least two real forms: bare
+    // ("37.94 Dr", "10,081.99 Cr" -- Axis) and parenthesized ("50000.00(Cr)", "1627.00(Dr)" --
+    // Union Bank of India). One pattern per marker, optional wrapping "(...)" so both forms are
+    // recognized without duplicating the detect/strip logic between detectSignFromRawAmount and
+    // parseNumeric below.
+    private static final java.util.regex.Pattern TRAILING_DR = java.util.regex.Pattern.compile("(?i)\\(?\\s*dr\\.?\\s*\\)?\\s*$");
+    private static final java.util.regex.Pattern TRAILING_CR = java.util.regex.Pattern.compile("(?i)\\(?\\s*cr\\.?\\s*\\)?\\s*$");
+
     public static LocalDate parseDate(String raw) {
         String withoutTime = TRAILING_TIME.matcher(raw).replaceFirst("");
         for (DateTimeFormatter fmt : DATE_FORMATS) {
@@ -164,9 +184,8 @@ public class CsvParser {
         if (raw == null) return null;
         String s = raw.trim();
         if (s.isEmpty()) return null;
-        String lower = s.toLowerCase();
-        if (lower.endsWith("cr") || lower.endsWith("cr.")) return true;
-        if (lower.endsWith("dr") || lower.endsWith("dr.")) return false;
+        if (TRAILING_CR.matcher(s).find()) return true;
+        if (TRAILING_DR.matcher(s).find()) return false;
         if (s.startsWith("+")) return true;
         return null;
     }
@@ -182,14 +201,36 @@ public class CsvParser {
         String s = raw.trim();
         if (s.isEmpty()) return null;
         boolean negative = false;
-        String lower = s.toLowerCase();
-        if (lower.endsWith("dr") || lower.endsWith("dr.")) {
+        // Bug fix: verified against a real Union Bank of India statement -- its Dr/Cr marker is
+        // parenthesized ("50000.00(Cr)", "1627.00(Dr)"), not the bare trailing " Dr"/" Cr" this
+        // used to require exclusively (Axis's format). Every amount cell failed to parse and the
+        // whole row silently vanished, same failure shape as the earlier Rupee-as-"C" bug -- see
+        // TRAILING_DR/TRAILING_CR's own doc comment for why one pattern now covers both forms.
+        if (TRAILING_DR.matcher(s).find()) {
             negative = true;
-            s = s.replaceAll("(?i)\\s*dr\\.?$", "");
-        } else if (lower.endsWith("cr") || lower.endsWith("cr.")) {
-            s = s.replaceAll("(?i)\\s*cr\\.?$", "");
+            s = TRAILING_DR.matcher(s).replaceFirst("");
+        } else if (TRAILING_CR.matcher(s).find()) {
+            s = TRAILING_CR.matcher(s).replaceFirst("");
         }
-        s = s.replaceAll("(?i)^\\s*(rs\\.?|inr)\\s*", "").replace("₹", "").replace(",", "").trim();
+        s = s.replaceAll("(?i)^\\s*(rs\\.?|inr)\\s*", "").replace("₹", "")
+                // Bug fix: verified against a real uploaded HDFC statement -- that PDF's embedded
+                // font doesn't map the Rupee glyph to the real Unicode ₹ codepoint at all; PDFBox
+                // extracts it as a literal "C" instead (e.g. "+  C 440.00" for what renders on
+                // screen as "+ ₹440.00"). Left unstripped, every amount cell in a file with this
+                // quirk fails BigDecimal parsing below and the whole row silently vanishes --
+                // exactly the "transactions aren't loading" failure mode this fixes. Stripped as
+                // a whole token (word-boundary'd, and only when a digit follows once whitespace
+                // is ignored) so a real letter elsewhere can never be caught by accident.
+                // (?<![A-Za-z0-9]) instead of a plain \b on this side deliberately -- \b would
+                // require a word-boundary on BOTH sides of "C", but "C" sits directly against the
+                // digit with no separating space in this real file's "C200.00"/"C1,817.02" cells
+                // (only some occurrences have a space, e.g. "+  C 440.00"), and \b never fires
+                // between two word characters ("C" and "2") in the first place.
+                .replaceAll("(?i)(?<![A-Za-z0-9])C(?=\\s*\\d)", "")
+                .replace(",", "").trim();
+        // Any whitespace still left at this point (e.g. between a sign and the digits, once the
+        // currency-glyph artifact above was removed) can't be part of a valid number either way.
+        s = s.replaceAll("\\s+", "");
         if (s.isEmpty() || s.equals("-")) return null;
         try {
             BigDecimal value = new BigDecimal(s);

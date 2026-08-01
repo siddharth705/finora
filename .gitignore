@@ -1,54 +1,199 @@
-# Nothing in this repo had a .gitignore anywhere (checked root and every sub-project) despite
-# node_modules/ and target/ already existing as real build output, and .finora/installation.key
-# holding a real bootstrap secret in the repo root -- all of that was one `git add .` away from
-# being committed. This exists to close that gap; see the deployment-readiness discussion this
-# was written alongside for the full context ("no production values should exist inside source
-# code" applies just as much to what accidentally ends up in git history as to what's hardcoded
-# in application.yml).
+# ============================================================================================
+# Finora - Repository Ignore Rules
+#
+# This repository intentionally ignores generated artifacts, secrets, local development state,
+# temporary financial documents, AI datasets/models, and machine-specific configuration.
+#
+# Guiding Principle:
+# Source control should contain only:
+#   - Source code
+#   - Documentation
+#   - Tests
+#   - Reproducible fixtures
+#   - Configuration templates
+#
+# It should NEVER contain:
+#   - Secrets
+#   - Real customer financial documents
+#   - Generated build artifacts
+#   - Local IDE state
+#   - AI datasets or model checkpoints
+#   - Temporary debugging files
+# ============================================================================================
 
-# --- Secrets -----------------------------------------------------------------------------
-# BootstrapService writes a real one-time installation key here for local/dev setup (see
-# RFC-BOOTSTRAP-01 in docs/bootstrap-setup-future-work.md) -- never committed, regardless of
-# environment.
+# ============================================================================================
+# Secrets
+# ============================================================================================
+
+# Bootstrap installation key (generated locally during first-time setup)
 .finora/
-*.env
+
+# Environment files
 .env
-.env.local
-.env.*.local
-.env.development
-.env.production
-# The checked-in template is the one exception -- it never holds a real value.
+.env.*
+*.env
+*.env.local
+*.env.development
+*.env.production
+*.env.test
+
+# Keep only the template
 !.env.example
 
-# --- Java / Maven (backend/) --------------------------------------------------------------
-backend/target/
+# ============================================================================================
+# Java / Maven / Gradle
+# ============================================================================================
+
+**/target/
 *.class
 *.jar
-!.mvn/wrapper/maven-wrapper.jar
+*.war
+*.ear
+
+# JVM crash logs
 hs_err_pid*.log
+replay_pid*.log
 
-# --- Node / Vite (frontend/, admin-portal/) -------------------------------------------------
-node_modules/
-dist/
-dist-ssr/
-*.local
+# Keep Maven wrapper
+!.mvn/wrapper/maven-wrapper.jar
+
+# ============================================================================================
+# Node / Frontend
+# ============================================================================================
+
+**/node_modules/
+
+**/dist/
+**/dist-ssr/
+
 .vite/
+**/.vite/
 
-# --- IDE / editor (kept minimal -- .vscode/settings.json here is shared team config, not
-# per-developer, so it stays tracked; only ignore genuinely machine-specific IDE state) -------
+# TypeScript incremental compilation cache
+*.tsbuildinfo
+
+# ============================================================================================
+# Python (Future AI Services)
+# ============================================================================================
+
+__pycache__/
+*.py[cod]
+*.pyo
+
+.venv/
+venv/
+env/
+
+.pytest_cache/
+.mypy_cache/
+
+# ============================================================================================
+# AI / ML (Future Financial Intelligence Engine)
+# ============================================================================================
+
+# Large models and datasets should never be committed
+models/
+datasets/
+training/
+checkpoints/
+embeddings/
+vector-db/
+vector_store/
+
+# Local AI experiments
+.ai/
+experiments/
+
+# ============================================================================================
+# Temporary Financial Documents
+# ============================================================================================
+
+# Real customer statements used for debugging.
+# Never commit financial documents containing customer information.
+backend/scratch-pdf/
+scratch/
+scratch-*/
+tmp/
+temp/
+
+# ============================================================================================
+# Local Databases
+# ============================================================================================
+
+*.db
+*.sqlite
+*.sqlite3
+*.mv.db
+
+# ============================================================================================
+# Docker
+# ============================================================================================
+
+docker-compose.override.yml
+
+# ============================================================================================
+# IDE / Editor
+# ============================================================================================
+
 .idea/
 *.iml
+
 .vscode/*
 !.vscode/settings.json
 !.vscode/extensions.json
 
-# --- OS ------------------------------------------------------------------------------------
+# ============================================================================================
+# Cloudflare
+# ============================================================================================
+
+**/.wrangler/
+
+# ============================================================================================
+# Claude / AI Assistants
+# ============================================================================================
+
+.claude/
+
+# ============================================================================================
+# Operating System
+# ============================================================================================
+
 .DS_Store
 Thumbs.db
 
-# --- Logs ----------------------------------------------------------------------------------
+# ============================================================================================
+# Logs
+# ============================================================================================
+
 *.log
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
-# Cloudflare Wrangler local state
-**/.wrangler/
+# ============================================================================================
+# Archives
+# ============================================================================================
+
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.rar
+
+# ============================================================================================
+# Generated Reports
+# ============================================================================================
+
+coverage/
+reports/
+
+# ============================================================================================
+# Backup Files
+# ============================================================================================
+
+*.bak
+*.tmp
+*.swp
+*.swo
+*~

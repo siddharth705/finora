@@ -43,13 +43,12 @@ public class PdfTableLocator {
     // be exact; revisit if a real statement's row spacing turns out to need a different value.
     private static final float ROW_Y_TOLERANCE = 3.0f;
 
-    // How close (in the same y-units as ROW_Y_TOLERANCE) a dateless/amountless row has to sit
-    // beneath the previous data row to be folded into it as a description continuation line
-    // (HDFC's layout wraps a transaction's description onto a second visual row -- a customer
-    // name/CKYC-ID line, then the real merchant line). Not measured against a real corpus either;
-    // a small multiple of ROW_Y_TOLERANCE comfortably covers normal single-line-gap spacing
-    // without also swallowing an unrelated line further down the page.
-    private static final float MAX_CONTINUATION_ROW_GAP = ROW_Y_TOLERANCE * 4;
+    // Column-name hints for locating "the date column" within an already-bucketed row -- used by
+    // the continuation-row merge in locateAll() below, kept in sync with
+    // TransactionNormalizer's own date hints (not reused directly since that method also checks
+    // a couple of CSV-only variants that never apply to a PDF-bucketed row).
+    private static final List<String> DATE_HINTS = List.of(
+            "date", "transaction date", "txn date", "value date", "date & time");
 
     private static final List<String> HEADER_HINTS = List.of(
             "date", "description", "debit", "credit", "balance",
@@ -64,6 +63,16 @@ public class PdfTableLocator {
     // checked first.
     private static final Pattern SECTION_MARKER = Pattern.compile(
             "(?i)\\b(SAVINGS|CURRENT|CREDIT\\s+CARD|DEPOSIT|LOAN)\\s+ACCOUNT\\b.*\\d{4,}");
+
+    // A page-footer/page-number line ("Page 1 of 2") has no date of its own, same as a genuine
+    // continuation line -- but it isn't one, and merging it into the last real row on that page
+    // pollutes (or, if it lands in the amount column, outright breaks parsing of) an otherwise
+    // valid transaction. Loosely matched (just "page" ... "of" as substrings) rather than a strict
+    // "Page \d+ of \d+" shape, since a real PDF's page-number glyphs don't always extract as plain
+    // ASCII digits (verified against a real Union Bank of India statement, whose page-number line
+    // extracted as "Page �1� of� 2" -- a font/encoding artifact on the digits
+    // themselves, not just an isolated quirk this pattern needs to special-case digit-by-digit).
+    private static final Pattern PAGE_FOOTER = Pattern.compile("(?i)\\bpage\\b.*\\bof\\b");
 
     public record LocatedTable(List<Map<String, String>> rows, List<String> preTableLines) {}
 
@@ -84,7 +93,7 @@ public class PdfTableLocator {
     public LocatedTable locate(List<PositionedText> positionedText) {
         LocatedDocument doc = locateAll(positionedText);
         if (doc.sections().isEmpty()) {
-            return new LocatedTable(List.of(), rowsToLines(foldedRows(positionedText)));
+            return new LocatedTable(List.of(), rowsToLines(groupIntoRows(positionedText)));
         }
         LocatedSection first = doc.sections().get(0);
         return new LocatedTable(first.rows(), first.auxiliaryText());
@@ -102,7 +111,7 @@ public class PdfTableLocator {
      * header at all) is collected as that section's {@code auxiliaryText} rather than data.
      */
     public LocatedDocument locateAll(List<PositionedText> positionedText) {
-        List<List<PositionedText>> rows = foldedRows(positionedText);
+        List<List<PositionedText>> rows = groupIntoRows(positionedText);
 
         List<LocatedSection> sections = new ArrayList<>();
         List<String> pendingAuxiliary = new ArrayList<>();
@@ -110,6 +119,7 @@ public class PdfTableLocator {
         List<String> headerNames = null;
         List<Float> headerAnchors = null;
         Set<String> currentHeaderSignature = null;
+        Integer lastRowPage = null; // page index of the most recently added row in currentRows
 
         for (List<PositionedText> row : rows) {
             String rowLine = lineOf(row);
@@ -123,6 +133,7 @@ public class PdfTableLocator {
                 headerNames = null;
                 headerAnchors = null;
                 currentHeaderSignature = null;
+                lastRowPage = null;
                 pendingAuxiliary.add(rowLine);
                 continue;
             }
@@ -146,14 +157,47 @@ public class PdfTableLocator {
                 }
                 currentHeaderSignature = signature;
                 currentRows = new ArrayList<>();
+                lastRowPage = null;
                 continue;
             }
 
             if (currentRows == null) {
                 pendingAuxiliary.add(rowLine);
+            } else if (PAGE_FOOTER.matcher(rowLine).find()) {
+                continue; // a page-number line is never a transaction or a continuation of one
             } else {
                 Map<String, String> bucketed = bucketRow(row, headerNames, headerAnchors);
-                if (!bucketed.isEmpty()) currentRows.add(bucketed);
+                if (bucketed.isEmpty()) continue;
+
+                // Bug fix: a description that wraps onto a second visual row (HDFC's layout --
+                // see this method's own doc comment) used to be handled by a y-distance heuristic
+                // ("fold anything within N points of the previous row that has no date/amount
+                // token") -- verified against a REAL uploaded HDFC statement to be badly wrong:
+                // ordinary single-line spacing between UNRELATED lines throughout the whole
+                // document (page header, footer notes, disclaimer text) is well within any y-gap
+                // threshold that also covers genuine same-cell line wrapping, so it collapsed the
+                // entire transaction table -- and the surrounding letterhead -- into one garbage
+                // row. The real, reliable signal is structural, not positional: a continuation
+                // row is one with NO value in the date column at all. Every genuine transaction
+                // row has its own date; a wrapped second line of the same transaction (or, in the
+                // real HDFC file, the line the amount itself lands on) does not. Merging is scoped
+                // to rows already inside a known table (this loop only runs once a header has
+                // been found) and stops the moment a new header/section marker is seen, so it can
+                // never reach into unrelated document text the way the old y-gap check could.
+                //
+                // Second bug fix, same session, a different real file (Union Bank of India): a
+                // repeated per-page title banner ("Savings Account," on its own line at the top of
+                // page 2) also has no date, and without a page-boundary guard it merged into the
+                // LAST row of page 1 instead -- crossing a page break is never a real continuation
+                // of a transaction, so this is scoped to same-page rows only, same spirit as never
+                // crossing a header/section boundary above.
+                boolean samePage = lastRowPage != null && !row.isEmpty() && row.get(0).pageIndex() == lastRowPage;
+                if (!hasDateValue(bucketed) && !currentRows.isEmpty() && samePage) {
+                    mergeInto(currentRows.get(currentRows.size() - 1), bucketed);
+                } else {
+                    currentRows.add(bucketed);
+                    lastRowPage = row.isEmpty() ? lastRowPage : row.get(0).pageIndex();
+                }
             }
         }
         if (currentRows != null) {
@@ -162,58 +206,20 @@ public class PdfTableLocator {
         return new LocatedDocument(sections);
     }
 
-    /** Groups raw positioned text into visual rows, then folds description-continuation rows
-     *  into the data row above them, before any header/section logic ever sees them. */
-    private List<List<PositionedText>> foldedRows(List<PositionedText> positionedText) {
-        List<List<PositionedText>> rows = groupIntoRows(positionedText);
-        return foldContinuationRows(rows);
+    private boolean hasDateValue(Map<String, String> bucketed) {
+        return CsvParser.firstNonBlank(bucketed, DATE_HINTS.toArray(new String[0])) != null;
     }
 
-    /**
-     * Folds a row that carries no date/amount-shaped token of its own into the immediately
-     * preceding row, appending its text -- this is what makes HDFC's wrapped transaction
-     * descriptions (a customer-name/CKYC-ID line, then the real merchant line, both on separate
-     * visual rows) land as ONE row/description instead of the continuation line becoming its own
-     * dateless, amountless row that {@code TransactionNormalizer.normalize()} would otherwise
-     * silently drop, losing the real merchant text.
-     *
-     * Deliberately conservative: only folds when (a) the row has no token that itself looks like
-     * a date or a monetary amount, (b) it isn't a recognized header row itself, and (c) it sits
-     * within {@link #MAX_CONTINUATION_ROW_GAP} of the previous row on the same page -- a
-     * genuinely unrelated line (a footer note, a page number) sitting far below the table won't
-     * accidentally get folded into the last real transaction row.
-     */
-    private List<List<PositionedText>> foldContinuationRows(List<List<PositionedText>> rows) {
-        List<List<PositionedText>> result = new ArrayList<>();
-        for (List<PositionedText> row : rows) {
-            boolean isContinuationCandidate = !row.isEmpty()
-                    && !looksLikeHeaderRow(row)
-                    && !SECTION_MARKER.matcher(lineOf(row)).find()
-                    && !hasDateOrAmountToken(row)
-                    && !result.isEmpty();
-            if (isContinuationCandidate) {
-                List<PositionedText> previous = result.get(result.size() - 1);
-                float gap = Math.abs(row.get(0).y() - previous.get(previous.size() - 1).y());
-                boolean samePage = row.get(0).pageIndex() == previous.get(0).pageIndex();
-                if (samePage && gap <= MAX_CONTINUATION_ROW_GAP) {
-                    List<PositionedText> merged = new ArrayList<>(previous);
-                    merged.addAll(row);
-                    result.set(result.size() - 1, merged);
-                    continue;
-                }
-            }
-            result.add(row);
+    /** Merges a continuation row's non-blank column values into the transaction row above it --
+     *  per column, appending with a space when both already have a value (same join convention
+     *  {@link #bucketRow} itself uses for two text runs landing in the same column), or simply
+     *  filling it in when the target's own value for that column is blank/absent. */
+    private void mergeInto(Map<String, String> target, Map<String, String> continuation) {
+        for (Map.Entry<String, String> e : continuation.entrySet()) {
+            if (e.getValue() == null || e.getValue().isBlank()) continue;
+            String existing = target.get(e.getKey());
+            target.put(e.getKey(), (existing == null || existing.isBlank()) ? e.getValue() : existing + " " + e.getValue());
         }
-        return result;
-    }
-
-    private boolean hasDateOrAmountToken(List<PositionedText> row) {
-        for (PositionedText t : row) {
-            String s = t.text().trim();
-            if (s.matches("\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}")) return true; // dd/mm/yyyy or dd-mm-yyyy
-            if (s.matches("[+-]?[₹$]?\\s*[\\d,]+\\.\\d{1,2}\\s*(Dr\\.?|Cr\\.?)?")) return true; // a monetary-looking number
-        }
-        return false;
     }
 
     /** Groups text runs into visual rows: same page, sorted top-to-bottom (ascending y --

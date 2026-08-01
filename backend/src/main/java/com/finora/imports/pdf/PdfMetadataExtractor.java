@@ -5,6 +5,7 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -38,7 +39,24 @@ public class PdfMetadataExtractor {
     private static final DateTimeFormatter[] DATE_FORMATS = {
             DateTimeFormatter.ofPattern("dd-MM-yyyy"),
             DateTimeFormatter.ofPattern("dd/MM/yyyy"),
+            // "09 Aug, 2026" / "09 Aug 2026" -- real HDFC statements render Due Date this way
+            // (see GRID_DUE_DATE_LABEL's own doc comment for why it isn't a plain "Label: Value" line).
+            DateTimeFormatter.ofPattern("d MMM, yyyy", Locale.ENGLISH),
+            DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH),
     };
+
+    // Some real statements (verified against an actual HDFC "Tata Neu Plus" credit card export)
+    // lay the payment-summary block out as a genuine grid -- a row of labels ("... MINIMUM DUE
+    // DUE DATE"), then a row of values a line or two later ("C200.00 09 Aug, 2026") -- rather
+    // than "Label: Value" text PAYMENT_DUE_DATE above can match on a single line. This is a
+    // best-effort fallback for that shape specifically: find a line whose LAST label is "Due
+    // Date", then look at the next few lines for the first date-shaped substring, which by
+    // construction (values render in the same left-to-right order as their labels) corresponds
+    // to it. Bounded to a few lines so it can't wander into unrelated text further down the page.
+    private static final Pattern GRID_DUE_DATE_LABEL = Pattern.compile("(?i).*\\bDUE\\s+DATE\\s*$");
+    private static final Pattern DATE_LIKE = Pattern.compile(
+            "\\b\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}\\b|\\b\\d{1,2}\\s+[A-Za-z]{3,9}\\.?,?\\s+\\d{4}\\b");
+    private static final int GRID_VALUE_SEARCH_WINDOW = 3;
 
     private static Pattern labelPattern(String label) {
         return Pattern.compile("(?i)^\\s*" + label + "\\s*:?\\s*(.+)$");
@@ -60,7 +78,8 @@ public class PdfMetadataExtractor {
         java.math.BigDecimal creditLimit = null;
         LocalDate paymentDueDate = null;
 
-        for (String line : preTableLines) {
+        for (int i = 0; i < preTableLines.size(); i++) {
+            String line = preTableLines.get(i);
             String holder = firstGroup(ACCOUNT_HOLDER, line);
             if (holder != null) { accountHolderName = holder; continue; }
 
@@ -89,11 +108,31 @@ public class PdfMetadataExtractor {
             if (limit != null) { creditLimit = com.finora.imports.CsvParser.parseNumeric(limit); continue; }
 
             String dueDate = firstGroup(PAYMENT_DUE_DATE, line);
-            if (dueDate != null) paymentDueDate = parseDate(dueDate);
+            if (dueDate != null) { paymentDueDate = parseDate(dueDate); continue; }
+
+            if (paymentDueDate == null && GRID_DUE_DATE_LABEL.matcher(line).matches()) {
+                paymentDueDate = findGridDueDate(preTableLines, i);
+            }
         }
 
         return new ExtractedMetadata(accountHolderName, accountNumberMasked, branchName, ifscCode,
                 periodStart, periodEnd, creditLimit, paymentDueDate);
+    }
+
+    /** See {@link #GRID_DUE_DATE_LABEL}'s own doc comment. Scans the few lines after a "...Due
+     *  Date" label line for the first date-shaped substring and parses it -- null (not a thrown
+     *  exception) if nothing date-shaped turns up within the window, same "genuinely null when
+     *  the file didn't carry enough signal" discipline every other field here follows. */
+    private LocalDate findGridDueDate(List<String> lines, int labelLineIndex) {
+        int end = Math.min(lines.size(), labelLineIndex + 1 + GRID_VALUE_SEARCH_WINDOW);
+        for (int j = labelLineIndex + 1; j < end; j++) {
+            Matcher m = DATE_LIKE.matcher(lines.get(j));
+            if (m.find()) {
+                LocalDate parsed = parseDate(m.group());
+                if (parsed != null) return parsed;
+            }
+        }
+        return null;
     }
 
     private String firstGroup(Pattern pattern, String line) {
