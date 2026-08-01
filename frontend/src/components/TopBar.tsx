@@ -125,7 +125,7 @@ export function TopBar() {
           value={searchValue}
           onChange={(e) => setSearchValue(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && runSearch()}
-          className="w-full bg-card border border-border rounded-lg pl-10 pr-16 py-2.5 text-sm shadow-card focus:outline-none focus:ring-2 focus:ring-primary/30"
+          className="bg-card text-ink w-full border border-border rounded-lg pl-10 pr-16 py-2.5 text-sm shadow-card focus:outline-none focus:ring-2 focus:ring-primary/30"
         />
         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-muted bg-bg border border-border rounded px-1.5 py-0.5">
           Ctrl + K

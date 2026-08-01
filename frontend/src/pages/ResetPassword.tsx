@@ -144,7 +144,7 @@ export default function ResetPassword() {
                   onBlur={() => markTouched('otp')}
                   inputMode="numeric"
                   placeholder="123456"
-                  className="w-full border border-border rounded-lg px-3 py-2.5 text-center text-lg tracking-[0.4em] font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 mb-1"
+                  className="bg-white text-gray-900 w-full border border-border rounded-lg px-3 py-2.5 text-center text-lg tracking-[0.4em] font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 mb-1"
                 />
                 <div className="flex items-center justify-between">
                   <p className="text-[11px] h-3.5">

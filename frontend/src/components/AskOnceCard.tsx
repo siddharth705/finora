@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { HelpCircle, Check } from 'lucide-react';
+import { HelpCircle, Check, ChevronLeft, ChevronRight } from 'lucide-react';
 import { transactionsApi, categoriesApi } from '../api/endpoints';
 import type { Transaction } from '../types';
+
+const PAGE_SIZE = 10;
 
 function fmt(n: number) {
   // Negative amounts (e.g. a month where spend exceeded income) must render as "-₹500",
@@ -23,6 +25,7 @@ export function AskOnceCard() {
   const [picks, setPicks] = useState<Record<string, string>>({});
   const [resolving, setResolving] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(0);
 
   function load() {
     setLoading(true);
@@ -34,6 +37,16 @@ export function AskOnceCard() {
       .finally(() => setLoading(false));
   }
   useEffect(load, []);
+
+  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  // Clamp rather than let `page` drift out of range once items shrink below the current page's
+  // start (e.g. confirming every item on the last page, or a real-time removal below) -- without
+  // this, the visible slice would silently go empty while the pager still shows a now-invalid
+  // page number.
+  useEffect(() => {
+    if (page > totalPages - 1) setPage(Math.max(0, totalPages - 1));
+  }, [totalPages, page]);
+  const pageItems = items.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
 
   async function resolve(id: string) {
     const category = picks[id];
@@ -73,7 +86,7 @@ export function AskOnceCard() {
         Pick a category once — Finora will remember it for every future transaction from the same merchant.
       </p>
       <div className="space-y-3">
-        {items.map((t) => (
+        {pageItems.map((t) => (
           <div key={t.id} className="flex items-center gap-3 flex-wrap sm:flex-nowrap">
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-ink truncate">{t.description || t.merchant}</p>
@@ -82,7 +95,7 @@ export function AskOnceCard() {
             <select
               value={picks[t.id] ?? ''}
               onChange={(e) => setPicks((p) => ({ ...p, [t.id]: e.target.value }))}
-              className="border border-border rounded-lg px-2.5 py-1.5 text-xs flex-shrink-0"
+              className="bg-card text-ink border border-border rounded-lg px-2.5 py-1.5 text-xs flex-shrink-0"
             >
               <option value="" disabled>Choose category…</option>
               {categories.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -97,6 +110,32 @@ export function AskOnceCard() {
           </div>
         ))}
       </div>
+      {items.length > PAGE_SIZE && (
+        <div className="flex items-center justify-between mt-4 pt-3 border-t border-border">
+          <p className="text-[11px] text-muted">
+            Showing {page * PAGE_SIZE + 1}-{Math.min(items.length, page * PAGE_SIZE + PAGE_SIZE)} of {items.length}
+          </p>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+              className="w-7 h-7 rounded-lg border border-border flex items-center justify-center text-muted hover:text-ink hover:bg-bg disabled:opacity-30 disabled:hover:bg-transparent"
+              aria-label="Previous page"
+            >
+              <ChevronLeft size={14} />
+            </button>
+            <span className="text-[11px] text-muted px-1">Page {page + 1} of {totalPages}</span>
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              disabled={page >= totalPages - 1}
+              className="w-7 h-7 rounded-lg border border-border flex items-center justify-center text-muted hover:text-ink hover:bg-bg disabled:opacity-30 disabled:hover:bg-transparent"
+              aria-label="Next page"
+            >
+              <ChevronRight size={14} />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

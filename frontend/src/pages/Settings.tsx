@@ -86,11 +86,11 @@ export default function Settings() {
         <div className="grid md:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs uppercase text-gray-500 mb-1">Full name</label>
-            <input value={fullName} readOnly className="w-full border rounded px-3 py-2 text-sm bg-black/5" />
+            <input value={fullName} readOnly className="text-ink w-full border rounded px-3 py-2 text-sm bg-black/5" />
           </div>
           <div>
             <label className="block text-xs uppercase text-gray-500 mb-1">Email</label>
-            <input value={email} readOnly className="w-full border rounded px-3 py-2 text-sm bg-black/5" />
+            <input value={email} readOnly className="text-ink w-full border rounded px-3 py-2 text-sm bg-black/5" />
           </div>
         </div>
         <p className="text-xs text-gray-400 mt-3">Editing name/email isn't wired up yet — this reflects what you registered with.</p>
@@ -101,14 +101,14 @@ export default function Settings() {
         <div className="grid md:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs uppercase text-gray-500 mb-1">Low balance alert threshold</label>
-            <input type="number" value={lowBalanceThreshold} onChange={(e) => setLowBalanceThreshold(e.target.value)} className="w-full border rounded px-3 py-2 text-sm" />
+            <input type="number" value={lowBalanceThreshold} onChange={(e) => setLowBalanceThreshold(e.target.value)} className="bg-card text-ink w-full border rounded px-3 py-2 text-sm" />
           </div>
           <div>
             <label className="block text-xs uppercase text-gray-500 mb-1">Theme</label>
             <select
               value={theme}
               onChange={(e) => setTheme(e.target.value as 'light' | 'dark' | 'system')}
-              className="w-full border rounded px-3 py-2 text-sm"
+              className="bg-card text-ink w-full border rounded px-3 py-2 text-sm"
             >
               <option value="light">Light</option>
               <option value="dark">Dark</option>
@@ -120,7 +120,7 @@ export default function Settings() {
             <select
               value={timezone}
               onChange={(e) => setTimezone(e.target.value)}
-              className="w-full border rounded px-3 py-2 text-sm"
+              className="bg-card text-ink w-full border rounded px-3 py-2 text-sm"
             >
               {!timezones.includes(timezone) && <option value={timezone}>{timezone}</option>}
               {timezones.map((tz) => <option key={tz} value={tz}>{tz}</option>)}

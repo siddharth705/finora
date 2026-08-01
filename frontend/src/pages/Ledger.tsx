@@ -116,15 +116,15 @@ export default function Ledger() {
           placeholder="Search description, merchant, bank, account, branch, IFSC…"
           value={keywordInput}
           onChange={(e) => setKeywordInput(e.target.value)}
-          className="border rounded px-2 py-1.5 text-sm"
+          className="bg-card text-ink border rounded px-2 py-1.5 text-sm"
         />
-        <select className="border rounded px-2 py-1.5 text-sm" onChange={(e) => setFilters((f) => ({ ...f, type: e.target.value || undefined, page: 0 }))}>
+        <select className="bg-card text-ink border rounded px-2 py-1.5 text-sm" onChange={(e) => setFilters((f) => ({ ...f, type: e.target.value || undefined, page: 0 }))}>
           <option value="">All Types</option>
           <option value="INCOME">Income</option>
           <option value="EXPENSE">Expense</option>
         </select>
-        <input type="date" className="border rounded px-2 py-1.5 text-sm" onChange={(e) => setFilters((f) => ({ ...f, dateFrom: e.target.value || undefined, page: 0 }))} />
-        <input type="date" className="border rounded px-2 py-1.5 text-sm" onChange={(e) => setFilters((f) => ({ ...f, dateTo: e.target.value || undefined, page: 0 }))} />
+        <input type="date" className="bg-card text-ink border rounded px-2 py-1.5 text-sm" onChange={(e) => setFilters((f) => ({ ...f, dateFrom: e.target.value || undefined, page: 0 }))} />
+        <input type="date" className="bg-card text-ink border rounded px-2 py-1.5 text-sm" onChange={(e) => setFilters((f) => ({ ...f, dateTo: e.target.value || undefined, page: 0 }))} />
       </div>
 
       <div className="bg-card rounded shadow overflow-x-auto relative">
@@ -313,41 +313,41 @@ function EditTransactionModal({
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div>
               <label className="block text-[11px] uppercase text-muted mb-1">Date</label>
-              <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="border border-border rounded-lg px-3 py-2 text-sm w-full" />
+              <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
             </div>
             <div>
               <label className="block text-[11px] uppercase text-muted mb-1">Type</label>
-              <select value={type} onChange={(e) => setType(e.target.value as 'INCOME' | 'EXPENSE')} className="border border-border rounded-lg px-3 py-2 text-sm w-full">
+              <select value={type} onChange={(e) => setType(e.target.value as 'INCOME' | 'EXPENSE')} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full">
                 <option value="INCOME">Income</option>
                 <option value="EXPENSE">Expense</option>
               </select>
             </div>
             <div className="col-span-2">
               <label className="block text-[11px] uppercase text-muted mb-1">Description</label>
-              <input value={description} onChange={(e) => setDescription(e.target.value)} className="border border-border rounded-lg px-3 py-2 text-sm w-full" />
+              <input value={description} onChange={(e) => setDescription(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
             </div>
             <div className="col-span-2">
               <label className="block text-[11px] uppercase text-muted mb-1">Merchant</label>
-              <input value={merchant} onChange={(e) => setMerchant(e.target.value)} className="border border-border rounded-lg px-3 py-2 text-sm w-full" />
+              <input value={merchant} onChange={(e) => setMerchant(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
             </div>
             <div>
               <label className="block text-[11px] uppercase text-muted mb-1">Amount</label>
-              <input type="number" min="0.01" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="border border-border rounded-lg px-3 py-2 text-sm w-full" />
+              <input type="number" min="0.01" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
             </div>
             <div>
               <label className="block text-[11px] uppercase text-muted mb-1">Category</label>
-              <select value={category} onChange={(e) => setCategory(e.target.value)} className="border border-border rounded-lg px-3 py-2 text-sm w-full">
+              <select value={category} onChange={(e) => setCategory(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full">
                 {!categories.includes(category) && <option value={category}>{category}</option>}
                 {categories.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
             <div className="col-span-2">
               <label className="block text-[11px] uppercase text-muted mb-1">Notes</label>
-              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="border border-border rounded-lg px-3 py-2 text-sm w-full" />
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
             </div>
             <div className="col-span-2">
               <label className="block text-[11px] uppercase text-muted mb-1">Tags (comma-separated)</label>
-              <input value={tagsInput} onChange={(e) => setTagsInput(e.target.value)} placeholder="e.g. shared, recurring" className="border border-border rounded-lg px-3 py-2 text-sm w-full" />
+              <input value={tagsInput} onChange={(e) => setTagsInput(e.target.value)} placeholder="e.g. shared, recurring" className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
             </div>
           </div>
 

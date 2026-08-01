@@ -82,10 +82,10 @@ export default function Goals() {
   return (
     <div className="space-y-4">
       <div className="bg-card rounded p-4 shadow grid grid-cols-2 md:grid-cols-4 gap-2 items-end">
-        <div><label className="block text-xs uppercase text-gray-500 mb-1">Name</label><input value={name} onChange={(e) => setName(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full" /></div>
-        <div><label className="block text-xs uppercase text-gray-500 mb-1">Target</label><input type="number" value={target} onChange={(e) => setTarget(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full" /></div>
-        <div><label className="block text-xs uppercase text-gray-500 mb-1">Starting amount</label><input type="number" value={current} onChange={(e) => setCurrent(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full" /></div>
-        <div><label className="block text-xs uppercase text-gray-500 mb-1">Target date</label><input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full" /></div>
+        <div><label className="block text-xs uppercase text-gray-500 mb-1">Name</label><input value={name} onChange={(e) => setName(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" /></div>
+        <div><label className="block text-xs uppercase text-gray-500 mb-1">Target</label><input type="number" value={target} onChange={(e) => setTarget(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" /></div>
+        <div><label className="block text-xs uppercase text-gray-500 mb-1">Starting amount</label><input type="number" value={current} onChange={(e) => setCurrent(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" /></div>
+        <div><label className="block text-xs uppercase text-gray-500 mb-1">Target date</label><input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" /></div>
         <button onClick={addGoal} disabled={saving} className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded text-xs uppercase col-span-2 md:col-span-1 disabled:opacity-50">
           {saving ? 'Adding…' : 'Add Goal'}
         </button>

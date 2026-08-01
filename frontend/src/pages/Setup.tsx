@@ -223,7 +223,7 @@ export default function Setup() {
                         onChange={(e) => setRenameValue(e.target.value)}
                         onBlur={() => submitRename(a.id)}
                         onKeyDown={(e) => { if (e.key === 'Enter') submitRename(a.id); if (e.key === 'Escape') cancelRename(); }}
-                        className="border border-primary/40 rounded-lg px-2 py-1 text-sm font-semibold w-full max-w-xs"
+                        className="bg-card text-ink border border-primary/40 rounded-lg px-2 py-1 text-sm font-semibold w-full max-w-xs"
                       />
                     ) : (
                       <>
@@ -346,7 +346,7 @@ export default function Setup() {
         <div className="p-4 pt-0 grid grid-cols-2 md:grid-cols-4 gap-3 items-end">
           <div>
             <label className="block text-xs uppercase text-gray-500 mb-1">Name</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full" />
+            <input value={name} onChange={(e) => setName(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
           </div>
           <div>
             {/* Search-then-select, per the brief -- filters the already-loaded registry
@@ -358,9 +358,9 @@ export default function Setup() {
               value={bankSearch}
               onChange={(e) => setBankSearch(e.target.value)}
               placeholder="e.g. Punjab National Bank"
-              className="border rounded px-2 py-1.5 text-sm w-full mb-1"
+              className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full mb-1"
             />
-            <select value={bankId} onChange={(e) => setBankId(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full">
+            <select value={bankId} onChange={(e) => setBankId(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full">
               <option value="">Other / Not Listed</option>
               {banks
                 .filter((b) => {
@@ -373,7 +373,7 @@ export default function Setup() {
           </div>
           <div>
             <label className="block text-xs uppercase text-gray-500 mb-1">Type</label>
-            <select value={type} onChange={(e) => setType(e.target.value as Account['accountType'])} className="border rounded px-2 py-1.5 text-sm w-full">
+            <select value={type} onChange={(e) => setType(e.target.value as Account['accountType'])} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full">
               <option value="SAVINGS">Savings</option>
               <option value="CREDIT_CARD">Credit Card</option>
               <option value="WALLET">Wallet</option>
@@ -382,33 +382,33 @@ export default function Setup() {
           </div>
           <div>
             <label className="block text-xs uppercase text-gray-500 mb-1">Balance</label>
-            <input type="number" value={balance} onChange={(e) => setBalance(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full" />
+            <input type="number" value={balance} onChange={(e) => setBalance(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
           </div>
           <div>
             <label className="block text-xs uppercase text-gray-500 mb-1">Account holder</label>
-            <input value={holderName} onChange={(e) => setHolderName(e.target.value)} placeholder="Optional" className="border rounded px-2 py-1.5 text-sm w-full" />
+            <input value={holderName} onChange={(e) => setHolderName(e.target.value)} placeholder="Optional" className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
           </div>
           <div>
             <label className="block text-xs uppercase text-gray-500 mb-1">Account number</label>
-            <input value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} placeholder="Optional" className="border rounded px-2 py-1.5 text-sm w-full" />
+            <input value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} placeholder="Optional" className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
           </div>
           <div>
             <label className="block text-xs uppercase text-gray-500 mb-1">Branch</label>
-            <input value={branchName} onChange={(e) => setBranchName(e.target.value)} placeholder="Optional" className="border rounded px-2 py-1.5 text-sm w-full" />
+            <input value={branchName} onChange={(e) => setBranchName(e.target.value)} placeholder="Optional" className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
           </div>
           <div>
             <label className="block text-xs uppercase text-gray-500 mb-1">IFSC code</label>
-            <input value={ifscCode} onChange={(e) => setIfscCode(e.target.value.toUpperCase())} placeholder="Optional" className="border rounded px-2 py-1.5 text-sm w-full" />
+            <input value={ifscCode} onChange={(e) => setIfscCode(e.target.value.toUpperCase())} placeholder="Optional" className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
           </div>
           {type === 'CREDIT_CARD' && (
             <>
               <div>
                 <label className="block text-xs uppercase text-gray-500 mb-1">Limit</label>
-                <input type="number" value={limit} onChange={(e) => setLimit(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full" />
+                <input type="number" value={limit} onChange={(e) => setLimit(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
               </div>
               <div>
                 <label className="block text-xs uppercase text-gray-500 mb-1">Due date</label>
-                <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full" />
+                <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
               </div>
             </>
           )}

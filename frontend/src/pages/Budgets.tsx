@@ -58,11 +58,11 @@ export default function Budgets() {
       <div className="bg-card rounded p-4 shadow flex gap-2 items-end">
         <div>
           <label className="block text-xs uppercase text-gray-500 mb-1">Category</label>
-          <input value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="border rounded px-2 py-1.5 text-sm" />
+          <input value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm" />
         </div>
         <div>
           <label className="block text-xs uppercase text-gray-500 mb-1">Monthly limit</label>
-          <input type="number" value={newLimit} onChange={(e) => setNewLimit(e.target.value)} className="border rounded px-2 py-1.5 text-sm" />
+          <input type="number" value={newLimit} onChange={(e) => setNewLimit(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm" />
         </div>
         <button onClick={addOrUpdate} disabled={saving} className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded text-xs uppercase disabled:opacity-50">
           {saving ? 'Saving…' : 'Set Budget'}

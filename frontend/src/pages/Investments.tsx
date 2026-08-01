@@ -123,15 +123,15 @@ export default function Investments() {
         <div className="grid md:grid-cols-4 gap-2 items-end mb-4">
           <div>
             <label className="block text-xs uppercase text-gray-500 mb-1">Name</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full" />
+            <input value={name} onChange={(e) => setName(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
           </div>
           <div>
             <label className="block text-xs uppercase text-gray-500 mb-1">Current value</label>
-            <input type="number" value={value} onChange={(e) => setValue(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full" />
+            <input type="number" value={value} onChange={(e) => setValue(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
           </div>
           <div>
             <label className="block text-xs uppercase text-gray-500 mb-1">Type</label>
-            <select value={kind} onChange={(e) => setKind(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full">
+            <select value={kind} onChange={(e) => setKind(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full">
               <option>Mutual Fund</option><option>Stocks</option><option>FD</option><option>PPF/NPS</option><option>Other</option>
             </select>
           </div>

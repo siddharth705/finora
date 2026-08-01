@@ -304,7 +304,7 @@ export default function Import() {
               <select
                 value={selectedAccountId}
                 onChange={(e) => setSelectedAccountId(e.target.value)}
-                className="border border-border rounded-lg px-3 py-2 text-sm w-full max-w-sm"
+                className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full max-w-sm"
               >
                 {existingAccounts.length === 0 && <option value="">No accounts yet</option>}
                 {existingAccounts.map((a) => (
@@ -325,11 +325,11 @@ export default function Import() {
                 )}
                 <div>
                   <label className="block text-xs uppercase text-muted mb-1">Account name</label>
-                  <input value={newName} onChange={(e) => setNewName(e.target.value)} className="border border-border rounded-lg px-3 py-2 text-sm w-full" />
+                  <input value={newName} onChange={(e) => setNewName(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
                 </div>
                 <div>
                   <label className="block text-xs uppercase text-muted mb-1">Account type</label>
-                  <select value={newType} onChange={(e) => setNewType(e.target.value as Account['accountType'])} className="border border-border rounded-lg px-3 py-2 text-sm w-full">
+                  <select value={newType} onChange={(e) => setNewType(e.target.value as Account['accountType'])} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full">
                     <option value="SAVINGS">Savings</option>
                     <option value="CREDIT_CARD">Credit Card</option>
                     <option value="WALLET">Wallet</option>
@@ -340,7 +340,7 @@ export default function Import() {
                   <label className="block text-xs uppercase text-muted mb-1">
                     Opening balance {detectedAccount?.openingBalance != null && <span className="normal-case text-primary">(detected)</span>}
                   </label>
-                  <input type="number" value={newOpeningBalance} onChange={(e) => setNewOpeningBalance(e.target.value)} className="border border-border rounded-lg px-3 py-2 text-sm w-full" />
+                  <input type="number" value={newOpeningBalance} onChange={(e) => setNewOpeningBalance(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
                 </div>
                 {detectedAccount?.accountHolderName && (
                   <div>
@@ -370,11 +370,11 @@ export default function Import() {
                   <>
                     <div>
                       <label className="block text-xs uppercase text-muted mb-1">Credit limit</label>
-                      <input type="number" value={newCreditLimit} onChange={(e) => setNewCreditLimit(e.target.value)} className="border border-border rounded-lg px-3 py-2 text-sm w-full" />
+                      <input type="number" value={newCreditLimit} onChange={(e) => setNewCreditLimit(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
                     </div>
                     <div>
                       <label className="block text-xs uppercase text-muted mb-1">Payment due date</label>
-                      <input type="date" value={newDueDate} onChange={(e) => setNewDueDate(e.target.value)} className="border border-border rounded-lg px-3 py-2 text-sm w-full" />
+                      <input type="date" value={newDueDate} onChange={(e) => setNewDueDate(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
                     </div>
                   </>
                 )}
@@ -434,7 +434,7 @@ export default function Import() {
                       <select
                         value={chosenCategory[i]}
                         onChange={(e) => setChosenCategory((arr) => arr.map((v, j) => (j === i ? e.target.value : v)))}
-                        className="border border-border rounded px-1 py-0.5 text-xs"
+                        className="bg-card text-ink border border-border rounded px-1 py-0.5 text-xs"
                       >
                         {categories.map((c) => (
                           <option key={c} value={c}>{c}</option>

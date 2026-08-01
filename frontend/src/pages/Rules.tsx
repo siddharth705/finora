@@ -91,13 +91,13 @@ function RulesTab() {
         <div className="grid grid-cols-6 gap-2 items-end">
           <div>
             <label className="block text-xs text-gray-500 mb-1">Field</label>
-            <select value={field} onChange={(e) => setField(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full">
+            <select value={field} onChange={(e) => setField(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full">
               {FIELDS.map((f) => <option key={f} value={f}>{f}</option>)}
             </select>
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">Operator</label>
-            <select value={operator} onChange={(e) => setOperator(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full">
+            <select value={operator} onChange={(e) => setOperator(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full">
               {OPERATORS.map((o) => <option key={o} value={o}>{o}</option>)}
             </select>
           </div>
@@ -107,22 +107,22 @@ function RulesTab() {
             </label>
             <input value={comparisonValue} onChange={(e) => setComparisonValue(e.target.value)}
               placeholder={operator === 'BETWEEN' ? '1000,5000' : 'swiggy'}
-              className="border rounded px-2 py-1.5 text-sm w-full" />
+              className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">Action</label>
-            <select value={actionType} onChange={(e) => setActionType(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full">
+            <select value={actionType} onChange={(e) => setActionType(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full">
               {ACTION_TYPES.map((a) => <option key={a} value={a}>{a}</option>)}
             </select>
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">{valueLabel ?? 'Action value (n/a)'}</label>
             <input value={actionValue} onChange={(e) => setActionValue(e.target.value)} disabled={!valueLabel}
-              className="border rounded px-2 py-1.5 text-sm w-full disabled:bg-black/5" />
+              className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full disabled:bg-black/5" />
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">Priority</label>
-            <input type="number" value={priority} onChange={(e) => setPriority(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full" />
+            <input type="number" value={priority} onChange={(e) => setPriority(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
           </div>
         </div>
         <button onClick={createRule} disabled={saving} className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded text-xs uppercase disabled:opacity-50">
@@ -251,24 +251,24 @@ function RelationshipsTab() {
           <div>
             <label className="block text-xs text-gray-500 mb-1">Label</label>
             <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="My Card Account"
-              className="border rounded px-2 py-1.5 text-sm w-full" />
+              className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">Type</label>
-            <select value={relationshipType} onChange={(e) => setRelationshipType(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full">
+            <select value={relationshipType} onChange={(e) => setRelationshipType(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full">
               {RELATIONSHIP_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">Identifier type</label>
-            <select value={identifierType} onChange={(e) => setIdentifierType(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full">
+            <select value={identifierType} onChange={(e) => setIdentifierType(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full">
               {IDENTIFIER_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">Identifier value</label>
             <input value={identifierValue} onChange={(e) => setIdentifierValue(e.target.value)} placeholder="XX4802"
-              className="border rounded px-2 py-1.5 text-sm w-full" />
+              className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
           </div>
         </div>
         <button onClick={createRelationship} disabled={saving} className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded text-xs uppercase disabled:opacity-50">
@@ -392,7 +392,7 @@ function EditRelationshipModal({
       <div className="space-y-3 text-sm">
         <div>
           <label className="block text-xs text-gray-500 mb-1">Label</label>
-          <input value={label} onChange={(e) => setLabel(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full" />
+          <input value={label} onChange={(e) => setLabel(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">Type</label>
@@ -401,7 +401,7 @@ function EditRelationshipModal({
               in the create-relationship form above -- so unlike that one, a raw string from
               e.target.value doesn't structurally match its setter. RELATIONSHIP_TYPES only ever
               populates these <option>s with one of those 4 literals, so the cast is safe. */}
-          <select value={relationshipType} onChange={(e) => setRelationshipType(e.target.value as Relationship['relationshipType'])} className="border rounded px-2 py-1.5 text-sm w-full">
+          <select value={relationshipType} onChange={(e) => setRelationshipType(e.target.value as Relationship['relationshipType'])} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full">
             {RELATIONSHIP_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
         </div>
@@ -411,11 +411,11 @@ function EditRelationshipModal({
             {identifiers.map((id, i) => (
               <div key={i} className="flex gap-1.5">
                 <select value={id.identifierType} onChange={(e) => updateIdentifier(i, 'identifierType', e.target.value)}
-                  className="border rounded px-2 py-1 text-xs w-1/3">
+                  className="bg-card text-ink border rounded px-2 py-1 text-xs w-1/3">
                   {IDENTIFIER_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
                 <input value={id.identifierValue} onChange={(e) => updateIdentifier(i, 'identifierValue', e.target.value)}
-                  className="border rounded px-2 py-1 text-xs flex-1" />
+                  className="bg-card text-ink border rounded px-2 py-1 text-xs flex-1" />
                 <button onClick={() => removeIdentifier(i)} className="text-gray-400 hover:text-danger px-1"><Trash2 size={13} /></button>
               </div>
             ))}
@@ -467,7 +467,7 @@ function MergeRelationshipModal({
         </p>
         <div>
           <label className="block text-xs text-gray-500 mb-1">Merge this relationship in</label>
-          <select value={mergeFromId} onChange={(e) => setMergeFromId(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-full">
+          <select value={mergeFromId} onChange={(e) => setMergeFromId(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full">
             {candidates.map((c) => <option key={c.id} value={c.id}>{c.label} ({c.relationshipType})</option>)}
           </select>
         </div>

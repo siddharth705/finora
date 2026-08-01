@@ -53,7 +53,7 @@ export default function Reports() {
       <div className="bg-card rounded p-4 shadow flex flex-wrap items-end gap-3 justify-between">
         <div>
           <label className="block text-xs uppercase text-gray-500 mb-1">Month</label>
-          <select value={month} onChange={(e) => setMonth(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
+          <select value={month} onChange={(e) => setMonth(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm">
             {months.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
         </div>

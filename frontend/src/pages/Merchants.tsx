@@ -144,7 +144,7 @@ export default function Merchants() {
                           value={renameValue}
                           onChange={(e) => setRenameValue(e.target.value)}
                           onKeyDown={(e) => e.key === 'Enter' && saveRename(m.id)}
-                          className="border rounded px-2 py-1 text-sm w-40"
+                          className="bg-card text-ink border rounded px-2 py-1 text-sm w-40"
                         />
                         <button onClick={() => saveRename(m.id)} className="text-success"><Check size={16} /></button>
                         <button onClick={() => setRenamingId(null)} className="text-gray-400"><X size={16} /></button>
@@ -192,7 +192,7 @@ export default function Merchants() {
                 <select
                   value={mergeSourceId}
                   onChange={(e) => setMergeSourceId(e.target.value)}
-                  className="border rounded px-2 py-1.5 text-sm w-full mb-4"
+                  className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full mb-4"
                 >
                   <option value="">Select a merchant…</option>
                   {merchants.filter((m) => m.id !== mergeTarget.id).map((m) => (

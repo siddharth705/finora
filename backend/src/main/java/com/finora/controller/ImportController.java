@@ -3,6 +3,7 @@ package com.finora.controller;
 import com.finora.dto.ApiResponse;
 import com.finora.dto.ImportDto.*;
 import com.finora.entity.ImportSession;
+import com.finora.imports.ImportConcurrencyLimiter;
 import com.finora.imports.ImportSessionService;
 import com.finora.security.CurrentUser;
 import com.finora.imports.ImportService;
@@ -19,20 +20,29 @@ public class ImportController {
 
     private final ImportService importService;
     private final ImportSessionService importSessionService;
+    private final ImportConcurrencyLimiter concurrencyLimiter;
     private final CurrentUser currentUser;
 
-    public ImportController(ImportService importService, ImportSessionService importSessionService, CurrentUser currentUser) {
+    public ImportController(ImportService importService, ImportSessionService importSessionService,
+                             ImportConcurrencyLimiter concurrencyLimiter, CurrentUser currentUser) {
         this.importService = importService;
         this.importSessionService = importSessionService;
+        this.concurrencyLimiter = concurrencyLimiter;
         this.currentUser = currentUser;
     }
 
     // ADR-0002: staging now persists the reviewed-later state server-side, so a dropped session
     // doesn't lose the whole upload+parse. Returns the session id alongside the same staging
     // payload as before.
+    //
+    // Gated through ImportConcurrencyLimiter -- see that class's own doc comment for the full
+    // reasoning. This is the actual CPU/DB-heavy work (parsing, categorization, duplicate
+    // detection), so it's the one that needs bounding under a burst, not every endpoint in this
+    // controller.
     @PostMapping(value = "/csv/stage", consumes = "multipart/form-data")
     public ResponseEntity<ApiResponse<StagingSessionResponse>> stage(@RequestParam("file") MultipartFile file) throws Exception {
-        return ResponseEntity.ok(ApiResponse.ok(importService.parseAndStageWithSession(currentUser.id(), file)));
+        return ResponseEntity.ok(ApiResponse.ok(
+                concurrencyLimiter.runGated(() -> importService.parseAndStageWithSession(currentUser.id(), file))));
     }
 
     // PDF Milestone 1 (com.finora.imports.pdf) -- digital/text-based bank statements only, no
@@ -42,7 +52,8 @@ public class ImportController {
     // this controller needed to change for PDF support.
     @PostMapping(value = "/pdf/stage", consumes = "multipart/form-data")
     public ResponseEntity<ApiResponse<StagingSessionResponse>> stagePdf(@RequestParam("file") MultipartFile file) throws Exception {
-        return ResponseEntity.ok(ApiResponse.ok(importService.parseAndStagePdfWithSession(currentUser.id(), file)));
+        return ResponseEntity.ok(ApiResponse.ok(
+                concurrencyLimiter.runGated(() -> importService.parseAndStagePdfWithSession(currentUser.id(), file))));
     }
 
     // ADR-0002: plain JSON now, not multipart -- the file no longer needs to be re-uploaded here,

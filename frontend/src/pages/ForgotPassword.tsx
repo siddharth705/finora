@@ -74,7 +74,7 @@ export default function ForgotPassword() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               onBlur={() => setTouched(true)}
-              className="w-full border border-border rounded-lg px-3 py-2.5 mb-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="bg-white text-gray-900 w-full border border-border rounded-lg px-3 py-2.5 mb-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
             <p className="text-[11px] mb-4 h-3.5">
               {touched && !emailValid && <span className="text-danger">Enter a valid email address.</span>}
