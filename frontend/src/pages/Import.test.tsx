@@ -61,6 +61,11 @@ const detectedAccount: DetectedAccountInfo = {
 function stagingResultWith(overrides: Partial<{ sessionId: string }> = {}) {
   return {
     sessionId: overrides.sessionId ?? 'session-1',
+    // multiAccount/sections only exist on the PDF staging response shape, but included here too
+    // (harmless for the CSV mock) so one helper satisfies both importApi.stageCsv and
+    // importApi.stagePdf's declared return types.
+    multiAccount: false,
+    sections: null,
     staging: { rows: [], totalParsed: 0, flaggedDuplicates: 0, detectedAccount },
   };
 }
@@ -99,7 +104,9 @@ describe('Import — file-type routing', () => {
     await user.upload(screen.getByTestId('statement-file-input'), csvFile());
 
     await waitFor(() => expect(importApi.stageCsv).toHaveBeenCalledTimes(1));
-    expect(importApi.stageCsv).toHaveBeenCalledWith(expect.objectContaining({ name: 'statement.csv' }));
+    // Second argument is the upload-progress callback (setUploadProgress) -- not asserted here,
+    // just the file itself, since it varies by render (a bound React state setter).
+    expect(importApi.stageCsv).toHaveBeenCalledWith(expect.objectContaining({ name: 'statement.csv' }), expect.any(Function));
     expect(importApi.stagePdf).not.toHaveBeenCalled();
   });
 
@@ -110,7 +117,7 @@ describe('Import — file-type routing', () => {
     await user.upload(screen.getByTestId('statement-file-input'), pdfFile());
 
     await waitFor(() => expect(importApi.stagePdf).toHaveBeenCalledTimes(1));
-    expect(importApi.stagePdf).toHaveBeenCalledWith(expect.objectContaining({ name: 'statement.pdf' }));
+    expect(importApi.stagePdf).toHaveBeenCalledWith(expect.objectContaining({ name: 'statement.pdf' }), expect.any(Function));
     expect(importApi.stageCsv).not.toHaveBeenCalled();
   });
 

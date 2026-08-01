@@ -44,13 +44,13 @@ export function Sidebar() {
 
   return (
     <aside className="w-64 flex-shrink-0 bg-sidebar min-h-screen flex flex-col py-6 px-4">
-      {/* Logo */}
-      <div className="flex items-center gap-2.5 px-2 mb-8">
+      {/* Logo -- links back to the Dashboard, same as clicking the "Dashboard" nav item below. */}
+      <NavLink to="/app" end className="flex items-center gap-2.5 px-2 mb-8">
         <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-400 to-primary-dark flex items-center justify-center flex-shrink-0">
           <Sparkles size={16} className="text-white" strokeWidth={2.5} />
         </div>
         <span className="text-white font-extrabold tracking-wide text-lg">FINORA</span>
-      </div>
+      </NavLink>
 
       {/* Nav */}
       <nav className="flex-1 space-y-1">

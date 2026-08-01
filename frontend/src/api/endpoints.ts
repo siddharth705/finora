@@ -1,7 +1,7 @@
 import { api, rawApi, type ApiEnvelope } from './client';
 import type {
   Account, AccountStatementGroup, BankInfo, Budget, DashboardSummary, DetectedAccountInfo, Goal,
-  ImportSummary, ReimportResult, StagedRow, StatementSummary, Transaction,
+  ImportSummary, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, Transaction,
   Merchant, MerchantAuditEntry, Rule, Relationship, WorkspaceSettings, AuditLogEntry,
 } from '../types';
 
@@ -157,6 +157,21 @@ export interface ConfirmPayload {
   statementClosingBalance: number | null;
 }
 
+// One account's worth of reviewed rows within a MultiAccountConfirmPayload -- same shape as
+// ConfirmPayload minus sessionId (shared once at the top level instead of repeated per section).
+export interface SectionConfirmPayload {
+  rows: ConfirmedRowPayload[];
+  existingAccountId: string | null;
+  newAccount: NewAccountPayload | null;
+  statementOpeningBalance: number | null;
+  statementClosingBalance: number | null;
+}
+
+export interface MultiAccountConfirmPayload {
+  sessionId: string;
+  sections: SectionConfirmPayload[];
+}
+
 export interface ImportSessionSummary {
   id: string;
   fileName: string;
@@ -172,29 +187,60 @@ interface StagingResult {
   detectedAccount: DetectedAccountInfo;
 }
 
+// A PDF upload can now detect more than one account section in a single file (e.g. an
+// HSBC-style "Composite Statement" bundling a savings account and a credit-card account) --
+// see ImportDto.PdfStagingSessionResponse on the backend. Exactly one of staging/sections is
+// populated, selected by multiAccount: the common single-account case (and every CSV upload,
+// which can never be multi-account) still gets `staging` exactly as before; a detected
+// multi-account PDF gets `sections` instead.
+interface PdfStagingSessionResult {
+  sessionId: string;
+  multiAccount: boolean;
+  staging: StagingResult | null;
+  sections: StagedAccountSection[] | null;
+}
+
+// Reports 0-100 upload progress via axios's onUploadProgress -- purely the network-transfer
+// portion (the callback can't see server-side parsing time after the bytes finish sending), so
+// callers should treat 100% as "upload done, processing," not "fully complete."
+type ProgressCallback = (percent: number) => void;
+
+function toUploadProgressConfig(onProgress?: ProgressCallback) {
+  return onProgress
+    ? {
+        onUploadProgress: (e: { loaded: number; total?: number }) => {
+          if (e.total) onProgress(Math.round((e.loaded / e.total) * 100));
+        },
+      }
+    : {};
+}
+
 // ADR-0002: the staged review now survives a dropped session -- the backend persists what gets
 // staged (file bytes included) rather than that state living only in this response and whatever
 // this page holds in memory afterward. sessionId is what ties stage -> confirm together now,
 // instead of re-uploading the file a second time at confirm.
 export const importApi = {
-  stageCsv: (file: File) => {
+  stageCsv: (file: File, onProgress?: ProgressCallback) => {
     const form = new FormData();
     form.append('file', file);
     return api
       .post<{ sessionId: string; staging: StagingResult }>('/import/csv/stage', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        ...toUploadProgressConfig(onProgress),
       })
       .then((r) => r.data);
   },
   // PDF Milestone 1 (see backend com.finora.imports.pdf package doc) -- digital/text-based bank
-  // statements only, no OCR/scanned PDFs. Same StagingSessionResponse shape as CSV staging, so
-  // everything downstream of this call (review, confirm) is unaware which format produced it.
-  stagePdf: (file: File) => {
+  // statements only, no OCR/scanned PDFs. Response shape changed from the CSV-shared
+  // {sessionId, staging} to PdfStagingSessionResult to carry a multi-account PDF's several
+  // detected sections -- see that type's own doc comment.
+  stagePdf: (file: File, onProgress?: ProgressCallback) => {
     const form = new FormData();
     form.append('file', file);
     return api
-      .post<{ sessionId: string; staging: StagingResult }>('/import/pdf/stage', form, {
+      .post<PdfStagingSessionResult>('/import/pdf/stage', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        ...toUploadProgressConfig(onProgress),
       })
       .then((r) => r.data);
   },
@@ -204,6 +250,12 @@ export const importApi = {
   // backend, which is exactly what makes an import auto-create its account when needed.
   confirm: (payload: ConfirmPayload) =>
     api.post<ImportSummary>('/import/csv/confirm', payload).then((r) => r.data),
+  // Confirms every detected account section of a multi-account PDF staging session together --
+  // used only when stagePdf() returned multiAccount: true. See ImportService.confirmMultiSection
+  // on the backend, which loops the existing single-account confirm() once per section rather
+  // than duplicating that logic.
+  confirmMulti: (payload: MultiAccountConfirmPayload) =>
+    api.post<{ perAccount: ImportSummary[] }>('/import/pdf/confirm-multi', payload).then((r) => r.data),
   // "Your unfinished imports" -- lets the UI offer to resume a staged-but-not-yet-confirmed
   // session (e.g. after a reload) instead of it silently sitting there until it expires.
   listSessions: () => api.get<ImportSessionSummary[]>('/import/sessions').then((r) => r.data),

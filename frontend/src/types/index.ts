@@ -142,6 +142,17 @@ export interface DetectedAccountInfo {
   bank: BankInfo;
 }
 
+// One detected account section within a single multi-account PDF upload (e.g. an HSBC-style
+// "Composite Statement" bundling a savings account and a credit-card account in one file) --
+// see ImportDto.StagedAccountSection on the backend. Structurally identical to the single-account
+// staging shape, just one per detected account.
+export interface StagedAccountSection {
+  detectedAccount: DetectedAccountInfo;
+  rows: StagedRow[];
+  totalParsed: number;
+  flaggedDuplicates: number;
+}
+
 export interface ImportSummary {
   imported: number;
   skipped: number;
