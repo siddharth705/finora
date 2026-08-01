@@ -9,7 +9,11 @@
  * Scope, per the agreed Milestone 1 boundaries:
  *   - Digital (text-based) PDF bank statements only. No OCR, no scanned PDFs.
  *   - One real layout worked through end-to-end (see the golden test fixture,
- *     src/test/resources/pdf/sbi_sample_statement.pdf) rather than several banks half-supported.
+ *     src/test/resources/pdf/separate_debit_credit_balance_sample.pdf) rather than several banks
+ *     half-supported. (Note: several more layout capabilities have been added since this was
+ *     originally written -- see docs/engineering/financial-document-intelligence-principles.md
+ *     for the current, maintained picture; this paragraph is left as historical Milestone-1
+ *     framing, not a claim that only one layout is supported today.)
  *   - No {@code FinancialDocument} canonical model, no {@code DocumentParser}/extractor
  *     interface, no Document Profiles/Extraction Templates, no AI. Each of those was explicitly
  *     deferred until a second real implementation (or a dedicated AI RFC) exists to justify them

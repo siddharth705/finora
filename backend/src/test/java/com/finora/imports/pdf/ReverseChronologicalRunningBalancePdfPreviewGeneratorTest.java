@@ -79,7 +79,7 @@ class ReverseChronologicalRunningBalancePdfPreviewGeneratorTest {
     }
 
     @Test
-    void generate_detectsSavingsAccountType_andThePnbBankFromTheIfscLine() throws Exception {
+    void generate_detectsSavingsAccountType_andResolvesTheBankFromTheIfscLine() throws Exception {
         StagingResponse response = generate();
         var detected = response.detectedAccount();
 

@@ -53,7 +53,7 @@ class TransactionNormalizerTest {
     // --- Description column recognition ---
 
     @Test
-    void normalize_readsDescriptionFromARemarksColumn_PnbOneStyle() {
+    void normalize_readsDescriptionFromARemarksColumn_noSeparateDescriptionColumn() {
         Map<String, String> row = rowOf(
                 "Date", "31/07/2026",
                 "Instrument ID", "",
@@ -199,5 +199,36 @@ class TransactionNormalizerTest {
 
         assertThat(normalizer.normalize(userId, creditRow).amount()).isEqualByComparingTo(new BigDecimal("1057.0"));
         assertThat(normalizer.normalize(userId, debitRow).amount()).isEqualByComparingTo(new BigDecimal("680.0"));
+    }
+
+    // --- explainFailure() -- "Never lose information": a row normalize() rejects still gets a
+    // specific, actionable reason surfaced to the user instead of just vanishing from the count. ---
+
+    @Test
+    void explainFailure_reportsNoDateColumn_whenNothingLooksLikeADate() {
+        Map<String, String> row = rowOf("Amount", "500.00", "Description", "Groceries");
+
+        assertThat(normalizer.explainFailure(row)).isEqualTo("No column recognized as a date");
+    }
+
+    @Test
+    void explainFailure_reportsTheUnparseableDateValue_whenADateColumnExistsButDoesNotParse() {
+        Map<String, String> row = rowOf("Date", "not-a-real-date", "Amount", "500.00");
+
+        assertThat(normalizer.explainFailure(row)).contains("not-a-real-date").contains("didn't match any known date format");
+    }
+
+    @Test
+    void explainFailure_reportsNoAmountColumn_whenDateParsesButNothingLooksLikeAnAmount() {
+        Map<String, String> row = rowOf("Date", "05/07/2026", "Description", "Groceries");
+
+        assertThat(normalizer.explainFailure(row)).isEqualTo("No column recognized as an amount or balance");
+    }
+
+    @Test
+    void explainFailure_reportsTheUnparseableAmountValue_whenAnAmountColumnExistsButDoesNotParse() {
+        Map<String, String> row = rowOf("Date", "05/07/2026", "Amount", "not-a-number");
+
+        assertThat(normalizer.explainFailure(row)).contains("not-a-number").contains("didn't match any known numeric format");
     }
 }

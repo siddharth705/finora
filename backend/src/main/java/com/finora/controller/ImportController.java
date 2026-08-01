@@ -92,7 +92,12 @@ public class ImportController {
         ImportSession session = importSessionService.getOwnedSession(currentUser.id(), id);
         List<StagedRow> rows = importSessionService.readStagedRows(session);
         int dupCount = (int) rows.stream().filter(StagedRow::likelyDuplicate).count();
-        StagingResponse staging = new StagingResponse(rows, rows.size(), dupCount, importSessionService.readDetectedAccount(session));
+        // unparseableRows is intentionally NOT persisted on ImportSession (v1 scope -- see
+        // docs/engineering/financial-document-intelligence-principles.md's "Never lose
+        // information" section) -- a resumed session shows the rows that DID stage correctly
+        // exactly as before, but a row that failed to parse is only visible in the original
+        // staging response, not after a later resume. Accepted trade-off, not an oversight.
+        StagingResponse staging = new StagingResponse(rows, rows.size(), dupCount, importSessionService.readDetectedAccount(session), List.of());
         return ApiResponse.ok(new StagingSessionResponse(session.getId(), staging));
     }
 

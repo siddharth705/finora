@@ -5,6 +5,7 @@ import com.finora.dto.ImportDto.DetectedAccountInfo;
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.dto.ImportDto.StagedRow;
 import com.finora.dto.ImportDto.StagingResponse;
+import com.finora.dto.ImportDto.UnparseableRow;
 import com.finora.imports.CsvParser;
 import com.finora.imports.TransactionNormalizer;
 import com.finora.util.BankRegistry;
@@ -66,7 +67,7 @@ public class PdfPreviewGenerator {
      *  {@code ImportService.parseAndStagePdfWithSession}) call {@link #generateSections} instead. */
     public StagingResponse generate(UUID userId, String filename, byte[] fileBytes) throws IOException {
         StagedAccountSection first = generateSections(userId, filename, fileBytes).get(0);
-        return new StagingResponse(first.rows(), first.totalParsed(), first.flaggedDuplicates(), first.detectedAccount());
+        return new StagingResponse(first.rows(), first.totalParsed(), first.flaggedDuplicates(), first.detectedAccount(), first.unparseableRows());
     }
 
     /** Detects and stages every account section in the document. Always returns at least one
@@ -79,9 +80,15 @@ public class PdfPreviewGenerator {
         PdfTableLocator.LocatedDocument doc = tableLocator.locateAll(positioned);
 
         if (doc.sections().isEmpty()) {
+            // "Never lose information" (see the engineering principles doc) applies at the
+            // whole-document level too: previously this returned a well-formed but silently empty
+            // response -- indistinguishable from a genuinely blank PDF. Every non-blank line of
+            // extracted text is surfaced here instead, since without a recognized table there's no
+            // header to key a structured row by.
             PdfTableLocator.LocatedTable empty = tableLocator.locate(positioned);
-            return List.of(buildSection(userId, filename,
-                    new PdfTableLocator.LocatedSection(empty.preTableLines(), List.of())));
+            StagedAccountSection section = buildSection(userId, filename,
+                    new PdfTableLocator.LocatedSection(empty.preTableLines(), List.of()));
+            return List.of(surfaceUnrecognizedText(section, empty.preTableLines()));
         }
 
         List<StagedAccountSection> result = new ArrayList<>();
@@ -93,12 +100,25 @@ public class PdfPreviewGenerator {
 
     private StagedAccountSection buildSection(UUID userId, String filename, PdfTableLocator.LocatedSection section) {
         List<StagedRow> staged = new ArrayList<>();
+        // "Never lose information" (see the engineering principles doc) -- a row that fails to
+        // normalize is reported with WHY, not just silently absent from the row count. Real cost
+        // of this on the PDF path specifically: PdfTableLocator treats everything after a header
+        // as a candidate row (see its own doc comment), so this can include genuine boilerplate
+        // (disclaimer paragraphs, page footers that survived PAGE_FOOTER filtering under a
+        // different phrasing, etc.), not just transactions the engine failed to understand. Kept
+        // unfiltered here anyway rather than guessing at a second heuristic for "is this row even
+        // worth reporting" -- the frontend review screen is where that judgment call belongs, not
+        // this layer inventing a second, less-principled filter on top of the real one.
+        List<UnparseableRow> unparseable = new ArrayList<>();
         // date -> balance-as-reported, purely to derive opening/closing balance below -- not
         // persisted anywhere, discarded once this method returns.
         List<BalancePoint> balancePoints = new ArrayList<>();
         for (Map<String, String> row : section.rows()) {
             StagedRow parsed = transactionNormalizer.normalize(userId, row);
-            if (parsed == null) continue; // same "skip rows that don't parse as a transaction" contract CSV's PreviewGenerator follows
+            if (parsed == null) {
+                unparseable.add(new UnparseableRow(row, transactionNormalizer.explainFailure(row)));
+                continue;
+            }
             staged.add(parsed);
 
             BigDecimal balance = CsvParser.parseNumeric(
@@ -118,7 +138,18 @@ public class PdfPreviewGenerator {
 
         int dupCount = (int) staged.stream().filter(StagedRow::likelyDuplicate).count();
         DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, staged, balancePoints);
-        return new StagedAccountSection(detected, staged, staged.size(), dupCount);
+        return new StagedAccountSection(detected, staged, staged.size(), dupCount, unparseable);
+    }
+
+    private StagedAccountSection surfaceUnrecognizedText(StagedAccountSection section, List<String> extractedLines) {
+        List<UnparseableRow> unparseable = new ArrayList<>();
+        for (String line : extractedLines) {
+            if (line == null || line.isBlank()) continue;
+            unparseable.add(new UnparseableRow(Map.of("text", line),
+                    "No transaction table was recognized anywhere in this document"));
+        }
+        return new StagedAccountSection(section.detectedAccount(), section.rows(), section.totalParsed(),
+                section.flaggedDuplicates(), unparseable);
     }
 
     private record BalancePoint(LocalDate date, BigDecimal signedAmount, BigDecimal balance,

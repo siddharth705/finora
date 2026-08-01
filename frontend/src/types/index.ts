@@ -105,6 +105,16 @@ export interface Goal {
   targetDate?: string;
 }
 
+// A row that could NOT be parsed into a StagedRow -- surfaced instead of silently vanishing (see
+// docs/engineering/financial-document-intelligence-principles.md's "Never lose information").
+// `raw` is exactly what was extracted (whatever columns the source layout produced); `reason` is
+// a human-readable explanation of why it didn't survive normalization. Never confirmable into the
+// ledger -- purely so the user can see what the engine actually saw and why it was skipped.
+export interface UnparseableRow {
+  raw: Record<string, string | null>;
+  reason: string;
+}
+
 export interface StagedRow {
   date: string;
   description: string;
@@ -151,6 +161,7 @@ export interface StagedAccountSection {
   rows: StagedRow[];
   totalParsed: number;
   flaggedDuplicates: number;
+  unparseableRows: UnparseableRow[];
 }
 
 export interface ImportSummary {
@@ -213,6 +224,7 @@ export interface ReimportResult {
     totalParsed: number;
     flaggedDuplicates: number;
     detectedAccount: DetectedAccountInfo;
+    unparseableRows: UnparseableRow[];
   };
   accountId: string;
   accountName: string;

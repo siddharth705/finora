@@ -2,7 +2,7 @@ import { api, rawApi, type ApiEnvelope } from './client';
 import type {
   Account, AccountStatementGroup, BankInfo, Budget, DashboardSummary, DetectedAccountInfo, Goal,
   ImportSummary, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, Transaction,
-  Merchant, MerchantAuditEntry, Rule, Relationship, WorkspaceSettings, AuditLogEntry,
+  Merchant, MerchantAuditEntry, Rule, Relationship, WorkspaceSettings, AuditLogEntry, UnparseableRow,
 } from '../types';
 
 export const authApi = {
@@ -185,6 +185,7 @@ interface StagingResult {
   totalParsed: number;
   flaggedDuplicates: number;
   detectedAccount: DetectedAccountInfo;
+  unparseableRows: UnparseableRow[];
 }
 
 // A PDF upload can now detect more than one account section in a single file (e.g. an

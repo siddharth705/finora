@@ -72,6 +72,21 @@ class ParenthesizedDrCrRunningBalancePdfPreviewGeneratorTest {
     }
 
     @Test
+    void generate_surfacesTheTitleBannerAsUnparseable_ratherThanSilentlyDroppingIt() throws Exception {
+        // "Never lose information" (see the engineering principles doc): the page-2 title banner
+        // ("Savings Account," no date, no amount) correctly never becomes a staged transaction --
+        // but it also isn't just gone. It shows up here, with a specific, actionable reason, not
+        // merely absent from the row count the way it would have been before this capability.
+        StagingResponse response = generate();
+
+        assertThat(response.unparseableRows()).isNotEmpty();
+        var banner = response.unparseableRows().stream()
+                .filter(r -> "Savings Account".equals(r.raw().get("Date")))
+                .findFirst().orElseThrow();
+        assertThat(banner.reason()).contains("didn't match any known date format");
+    }
+
+    @Test
     void generate_reconstructsBalanceChain_forASameDayTwoTransactionCluster() throws Exception {
         StagingResponse response = generate();
         var detected = response.detectedAccount();

@@ -21,8 +21,9 @@ import java.util.List;
  * suffix, a running balance, a wrapped description, a composite multi-account statement, ...),
  * never a bank.
  *
- * The existing SBI golden fixture (src/test/resources/pdf/sbi_sample_statement.pdf) was built the
- * same low-level way by an external script this repo doesn't carry (see
+ * The existing golden fixture (src/test/resources/pdf/separate_debit_credit_balance_sample.pdf,
+ * originally named for the bank it was modeled on -- see that fixture's own test class for why it
+ * was renamed) was built the same low-level way by an external script this repo doesn't carry (see
  * PdfPreviewGeneratorTest's own doc comment) -- that fixture's test already proves this technique
  * produces per-cell PositionedText runs granular enough for PdfTableLocator's nearest-x column
  * bucketing to work (its debit-vs-credit-by-position assertion would fail outright if PDFBox's
@@ -247,5 +248,55 @@ public final class PdfFixtureBuilder {
                 .row(col, "02-05-2026", "S3533658", "Salary Credit", "15000.00(Cr)", "", "39234.84(Cr)", "");
 
         return render(List.of(page1, page2));
+    }
+
+    /**
+     * A credit-card statement whose payment-summary block lays the Due Date field out as a grid
+     * (a label line ending in "...DUE DATE", an unrelated intervening line, then a value line
+     * whose LAST date-shaped token is the actual due date) rather than a single "Label: Value"
+     * line -- {@link com.finora.imports.pdf.PdfMetadataExtractor}'s bounded-window grid fallback
+     * exists specifically for this shape. Modeled on a real HDFC "Tata Neu Plus" statement, but
+     * the pattern isn't specific to it.
+     */
+    public static byte[] buildGridMetadataFallbackSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 150f, 470f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Credit Card Statement")
+                .line("Total Payment Due 1,500.00 Minimum Amount Due 200.00")
+                .blankLine()
+                // The trailing label line the grid fallback looks for -- "AVAILABLE CREDIT LIMIT"
+                // is irrelevant filler proving the fallback keys off the trailing "...DUE DATE"
+                // phrase, not the whole line's content.
+                .line("AVAILABLE CREDIT LIMIT MINIMUM DUE DUE DATE")
+                // An unrelated intervening line (real statements commonly wrap a sub-label like
+                // "(Including Cash)" onto its own line here) -- the fallback's bounded search
+                // window must see past this to the value line below, not stop here.
+                .line("(Including Cash)")
+                // The value line: "200.00" corresponds to MINIMUM DUE, "09 Aug, 2026" to DUE
+                // DATE -- values render in the same left-to-right order as their labels, so the
+                // LAST date-shaped token on this line is the one that matters.
+                .line("5000.00 200.00 09 Aug, 2026")
+                .blankLine()
+                .row(col, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                .row(col, "15/07/2026", "Test Merchant Purchase", "500.00 Dr");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * No header row, no table at all -- every line is a free-standing sentence
+     * (`PdfTableLocator.locateAll` never recognizes a section). Exercises the "Never lose
+     * information" whole-document gap: a real file this happens against (a statement in a layout
+     * the engine genuinely doesn't understand yet) used to come back as a well-formed but
+     * completely empty response, indistinguishable from a blank upload.
+     */
+    public static byte[] buildUnrecognizableDocumentSample() throws IOException {
+        PageBuilder page = new PageBuilder();
+        page.line("Some Financial Institution")
+                .line("This statement uses a layout the engine does not recognize yet.")
+                .line("Account summary: nothing here matches a known column header.");
+
+        return render(List.of(page));
     }
 }

@@ -4,7 +4,7 @@ import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { CheckCircle2, UploadCloud, AlertTriangle, Clock, FileText, FileSpreadsheet } from 'lucide-react';
 import { importApi, statementImportsApi, categoriesApi, accountsApi } from '../api/endpoints';
 import { BankLogo } from '../components/BankLogo';
-import type { Account, DetectedAccountInfo, ImportSummary, ReimportResult, StagedAccountSection, StagedRow } from '../types';
+import type { Account, DetectedAccountInfo, ImportSummary, ReimportResult, StagedAccountSection, StagedRow, UnparseableRow } from '../types';
 
 type Step = 'upload' | 'review' | 'summary';
 type AccountChoice = 'existing' | 'new';
@@ -32,6 +32,9 @@ interface SectionState {
   newOpeningBalance: string;
   newCreditLimit: string;
   newDueDate: string;
+  // "Never lose information" (see the engineering principles doc) -- rows the backend couldn't
+  // parse into a transaction, shown for transparency, never confirmable into the ledger.
+  unparseableRows: UnparseableRow[];
 }
 
 function initialSectionState(section: StagedAccountSection, existingAccounts: Account[]): SectionState {
@@ -48,6 +51,7 @@ function initialSectionState(section: StagedAccountSection, existingAccounts: Ac
     newOpeningBalance: detected.openingBalance != null ? String(detected.openingBalance) : '',
     newCreditLimit: detected.creditLimit != null ? String(detected.creditLimit) : '',
     newDueDate: detected.paymentDueDate ?? '',
+    unparseableRows: section.unparseableRows,
   };
 }
 
@@ -93,6 +97,8 @@ export default function Import() {
   const [included, setIncluded] = useState<boolean[]>([]);
   const [chosenCategory, setChosenCategory] = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
+  // "Never lose information" -- rows the backend couldn't parse, shown for transparency.
+  const [unparseableRows, setUnparseableRows] = useState<UnparseableRow[]>([]);
 
   // Target account: an existing one, or a new one built from what the statement told us
   const [existingAccounts, setExistingAccounts] = useState<Account[]>([]);
@@ -137,6 +143,7 @@ export default function Import() {
       setIncluded(reimportState.staging.rows.map((r) => !r.likelyDuplicate));
       setChosenCategory(reimportState.staging.rows.map((r) => r.suggestedCategory));
       setDetectedAccount(reimportState.staging.detectedAccount);
+      setUnparseableRows(reimportState.staging.unparseableRows);
       setAccountChoice('existing');
       setSelectedAccountId(reimportState.accountId);
       setStep('review');
@@ -178,6 +185,7 @@ export default function Import() {
       setIncluded(staging.rows.map((r) => !r.likelyDuplicate));
       setChosenCategory(staging.rows.map((r) => r.suggestedCategory));
       setDetectedAccount(staging.detectedAccount);
+      setUnparseableRows(staging.unparseableRows);
 
       // Pre-fill the new-account form from whatever the statement told us — every field here
       // is editable before anything is created, since detection is best-effort by design.
@@ -333,6 +341,7 @@ export default function Import() {
   function startOver() {
     setStep('upload');
     setRows([]);
+    setUnparseableRows([]);
     setSummary(null);
     setMultiSummary(null);
     setMultiSections(null);
@@ -458,6 +467,8 @@ export default function Import() {
                 setChosenCategory={(updater) => updateSection(setMultiSections, sectionIndex, { chosenCategory: updater(section.chosenCategory) })}
                 categories={categories}
               />
+
+              <UnparseableRowsPanel rows={section.unparseableRows} />
             </div>
           ))}
 
@@ -551,6 +562,9 @@ export default function Import() {
               setChosenCategory={setChosenCategory}
               categories={categories}
             />
+
+            <UnparseableRowsPanel rows={unparseableRows} />
+
             <button
               onClick={confirmImport}
               disabled={
@@ -794,6 +808,36 @@ function TransactionPreviewTable({
         ))}
       </tbody>
     </table>
+  );
+}
+
+// "Never lose information" (see the engineering principles doc): rows the backend saw but could
+// not parse into a transaction. Never confirmable -- purely so the user can see what was skipped
+// and why, instead of a row silently vanishing from the count. Collapsed by default since most
+// imports have none or only boilerplate/disclaimer lines here.
+function UnparseableRowsPanel({ rows }: { rows: UnparseableRow[] }) {
+  if (rows.length === 0) return null;
+
+  return (
+    <details className="bg-warning-bg border border-warning rounded-lg p-3 mb-4">
+      <summary className="text-xs font-semibold text-ink cursor-pointer flex items-center gap-2">
+        <AlertTriangle size={13} className="text-warning flex-shrink-0" />
+        {rows.length} row{rows.length === 1 ? '' : 's'} couldn't be read as transactions
+      </summary>
+      <div className="mt-2 space-y-2">
+        {rows.map((r, i) => (
+          <div key={i} className="text-xs font-mono border-t border-warning/30 pt-2">
+            <p className="text-muted">{r.reason}</p>
+            <p className="text-ink truncate">
+              {Object.entries(r.raw)
+                .filter(([, v]) => v)
+                .map(([k, v]) => `${k}: ${v}`)
+                .join('  |  ')}
+            </p>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 

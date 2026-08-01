@@ -3,6 +3,7 @@ package com.finora.imports.pdf;
 import com.finora.dto.ImportDto.StagingResponse;
 import com.finora.imports.DuplicateDetector;
 import com.finora.imports.TransactionNormalizer;
+import com.finora.imports.pdf.fixtures.PdfFixtureBuilder;
 import com.finora.repository.TransactionRepository;
 import com.finora.service.CategorizationService;
 import org.junit.jupiter.api.Test;
@@ -17,15 +18,20 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Golden-fixture test against src/test/resources/pdf/sbi_sample_statement.pdf -- a synthetic
- * statement generated specifically for this milestone (there's no real bank PDF available to
- * test against in the environment this was built in), laid out as a real digital PDF with
- * genuine per-field text-drawing positions, not hand-written to match whatever the parser
- * happens to expect. The exact expected values below (account holder "JOHN DOE", 6 transaction
- * rows including the two balance-only opening/closing rows, etc.) match exactly what
- * generate_fixture.py drew onto that PDF -- see this test class's own values as the source of
- * truth for what the fixture contains, since this repo doesn't carry the fixture-generation
- * script itself, only the resulting PDF.
+ * Golden-fixture test for the baseline capability: separate Debit/Credit columns plus a running
+ * Balance column (no Dr/Cr suffix, no wrapping, one section, chronological order) -- the simplest
+ * layout shape, and the one every other capability test builds on top of. Against
+ * src/test/resources/pdf/separate_debit_credit_balance_sample.pdf -- a synthetic statement (there
+ * was no real bank PDF available to test against in the environment this was originally built in),
+ * laid out as a real digital PDF with genuine per-field text-drawing positions, not hand-written to
+ * match whatever the parser happens to expect. Renamed from its original "separate_debit_credit_balance_statement.pdf"
+ * -- the fixture's content (IFSC "SBIN0001234", etc.) still happens to look like an SBI export
+ * since that's what it was originally modeled on, but neither the file name nor this test class
+ * should describe it that way; see docs/engineering/financial-document-intelligence-principles.md.
+ * The exact expected values below (account holder "JOHN DOE", 6 transaction rows including the two
+ * balance-only opening/closing rows, etc.) match exactly what the fixture contains -- see this test
+ * class's own values as the source of truth, since this repo doesn't carry the original
+ * fixture-generation script, only the resulting PDF.
  *
  * IMPORTANT: written without the ability to compile or run it in the environment this was
  * built in (no JDK/Maven available there) -- reasoned through carefully against PDFBox's
@@ -37,7 +43,7 @@ import static org.mockito.Mockito.when;
 class PdfPreviewGeneratorTest {
 
     private byte[] fixtureBytes() throws Exception {
-        Path path = Path.of("src/test/resources/pdf/sbi_sample_statement.pdf");
+        Path path = Path.of("src/test/resources/pdf/separate_debit_credit_balance_sample.pdf");
         return Files.readAllBytes(path);
     }
 
@@ -56,7 +62,7 @@ class PdfPreviewGeneratorTest {
 
     @Test
     void generate_extractsAllSixRowsFromTheGoldenFixture() throws Exception {
-        StagingResponse response = realGenerator().generate(UUID.randomUUID(), "sbi_sample_statement.pdf", fixtureBytes());
+        StagingResponse response = realGenerator().generate(UUID.randomUUID(), "separate_debit_credit_balance_statement.pdf", fixtureBytes());
 
         // OPENING BALANCE, 4 real transactions, CLOSING BALANCE -- all 6 rows have a parseable
         // date and amount (the balance column, for the two balance-only rows), so all 6 should
@@ -67,7 +73,7 @@ class PdfPreviewGeneratorTest {
 
     @Test
     void generate_correctlyDistinguishesDebitFromCredit_byColumnPosition() throws Exception {
-        StagingResponse response = realGenerator().generate(UUID.randomUUID(), "sbi_sample_statement.pdf", fixtureBytes());
+        StagingResponse response = realGenerator().generate(UUID.randomUUID(), "separate_debit_credit_balance_statement.pdf", fixtureBytes());
 
         // The whole point of position-aware extraction: SWIGGY (450.00) is a debit, SALARY
         // (75000.00) is a credit -- both are just plain numbers with no other distinguishing
@@ -84,7 +90,7 @@ class PdfPreviewGeneratorTest {
 
     @Test
     void generate_extractsAccountMetadataFromTheHeaderLines() throws Exception {
-        StagingResponse response = realGenerator().generate(UUID.randomUUID(), "sbi_sample_statement.pdf", fixtureBytes());
+        StagingResponse response = realGenerator().generate(UUID.randomUUID(), "separate_debit_credit_balance_statement.pdf", fixtureBytes());
         var detected = response.detectedAccount();
 
         assertThat(detected.accountHolderName()).isEqualTo("JOHN DOE");
@@ -96,7 +102,7 @@ class PdfPreviewGeneratorTest {
 
     @Test
     void generate_derivesOpeningAndClosingBalanceFromTheBalanceOnlyRows() throws Exception {
-        StagingResponse response = realGenerator().generate(UUID.randomUUID(), "sbi_sample_statement.pdf", fixtureBytes());
+        StagingResponse response = realGenerator().generate(UUID.randomUUID(), "separate_debit_credit_balance_statement.pdf", fixtureBytes());
         var detected = response.detectedAccount();
 
         assertThat(detected.openingBalance()).isEqualByComparingTo("50000.00");
@@ -105,10 +111,26 @@ class PdfPreviewGeneratorTest {
 
     @Test
     void generate_parsesTheStatementPeriodFromItsOwnHeaderLine() throws Exception {
-        StagingResponse response = realGenerator().generate(UUID.randomUUID(), "sbi_sample_statement.pdf", fixtureBytes());
+        StagingResponse response = realGenerator().generate(UUID.randomUUID(), "separate_debit_credit_balance_statement.pdf", fixtureBytes());
         var detected = response.detectedAccount();
 
         assertThat(detected.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 7, 1));
         assertThat(detected.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 31));
+    }
+
+    // "Never lose information" (see the engineering principles doc) at the whole-document level:
+    // a PDF where no table/header is recognized anywhere used to come back with an empty
+    // unparseableRows list -- indistinguishable from a genuinely blank upload.
+    @Test
+    void generate_surfacesEveryExtractedLine_whenNoTableIsRecognizedAnywhere() throws Exception {
+        byte[] bytes = PdfFixtureBuilder.buildUnrecognizableDocumentSample();
+        StagingResponse response = realGenerator().generate(UUID.randomUUID(), "unrecognized.pdf", bytes);
+
+        assertThat(response.rows()).isEmpty();
+        assertThat(response.unparseableRows()).isNotEmpty();
+        assertThat(response.unparseableRows()).allMatch(
+                r -> r.reason().equals("No transaction table was recognized anywhere in this document"));
+        assertThat(response.unparseableRows()).anyMatch(
+                r -> "Some Financial Institution".equals(r.raw().get("text")));
     }
 }

@@ -10,6 +10,19 @@ import java.util.UUID;
 
 public class ImportDto {
 
+    /**
+     * A row that could NOT be parsed into a {@link StagedRow} -- surfaced to the user instead of
+     * silently vanishing (see docs/engineering/financial-document-intelligence-principles.md's
+     * "Never lose information" section). {@code raw} is the row exactly as extracted (whatever
+     * columns the source format/layout produced, unchanged) so the user can see what the engine
+     * actually saw; {@code reason} is {@link com.finora.imports.TransactionNormalizer#explainFailure}'s
+     * human-readable explanation of why it didn't survive normalization. This is a diagnostic-only
+     * record for review -- an unparseable row is never counted in {@code totalParsed} and is never
+     * confirmable into the ledger; a user who wants that transaction has to re-enter it manually or
+     * fix the source file and re-import.
+     */
+    public record UnparseableRow(Map<String, String> raw, String reason) {}
+
     /** One parsed CSV row, auto-categorized and ready for user review before commit. */
     public record StagedRow(
             LocalDate date,
@@ -54,7 +67,8 @@ public class ImportDto {
             AccountDto.BankDto bank        // resolved bank metadata (name/color/initials); id "OTHER" if undetected
     ) {}
 
-    public record StagingResponse(List<StagedRow> rows, int totalParsed, int flaggedDuplicates, DetectedAccountInfo detectedAccount) {}
+    public record StagingResponse(List<StagedRow> rows, int totalParsed, int flaggedDuplicates,
+                                   DetectedAccountInfo detectedAccount, List<UnparseableRow> unparseableRows) {}
 
     /** One detected account section within a single PDF upload -- e.g. HSBC's "Composite
      *  Statement" bundles a savings-account section and a credit-card section in one file, each
@@ -63,7 +77,7 @@ public class ImportDto {
      *  ({@link PdfStagingSessionResponse}) reads unambiguously as "a list of these," not "a list
      *  of the same type used for the single-account case," which would invite confusing the two. */
     public record StagedAccountSection(DetectedAccountInfo detectedAccount, List<StagedRow> rows,
-                                        int totalParsed, int flaggedDuplicates) {}
+                                        int totalParsed, int flaggedDuplicates, List<UnparseableRow> unparseableRows) {}
 
     /** Response shape for POST /import/pdf/stage. Exactly one of {@code staging}/{@code sections}
      *  is populated, selected by {@code multiAccount}: a PDF with one detected account section

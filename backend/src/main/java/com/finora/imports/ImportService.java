@@ -133,7 +133,7 @@ public class ImportService {
             // The common case (and the only case a CSV upload can ever produce): behaves exactly
             // as this method always has, just wrapped in the new response envelope.
             StagingResponse staged = sections.isEmpty()
-                    ? new StagingResponse(List.of(), 0, 0, null)
+                    ? new StagingResponse(List.of(), 0, 0, null, List.of())
                     : toStagingResponse(sections.get(0));
             var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount());
             return new PdfStagingSessionResponse(session.getId(), false, staged, null);
@@ -144,7 +144,7 @@ public class ImportService {
     }
 
     private StagingResponse toStagingResponse(StagedAccountSection section) {
-        return new StagingResponse(section.rows(), section.totalParsed(), section.flaggedDuplicates(), section.detectedAccount());
+        return new StagingResponse(section.rows(), section.totalParsed(), section.flaggedDuplicates(), section.detectedAccount(), section.unparseableRows());
     }
 
     /**

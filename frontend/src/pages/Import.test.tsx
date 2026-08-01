@@ -66,7 +66,7 @@ function stagingResultWith(overrides: Partial<{ sessionId: string }> = {}) {
     // importApi.stagePdf's declared return types.
     multiAccount: false,
     sections: null,
-    staging: { rows: [], totalParsed: 0, flaggedDuplicates: 0, detectedAccount },
+    staging: { rows: [], totalParsed: 0, flaggedDuplicates: 0, detectedAccount, unparseableRows: [] },
   };
 }
 
