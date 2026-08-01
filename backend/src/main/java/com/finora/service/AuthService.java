@@ -10,6 +10,7 @@ import com.finora.repository.CategoryRepository;
 import com.finora.repository.PasswordResetTokenRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
+import com.finora.util.PhoneMasking;
 import com.finora.util.TokenHasher;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -101,7 +102,8 @@ public class AuthService {
         String accessToken = jwtService.generateToken(user.getId(), user.getEmail());
         String refreshToken = refreshTokenService.issue(user.getId()).rawToken();
         return new AuthResponse(accessToken, refreshToken, user.getEmail(), user.getFullName(),
-                user.isPhoneVerified(), otpResult.delivered() ? null : otpResult.otp());
+                user.isPhoneVerified(), otpResult.delivered() ? null : otpResult.otp(),
+                PhoneMasking.mask(user.getPhoneNumber()));
     }
 
     /**
@@ -230,7 +232,8 @@ public class AuthService {
 
         String accessToken = jwtService.generateToken(user.getId(), user.getEmail());
         String refreshToken = refreshTokenService.issue(user.getId()).rawToken();
-        return new AuthResponse(accessToken, refreshToken, user.getEmail(), user.getFullName(), user.isPhoneVerified(), null);
+        return new AuthResponse(accessToken, refreshToken, user.getEmail(), user.getFullName(), user.isPhoneVerified(),
+                null, PhoneMasking.mask(user.getPhoneNumber()));
     }
 
     /** Exchanges a valid, unused refresh token for a new access token + a rotated refresh token. */
@@ -271,7 +274,7 @@ public class AuthService {
                 ? "A verification code has been sent to your phone."
                 : "A verification code has been issued.";
         // Only exposed when there's no real SMS provider configured — see OtpService.OtpIssueResult.
-        return new SendOtpResponse(message, result.delivered() ? null : result.otp());
+        return new SendOtpResponse(message, result.delivered() ? null : result.otp(), PhoneMasking.mask(user.getPhoneNumber()));
     }
 
     @Transactional

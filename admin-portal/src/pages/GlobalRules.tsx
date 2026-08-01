@@ -210,7 +210,7 @@ function GlobalRulesContent() {
   });
 
   function invalidate() {
-    queryClient.invalidateQueries({ queryKey: ['admin-rules'] });
+    void queryClient.invalidateQueries({ queryKey: ['admin-rules'] });
   }
 
   const createMutation = useMutation({

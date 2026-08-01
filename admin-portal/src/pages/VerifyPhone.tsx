@@ -24,6 +24,10 @@ export default function VerifyPhone() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [devOtp, setDevOtp] = useState<string | null>(null);
+  // Which number the code was sent to -- lets this screen show something more useful than "your
+  // mobile number," and lets a wrong/missing country code on the account be visible on screen
+  // instead of silently failing to deliver via the SMS provider.
+  const [maskedPhone, setMaskedPhone] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
 
@@ -33,8 +37,9 @@ export default function VerifyPhone() {
     // an admin-created account (SetupService.completeSetup -> AuthService.adminCreateUser)
     // deliberately does NOT get one sent automatically. Without this, the caller would land on
     // a code-entry form with no code ever having been sent, and no visible reason why.
-    handleResend();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    void handleResend();
+    // handleResend only closes over stable setState setters and the phoneApi import, so an
+    // empty dependency array is correct as-is -- no suppression needed.
   }, []);
 
   async function handleVerify(e: FormEvent) {
@@ -65,6 +70,7 @@ export default function VerifyPhone() {
       const res = await phoneApi.sendOtp();
       setInfo(res.message);
       setDevOtp(res.devOtp);
+      setMaskedPhone(res.maskedPhone);
     } catch (err: any) {
       setError(err?.response?.data?.message ?? 'Could not send a new code right now.');
     } finally {
@@ -89,7 +95,7 @@ export default function VerifyPhone() {
           </div>
           <p className="text-sm text-muted mb-6">
             Your credentials checked out, but this account still needs phone verification before
-            it can open the admin portal. Enter the 6-digit code sent to your mobile number.
+            it can open the admin portal. Enter the 6-digit code sent to {maskedPhone ?? 'your mobile number'}.
           </p>
 
           {error && <p className="text-sm text-danger bg-danger-bg rounded-lg px-3.5 py-2.5 mb-4">{error}</p>}

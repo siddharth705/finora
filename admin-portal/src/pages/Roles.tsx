@@ -79,7 +79,7 @@ function RoleCard({
   const [error, setError] = useState<string | null>(null);
 
   function invalidate() {
-    queryClient.invalidateQueries({ queryKey: ['admin-roles'] });
+    void queryClient.invalidateQueries({ queryKey: ['admin-roles'] });
   }
 
   const updateMutation = useMutation({
@@ -244,7 +244,7 @@ function RolesContent() {
     onSuccess: () => {
       setShowCreateRole(false);
       setCreateRoleError(null);
-      queryClient.invalidateQueries({ queryKey: ['admin-roles'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-roles'] });
     },
     onError: (err: any) => setCreateRoleError(errorMessage(err, 'Failed to create role.')),
   });
@@ -253,15 +253,15 @@ function RolesContent() {
     onSuccess: () => {
       setShowCreatePermission(false);
       setCreatePermissionError(null);
-      queryClient.invalidateQueries({ queryKey: ['admin-permissions'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-permissions'] });
     },
     onError: (err: any) => setCreatePermissionError(errorMessage(err, 'Failed to create permission.')),
   });
   const deletePermissionMutation = useMutation({
     mutationFn: (id: string) => adminRolesApi.deletePermission(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-permissions'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-roles'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-permissions'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-roles'] });
     },
   });
 

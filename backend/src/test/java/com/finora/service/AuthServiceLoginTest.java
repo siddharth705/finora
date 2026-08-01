@@ -93,6 +93,22 @@ class AuthServiceLoginTest {
         verify(userRepository, never()).findByPhoneNumber(any());
     }
 
+    /**
+     * Unlike register(), login() never issues a fresh OTP itself -- but the masked phone is still
+     * populated here regardless, since VerifyPhone.tsx needs it to display which number a code
+     * will be sent to once it makes its own /phone/send-otp call right after.
+     */
+    @Test
+    void login_returnsTheMaskedPhoneNumber_evenThoughItNeverIssuesAnOtpItself() {
+        User u = user("jane@example.com", "+919876500001");
+        when(userRepository.findByEmail("jane@example.com")).thenReturn(Optional.of(u));
+        stubSuccessfulAuthentication();
+
+        var response = authService.login(new LoginRequest("jane@example.com", "Password123"));
+
+        assertThat(response.maskedPhone()).isEqualTo("+•••••••••001");
+    }
+
     @Test
     void login_withExactPhoneNumberMatch_resolvesToTheAccountsEmail() {
         User u = user("jane@example.com", "+919876500001");

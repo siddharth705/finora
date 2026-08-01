@@ -98,14 +98,20 @@ describe('Sidebar', () => {
   });
 
   it('shows every section for an account holding every gating permission', () => {
+    // Bug fix: this list was missing PLATFORM_DIAGNOSTICS_VIEW (added after this test was
+    // written, gating both System Health and Platform Diagnostics -- see links[] in Sidebar.tsx),
+    // so the test failed the moment that permission existed, not because Sidebar was broken.
     renderSidebar([
       'USER_VIEW', 'ROLE_MANAGE', 'BANK_MANAGE', 'MERCHANT_MANAGE', 'RULE_MANAGE',
-      'RECONCILIATION_VIEW', 'PLATFORM_ANALYTICS_VIEW', 'AUDIT_VIEW', 'SYSTEM_SETTINGS',
+      'RECONCILIATION_VIEW', 'PLATFORM_ANALYTICS_VIEW', 'AUDIT_VIEW', 'PLATFORM_DIAGNOSTICS_VIEW',
+      'SYSTEM_SETTINGS',
     ]);
 
+    // Every label in Sidebar.tsx's links[] -- kept as a literal list (not derived from the
+    // component) so this test actually catches a future nav item added without updating it here.
     for (const label of ['Dashboard', 'Users', 'Roles & Permissions', 'Banks', 'Merchant Intelligence',
       'Global Rules', 'Learning Engine', 'Reconciliation Monitor', 'Platform Analytics',
-      'Audit Log', 'System Health', 'Settings']) {
+      'Audit Log', 'System Health', 'Platform Diagnostics', 'Feature Flags', 'Settings']) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
   });

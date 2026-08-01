@@ -47,7 +47,10 @@ export const meApi = {
 // rather than the admin portal growing its own parallel one.
 export const phoneApi = {
   sendOtp: () =>
-    api.post<{ message: string; devOtp: string | null }>('/phone/send-otp').then((r) => r.data),
+    // maskedPhone (see PhoneMasking on the backend) lets this screen show which number a code
+    // was sent to -- e.g. "+•••••••••705" -- so a wrong/missing country code on the account is
+    // visible on screen instead of silently failing to deliver via the SMS provider.
+    api.post<{ message: string; devOtp: string | null; maskedPhone: string | null }>('/phone/send-otp').then((r) => r.data),
   verifyOtp: (otp: string) =>
     api.post<{ verified: boolean; message: string }>('/phone/verify-otp', { otp }).then((r) => r.data),
 };

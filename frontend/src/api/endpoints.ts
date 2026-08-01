@@ -5,14 +5,28 @@ import type {
   Merchant, MerchantAuditEntry, Rule, Relationship, WorkspaceSettings, AuditLogEntry, UnparseableRow,
 } from '../types';
 
+// Mirrors the backend's AuthDtos.AuthResponse. maskedPhone (see PhoneMasking on the backend) lets
+// VerifyPhone.tsx show which number a code was sent to -- e.g. "+•••••••••705" -- so a wrong or
+// missing country code on the account is visible on screen instead of silently failing to
+// deliver via the SMS provider.
+export interface AuthResponseDto {
+  token: string;
+  refreshToken: string;
+  email: string;
+  fullName: string;
+  phoneVerified: boolean;
+  devOtp: string | null;
+  maskedPhone: string | null;
+}
+
 export const authApi = {
   register: (email: string, password: string, fullName: string, phoneNumber: string) =>
-    api.post('/auth/register', { email, password, fullName, phoneNumber }),
+    api.post<AuthResponseDto>('/auth/register', { email, password, fullName, phoneNumber }),
   // `identifier` accepts either an email address or a registered mobile number -- see
   // AuthService.resolveEmailForLogin on the backend, which resolves either down to the
   // account's real email before authenticating.
   login: (identifier: string, password: string) =>
-    api.post('/auth/login', { identifier, password }),
+    api.post<AuthResponseDto>('/auth/login', { identifier, password }),
   forgotPassword: (email: string) =>
     api.post<{ message: string; devResetLink: string | null }>('/auth/forgot-password', { email }).then((r) => r.data),
   // Second factor for password reset -- the reset token alone (proof of email access) is no
@@ -32,7 +46,7 @@ export const authApi = {
 
 export const phoneApi = {
   sendOtp: () =>
-    api.post<{ message: string; devOtp: string | null }>('/phone/send-otp').then((r) => r.data),
+    api.post<{ message: string; devOtp: string | null; maskedPhone: string | null }>('/phone/send-otp').then((r) => r.data),
   verifyOtp: (otp: string) =>
     api.post<{ verified: boolean; message: string }>('/phone/verify-otp', { otp }).then((r) => r.data),
 };

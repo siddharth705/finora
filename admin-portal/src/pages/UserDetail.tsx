@@ -41,8 +41,8 @@ function EditProfileForm({
   const updateMutation = useMutation({
     mutationFn: (req: AdminUpdateUserRequest) => adminUsersApi.update(userId, req),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-user', userId] });
-      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-user', userId] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-users'] });
       onDone();
     },
     onError: (err: any) => setError(errorMessage(err, 'Failed to update profile.')),
@@ -215,8 +215,8 @@ function AccountsSection({ userId }: { userId: string }) {
   });
 
   function invalidate() {
-    queryClient.invalidateQueries({ queryKey: ['admin-user-accounts', userId] });
-    queryClient.invalidateQueries({ queryKey: ['admin-user', userId] });
+    void queryClient.invalidateQueries({ queryKey: ['admin-user-accounts', userId] });
+    void queryClient.invalidateQueries({ queryKey: ['admin-user', userId] });
   }
 
   const createMutation = useMutation({
@@ -378,9 +378,9 @@ function TransactionsSection({ userId }: { userId: string }) {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => adminTransactionsApi.delete(userId, id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-user-transactions', userId] });
-      queryClient.invalidateQueries({ queryKey: ['admin-user-accounts', userId] });
-      queryClient.invalidateQueries({ queryKey: ['admin-user', userId] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-user-transactions', userId] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-user-accounts', userId] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-user', userId] });
     },
   });
 
@@ -440,7 +440,7 @@ function MerchantRow({
   const [error, setError] = useState<string | null>(null);
 
   function invalidate() {
-    queryClient.invalidateQueries({ queryKey: ['admin-user-merchants', userId] });
+    void queryClient.invalidateQueries({ queryKey: ['admin-user-merchants', userId] });
   }
 
   const renameMutation = useMutation({
@@ -686,7 +686,7 @@ function RuleRow({ userId, rule }: { userId: string; rule: RuleDto }) {
   const [error, setError] = useState<string | null>(null);
 
   function invalidate() {
-    queryClient.invalidateQueries({ queryKey: ['admin-user-rules', userId] });
+    void queryClient.invalidateQueries({ queryKey: ['admin-user-rules', userId] });
   }
 
   const updateMutation = useMutation({
@@ -796,7 +796,7 @@ function RulesSection({ userId }: { userId: string }) {
     onSuccess: () => {
       setShowCreate(false);
       setCreateError(null);
-      queryClient.invalidateQueries({ queryKey: ['admin-user-rules', userId] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-user-rules', userId] });
     },
     onError: (err: any) => setCreateError(errorMessage(err, 'Failed to create rule.')),
   });
@@ -1062,8 +1062,8 @@ function UserDetailContent({ id }: { id: string }) {
   });
 
   function invalidateUser() {
-    queryClient.invalidateQueries({ queryKey: ['admin-user', id] });
-    queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+    void queryClient.invalidateQueries({ queryKey: ['admin-user', id] });
+    void queryClient.invalidateQueries({ queryKey: ['admin-users'] });
   }
 
   const suspendMutation = useMutation({ mutationFn: () => adminUsersApi.suspend(id), onSuccess: invalidateUser });

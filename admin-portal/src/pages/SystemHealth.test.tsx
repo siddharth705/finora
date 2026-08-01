@@ -46,7 +46,7 @@ describe('SystemHealth', () => {
     vi.mocked(adminSystemApi.recentImports).mockReset();
   });
 
-  it('shows an access-denied message when the account lacks SYSTEM_SETTINGS', () => {
+  it('shows an access-denied message when the account lacks PLATFORM_DIAGNOSTICS_VIEW', () => {
     mockAuth([]);
     vi.mocked(adminSystemApi.health).mockResolvedValue(HEALTHY);
     vi.mocked(adminSystemApi.recentImports).mockResolvedValue([]);
@@ -57,7 +57,7 @@ describe('SystemHealth', () => {
   });
 
   it('renders the overall status and per-component breakdown', async () => {
-    mockAuth(['SYSTEM_SETTINGS']);
+    mockAuth(['PLATFORM_DIAGNOSTICS_VIEW']);
     vi.mocked(adminSystemApi.health).mockResolvedValue(HEALTHY);
     vi.mocked(adminSystemApi.recentImports).mockResolvedValue([]);
 
@@ -69,7 +69,7 @@ describe('SystemHealth', () => {
   });
 
   it('shows the empty message when there are no recorded imports', async () => {
-    mockAuth(['SYSTEM_SETTINGS']);
+    mockAuth(['PLATFORM_DIAGNOSTICS_VIEW']);
     vi.mocked(adminSystemApi.health).mockResolvedValue(HEALTHY);
     vi.mocked(adminSystemApi.recentImports).mockResolvedValue([]);
 
@@ -79,7 +79,7 @@ describe('SystemHealth', () => {
   });
 
   it('shows a real recent import with the honest hadSkippedRows signal, not a fabricated status', async () => {
-    mockAuth(['SYSTEM_SETTINGS']);
+    mockAuth(['PLATFORM_DIAGNOSTICS_VIEW']);
     vi.mocked(adminSystemApi.health).mockResolvedValue(HEALTHY);
     vi.mocked(adminSystemApi.recentImports).mockResolvedValue([
       {

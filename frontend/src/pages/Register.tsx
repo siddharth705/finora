@@ -112,11 +112,11 @@ export default function Register() {
       // phoneNumber only ever holds the 10-digit local number now (see the Mobile number field
       // below) -- +91 is prepended here, once, at the actual submission boundary, rather than
       // being stored in state at all.
-      const { phoneVerified, devOtp } = await register(email.trim(), password, trimmedName, `+91${phoneNumber}`);
+      const { phoneVerified, devOtp, maskedPhone } = await register(email.trim(), password, trimmedName, `+91${phoneNumber}`);
       // The OTP issued during registration comes back on this same response — pass it through
-      // via router state so VerifyPhone can show it immediately instead of requiring the user
-      // to click "Resend" just to see a code for the first time.
-      navigate(phoneVerified ? '/app' : '/verify-phone', { state: { devOtp } });
+      // via router state so VerifyPhone can show it (and which number it went to) immediately
+      // instead of requiring the user to click "Resend" just to see a code for the first time.
+      navigate(phoneVerified ? '/app' : '/verify-phone', { state: { devOtp, maskedPhone } });
     } catch (err: any) {
       setError(err.response?.data?.message ?? 'Registration failed.');
     } finally {

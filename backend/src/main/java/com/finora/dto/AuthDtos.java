@@ -43,14 +43,19 @@ public class AuthDtos {
      *  phoneVerified tells the frontend right after login/register whether to prompt for OTP.
      *  devOtp is only populated by register() when no SMS provider is configured — mirrors
      *  devResetLink's reasoning, and keeps the flow testable without a real Twilio account
-     *  instead of the OTP being visible only in server logs. Always null from login(). */
+     *  instead of the OTP being visible only in server logs. Always null from login().
+     *  maskedPhone (see PhoneMasking) is populated whenever phoneVerified is false, regardless of
+     *  whether an OTP was actually issued at this exact call -- VerifyPhone.tsx uses it to show
+     *  which number a code was (or is about to be) sent to, so a wrong/missing country code is
+     *  visible on screen instead of silently failing to deliver. */
     public record AuthResponse(
             String token,
             String refreshToken,
             String email,
             String fullName,
             boolean phoneVerified,
-            String devOtp
+            String devOtp,
+            String maskedPhone
     ) {}
 
     public record ForgotPasswordRequest(@Email @NotBlank String email) {}
@@ -95,9 +100,9 @@ public class AuthDtos {
      * devOtp is only populated because this environment has no SMS provider wired up — same
      * reasoning as devResetLink above. Remove it once a real Twilio (or similar) account is
      * configured; with one configured, this field is always null and the code only ever goes
-     * out via real SMS.
+     * out via real SMS. maskedPhone (see PhoneMasking) is always populated, real provider or not.
      */
-    public record SendOtpResponse(String message, String devOtp) {}
+    public record SendOtpResponse(String message, String devOtp, String maskedPhone) {}
 
     public record VerifyOtpRequest(@NotBlank String otp) {}
 

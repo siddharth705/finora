@@ -352,7 +352,7 @@ function BanksContent() {
   });
 
   function invalidate() {
-    queryClient.invalidateQueries({ queryKey: ['admin-banks'] });
+    void queryClient.invalidateQueries({ queryKey: ['admin-banks'] });
   }
 
   const createMutation = useMutation({

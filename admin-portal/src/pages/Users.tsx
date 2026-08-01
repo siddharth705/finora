@@ -165,7 +165,7 @@ function UsersTable() {
   const suspendMutation = useMutation({
     mutationFn: (id: string) => adminUsersApi.suspend(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-users'] });
       notify.success('User suspended.');
     },
     onError: (err: any) => notify.error(err?.response?.data?.message ?? 'Failed to suspend user.'),
@@ -173,7 +173,7 @@ function UsersTable() {
   const reactivateMutation = useMutation({
     mutationFn: (id: string) => adminUsersApi.reactivate(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-users'] });
       notify.success('User reactivated.');
     },
     onError: (err: any) => notify.error(err?.response?.data?.message ?? 'Failed to reactivate user.'),
@@ -209,7 +209,7 @@ function UsersTable() {
     onSuccess: () => {
       setShowCreate(false);
       setCreateError(null);
-      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-users'] });
     },
     onError: (err: any) => setCreateError(err?.response?.data?.message ?? 'Failed to create user.'),
   });

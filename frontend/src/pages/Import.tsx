@@ -813,31 +813,22 @@ function TransactionPreviewTable({
 
 // "Never lose information" (see the engineering principles doc): rows the backend saw but could
 // not parse into a transaction. Never confirmable -- purely so the user can see what was skipped
-// and why, instead of a row silently vanishing from the count. Collapsed by default since most
-// imports have none or only boilerplate/disclaimer lines here.
+// instead of a row silently vanishing from the count.
+//
+// Deliberately just a count, not the raw per-row reason/field dump this used to show (e.g. "Date
+// value 'DISCLAIMER' didn't match any known date format" plus the raw extracted cell text) --
+// that level of parser-internals detail is diagnostic information for support/engineering to
+// debug an extraction gap, not something a person importing their own bank statement needs to
+// see or can act on. The raw detail isn't persisted anywhere yet (see Sprint tracking for the
+// admin-portal viewer this could feed later); today it's simply not surfaced to the end user.
 function UnparseableRowsPanel({ rows }: { rows: UnparseableRow[] }) {
   if (rows.length === 0) return null;
 
   return (
-    <details className="bg-warning-bg border border-warning rounded-lg p-3 mb-4">
-      <summary className="text-xs font-semibold text-ink cursor-pointer flex items-center gap-2">
-        <AlertTriangle size={13} className="text-warning flex-shrink-0" />
-        {rows.length} row{rows.length === 1 ? '' : 's'} couldn't be read as transactions
-      </summary>
-      <div className="mt-2 space-y-2">
-        {rows.map((r, i) => (
-          <div key={i} className="text-xs font-mono border-t border-warning/30 pt-2">
-            <p className="text-muted">{r.reason}</p>
-            <p className="text-ink truncate">
-              {Object.entries(r.raw)
-                .filter(([, v]) => v)
-                .map(([k, v]) => `${k}: ${v}`)
-                .join('  |  ')}
-            </p>
-          </div>
-        ))}
-      </div>
-    </details>
+    <div className="bg-warning-bg border border-warning rounded-lg p-3 mb-4 text-xs font-semibold text-ink flex items-center gap-2">
+      <AlertTriangle size={13} className="text-warning flex-shrink-0" />
+      {rows.length} row{rows.length === 1 ? '' : 's'} couldn't be matched to a transaction (e.g. statement disclaimers or balance summaries) and won't be imported.
+    </div>
   );
 }
 

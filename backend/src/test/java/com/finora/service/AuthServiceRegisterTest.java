@@ -124,6 +124,27 @@ class AuthServiceRegisterTest {
         verify(userRepository).save(any(User.class));
     }
 
+    /**
+     * The masked phone lets VerifyPhone.tsx show which number a code was actually sent to,
+     * catching a wrong/missing country code on screen instead of a silent Twilio delivery
+     * failure -- see PhoneMasking's own class doc for the incident this was built to prevent a
+     * repeat of.
+     */
+    @Test
+    void register_returnsTheMaskedPhoneNumber_forVerifyPhoneToDisplay() {
+        when(userRepository.existsByEmail(anyString())).thenReturn(false);
+        when(userRepository.existsByPhoneNumber(anyString())).thenReturn(false);
+        when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
+            User u = invocation.getArgument(0);
+            ReflectionTestUtils.setField(u, "id", UUID.randomUUID());
+            return u;
+        });
+
+        var response = authService.register(request("newperson@example.com", "+919876500002"));
+
+        assertThat(response.maskedPhone()).isEqualTo("+•••••••••002");
+    }
+
     @Test
     void register_withLeadingOrTrailingWhitespaceInEmailAndName_savesTrimmedValues() {
         // RegisterRequest.fullName's @Pattern deliberately tolerates surrounding whitespace (so

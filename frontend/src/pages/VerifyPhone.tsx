@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles, ShieldCheck } from 'lucide-react';
@@ -16,11 +16,26 @@ export default function VerifyPhone() {
   // here (via router state from Register.tsx) instead of leaving this null until the user
   // clicks "Resend" just to see a code for the first time. Falls back to null when this page
   // is reached any other way (e.g. a direct link, or a page refresh, which drops router state).
-  const [devOtp, setDevOtp] = useState<string | null>(
-    (location.state as { devOtp?: string | null } | null)?.devOtp ?? null
-  );
+  const routerState = location.state as { devOtp?: string | null; maskedPhone?: string | null } | null;
+  const [devOtp, setDevOtp] = useState<string | null>(routerState?.devOtp ?? null);
+  // Which number the code was (or is about to be) sent to -- lets this screen show something
+  // more useful than "your mobile number," and lets a wrong/missing country code on the account
+  // be visible on screen instead of silently failing to deliver.
+  const [maskedPhone, setMaskedPhone] = useState<string | null>(routerState?.maskedPhone ?? null);
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
+
+  useEffect(() => {
+    // Reached via Login.tsx (a returning user whose phone still isn't verified) rather than
+    // Register.tsx: no OTP was issued as part of getting here, unlike registration, which sends
+    // one automatically. Without this, that path landed on a code-entry form with no code ever
+    // having been sent and no visible reason why -- mirrors admin-portal's VerifyPhone.tsx, which
+    // already always auto-sends since every one of its arrivals has this same gap.
+    if (routerState?.devOtp === undefined && routerState?.maskedPhone === undefined) {
+      void handleResend();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleVerify(e: FormEvent) {
     e.preventDefault();
@@ -50,6 +65,7 @@ export default function VerifyPhone() {
       const res = await phoneApi.sendOtp();
       setInfo(res.message);
       setDevOtp(res.devOtp);
+      setMaskedPhone(res.maskedPhone);
     } catch (err: any) {
       setError(err.response?.data?.message ?? 'Could not send a new code right now.');
     } finally {
@@ -71,7 +87,9 @@ export default function VerifyPhone() {
           <ShieldCheck size={20} className="text-primary" />
           <h1 className="text-2xl font-bold text-ink">Verify your phone</h1>
         </div>
-        <p className="text-sm text-muted mb-6">Enter the 6-digit code we sent to your mobile number.</p>
+        <p className="text-sm text-muted mb-6">
+          Enter the 6-digit code we sent to {maskedPhone ?? 'your mobile number'}.
+        </p>
 
         {error && <p className="text-danger text-sm mb-4">{error}</p>}
         {info && <p className="text-success text-sm mb-2">{info}</p>}
