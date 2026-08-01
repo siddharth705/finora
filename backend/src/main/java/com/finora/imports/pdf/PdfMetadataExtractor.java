@@ -30,11 +30,46 @@ public class PdfMetadataExtractor {
     // all) -- (?:...)? makes the colon itself optional while still requiring some separation.
     private static final Pattern ACCOUNT_HOLDER = labelPattern("Account Holder(?: Name)?");
     private static final Pattern ACCOUNT_NUMBER = labelPattern("Account Number");
-    private static final Pattern BRANCH = labelPattern("Branch(?: Name)?");
+    // Bug fix: verified against a real Union Bank of India statement -- its "Branch Address" line
+    // is a two-column SECTION HEADER ("Branch Address" | "Statement Details" side by side, same
+    // pattern as an earlier "Your Details" | "Account Details" header higher up the page), not a
+    // genuine "Branch: <name>" field -- without the negative lookahead, the bare "Branch" match
+    // consumed "Address Statement Details" as if it were the branch name.
+    private static final Pattern BRANCH = labelPattern("Branch(?: Name)?(?!\\s*Address)");
     private static final Pattern IFSC = labelPattern("IFSC(?: Code)?");
     private static final Pattern STATEMENT_PERIOD = labelPattern("Statement Period");
     private static final Pattern CREDIT_LIMIT = labelPattern("(?:Total )?Credit Limit(?: \\(Including Cash\\))?");
     private static final Pattern PAYMENT_DUE_DATE = labelPattern("(?:Payment )?Due Date");
+
+    // GRID_METADATA_TRAILING_LABEL: a genuine second real-world grid-metadata shape, distinct from
+    // GRID_DUE_DATE_LABEL's "label row, then a later value row" layout -- here the VALUE comes
+    // BEFORE its label on the very same line ("317002010038811 Account Number", "UBIN0531707
+    // IFSC"), the reverse of every "Label: Value" pattern above. Verified against the same real
+    // Union Bank of India statement: its account-details panel renders as a two-column grid where
+    // each row is "value label" rather than "label value", and ACCOUNT_HOLDER/ACCOUNT_NUMBER/IFSC
+    // above never match this layout at all (none of their lines start with the label).
+    //
+    // Account holder name specifically: this statement's "Name" field wraps its own value across
+    // several lines *before* the "Name" label itself appears (a still-harder shape not attempted
+    // here -- see the engineering principles doc's LEADING_NARRATION_CONTINUATION entry for the
+    // same underlying "value precedes its label across multiple lines" difficulty in a different
+    // part of this pipeline). The grid's OTHER column has a cleaner "Account Name" field on one
+    // line, which this uses instead -- a real, if less complete (no honorific), holder name is a
+    // better outcome than none. Capped at 3 space-separated capitalized words specifically so a
+    // preceding, unrelated address fragment ("...3,BEHIND  SHIVANI SURESH MOURYA Account Name")
+    // doesn't get swept into the captured name -- verified this cap is what correctly excludes
+    // "BEHIND" (itself capitalized) while still capturing the full 3-word name.
+    private static final Pattern ACCOUNT_NAME_TRAILING_LABEL =
+            Pattern.compile("(?i)([A-Z][A-Za-z]*(?:\\s+[A-Z][A-Za-z]*){0,2})\\s+Account\\s*Name\\s*$");
+    private static final Pattern ACCOUNT_NUMBER_TRAILING_LABEL =
+            Pattern.compile("(?i)^(\\d{6,20})\\s+Account\\s*Number\\s*$");
+    private static final Pattern STATEMENT_PERIOD_TRAILING_LABEL =
+            Pattern.compile("(?i)^(.+?)\\s+Statement\\s*Period\\s*$");
+    // IFSC codes have a fixed, distinctive shape (4 letters, a literal 0, 6 more alphanumerics) --
+    // reliable enough to find directly by content, independent of any label at all, which sidesteps
+    // needing to handle this statement's IFSC line being merged with an unrelated Email field on
+    // the same extracted line ("...@GMAIL.COM Email id UBIN0531707 IFSC").
+    private static final Pattern IFSC_SHAPE = Pattern.compile("\\b[A-Z]{4}0[A-Z0-9]{6}\\b");
 
     private static final DateTimeFormatter[] DATE_FORMATS = {
             DateTimeFormatter.ofPattern("dd-MM-yyyy"),
@@ -112,6 +147,41 @@ public class PdfMetadataExtractor {
 
             if (paymentDueDate == null && GRID_DUE_DATE_LABEL.matcher(line).matches()) {
                 paymentDueDate = findGridDueDate(preTableLines, i);
+                continue;
+            }
+
+            // GRID_METADATA_TRAILING_LABEL fallbacks (see that constant's own doc comment) -- only
+            // consulted once the "label first" checks above have already had their chance on every
+            // line, so a document using the ordinary "Label: Value" shape is completely unaffected.
+            if (accountNumberMasked == null) {
+                Matcher acctNoMatch = ACCOUNT_NUMBER_TRAILING_LABEL.matcher(line);
+                if (acctNoMatch.matches()) {
+                    accountNumberMasked = com.finora.imports.CsvParser.maskAccountNumber(acctNoMatch.group(1));
+                    continue;
+                }
+            }
+            if (accountHolderName == null) {
+                Matcher holderMatch = ACCOUNT_NAME_TRAILING_LABEL.matcher(line);
+                if (holderMatch.find()) {
+                    accountHolderName = holderMatch.group(1).trim();
+                    continue;
+                }
+            }
+            if (ifscCode == null) {
+                Matcher ifscMatch = IFSC_SHAPE.matcher(line);
+                if (ifscMatch.find()) {
+                    ifscCode = ifscMatch.group().toUpperCase();
+                    continue;
+                }
+            }
+            if (periodStart == null && periodEnd == null) {
+                Matcher periodMatch = STATEMENT_PERIOD_TRAILING_LABEL.matcher(line);
+                if (periodMatch.matches()) {
+                    LocalDate[] parsed = parsePeriod(periodMatch.group(1).trim());
+                    periodStart = parsed[0];
+                    periodEnd = parsed[1];
+                    continue;
+                }
             }
         }
 

@@ -307,11 +307,9 @@ Done
 ✓ Composite Statements (multi-account, multi-section)
 ✓ Credit Card Summary Signal
 ✓ Metadata Grid (2-row)
+✓ Metadata Grid (trailing label -- value precedes its label on the same line)
 ✓ Never Lose Information (unparseable rows surfaced with a reason, not dropped)
 ✓ Offset Column Anchors (header labels not aligned with their own column's data)
-
-In Progress
-• Metadata Grid (4-column)
 
 Planned
 • Leading Narration Continuation (transaction description wraps before the date/amount row, not after)
@@ -498,25 +496,40 @@ no claim.
   after a trailing label).
 - **Regression tests:** `GridMetadataFallbackPdfPreviewGeneratorTest`.
 - **Maturity:** Beta.
-- **Known limitations:** only handles a 2-row grid; a 4-column grid (`Name | [value] |
-  Customer/CIF ID | [value]`) is a distinct, not-yet-implemented layout — see the entry directly
-  below.
+- **Known limitations:** only handles a 2-row grid, and only the "label first" line shape — see
+  the entry directly below for the reversed "value first" shape.
 
-#### Metadata Grid (4-column) — In Progress
-- **Purpose:** same goal as `GRID_METADATA_FALLBACK`, for a 4-column label/value grid
-  (`Name | [value] | Customer/CIF ID | [value]`) instead of a 2-row one.
-- **Supported layouts:** not yet implemented.
-- **Implementation:** none yet.
-- **Regression tests:** none yet.
-- **Maturity:** Planned / blocked.
-- **Known limitations:** found in a real statement where account holder name, masked account
-  number, and IFSC all stay null against it today, and branch name resolves to a garbled wrong
-  value. Not fixed speculatively — per "Layering discipline" and the real-document testing
-  philosophy above, this needs a real diagnostic pass against the actual extracted structure
-  before a fix is written. Currently blocked on a real document being available again (the
-  previous real file was correctly deleted after its diagnostic pass, per "Handling real
-  documents" — the capability can't be built from a guess at what a 4-column grid probably looks
-  like).
+#### `GRID_METADATA_TRAILING_LABEL`
+- **Purpose:** extract account-level metadata from a grid where each row's VALUE comes BEFORE its
+  own label on the same line (`"317002010038811 Account Number"`, `"UBIN0531707 IFSC"`) — the
+  reverse of every "Label: Value" shape `ACCOUNT_HOLDER`/`ACCOUNT_NUMBER`/`IFSC`/`BRANCH` already
+  handle. Originally scoped (speculatively, before a real document existed to check it against) as
+  "a 4-column grid" — the real layout turned out to be a two-column grid with reversed value/label
+  order instead; renamed once the actual shape was known rather than keeping a name that no longer
+  described it.
+- **Supported layouts:** a metadata panel whose lines are `<value> <label>` rather than `<label>
+  <value>` — verified against account number, IFSC, account holder name, and statement period
+  fields specifically.
+- **Implementation:** `PdfMetadataExtractor` — `ACCOUNT_NUMBER_TRAILING_LABEL` (digit-run before
+  "Account Number"), `IFSC_SHAPE` (IFSC codes have a fixed, distinctive shape — 4 letters, a
+  literal `0`, 6 more alphanumerics — found directly by content, independent of any label at all,
+  which sidesteps the real statement's IFSC line being merged with an unrelated Email field on the
+  same extracted line), `ACCOUNT_NAME_TRAILING_LABEL` (up to 3 capitalized words before "Account
+  Name" — capped specifically so an unrelated capitalized address fragment immediately before the
+  real name doesn't get swept in), `STATEMENT_PERIOD_TRAILING_LABEL`. All four are fallbacks,
+  consulted only when the ordinary "label first" checks already had their chance on a given line —
+  a document using the ordinary shape is completely unaffected.
+- **Regression tests:** `PdfMetadataExtractorTest`.
+- **Maturity:** Beta.
+- **Known limitations:** the same real statement's own "Name" field (a *different*, more complete
+  holder name — with an honorific — than the "Account Name" field this capability uses instead)
+  wraps its value across several lines *before* the "Name" label appears at all; not attempted here
+  (see `LEADING_NARRATION_CONTINUATION` below for the same underlying "value precedes its label
+  across multiple lines" difficulty appearing in a different part of this pipeline). Branch name
+  stays null against this same statement — its branch-address panel is *also* a multi-line-wrapped
+  value-before-label field, same gap, not attempted for the same reason. A real, if incomplete
+  (no honorific), holder name from `ACCOUNT_NAME_TRAILING_LABEL` was judged a better outcome than
+  none — a genuinely null branch name was judged better than another guess.
 
 #### `LEADING_NARRATION_CONTINUATION` — Planned, not yet attempted
 - **Purpose:** a transaction whose narration/description text wraps across multiple lines
@@ -567,7 +580,7 @@ Two axes, neither of which is "which bank":
 
 - **More layout capabilities**, added as real documents motivate them: separate debit/credit
   columns, single-amount-column variants not yet seen, merchant-category columns, additional date
-  formats, the 4-column metadata grid above.
+  formats, leading (not just trailing) narration continuation.
 - **More document types**, once there's a real driver: CSV already exists (predates this
   document, already generic); Excel, scanned PDFs, and OCR are explicitly out of scope until then
   — see the existing PDF package doc's own reasoning for deferring OCR once already. Each new
