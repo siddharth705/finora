@@ -314,6 +314,7 @@ In Progress
 • Metadata Grid (4-column)
 
 Planned
+• Leading Narration Continuation (transaction description wraps before the date/amount row, not after)
 • Excel
 • Scanned PDFs / OCR
 • Images
@@ -516,6 +517,37 @@ no claim.
   previous real file was correctly deleted after its diagnostic pass, per "Handling real
   documents" — the capability can't be built from a guess at what a 4-column grid probably looks
   like).
+
+#### `LEADING_NARRATION_CONTINUATION` — Planned, not yet attempted
+- **Purpose:** a transaction whose narration/description text wraps across multiple lines
+  *before* its own date+amount row, rather than after it (the shape every existing continuation
+  capability — `WRAPPED_DESCRIPTION` — assumes). A real Canara Bank statement's layout renders
+  each transaction as: 2-3 narration lines (no date) → the date+amount+balance line (with a
+  fragment of narration mixed in) → 1-2 trailing detail lines (transaction time + reference,
+  then a cheque number — also no date).
+- **Supported layouts:** not yet implemented.
+- **Implementation:** none yet — deliberately not attempted this pass. `PdfTableLocator.locateAll`'s
+  continuation-merge is structurally single-directional (a dateless row always merges *backward*
+  into whatever row came before it), which is exactly right for `WRAPPED_DESCRIPTION` but exactly
+  wrong for leading narration: on the real file, every transaction's leading lines merged into the
+  *previous* transaction's row instead (or, for the very first transaction, into the statement's
+  own "Opening Balance" summary row) — silently attaching the wrong narration to the wrong
+  transaction — until a page boundary happened to break the chain, at which point the leading
+  lines surfaced as an orphaned, undated `UnparseableRow` instead (still not attached to the
+  transaction they belong to, just visibly so instead of silently).
+- **Regression tests:** none yet.
+- **Maturity:** Planned / blocked, deliberately.
+- **Known limitations:** a real general fix needs the merge logic to buffer dateless rows and
+  resolve them against *either* the previous or the next date-bearing row, not always the
+  previous one — and doing that safely requires distinguishing "leading narration" from
+  `WRAPPED_DESCRIPTION`'s existing "trailing narration" shape without breaking the already-
+  validated capability (`WrappedDescriptionCreditCardPdfPreviewGeneratorTest` and every other
+  fixture depending on backward-only merging). A narrow content-pattern signal (Canara's trailing
+  detail lines are recognizably shaped — a `HH:MM:SS/<reference>` line, then a `Chq: <number>`
+  line) could distinguish "this dateless row is definitely trailing" from "buffer it forward" —
+  but that needs to be designed and tested deliberately against this real file, not bolted on
+  under time pressure in the middle of fixing three *other* real files' bugs. Left open rather
+  than risking a regression to a working capability.
 
 #### Excel, Scanned PDFs / OCR, Images, Handwritten Statements — Planned
 - **Purpose:** additional document formats, each requiring a new implementation of the early

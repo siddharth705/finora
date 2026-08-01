@@ -339,4 +339,35 @@ public final class PdfFixtureBuilder {
 
         return render(List.of(page));
     }
+
+    /**
+     * A layout with singular "Withdrawal (Dr.)" / "Deposit (Cr.)" column headers (which normalize
+     * to "withdrawal"/"deposit", not the plural "withdrawals"/"deposits" this pipeline previously
+     * only recognized), a day-abbreviated-month-year date format ("01 Jul 2026"), and a reward/
+     * cashback-style row that carries no value in either amount column at all -- just a small
+     * amount and the resulting running balance combined into one Balance cell ("1.00 24352.97").
+     * Modeled on a real Kotak Mahindra Bank statement, but none of these three shapes are specific
+     * to that bank.
+     */
+    public static byte[] buildSingularDepositWithdrawalColumnsSample() throws IOException {
+        // Description column kept short and Withdrawal/Deposit/Balance pushed well clear of it --
+        // a longer description here would spatially overlap the amount columns' x-position and
+        // PDFBox would interleave the two columns' text character-by-character (a fixture-design
+        // pitfall hit before in this file; see PdfPreviewGeneratorTest's own history), not a real
+        // statement's actual layout constraint.
+        float[] col = {LEFT_MARGIN, 150f, 320f, 400f, 480f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Account Statement")
+                .blankLine()
+                .row(col, "Date", "Description", "Withdrawal (Dr.)", "Deposit (Cr.)", "Balance")
+                .row(col, "01 Jul 2026", "IMPS to Landlord", "1000.00", null, "24361.97")
+                .row(col, "01 Jul 2026", "UPI/SIVVA SURESH K", null, "10.00", "24351.97")
+                // Cashback row: no separate Withdrawal or Deposit value at all -- just a leading
+                // amount and the resulting balance combined in the Balance cell, exactly as PDFBox
+                // extracts it on a real Kotak Mahindra Bank statement for this row shape.
+                .row(col, "02 Jul 2026", "CASHBACK EARNED", null, null, "1.00 24352.97");
+
+        return render(List.of(page));
+    }
 }

@@ -35,13 +35,23 @@ public class TransactionNormalizer {
     // get silently dropped, before PdfPreviewGenerator's own balancePoints logic ever sees them.
     private static final String[] DATE_HINTS =
             {"date", "transaction_date", "txn date", "transaction date", "value date", "date & time"};
+    // Bug fix: verified against a real Kotak Mahindra Bank statement -- its columns are literally
+    // named "Deposit (Cr.)" / "Withdrawal (Dr.)", which CsvParser.normalizeHeaderCell reduces to
+    // the SINGULAR "deposit"/"withdrawal" (the parenthesized "(Cr.)"/"(Dr.)" suffix strips the
+    // same way a currency suffix like "Amount (Rs.)" does) -- neither of which matched anything
+    // in this list before (only the plural "deposits"/"withdrawals" did). Every row on that
+    // statement silently fell all the way through to the "balance" fallback instead: every
+    // transaction staged with its AMOUNT showing as the account's running BALANCE, and every
+    // transaction -- including genuine UPI credits -- staged as an EXPENSE, since "deposit"/
+    // "withdrawal" weren't recognized as amount OR credit signals at all. Not a dropped-row bug
+    // (which would have been obvious) -- a silently-wrong-data bug, worse in kind.
     private static final String[] AMOUNT_HINTS = {"amount", "debit", "credit",
             "dr amount", "cr amount", "debit amount", "credit amount",
             "withdrawal amt", "withdrawal amount", "deposit amt", "deposit amount",
-            "deposits", "withdrawals",
+            "deposit", "withdrawal", "deposits", "withdrawals",
             "balance", "running balance", "closing balance"};
     private static final String[] CREDIT_HINTS =
-            {"credit", "cr amount", "credit amount", "deposit amt", "deposit amount", "deposits"};
+            {"credit", "cr amount", "credit amount", "deposit amt", "deposit amount", "deposit", "deposits"};
     private static final String[] TYPE_HINTS = {"type"};
     private static final String[] DESCRIPTION_HINTS =
             {"description", "narration", "remarks", "particulars", "transaction description", "transaction details"};
@@ -69,6 +79,26 @@ public class TransactionNormalizer {
         return names;
     }
 
+    // Same as CsvParser.firstNonBlank, but skips a hint match whose value doesn't parse as a
+    // number at all, continuing to a lower-priority hint instead of committing to a value already
+    // known to be unusable. Bug fix, verified against a real Canara Bank statement: its closing-
+    // balance summary row puts the literal label text "Closing Balance" in what's otherwise the
+    // Deposits column (the same column real deposit amounts use on every other row) -- without
+    // this, that label matched the "deposits" hint first and the row's real amount (a genuine
+    // last transaction's Withdrawals value, sharing this row with the closing-balance label) was
+    // never reached; the row failed to parse a nonsense "amount" instead.
+    private static String firstParseableAmount(Map<String, String> row, String[] hints) {
+        for (String hint : hints) {
+            for (Map.Entry<String, String> e : row.entrySet()) {
+                if (e.getKey() != null && CsvParser.normalizeHeaderCell(e.getKey()).equalsIgnoreCase(hint)) {
+                    String v = e.getValue();
+                    if (v != null && !v.isBlank() && CsvParser.parseNumeric(v) != null) return v;
+                }
+            }
+        }
+        return null;
+    }
+
     /**
      * Human-readable reason {@link #normalize} returned null for this row -- callers that
      * implement "never lose information" (see
@@ -83,9 +113,12 @@ public class TransactionNormalizer {
         if (dateRaw == null) return "No column recognized as a date";
         if (CsvParser.parseDate(dateRaw.trim()) == null) return "Date value \"" + dateRaw + "\" didn't match any known date format";
 
-        String amountRaw = CsvParser.firstNonBlank(row, AMOUNT_HINTS);
-        if (amountRaw == null) return "No column recognized as an amount or balance";
-        if (CsvParser.parseNumeric(amountRaw) == null) return "Amount value \"" + amountRaw + "\" didn't match any known numeric format";
+        String amountRaw = firstParseableAmount(row, AMOUNT_HINTS);
+        if (amountRaw == null) {
+            String anyAmountRaw = CsvParser.firstNonBlank(row, AMOUNT_HINTS);
+            if (anyAmountRaw == null) return "No column recognized as an amount or balance";
+            return "Amount value \"" + anyAmountRaw + "\" didn't match any known numeric format";
+        }
 
         return "Date and amount both parsed but the row was still rejected";
     }
@@ -94,7 +127,7 @@ public class TransactionNormalizer {
      *  date or amount column value) — callers should skip such rows rather than fail the import. */
     public StagedRow normalize(UUID userId, Map<String, String> row) {
         String dateRaw = CsvParser.firstNonBlank(row, DATE_HINTS);
-        String amountRaw = CsvParser.firstNonBlank(row, AMOUNT_HINTS);
+        String amountRaw = firstParseableAmount(row, AMOUNT_HINTS);
         if (dateRaw == null || amountRaw == null) return null;
 
         LocalDate date = CsvParser.parseDate(dateRaw.trim());
@@ -107,7 +140,11 @@ public class TransactionNormalizer {
         // built by CsvParser always has an entry per header regardless of whether that row's
         // value is blank), so what actually indicates income is a *non-blank* value in the
         // credit column, not just the column's presence.
-        String creditRaw = CsvParser.firstNonBlank(row, CREDIT_HINTS);
+        // Same non-numeric-match skip as firstParseableAmount above, for the same reason: a
+        // summary row's "Closing Balance"/"Opening Balance" label sitting in the Deposits column
+        // must not be read as "this row has a credit," any more than it should be read as this
+        // row's actual amount.
+        String creditRaw = firstParseableAmount(row, CREDIT_HINTS);
         // Bug fix: a unified Amount + Type column layout (one amount column, a separate Type
         // column holding literally "DR"/"CR" -- e.g. PNB ONE's PDF/CSV exports) has neither a
         // "credit" column nor a Type value containing the literal word "income", so every row

@@ -49,4 +49,12 @@ class CsvParserTest {
         assertThat(CsvParser.parseDate("30/06/2026 14:18")).isEqualTo(java.time.LocalDate.of(2026, 6, 30));
         assertThat(CsvParser.parseDate("30/06/2026")).isEqualTo(java.time.LocalDate.of(2026, 6, 30));
     }
+
+    @Test
+    void parseDate_recognizesADayAbbreviatedMonthYearFormat() {
+        // Verified against a real Kotak Mahindra Bank statement -- "01 Jul 2026," a format none
+        // of the numeric-only patterns matched, so every row on that file was silently dropped.
+        assertThat(CsvParser.parseDate("01 Jul 2026")).isEqualTo(java.time.LocalDate.of(2026, 7, 1));
+        assertThat(CsvParser.parseDate("25 Dec 2026")).isEqualTo(java.time.LocalDate.of(2026, 12, 25));
+    }
 }

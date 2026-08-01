@@ -182,6 +182,57 @@ class TransactionNormalizerTest {
         assertThat(result.type()).isEqualTo("INCOME");
     }
 
+    // Regression test for a serious real bug, not just a dropped-row bug: a real Kotak Mahindra
+    // Bank statement uses column headers "Deposit (Cr.)" / "Withdrawal (Dr.)", which
+    // CsvParser.normalizeHeaderCell reduces to the SINGULAR "deposit"/"withdrawal" (the
+    // parenthesized "(Cr.)"/"(Dr.)" suffix strips the same way a currency suffix does) -- neither
+    // of which used to be recognized by this class at all (only the plural "deposits"/
+    // "withdrawals" was). Every row on that file silently fell through to the "balance" fallback
+    // instead: the transaction's AMOUNT showed as the account's running BALANCE, and every row --
+    // including genuine credits -- staged as an EXPENSE, with no error and no dropped-row signal
+    // to reveal it. Caught only by directly inspecting staged amounts against the real file, not
+    // by anything failing loudly.
+    @Test
+    void normalize_recognizesASingularDepositColumnHeader_asACreditSignal_notJustTheBalanceFallback() {
+        Map<String, String> row = rowOf("Date", "01/07/2026", "Deposit (Cr.)", "10.00", "Balance", "24351.97",
+                "Description", "UPI/SIVVA SURESH K");
+
+        StagedRow result = normalizer.normalize(userId, row);
+
+        assertThat(result).isNotNull();
+        assertThat(result.type()).isEqualTo("INCOME");
+        assertThat(result.amount()).isEqualByComparingTo("10.00");
+    }
+
+    @Test
+    void normalize_recognizesASingularWithdrawalColumnHeader_asTheAmount_notTheBalance() {
+        Map<String, String> row = rowOf("Date", "01/07/2026", "Withdrawal (Dr.)", "1000.00", "Balance", "24361.97",
+                "Description", "SentIMPS618212386186");
+
+        StagedRow result = normalizer.normalize(userId, row);
+
+        assertThat(result).isNotNull();
+        assertThat(result.type()).isEqualTo("EXPENSE");
+        assertThat(result.amount()).isEqualByComparingTo("1000.00");
+    }
+
+    // Regression test: verified against a real Canara Bank statement whose closing-balance
+    // summary row puts the literal label text "Closing Balance" in what's otherwise the Deposits
+    // column real deposit amounts use on every other row -- a plain "first non-blank match" would
+    // return that label as the "amount" and fail to parse it as a number, dropping a row that
+    // actually carries a real, usable Withdrawals amount right alongside it.
+    @Test
+    void normalize_skipsAnAmountHintMatch_whoseValueIsntActuallyNumeric_andFallsThroughToARealAmount() {
+        Map<String, String> row = rowOf("Date", "01/08/2026", "Deposits", "Closing Balance",
+                "Withdrawals", "228.00", "Balance", "107279.08");
+
+        StagedRow result = normalizer.normalize(userId, row);
+
+        assertThat(result).isNotNull();
+        assertThat(result.amount()).isEqualByComparingTo("228.00");
+        assertThat(result.type()).isEqualTo("EXPENSE");
+    }
+
     @Test
     void normalize_defaultsToExpense_whenNeitherATypeColumnNorACreditColumnIndicatesIncome() {
         Map<String, String> row = rowOf("Date", "05/07/2026", "Debit", "1000", "Description", "Groceries");

@@ -75,6 +75,14 @@ public class PdfTableLocator {
     private static final Pattern TRAILING_AMOUNT = Pattern.compile(
             "(?i)^(.*\\S)\\s+([\\d,]+\\.\\d{2}\\s*(?:dr|cr)?\\.?)\\s*$");
 
+    // A transaction amount with no dedicated Deposit/Withdrawal-column value of its own, combined
+    // with the resulting running balance into one Balance cell -- e.g. "1.00 14,577.97" (a
+    // cashback-reward row on a real Kotak Mahindra Bank statement, where such rows carry no value
+    // in either amount column, only this combined pair). Deliberately just two decimal numbers and
+    // nothing else, so an ordinary single balance value ("24,361.97") never matches.
+    private static final Pattern LEADING_AMOUNT_IN_BALANCE = Pattern.compile(
+            "^([\\d,]+\\.\\d{2})\\s+([\\d,]+\\.\\d{2})$");
+
     // A page-footer/page-number line ("Page 1 of 2") has no date of its own, same as a genuine
     // continuation line -- but it isn't one, and merging it into the last real row on that page
     // pollutes (or, if it lands in the amount column, outright breaks parsing of) an otherwise
@@ -356,7 +364,45 @@ public class PdfTableLocator {
             result.put(columnName, existing == null ? t.text() : existing + " " + t.text());
         }
         splitTrailingAmountIfMissing(result, headerNames);
+        splitLeadingAmountFromBalanceIfMissing(result, headerNames);
         return result;
+    }
+
+    // Recovers a transaction whose amount was never given its own column value at all -- see
+    // LEADING_AMOUNT_IN_BALANCE's own doc comment for the real statement that motivated this.
+    // Only acts when every deposit/withdrawal/credit/debit-hint column is genuinely empty for this
+    // row (never overwrites a real value), and only ever pulls the leading number off a Balance
+    // cell that is exactly "amount balance" and nothing else. Defaults the recovered amount to
+    // whichever credit/deposit-hint column exists (this shape has only been seen on a
+    // balance-increasing row so far -- a cashback/reward credit); if none exists, falls back to a
+    // debit/withdrawal-hint column so the row is still recovered rather than silently dropped, on
+    // the principle that a possibly-wrong direction is still strictly better than losing the row
+    // entirely -- the review screen is where the user corrects it if this guess is wrong.
+    private static final List<String> CREDIT_HINTS = List.of("deposit", "deposits", "credit", "cr amount", "credit amount");
+    private static final List<String> DEBIT_HINTS = List.of("withdrawal", "withdrawals", "debit", "dr amount", "debit amount");
+
+    private void splitLeadingAmountFromBalanceIfMissing(Map<String, String> result, List<String> headerNames) {
+        String balanceColumn = headerNames.stream()
+                .filter(h -> CsvParser.normalizeHeaderCell(h).equals("balance"))
+                .findFirst().orElse(null);
+        if (balanceColumn == null || !result.containsKey(balanceColumn)) return;
+
+        boolean anyDirectionColumnAlreadyHasAValue = headerNames.stream()
+                .anyMatch(h -> isAmountColumn(h) && !h.equals(balanceColumn) && result.containsKey(h));
+        if (anyDirectionColumnAlreadyHasAValue) return;
+
+        Matcher m = LEADING_AMOUNT_IN_BALANCE.matcher(result.get(balanceColumn));
+        if (!m.matches()) return;
+
+        String targetColumn = headerNames.stream()
+                .filter(h -> CREDIT_HINTS.contains(CsvParser.normalizeHeaderCell(h)))
+                .findFirst()
+                .or(() -> headerNames.stream().filter(h -> DEBIT_HINTS.contains(CsvParser.normalizeHeaderCell(h))).findFirst())
+                .orElse(null);
+        if (targetColumn == null) return;
+
+        result.put(balanceColumn, m.group(2));
+        result.put(targetColumn, m.group(1));
     }
 
     // Handles the case the two redirects above can't: some rows in a real statement render a
@@ -387,7 +433,8 @@ public class PdfTableLocator {
         return normalized.equals("date") || normalized.equals("date & time");
     }
 
-    private static final List<String> AMOUNT_COLUMN_HINTS = List.of("amount", "debit", "credit", "balance");
+    private static final List<String> AMOUNT_COLUMN_HINTS =
+            List.of("amount", "debit", "credit", "deposit", "withdrawal", "deposits", "withdrawals", "balance");
 
     private boolean isAmountColumn(String columnName) {
         return AMOUNT_COLUMN_HINTS.contains(CsvParser.normalizeHeaderCell(columnName));

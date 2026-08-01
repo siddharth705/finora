@@ -12,6 +12,7 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -32,7 +33,12 @@ public class CsvParser {
             DateTimeFormatter.ofPattern("yyyy-MM-dd"),
             DateTimeFormatter.ofPattern("dd/MM/yyyy"),
             DateTimeFormatter.ofPattern("dd-MM-yyyy"),
-            DateTimeFormatter.ofPattern("MM/dd/yyyy")
+            DateTimeFormatter.ofPattern("MM/dd/yyyy"),
+            // Bug fix: verified against a real Kotak Mahindra Bank statement -- "01 Jul 2026," a
+            // day-month(abbreviated name)-year format none of the above patterns match. Locale.ENGLISH
+            // pinned explicitly so parsing this format doesn't depend on the JVM's default locale
+            // (which may not even use Latin month abbreviations on a different machine).
+            DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH)
     );
 
     // Column-name hints used to locate the real header row, wherever it falls in the file. Real
