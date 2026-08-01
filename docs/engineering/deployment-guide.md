@@ -44,9 +44,9 @@ to leave at its default: local dev defaults, or must be explicitly set.
 | `CORS_ORIGINS` | Yes | both local dev ports | Comma-separated allowed origins (`CorsConfig`) | **No** — must list your real deployed frontend origin(s), no wildcard |
 | `APP_BASE_URL` | Yes | `http://localhost:5173` | Base URL used to build links in emails (password reset, etc. — see `EmailConfig`) | **No** — must be your real deployed frontend's URL, or generated links point at localhost |
 | `ADMIN_APP_BASE_URL` | Recommended | `http://localhost:5174` | Same purpose as `APP_BASE_URL`, but for the admin portal specifically — see `EmailProperties.resolveBaseUrl()`. The user frontend and admin portal are separate deployed apps at separate origins, each with its own `/reset-password` page, but there's no separate admin auth service; without this set, an admin's "Forgot Password" links to the *user* app's reset page instead of the admin portal's own. Picked automatically from the request's `Origin` header — no frontend changes needed either way. | Leave unset only if you're fine with admin password resets linking to the wrong app |
-| `RESEND_API_KEY` | Yes (to send real email) | empty | Resend API key; empty falls back to `NoOpEmailService` (logs the link instead of sending) | No — leaving this unset means no real emails ever get sent |
+| `RESEND_API_KEY` | **Yes — hard boot-time requirement in `prod`** | empty | Resend API key; empty falls back to `NoOpEmailService` (logs the link instead of sending) | **No.** Unset, this used to just mean silent no-op emails; `ProductionConfigValidator` now refuses to *start* the `prod` profile at all if this is blank, because the actual failure mode is worse than "no email" — `NoOpEmailService.isConfigured()` returning `false` makes `AuthService.forgotPassword()` return the raw, valid reset link directly in the API response instead, a full account-takeover primitive for anyone who knows a user's email address. |
 | `EMAIL_FROM` | No | `onboarding@resend.dev` | "From" address for outgoing email | Only if you have your own verified sender |
-| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM_NUMBER` | Yes (to send real SMS) | empty | Twilio credentials for OTP SMS; empty falls back to logging the OTP instead of sending it | No — same reasoning as `RESEND_API_KEY` |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM_NUMBER` | **`TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`: Yes — hard boot-time requirement in `prod`. `TWILIO_FROM_NUMBER`: only needed to actually send.** | empty | Twilio credentials for OTP SMS; empty falls back to logging the OTP instead of sending it | **No.** Same escalation as `RESEND_API_KEY` above: `ProductionConfigValidator` refuses to start the `prod` profile if `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN` are blank, not just log a warning. |
 | `FINORA_SETUP_KEY` | No | empty (auto-generated + written to `.finora/installation.key`) | First-run bootstrap installation key | See `docs/bootstrap-setup-future-work.md` — set explicitly rather than relying on a written file in any deployment without a persistent, host-readable filesystem |
 | `TRUST_PROXY_HEADERS` | **Yes, on Railway** | `false` | Whether `RateLimitFilter` trusts `X-Forwarded-For` for the real client IP | **Must be `true` on Railway** (or any deployment behind a real reverse proxy) — otherwise every user shares one rate-limit bucket. Must stay `false` anywhere not behind a trusted proxy, or rate limiting can be bypassed by spoofing the header. |
 | `UPLOAD_MAX_FILE_SIZE` / `UPLOAD_MAX_REQUEST_SIZE` | No | `10MB` | Multipart upload size limits (CSV/PDF statement import) | Yes |
@@ -97,6 +97,8 @@ APP_BASE_URL=https://finora-cng.pages.dev
 ADMIN_APP_BASE_URL=https://finora-admin.pages.dev
 RESEND_API_KEY=<your real Resend API key>
 EMAIL_FROM=<your verified sender address>
+TWILIO_ACCOUNT_SID=<your real Twilio Account SID>
+TWILIO_AUTH_TOKEN=<your real Twilio Auth Token>
 TRUST_PROXY_HEADERS=true
 ```
 
@@ -108,14 +110,31 @@ Railway sets `PORT` itself — don't set it manually. The four Railway Postgres 
 available directly from the Postgres service's own "Connect" tab once you've provisioned it and
 linked it to the backend service.
 
-If `TWILIO_*` and `FINORA_SETUP_KEY` aren't set, the app starts fine (see the audit table above)
-— but real SMS/first-run bootstrap won't behave the way they do in local dev, so decide those
-deliberately rather than by omission.
+If `FINORA_SETUP_KEY` isn't set, the app starts fine — first-run bootstrap just falls back to
+writing/logging a generated key instead (see `docs/bootstrap-setup-future-work.md`).
+**`TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN` are different: they are hard boot-time requirements,
+same as `RESEND_API_KEY`** — see the next paragraph.
 
-`ProductionConfigValidator` will refuse to start the app (loud failure at boot, not a silent
-insecure default) if `JWT_SECRET` or `DB_PASSWORD` are still their local-dev placeholder values
-while `SPRING_PROFILES_ACTIVE=prod` — this is intentional and is the safety net for forgetting to
-set one of the two most security-critical variables above.
+`ProductionConfigValidator` refuses to start the app at all (loud failure at boot, not a silent
+insecure default, and not a `restartPolicyMaxRetries` crash-loop you have to dig through logs to
+diagnose) if, while `SPRING_PROFILES_ACTIVE=prod`:
+- `JWT_SECRET` or `DB_PASSWORD` are still their local-dev placeholder values,
+- `RESEND_API_KEY` is blank, or
+- `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` are blank.
+
+**Set all four categories above *before* the first deploy with `SPRING_PROFILES_ACTIVE=prod`.**
+A real incident already happened here: a deploy went out with `prod` active but
+`RESEND_API_KEY`/`TWILIO_*` unset, and Railway crash-looped the service (`restartPolicyMaxRetries:
+5` in `railway.json` then leaves it "Crashed") — burning through the deploy's log history and
+free-tier build minutes before the cause was found. Two ways out if this happens to you:
+1. **Fix it properly** — set the real `RESEND_API_KEY`/`TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`
+   values (Resend and Twilio both have usable free/trial tiers) and redeploy.
+2. **Unblock immediately, fix later** — remove or change `SPRING_PROFILES_ACTIVE` so it isn't
+   `prod` (e.g. delete the variable, or set it to `dev`), then redeploy. This is a deliberate,
+   temporary trade: `ProductionConfigValidator` only runs in the `prod` profile, so this reopens
+   the exact holes it exists to catch (password-reset links leaking in API responses instead of
+   being emailed; OTPs only ever logged, never sent) — acceptable while you're the only person
+   using the deployment to test, not once real users' accounts are on it.
 
 ## Cloudflare (both frontends)
 
