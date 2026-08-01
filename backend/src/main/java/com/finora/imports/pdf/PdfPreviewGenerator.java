@@ -2,8 +2,10 @@ package com.finora.imports.pdf;
 
 import com.finora.accounts.AccountDto;
 import com.finora.dto.ImportDto.DetectedAccountInfo;
+import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.dto.ImportDto.StagedRow;
 import com.finora.dto.ImportDto.StagingResponse;
+import com.finora.imports.CsvParser;
 import com.finora.imports.TransactionNormalizer;
 import com.finora.util.BankRegistry;
 import org.springframework.stereotype.Component;
@@ -12,7 +14,9 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -32,6 +36,12 @@ import java.util.UUID;
  * reconstruction, after that logic's own local copy here turned out to have the same file-order
  * bug StatementValidator's copy did, undetected for exactly as long as the two copies existed
  * independently. See that class's own doc comment for the full story.
+ *
+ * A single PDF is no longer assumed to contain exactly one account: {@link #generateSections}
+ * detects every account section {@link PdfTableLocator#locateAll} finds (e.g. HSBC's "Composite
+ * Statement" bundles a savings-account section and a credit-card section in one file) and stages
+ * each independently. {@link #generate} remains as a single-account convenience wrapper -- for
+ * the (still common) single-section document, its behavior is byte-for-byte what it always was.
  */
 @Component
 public class PdfPreviewGenerator {
@@ -49,30 +59,66 @@ public class PdfPreviewGenerator {
         this.transactionNormalizer = transactionNormalizer;
     }
 
+    /** Single-account convenience wrapper over {@link #generateSections} -- returns the FIRST
+     *  (and, for every document with exactly one detected section, only) section in the same
+     *  {@link StagingResponse} shape this method has always returned. Callers that need to
+     *  detect and stage multiple accounts from one upload (see
+     *  {@code ImportService.parseAndStagePdfWithSession}) call {@link #generateSections} instead. */
     public StagingResponse generate(UUID userId, String filename, byte[] fileBytes) throws IOException {
-        List<PositionedText> positioned = textExtractor.extract(fileBytes);
-        PdfTableLocator.LocatedTable table = tableLocator.locate(positioned);
+        StagedAccountSection first = generateSections(userId, filename, fileBytes).get(0);
+        return new StagingResponse(first.rows(), first.totalParsed(), first.flaggedDuplicates(), first.detectedAccount());
+    }
 
+    /** Detects and stages every account section in the document. Always returns at least one
+     *  element -- a document with no recognizable transaction table anywhere still yields one
+     *  section with zero rows (same "well-formed empty result rather than a 500" contract the
+     *  single-section path has always followed), so a bank recognizable purely from letterhead
+     *  text still gets suggested even when nothing parsed as a transaction. */
+    public List<StagedAccountSection> generateSections(UUID userId, String filename, byte[] fileBytes) throws IOException {
+        List<PositionedText> positioned = textExtractor.extract(fileBytes);
+        PdfTableLocator.LocatedDocument doc = tableLocator.locateAll(positioned);
+
+        if (doc.sections().isEmpty()) {
+            PdfTableLocator.LocatedTable empty = tableLocator.locate(positioned);
+            return List.of(buildSection(userId, filename,
+                    new PdfTableLocator.LocatedSection(empty.preTableLines(), List.of())));
+        }
+
+        List<StagedAccountSection> result = new ArrayList<>();
+        for (PdfTableLocator.LocatedSection section : doc.sections()) {
+            result.add(buildSection(userId, filename, section));
+        }
+        return result;
+    }
+
+    private StagedAccountSection buildSection(UUID userId, String filename, PdfTableLocator.LocatedSection section) {
         List<StagedRow> staged = new ArrayList<>();
         // date -> balance-as-reported, purely to derive opening/closing balance below -- not
         // persisted anywhere, discarded once this method returns.
         List<BalancePoint> balancePoints = new ArrayList<>();
-        for (Map<String, String> row : table.rows()) {
+        for (Map<String, String> row : section.rows()) {
             StagedRow parsed = transactionNormalizer.normalize(userId, row);
             if (parsed == null) continue; // same "skip rows that don't parse as a transaction" contract CSV's PreviewGenerator follows
             staged.add(parsed);
 
-            BigDecimal balance = com.finora.imports.CsvParser.parseNumeric(
-                    com.finora.imports.CsvParser.firstNonBlank(row, "balance", "running balance", "closing balance"));
+            BigDecimal balance = CsvParser.parseNumeric(
+                    CsvParser.firstNonBlank(row, "balance", "running balance", "closing balance"));
             if (balance != null) {
                 BigDecimal signedAmount = "INCOME".equals(parsed.type()) ? parsed.amount() : parsed.amount().negate();
                 balancePoints.add(new BalancePoint(parsed.date(), signedAmount, balance, parsed.description()));
             }
         }
 
+        // Bug fix: some real exports (PNB ONE) list transactions newest-first -- the balance-chain
+        // reconstruction below is already value-based (BalanceChainUtil.first/last match by implied
+        // pre-transaction balance, never by list position) so it's unaffected by this, but the
+        // staged rows themselves used to come back in raw file order, i.e. reverse-chronological,
+        // which read oddly in the review table. Sorted here, once, right before returning.
+        staged.sort(Comparator.comparing(StagedRow::date));
+
         int dupCount = (int) staged.stream().filter(StagedRow::likelyDuplicate).count();
-        DetectedAccountInfo detected = buildDetectedAccountInfo(filename, table.preTableLines(), staged, balancePoints);
-        return new StagingResponse(staged, staged.size(), dupCount, detected);
+        DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, staged, balancePoints);
+        return new StagedAccountSection(detected, staged, staged.size(), dupCount);
     }
 
     private record BalancePoint(LocalDate date, BigDecimal signedAmount, BigDecimal balance,
@@ -80,9 +126,9 @@ public class PdfPreviewGenerator {
         @Override public BigDecimal balanceAfter() { return balance; }
     }
 
-    private DetectedAccountInfo buildDetectedAccountInfo(String filename, List<String> preTableLines,
+    private DetectedAccountInfo buildDetectedAccountInfo(String filename, PdfTableLocator.LocatedSection section,
                                                            List<StagedRow> staged, List<BalancePoint> balancePoints) {
-        PdfMetadataExtractor.ExtractedMetadata metadata = metadataExtractor.extract(preTableLines);
+        PdfMetadataExtractor.ExtractedMetadata metadata = metadataExtractor.extract(section.auxiliaryText());
 
         LocalDate statementStart = metadata.statementPeriodStart() != null ? metadata.statementPeriodStart()
                 : staged.stream().map(StagedRow::date).min(LocalDate::compareTo).orElse(null);
@@ -115,23 +161,39 @@ public class PdfPreviewGenerator {
             // actually IS that kind of explicit label row; otherwise back out its own transaction
             // amount to recover the balance that existed BEFORE it, same as CSV's StatementValidator.
             boolean isExplicitOpeningRow = trueFirstOfDay.description() != null
-                    && trueFirstOfDay.description().toLowerCase(java.util.Locale.ROOT).contains("opening balance");
+                    && trueFirstOfDay.description().toLowerCase(Locale.ROOT).contains("opening balance");
             openingBalance = isExplicitOpeningRow
                     ? trueFirstOfDay.balance()
                     : trueFirstOfDay.balance().subtract(trueFirstOfDay.signedAmount());
             closingBalance = trueLastOfDay.balance();
         }
 
-        List<String> bankTextHints = new ArrayList<>(preTableLines);
+        List<String> bankTextHints = new ArrayList<>(section.auxiliaryText());
         BankRegistry.BankInfo bank = BankRegistry.detect(filename, bankTextHints);
         String suggestedName = bank.officialName() != null ? bank.officialName() : "Bank Statement Import";
 
+        // A credit-card statement's own signal rarely lives in a table COLUMN the way CSV's
+        // StatementValidator.scanRow can key off (e.g. "Card Number") -- Axis/HDFC-style layouts
+        // carry it only in a free-text payment-summary block ("Total Payment Due", "Minimum
+        // Amount Due") that sits above the transaction table, i.e. in this section's own
+        // auxiliaryText, not in any row. Checking both keeps this correct for either shape.
+        boolean creditCardSignals = section.rows().stream().anyMatch(row ->
+                CsvParser.hasHeaderMatch(row, "card number", "minimum due", "minimum amount due"))
+                || section.auxiliaryText().stream().anyMatch(this::containsCreditCardTextSignal);
+
         return new DetectedAccountInfo(
                 suggestedName,
-                "SAVINGS", // Milestone 1 scope is a savings-statement layout only -- see package doc
+                creditCardSignals ? "CREDIT_CARD" : "SAVINGS",
                 openingBalance, closingBalance, statementStart, statementEnd,
-                metadata.accountNumberMasked(), null, null,
+                metadata.accountNumberMasked(), metadata.creditLimit(), metadata.paymentDueDate(),
                 metadata.accountHolderName(), metadata.branchName(), metadata.ifscCode(),
                 AccountDto.BankDto.from(bank));
+    }
+
+    private boolean containsCreditCardTextSignal(String line) {
+        if (line == null) return false;
+        String lower = line.toLowerCase(Locale.ROOT);
+        return lower.contains("total payment due") || lower.contains("minimum amount due")
+                || lower.contains("minimum due") || lower.contains("credit limit") || lower.contains("card number");
     }
 }

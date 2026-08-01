@@ -50,8 +50,14 @@ public class ImportController {
     // delete) is completely unaware whether a session came from here or from /csv/stage above --
     // both produce the identical StagingSessionResponse/ImportSession shape, so nothing else in
     // this controller needed to change for PDF support.
+    //
+    // Response shape changed from StagingSessionResponse to PdfStagingSessionResponse to carry a
+    // multi-account PDF's several detected sections (e.g. HSBC's composite statement, which
+    // bundles a savings-account section and a credit-card section in one file) -- the
+    // single-account case (multiAccount: false) still carries the exact same `staging` payload
+    // this endpoint always returned, just wrapped in the new envelope.
     @PostMapping(value = "/pdf/stage", consumes = "multipart/form-data")
-    public ResponseEntity<ApiResponse<StagingSessionResponse>> stagePdf(@RequestParam("file") MultipartFile file) throws Exception {
+    public ResponseEntity<ApiResponse<PdfStagingSessionResponse>> stagePdf(@RequestParam("file") MultipartFile file) throws Exception {
         return ResponseEntity.ok(ApiResponse.ok(
                 concurrencyLimiter.runGated(() -> importService.parseAndStagePdfWithSession(currentUser.id(), file))));
     }
@@ -62,6 +68,13 @@ public class ImportController {
     @PostMapping("/csv/confirm")
     public ResponseEntity<ApiResponse<ConfirmResponse>> confirm(@RequestBody ConfirmRequest request) {
         return ResponseEntity.ok(ApiResponse.ok(importService.confirmSession(currentUser.id(), request), "Import complete"));
+    }
+
+    // Confirms every account section of a multi-account PDF staging session together (see
+    // ImportService.confirmMultiSection) -- used only when /pdf/stage returned multiAccount: true.
+    @PostMapping("/pdf/confirm-multi")
+    public ResponseEntity<ApiResponse<MultiAccountConfirmResponse>> confirmMulti(@RequestBody MultiAccountConfirmRequest request) {
+        return ResponseEntity.ok(ApiResponse.ok(importService.confirmMultiSection(currentUser.id(), request), "Import complete"));
     }
 
     // ADR-0002: "your unfinished imports" -- lets the frontend offer to resume a staged-but-not-

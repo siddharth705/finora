@@ -31,7 +31,7 @@ public class TransactionNormalizer {
     /** Returns null when the row doesn't have enough signal to be a transaction (no recognizable
      *  date or amount column value) — callers should skip such rows rather than fail the import. */
     public StagedRow normalize(UUID userId, Map<String, String> row) {
-        String dateRaw = CsvParser.firstNonBlank(row, "date", "transaction_date", "txn date", "transaction date", "value date");
+        String dateRaw = CsvParser.firstNonBlank(row, "date", "transaction_date", "txn date", "transaction date", "value date", "date & time");
         // "balance" is last-resort on purpose: a PDF statement's OPENING BALANCE/CLOSING BALANCE
         // rows (see PdfPreviewGenerator/PdfTableLocator) carry no debit or credit value at all --
         // only a Balance column -- so without this fallback those two rows have a date but no
@@ -43,6 +43,7 @@ public class TransactionNormalizer {
         String amountRaw = CsvParser.firstNonBlank(row, "amount", "debit", "credit",
                 "dr amount", "cr amount", "debit amount", "credit amount",
                 "withdrawal amt", "withdrawal amount", "deposit amt", "deposit amount",
+                "deposits", "withdrawals",
                 "balance", "running balance", "closing balance");
         if (dateRaw == null || amountRaw == null) return null;
 
@@ -56,7 +57,7 @@ public class TransactionNormalizer {
         // built by CsvParser always has an entry per header regardless of whether that row's
         // value is blank), so what actually indicates income is a *non-blank* value in the
         // credit column, not just the column's presence.
-        String creditRaw = CsvParser.firstNonBlank(row, "credit", "cr amount", "credit amount", "deposit amt", "deposit amount");
+        String creditRaw = CsvParser.firstNonBlank(row, "credit", "cr amount", "credit amount", "deposit amt", "deposit amount", "deposits");
         // Bug fix: a unified Amount + Type column layout (one amount column, a separate Type
         // column holding literally "DR"/"CR" -- e.g. PNB ONE's PDF/CSV exports) has neither a
         // "credit" column nor a Type value containing the literal word "income", so every row
@@ -65,14 +66,24 @@ public class TransactionNormalizer {
         // an EXPENSE (with the sign flattened to positive by the .abs() above, so it displayed as
         // a debit in the ledger). Checked ahead of the credit-column-presence fallback since it's
         // the more specific, more authoritative signal when a Type column exists at all.
+        //
+        // Lowest-priority fallback: a single Amount column with no separate Type/Credit column at
+        // all (Axis's "37.94 Dr" / "10,081.99 Cr", HDFC's leading "+" for a credit) -- neither of
+        // the checks above ever fires for this shape, since there's no Type/Credit column to find,
+        // so every row would otherwise default to EXPENSE regardless of its actual sign. Only
+        // consulted once every more specific column-based signal has already come up empty.
         boolean isIncome;
         String typeNormalized = typeRaw == null ? null : typeRaw.trim().toLowerCase();
         if ("cr".equals(typeNormalized) || "credit".equals(typeNormalized)) {
             isIncome = true;
         } else if ("dr".equals(typeNormalized) || "debit".equals(typeNormalized)) {
             isIncome = false;
+        } else if (typeRaw != null && typeRaw.toLowerCase().contains("income")) {
+            isIncome = true;
+        } else if (creditRaw != null) {
+            isIncome = true;
         } else {
-            isIncome = (typeRaw != null && typeRaw.toLowerCase().contains("income")) || creditRaw != null;
+            isIncome = Boolean.TRUE.equals(CsvParser.detectSignFromRawAmount(amountRaw));
         }
         String type = isIncome ? "INCOME" : "EXPENSE";
 
@@ -83,7 +94,8 @@ public class TransactionNormalizer {
         // work with, and CategoryRules.extractMerchant("") falls back to the literal string
         // "unknown" -- which is what actually showed up in the ledger's Description column
         // (Ledger.tsx falls back to `t.merchant` when `t.description` is empty).
-        String description = Optional.ofNullable(CsvParser.firstNonBlank(row, "description", "narration", "remarks", "particulars")).orElse("");
+        String description = Optional.ofNullable(CsvParser.firstNonBlank(row, "description", "narration", "remarks", "particulars",
+                "transaction description", "transaction details")).orElse("");
         String fileCategory = CsvParser.firstNonBlank(row, "category");
 
         // Bug fix: every credit/income row used to be hardcoded to "Salary" regardless of what it

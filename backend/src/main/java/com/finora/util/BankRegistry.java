@@ -111,13 +111,13 @@ public final class BankRegistry {
         // ---------------- Private Banks ----------------
         register("HDFC", "HDFC Bank", "HDFC Bank", "#004C8F", "HDFC", "hdfc",
                 Category.PRIVATE, "https://www.hdfcbank.com", "HDFC",
-                new String[]{"HDFC", "HDFCBANK"});
+                new String[]{"HDFC", "HDFCBANK", "TATA NEU"});
         register("ICICI", "ICICI Bank", "ICICI Bank", "#F37021", "ICICI", "icici",
                 Category.PRIVATE, "https://www.icicibank.com", "ICIC",
                 new String[]{"ICICI", "ICICIBANK"});
         register("AXIS", "Axis Bank", "Axis Bank", "#97144D", "AXIS", "axis",
                 Category.PRIVATE, "https://www.axisbank.com", "UTIB",
-                new String[]{"AXIS", "AXISBANK"});
+                new String[]{"AXIS", "AXISBANK", "NEO RUPAY"});
         register("KOTAK", "Kotak Mahindra Bank", "Kotak Mahindra", "#ED232A", "K", "kotak",
                 Category.PRIVATE, "https://www.kotak.com", "KKBK",
                 new String[]{"KOTAK", "KOTAKMAHINDRA", "KOTAKMAHINDRABANK"});

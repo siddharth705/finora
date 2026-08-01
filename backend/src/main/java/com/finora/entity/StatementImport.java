@@ -38,6 +38,13 @@ public class StatementImport extends BaseEntity {
     @Column(name = "source_format", nullable = false)
     private String sourceFormat = "CSV";
 
+    /** Which section (0-based) of a multi-account PDF this row came from -- null for every
+     *  CSV/single-account-PDF import. Required for reimport() to replay the correct section of a
+     *  composite statement (e.g. HSBC) instead of always re-parsing section 0 -- see
+     *  ImportService.parseAndStageAnyFormat()'s section-aware branch. */
+    @Column(name = "source_section_index")
+    private Integer sourceSectionIndex;
+
     // Raw CSV bytes — kept so "Re-import Statement" can replay the exact file and "Download
     // Original File" has something to serve. Lazy-fetched: every list/history view only needs
     // the metadata columns, not the file bytes, so this shouldn't ride along on those queries.
@@ -81,6 +88,8 @@ public class StatementImport extends BaseEntity {
     public void setFileName(String fileName) { this.fileName = fileName; }
     public String getSourceFormat() { return sourceFormat; }
     public void setSourceFormat(String sourceFormat) { this.sourceFormat = sourceFormat; }
+    public Integer getSourceSectionIndex() { return sourceSectionIndex; }
+    public void setSourceSectionIndex(Integer sourceSectionIndex) { this.sourceSectionIndex = sourceSectionIndex; }
     public byte[] getFileContent() { return fileContent; }
     public void setFileContent(byte[] fileContent) { this.fileContent = fileContent; }
     public LocalDate getStatementPeriodStart() { return statementPeriodStart; }

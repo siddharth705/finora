@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finora.dto.ImportDto.DetectedAccountInfo;
+import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.dto.ImportDto.StagedRow;
 import com.finora.entity.ImportSession;
 import com.finora.exception.ApiException;
@@ -58,6 +59,27 @@ public class ImportSessionService {
         session.setFileContent(fileContent);
         session.setStagedRowsJson(writeJson(rows));
         session.setDetectedAccountJson(writeJson(detectedAccount));
+        session.setExpiresAt(Instant.now().plus(SESSION_TTL));
+        return importSessionRepository.save(session);
+    }
+
+    /** Multi-account equivalent of {@link #createSession} -- for a PDF upload where
+     *  {@code PdfPreviewGenerator.generateSections} detected more than one account section (e.g.
+     *  HSBC's composite statement). Populates {@code sectionsJson} instead of the two
+     *  single-account JSON columns, and marks the session {@link ImportSession#KIND_MULTI_ACCOUNT}
+     *  so {@link #readStagedRows}/{@link #readDetectedAccount} refuse to read it by mistake. */
+    @Transactional
+    public ImportSession createMultiSection(UUID userId, String fileName, byte[] fileContent,
+                                             List<StagedAccountSection> sections) {
+        importSessionRepository.deleteAll(
+                importSessionRepository.findByUserIdAndExpiresAtBefore(userId, Instant.now()));
+
+        ImportSession session = new ImportSession();
+        session.setUserId(userId);
+        session.setFileName(fileName);
+        session.setFileContent(fileContent);
+        session.setSessionKind(ImportSession.KIND_MULTI_ACCOUNT);
+        session.setSectionsJson(writeJson(sections));
         session.setExpiresAt(Instant.now().plus(SESSION_TTL));
         return importSessionRepository.save(session);
     }
@@ -122,11 +144,31 @@ public class ImportSessionService {
     }
 
     public List<StagedRow> readStagedRows(ImportSession session) {
+        requireKind(session, ImportSession.KIND_SINGLE_ACCOUNT);
         return readJson(session.getStagedRowsJson(), new TypeReference<List<StagedRow>>() {});
     }
 
     public DetectedAccountInfo readDetectedAccount(ImportSession session) {
+        requireKind(session, ImportSession.KIND_SINGLE_ACCOUNT);
         return readJson(session.getDetectedAccountJson(), DetectedAccountInfo.class);
+    }
+
+    /** Multi-account equivalent of {@link #readStagedRows}/{@link #readDetectedAccount} -- see
+     *  {@link #createMultiSection}. */
+    public List<StagedAccountSection> readSections(ImportSession session) {
+        requireKind(session, ImportSession.KIND_MULTI_ACCOUNT);
+        return readJson(session.getSectionsJson(), new TypeReference<List<StagedAccountSection>>() {});
+    }
+
+    /** Guards against reading the wrong pair of JSON columns for a session's actual kind --
+     *  e.g. a client calling the single-account confirm endpoint against a session that was
+     *  actually staged as MULTI_ACCOUNT (sectionsJson populated, the other two columns null). */
+    private void requireKind(ImportSession session, String expectedKind) {
+        if (!expectedKind.equals(session.getSessionKind())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "This import session is a " + session.getSessionKind()
+                            + " session -- use the matching stage/confirm endpoint for it.");
+        }
     }
 
     private String writeJson(Object value) {

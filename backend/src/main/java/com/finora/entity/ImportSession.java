@@ -33,6 +33,9 @@ public class ImportSession {
     public static final String STATUS_STAGED = "STAGED";
     public static final String STATUS_CONFIRMED = "CONFIRMED";
 
+    public static final String KIND_SINGLE_ACCOUNT = "SINGLE_ACCOUNT";
+    public static final String KIND_MULTI_ACCOUNT = "MULTI_ACCOUNT";
+
     @Id
     @GeneratedValue
     private UUID id;
@@ -46,11 +49,24 @@ public class ImportSession {
     @Column(name = "file_content", nullable = false)
     private byte[] fileContent;
 
-    @Column(name = "staged_rows_json", nullable = false, columnDefinition = "TEXT")
+    // Nullable as of V37: populated for a SINGLE_ACCOUNT session, left null for a MULTI_ACCOUNT
+    // one (which uses sectionsJson instead) -- see ImportSessionService's read-side guard, which
+    // throws a clear error rather than letting a caller silently read null/garbage from the wrong
+    // pair of columns for a given session's actual kind.
+    @Column(name = "staged_rows_json", columnDefinition = "TEXT")
     private String stagedRowsJson;
 
-    @Column(name = "detected_account_json", nullable = false, columnDefinition = "TEXT")
+    @Column(name = "detected_account_json", columnDefinition = "TEXT")
     private String detectedAccountJson;
+
+    // Jackson-serialized List<ImportDto.StagedAccountSection> -- populated only for a
+    // MULTI_ACCOUNT session (e.g. an HSBC composite-statement upload detecting more than one
+    // account section), left null for a SINGLE_ACCOUNT one.
+    @Column(name = "sections_json", columnDefinition = "TEXT")
+    private String sectionsJson;
+
+    @Column(name = "session_kind", nullable = false)
+    private String sessionKind = KIND_SINGLE_ACCOUNT;
 
     @Column(nullable = false)
     private String status = STATUS_STAGED;
@@ -75,6 +91,10 @@ public class ImportSession {
     public void setStagedRowsJson(String stagedRowsJson) { this.stagedRowsJson = stagedRowsJson; }
     public String getDetectedAccountJson() { return detectedAccountJson; }
     public void setDetectedAccountJson(String detectedAccountJson) { this.detectedAccountJson = detectedAccountJson; }
+    public String getSectionsJson() { return sectionsJson; }
+    public void setSectionsJson(String sectionsJson) { this.sectionsJson = sectionsJson; }
+    public String getSessionKind() { return sessionKind; }
+    public void setSessionKind(String sessionKind) { this.sessionKind = sessionKind; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public Instant getCreatedAt() { return createdAt; }

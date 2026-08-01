@@ -32,6 +32,8 @@ public class PdfMetadataExtractor {
     private static final Pattern BRANCH = labelPattern("Branch(?: Name)?");
     private static final Pattern IFSC = labelPattern("IFSC(?: Code)?");
     private static final Pattern STATEMENT_PERIOD = labelPattern("Statement Period");
+    private static final Pattern CREDIT_LIMIT = labelPattern("(?:Total )?Credit Limit(?: \\(Including Cash\\))?");
+    private static final Pattern PAYMENT_DUE_DATE = labelPattern("(?:Payment )?Due Date");
 
     private static final DateTimeFormatter[] DATE_FORMATS = {
             DateTimeFormatter.ofPattern("dd-MM-yyyy"),
@@ -44,7 +46,8 @@ public class PdfMetadataExtractor {
 
     public record ExtractedMetadata(
             String accountHolderName, String accountNumberMasked, String branchName,
-            String ifscCode, LocalDate statementPeriodStart, LocalDate statementPeriodEnd
+            String ifscCode, LocalDate statementPeriodStart, LocalDate statementPeriodEnd,
+            java.math.BigDecimal creditLimit, LocalDate paymentDueDate
     ) {}
 
     public ExtractedMetadata extract(List<String> preTableLines) {
@@ -54,6 +57,8 @@ public class PdfMetadataExtractor {
         String ifscCode = null;
         LocalDate periodStart = null;
         LocalDate periodEnd = null;
+        java.math.BigDecimal creditLimit = null;
+        LocalDate paymentDueDate = null;
 
         for (String line : preTableLines) {
             String holder = firstGroup(ACCOUNT_HOLDER, line);
@@ -73,10 +78,22 @@ public class PdfMetadataExtractor {
                 LocalDate[] parsed = parsePeriod(period);
                 periodStart = parsed[0];
                 periodEnd = parsed[1];
+                continue;
             }
+
+            // Checked ahead of PAYMENT_DUE_DATE below since "Credit Limit" is the more specific
+            // label of the two (a payment-summary block commonly lists both fields on separate
+            // lines, and neither regex is a prefix of the other, but ordering follows the same
+            // "most specific signal first" convention as the rest of this loop).
+            String limit = firstGroup(CREDIT_LIMIT, line);
+            if (limit != null) { creditLimit = com.finora.imports.CsvParser.parseNumeric(limit); continue; }
+
+            String dueDate = firstGroup(PAYMENT_DUE_DATE, line);
+            if (dueDate != null) paymentDueDate = parseDate(dueDate);
         }
 
-        return new ExtractedMetadata(accountHolderName, accountNumberMasked, branchName, ifscCode, periodStart, periodEnd);
+        return new ExtractedMetadata(accountHolderName, accountNumberMasked, branchName, ifscCode,
+                periodStart, periodEnd, creditLimit, paymentDueDate);
     }
 
     private String firstGroup(Pattern pattern, String line) {

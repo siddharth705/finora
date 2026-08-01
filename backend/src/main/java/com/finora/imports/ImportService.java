@@ -118,14 +118,33 @@ public class ImportService {
      * PDF equivalent of parseAndStageWithSession() above -- same session-creation contract,
      * different extraction path (com.finora.imports.pdf.PdfPreviewGenerator instead of
      * PreviewGenerator/CsvParser). Everything from this point on (ImportSession, confirmSession(),
-     * review, confirm) is identical regardless of which staging path produced it.
+     * review, confirm) is identical regardless of which staging path produced it, EXCEPT when
+     * PdfPreviewGenerator detects more than one account section in the same file (e.g. HSBC's
+     * "Composite Statement", which bundles a savings-account section and a credit-card section in
+     * one PDF) -- that case branches to a multi-account session and response shape instead, since
+     * a single ConfirmRequest/DetectedAccountInfo genuinely can't represent N accounts at once.
      */
-    public StagingSessionResponse parseAndStagePdfWithSession(UUID userId, MultipartFile file) throws IOException {
+    public PdfStagingSessionResponse parseAndStagePdfWithSession(UUID userId, MultipartFile file) throws IOException {
         byte[] fileContent = file.getBytes();
         String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "statement.pdf";
-        StagingResponse staged = pdfPreviewGenerator.generate(userId, fileName, fileContent);
-        var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount());
-        return new StagingSessionResponse(session.getId(), staged);
+        List<StagedAccountSection> sections = pdfPreviewGenerator.generateSections(userId, fileName, fileContent);
+
+        if (sections.size() <= 1) {
+            // The common case (and the only case a CSV upload can ever produce): behaves exactly
+            // as this method always has, just wrapped in the new response envelope.
+            StagingResponse staged = sections.isEmpty()
+                    ? new StagingResponse(List.of(), 0, 0, null)
+                    : toStagingResponse(sections.get(0));
+            var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount());
+            return new PdfStagingSessionResponse(session.getId(), false, staged, null);
+        }
+
+        var session = importSessionService.createMultiSection(userId, fileName, fileContent, sections);
+        return new PdfStagingSessionResponse(session.getId(), true, null, sections);
+    }
+
+    private StagingResponse toStagingResponse(StagedAccountSection section) {
+        return new StagingResponse(section.rows(), section.totalParsed(), section.flaggedDuplicates(), section.detectedAccount());
     }
 
     /**
@@ -154,9 +173,24 @@ public class ImportService {
      * extension). Used by reimport() specifically; the two *upload* entry points
      * (parseAndStageWithSession / parseAndStagePdfWithSession) already know their own format
      * directly and don't need this routing at all.
+     *
+     * sourceSectionIndex (V37) is the section-aware half of this same routing: a StatementImport
+     * that came from section N of a multi-account PDF (e.g. HSBC's composite statement) must be
+     * re-parsed against that SAME section, not section 0 -- otherwise reimport() would silently
+     * replay a different account's transactions against this one. Null for every CSV import and
+     * every single-account PDF import, which re-parse exactly as before.
      */
-    public StagingResponse parseAndStageAnyFormat(UUID userId, String sourceFormat, String filename, byte[] content) throws IOException {
+    public StagingResponse parseAndStageAnyFormat(UUID userId, String sourceFormat, String filename, byte[] content,
+                                                   Integer sourceSectionIndex) throws IOException {
         if ("PDF".equalsIgnoreCase(sourceFormat)) {
+            if (sourceSectionIndex != null) {
+                List<StagedAccountSection> sections = pdfPreviewGenerator.generateSections(userId, filename, content);
+                if (sourceSectionIndex >= sections.size()) {
+                    throw new ApiException(HttpStatus.CONFLICT,
+                            "This statement's account sections no longer match what was originally imported -- re-upload the file to import it fresh.");
+                }
+                return toStagingResponse(sections.get(sourceSectionIndex));
+            }
             return pdfPreviewGenerator.generate(userId, filename, content);
         }
         return parseAndStage(userId, filename, new java.io.ByteArrayInputStream(content));
@@ -165,6 +199,48 @@ public class ImportService {
     public ConfirmResponse confirm(UUID userId, MultipartFile file, ConfirmRequest request) throws IOException {
         String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "statement.csv";
         return confirm(userId, fileName, file.getBytes(), request);
+    }
+
+    /**
+     * Confirms every account section of a multi-account PDF staging session together (see
+     * PdfPreviewGenerator.generateSections / ImportSessionService.createMultiSection) -- e.g.
+     * HSBC's composite statement, once staged, surfaces a savings-account section and a
+     * credit-card section for the user to review side by side, and this confirms both in one
+     * request rather than requiring two separate uploads of the same file.
+     *
+     * Deliberately loops calling the existing, unmodified per-account confirm() overload once per
+     * section rather than duplicating its transaction-import/categorization/reconciliation logic
+     * here -- each section becomes its own Account (existing or new) and its own StatementImport
+     * row, each storing this same multi-account PDF's full bytes (so each stays independently
+     * re-importable later) -- an accepted, if N-fold-redundant, storage cost for a v1 of this.
+     */
+    @Transactional
+    public MultiAccountConfirmResponse confirmMultiSection(UUID userId, MultiAccountConfirmRequest request) {
+        if (request.sessionId() == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "sessionId is required.");
+        }
+        var session = importSessionService.claimForConfirmation(userId, request.sessionId());
+        var stagedSections = importSessionService.readSections(session);
+        if (stagedSections.size() != request.sections().size()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "The reviewed sections don't match what was staged for this import session -- try staging again.");
+        }
+
+        List<ConfirmResponse> responses = new ArrayList<>();
+        for (int i = 0; i < request.sections().size(); i++) {
+            SectionConfirm sectionConfirm = request.sections().get(i);
+            StagedAccountSection stagedSection = stagedSections.get(i);
+            if (stagedSection.rows().size() != sectionConfirm.rows().size()) {
+                throw new ApiException(HttpStatus.BAD_REQUEST,
+                        "The reviewed rows for account " + (i + 1) + " don't match what was staged for this import session -- try staging again.");
+            }
+            ConfirmRequest perAccountRequest = new ConfirmRequest(
+                    null, // this section's ConfirmRequest doesn't carry its own sessionId -- the session is claimed once, above, for the whole multi-account request
+                    sectionConfirm.rows(), sectionConfirm.existingAccountId(), sectionConfirm.newAccount(),
+                    sectionConfirm.statementOpeningBalance(), sectionConfirm.statementClosingBalance());
+            responses.add(confirm(userId, session.getFileName(), session.getFileContent(), perAccountRequest, i));
+        }
+        return new MultiAccountConfirmResponse(responses);
     }
 
     /**
@@ -210,6 +286,18 @@ public class ImportService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request) {
+        return confirm(userId, fileName, fileContent, request, null);
+    }
+
+    /**
+     * sourceSectionIndex-aware variant used by {@link #confirmMultiSection} -- every other caller
+     * (the byte-array overload above, confirmSession()) goes through with {@code null}, which
+     * this method treats identically to how confirm() has always behaved: no
+     * StatementImport.sourceSectionIndex recorded, since there's only ever one section to record
+     * an index into.
+     */
+    @Transactional
+    public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request, Integer sourceSectionIndex) {
         long startedAtMs = System.currentTimeMillis();
         List<String> accountsCreated = new ArrayList<>();
 
@@ -291,6 +379,7 @@ public class ImportService {
         // re-derived from the filename later at reimport time (see
         // StatementImportService.reimport()'s own comment for why that was a real fragility).
         statementImport.setSourceFormat(fileName != null && fileName.toLowerCase().endsWith(".pdf") ? "PDF" : "CSV");
+        statementImport.setSourceSectionIndex(sourceSectionIndex);
         statementImport.setFileContent(fileContent);
         statementImport.setStatementPeriodStart(minDate);
         statementImport.setStatementPeriodEnd(maxDate);

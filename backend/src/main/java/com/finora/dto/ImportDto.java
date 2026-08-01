@@ -56,6 +56,40 @@ public class ImportDto {
 
     public record StagingResponse(List<StagedRow> rows, int totalParsed, int flaggedDuplicates, DetectedAccountInfo detectedAccount) {}
 
+    /** One detected account section within a single PDF upload -- e.g. HSBC's "Composite
+     *  Statement" bundles a savings-account section and a credit-card section in one file, each
+     *  of which becomes one of these. Structurally identical to {@link StagingResponse}; kept as
+     *  its own type rather than reused directly so a multi-section response's shape
+     *  ({@link PdfStagingSessionResponse}) reads unambiguously as "a list of these," not "a list
+     *  of the same type used for the single-account case," which would invite confusing the two. */
+    public record StagedAccountSection(DetectedAccountInfo detectedAccount, List<StagedRow> rows,
+                                        int totalParsed, int flaggedDuplicates) {}
+
+    /** Response shape for POST /import/pdf/stage. Exactly one of {@code staging}/{@code sections}
+     *  is populated, selected by {@code multiAccount}: a PDF with one detected account section
+     *  (the common case, and the only case CSV upload can ever produce) returns the same
+     *  {@code staging} shape the endpoint always has, unchanged; a PDF with more than one section
+     *  detected (e.g. HSBC's composite statement) returns {@code sections} instead, and the
+     *  frontend review screen needs a per-section "Account 1 of N" UI to review/confirm each one
+     *  before posting {@link MultiAccountConfirmRequest}. */
+    public record PdfStagingSessionResponse(UUID sessionId, boolean multiAccount,
+                                             StagingResponse staging, List<StagedAccountSection> sections) {}
+
+    /** One account's worth of reviewed rows within a {@link MultiAccountConfirmRequest} --
+     *  structurally identical to {@link ConfirmRequest} minus the sessionId (shared once at the
+     *  top level, not repeated per section). */
+    public record SectionConfirm(
+            List<ConfirmedRow> rows, UUID existingAccountId, NewAccountRequest newAccount,
+            BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance
+    ) {}
+
+    /** Confirms every section of a multi-account PDF staging session together -- see
+     *  ImportService.confirmMultiSection(), which loops calling the existing single-account
+     *  confirm() once per section rather than duplicating that logic here. */
+    public record MultiAccountConfirmRequest(UUID sessionId, List<SectionConfirm> sections) {}
+
+    public record MultiAccountConfirmResponse(List<ConfirmResponse> perAccount) {}
+
     /** Wraps StagingResponse with the persisted session id (ADR-0002) -- returned by the public
      *  /import/csv/stage endpoint specifically. StagingResponse itself is left untouched (no
      *  sessionId field) so the internal byte-stream parseAndStage() overload used by

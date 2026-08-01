@@ -20,6 +20,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
 
 /**
@@ -75,13 +76,13 @@ class StatementImportServiceReimportTest {
     void reimport_ofAPdfSourcedStatement_routesThroughThePdfPath_notTheCsvOne() throws Exception {
         when(statementImportRepository.findById(statementImportId))
                 .thenReturn(Optional.of(statementWithFile("sbi_statement.pdf", "PDF")));
-        when(importService.parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("sbi_statement.pdf"), any()))
+        when(importService.parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("sbi_statement.pdf"), any(), isNull()))
                 .thenReturn(new StagingResponse(List.of(), 0, 0,
                         new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null, null, null, null)));
 
         service.reimport(userId, statementImportId);
 
-        verify(importService).parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("sbi_statement.pdf"), any());
+        verify(importService).parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("sbi_statement.pdf"), any(), isNull());
         // The old (buggy) call path must never fire for a PDF-sourced statement.
         verify(importService, never()).parseAndStage(any(), any(), any(java.io.InputStream.class));
     }
@@ -90,14 +91,14 @@ class StatementImportServiceReimportTest {
     void reimport_ofACsvSourcedStatement_stillWorksTheSameWayAsBefore() throws Exception {
         when(statementImportRepository.findById(statementImportId))
                 .thenReturn(Optional.of(statementWithFile("hdfc_statement.csv", "CSV")));
-        when(importService.parseAndStageAnyFormat(eq(userId), eq("CSV"), eq("hdfc_statement.csv"), any()))
+        when(importService.parseAndStageAnyFormat(eq(userId), eq("CSV"), eq("hdfc_statement.csv"), any(), isNull()))
                 .thenReturn(new StagingResponse(List.of(), 0, 0,
                         new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null, null, null, null)));
 
         var result = service.reimport(userId, statementImportId);
 
         assertThat(result.accountId()).isEqualTo(accountId);
-        verify(importService).parseAndStageAnyFormat(eq(userId), eq("CSV"), eq("hdfc_statement.csv"), any());
+        verify(importService).parseAndStageAnyFormat(eq(userId), eq("CSV"), eq("hdfc_statement.csv"), any(), isNull());
     }
 
     @Test
@@ -108,12 +109,12 @@ class StatementImportServiceReimportTest {
         // stored field, not a guess from the name.
         when(statementImportRepository.findById(statementImportId))
                 .thenReturn(Optional.of(statementWithFile("export.dat", "PDF")));
-        when(importService.parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("export.dat"), any()))
+        when(importService.parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("export.dat"), any(), isNull()))
                 .thenReturn(new StagingResponse(List.of(), 0, 0,
                         new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null, null, null, null)));
 
         service.reimport(userId, statementImportId);
 
-        verify(importService).parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("export.dat"), any());
+        verify(importService).parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("export.dat"), any(), isNull());
     }
 }

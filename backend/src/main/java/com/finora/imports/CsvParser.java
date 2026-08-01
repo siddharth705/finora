@@ -136,10 +136,38 @@ public class CsvParser {
         return null;
     }
 
+    // Strips a trailing time-of-day component before trying the date-only formats above -- some
+    // real exports (HDFC's "DATE & TIME" column, e.g. "30/06/2026| 14:18") combine a date and a
+    // 24-hour or am/pm time in one cell, sometimes separated by a literal "|" glyph rather than
+    // plain whitespace (an artifact of how the statement's own PDF table renders that column's
+    // visual divider). A cell with no trailing time component is left untouched (no-op match).
+    private static final java.util.regex.Pattern TRAILING_TIME = java.util.regex.Pattern.compile(
+            "(?i)[\\s|]+\\d{1,2}:\\d{2}(:\\d{2})?\\s*(am|pm)?$");
+
     public static LocalDate parseDate(String raw) {
+        String withoutTime = TRAILING_TIME.matcher(raw).replaceFirst("");
         for (DateTimeFormatter fmt : DATE_FORMATS) {
-            try { return LocalDate.parse(raw, fmt); } catch (Exception ignored) {}
+            try { return LocalDate.parse(withoutTime, fmt); } catch (Exception ignored) {}
         }
+        return null;
+    }
+
+    /**
+     * Infers income (true) vs. expense (false) purely from a single amount cell's own text, for
+     * layouts with neither a separate Type column nor a separate Credit column -- e.g. Axis's
+     * "37.94 Dr" / "10,081.99 Cr" (one Amount column, Dr/Cr embedded in the value) or HDFC's
+     * leading "+" for a credit ("+ ₹440.00") with no marker at all on debit rows. Returns null
+     * when the raw string carries no such signal, so callers can fall through to their own
+     * default rather than this method inventing one.
+     */
+    public static Boolean detectSignFromRawAmount(String raw) {
+        if (raw == null) return null;
+        String s = raw.trim();
+        if (s.isEmpty()) return null;
+        String lower = s.toLowerCase();
+        if (lower.endsWith("cr") || lower.endsWith("cr.")) return true;
+        if (lower.endsWith("dr") || lower.endsWith("dr.")) return false;
+        if (s.startsWith("+")) return true;
         return null;
     }
 

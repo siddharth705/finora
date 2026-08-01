@@ -158,7 +158,7 @@ public class StatementImportService {
         // (Milestone 1). Now routes by the explicit sourceFormat recorded on this row at
         // confirm() time, not the filename's extension -- see
         // ImportService.parseAndStageAnyFormat's own doc comment for why that's more robust.
-        var staging = importService.parseAndStageAnyFormat(userId, si.getSourceFormat(), si.getFileName(), content);
+        var staging = importService.parseAndStageAnyFormat(userId, si.getSourceFormat(), si.getFileName(), content, si.getSourceSectionIndex());
 
         Account account = accountRepository.findById(si.getAccountId())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND,
