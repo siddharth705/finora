@@ -46,7 +46,8 @@ to leave at its default: local dev defaults, or must be explicitly set.
 | `ADMIN_APP_BASE_URL` | Recommended | `http://localhost:5174` | Same purpose as `APP_BASE_URL`, but for the admin portal specifically — see `EmailProperties.resolveBaseUrl()`. The user frontend and admin portal are separate deployed apps at separate origins, each with its own `/reset-password` page, but there's no separate admin auth service; without this set, an admin's "Forgot Password" links to the *user* app's reset page instead of the admin portal's own. Picked automatically from the request's `Origin` header — no frontend changes needed either way. | Leave unset only if you're fine with admin password resets linking to the wrong app |
 | `RESEND_API_KEY` | **Yes — hard boot-time requirement in `prod`** | empty | Resend API key; empty falls back to `NoOpEmailService` (logs the link instead of sending) | **No.** Unset, this used to just mean silent no-op emails; `ProductionConfigValidator` now refuses to *start* the `prod` profile at all if this is blank, because the actual failure mode is worse than "no email" — `NoOpEmailService.isConfigured()` returning `false` makes `AuthService.forgotPassword()` return the raw, valid reset link directly in the API response instead, a full account-takeover primitive for anyone who knows a user's email address. |
 | `EMAIL_FROM` | No | `onboarding@resend.dev` | "From" address for outgoing email | Only if you have your own verified sender |
-| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM_NUMBER` | **`TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`: Yes — hard boot-time requirement in `prod`. `TWILIO_FROM_NUMBER`: only needed to actually send.** | empty | Twilio credentials for OTP SMS; empty falls back to logging the OTP instead of sending it | **No.** Same escalation as `RESEND_API_KEY` above: `ProductionConfigValidator` refuses to start the `prod` profile if `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN` are blank, not just log a warning. |
+| `GOOGLE_APPLICATION_CREDENTIALS` | **Yes — hard boot-time requirement in `prod`** | unset | Absolute path to a Firebase service-account JSON key file; read directly by the Firebase Admin SDK (`FirebaseConfig`), not via a Spring `@ConfigurationProperties` binding — there's no `application.yml` key for this | **No.** `ProductionConfigValidator` refuses to start the `prod` profile unless `PhoneVerificationProvider.isConfigured()` (i.e. this file is present and valid) — see its own doc comment. Phone verification (registration, password reset, authenticated password change) fails with a 503 everywhere else if this is missing. |
+| *(unset)* | — | — | `FirebaseConfig.firebaseApp()` logs a warning and yields `Optional.empty()` — the app still starts (outside `prod`), but any phone-verification-gated flow fails until this is set | Acceptable only outside `prod` |
 | `FINORA_SETUP_KEY` | No | empty (auto-generated + written to `.finora/installation.key`) | First-run bootstrap installation key | See `docs/bootstrap-setup-future-work.md` — set explicitly rather than relying on a written file in any deployment without a persistent, host-readable filesystem |
 | `TRUST_PROXY_HEADERS` | **Yes, on Railway** | `false` | Whether `RateLimitFilter` trusts `X-Forwarded-For` for the real client IP | **Must be `true` on Railway** (or any deployment behind a real reverse proxy) — otherwise every user shares one rate-limit bucket. Must stay `false` anywhere not behind a trusted proxy, or rate limiting can be bypassed by spoofing the header. |
 | `UPLOAD_MAX_FILE_SIZE` / `UPLOAD_MAX_REQUEST_SIZE` | No | `10MB` | Multipart upload size limits (CSV/PDF statement import) | Yes |
@@ -97,10 +98,15 @@ APP_BASE_URL=https://finora-cng.pages.dev
 ADMIN_APP_BASE_URL=https://finora-admin.pages.dev
 RESEND_API_KEY=<your real Resend API key>
 EMAIL_FROM=<your verified sender address>
-TWILIO_ACCOUNT_SID=<your real Twilio Account SID>
-TWILIO_AUTH_TOKEN=<your real Twilio Auth Token>
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/firebase-service-account.json
 TRUST_PROXY_HEADERS=true
 ```
+
+`GOOGLE_APPLICATION_CREDENTIALS` must point at a real, readable file on the deployed instance —
+on Railway that typically means committing the JSON as a "Raw file" volume mount or writing it out
+from a base64'd env var at container startup, since Railway's Variables tab itself only stores
+strings, not files. Download the service-account key from Firebase Console → Project Settings →
+Service Accounts → "Generate new private key"; never commit it to source control.
 
 `CORS_ORIGINS` must list **both** frontend origins, comma-separated, no spaces around the comma
 (or trim them — `CorsConfig` already trims each entry) — a mismatch here is exactly what produces
@@ -112,29 +118,31 @@ linked it to the backend service.
 
 If `FINORA_SETUP_KEY` isn't set, the app starts fine — first-run bootstrap just falls back to
 writing/logging a generated key instead (see `docs/bootstrap-setup-future-work.md`).
-**`TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN` are different: they are hard boot-time requirements,
-same as `RESEND_API_KEY`** — see the next paragraph.
+**`GOOGLE_APPLICATION_CREDENTIALS` is different: it's a hard boot-time requirement, same as
+`RESEND_API_KEY`** — see the next paragraph.
 
 `ProductionConfigValidator` refuses to start the app at all (loud failure at boot, not a silent
 insecure default, and not a `restartPolicyMaxRetries` crash-loop you have to dig through logs to
 diagnose) if, while `SPRING_PROFILES_ACTIVE=prod`:
 - `JWT_SECRET` or `DB_PASSWORD` are still their local-dev placeholder values,
 - `RESEND_API_KEY` is blank, or
-- `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` are blank.
+- `PhoneVerificationProvider.isConfigured()` is false — i.e. `GOOGLE_APPLICATION_CREDENTIALS`
+  isn't set to a valid, readable Firebase service-account key file.
 
 **Set all four categories above *before* the first deploy with `SPRING_PROFILES_ACTIVE=prod`.**
-A real incident already happened here: a deploy went out with `prod` active but
-`RESEND_API_KEY`/`TWILIO_*` unset, and Railway crash-looped the service (`restartPolicyMaxRetries:
-5` in `railway.json` then leaves it "Crashed") — burning through the deploy's log history and
-free-tier build minutes before the cause was found. Two ways out if this happens to you:
-1. **Fix it properly** — set the real `RESEND_API_KEY`/`TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`
-   values (Resend and Twilio both have usable free/trial tiers) and redeploy.
+A real incident already happened here (back when this was `RESEND_API_KEY`/SMS-provider
+credentials, before the Firebase migration): a deploy went out with `prod` active but required
+config unset, and Railway crash-looped the service (`restartPolicyMaxRetries: 5` in
+`railway.json` then leaves it "Crashed") — burning through the deploy's log history and free-tier
+build minutes before the cause was found. Two ways out if this happens to you:
+1. **Fix it properly** — set the real `RESEND_API_KEY` and a valid `GOOGLE_APPLICATION_CREDENTIALS`
+   (see above) and redeploy.
 2. **Unblock immediately, fix later** — remove or change `SPRING_PROFILES_ACTIVE` so it isn't
    `prod` (e.g. delete the variable, or set it to `dev`), then redeploy. This is a deliberate,
    temporary trade: `ProductionConfigValidator` only runs in the `prod` profile, so this reopens
    the exact holes it exists to catch (password-reset links leaking in API responses instead of
-   being emailed; OTPs only ever logged, never sent) — acceptable while you're the only person
-   using the deployment to test, not once real users' accounts are on it.
+   being emailed; phone verification failing closed with a 503) — acceptable while you're the only
+   person using the deployment to test, not once real users' accounts are on it.
 
 ## Cloudflare (both frontends)
 
@@ -184,6 +192,15 @@ requests still fail after fixing `VITE_API_BASE_URL`, this is the next thing to 
 | `frontend/` | `VITE_BRANDFETCH_CLIENT_ID` | No | Optional bank-logo lookups; unset just skips that step |
 | `admin-portal/` | `VITE_API_BASE_URL` | **Yes** | Same as above, this app's own API client |
 | `admin-portal/` | `VITE_BACKEND_ORIGIN` | Yes, if Diagnostics' Swagger/Actuator links are used | Direct human-facing links that can't go through the API client |
+| both | `VITE_FIREBASE_API_KEY` / `VITE_FIREBASE_AUTH_DOMAIN` / `VITE_FIREBASE_PROJECT_ID` / `VITE_FIREBASE_STORAGE_BUCKET` / `VITE_FIREBASE_MESSAGING_SENDER_ID` / `VITE_FIREBASE_APP_ID` | **Yes** | Firebase Web SDK config (`lib/firebase.ts` in each app) that powers Firebase Phone Authentication (OTP send/confirm for registration, password reset, and admin password change) | **No.** Without these, `getFirebaseAuth()` throws the moment a phone-verification screen is actually used (`VerifyPhone.tsx`/`ResetPassword.tsx`) — everything else in the app keeps working since Firebase init is lazy, not at module load. |
+
+Copy Firebase Console → Project Settings → General → "Your apps" → the SDK config snippet's six
+values directly into the six `VITE_FIREBASE_*` vars above — this is the same Firebase project the
+backend's `GOOGLE_APPLICATION_CREDENTIALS` service account belongs to, and the same values in both
+`frontend/` and `admin-portal/`. Not secrets in the way an API key to a paid/quota-limited service
+would be (Firebase's own docs treat this config as safe to ship in a client bundle; access control
+is enforced server-side via the Admin SDK, not by hiding this object) — but still real per-project
+values, not placeholders.
 
 `.env.example` in each app's root documents these with the same detail as the table above — copy
 to `.env.local` for local overrides, or configure via your deploy pipeline's own env injection for
