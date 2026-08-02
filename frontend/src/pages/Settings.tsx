@@ -3,6 +3,7 @@ import { CheckCircle2, User, SlidersHorizontal, Sparkles, ShieldCheck, Info } fr
 import { userApi, workspaceApi, analyticsApi, type ImportStatistics } from '../api/endpoints';
 import { useTheme } from '../context/ThemeContext';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
+import { maskPhone } from '../lib/maskPhone';
 
 // v1 scope is deliberately capabilities-first, not roadmap-first: every section below reflects a
 // real, backed setting or fact. No "Coming soon" placeholders for 2FA, API keys, integrations,
@@ -39,19 +40,6 @@ function availableTimezones(): string[] {
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/);
   return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '?';
-}
-
-// Mirrors the backend's PhoneMasking.mask() exactly (3 trailing visible digits, "+" preserved
-// when present) -- used only in Security's confirmation row; Profile keeps the full number
-// visible, since that's the "your info" context, not the "don't expose this on screen" one.
-function maskPhone(phone: string): string {
-  const hasCountryCodePrefix = phone.startsWith('+');
-  const prefix = hasCountryCodePrefix ? '+' : '';
-  const digits = hasCountryCodePrefix ? phone.slice(1) : phone;
-  const VISIBLE_SUFFIX_LENGTH = 3;
-  if (digits.length <= VISIBLE_SUFFIX_LENGTH) return phone;
-  const visible = digits.slice(-VISIBLE_SUFFIX_LENGTH);
-  return prefix + '•'.repeat(digits.length - VISIBLE_SUFFIX_LENGTH) + visible;
 }
 
 function formatMonthYear(iso: string | null | undefined): string {

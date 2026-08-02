@@ -4,26 +4,33 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import VerifyPhone from './VerifyPhone';
 import { useAuth } from '../context/AuthContext';
-import { phoneApi } from '../api/endpoints';
+import { phoneApi, userApi } from '../api/endpoints';
+import { sendPhoneVerificationCode, confirmPhoneVerificationCode } from '../lib/phoneAuth';
 
 vi.mock('../context/AuthContext', () => ({
   useAuth: vi.fn(),
 }));
 
 vi.mock('../api/endpoints', () => ({
-  phoneApi: {
-    sendOtp: vi.fn(),
-    verifyOtp: vi.fn(),
-  },
+  phoneApi: { verify: vi.fn() },
+  userApi: { get: vi.fn() },
 }));
 
-function renderAt(path: string, state?: unknown) {
+vi.mock('../lib/phoneAuth', () => ({
+  sendPhoneVerificationCode: vi.fn(),
+  confirmPhoneVerificationCode: vi.fn(),
+  resetPhoneVerification: vi.fn(),
+}));
+
+const FAKE_CONFIRMATION = { confirm: vi.fn() } as any;
+
+function renderVerifyPhone() {
   vi.mocked(useAuth).mockReturnValue({
     token: 'tok', email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
     login: vi.fn(), register: vi.fn(), setPhoneVerified: vi.fn(), logout: vi.fn(),
   });
   return render(
-    <MemoryRouter initialEntries={[{ pathname: path, state }]}>
+    <MemoryRouter initialEntries={['/verify-phone']}>
       <Routes>
         <Route path="/verify-phone" element={<VerifyPhone />} />
       </Routes>
@@ -33,54 +40,86 @@ function renderAt(path: string, state?: unknown) {
 
 describe('VerifyPhone', () => {
   beforeEach(() => {
-    vi.mocked(phoneApi.sendOtp).mockReset().mockResolvedValue({
-      message: 'A verification code has been sent to your phone.',
-      devOtp: null,
-      maskedPhone: '+•••••••••705',
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'jane@example.com', fullName: 'Jane', lowBalanceThreshold: 2000, theme: 'system',
+      timezone: 'Asia/Kolkata', phoneNumber: '+919876543705', phoneVerified: false,
+      createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null,
     });
+    vi.mocked(sendPhoneVerificationCode).mockReset().mockResolvedValue(FAKE_CONFIRMATION);
+    vi.mocked(confirmPhoneVerificationCode).mockReset().mockResolvedValue('fake-firebase-id-token');
+    vi.mocked(phoneApi.verify).mockReset().mockResolvedValue({ message: 'Phone number verified.' });
   });
 
-  /**
-   * Bug fix: reached via Login.tsx (a returning user whose phone still isn't verified), no OTP
-   * had ever been issued to get here -- unlike Register.tsx, which sends one automatically and
-   * seeds this page's state with it. This mirrors admin-portal's VerifyPhone.tsx, which already
-   * always auto-sends for exactly this reason.
-   */
-  it('auto-sends a code on mount when reached with no router state (the login path)', async () => {
-    renderAt('/verify-phone');
+  it('fetches the real phone number and triggers Firebase to send a code on mount', async () => {
+    renderVerifyPhone();
 
-    await waitFor(() => expect(phoneApi.sendOtp).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(userApi.get).toHaveBeenCalled());
+    await waitFor(() => expect(sendPhoneVerificationCode).toHaveBeenCalledWith('+919876543705', expect.any(String)));
     expect(await screen.findByText(/\+•••••••••705/)).toBeInTheDocument();
   });
 
-  it('does NOT auto-send when reached via Register with a seeded code (avoids sending twice)', async () => {
-    renderAt('/verify-phone', { devOtp: '123456', maskedPhone: '+•••••••••705' });
+  it('keeps Verify disabled until a code has been sent and a 6-digit code is entered', async () => {
+    const user = userEvent.setup();
+    renderVerifyPhone();
+    await screen.findByText(/\+•••••••••705/);
 
-    // Give any accidental auto-send a chance to fire before asserting it didn't.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(phoneApi.sendOtp).not.toHaveBeenCalled();
-    expect(screen.getByText(/\+•••••••••705/)).toBeInTheDocument();
-    expect(screen.getByText('123456')).toBeInTheDocument();
+    const verifyButton = screen.getByRole('button', { name: /^verify$/i });
+    expect(verifyButton).toBeDisabled();
+
+    await user.type(screen.getByPlaceholderText('123456'), '123456');
+    expect(verifyButton).toBeEnabled();
   });
 
-  it('updates the displayed masked phone after clicking Resend', async () => {
+  it('submits the confirmed code, verifies with the backend, and marks the phone verified', async () => {
     const user = userEvent.setup();
-    // Seeded so the initial auto-send guard is skipped -- this test is about Resend specifically.
-    renderAt('/verify-phone', { devOtp: null, maskedPhone: '+•••••••••111' });
-    expect(screen.getByText(/\+•••••••••111/)).toBeInTheDocument();
-
-    vi.mocked(phoneApi.sendOtp).mockResolvedValueOnce({
-      message: 'A verification code has been sent to your phone.',
-      devOtp: null,
-      maskedPhone: '+•••••••••705',
+    const setPhoneVerified = vi.fn();
+    vi.mocked(useAuth).mockReturnValue({
+      token: 'tok', email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
+      login: vi.fn(), register: vi.fn(), setPhoneVerified, logout: vi.fn(),
     });
+    render(
+      <MemoryRouter initialEntries={['/verify-phone']}>
+        <Routes><Route path="/verify-phone" element={<VerifyPhone />} /></Routes>
+      </MemoryRouter>
+    );
+    await screen.findByText(/\+•••••••••705/);
+
+    await user.type(screen.getByPlaceholderText('123456'), '123456');
+    await user.click(screen.getByRole('button', { name: /^verify$/i }));
+
+    await waitFor(() => expect(confirmPhoneVerificationCode).toHaveBeenCalledWith(FAKE_CONFIRMATION, '123456'));
+    await waitFor(() => expect(phoneApi.verify).toHaveBeenCalledWith('fake-firebase-id-token'));
+    expect(setPhoneVerified).toHaveBeenCalledWith(true);
+  });
+
+  it('shows an inline error and does not verify with the backend when Firebase rejects the code', async () => {
+    vi.mocked(confirmPhoneVerificationCode).mockRejectedValue({ code: 'auth/invalid-verification-code' });
+    const user = userEvent.setup();
+    renderVerifyPhone();
+    await screen.findByText(/\+•••••••••705/);
+
+    await user.type(screen.getByPlaceholderText('123456'), '000000');
+    await user.click(screen.getByRole('button', { name: /^verify$/i }));
+
+    expect(await screen.findByText(/doesn't match/i)).toBeInTheDocument();
+    expect(phoneApi.verify).not.toHaveBeenCalled();
+  });
+
+  it('re-sends a code via Firebase when Resend is clicked', async () => {
+    const user = userEvent.setup();
+    renderVerifyPhone();
+    await screen.findByText(/\+•••••••••705/);
+    vi.mocked(sendPhoneVerificationCode).mockClear();
+
     await user.click(screen.getByText("Didn't get a code? Resend"));
 
-    expect(await screen.findByText(/\+•••••••••705/)).toBeInTheDocument();
+    await waitFor(() => expect(sendPhoneVerificationCode).toHaveBeenCalledTimes(1));
   });
 
-  it('falls back to generic text when no masked phone is available', () => {
-    renderAt('/verify-phone', { devOtp: '123456', maskedPhone: null });
-    expect(screen.getByText(/your mobile number/)).toBeInTheDocument();
+  it('shows a generic error when the initial send fails', async () => {
+    vi.mocked(sendPhoneVerificationCode).mockRejectedValue(new Error('network error'));
+    renderVerifyPhone();
+
+    expect(await screen.findByText(/could not send a verification code/i)).toBeInTheDocument();
   });
 });

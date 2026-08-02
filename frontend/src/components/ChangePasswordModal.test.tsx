@@ -3,10 +3,19 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ChangePasswordModal } from './ChangePasswordModal';
 import { passwordChangeApi } from '../api/endpoints';
+import { sendPhoneVerificationCode, confirmPhoneVerificationCode } from '../lib/phoneAuth';
 
 vi.mock('../api/endpoints', () => ({
   passwordChangeApi: { start: vi.fn(), verifyOtp: vi.fn(), complete: vi.fn() },
 }));
+
+vi.mock('../lib/phoneAuth', () => ({
+  sendPhoneVerificationCode: vi.fn(),
+  confirmPhoneVerificationCode: vi.fn(),
+  resetPhoneVerification: vi.fn(),
+}));
+
+const FAKE_CONFIRMATION = { confirm: vi.fn() } as any;
 
 function renderModal(onClose = vi.fn(), onSuccess = vi.fn()) {
   return { onClose, onSuccess, ...render(<ChangePasswordModal onClose={onClose} onSuccess={onSuccess} />) };
@@ -28,9 +37,11 @@ async function advanceToNewPasswordStep(user: ReturnType<typeof userEvent.setup>
 describe('ChangePasswordModal', () => {
   beforeEach(() => {
     vi.mocked(passwordChangeApi.start).mockReset().mockResolvedValue({
-      sessionId: 'session-1', maskedPhone: '+•••••••••705', devOtp: null,
+      sessionId: 'session-1', phoneNumber: '+919876543705', maskedPhone: '+•••••••••705',
     });
-    vi.mocked(passwordChangeApi.verifyOtp).mockReset().mockResolvedValue({ verified: true, message: 'Verified.' });
+    vi.mocked(sendPhoneVerificationCode).mockReset().mockResolvedValue(FAKE_CONFIRMATION);
+    vi.mocked(confirmPhoneVerificationCode).mockReset().mockResolvedValue('fake-firebase-id-token');
+    vi.mocked(passwordChangeApi.verifyOtp).mockReset().mockResolvedValue({ message: 'Verified.' });
     vi.mocked(passwordChangeApi.complete).mockReset().mockResolvedValue({
       message: 'Your password has been updated. This device stays signed in; every other device has been signed out.',
       otherDevicesSignedOut: true,
@@ -47,13 +58,14 @@ describe('ChangePasswordModal', () => {
       expect(screen.getByRole('button', { name: /send code/i })).toBeEnabled();
     });
 
-    it('calls passwordChangeApi.start and advances to the OTP step on success', async () => {
+    it('calls passwordChangeApi.start, sends a Firebase code to the real phone number, and advances to the OTP step', async () => {
       const user = userEvent.setup();
       renderModal();
 
       await advanceToOtpStep(user);
 
       expect(passwordChangeApi.start).toHaveBeenCalledWith('OldPass123!');
+      expect(sendPhoneVerificationCode).toHaveBeenCalledWith('+919876543705', expect.any(String));
       expect(screen.getByText(/\+•••••••••705/)).toBeInTheDocument();
     });
 
@@ -94,10 +106,8 @@ describe('ChangePasswordModal', () => {
       expect(screen.getByRole('button', { name: /^verify$/i })).toBeEnabled();
     });
 
-    it('shows an inline error and does not advance when the code is wrong', async () => {
-      vi.mocked(passwordChangeApi.verifyOtp).mockReset().mockResolvedValue({
-        verified: false, message: "That code doesn't match — check and try again.",
-      });
+    it('shows an inline error and does not advance when Firebase rejects the code', async () => {
+      vi.mocked(confirmPhoneVerificationCode).mockRejectedValue({ code: 'auth/invalid-verification-code' });
       const user = userEvent.setup();
       renderModal();
       await advanceToOtpStep(user);
@@ -107,15 +117,17 @@ describe('ChangePasswordModal', () => {
 
       expect(await screen.findByText(/doesn't match/i)).toBeInTheDocument();
       expect(screen.queryByLabelText(/^new password$/i)).not.toBeInTheDocument();
+      expect(passwordChangeApi.verifyOtp).not.toHaveBeenCalled();
     });
 
-    it('advances to the new-password step on a correct code', async () => {
+    it('advances to the new-password step on a correct code, sending the Firebase ID token to the backend', async () => {
       const user = userEvent.setup();
       renderModal();
 
       await advanceToNewPasswordStep(user);
 
-      expect(passwordChangeApi.verifyOtp).toHaveBeenCalledWith('session-1', '654321');
+      expect(confirmPhoneVerificationCode).toHaveBeenCalledWith(FAKE_CONFIRMATION, '654321');
+      expect(passwordChangeApi.verifyOtp).toHaveBeenCalledWith('session-1', 'fake-firebase-id-token');
       expect(screen.getByLabelText(/^new password$/i)).toBeInTheDocument();
     });
 

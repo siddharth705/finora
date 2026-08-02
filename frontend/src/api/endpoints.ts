@@ -8,14 +8,14 @@ import type {
 // Mirrors the backend's AuthDtos.AuthResponse. maskedPhone (see PhoneMasking on the backend) lets
 // VerifyPhone.tsx show which number a code was sent to -- e.g. "+•••••••••705" -- so a wrong or
 // missing country code on the account is visible on screen instead of silently failing to
-// deliver via the SMS provider.
+// deliver. The frontend fetches the REAL phone number separately (userApi.get(), once
+// authenticated) when it actually needs to hand it to Firebase's signInWithPhoneNumber().
 export interface AuthResponseDto {
   token: string;
   refreshToken: string;
   email: string;
   fullName: string;
   phoneVerified: boolean;
-  devOtp: string | null;
   maskedPhone: string | null;
 }
 
@@ -29,13 +29,15 @@ export const authApi = {
     api.post<AuthResponseDto>('/auth/login', { identifier, password }),
   forgotPassword: (email: string) =>
     api.post<{ message: string; devResetLink: string | null }>('/auth/forgot-password', { email }).then((r) => r.data),
-  // Second factor for password reset -- the reset token alone (proof of email access) is no
-  // longer sufficient; a phone OTP (proof of phone access) is required too, same principle as
-  // phone verification elsewhere. token is the same raw reset-link token from forgotPassword.
-  requestPasswordResetOtp: (token: string) =>
-    api.post<{ message: string; devOtp: string | null }>('/auth/reset-password/request-otp', { token }).then((r) => r.data),
-  resetPassword: (token: string, otp: string, newPassword: string) =>
-    api.post<{ message: string }>('/auth/reset-password', { token, otp, newPassword }).then((r) => r.data),
+  // Reveals the account's real phone number for a valid, unused reset link -- needed to call
+  // Firebase Phone Authentication directly (Firebase's own client SDK sends the OTP; this
+  // backend never does). token is the same raw reset-link token from forgotPassword.
+  resolveResetPasswordPhone: (token: string) =>
+    api.post<{ phoneNumber: string }>('/auth/reset-password/phone', { token }).then((r) => r.data),
+  // firebaseIdToken is the second factor -- proof of phone access via Firebase Phone
+  // Authentication, verified server-side (see AuthService.resetPassword on the backend).
+  resetPassword: (token: string, firebaseIdToken: string, newPassword: string) =>
+    api.post<{ message: string }>('/auth/reset-password', { token, firebaseIdToken, newPassword }).then((r) => r.data),
   // Uses a bare axios call (not the shared `api` instance) so a failing/expiring access token
   // on the shared instance can't interfere with the refresh call itself.
   refresh: (refreshToken: string) =>
@@ -44,11 +46,12 @@ export const authApi = {
     api.post<{ message: string }>('/auth/logout', { refreshToken }).then((r) => r.data),
 };
 
+// Just one endpoint now -- there's no backend-triggered "send" step (Firebase's own client SDK
+// sends the OTP directly; the frontend already knows the account's real phone number from
+// userApi.get()), only verifying the Firebase ID token that results from it.
 export const phoneApi = {
-  sendOtp: () =>
-    api.post<{ message: string; devOtp: string | null; maskedPhone: string | null }>('/phone/send-otp').then((r) => r.data),
-  verifyOtp: (otp: string) =>
-    api.post<{ verified: boolean; message: string }>('/phone/verify-otp', { otp }).then((r) => r.data),
+  verify: (firebaseIdToken: string) =>
+    api.post<{ message: string }>('/phone/verify', { firebaseIdToken }).then((r) => r.data),
 };
 
 // Mirrors the backend's AccountDto.CreateRequest -- a distinct shape from Account itself
@@ -408,15 +411,17 @@ export const userApi = {
 // PasswordChangeService on the backend for the full start -> verify-otp -> complete state machine
 // these three calls back. Three separate round trips (not one combined call) so the UI can show
 // real progress and the backend can enforce that step N+1 never runs before step N actually
-// succeeded server-side.
+// succeeded server-side. OTP verification itself is Firebase Phone Authentication -- start()
+// returns the real phone number to hand to Firebase directly; verifyOtp() sends the resulting ID
+// token, never a code.
 export const passwordChangeApi = {
   start: (currentPassword: string) =>
-    api.post<{ sessionId: string; maskedPhone: string; devOtp: string | null }>(
+    api.post<{ sessionId: string; phoneNumber: string; maskedPhone: string }>(
       '/users/me/password-change/start', { currentPassword }
     ).then((r) => r.data),
-  verifyOtp: (sessionId: string, otp: string) =>
-    api.post<{ verified: boolean; message: string }>(
-      '/users/me/password-change/verify-otp', { sessionId, otp }
+  verifyOtp: (sessionId: string, firebaseIdToken: string) =>
+    api.post<{ message: string }>(
+      '/users/me/password-change/verify-otp', { sessionId, firebaseIdToken }
     ).then((r) => r.data),
   // currentRefreshToken lets the backend positively identify (and exclude) this device from
   // revocation when signOutOtherDevices is true -- an access token alone doesn't carry enough

@@ -1,75 +1,81 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Sparkles, ShieldCheck } from 'lucide-react';
-import { phoneApi } from '../api/endpoints';
+import { phoneApi, userApi } from '../api/endpoints';
 import { useAuth } from '../context/AuthContext';
+import { sendPhoneVerificationCode, confirmPhoneVerificationCode, resetPhoneVerification } from '../lib/phoneAuth';
+import { maskPhone } from '../lib/maskPhone';
+import type { ConfirmationResult } from 'firebase/auth';
+
+const RECAPTCHA_CONTAINER_ID = 'verify-phone-recaptcha';
+
+// Firebase's own error codes for the two cases worth a specific message rather than its generic
+// one -- everything else falls back to a plain "something went wrong" rather than surfacing raw
+// Firebase error text to the user.
+function friendlyFirebaseError(err: any): string {
+  switch (err?.code) {
+    case 'auth/invalid-verification-code':
+      return "That code doesn't match — check and try again.";
+    case 'auth/code-expired':
+      return 'This code has expired. Request a new one.';
+    default:
+      return 'Could not verify — try again.';
+  }
+}
 
 export default function VerifyPhone() {
   const navigate = useNavigate();
-  const location = useLocation();
   const { setPhoneVerified } = useAuth();
   const [otp, setOtp] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
-  // Registration already issues the first OTP and returns it in the same response — seed it
-  // here (via router state from Register.tsx) instead of leaving this null until the user
-  // clicks "Resend" just to see a code for the first time. Falls back to null when this page
-  // is reached any other way (e.g. a direct link, or a page refresh, which drops router state).
-  const routerState = location.state as { devOtp?: string | null; maskedPhone?: string | null } | null;
-  const [devOtp, setDevOtp] = useState<string | null>(routerState?.devOtp ?? null);
-  // Which number the code was (or is about to be) sent to -- lets this screen show something
-  // more useful than "your mobile number," and lets a wrong/missing country code on the account
-  // be visible on screen instead of silently failing to deliver.
-  const [maskedPhone, setMaskedPhone] = useState<string | null>(routerState?.maskedPhone ?? null);
+  const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<ConfirmationResult | null>(null);
   const [loading, setLoading] = useState(false);
-  const [resending, setResending] = useState(false);
+  const [sending, setSending] = useState(false);
+  const startedRef = useRef(false);
+
+  async function startVerification() {
+    setSending(true);
+    setError(null);
+    setOtp('');
+    try {
+      // The account's real phone number is never carried through router state -- fetched fresh
+      // here (this page is only ever reached authenticated, right after register() or login())
+      // and handed straight to Firebase, which sends the code itself; this backend never does.
+      const settings = await userApi.get();
+      setPhoneNumber(settings.phoneNumber);
+      const result = await sendPhoneVerificationCode(settings.phoneNumber, RECAPTCHA_CONTAINER_ID);
+      setConfirmation(result);
+    } catch {
+      setError('Could not send a verification code right now.');
+    } finally {
+      setSending(false);
+    }
+  }
 
   useEffect(() => {
-    // Reached via Login.tsx (a returning user whose phone still isn't verified) rather than
-    // Register.tsx: no OTP was issued as part of getting here, unlike registration, which sends
-    // one automatically. Without this, that path landed on a code-entry form with no code ever
-    // having been sent and no visible reason why -- mirrors admin-portal's VerifyPhone.tsx, which
-    // already always auto-sends since every one of its arrivals has this same gap.
-    if (routerState?.devOtp === undefined && routerState?.maskedPhone === undefined) {
-      void handleResend();
-    }
+    if (startedRef.current) return;
+    startedRef.current = true;
+    void startVerification();
+    return () => resetPhoneVerification();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleVerify(e: FormEvent) {
     e.preventDefault();
+    if (!confirmation) return;
     setError(null);
     setLoading(true);
     try {
-      const res = await phoneApi.verifyOtp(otp);
-      if (res.verified) {
-        setPhoneVerified(true);
-        navigate('/app');
-      } else {
-        setError(res.message);
-      }
+      const idToken = await confirmPhoneVerificationCode(confirmation, otp);
+      await phoneApi.verify(idToken);
+      setPhoneVerified(true);
+      navigate('/app');
     } catch (err: any) {
-      setError(err.response?.data?.message ?? 'Could not verify — try again.');
+      setError(err.response?.data?.message ?? friendlyFirebaseError(err));
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function handleResend() {
-    setResending(true);
-    setError(null);
-    setInfo(null);
-    setDevOtp(null);
-    try {
-      const res = await phoneApi.sendOtp();
-      setInfo(res.message);
-      setDevOtp(res.devOtp);
-      setMaskedPhone(res.maskedPhone);
-    } catch (err: any) {
-      setError(err.response?.data?.message ?? 'Could not send a new code right now.');
-    } finally {
-      setResending(false);
     }
   }
 
@@ -88,17 +94,10 @@ export default function VerifyPhone() {
           <h1 className="text-2xl font-bold text-ink">Verify your phone</h1>
         </div>
         <p className="text-sm text-muted mb-6">
-          Enter the 6-digit code we sent to {maskedPhone ?? 'your mobile number'}.
+          Enter the 6-digit code we sent to {phoneNumber ? maskPhone(phoneNumber) : 'your mobile number'}.
         </p>
 
         {error && <p className="text-danger text-sm mb-4">{error}</p>}
-        {info && <p className="text-success text-sm mb-2">{info}</p>}
-        {devOtp && (
-          <div className="bg-primary-light border border-primary/20 rounded-lg p-3 mb-4 text-xs">
-            <p className="font-medium uppercase text-[10px] text-primary mb-1">No SMS provider configured yet — dev code:</p>
-            <p className="font-mono text-base tracking-widest">{devOtp}</p>
-          </div>
-        )}
 
         <form onSubmit={handleVerify}>
           <label className="block text-xs font-medium text-muted mb-1">Verification code</label>
@@ -108,12 +107,13 @@ export default function VerifyPhone() {
             required
             inputMode="numeric"
             placeholder="123456"
-            className="bg-white text-gray-900 w-full border border-border rounded-lg px-3 py-2.5 mb-4 text-center text-lg tracking-[0.5em] font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
+            disabled={!confirmation}
+            className="bg-white text-gray-900 w-full border border-border rounded-lg px-3 py-2.5 mb-4 text-center text-lg tracking-[0.5em] font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
           />
 
           <button
             type="submit"
-            disabled={loading || otp.length !== 6}
+            disabled={loading || !confirmation || otp.length !== 6}
             className="w-full bg-primary hover:bg-primary-dark text-white rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
           >
             {loading ? 'Verifying…' : 'Verify'}
@@ -121,12 +121,16 @@ export default function VerifyPhone() {
         </form>
 
         <button
-          onClick={handleResend}
-          disabled={resending}
+          onClick={startVerification}
+          disabled={sending}
           className="w-full mt-3 text-xs text-primary font-medium text-center"
         >
-          {resending ? 'Sending…' : "Didn't get a code? Resend"}
+          {sending ? 'Sending…' : "Didn't get a code? Resend"}
         </button>
+
+        {/* Anchor for Firebase's invisible reCAPTCHA -- never visibly rendered, but must exist in
+            the DOM before sendPhoneVerificationCode() runs. */}
+        <div id={RECAPTCHA_CONTAINER_ID} />
       </div>
     </div>
   );

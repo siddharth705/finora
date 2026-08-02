@@ -1,7 +1,22 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { X, Eye, EyeOff, CheckCircle2, Circle, ChevronDown, ChevronUp } from 'lucide-react';
 import { passwordChangeApi } from '../api/endpoints';
 import { safeStorage } from '../lib/safeStorage';
+import { sendPhoneVerificationCode, confirmPhoneVerificationCode, resetPhoneVerification } from '../lib/phoneAuth';
+import type { ConfirmationResult } from 'firebase/auth';
+
+const RECAPTCHA_CONTAINER_ID = 'change-password-recaptcha';
+
+function friendlyFirebaseError(err: any): string {
+  switch (err?.code) {
+    case 'auth/invalid-verification-code':
+      return "That code doesn't match — check and try again.";
+    case 'auth/code-expired':
+      return 'This code has expired. Start over to get a new one.';
+    default:
+      return 'Could not verify that code. Please try again.';
+  }
+}
 
 /**
  * The authenticated, OTP-gated Change Password flow (Phase 2) -- current password -> OTP sent to
@@ -84,7 +99,7 @@ export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => voi
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [maskedPhone, setMaskedPhone] = useState('');
-  const [devOtp, setDevOtp] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<ConfirmationResult | null>(null);
   const [otp, setOtp] = useState('');
 
   const [newPassword, setNewPassword] = useState('');
@@ -93,6 +108,8 @@ export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => voi
   const [showRecommendations, setShowRecommendations] = useState(false);
   const [signOutOtherDevices, setSignOutOtherDevices] = useState(true);
   const [successMessage, setSuccessMessage] = useState('');
+
+  useEffect(() => () => resetPhoneVerification(), []);
 
   const s = strength(newPassword);
   const suggestion = nextSuggestion(newPassword);
@@ -108,7 +125,10 @@ export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => voi
       const res = await passwordChangeApi.start(currentPassword);
       setSessionId(res.sessionId);
       setMaskedPhone(res.maskedPhone);
-      setDevOtp(res.devOtp);
+      // Firebase sends the code itself, directly to the phone number this response reveals --
+      // this backend never does (see PasswordChangeService.start's own doc comment).
+      const result = await sendPhoneVerificationCode(res.phoneNumber, RECAPTCHA_CONTAINER_ID);
+      setConfirmation(result);
       setStep('otp');
     } catch (e: any) {
       setError(e.response?.data?.message ?? 'Could not start the password change. Please try again.');
@@ -118,19 +138,16 @@ export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => voi
   }
 
   async function submitOtp() {
-    if (!sessionId || !otpValid || submitting) return;
+    if (!sessionId || !confirmation || !otpValid || submitting) return;
     setSubmitting(true);
     setError(null);
     try {
-      const res = await passwordChangeApi.verifyOtp(sessionId, otp);
-      if (res.verified) {
-        setStep('newPassword');
-      } else {
-        setError(res.message);
-        setOtp('');
-      }
+      const firebaseIdToken = await confirmPhoneVerificationCode(confirmation, otp);
+      await passwordChangeApi.verifyOtp(sessionId, firebaseIdToken);
+      setStep('newPassword');
     } catch (e: any) {
-      setError(e.response?.data?.message ?? 'Could not verify that code. Please try again.');
+      setError(e.response?.data?.message ?? friendlyFirebaseError(e));
+      setOtp('');
     } finally {
       setSubmitting(false);
     }
@@ -143,6 +160,8 @@ export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => voi
     setStep('password');
     setOtp('');
     setSessionId(null);
+    setConfirmation(null);
+    resetPhoneVerification();
     setError(null);
   }
 
@@ -217,22 +236,18 @@ export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => voi
             {step === 'otp' && (
               <div className="space-y-3">
                 <p className="text-xs text-muted">Enter the 6-digit code sent to {maskedPhone}.</p>
-                {devOtp && (
-                  <div className="bg-primary-light border border-primary/20 rounded-lg p-2.5 text-xs">
-                    <p className="mb-0.5 font-medium uppercase text-[10px] text-primary">
-                      No SMS provider configured yet — dev code:
-                    </p>
-                    <p className="font-mono text-sm tracking-widest">{devOtp}</p>
-                  </div>
-                )}
                 <input
                   value={otp}
                   onChange={(e) => { setOtp(e.target.value.replace(/\D/g, '').slice(0, 6)); setError(null); }}
                   inputMode="numeric"
                   placeholder="123456"
                   aria-label="Verification code"
-                  className="bg-white text-gray-900 w-full border border-border rounded-lg px-3 py-2.5 text-center text-lg tracking-[0.4em] font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  disabled={!confirmation}
+                  className="bg-white text-gray-900 w-full border border-border rounded-lg px-3 py-2.5 text-center text-lg tracking-[0.4em] font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
                 />
+                {/* Anchor for Firebase's invisible reCAPTCHA -- never visibly rendered, but must
+                    exist in the DOM before sendPhoneVerificationCode() runs. */}
+                <div id={RECAPTCHA_CONTAINER_ID} />
                 {error && <p className="text-danger text-xs">{error}</p>}
                 <div className="flex items-center justify-between pt-3 border-t border-border">
                   <button type="button" onClick={startOver} className="text-primary text-[11px] font-medium">

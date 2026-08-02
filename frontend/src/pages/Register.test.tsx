@@ -44,7 +44,7 @@ async function fillValidFormExceptPhone(user: ReturnType<typeof userEvent.setup>
 
 describe('Register — mobile number field', () => {
   beforeEach(() => {
-    registerMock.mockReset().mockResolvedValue({ phoneVerified: false, devOtp: '123456' });
+    registerMock.mockReset().mockResolvedValue({ phoneVerified: false });
   });
 
   it('strips non-digit characters as they are typed', async () => {

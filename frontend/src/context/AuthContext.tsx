@@ -15,7 +15,7 @@ interface AuthState {
     password: string,
     fullName: string,
     phoneNumber: string
-  ) => Promise<{ phoneVerified: boolean; devOtp: string | null; maskedPhone: string | null }>;
+  ) => Promise<{ phoneVerified: boolean }>;
   setPhoneVerified: (verified: boolean) => void;
   logout: () => void;
 }
@@ -60,14 +60,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     password: string,
     name: string,
     phoneNumber: string
-  ): Promise<{ phoneVerified: boolean; devOtp: string | null; maskedPhone: string | null }> {
+  ): Promise<{ phoneVerified: boolean }> {
     const res = await authApi.register(regEmail, password, name, phoneNumber);
     persist(res.data);
-    // devOtp is only ever non-null when no SMS provider is configured (see AuthDtos.AuthResponse) —
-    // the caller uses it to show the just-issued code immediately instead of making the user
-    // click "Resend" to see any code at all. maskedPhone lets it also show which number that code
-    // went to, without a second round trip to /phone/send-otp just to learn it.
-    return { phoneVerified: res.data.phoneVerified, devOtp: res.data.devOtp ?? null, maskedPhone: res.data.maskedPhone ?? null };
+    // VerifyPhone.tsx fetches the account's real phone number itself (userApi.get(), now that
+    // it's authenticated) rather than being handed it via router state -- one less thing this
+    // return value needs to carry.
+    return { phoneVerified: res.data.phoneVerified };
   }
 
   function setPhoneVerified(verified: boolean) {
