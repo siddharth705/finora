@@ -30,29 +30,35 @@ export const authApi = {
   forgotPassword: (email: string) =>
     api.post<{ message: string; devResetLink: string | null }>('/auth/forgot-password', { email }).then((r) => r.data),
   // Second factor for password reset -- the reset token alone (proof of email access) is no
-  // longer sufficient; a phone OTP (proof of phone access) is required too.
-  requestPasswordResetOtp: (token: string) =>
-    api.post<{ message: string; devOtp: string | null }>('/auth/reset-password/request-otp', { token }).then((r) => r.data),
-  resetPassword: (token: string, otp: string, newPassword: string) =>
-    api.post<{ message: string }>('/auth/reset-password', { token, otp, newPassword }).then((r) => r.data),
+  // longer sufficient; a phone OTP via Firebase Phone Authentication (proof of phone access) is
+  // required too. The backend never sends the OTP itself, only reveals the real phone number so
+  // this app can hand it to Firebase directly -- same as frontend/'s authApi.resolveResetPasswordPhone.
+  resolveResetPasswordPhone: (token: string) =>
+    api.post<{ phoneNumber: string }>('/auth/reset-password/phone', { token }).then((r) => r.data),
+  resetPassword: (token: string, firebaseIdToken: string, newPassword: string) =>
+    api.post<{ message: string }>('/auth/reset-password', { token, firebaseIdToken, newPassword }).then((r) => r.data),
 };
 
 export const meApi = {
   access: () => api.get<MeAccessDto>('/users/me/access').then((r) => r.data),
 };
 
-// Same /phone/* endpoints the user app (frontend/) already calls -- there's no separate
-// admin-specific verification mechanism, just one shared implementation. See
+// The current admin's own settings -- only phoneNumber is used here (VerifyPhone.tsx needs the
+// real number to hand to Firebase's signInWithPhoneNumber()), same /users/me endpoint the user
+// app (frontend/) calls for the same reason. Not gated behind any admin permission -- it's just
+// "my own account," same as meApi.access() above.
+export const userApi = {
+  get: () => api.get<{ phoneNumber: string }>('/users/me').then((r) => r.data),
+};
+
+// Just one endpoint now -- there's no backend-triggered "send" step (Firebase's own client SDK
+// sends the OTP directly), only verifying the Firebase ID token that results from it. Same
+// /phone/verify endpoint the user app (frontend/) calls; see
 // docs/adr/0001-administrator-verification-strategy.md for why this reuses the existing flow
 // rather than the admin portal growing its own parallel one.
 export const phoneApi = {
-  sendOtp: () =>
-    // maskedPhone (see PhoneMasking on the backend) lets this screen show which number a code
-    // was sent to -- e.g. "+•••••••••705" -- so a wrong/missing country code on the account is
-    // visible on screen instead of silently failing to deliver via the SMS provider.
-    api.post<{ message: string; devOtp: string | null; maskedPhone: string | null }>('/phone/send-otp').then((r) => r.data),
-  verifyOtp: (otp: string) =>
-    api.post<{ verified: boolean; message: string }>('/phone/verify-otp', { otp }).then((r) => r.data),
+  verify: (firebaseIdToken: string) =>
+    api.post<{ message: string }>('/phone/verify', { firebaseIdToken }).then((r) => r.data),
 };
 
 export interface UserListFilters {

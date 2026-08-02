@@ -3,6 +3,11 @@ import type { FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ShieldAlert } from 'lucide-react';
 import { authApi } from '../api/endpoints';
+import { sendPhoneVerificationCode, confirmPhoneVerificationCode, resetPhoneVerification } from '../lib/phoneAuth';
+import { maskPhone } from '../lib/maskPhone';
+import type { ConfirmationResult } from 'firebase/auth';
+
+const RECAPTCHA_CONTAINER_ID = 'reset-password-recaptcha';
 
 // Same heuristic as frontend/'s Register.tsx/ResetPassword.tsx -- kept identical so the meter
 // means the same thing wherever a password gets set anywhere in Finora, admin or not.
@@ -17,21 +22,34 @@ function passwordStrength(pw: string): { score: number; label: string; color: st
   return { score, label: labels[score], color: colors[score] };
 }
 
+function friendlyFirebaseError(err: any): string {
+  switch (err?.code) {
+    case 'auth/invalid-verification-code':
+      return "That code doesn't match — check and try again.";
+    case 'auth/code-expired':
+      return 'This code has expired. Request a new one.';
+    default:
+      return 'Could not reset password. The code may be wrong or the link may have expired.';
+  }
+}
+
 /**
  * Bug fix / security hardening: a reset link alone (proof of email access) used to be sufficient
- * to change a password outright, including for admin accounts. Now requires an OTP sent to the
- * account's phone as a second factor, same principle VerifyPhone already applies elsewhere, and
- * the exact same backend endpoints the user-facing app's ResetPassword.tsx uses.
+ * to change a password outright, including for admin accounts. Now requires a phone OTP via
+ * Firebase Phone Authentication as a second factor, same principle VerifyPhone already applies
+ * elsewhere, and the exact same backend endpoints/flow the user-facing app's ResetPassword.tsx
+ * uses -- the backend never sends the OTP itself, only reveals the real phone number
+ * (authApi.resolveResetPasswordPhone) so this page can hand it to Firebase directly.
  */
 export default function ResetPassword() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const token = searchParams.get('token');
   const [otp, setOtp] = useState('');
-  const [otpRequested, setOtpRequested] = useState(false);
-  const [otpDevCode, setOtpDevCode] = useState<string | null>(null);
+  const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<ConfirmationResult | null>(null);
   const [otpError, setOtpError] = useState<string | null>(null);
-  const [resendingOtp, setResendingOtp] = useState(false);
+  const [sendingOtp, setSendingOtp] = useState(false);
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [touched, setTouched] = useState<Record<string, boolean>>({});
@@ -39,37 +57,36 @@ export default function ResetPassword() {
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
 
-  useEffect(() => {
-    if (!token) return;
-    void requestOtp();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
-
   async function requestOtp() {
     if (!token) return;
-    setResendingOtp(true);
+    setSendingOtp(true);
     setOtpError(null);
-    // A resend invalidates whatever code was issued before (OtpService.issueOtp() replaces the
-    // still-active one) -- clearing here so a stale, now-wrong code can't sit in the field
-    // looking valid and get submitted, which would just fail with a confusing "incorrect code"
-    // even though the user typed something that WAS right a moment ago.
     setOtp('');
+    setConfirmation(null);
     try {
-      const res = await authApi.requestPasswordResetOtp(token);
-      setOtpDevCode(res.devOtp);
-      setOtpRequested(true);
+      const res = await authApi.resolveResetPasswordPhone(token);
+      setPhoneNumber(res.phoneNumber);
+      const result = await sendPhoneVerificationCode(res.phoneNumber, RECAPTCHA_CONTAINER_ID);
+      setConfirmation(result);
     } catch (err: any) {
       setOtpError(err.response?.data?.message ?? 'Could not send a verification code. The link may be invalid or expired.');
     } finally {
-      setResendingOtp(false);
+      setSendingOtp(false);
     }
   }
+
+  useEffect(() => {
+    if (!token) return;
+    void requestOtp();
+    return () => resetPhoneVerification();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
 
   const passwordLongEnough = password.length >= 8;
   const passwordsMatch = confirm.length > 0 && confirm === password;
   const otpValid = /^\d{6}$/.test(otp);
   const strength = useMemo(() => passwordStrength(password), [password]);
-  const formValid = Boolean(token) && otpValid && passwordLongEnough && passwordsMatch;
+  const formValid = Boolean(token) && Boolean(confirmation) && otpValid && passwordLongEnough && passwordsMatch;
 
   function markTouched(field: string) {
     setTouched((t) => ({ ...t, [field]: true }));
@@ -79,17 +96,19 @@ export default function ResetPassword() {
     e.preventDefault();
     setTouched({ password: true, confirm: true, otp: true });
     if (!token) { setError('No reset token found in the link.'); return; }
+    if (!confirmation) { setError('Enter the 6-digit verification code sent to your phone.'); return; }
     if (!otpValid) { setError('Enter the 6-digit verification code sent to your phone.'); return; }
     if (!passwordLongEnough) { setError('Password must be at least 8 characters.'); return; }
     if (!passwordsMatch) { setError('Passwords do not match.'); return; }
     setError(null);
     setLoading(true);
     try {
-      await authApi.resetPassword(token, otp, password);
+      const firebaseIdToken = await confirmPhoneVerificationCode(confirmation, otp);
+      await authApi.resetPassword(token, firebaseIdToken, password);
       setDone(true);
       setTimeout(() => navigate('/login'), 2000);
     } catch (err: any) {
-      setError(err.response?.data?.message ?? 'Could not reset password. The code may be wrong or the link may have expired.');
+      setError(err.response?.data?.message ?? friendlyFirebaseError(err));
     } finally {
       setLoading(false);
     }
@@ -125,24 +144,19 @@ export default function ResetPassword() {
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-ink mb-1">Verification code</label>
                   <p className="text-xs text-muted mb-2">
-                    {otpRequested ? 'Enter the 6-digit code sent to the phone number on file.' : 'Sending a verification code…'}
+                    {confirmation
+                      ? `Enter the 6-digit code sent to ${phoneNumber ? maskPhone(phoneNumber) : 'the phone number on file'}.`
+                      : 'Sending a verification code…'}
                   </p>
                   {otpError && <p className="text-danger text-xs mb-2">{otpError}</p>}
-                  {otpDevCode && (
-                    <div className="bg-primary-light border border-primary/20 rounded-lg p-2.5 mb-2 text-xs">
-                      <p className="mb-0.5 font-medium uppercase text-[10px] text-primary">
-                        No SMS provider configured yet — dev code:
-                      </p>
-                      <p className="font-mono text-sm tracking-widest">{otpDevCode}</p>
-                    </div>
-                  )}
                   <input
                     value={otp}
                     onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
                     onBlur={() => markTouched('otp')}
                     inputMode="numeric"
                     placeholder="123456"
-                    className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-center text-lg tracking-[0.4em] font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 mb-1"
+                    disabled={!confirmation}
+                    className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-center text-lg tracking-[0.4em] font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 mb-1 disabled:opacity-50"
                   />
                   <div className="flex items-center justify-between">
                     <p className="text-[11px] h-3.5">
@@ -151,10 +165,10 @@ export default function ResetPassword() {
                     <button
                       type="button"
                       onClick={requestOtp}
-                      disabled={resendingOtp}
+                      disabled={sendingOtp}
                       className="text-[11px] text-primary font-medium"
                     >
-                      {resendingOtp ? 'Sending…' : 'Resend code'}
+                      {sendingOtp ? 'Sending…' : 'Resend code'}
                     </button>
                   </div>
                 </div>
@@ -213,6 +227,10 @@ export default function ResetPassword() {
               <p className="text-sm mt-4 text-center">
                 <Link to="/login" className="text-primary font-medium">Back to sign in</Link>
               </p>
+
+              {/* Anchor for Firebase's invisible reCAPTCHA -- never visibly rendered, but must
+                  exist in the DOM before sendPhoneVerificationCode() runs. */}
+              <div id={RECAPTCHA_CONTAINER_ID} />
             </form>
           )}
         </div>
