@@ -49,7 +49,7 @@ class UserSettingsServiceTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser()));
 
         UserSettingsDto result = service.update(userId,
-                new UserSettingsDto.UpdateRequest(null, null, "America/New_York"));
+                new UserSettingsDto.UpdateRequest(null, null, "America/New_York", null));
 
         assertThat(result.timezone()).isEqualTo("America/New_York");
     }
@@ -59,7 +59,7 @@ class UserSettingsServiceTest {
         User user = existingUser();
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
-        assertThatThrownBy(() -> service.update(userId, new UserSettingsDto.UpdateRequest(null, null, "Not/A_Real_Zone")))
+        assertThatThrownBy(() -> service.update(userId, new UserSettingsDto.UpdateRequest(null, null, "Not/A_Real_Zone", null)))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Not/A_Real_Zone");
 
@@ -75,8 +75,57 @@ class UserSettingsServiceTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
         UserSettingsDto result = service.update(userId,
-                new UserSettingsDto.UpdateRequest(new BigDecimal("500"), null, null));
+                new UserSettingsDto.UpdateRequest(new BigDecimal("500"), null, null, null));
 
         assertThat(result.timezone()).isEqualTo("Europe/London");
+    }
+
+    @Test
+    void update_changesFullName_whenProvided() {
+        User user = existingUser();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        UserSettingsDto result = service.update(userId,
+                new UserSettingsDto.UpdateRequest(null, null, null, "  Amy Santiago  "));
+
+        // Trimmed -- a name field is exactly the kind of input a user is likely to paste with
+        // stray leading/trailing whitespace from another app.
+        assertThat(result.fullName()).isEqualTo("Amy Santiago");
+    }
+
+    @Test
+    void update_rejectsABlankFullName_withoutEverPersistingIt() {
+        User user = existingUser();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> service.update(userId, new UserSettingsDto.UpdateRequest(null, null, null, "   ")))
+                .isInstanceOf(ApiException.class);
+
+        assertThat(user.getFullName()).isEqualTo("Amy");
+    }
+
+    @Test
+    void get_includesThePhoneAndCreatedAtFacts_alongsideTheEditablePreferences() {
+        User user = existingUser();
+        user.setPhoneNumber("+919876543210");
+        user.setPhoneVerified(true);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        UserSettingsDto result = service.get(userId);
+
+        assertThat(result.phoneNumber()).isEqualTo("+919876543210");
+        assertThat(result.phoneVerified()).isTrue();
+        assertThat(result.createdAt()).isEqualTo(user.getCreatedAt());
+    }
+
+    @Test
+    void get_reportsPasswordChangedAtAsNull_forAnAccountThatHasNeverChangedItsPassword() {
+        User user = existingUser();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        UserSettingsDto result = service.get(userId);
+
+        // Never backfilled to a guess -- see User.passwordChangedAt's own doc comment.
+        assertThat(result.passwordChangedAt()).isNull();
     }
 }

@@ -24,7 +24,7 @@ public class UserSettingsService {
     @Transactional(readOnly = true)
     public UserSettingsDto get(UUID userId) {
         User u = userRepository.findById(userId).orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
-        return new UserSettingsDto(u.getEmail(), u.getFullName(), u.getLowBalanceThreshold(), u.getTheme(), u.getTimezone());
+        return toDto(u);
     }
 
     public UserSettingsDto update(UUID userId, UserSettingsDto.UpdateRequest req) {
@@ -43,8 +43,18 @@ public class UserSettingsService {
             }
             u.setTimezone(req.timezone());
         }
+        if (req.fullName() != null) {
+            String trimmed = req.fullName().trim();
+            if (trimmed.isEmpty()) throw new ApiException(HttpStatus.BAD_REQUEST, "Full name can't be empty.");
+            u.setFullName(trimmed);
+        }
         u.setUpdatedAt(Instant.now());
         User saved = userRepository.save(u);
-        return new UserSettingsDto(saved.getEmail(), saved.getFullName(), saved.getLowBalanceThreshold(), saved.getTheme(), saved.getTimezone());
+        return toDto(saved);
+    }
+
+    private UserSettingsDto toDto(User u) {
+        return new UserSettingsDto(u.getEmail(), u.getFullName(), u.getLowBalanceThreshold(), u.getTheme(),
+                u.getTimezone(), u.getPhoneNumber(), u.isPhoneVerified(), u.getCreatedAt(), u.getPasswordChangedAt());
     }
 }
