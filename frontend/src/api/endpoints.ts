@@ -387,11 +387,44 @@ export interface UserSettings {
   lowBalanceThreshold: number;
   theme: string;
   timezone: string;
+  // Read-only — no setter path in userApi.update below. phoneNumber/phoneVerified are the
+  // OTP-verified registration number (see PhoneMaskingTest/VerifyPhone.tsx); createdAt is a fact
+  // about the account, not a preference.
+  phoneNumber: string;
+  phoneVerified: boolean;
+  createdAt: string;
+  // Null until the account's password has been changed at least once -- never a guessed
+  // fallback date (see the backend User.passwordChangedAt's own doc comment).
+  passwordChangedAt: string | null;
 }
 export const userApi = {
   get: () => api.get<UserSettings>('/users/me').then((r) => r.data),
-  update: (body: { lowBalanceThreshold?: number; theme?: string; timezone?: string }) =>
+  update: (body: { lowBalanceThreshold?: number; theme?: string; timezone?: string; fullName?: string }) =>
     api.put<UserSettings>('/users/me', body).then((r) => r.data),
+};
+
+// The authenticated, OTP-gated Change Password flow -- see ChangePasswordModal's own doc comment
+// for why this is a genuinely separate journey from authApi's forgot-password/reset-password, and
+// PasswordChangeService on the backend for the full start -> verify-otp -> complete state machine
+// these three calls back. Three separate round trips (not one combined call) so the UI can show
+// real progress and the backend can enforce that step N+1 never runs before step N actually
+// succeeded server-side.
+export const passwordChangeApi = {
+  start: (currentPassword: string) =>
+    api.post<{ sessionId: string; maskedPhone: string; devOtp: string | null }>(
+      '/users/me/password-change/start', { currentPassword }
+    ).then((r) => r.data),
+  verifyOtp: (sessionId: string, otp: string) =>
+    api.post<{ verified: boolean; message: string }>(
+      '/users/me/password-change/verify-otp', { sessionId, otp }
+    ).then((r) => r.data),
+  // currentRefreshToken lets the backend positively identify (and exclude) this device from
+  // revocation when signOutOtherDevices is true -- an access token alone doesn't carry enough
+  // information to know which refresh token belongs to this browser tab.
+  complete: (sessionId: string, newPassword: string, signOutOtherDevices: boolean, currentRefreshToken: string) =>
+    api.post<{ message: string; otherDevicesSignedOut: boolean }>(
+      '/users/me/password-change/complete', { sessionId, newPassword, signOutOtherDevices, currentRefreshToken }
+    ).then((r) => r.data),
 };
 
 // --- Merchant Management (docs/financial-intelligence-engine-spec.md §5) ---
