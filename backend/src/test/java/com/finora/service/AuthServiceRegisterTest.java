@@ -34,6 +34,7 @@ class AuthServiceRegisterTest {
 
     private UserRepository userRepository;
     private PlatformSettingsService platformSettingsService;
+    private AuditService auditService;
     private AuthService authService;
 
     @BeforeEach
@@ -56,10 +57,18 @@ class AuthServiceRegisterTest {
         platformSettingsService = mock(PlatformSettingsService.class);
         when(platformSettingsService.getEntity()).thenReturn(new com.finora.entity.PlatformSettings());
 
+        // Same class of bug as refreshTokenService above: register()'s success path now also
+        // calls auditService.record(..., emailResult.provider().name(), ...) right after sending
+        // the welcome email, dereferencing whatever sendWelcomeEmail() returns.
+        EmailProvider emailProvider = mock(EmailProvider.class);
+        when(emailProvider.sendWelcomeEmail(any(), any()))
+                .thenReturn(EmailResult.success(ProviderType.RESEND, "test-message-id"));
+
+        auditService = mock(AuditService.class);
         authService = new AuthService(
                 userRepository, mock(CategoryRepository.class), mock(PasswordResetTokenRepository.class),
                 mock(PasswordEncoder.class), mock(JwtService.class), mock(AuthenticationManager.class),
-                mock(AuditService.class), refreshTokenService, mock(EmailProvider.class),
+                auditService, refreshTokenService, emailProvider,
                 new EmailProperties(), mock(PhoneVerificationProvider.class), platformSettingsService,
                 mock(PasswordHistoryService.class)
         );
@@ -116,6 +125,8 @@ class AuthServiceRegisterTest {
         authService.register(request("newperson@example.com", "+919876500002"));
 
         verify(userRepository).save(any(User.class));
+        verify(auditService).record(any(), eq("EMAIL_SENT"), eq("User"), any(),
+                argThat(metadata -> "welcome".equals(metadata.get("type")) && Boolean.TRUE.equals(metadata.get("success"))));
     }
 
     /**

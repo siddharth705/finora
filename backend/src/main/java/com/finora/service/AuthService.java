@@ -100,7 +100,9 @@ public class AuthService {
         }
         User user = createUserRecord(request);
         auditService.record(user.getId(), "USER_REGISTERED", "User", user.getId());
-        emailProvider.sendWelcomeEmail(user.getEmail(), user.getFullName());
+        EmailResult welcomeEmailResult = emailProvider.sendWelcomeEmail(user.getEmail(), user.getFullName());
+        auditService.record(user.getId(), "EMAIL_SENT", "User", user.getId(), Map.of(
+                "type", "welcome", "provider", welcomeEmailResult.provider().name(), "success", welcomeEmailResult.success()));
 
         String accessToken = jwtService.generateToken(user.getId(), user.getEmail());
         String refreshToken = refreshTokenService.issue(user.getId()).rawToken();
@@ -396,7 +398,9 @@ public class AuthService {
         String resetLink = base + "/reset-password?token=" + rawToken;
 
         if (emailProvider.isConfigured()) {
-            emailProvider.sendPasswordResetEmail(userOpt.get().getEmail(), resetLink);
+            EmailResult resetEmailResult = emailProvider.sendPasswordResetEmail(userOpt.get().getEmail(), resetLink);
+            auditService.record(userOpt.get().getId(), "EMAIL_SENT", "User", userOpt.get().getId(), Map.of(
+                    "type", "password_reset", "provider", resetEmailResult.provider().name(), "success", resetEmailResult.success()));
             // Real email exists — no reason to also hand the link back in the API response.
             return new ForgotPasswordResponse(genericMessage, null);
         }
@@ -469,7 +473,9 @@ public class AuthService {
         resetTokenRepository.save(prt);
 
         auditService.record(user.getId(), "PASSWORD_RESET", "User", user.getId(), Map.of("method", "firebase_phone"));
-        emailProvider.sendPasswordChangedEmail(user.getEmail());
+        EmailResult changedEmailResult = emailProvider.sendPasswordChangedEmail(user.getEmail());
+        auditService.record(user.getId(), "EMAIL_SENT", "User", user.getId(), Map.of(
+                "type", "password_changed", "provider", changedEmailResult.provider().name(), "success", changedEmailResult.success()));
 
         return new ResetPasswordResponse("Password updated — you can now sign in with your new password.");
     }

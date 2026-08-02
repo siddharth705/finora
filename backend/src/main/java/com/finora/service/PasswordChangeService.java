@@ -195,7 +195,9 @@ public class PasswordChangeService {
         }
 
         auditService.record(userId, "PASSWORD_CHANGED", "User", userId, Map.of("method", "authenticated_settings_otp_gated"));
-        emailProvider.sendPasswordChangedEmail(user.getEmail());
+        EmailResult changedEmailResult = emailProvider.sendPasswordChangedEmail(user.getEmail());
+        auditService.record(userId, "EMAIL_SENT", "User", userId, Map.of(
+                "type", "password_changed", "provider", changedEmailResult.provider().name(), "success", changedEmailResult.success()));
 
         return new CompleteResponse(completeMessage(request.signOutOtherDevices()), request.signOutOtherDevices());
     }

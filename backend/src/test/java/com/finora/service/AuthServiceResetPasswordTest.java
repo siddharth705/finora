@@ -40,6 +40,8 @@ class AuthServiceResetPasswordTest {
     private PasswordResetTokenRepository resetTokenRepository;
     private PasswordEncoder passwordEncoder;
     private PhoneVerificationProvider phoneVerificationProvider;
+    private EmailProvider emailProvider;
+    private AuditService auditService;
     private AuthService authService;
     private final UUID userId = UUID.randomUUID();
 
@@ -49,11 +51,18 @@ class AuthServiceResetPasswordTest {
         resetTokenRepository = mock(PasswordResetTokenRepository.class);
         passwordEncoder = mock(PasswordEncoder.class);
         phoneVerificationProvider = mock(PhoneVerificationProvider.class);
+        // resetPassword()'s success path calls emailProvider.sendPasswordChangedEmail(...) and now
+        // immediately dereferences the EmailResult it returns -- an unstubbed mock returns null,
+        // which would NPE the one test below that actually reaches this line.
+        emailProvider = mock(EmailProvider.class);
+        when(emailProvider.sendPasswordChangedEmail(any()))
+                .thenReturn(EmailResult.success(ProviderType.RESEND, "test-message-id"));
+        auditService = mock(AuditService.class);
 
         authService = new AuthService(
                 userRepository, mock(CategoryRepository.class), resetTokenRepository,
                 passwordEncoder, mock(JwtService.class), mock(AuthenticationManager.class),
-                mock(AuditService.class), mock(RefreshTokenService.class), mock(EmailProvider.class),
+                auditService, mock(RefreshTokenService.class), emailProvider,
                 new EmailProperties(), phoneVerificationProvider, mock(PlatformSettingsService.class),
                 mock(PasswordHistoryService.class)
         );
@@ -97,6 +106,8 @@ class AuthServiceResetPasswordTest {
         assertThat(prt.getUsedAt()).isNotNull();
         verify(resetTokenRepository).save(prt);
         verify(userRepository).save(user);
+        verify(auditService).record(eq(userId), eq("EMAIL_SENT"), eq("User"), eq(userId),
+                argThat(metadata -> "password_changed".equals(metadata.get("type")) && Boolean.TRUE.equals(metadata.get("success"))));
     }
 
     /**

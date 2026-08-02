@@ -17,6 +17,7 @@ import com.finora.service.CategorizationService;
 import com.finora.service.ReconciliationService;
 import com.finora.service.RecurringService;
 import com.finora.service.SmsProvider;
+import com.finora.service.SmsResult;
 import com.finora.util.CategoryRules;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -254,7 +255,10 @@ public class TransactionService {
     private void doSendTransactionAlert(UUID userId, Transaction t) {
         User user = userRepository.findById(userId).orElse(null);
         if (user == null || !user.isPhoneVerified() || user.getPhoneNumber() == null) return;
-        smsProvider.sendTransactionAlert(user.getPhoneNumber(), t.getDescription(), t.getAmount(), t.getTxnType().name());
+        SmsResult result = smsProvider.sendTransactionAlert(
+                user.getPhoneNumber(), t.getDescription(), t.getAmount(), t.getTxnType().name());
+        auditService.record(userId, "SMS_SENT", "User", userId, Map.of(
+                "type", "transaction_alert", "provider", result.provider().name(), "success", result.success()));
     }
 
     private BigDecimal balanceOf(Transaction t) {

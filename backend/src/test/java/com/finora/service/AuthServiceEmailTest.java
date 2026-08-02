@@ -32,6 +32,7 @@ class AuthServiceEmailTest {
     private PasswordResetTokenRepository resetTokenRepository;
     private EmailProvider emailProvider;
     private EmailProperties emailProperties;
+    private AuditService auditService;
     private AuthService authService;
     private final UUID userId = UUID.randomUUID();
 
@@ -42,6 +43,7 @@ class AuthServiceEmailTest {
         emailProvider = mock(EmailProvider.class);
         emailProperties = new EmailProperties();
         emailProperties.setAppBaseUrl("http://localhost:5173");
+        auditService = mock(AuditService.class);
 
         User user = new User();
         ReflectionTestUtils.setField(user, "id", userId);
@@ -51,7 +53,7 @@ class AuthServiceEmailTest {
         authService = new AuthService(
                 userRepository, mock(CategoryRepository.class), resetTokenRepository,
                 mock(PasswordEncoder.class), mock(JwtService.class), mock(AuthenticationManager.class),
-                mock(AuditService.class), mock(RefreshTokenService.class), emailProvider, emailProperties,
+                auditService, mock(RefreshTokenService.class), emailProvider, emailProperties,
                 mock(PhoneVerificationProvider.class), mock(PlatformSettingsService.class),
                 mock(PasswordHistoryService.class)
         );
@@ -60,11 +62,15 @@ class AuthServiceEmailTest {
     @Test
     void forgotPassword_sendsRealEmail_andOmitsLinkFromResponse_whenEmailProviderConfigured() {
         when(emailProvider.isConfigured()).thenReturn(true);
+        when(emailProvider.sendPasswordResetEmail(any(), any()))
+                .thenReturn(EmailResult.success(ProviderType.RESEND, "test-message-id"));
 
         var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com"), null);
 
         verify(emailProvider).sendPasswordResetEmail(eq("test@example.com"), contains("/reset-password?token="));
         assertThat(response.devResetLink()).isNull();
+        verify(auditService).record(eq(userId), eq("EMAIL_SENT"), eq("User"), eq(userId),
+                argThat(metadata -> "password_reset".equals(metadata.get("type")) && Boolean.TRUE.equals(metadata.get("success"))));
     }
 
     @Test

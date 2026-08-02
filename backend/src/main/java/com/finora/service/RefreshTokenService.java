@@ -110,6 +110,25 @@ public class RefreshTokenService {
         });
     }
 
+    /** Backs the device-management "your active sessions" list -- ordered most-recently-active
+     *  first, since that's the order a user actually scans when looking for "which one is my
+     *  phone right now" or "what's this session I don't recognize." */
+    public List<RefreshToken> listActiveSessions(UUID userId) {
+        return refreshTokenRepository.findByUserIdAndRevokedAtIsNullAndExpiresAtAfterOrderByLastSeenAtDesc(
+                userId, Instant.now());
+    }
+
+    /** Lets a user sign a single device out remotely (e.g. a lost phone) without touching any of
+     *  their other sessions -- unlike revokeAllOtherSessionsForUser, this targets exactly one
+     *  session by id. Scoped to userId so a session id alone (a guessable-enough UUID from, say,
+     *  a shared screenshot) can never be used to revoke a session belonging to a different user. */
+    public void revokeSession(UUID userId, UUID sessionId) {
+        RefreshToken rt = refreshTokenRepository.findByIdAndUserId(sessionId, userId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Session not found"));
+        rt.setRevokedAt(Instant.now());
+        refreshTokenRepository.save(rt);
+    }
+
     /** Revokes every active session for the user, including whichever one is calling this --
      *  the same defense-in-depth response rotate() already applies when it detects a
      *  stolen/replayed refresh token (see this class's own doc comment). */

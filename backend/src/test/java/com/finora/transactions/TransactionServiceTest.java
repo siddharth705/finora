@@ -14,7 +14,9 @@ import com.finora.service.BankManagementService;
 import com.finora.service.CategorizationService;
 import com.finora.service.ReconciliationService;
 import com.finora.service.RecurringService;
+import com.finora.service.ProviderType;
 import com.finora.service.SmsProvider;
+import com.finora.service.SmsResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -45,6 +47,7 @@ class TransactionServiceTest {
     private BankManagementService bankManagementService;
     private UserRepository userRepository;
     private SmsProvider smsProvider;
+    private AuditService auditService;
     private TransactionService transactionService;
 
     private final UUID userId = UUID.randomUUID();
@@ -71,8 +74,14 @@ class TransactionServiceTest {
                         .map(com.finora.accounts.AccountDto.BankDto::from).toList());
         userRepository = mock(UserRepository.class);
         smsProvider = mock(SmsProvider.class);
+        // doSendTransactionAlert() now records an audit entry off the SmsResult it gets back --
+        // an unstubbed mock returns null, which would NPE the one test below that actually
+        // reaches this call.
+        when(smsProvider.sendTransactionAlert(any(), any(), any(), any()))
+                .thenReturn(SmsResult.success(ProviderType.TWO_FACTOR, "test-message-id"));
+        auditService = mock(AuditService.class);
         transactionService = new TransactionService(transactionRepository, categoryRepository, accountRepository,
-                categorizationService, reconciliationService, recurringService, mock(AuditService.class),
+                categorizationService, reconciliationService, recurringService, auditService,
                 bankManagementService, userRepository, smsProvider);
 
         dummyCategory = new Category();
@@ -151,6 +160,8 @@ class TransactionServiceTest {
         transactionService.create(userId, req);
 
         verify(smsProvider).sendTransactionAlert(eq("+919876543210"), eq("Swiggy order"), eq(BigDecimal.valueOf(486)), eq("EXPENSE"));
+        verify(auditService).record(eq(userId), eq("SMS_SENT"), eq("User"), eq(userId),
+                argThat(metadata -> "transaction_alert".equals(metadata.get("type")) && Boolean.TRUE.equals(metadata.get("success"))));
     }
 
     @Test

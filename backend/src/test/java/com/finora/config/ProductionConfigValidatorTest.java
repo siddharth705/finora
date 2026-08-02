@@ -53,9 +53,21 @@ class ProductionConfigValidatorTest {
     }
 
     private Environment envWithProfilesAndDbPassword(String[] profiles, String dbPassword) {
+        return envWithProfilesAndDbPasswordAndTrustProxyHeaders(profiles, dbPassword, true);
+    }
+
+    // A bare mock(Environment.class) doesn't run the real getProperty(String, Class, T) logic --
+    // an unstubbed call returns null, not the supplied default, which would NPE on unboxing to
+    // boolean in ProductionConfigValidator. trustProxyHeaders defaults true here so every
+    // pre-existing test above (none of which care about this setting) keeps exercising a
+    // no-warning path unless a test explicitly wants otherwise.
+    private Environment envWithProfilesAndDbPasswordAndTrustProxyHeaders(
+            String[] profiles, String dbPassword, boolean trustProxyHeaders) {
         Environment environment = mock(Environment.class);
         when(environment.getActiveProfiles()).thenReturn(profiles);
         when(environment.getProperty("spring.datasource.password")).thenReturn(dbPassword);
+        when(environment.getProperty("app.security.trust-proxy-headers", Boolean.class, false))
+                .thenReturn(trustProxyHeaders);
         return environment;
     }
 
@@ -134,6 +146,27 @@ class ProductionConfigValidatorTest {
     void run_inProdProfile_withNoTwoFactorApiKeyConfigured_warnsButDoesNotThrow() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
         var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), smsWith(false));
+
+        assertThat(catchNoThrow(validator)).isTrue();
+    }
+
+    /** Same soft-warning treatment as TWO_FACTOR_API_KEY -- an unset TRUST_PROXY_HEADERS must only
+     *  warn, never block startup, since correctness depends on deployment topology, not just the
+     *  prod profile being active. */
+    @Test
+    void run_inProdProfile_withTrustProxyHeadersUnset_warnsButDoesNotThrow() {
+        Environment environment = envWithProfilesAndDbPasswordAndTrustProxyHeaders(
+                new String[]{"prod"}, "a-real-password", false);
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+
+        assertThat(catchNoThrow(validator)).isTrue();
+    }
+
+    @Test
+    void run_inProdProfile_withTrustProxyHeadersSetTrue_doesNotThrow() {
+        Environment environment = envWithProfilesAndDbPasswordAndTrustProxyHeaders(
+                new String[]{"prod"}, "a-real-password", true);
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
 
         assertThat(catchNoThrow(validator)).isTrue();
     }

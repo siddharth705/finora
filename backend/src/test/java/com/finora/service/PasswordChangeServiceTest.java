@@ -36,6 +36,7 @@ class PasswordChangeServiceTest {
     private PhoneVerificationProvider phoneVerificationProvider;
     private RefreshTokenService refreshTokenService;
     private AuditService auditService;
+    private EmailProvider emailProvider;
     private PasswordChangeService service;
     private final UUID userId = UUID.randomUUID();
 
@@ -47,6 +48,12 @@ class PasswordChangeServiceTest {
         phoneVerificationProvider = mock(PhoneVerificationProvider.class);
         refreshTokenService = mock(RefreshTokenService.class);
         auditService = mock(AuditService.class);
+        // complete()'s success path calls emailProvider.sendPasswordChangedEmail(...) and now
+        // immediately dereferences the EmailResult it returns -- an unstubbed mock returns null,
+        // which would NPE both complete() success tests below.
+        emailProvider = mock(EmailProvider.class);
+        when(emailProvider.sendPasswordChangedEmail(any()))
+                .thenReturn(EmailResult.success(ProviderType.RESEND, "test-message-id"));
 
         // Mirrors real JPA behavior: a save() assigns the generated id the first time a
         // never-persisted (id == null) entity is saved.
@@ -60,7 +67,7 @@ class PasswordChangeServiceTest {
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
         service = new PasswordChangeService(userRepository, sessionRepository, passwordEncoder,
-                phoneVerificationProvider, refreshTokenService, auditService, mock(EmailProvider.class),
+                phoneVerificationProvider, refreshTokenService, auditService, emailProvider,
                 mock(PasswordHistoryService.class));
     }
 
@@ -225,6 +232,8 @@ class PasswordChangeServiceTest {
         verify(refreshTokenService, never()).revokeAllOtherSessionsForUser(any(), any());
         verify(auditService, never()).record(any(), eq("OTHER_SESSIONS_REVOKED"), any(), any());
         verify(auditService).record(userId, "OTHER_SESSIONS_PRESERVED", "User", userId);
+        verify(auditService).record(eq(userId), eq("EMAIL_SENT"), eq("User"), eq(userId),
+                argThat(metadata -> "password_changed".equals(metadata.get("type")) && Boolean.TRUE.equals(metadata.get("success"))));
     }
 
     @Test

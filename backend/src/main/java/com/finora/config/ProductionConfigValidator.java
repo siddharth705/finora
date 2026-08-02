@@ -109,6 +109,24 @@ public class ProductionConfigValidator implements ApplicationRunner {
             log.warn("TWO_FACTOR_API_KEY is unset -- transaction alert SMS will be logged only, never actually sent.");
         }
 
+        // Same soft-warning treatment as TWO_FACTOR_API_KEY above, for the same reason: correctness
+        // depends on the actual deployment topology, not just on being in the prod profile, so this
+        // can't be a hard failure the way JWT_SECRET/RESEND_API_KEY are -- an operator running prod
+        // NOT behind a reverse proxy correctly leaves this false. But the default is false, and on
+        // Railway (this app's actual deployment target -- see docker-compose.yml/deployment-guide.md)
+        // it must be true, so silently starting with the default in prod is exactly the kind of easy
+        // operator mistake this validator exists to surface. See RateLimitFilter's own doc comment
+        // for the full story: wrong in one direction shares one rate-limit bucket across every user
+        // (the proxy's own IP instead of each real client's); wrong in the other direction lets a
+        // client bypass rate limiting entirely by spoofing X-Forwarded-For.
+        if (!environment.getProperty("app.security.trust-proxy-headers", Boolean.class, false)) {
+            log.warn("TRUST_PROXY_HEADERS is unset (defaults to false). If this deployment sits behind a "
+                    + "trusted reverse proxy (e.g. Railway), set it true -- every user is currently sharing "
+                    + "one rate-limit bucket keyed off the proxy's own IP instead of each real client's. If "
+                    + "it does NOT sit behind a trusted proxy, false is correct and this warning can be "
+                    + "ignored.");
+        }
+
         if (!problems.isEmpty()) {
             String message = "Refusing to start with the prod profile active and insecure default "
                     + "configuration still in place:\n" + problems
