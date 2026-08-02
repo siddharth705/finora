@@ -49,13 +49,6 @@ class AuthServiceRegisterTest {
         when(refreshTokenService.issue(any())).thenReturn(
                 new RefreshTokenService.IssuedToken("test-refresh-token", java.time.Instant.now().plusSeconds(3600)));
 
-        // Bug fix: same shape of bug, one line later in register() -- otpService.issueOtp(...)
-        // is dereferenced immediately too (.delivered()), and this mock was never stubbed either.
-        // Fixing the refreshTokenService NPE above was necessary but not sufficient; this is what
-        // was still failing right after it.
-        OtpService otpService = mock(OtpService.class);
-        when(otpService.issueOtp(any(), any(), any())).thenReturn(new OtpService.OtpIssueResult("123456", true));
-
         // register() checks platformSettingsService.getEntity().isRegistrationsEnabled() before
         // doing anything else -- defaults to a real entity with registrationsEnabled=true (the
         // same default V27__platform_settings.sql seeds) so every existing test below, none of
@@ -67,7 +60,7 @@ class AuthServiceRegisterTest {
                 userRepository, mock(CategoryRepository.class), mock(PasswordResetTokenRepository.class),
                 mock(PasswordEncoder.class), mock(JwtService.class), mock(AuthenticationManager.class),
                 mock(AuditService.class), refreshTokenService, mock(EmailService.class),
-                new EmailProperties(), otpService, platformSettingsService
+                new EmailProperties(), mock(PhoneVerificationProvider.class), platformSettingsService
         );
     }
 

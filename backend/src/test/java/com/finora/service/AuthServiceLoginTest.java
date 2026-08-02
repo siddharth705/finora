@@ -62,7 +62,7 @@ class AuthServiceLoginTest {
                 userRepository, mock(CategoryRepository.class), mock(PasswordResetTokenRepository.class),
                 mock(PasswordEncoder.class), mock(JwtService.class), authenticationManager,
                 mock(AuditService.class), refreshTokenService, mock(EmailService.class),
-                new EmailProperties(), mock(OtpService.class), platformSettingsService
+                new EmailProperties(), mock(PhoneVerificationProvider.class), platformSettingsService
         );
     }
 
@@ -94,12 +94,12 @@ class AuthServiceLoginTest {
     }
 
     /**
-     * Unlike register(), login() never issues a fresh OTP itself -- but the masked phone is still
-     * populated here regardless, since VerifyPhone.tsx needs it to display which number a code
-     * will be sent to once it makes its own /phone/send-otp call right after.
+     * The masked phone is populated here regardless of verification state, since VerifyPhone.tsx
+     * needs it to display which number a code will go to once it calls Firebase Phone
+     * Authentication directly right after.
      */
     @Test
-    void login_returnsTheMaskedPhoneNumber_evenThoughItNeverIssuesAnOtpItself() {
+    void login_returnsTheMaskedPhoneNumber_evenThoughItNeverTriggersPhoneVerificationItself() {
         User u = user("jane@example.com", "+919876500001");
         when(userRepository.findByEmail("jane@example.com")).thenReturn(Optional.of(u));
         stubSuccessfulAuthentication();

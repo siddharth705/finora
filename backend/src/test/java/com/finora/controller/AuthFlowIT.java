@@ -3,9 +3,12 @@ package com.finora.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finora.AbstractIntegrationTest;
+import com.finora.testsupport.FakePhoneVerificationProvider;
+import com.finora.testsupport.TestPhoneVerificationConfig;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.*;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -16,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * and with a garbage token. This is the kind of thing that's easy to break silently by editing
  * SecurityConfig's matcher order or the JWT filter and not notice until a real deployment.
  */
+@Import(TestPhoneVerificationConfig.class)
 class AuthFlowIT extends AbstractIntegrationTest {
 
     @Autowired private TestRestTemplate restTemplate;
@@ -24,10 +28,11 @@ class AuthFlowIT extends AbstractIntegrationTest {
     @Test
     void register_thenLogin_thenAccessProtectedEndpoint_succeeds() throws Exception {
         String email = "flow-" + System.currentTimeMillis() + "@example.com";
+        String phoneNumber = "+919876543210";
 
         String registerBody = """
-                {"email": "%s", "password": "SecurePass123", "fullName": "Flow Test User", "phoneNumber": "+919876543210"}
-                """.formatted(email);
+                {"email": "%s", "password": "SecurePass123", "fullName": "Flow Test User", "phoneNumber": "%s"}
+                """.formatted(email, phoneNumber);
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
 
@@ -45,19 +50,21 @@ class AuthFlowIT extends AbstractIntegrationTest {
 
         // A freshly registered user is not phone-verified yet -- PhoneVerificationFilter must
         // reject a protected endpoint until verification completes, and must still allow the
-        // verify-otp call itself (otherwise nobody could ever get verified in the first place).
+        // verify call itself (otherwise nobody could ever get verified in the first place).
         ResponseEntity<String> beforeVerification = restTemplate.exchange(
                 "/api/v1/accounts", HttpMethod.GET, new HttpEntity<>(authHeaders), String.class);
         assertThat(beforeVerification.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
         JsonNode beforeJson = mapper.readTree(beforeVerification.getBody());
         assertThat(beforeJson.get("errorCode").asText()).isEqualTo("PHONE_VERIFICATION_REQUIRED");
 
-        String devOtp = registerJson.get("data").get("devOtp").asText();
+        // Firebase's own client SDK would normally send/confirm the OTP and hand back an ID token
+        // -- FakePhoneVerificationProvider (wired in via @Import above) stands in for that, since
+        // this backend never sees a real Firebase project in tests.
         String verifyBody = """
-                {"otp": "%s"}
-                """.formatted(devOtp);
+                {"firebaseIdToken": "%s"}
+                """.formatted(FakePhoneVerificationProvider.tokenFor(phoneNumber));
         ResponseEntity<String> verifyResponse = restTemplate.postForEntity(
-                "/api/v1/phone/verify-otp", new HttpEntity<>(verifyBody, authHeaders), String.class);
+                "/api/v1/phone/verify", new HttpEntity<>(verifyBody, authHeaders), String.class);
         assertThat(verifyResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
 
         // Now that the phone is verified, the same token can reach a protected endpoint.

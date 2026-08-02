@@ -111,13 +111,11 @@ app:
     # setting existed -- see EmailProperties.resolveBaseUrl()'s own doc comment for the real bug
     # this fixes once it IS set. Local dev default (5174) matches CORS_ORIGINS' own default above.
     admin-app-base-url: ${ADMIN_APP_BASE_URL:http://localhost:5174}
-  sms:
-    # Empty by default — falls back to logging the OTP server-side instead of sending it via
-    # SMS (dev convenience, same pattern as email). Set all three TWILIO_* vars to switch to
-    # sending real SMS via Twilio.
-    account-sid: ${TWILIO_ACCOUNT_SID:}
-    auth-token: ${TWILIO_AUTH_TOKEN:}
-    from-number: ${TWILIO_FROM_NUMBER:}
+  # Phone verification (registration, password reset, authenticated password change) is Firebase
+  # Phone Authentication now -- see FirebaseConfig's own doc comment for the full architecture.
+  # There's no app.sms.* block here anymore: the Firebase Admin SDK reads its own credentials from
+  # the standard GOOGLE_APPLICATION_CREDENTIALS environment variable (a service-account JSON key
+  # file path), not a Spring @ConfigurationProperties binding.
   setup:
     # Empty by default — BootstrapService generates a random key and writes it to
     # .finora/installation.key for local/dev use (see docker-compose.yml's bind mount for that path).
@@ -137,6 +135,10 @@ app:
     # behind Railway (or any other trusted reverse proxy) so RateLimitFilter reads the real client
     # IP from X-Forwarded-For instead.
     trust-proxy-headers: ${TRUST_PROXY_HEADERS:false}
+    # How long a started Change Password flow (PasswordChangeSession) stays usable before its own
+    # isExpired() check starts rejecting verify-otp/complete calls against it. A property rather
+    # than a hardcoded constant so it can be tuned per-deployment without a code change.
+    password-change-session-expiry-minutes: ${PASSWORD_CHANGE_SESSION_EXPIRY_MINUTES:15}
   import:
     # See ImportConcurrencyLimiter's own doc comment for the full reasoning. 6 is deliberately
     # conservative relative to DB_POOL_MAX_SIZE (10, see the datasource config above) -- leaves

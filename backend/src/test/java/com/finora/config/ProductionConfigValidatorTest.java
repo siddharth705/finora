@@ -1,5 +1,6 @@
 package com.finora.config;
 
+import com.finora.service.PhoneVerificationProvider;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.env.Environment;
 
@@ -30,15 +31,18 @@ class ProductionConfigValidatorTest {
         return emailWith("re_real_resend_api_key");
     }
 
-    private SmsProperties smsWith(String accountSid, String authToken) {
-        SmsProperties props = new SmsProperties();
-        props.setAccountSid(accountSid);
-        props.setAuthToken(authToken);
-        return props;
+    private PhoneVerificationProvider firebaseWith(boolean configured) {
+        PhoneVerificationProvider service = mock(PhoneVerificationProvider.class);
+        when(service.isConfigured()).thenReturn(configured);
+        return service;
     }
 
-    private SmsProperties realSms() {
-        return smsWith("ACrealaccountsid", "realauthtoken");
+    private PhoneVerificationProvider configuredFirebase() {
+        return firebaseWith(true);
+    }
+
+    private PhoneVerificationProvider unconfiguredFirebase() {
+        return firebaseWith(false);
     }
 
     private Environment envWithProfilesAndDbPassword(String[] profiles, String dbPassword) {
@@ -52,7 +56,7 @@ class ProductionConfigValidatorTest {
     void run_inProdProfile_withThePlaceholderJwtSecretStillSet_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
         JwtProperties jwt = jwtWith("change-this-to-a-long-random-secret-in-your-env-file-min-32-chars");
-        var validator = new ProductionConfigValidator(environment, jwt, realEmail(), realSms());
+        var validator = new ProductionConfigValidator(environment, jwt, realEmail(), configuredFirebase());
 
         assertThatThrownBy(() -> validator.run(null))
                 .isInstanceOf(IllegalStateException.class)
@@ -63,7 +67,7 @@ class ProductionConfigValidatorTest {
     void run_inProdProfile_withATooShortJwtSecret_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
         JwtProperties jwt = jwtWith("too-short");
-        var validator = new ProductionConfigValidator(environment, jwt, realEmail(), realSms());
+        var validator = new ProductionConfigValidator(environment, jwt, realEmail(), configuredFirebase());
 
         assertThatThrownBy(() -> validator.run(null))
                 .isInstanceOf(IllegalStateException.class)
@@ -73,22 +77,23 @@ class ProductionConfigValidatorTest {
     @Test
     void run_inProdProfile_withTheDefaultDbPasswordStillSet_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "finora");
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), realSms());
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase());
 
         assertThatThrownBy(() -> validator.run(null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("DB_PASSWORD");
     }
 
-    // Bug fix regression tests: RESEND_API_KEY/Twilio credentials used to not be checked here at
-    // all -- a prod deployment missing either started up completely normally, silently returning
-    // real password-reset links directly in API responses (no RESEND_API_KEY) or only ever
-    // logging OTP codes server-side instead of sending them (no Twilio credentials).
+    // Bug fix regression tests: RESEND_API_KEY/phone-verification credentials used to not be
+    // checked here at all -- a prod deployment missing either started up completely normally,
+    // silently returning real password-reset links directly in API responses (no
+    // RESEND_API_KEY) or leaving every phone-verification call failing with a 503 the moment a
+    // real user hit it (no GOOGLE_APPLICATION_CREDENTIALS for the Firebase Admin SDK).
 
     @Test
     void run_inProdProfile_withNoResendApiKeyConfigured_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
-        var validator = new ProductionConfigValidator(environment, realJwt(), emailWith(null), realSms());
+        var validator = new ProductionConfigValidator(environment, realJwt(), emailWith(null), configuredFirebase());
 
         assertThatThrownBy(() -> validator.run(null))
                 .isInstanceOf(IllegalStateException.class)
@@ -98,7 +103,7 @@ class ProductionConfigValidatorTest {
     @Test
     void run_inProdProfile_withABlankResendApiKeyConfigured_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
-        var validator = new ProductionConfigValidator(environment, realJwt(), emailWith("   "), realSms());
+        var validator = new ProductionConfigValidator(environment, realJwt(), emailWith("   "), configuredFirebase());
 
         assertThatThrownBy(() -> validator.run(null))
                 .isInstanceOf(IllegalStateException.class)
@@ -106,30 +111,19 @@ class ProductionConfigValidatorTest {
     }
 
     @Test
-    void run_inProdProfile_withNoTwilioCredentialsConfigured_throws() {
+    void run_inProdProfile_withFirebaseNotConfigured_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), smsWith(null, null));
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), unconfiguredFirebase());
 
         assertThatThrownBy(() -> validator.run(null))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("TWILIO");
-    }
-
-    @Test
-    void run_inProdProfile_withOnlyOneOfTheTwoTwilioCredentialsConfigured_throws() {
-        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(),
-                smsWith("ACrealaccountsid", null));
-
-        assertThatThrownBy(() -> validator.run(null))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("TWILIO");
+                .hasMessageContaining("GOOGLE_APPLICATION_CREDENTIALS");
     }
 
     @Test
     void run_inProdProfile_withRealSecretsConfigured_doesNotThrow() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), realSms());
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase());
 
         assertThat(catchNoThrow(validator)).isTrue();
     }
@@ -140,7 +134,7 @@ class ProductionConfigValidatorTest {
         // exactly what makes that possible.
         Environment environment = envWithProfilesAndDbPassword(new String[]{"dev"}, "finora");
         JwtProperties jwt = jwtWith("change-this-to-a-long-random-secret-in-your-env-file-min-32-chars");
-        var validator = new ProductionConfigValidator(environment, jwt, emailWith(null), smsWith(null, null));
+        var validator = new ProductionConfigValidator(environment, jwt, emailWith(null), unconfiguredFirebase());
 
         assertThat(catchNoThrow(validator)).isTrue();
     }
@@ -149,7 +143,7 @@ class ProductionConfigValidatorTest {
     void run_withNoActiveProfilesAtAll_doesNotThrow() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{}, "finora");
         JwtProperties jwt = jwtWith("change-this-to-a-long-random-secret-in-your-env-file-min-32-chars");
-        var validator = new ProductionConfigValidator(environment, jwt, emailWith(null), smsWith(null, null));
+        var validator = new ProductionConfigValidator(environment, jwt, emailWith(null), unconfiguredFirebase());
 
         assertThat(catchNoThrow(validator)).isTrue();
     }

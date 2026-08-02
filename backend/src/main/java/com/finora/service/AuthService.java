@@ -4,7 +4,6 @@ import com.finora.config.EmailProperties;
 import com.finora.dto.AuthDtos.*;
 import com.finora.entity.Category;
 import com.finora.entity.PasswordResetToken;
-import com.finora.entity.PhoneOtp;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.repository.CategoryRepository;
@@ -60,7 +59,7 @@ public class AuthService {
     private final RefreshTokenService refreshTokenService;
     private final EmailService emailService;
     private final EmailProperties emailProperties;
-    private final OtpService otpService;
+    private final PhoneVerificationProvider phoneVerificationProvider;
     private final PlatformSettingsService platformSettingsService;
     private final SecureRandom secureRandom = new SecureRandom();
 
@@ -68,7 +67,8 @@ public class AuthService {
                         PasswordResetTokenRepository resetTokenRepository, PasswordEncoder passwordEncoder,
                         JwtService jwtService, AuthenticationManager authenticationManager,
                         AuditService auditService, RefreshTokenService refreshTokenService,
-                        EmailService emailService, EmailProperties emailProperties, OtpService otpService,
+                        EmailService emailService, EmailProperties emailProperties,
+                        PhoneVerificationProvider phoneVerificationProvider,
                         PlatformSettingsService platformSettingsService) {
         this.userRepository = userRepository;
         this.categoryRepository = categoryRepository;
@@ -80,7 +80,7 @@ public class AuthService {
         this.refreshTokenService = refreshTokenService;
         this.emailService = emailService;
         this.emailProperties = emailProperties;
-        this.otpService = otpService;
+        this.phoneVerificationProvider = phoneVerificationProvider;
         this.platformSettingsService = platformSettingsService;
     }
 
@@ -96,26 +96,20 @@ public class AuthService {
         User user = createUserRecord(request);
         auditService.record(user.getId(), "USER_REGISTERED", "User", user.getId());
 
-        // Send the first OTP automatically — the user shouldn't have to take a separate action
-        // just to trigger it right after signing up.
-        var otpResult = otpService.issueOtp(user.getId(), user.getPhoneNumber(), PhoneOtp.Purpose.REGISTER_PHONE);
-
         String accessToken = jwtService.generateToken(user.getId(), user.getEmail());
         String refreshToken = refreshTokenService.issue(user.getId()).rawToken();
         return new AuthResponse(accessToken, refreshToken, user.getEmail(), user.getFullName(),
-                user.isPhoneVerified(), otpResult.delivered() ? null : otpResult.otp(),
-                PhoneMasking.mask(user.getPhoneNumber()));
+                user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()));
     }
 
     /**
      * Support-assisted signup -- an admin creating an account on someone's behalf (USER_CREATE,
      * V16__rbac_roles_permissions.sql). Shares createUserRecord() with the self-service register()
      * above (same uniqueness checks, same default-category seeding), but deliberately does NOT
-     * issue an OTP or mint tokens the way register() does: those exist to get the person who just
-     * submitted the form straight into their own session, which isn't the admin's session to have.
-     * The new user completes phone verification themselves the first time they actually log in
-     * (VerifyPhone.tsx already triggers a fresh OTP send at that point regardless of whether one
-     * was ever issued before).
+     * mint tokens the way register() does: those exist to get the person who just submitted the
+     * form straight into their own session, which isn't the admin's session to have. The new user
+     * completes phone verification themselves the first time they actually log in (VerifyPhone.tsx
+     * calls Firebase Phone Authentication directly at that point).
      */
     @Transactional
     public User adminCreateUser(RegisterRequest request, UUID actingAdminId) {
@@ -126,7 +120,7 @@ public class AuthService {
     }
 
     /** The uniqueness checks + row creation + default-category seeding every user-creation path
-     *  needs, regardless of what happens after (register() continues into OTP + tokens;
+     *  needs, regardless of what happens after (register() continues into minting tokens;
      *  adminCreateUser() stops here). */
     private User createUserRecord(RegisterRequest request) {
         // Trimmed once up front and reused everywhere below -- the duplicate check and the
@@ -234,7 +228,7 @@ public class AuthService {
         String accessToken = jwtService.generateToken(user.getId(), user.getEmail());
         String refreshToken = refreshTokenService.issue(user.getId()).rawToken();
         return new AuthResponse(accessToken, refreshToken, user.getEmail(), user.getFullName(), user.isPhoneVerified(),
-                null, PhoneMasking.mask(user.getPhoneNumber()));
+                PhoneMasking.mask(user.getPhoneNumber()));
     }
 
     /** Exchanges a valid, unused refresh token for a new access token + a rotated refresh token. */
@@ -261,29 +255,40 @@ public class AuthService {
         return new LogoutResponse("Signed out.");
     }
 
-    /** Resends an OTP to the current user's stored phone number. */
+    /**
+     * Marks the current user's phone verified once Firebase attests it -- the frontend's own
+     * Firebase client SDK already sent and confirmed the OTP directly against Firebase; this is
+     * the one thing the backend needs to trust that instead of taking the frontend's word for it
+     * (see PhoneVerificationProvider's own doc comment). A cryptographically valid token
+     * for the WRONG phone number (e.g. stale client state, a different account's number) is
+     * rejected just as firmly as an invalid one -- proving control of *some* phone number isn't
+     * enough, it has to be the one on this account.
+     */
     @Transactional
-    public SendOtpResponse sendPhoneOtp(UUID userId) {
+    public VerifyPhoneResponse verifyPhoneWithFirebase(UUID userId, String firebaseIdToken) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
-        if (user.getPhoneNumber() == null || user.getPhoneNumber().isBlank()) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "No phone number on file for this account.");
+
+        String verifiedPhone = phoneVerificationProvider.verifyAndGetPhoneNumber(firebaseIdToken);
+        if (!phoneNumbersMatch(verifiedPhone, user.getPhoneNumber())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "The verified phone number doesn't match the one on this account.");
         }
 
-        var result = otpService.issueOtp(userId, user.getPhoneNumber(), PhoneOtp.Purpose.REGISTER_PHONE);
-        String message = result.delivered()
-                ? "A verification code has been sent to your phone."
-                : "A verification code has been issued.";
-        // Only exposed when there's no real SMS provider configured — see OtpService.OtpIssueResult.
-        return new SendOtpResponse(message, result.delivered() ? null : result.otp(), PhoneMasking.mask(user.getPhoneNumber()));
+        user.setPhoneVerified(true);
+        user.setUpdatedAt(Instant.now());
+        userRepository.save(user);
+
+        auditService.record(userId, "PHONE_VERIFIED", "User", userId, Map.of("method", "firebase"));
+        return new VerifyPhoneResponse("Phone number verified.");
     }
 
-    @Transactional
-    public VerifyOtpResponse verifyPhoneOtp(UUID userId, String otp) {
-        boolean verified = otpService.verifyOtp(userId, otp, PhoneOtp.Purpose.REGISTER_PHONE);
-        return verified
-                ? new VerifyOtpResponse(true, "Phone number verified.")
-                : new VerifyOtpResponse(false, "That code doesn't match — check and try again.");
+    /** Firebase's phone_number claim is always E.164 ("+919876543210"); User.phoneNumber may or
+     *  may not carry the leading "+" depending on how it was typed at registration (see
+     *  RegisterRequest's own pattern, which accepts either) -- compares digits only so that
+     *  difference alone never causes a false mismatch. */
+    private boolean phoneNumbersMatch(String a, String b) {
+        if (a == null || b == null) return false;
+        return a.replaceAll("[^0-9]", "").equals(b.replaceAll("[^0-9]", ""));
     }
 
     private void registerFailedLogin(User user) {
@@ -345,31 +350,27 @@ public class AuthService {
     }
 
     /**
-     * Second factor for password reset (see RequestPasswordResetOtpRequest's own doc comment):
-     * validates the reset token exactly like resetPassword() does, then sends an OTP to the
-     * account's phone. Deliberately does NOT consume/mark the token here -- that only happens
-     * once the whole reset actually completes in resetPassword() below, so a user who requests
-     * an OTP but never finishes the flow can still use the same reset link again later within
-     * its normal expiry window.
+     * Reveals the account's real phone number for a valid, unused reset link (see
+     * ResolveResetPasswordPhoneRequest's own doc comment for why the frontend needs it and why
+     * this reset-token gate is enough to make that safe). Validates the token exactly like
+     * resetPassword() does, but deliberately does NOT consume/mark it here -- that only happens
+     * once the whole reset actually completes in resetPassword() below, so a user who looks up
+     * the phone number but never finishes the flow can still use the same reset link again later
+     * within its normal expiry window.
      */
-    @Transactional
-    public RequestPasswordResetOtpResponse requestPasswordResetOtp(RequestPasswordResetOtpRequest request) {
+    @Transactional(readOnly = true)
+    public ResolveResetPasswordPhoneResponse resolveResetPasswordPhone(ResolveResetPasswordPhoneRequest request) {
         PasswordResetToken prt = validateResetToken(request.token());
         User user = userRepository.findById(prt.getUserId())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
         if (user.getPhoneNumber() == null || user.getPhoneNumber().isBlank()) {
             // Shouldn't be reachable in practice -- phone number is required at both
             // registration and admin-create time -- but User.phoneNumber has no NOT NULL
-            // constraint at the DB level (V8), so this is a real, if unlikely, state to guard
-            // rather than let a null flow into SmsService.sendOtp().
+            // constraint at the DB level (V8), so this is a real, if unlikely, state to guard.
             throw new ApiException(HttpStatus.BAD_REQUEST,
                     "This account has no phone number on file. Contact an administrator for help resetting your password.");
         }
-        var otpResult = otpService.issueOtp(user.getId(), user.getPhoneNumber(), PhoneOtp.Purpose.PASSWORD_RESET);
-        String message = otpResult.delivered()
-                ? "A verification code has been sent to the phone number on file."
-                : "A verification code has been issued.";
-        return new RequestPasswordResetOtpResponse(message, otpResult.delivered() ? null : otpResult.otp());
+        return new ResolveResetPasswordPhoneResponse(user.getPhoneNumber());
     }
 
     @Transactional
@@ -380,12 +381,12 @@ public class AuthService {
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
 
         // Second factor -- the reset token alone (proof of email access) is no longer enough;
-        // see RequestPasswordResetOtpRequest's doc comment for why. otpService.verifyOtp()
-        // itself throws for "no OTP requested yet"/expired/too-many-attempts, and returns false
-        // (rather than throwing) specifically for a wrong code -- that boolean is what's turned
-        // into a clear error here rather than silently proceeding.
-        if (!otpService.verifyOtp(user.getId(), request.otp(), PhoneOtp.Purpose.PASSWORD_RESET)) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "Incorrect verification code.");
+        // see ResetPasswordRequest's own doc comment for why. Same defensive check as
+        // verifyPhoneWithFirebase(): a valid token for the WRONG phone number is rejected just as
+        // firmly as an invalid one.
+        String verifiedPhone = phoneVerificationProvider.verifyAndGetPhoneNumber(request.firebaseIdToken());
+        if (!phoneNumbersMatch(verifiedPhone, user.getPhoneNumber())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "The verified phone number doesn't match the one on this account.");
         }
 
         Instant now = Instant.now();
@@ -397,12 +398,12 @@ public class AuthService {
         prt.setUsedAt(Instant.now());
         resetTokenRepository.save(prt);
 
-        auditService.record(user.getId(), "PASSWORD_RESET", "User", user.getId(), Map.of("method", "otp_recovery"));
+        auditService.record(user.getId(), "PASSWORD_RESET", "User", user.getId(), Map.of("method", "firebase_phone"));
 
         return new ResetPasswordResponse("Password updated — you can now sign in with your new password.");
     }
 
-    /** Shared by requestPasswordResetOtp() and resetPassword() -- both need the exact same
+    /** Shared by resolveResetPasswordPhone() and resetPassword() -- both need the exact same
      *  "is this reset link still good" checks, and drifting between two separate copies of this
      *  logic is exactly how one of them ends up silently more/less strict than the other. */
     private PasswordResetToken validateResetToken(String rawToken) {

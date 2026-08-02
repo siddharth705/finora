@@ -34,10 +34,10 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.ok(authService.forgotPassword(request, origin)));
     }
 
-    @PostMapping("/reset-password/request-otp")
-    public ResponseEntity<ApiResponse<RequestPasswordResetOtpResponse>> requestPasswordResetOtp(
-            @Valid @RequestBody RequestPasswordResetOtpRequest request) {
-        return ResponseEntity.ok(ApiResponse.ok(authService.requestPasswordResetOtp(request)));
+    @PostMapping("/reset-password/phone")
+    public ResponseEntity<ApiResponse<ResolveResetPasswordPhoneResponse>> resolveResetPasswordPhone(
+            @Valid @RequestBody ResolveResetPasswordPhoneRequest request) {
+        return ResponseEntity.ok(ApiResponse.ok(authService.resolveResetPasswordPhone(request)));
     }
 
     @PostMapping("/reset-password")

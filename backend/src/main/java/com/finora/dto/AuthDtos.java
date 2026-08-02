@@ -41,21 +41,19 @@ public class AuthDtos {
 
     /** token = short-lived access token (15 min default); refreshToken = long-lived (30 days),
      *  used to obtain a new access token via /auth/refresh without re-entering credentials.
-     *  phoneVerified tells the frontend right after login/register whether to prompt for OTP.
-     *  devOtp is only populated by register() when no SMS provider is configured — mirrors
-     *  devResetLink's reasoning, and keeps the flow testable without a real Twilio account
-     *  instead of the OTP being visible only in server logs. Always null from login().
-     *  maskedPhone (see PhoneMasking) is populated whenever phoneVerified is false, regardless of
-     *  whether an OTP was actually issued at this exact call -- VerifyPhone.tsx uses it to show
-     *  which number a code was (or is about to be) sent to, so a wrong/missing country code is
-     *  visible on screen instead of silently failing to deliver. */
+     *  phoneVerified tells the frontend right after login/register whether to prompt for OTP
+     *  (via Firebase Phone Authentication -- see FirebaseConfig's own doc comment for the full
+     *  architecture). maskedPhone (see PhoneMasking) is populated whenever phoneVerified is
+     *  false, so VerifyPhone.tsx can show which number a code will go to -- a wrong/missing
+     *  country code on the account is visible on screen instead of silently failing to deliver.
+     *  The frontend fetches the REAL phone number separately (GET /users/me, once authenticated)
+     *  when it actually needs to hand it to Firebase's signInWithPhoneNumber(). */
     public record AuthResponse(
             String token,
             String refreshToken,
             String email,
             String fullName,
             boolean phoneVerified,
-            String devOtp,
             String maskedPhone
     ) {}
 
@@ -68,26 +66,34 @@ public class AuthDtos {
      */
     public record ForgotPasswordResponse(String message, String devResetLink) {}
 
+    /**
+     * firebaseIdToken is the second factor -- the reset token alone (proof of email access) is
+     * no longer sufficient to change a password; proof of phone access via Firebase Phone
+     * Authentication is required too, same two-factor principle as VerifyPhone already applies
+     * elsewhere. AuthService.resetPassword() verifies this token server-side (via
+     * PhoneVerificationProvider) and checks the phone number it attests to matches the
+     * account's own before proceeding -- never trusts the frontend's own "it worked" signal.
+     */
     public record ResetPasswordRequest(
             @NotBlank String token,
-            @NotBlank String otp,
+            @NotBlank String firebaseIdToken,
             @NotBlank @Size(min = 8, max = 72, message = PASSWORD_SIZE_MESSAGE) String newPassword
     ) {}
 
     public record ResetPasswordResponse(String message) {}
 
     /**
-     * Second factor for password reset -- the reset token alone (proof of email access) is no
-     * longer sufficient to change a password; a phone OTP (proof of phone access) is required
-     * too, same two-factor principle as VerifyPhone already applies elsewhere. token here is the
-     * SAME raw reset-link token from forgot-password, used to resolve which account to send the
-     * OTP to without requiring a JWT (the person is, by definition, not logged in at this point).
+     * Reveals the account's real phone number for a valid, unused reset link -- the frontend
+     * needs it to call Firebase Phone Authentication directly (Firebase's own client SDK sends
+     * the OTP; this backend never does). token here is the SAME raw reset-link token from
+     * forgot-password, used to resolve which account without requiring a JWT (the person is, by
+     * definition, not logged in at this point). Gated on the exact same reset-token validity
+     * check resetPassword() itself uses -- see AuthService.resolveResetPasswordPhone()'s own doc
+     * comment for why that's enough to prevent this from being an arbitrary phone-number lookup.
      */
-    public record RequestPasswordResetOtpRequest(@NotBlank String token) {}
+    public record ResolveResetPasswordPhoneRequest(@NotBlank String token) {}
 
-    /** devOtp mirrors SendOtpResponse.devOtp -- only populated when no SMS provider is
-     *  configured, same convention as everywhere else an OTP gets issued in this codebase. */
-    public record RequestPasswordResetOtpResponse(String message, String devOtp) {}
+    public record ResolveResetPasswordPhoneResponse(String phoneNumber) {}
 
     public record RefreshRequest(@NotBlank String refreshToken) {}
 
@@ -97,15 +103,11 @@ public class AuthDtos {
 
     public record LogoutResponse(String message) {}
 
-    /**
-     * devOtp is only populated because this environment has no SMS provider wired up — same
-     * reasoning as devResetLink above. Remove it once a real Twilio (or similar) account is
-     * configured; with one configured, this field is always null and the code only ever goes
-     * out via real SMS. maskedPhone (see PhoneMasking) is always populated, real provider or not.
-     */
-    public record SendOtpResponse(String message, String devOtp, String maskedPhone) {}
+    /** firebaseIdToken proves phone ownership via Firebase Phone Authentication -- see
+     *  PhoneVerificationProvider's own doc comment. Backs POST /api/v1/phone/verify,
+     *  called once the frontend's own Firebase client SDK has already sent and confirmed the
+     *  OTP; the backend only ever sees the resulting token, never the code itself. */
+    public record VerifyPhoneRequest(@NotBlank String firebaseIdToken) {}
 
-    public record VerifyOtpRequest(@NotBlank String otp) {}
-
-    public record VerifyOtpResponse(boolean verified, String message) {}
+    public record VerifyPhoneResponse(String message) {}
 }

@@ -52,7 +52,7 @@ class AuthServiceEmailTest {
                 userRepository, mock(CategoryRepository.class), resetTokenRepository,
                 mock(PasswordEncoder.class), mock(JwtService.class), mock(AuthenticationManager.class),
                 mock(AuditService.class), mock(RefreshTokenService.class), emailService, emailProperties,
-                mock(OtpService.class), mock(PlatformSettingsService.class)
+                mock(PhoneVerificationProvider.class), mock(PlatformSettingsService.class)
         );
     }
 

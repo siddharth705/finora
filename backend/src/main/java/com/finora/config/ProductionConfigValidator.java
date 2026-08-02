@@ -1,5 +1,6 @@
 package com.finora.config;
 
+import com.finora.service.PhoneVerificationProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
@@ -33,14 +34,15 @@ public class ProductionConfigValidator implements ApplicationRunner {
     private final Environment environment;
     private final JwtProperties jwtProperties;
     private final EmailProperties emailProperties;
-    private final SmsProperties smsProperties;
+    private final PhoneVerificationProvider phoneVerificationProvider;
 
     public ProductionConfigValidator(Environment environment, JwtProperties jwtProperties,
-                                      EmailProperties emailProperties, SmsProperties smsProperties) {
+                                      EmailProperties emailProperties,
+                                      PhoneVerificationProvider phoneVerificationProvider) {
         this.environment = environment;
         this.jwtProperties = jwtProperties;
         this.emailProperties = emailProperties;
-        this.smsProperties = smsProperties;
+        this.phoneVerificationProvider = phoneVerificationProvider;
     }
 
     @Override
@@ -65,28 +67,31 @@ public class ProductionConfigValidator implements ApplicationRunner {
         }
 
         // Bug fix: JWT_SECRET/DB_PASSWORD were the only two settings this validator checked, even
-        // though EmailConfig/SmsConfig each have their own silent "convenience default" -- no
-        // RESEND_API_KEY falls back to NoOpEmailService, and AuthService.forgotPassword() branches
-        // on emailService.isConfigured() to decide whether to actually send the reset email or
-        // just return the raw, valid reset link directly in the API response body instead (the
-        // same dev-environment convenience CorsConfig's own class doc calls out this validator as
-        // existing specifically to catch reaching production). Omitting RESEND_API_KEY from a real
-        // deployment -- an easy operator mistake, since every OTHER secret here fails loudly and
-        // this one didn't -- turned "forgot password" into a full account-takeover primitive for
-        // anyone who knows a victim's email address, no email access required at all. Missing
-        // Twilio credentials (NoOpSmsService) is the same category of gap for OTP delivery, lower
-        // severity only because it requires server log access rather than a single unauthenticated
-        // API call, not because it's actually acceptable in production either.
+        // though EmailConfig has its own silent "convenience default" -- no RESEND_API_KEY falls
+        // back to NoOpEmailService, and AuthService.forgotPassword() branches on
+        // emailService.isConfigured() to decide whether to actually send the reset email or just
+        // return the raw, valid reset link directly in the API response body instead (the same
+        // dev-environment convenience CorsConfig's own class doc calls out this validator as
+        // existing specifically to catch reaching production). Omitting RESEND_API_KEY from a
+        // real deployment -- an easy operator mistake, since every OTHER secret here fails loudly
+        // and this one didn't -- turned "forgot password" into a full account-takeover primitive
+        // for anyone who knows a victim's email address, no email access required at all.
         if (emailProperties.getApiKey() == null || emailProperties.getApiKey().isBlank()) {
             problems.append("- RESEND_API_KEY is unset. Without it, password-reset links are ")
                     .append("returned directly in the API response instead of emailed -- anyone who ")
                     .append("knows a user's email address could take over their account.\n");
         }
-        boolean smsConfigured = smsProperties.getAccountSid() != null && !smsProperties.getAccountSid().isBlank()
-                && smsProperties.getAuthToken() != null && !smsProperties.getAuthToken().isBlank();
-        if (!smsConfigured) {
-            problems.append("- TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN are unset. Without them, OTP codes ")
-                    .append("are only logged server-side, never actually sent to the user's phone.\n");
+        // GOOGLE_APPLICATION_CREDENTIALS (see FirebaseConfig) selects whether the Firebase Admin
+        // SDK can actually verify a Firebase ID token -- isConfigured() is the exact same check
+        // PhoneVerificationProvider itself uses before attempting verification, so this
+        // can never disagree with what actually happens at runtime. Without it, registration,
+        // password reset, and authenticated password change can never complete phone
+        // verification at all (every call fails with 503), not a silently-degraded fallback --
+        // still worth catching at boot rather than the first real user's first failed request.
+        if (!phoneVerificationProvider.isConfigured()) {
+            problems.append("- GOOGLE_APPLICATION_CREDENTIALS is unset or invalid. Without it, the Firebase ")
+                    .append("Admin SDK can't verify phone numbers, so registration, password reset, and ")
+                    .append("password change can never complete their phone-verification step.\n");
         }
 
         if (!problems.isEmpty()) {

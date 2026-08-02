@@ -12,9 +12,13 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * Deliberately NOT under /api/v1/auth/** — that prefix is entirely permitAll in SecurityConfig,
- * and these two endpoints need a real authenticated user (CurrentUser.id()) since they act on
- * "the current user's phone number," not an anonymous request. Living under /api/v1/phone
- * instead means they correctly fall under the default authenticated() rule.
+ * and this endpoint needs a real authenticated user (CurrentUser.id()) since it acts on "the
+ * current user's phone number," not an anonymous request. Living under /api/v1/phone instead
+ * means it correctly falls under the default authenticated() rule.
+ *
+ * Just one endpoint now -- there's no backend-triggered "send" step anymore (Firebase's own
+ * client SDK sends the OTP directly; the frontend already knows the account's real phone number
+ * from GET /users/me), only verifying the Firebase ID token that results from it.
  */
 @RestController
 @RequestMapping("/api/v1/phone")
@@ -28,13 +32,8 @@ public class PhoneController {
         this.currentUser = currentUser;
     }
 
-    @PostMapping("/send-otp")
-    public ApiResponse<SendOtpResponse> sendOtp() {
-        return ApiResponse.ok(authService.sendPhoneOtp(currentUser.id()));
-    }
-
-    @PostMapping("/verify-otp")
-    public ApiResponse<VerifyOtpResponse> verifyOtp(@Valid @RequestBody VerifyOtpRequest request) {
-        return ApiResponse.ok(authService.verifyPhoneOtp(currentUser.id(), request.otp()));
+    @PostMapping("/verify")
+    public ApiResponse<VerifyPhoneResponse> verify(@Valid @RequestBody VerifyPhoneRequest request) {
+        return ApiResponse.ok(authService.verifyPhoneWithFirebase(currentUser.id(), request.firebaseIdToken()));
     }
 }

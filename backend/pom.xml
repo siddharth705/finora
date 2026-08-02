@@ -125,6 +125,19 @@
       <version>3.0.3</version>
     </dependency>
 
+    <!-- Firebase Admin SDK: server-side verification of Firebase ID tokens issued by Firebase
+         Phone Authentication (the frontend's own client-side SDK handles OTP send/verify directly
+         against Firebase; this is only what lets the backend trust the resulting token instead of
+         taking the frontend's word for it). Replaces this app's own OTP generation/storage/
+         verification (see FirebaseConfig's own doc comment for why). Version unverified against
+         Maven Central in this sandbox (no network here), same caveat as the pdfbox dependency
+         above; bump to the latest 9.x if this specific patch doesn't resolve. -->
+    <dependency>
+      <groupId>com.google.firebase</groupId>
+      <artifactId>firebase-admin</artifactId>
+      <version>9.3.0</version>
+    </dependency>
+
     <!-- Utilities -->
     <dependency>
       <groupId>org.projectlombok</groupId>
