@@ -67,6 +67,16 @@ public class AccountService {
                 .toList();
     }
 
+    /**
+     * Bug fix: this had no @Transactional -- the account save and its AuditService.record() call
+     * are two separate writes that should either both happen or neither. AuditService.record()
+     * does not swallow its own exceptions (a straight auditLogRepository.save(), no try/catch), so
+     * without this, a failure in the audit write (e.g. a transient DB error) would leave the
+     * account already committed while the caller still receives a 500 -- risking a duplicate
+     * account being created on client retry, since nothing tells the client the mutation actually
+     * succeeded. Same bug class, same fix, as BudgetService.upsert()'s own documented rationale.
+     */
+    @Transactional
     public AccountDto create(UUID userId, AccountDto.CreateRequest req) {
         Account a = new Account();
         a.setUserId(userId);
@@ -91,6 +101,9 @@ public class AccountService {
         return AccountDto.from(saved, bankManagementService.resolve(saved.getBankId()));
     }
 
+    /** Bug fix: same atomicity gap as {@link #create} between the account save and the audit
+     *  write -- see that method's own doc comment. */
+    @Transactional
     public AccountDto update(UUID userId, UUID accountId, AccountDto.CreateRequest req) {
         Account a = getOwned(userId, accountId);
         var previousBalance = a.getBalance();
@@ -117,6 +130,9 @@ public class AccountService {
         return AccountDto.from(saved, bankManagementService.resolve(saved.getBankId()));
     }
 
+    /** Bug fix: same atomicity gap as {@link #create} between the account (soft-)delete and the
+     *  audit write -- see that method's own doc comment. */
+    @Transactional
     public void delete(UUID userId, UUID accountId) {
         Account a = getOwned(userId, accountId);
         accountRepository.delete(a); // soft delete via @SQLDelete on the entity

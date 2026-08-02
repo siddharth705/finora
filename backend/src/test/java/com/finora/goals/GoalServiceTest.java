@@ -126,4 +126,22 @@ class GoalServiceTest {
         verify(contributionRepository).save(captor.capture());
         assertThat(captor.getValue().getContributedAt()).isEqualTo(LocalDate.now(ZoneId.of("Pacific/Kiritimati")));
     }
+
+    // Bug fix: create()/addContribution() each do two related writes (Goal + GoalContribution)
+    // that must commit atomically -- same class of bug BudgetService.upsert() was already fixed
+    // for. A Mockito unit test can't exercise real transactional rollback (that needs a live
+    // Spring/DB context), so -- matching BudgetServiceTest.upsert_isTransactional()'s own
+    // established pattern for this exact situation -- this asserts the annotation is actually
+    // present, which is what a reviewer or a future refactor could otherwise silently drop.
+    @Test
+    void create_isTransactional() throws NoSuchMethodException {
+        assertThat(GoalService.class.getMethod("create", UUID.class, GoalDto.CreateRequest.class)
+                .isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class)).isTrue();
+    }
+
+    @Test
+    void addContribution_isTransactional() throws NoSuchMethodException {
+        assertThat(GoalService.class.getMethod("addContribution", UUID.class, UUID.class, BigDecimal.class)
+                .isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class)).isTrue();
+    }
 }

@@ -4,6 +4,7 @@ import com.finora.dto.ApiResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.env.Environment;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -68,6 +69,25 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleAccessDenied(AccessDeniedException ex) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(ApiResponse.error("You don't have permission to do that", "AUTH_003"));
+    }
+
+    /**
+     * Bug fix: Account carries @Version (BaseEntity), so two concurrent writes to the same
+     * account -- a double-click submit, or a transaction posted from a second tab while the first
+     * is still in flight -- make the losing request's save() throw
+     * ObjectOptimisticLockingFailureException (Spring's translation of JPA's
+     * OptimisticLockException). With no handler for it here, it fell through to the catch-all
+     * Exception handler below: a routine, expected concurrency conflict returned an opaque 500
+     * "Unexpected error" and got logged as log.error("Unhandled exception", ...) — the exact same
+     * "expected condition treated as an alarming failure" issue the AccessDeniedException handler
+     * above was already fixed for. @Version itself still does its job (no silent lost update --
+     * the loser's write is correctly rejected); this only fixes what the CLIENT sees when that
+     * happens, so a UI can tell the user to refresh and retry instead of showing a generic error.
+     */
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    public ResponseEntity<ApiResponse<Void>> handleOptimisticLock(OptimisticLockingFailureException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error("This record was just updated by another request — refresh and try again.", "CONFLICT"));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

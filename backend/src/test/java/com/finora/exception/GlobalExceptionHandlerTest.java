@@ -64,4 +64,23 @@ class GlobalExceptionHandlerTest {
         assertThat(response.getStatusCode().value()).isEqualTo(500);
         assertThat(response.getBody().errorCode()).isEqualTo("INTERNAL_ERROR");
     }
+
+    /**
+     * Bug fix: a concurrent write to a @Version-carrying entity (e.g. Account, hit by two
+     * simultaneous transaction posts) throws OptimisticLockingFailureException, which previously
+     * had no dedicated handler and fell through to handleGeneric() above -- a routine, expected
+     * concurrency conflict returned an opaque 500 instead of a clear, actionable 409.
+     */
+    @Test
+    void handleOptimisticLock_returns409_withAClearRetryMessage_notTheGeneric500() {
+        Environment environment = mock(Environment.class);
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(environment);
+
+        var response = handler.handleOptimisticLock(
+                new org.springframework.orm.ObjectOptimisticLockingFailureException("Account", "some-id"));
+
+        assertThat(response.getStatusCode().value()).isEqualTo(409);
+        assertThat(response.getBody().errorCode()).isEqualTo("CONFLICT");
+        assertThat(response.getBody().message()).contains("refresh and try again");
+    }
 }

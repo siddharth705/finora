@@ -7,6 +7,7 @@ import {
 import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
 import { adminDiagnosticsApi } from '../api/endpoints';
+import { useNotify } from '../context/NotificationContext';
 import type { PlatformDiagnosticsDto } from '../types';
 
 function formatUptime(seconds: number) {
@@ -60,11 +61,23 @@ function formatDiagnosticsSummary(data: PlatformDiagnosticsDto): string {
 
 function CopyDiagnosticsButton({ data }: { data: PlatformDiagnosticsDto }) {
   const [copied, setCopied] = useState(false);
+  const notify = useNotify();
 
+  // Bug fix: this used to have no try/catch at all -- navigator.clipboard.writeText() rejects in
+  // several realistic conditions for this exact page (an unfocused tab when the button is
+  // clicked, denied clipboard permission, or a self-hosted deployment served over plain HTTP,
+  // where the Clipboard API requires a secure context). Rejecting there threw out of an async
+  // function with nothing awaiting it, producing an unhandled promise rejection: the button
+  // silently did nothing -- no "Copied" state, no error, just a console error -- instead of
+  // telling the admin the copy actually failed.
   async function handleCopy() {
-    await navigator.clipboard.writeText(formatDiagnosticsSummary(data));
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(formatDiagnosticsSummary(data));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      notify.error('Could not copy to clipboard -- your browser may have blocked it.');
+    }
   }
 
   return (

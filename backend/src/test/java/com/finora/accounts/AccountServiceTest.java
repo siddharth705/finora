@@ -227,4 +227,29 @@ class AccountServiceTest {
         ReflectionTestUtils.setField(si, "importedAt", importedAt);
         return si;
     }
+
+    // Bug fix: create()/update()/delete() each do the account write plus an AuditService.record()
+    // call that must commit atomically with it -- AuditService.record() doesn't swallow its own
+    // exceptions, so without @Transactional a failed audit write leaves the account mutation
+    // already committed while the client still sees a 500. A Mockito unit test can't exercise
+    // real transactional rollback (needs a live Spring/DB context), so -- matching
+    // BudgetServiceTest.upsert_isTransactional()'s established pattern -- these assert the
+    // annotation is actually present.
+    @Test
+    void create_isTransactional() throws NoSuchMethodException {
+        assertThat(AccountService.class.getMethod("create", UUID.class, AccountDto.CreateRequest.class)
+                .isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class)).isTrue();
+    }
+
+    @Test
+    void update_isTransactional() throws NoSuchMethodException {
+        assertThat(AccountService.class.getMethod("update", UUID.class, UUID.class, AccountDto.CreateRequest.class)
+                .isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class)).isTrue();
+    }
+
+    @Test
+    void delete_isTransactional() throws NoSuchMethodException {
+        assertThat(AccountService.class.getMethod("delete", UUID.class, UUID.class)
+                .isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class)).isTrue();
+    }
 }

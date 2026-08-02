@@ -33,6 +33,16 @@ public class GoalService {
                 .toList();
     }
 
+    /**
+     * Bug fix: this had no @Transactional -- Goal creation and its initial GoalContribution row
+     * (when the goal starts with a non-zero currentAmount) are two separate writes that should
+     * either both happen or neither. Same bug class, same fix, as BudgetService.upsert()'s own
+     * documented rationale: a failure partway through (e.g. the contribution save failing after
+     * the goal save already committed) would leave the goal's currentAmount reflecting a
+     * contribution with no GoalContribution row behind it -- silently breaking the contribution
+     * history/audit trail a user would otherwise rely on to explain that balance.
+     */
+    @Transactional
     public GoalDto create(UUID userId, GoalDto.CreateRequest req) {
         Goal g = new Goal();
         g.setUserId(userId);
@@ -55,6 +65,9 @@ public class GoalService {
         return new GoalDto(saved.getId(), saved.getName(), saved.getTargetAmount(), saved.getCurrentAmount(), saved.getTargetDate());
     }
 
+    /** Bug fix: same atomicity gap as {@link #create}, on the same two writes (Goal +
+     *  GoalContribution) -- see that method's own doc comment. */
+    @Transactional
     public GoalDto addContribution(UUID userId, UUID goalId, BigDecimal amount) {
         Goal g = getOwned(userId, goalId);
         // Floor at zero as defense-in-depth: GoalDto.ContributionRequest's @DecimalMin(0.01)
