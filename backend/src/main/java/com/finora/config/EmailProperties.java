@@ -9,6 +9,9 @@ public class EmailProperties {
 
     private String apiKey;
     private String fromAddress;
+    // Optional display name shown alongside fromAddress (e.g. "Finora <onboarding@resend.dev>")
+    // -- unset means every real mail client just shows the bare address, exactly today's behavior.
+    private String fromName;
     // Kept as "appBaseUrl"/APP_BASE_URL for backward compatibility with existing deployments —
     // this is specifically the USER-facing frontend's base URL now that adminAppBaseUrl exists
     // as a separate setting (see that field's own doc comment for why this split was needed).
@@ -29,6 +32,8 @@ public class EmailProperties {
     public void setApiKey(String apiKey) { this.apiKey = apiKey; }
     public String getFromAddress() { return fromAddress; }
     public void setFromAddress(String fromAddress) { this.fromAddress = fromAddress; }
+    public String getFromName() { return fromName; }
+    public void setFromName(String fromName) { this.fromName = fromName; }
     public String getAppBaseUrl() { return appBaseUrl; }
     public void setAppBaseUrl(String appBaseUrl) { this.appBaseUrl = appBaseUrl; }
     public String getAdminAppBaseUrl() { return adminAppBaseUrl; }
