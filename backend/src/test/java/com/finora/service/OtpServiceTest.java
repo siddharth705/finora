@@ -39,8 +39,9 @@ class OtpServiceTest {
         otpService = new OtpService(otpRepository, userRepository, smsService, mock(AuditService.class));
 
         otpHistory = new ArrayList<>();
-        when(otpRepository.findByUserIdOrderByCreatedAtDesc(userId)).thenAnswer(inv -> {
-            List<PhoneOtp> reversed = new ArrayList<>(otpHistory);
+        when(otpRepository.findByUserIdAndPurposeOrderByCreatedAtDesc(eq(userId), any())).thenAnswer(inv -> {
+            PhoneOtp.Purpose purpose = inv.getArgument(1);
+            List<PhoneOtp> reversed = new ArrayList<>(otpHistory.stream().filter(o -> o.getPurpose() == purpose).toList());
             java.util.Collections.reverse(reversed);
             return reversed;
         });
@@ -61,7 +62,7 @@ class OtpServiceTest {
     void issueOtp_generatesSixDigitCode_andSendsViaSms() {
         when(smsService.isConfigured()).thenReturn(true);
 
-        var result = otpService.issueOtp(userId, "+919876543210");
+        var result = otpService.issueOtp(userId, "+919876543210", PhoneOtp.Purpose.REGISTER_PHONE);
 
         assertThat(result.otp()).hasSize(6);
         assertThat(result.otp()).matches("\\d{6}");
@@ -73,7 +74,7 @@ class OtpServiceTest {
     void issueOtp_whenSmsNotConfigured_reportsNotDelivered() {
         when(smsService.isConfigured()).thenReturn(false);
 
-        var result = otpService.issueOtp(userId, "+919876543210");
+        var result = otpService.issueOtp(userId, "+919876543210", PhoneOtp.Purpose.REGISTER_PHONE);
 
         assertThat(result.delivered()).isFalse();
     }
@@ -81,9 +82,9 @@ class OtpServiceTest {
     @Test
     void verifyOtp_withCorrectCode_succeedsAndMarksVerified() {
         when(smsService.isConfigured()).thenReturn(false);
-        var issued = otpService.issueOtp(userId, "+919876543210");
+        var issued = otpService.issueOtp(userId, "+919876543210", PhoneOtp.Purpose.REGISTER_PHONE);
 
-        boolean result = otpService.verifyOtp(userId, issued.otp());
+        boolean result = otpService.verifyOtp(userId, issued.otp(), PhoneOtp.Purpose.REGISTER_PHONE);
 
         assertThat(result).isTrue();
         assertThat(otpHistory.get(0).getVerifiedAt()).isNotNull();
@@ -92,9 +93,9 @@ class OtpServiceTest {
     @Test
     void verifyOtp_withWrongCode_failsAndIncrementsAttempts() {
         when(smsService.isConfigured()).thenReturn(false);
-        otpService.issueOtp(userId, "+919876543210");
+        otpService.issueOtp(userId, "+919876543210", PhoneOtp.Purpose.REGISTER_PHONE);
 
-        boolean result = otpService.verifyOtp(userId, "000000");
+        boolean result = otpService.verifyOtp(userId, "000000", PhoneOtp.Purpose.REGISTER_PHONE);
 
         assertThat(result).isFalse();
         assertThat(otpHistory.get(0).getAttempts()).isEqualTo(1);
@@ -104,13 +105,13 @@ class OtpServiceTest {
     @Test
     void verifyOtp_afterFiveWrongAttempts_rejectsFurtherAttemptsEvenIfCorrect() {
         when(smsService.isConfigured()).thenReturn(false);
-        var issued = otpService.issueOtp(userId, "+919876543210");
+        var issued = otpService.issueOtp(userId, "+919876543210", PhoneOtp.Purpose.REGISTER_PHONE);
 
         for (int i = 0; i < 5; i++) {
-            otpService.verifyOtp(userId, "000000");
+            otpService.verifyOtp(userId, "000000", PhoneOtp.Purpose.REGISTER_PHONE);
         }
 
-        assertThatThrownBy(() -> otpService.verifyOtp(userId, issued.otp()))
+        assertThatThrownBy(() -> otpService.verifyOtp(userId, issued.otp(), PhoneOtp.Purpose.REGISTER_PHONE))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Too many incorrect attempts");
     }
@@ -118,10 +119,10 @@ class OtpServiceTest {
     @Test
     void verifyOtp_afterExpiry_throwsExpiredError() {
         when(smsService.isConfigured()).thenReturn(false);
-        var issued = otpService.issueOtp(userId, "+919876543210");
+        var issued = otpService.issueOtp(userId, "+919876543210", PhoneOtp.Purpose.REGISTER_PHONE);
         otpHistory.get(0).setExpiresAt(Instant.now().minusSeconds(60));
 
-        assertThatThrownBy(() -> otpService.verifyOtp(userId, issued.otp()))
+        assertThatThrownBy(() -> otpService.verifyOtp(userId, issued.otp(), PhoneOtp.Purpose.REGISTER_PHONE))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("expired");
     }
@@ -129,17 +130,17 @@ class OtpServiceTest {
     @Test
     void verifyOtp_alreadyUsed_throwsAlreadyUsedError() {
         when(smsService.isConfigured()).thenReturn(false);
-        var issued = otpService.issueOtp(userId, "+919876543210");
-        otpService.verifyOtp(userId, issued.otp());
+        var issued = otpService.issueOtp(userId, "+919876543210", PhoneOtp.Purpose.REGISTER_PHONE);
+        otpService.verifyOtp(userId, issued.otp(), PhoneOtp.Purpose.REGISTER_PHONE);
 
-        assertThatThrownBy(() -> otpService.verifyOtp(userId, issued.otp()))
+        assertThatThrownBy(() -> otpService.verifyOtp(userId, issued.otp(), PhoneOtp.Purpose.REGISTER_PHONE))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("already been used");
     }
 
     @Test
     void verifyOtp_withNoOtpEverIssued_throwsClearError() {
-        assertThatThrownBy(() -> otpService.verifyOtp(userId, "123456"))
+        assertThatThrownBy(() -> otpService.verifyOtp(userId, "123456", PhoneOtp.Purpose.REGISTER_PHONE))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("No OTP has been requested");
     }

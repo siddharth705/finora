@@ -85,10 +85,29 @@ public class RefreshTokenService {
         });
     }
 
-    private void revokeAllForUser(UUID userId) {
+    /** Revokes every active session for the user, including whichever one is calling this --
+     *  the same defense-in-depth response rotate() already applies when it detects a
+     *  stolen/replayed refresh token (see this class's own doc comment). */
+    public void revokeAllForUser(UUID userId) {
         List<RefreshToken> active = refreshTokenRepository.findByUserIdAndRevokedAtIsNull(userId);
         Instant now = Instant.now();
         active.forEach(t -> t.setRevokedAt(now));
         refreshTokenRepository.saveAll(active);
+    }
+
+    /** Used by PasswordChangeService's "sign out other devices" choice -- unlike
+     *  revokeAllForUser(), the device that just completed the change stays signed in rather than
+     *  also being forced to re-authenticate, since currentRawToken identifies it and is excluded.
+     *  If currentRawToken doesn't match any active token (e.g. it was already rotated by the time
+     *  this runs), nothing is excluded and every session -- including, in that edge case, this
+     *  one -- ends up revoked; that fails toward the safer outcome, not a silent no-op. */
+    public void revokeAllOtherSessionsForUser(UUID userId, String currentRawToken) {
+        String currentHash = TokenHasher.sha256(currentRawToken);
+        List<RefreshToken> others = refreshTokenRepository.findByUserIdAndRevokedAtIsNull(userId).stream()
+                .filter(t -> !t.getTokenHash().equals(currentHash))
+                .toList();
+        Instant now = Instant.now();
+        others.forEach(t -> t.setRevokedAt(now));
+        refreshTokenRepository.saveAll(others);
     }
 }

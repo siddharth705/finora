@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -44,35 +45,42 @@ public class OtpService {
 
     public record OtpIssueResult(String otp, boolean delivered) {}
 
-    /** Generates and sends a fresh OTP, replacing any still-active one for this user. Returns
-     *  the plaintext code plus whether it was actually delivered via SMS — the caller uses
-     *  `delivered` to decide whether it's safe to also expose the code in an API response
-     *  (only when it wasn't really sent anywhere), mirroring forgotPassword()'s devResetLink. */
+    /** Generates and sends a fresh OTP for the given purpose, replacing any still-active one
+     *  this user has for that SAME purpose (a still-active code for a different purpose is left
+     *  alone -- see PhoneOtp.Purpose). Returns the plaintext code plus whether it was actually
+     *  delivered via SMS — the caller uses `delivered` to decide whether it's safe to also expose
+     *  the code in an API response (only when it wasn't really sent anywhere), mirroring
+     *  forgotPassword()'s devResetLink. */
     @Transactional
-    public OtpIssueResult issueOtp(UUID userId, String phoneNumber) {
+    public OtpIssueResult issueOtp(UUID userId, String phoneNumber, PhoneOtp.Purpose purpose) {
         String otp = generateOtp();
 
         PhoneOtp record = new PhoneOtp();
         record.setUserId(userId);
         record.setPhoneNumber(phoneNumber);
         record.setOtpHash(TokenHasher.sha256(otp));
+        record.setPurpose(purpose);
         record.setExpiresAt(Instant.now().plusSeconds(OTP_TTL_MINUTES * 60));
         otpRepository.save(record);
 
         smsService.sendOtp(phoneNumber, otp);
-        auditService.record(userId, "PHONE_OTP_ISSUED", "User", userId);
+        auditService.record(userId, "PHONE_OTP_ISSUED", "User", userId, Map.of("purpose", purpose.name()));
         return new OtpIssueResult(otp, smsService.isConfigured());
     }
 
     /**
-     * Verifies the OTP against the most recent one issued for this user. On success, marks the
-     * user's phone as verified. On failure, increments the attempt counter on that same OTP
-     * record (not a new one) - repeated wrong guesses against one code exhaust its own attempt
-     * budget rather than resetting with each new lookup.
+     * Verifies the OTP against the most recent one issued for this user FOR THIS PURPOSE -- a
+     * code issued for a different purpose is invisible to this lookup, even if it's more recent.
+     * On success, applies whatever that purpose implies: only REGISTER_PHONE marks the account's
+     * phone as verified, since PASSWORD_RESET/PASSWORD_CHANGE OTPs are proving "you still control
+     * this phone right now" for one transaction, not re-attesting registration. On failure,
+     * increments the attempt counter on that same OTP record (not a new one) - repeated wrong
+     * guesses against one code exhaust its own attempt budget rather than resetting with each new
+     * lookup.
      */
     @Transactional
-    public boolean verifyOtp(UUID userId, String submittedOtp) {
-        List<PhoneOtp> history = otpRepository.findByUserIdOrderByCreatedAtDesc(userId);
+    public boolean verifyOtp(UUID userId, String submittedOtp, PhoneOtp.Purpose purpose) {
+        List<PhoneOtp> history = otpRepository.findByUserIdAndPurposeOrderByCreatedAtDesc(userId, purpose);
         PhoneOtp latest = history.stream().findFirst()
                 .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, "No OTP has been requested for this account."));
 
@@ -96,13 +104,19 @@ public class OtpService {
         latest.setVerifiedAt(Instant.now());
         otpRepository.save(latest);
 
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
-        user.setPhoneVerified(true);
-        user.setUpdatedAt(Instant.now());
-        userRepository.save(user);
+        if (purpose == PhoneOtp.Purpose.REGISTER_PHONE) {
+            User user = userRepository.findById(userId)
+                    .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
+            user.setPhoneVerified(true);
+            user.setUpdatedAt(Instant.now());
+            userRepository.save(user);
+        }
 
-        auditService.record(userId, "PHONE_VERIFIED", "User", userId);
+        // "PHONE_VERIFIED" only when this purpose actually set that flag -- otherwise "OTP_VERIFIED"
+        // is the accurate label; a PASSWORD_CHANGE/PASSWORD_RESET code succeeding doesn't mean the
+        // phone number itself just became verified (it already was).
+        String action = purpose == PhoneOtp.Purpose.REGISTER_PHONE ? "PHONE_VERIFIED" : "OTP_VERIFIED";
+        auditService.record(userId, action, "User", userId, Map.of("purpose", purpose.name()));
         return true;
     }
 

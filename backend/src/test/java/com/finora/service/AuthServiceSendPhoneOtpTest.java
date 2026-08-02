@@ -1,6 +1,7 @@
 package com.finora.service;
 
 import com.finora.config.EmailProperties;
+import com.finora.entity.PhoneOtp;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.repository.CategoryRepository;
@@ -58,7 +59,7 @@ class AuthServiceSendPhoneOtpTest {
     @Test
     void sendPhoneOtp_returnsTheMaskedPhoneNumber_whenDeliveredViaARealProvider() {
         when(userRepository.findById(userId)).thenReturn(Optional.of(userWith("+919876500001")));
-        when(otpService.issueOtp(eq(userId), eq("+919876500001")))
+        when(otpService.issueOtp(eq(userId), eq("+919876500001"), eq(PhoneOtp.Purpose.REGISTER_PHONE)))
                 .thenReturn(new OtpService.OtpIssueResult("123456", true));
 
         var response = authService.sendPhoneOtp(userId);
@@ -72,7 +73,7 @@ class AuthServiceSendPhoneOtpTest {
         // devOtp's fallback-visibility branch and maskedPhone are independent -- masking the
         // phone doesn't depend on whether a real SMS provider is wired up.
         when(userRepository.findById(userId)).thenReturn(Optional.of(userWith("+919876500001")));
-        when(otpService.issueOtp(eq(userId), eq("+919876500001")))
+        when(otpService.issueOtp(eq(userId), eq("+919876500001"), eq(PhoneOtp.Purpose.REGISTER_PHONE)))
                 .thenReturn(new OtpService.OtpIssueResult("123456", false));
 
         var response = authService.sendPhoneOtp(userId);

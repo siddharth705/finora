@@ -4,6 +4,7 @@ import com.finora.config.EmailProperties;
 import com.finora.dto.AuthDtos.RequestPasswordResetOtpRequest;
 import com.finora.dto.AuthDtos.ResetPasswordRequest;
 import com.finora.entity.PasswordResetToken;
+import com.finora.entity.PhoneOtp;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.repository.CategoryRepository;
@@ -83,7 +84,7 @@ class AuthServiceResetPasswordTest {
         User user = existingUser();
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(passwordEncoder.encode("NewSecurePass123")).thenReturn("new-encoded-hash");
-        when(otpService.verifyOtp(userId, "123456")).thenReturn(true);
+        when(otpService.verifyOtp(userId, "123456", PhoneOtp.Purpose.PASSWORD_RESET)).thenReturn(true);
 
         var response = authService.resetPassword(new ResetPasswordRequest(rawToken, "123456", "NewSecurePass123"));
 
@@ -102,7 +103,7 @@ class AuthServiceResetPasswordTest {
         PasswordResetToken prt = tokenRecord(rawToken, Instant.now().plusSeconds(900), null);
         when(resetTokenRepository.findByTokenHash(TokenHasher.sha256(rawToken))).thenReturn(Optional.of(prt));
         when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser()));
-        when(otpService.verifyOtp(userId, "000000")).thenReturn(false);
+        when(otpService.verifyOtp(userId, "000000", PhoneOtp.Purpose.PASSWORD_RESET)).thenReturn(false);
 
         assertThatThrownBy(() -> authService.resetPassword(new ResetPasswordRequest(rawToken, "000000", "NewSecurePass123")))
                 .isInstanceOf(ApiException.class)
@@ -126,7 +127,7 @@ class AuthServiceResetPasswordTest {
                 .hasMessageContaining("already been used");
 
         verify(userRepository, never()).save(any());
-        verify(otpService, never()).verifyOtp(any(), any());
+        verify(otpService, never()).verifyOtp(any(), any(), any());
     }
 
     @Test
@@ -160,12 +161,13 @@ class AuthServiceResetPasswordTest {
         when(resetTokenRepository.findByTokenHash(TokenHasher.sha256(rawToken))).thenReturn(Optional.of(prt));
         User user = existingUser();
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
-        when(otpService.issueOtp(userId, "+919999999999")).thenReturn(new OtpService.OtpIssueResult("654321", false));
+        when(otpService.issueOtp(userId, "+919999999999", PhoneOtp.Purpose.PASSWORD_RESET))
+                .thenReturn(new OtpService.OtpIssueResult("654321", false));
 
         var response = authService.requestPasswordResetOtp(new RequestPasswordResetOtpRequest(rawToken));
 
         assertThat(response.devOtp()).isEqualTo("654321");
-        verify(otpService).issueOtp(userId, "+919999999999");
+        verify(otpService).issueOtp(userId, "+919999999999", PhoneOtp.Purpose.PASSWORD_RESET);
         // Requesting the OTP must NOT consume the reset token itself -- only a fully completed
         // reset (resetPassword()) does that, so a user who requests a code but never finishes
         // can still use the same link again within its normal expiry.
@@ -182,7 +184,7 @@ class AuthServiceResetPasswordTest {
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("expired");
 
-        verify(otpService, never()).issueOtp(any(), any());
+        verify(otpService, never()).issueOtp(any(), any(), any());
     }
 
     @Test
@@ -200,6 +202,6 @@ class AuthServiceResetPasswordTest {
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("no phone number on file");
 
-        verify(otpService, never()).issueOtp(any(), any());
+        verify(otpService, never()).issueOtp(any(), any(), any());
     }
 }

@@ -2,13 +2,16 @@ package com.finora.controller;
 
 import com.finora.dto.ApiResponse;
 import com.finora.dto.MeAccessDto;
+import com.finora.dto.PasswordChangeDtos.*;
 import com.finora.dto.UserSettingsDto;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.repository.UserRepository;
 import com.finora.security.CurrentUser;
 import com.finora.service.AuthorizationService;
+import com.finora.service.PasswordChangeService;
 import com.finora.service.UserSettingsService;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
@@ -20,13 +23,16 @@ public class UserController {
     private final CurrentUser currentUser;
     private final UserRepository userRepository;
     private final AuthorizationService authorizationService;
+    private final PasswordChangeService passwordChangeService;
 
     public UserController(UserSettingsService userSettingsService, CurrentUser currentUser,
-                           UserRepository userRepository, AuthorizationService authorizationService) {
+                           UserRepository userRepository, AuthorizationService authorizationService,
+                           PasswordChangeService passwordChangeService) {
         this.userSettingsService = userSettingsService;
         this.currentUser = currentUser;
         this.userRepository = userRepository;
         this.authorizationService = authorizationService;
+        this.passwordChangeService = passwordChangeService;
     }
 
     @GetMapping
@@ -37,6 +43,25 @@ public class UserController {
     @PutMapping
     public ApiResponse<UserSettingsDto> update(@RequestBody UserSettingsDto.UpdateRequest request) {
         return ApiResponse.ok(userSettingsService.update(currentUser.id(), request), "Preferences saved");
+    }
+
+    /**
+     * The authenticated, OTP-gated Change Password flow -- see PasswordChangeService's own doc
+     * comment for the full start -> verify-otp -> complete state machine these three back.
+     */
+    @PostMapping("/password-change/start")
+    public ApiResponse<StartResponse> startPasswordChange(@Valid @RequestBody StartRequest request) {
+        return ApiResponse.ok(passwordChangeService.start(currentUser.id(), request));
+    }
+
+    @PostMapping("/password-change/verify-otp")
+    public ApiResponse<VerifyOtpResponse> verifyPasswordChangeOtp(@Valid @RequestBody VerifyOtpRequest request) {
+        return ApiResponse.ok(passwordChangeService.verifyOtp(currentUser.id(), request));
+    }
+
+    @PostMapping("/password-change/complete")
+    public ApiResponse<CompleteResponse> completePasswordChange(@Valid @RequestBody CompleteRequest request) {
+        return ApiResponse.ok(passwordChangeService.complete(currentUser.id(), request));
     }
 
     /**

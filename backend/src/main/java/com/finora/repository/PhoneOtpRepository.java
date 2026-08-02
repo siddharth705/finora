@@ -7,5 +7,8 @@ import java.util.List;
 import java.util.UUID;
 
 public interface PhoneOtpRepository extends JpaRepository<PhoneOtp, UUID> {
-    List<PhoneOtp> findByUserIdOrderByCreatedAtDesc(UUID userId);
+    /** Scoped to one purpose (see PhoneOtp.Purpose) -- a code issued for one purpose must never
+     *  be found by a lookup verifying a different one, even if both were issued to the same user
+     *  around the same time. */
+    List<PhoneOtp> findByUserIdAndPurposeOrderByCreatedAtDesc(UUID userId, PhoneOtp.Purpose purpose);
 }

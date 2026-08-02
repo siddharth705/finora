@@ -89,6 +89,13 @@ public class User {
     @Column(nullable = false)
     private String timezone = "Asia/Kolkata";
 
+    // Null for every account that has never changed its password since this column was added
+    // (V40) -- never backfilled to a guess. Set by AuthService.changePassword() and
+    // AuthService.resetPassword() (a forgot-password reset is still a password change for this
+    // purpose), read by Settings' Security section ("Last changed ...").
+    @Column(name = "password_changed_at")
+    private Instant passwordChangedAt;
+
     // --- getters / setters ---
     public UUID getId() { return id; }
     public String getEmail() { return email; }
@@ -121,4 +128,6 @@ public class User {
     public boolean isSuspended() { return "SUSPENDED".equals(status); }
     public String getTimezone() { return timezone; }
     public void setTimezone(String timezone) { this.timezone = timezone; }
+    public Instant getPasswordChangedAt() { return passwordChangedAt; }
+    public void setPasswordChangedAt(Instant passwordChangedAt) { this.passwordChangedAt = passwordChangedAt; }
 }

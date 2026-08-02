@@ -4,6 +4,7 @@ import com.finora.config.EmailProperties;
 import com.finora.dto.AuthDtos.*;
 import com.finora.entity.Category;
 import com.finora.entity.PasswordResetToken;
+import com.finora.entity.PhoneOtp;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.repository.CategoryRepository;
@@ -97,7 +98,7 @@ public class AuthService {
 
         // Send the first OTP automatically — the user shouldn't have to take a separate action
         // just to trigger it right after signing up.
-        var otpResult = otpService.issueOtp(user.getId(), user.getPhoneNumber());
+        var otpResult = otpService.issueOtp(user.getId(), user.getPhoneNumber(), PhoneOtp.Purpose.REGISTER_PHONE);
 
         String accessToken = jwtService.generateToken(user.getId(), user.getEmail());
         String refreshToken = refreshTokenService.issue(user.getId()).rawToken();
@@ -269,7 +270,7 @@ public class AuthService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "No phone number on file for this account.");
         }
 
-        var result = otpService.issueOtp(userId, user.getPhoneNumber());
+        var result = otpService.issueOtp(userId, user.getPhoneNumber(), PhoneOtp.Purpose.REGISTER_PHONE);
         String message = result.delivered()
                 ? "A verification code has been sent to your phone."
                 : "A verification code has been issued.";
@@ -279,7 +280,7 @@ public class AuthService {
 
     @Transactional
     public VerifyOtpResponse verifyPhoneOtp(UUID userId, String otp) {
-        boolean verified = otpService.verifyOtp(userId, otp);
+        boolean verified = otpService.verifyOtp(userId, otp, PhoneOtp.Purpose.REGISTER_PHONE);
         return verified
                 ? new VerifyOtpResponse(true, "Phone number verified.")
                 : new VerifyOtpResponse(false, "That code doesn't match — check and try again.");
@@ -364,7 +365,7 @@ public class AuthService {
             throw new ApiException(HttpStatus.BAD_REQUEST,
                     "This account has no phone number on file. Contact an administrator for help resetting your password.");
         }
-        var otpResult = otpService.issueOtp(user.getId(), user.getPhoneNumber());
+        var otpResult = otpService.issueOtp(user.getId(), user.getPhoneNumber(), PhoneOtp.Purpose.PASSWORD_RESET);
         String message = otpResult.delivered()
                 ? "A verification code has been sent to the phone number on file."
                 : "A verification code has been issued.";
@@ -383,18 +384,20 @@ public class AuthService {
         // itself throws for "no OTP requested yet"/expired/too-many-attempts, and returns false
         // (rather than throwing) specifically for a wrong code -- that boolean is what's turned
         // into a clear error here rather than silently proceeding.
-        if (!otpService.verifyOtp(user.getId(), request.otp())) {
+        if (!otpService.verifyOtp(user.getId(), request.otp(), PhoneOtp.Purpose.PASSWORD_RESET)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Incorrect verification code.");
         }
 
+        Instant now = Instant.now();
         user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
-        user.setUpdatedAt(Instant.now());
+        user.setUpdatedAt(now);
+        user.setPasswordChangedAt(now);
         userRepository.save(user);
 
         prt.setUsedAt(Instant.now());
         resetTokenRepository.save(prt);
 
-        auditService.record(user.getId(), "PASSWORD_RESET", "User", user.getId());
+        auditService.record(user.getId(), "PASSWORD_RESET", "User", user.getId(), Map.of("method", "otp_recovery"));
 
         return new ResetPasswordResponse("Password updated — you can now sign in with your new password.");
     }

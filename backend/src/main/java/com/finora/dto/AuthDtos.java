@@ -9,8 +9,9 @@ public class AuthDtos {
 
     // Bcrypt silently truncates any input past 72 bytes, so two different passwords that only
     // differ after byte 72 would hash identically -- max = 72 makes that impossible rather than
-    // letting it happen invisibly.
-    private static final String PASSWORD_SIZE_MESSAGE = "Password must be between 8 and 72 characters";
+    // letting it happen invisibly. Package-private (not private) so PasswordChangeDtos' own new-
+    // password field can share the exact same message instead of a second, driftable copy.
+    static final String PASSWORD_SIZE_MESSAGE = "Password must be between 8 and 72 characters";
 
     // Letters (Unicode-aware, so accented/Indic/etc. names aren't rejected), spaces, hyphens,
     // apostrophes, and periods -- covers "Jean-Luc", "O'Brien", "Md. Rahman". Tolerates

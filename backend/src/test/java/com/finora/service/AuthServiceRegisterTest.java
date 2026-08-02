@@ -54,7 +54,7 @@ class AuthServiceRegisterTest {
         // Fixing the refreshTokenService NPE above was necessary but not sufficient; this is what
         // was still failing right after it.
         OtpService otpService = mock(OtpService.class);
-        when(otpService.issueOtp(any(), any())).thenReturn(new OtpService.OtpIssueResult("123456", true));
+        when(otpService.issueOtp(any(), any(), any())).thenReturn(new OtpService.OtpIssueResult("123456", true));
 
         // register() checks platformSettingsService.getEntity().isRegistrationsEnabled() before
         // doing anything else -- defaults to a real entity with registrationsEnabled=true (the

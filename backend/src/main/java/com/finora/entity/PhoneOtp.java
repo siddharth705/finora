@@ -8,6 +8,16 @@ import java.util.UUID;
 @Table(name = "phone_otps")
 public class PhoneOtp {
 
+    /** What this code is actually proving. A code issued to verify phone ownership at
+     *  registration must not double as proof for a password reset or change -- each purpose gets
+     *  its own OTP, looked up independently (see OtpService), so a code sent for one can't be
+     *  replayed to satisfy another. LOGIN_VERIFICATION / HIGH_VALUE_TRANSACTION are anticipated
+     *  future purposes, not implemented yet -- deliberately not added until a real caller needs
+     *  one, per this codebase's evidence-before-capability convention. */
+    public enum Purpose {
+        REGISTER_PHONE, PASSWORD_RESET, PASSWORD_CHANGE
+    }
+
     @Id
     @GeneratedValue
     private UUID id;
@@ -20,6 +30,10 @@ public class PhoneOtp {
 
     @Column(name = "otp_hash", nullable = false)
     private String otpHash;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 32)
+    private Purpose purpose;
 
     @Column(nullable = false)
     private int attempts = 0;
@@ -40,6 +54,8 @@ public class PhoneOtp {
     public void setPhoneNumber(String phoneNumber) { this.phoneNumber = phoneNumber; }
     public String getOtpHash() { return otpHash; }
     public void setOtpHash(String otpHash) { this.otpHash = otpHash; }
+    public Purpose getPurpose() { return purpose; }
+    public void setPurpose(Purpose purpose) { this.purpose = purpose; }
     public int getAttempts() { return attempts; }
     public void setAttempts(int attempts) { this.attempts = attempts; }
     public Instant getExpiresAt() { return expiresAt; }
