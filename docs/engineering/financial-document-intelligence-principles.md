@@ -727,6 +727,67 @@ Two axes, neither of which is "which bank":
 Every addition here gets a synthetic fixture and (transiently) a real-document diagnostic pass —
 same process as Phase 1.
 
+### Test Corpus Strategy
+
+The regression fixtures under `PdfFixtureBuilder` and their matching tests are, collectively, the
+engine's test corpus — and it's worth being explicit about how that corpus is allowed to grow,
+since "build a comprehensive test corpus" is easy to read as license to invent scenarios ahead of
+evidence. It isn't. The corpus grows exactly the same way a capability does:
+
+```
+Real Financial Document
+        │
+PdfPipelineDiagnostic
+        │
+Root Cause
+        │
+Generic Capability
+        │
+Synthetic Fixture
+        │
+Regression Test
+        │
+Capability Registry
+        │
+Delete Real Document
+```
+
+**Do NOT invent capabilities, header aliases, or layouts ahead of evidence.** Concretely:
+- Don't add a header alias (`"Posting Date"`, `"UTR"`, `"Paid In"`, ...) because it seems plausible
+  — only because a real document used it. Every hint in `TransactionNormalizer`'s hint arrays
+  should be traceable to the real file that motivated it (see that class's own comments for the
+  pattern — every existing entry already follows this).
+- Don't build corrupted-document / OCR-noise tests before OCR exists (see "Excel, Scanned PDFs /
+  OCR... — Planned" above) — there's nothing yet for those tests to protect.
+- Don't build Excel/OFX/QFX/CAMT.053/MT940 regression suites before those parsers exist — a test
+  corpus for a parser that hasn't been written is a spec, not a corpus, and inverts the order that
+  has worked for every capability so far.
+- Don't generate speculative layout variations (arbitrary column counts, alignments, hidden
+  columns) with no real document behind them.
+
+**What the corpus SHOULD grow through**, beyond the one-capability-per-real-document flow above:
+- **Composability testing** — most fixtures exercise one capability in relative isolation, but a
+  real document rarely activates only one. Combine already-evidenced capabilities (each
+  independently justified by its own real document) into one fixture to prove they still work
+  together — see `CapabilityCompositionPdfPreviewGeneratorTest` for the pattern. This is not
+  inventing a new capability; it's testing that existing ones compose.
+- **Capability-indexed organization** — `PdfFixtureBuilder`'s own class doc comment is a lookup
+  table from capability name to fixture method(s), grouped and ordered to match the Capability
+  Registry below, not chronologically (when each was added). Keep it current when adding a fixture.
+- **Parser independence** — `TransactionNormalizer.normalize()` is the single place row-level
+  meaning gets attached, shared unmodified by the CSV and PDF paths; `ParserIndependencePreviewGeneratorTest`
+  proves the same logical statement data normalizes identically regardless of which parser
+  produced the row map. Extend this the day a third real parser (Excel, OFX, ...) actually exists
+  — not before.
+
+**How progress here is measured** — deliberately not "number of fixtures," which rewards volume
+over substance: capability coverage (how many registry capabilities have regression tests — see
+below), capability composition (how many are verified working together, not just alone),
+regression strength (does the suite actually catch a real regression, not just pass), and evidence
+quality (can every fixture/hint be traced to the real document that motivated it). A corpus that
+scores well on fixture count but poorly on evidence quality is exactly the "attractive
+infrastructure built too early" this document's Phase 0 rules exist to prevent.
+
 ---
 
 ## Why Phases 3–6 and the Admin Portal stay a direction, not a roadmap item
@@ -923,6 +984,23 @@ become worthwhile to build:
   manual-correction rate, frequent regression failures, high maintenance effort, known
   limitations — a per-capability view is what lets prioritization follow actual impact instead of
   whichever bug report arrived most recently.
+- **A Capability Maturity Index**, once there are enough capabilities and enough real data that
+  "Stable/Beta" alone stops being a fine-grained enough signal — a small fixed scale (e.g. 1–5) per
+  dimension (evidence, regression strength, composition coverage, parser independence,
+  documentation, performance, observability) per capability, so two Stable capabilities can be
+  compared instead of both just reading "Stable." Structures the same judgment a human already
+  makes reading the source today; doesn't replace that judgment with a formula.
+- **Test Impact Analysis**, once the code-level Capability Registry above exists with declared
+  dependencies — a capability change runs only that capability's own tests plus its declared
+  dependents' tests, not the full suite. A CI mechanism built on top of the dependency graph above,
+  sequenced strictly after it, not a separate effort — there's nothing for this to walk until
+  dependencies are actually declared somewhere machine-readable.
+- **Capability Similarity**, later, and explicitly still deterministic — comparing two layout
+  fingerprints' capability sets and structural facts to surface "this new layout looks 90% like an
+  existing one" as a plain set-overlap calculation, not a model. Useful once there are enough
+  fingerprints for "is this genuinely new or a close variant of something we already handle" to be
+  a real, recurring question — not before. No relation to Phase 4's AI layer; this stays arithmetic
+  on facts DocumentContext already records.
 
 **What this deliberately is not, yet:** a mandate to build a metrics pipeline, a database schema,
 or a registry service this sprint. Every one of the above is real work, and per the entry criteria
@@ -991,10 +1069,20 @@ Organized the same way the underlying engine is layered, not as a grab-bag of sc
   "attempted, failed"), the full confidence breakdown by stage, metadata extraction with its
   *source* shown per field (which capability produced it, not just the value), and the "Never lose
   information" view made concrete: every dropped row, its reason, and — once Phase 5's suggestion
-  mechanism exists — which capability might explain it.
+  mechanism exists — which capability might explain it. **Import Replay** is this same drill-down
+  played back stage-by-stage (extraction → metadata → table detection → capability activation →
+  validation), the same data the stage-by-stage status already renders, just walked through
+  instead of shown all at once — a presentation of Phase 5's data, not a new data source.
 - **Capabilities** — the code-level registry (Phase 5) rendered: status, confidence, dependencies,
   version history, a usage heatmap (which capabilities actually matter vs. which fire on 4% of
-  documents), and the capability timeline (which version is live).
+  documents), the capability timeline (which version is live), and — once Phase 5's Capability
+  Similarity metric exists — which fingerprints cluster near each other.
+- **Benchmark Center** — a frozen **Golden Dataset** (a fixed set of real-shaped documents that
+  must always import cleanly — see Phase 3's "gold-standard set from perfect imports," the same
+  data, just re-run as a gate) and a **Stress Dataset** (the hardest known-real layouts on file),
+  both re-run on every change alongside the regular regression suite. Frozen deliberately: these
+  exist to catch a regression against KNOWN-good behavior, not to grow — new real documents feed
+  Phase 1's ordinary capability/fixture flow instead, same as always.
 - **Diagnostics** — parser decisions and warnings in plain language ("header confidence low: 13
   detected cells, expected ~5, suggests `HEADER_SANITY`") instead of a stack trace, plus the
   Unknown Patterns view Phase 5's stored-unknowns feed directly.

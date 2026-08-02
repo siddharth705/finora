@@ -30,6 +30,52 @@ import java.util.List;
  * writeString() callback fired once per whole line instead of once per cell). This class exists so
  * new fixtures are regenerable from committed Java source instead of another un-reproducible
  * binary.
+ *
+ * <h2>Capability index</h2>
+ * Methods below are grouped and ordered to match the Capability Registry in
+ * docs/engineering/financial-document-intelligence-principles.md, not chronologically (when each
+ * was added) -- so "which fixture exercises capability X" is a lookup here, not a grep across the
+ * whole file. Per the refined test-corpus strategy (see that doc's own "Test Corpus Strategy"
+ * section), this index only ever grows when a REAL document motivates a new fixture -- never
+ * speculatively.
+ *
+ * <pre>
+ * RUNNING_BALANCE / BALANCE_CHAIN_RECONSTRUCTION
+ *   -&gt; buildReverseChronologicalRunningBalanceSample, buildReferenceNumberAndBalanceSample
+ * DR_CR_SUFFIX (bare and parenthesized)
+ *   -&gt; buildDrCrSuffixAmountColumnSample, buildParenthesizedDrCrRunningBalanceSample
+ * LEADING_PLUS_CREDIT
+ *   -&gt; buildWrappedDescriptionCreditCardSample
+ * DATE_TIME_COLUMN
+ *   -&gt; buildWrappedDescriptionCreditCardSample
+ * WRAPPED_DESCRIPTION
+ *   -&gt; buildWrappedDescriptionCreditCardSample
+ * REPEATED_HEADER
+ *   -&gt; buildDrCrSuffixAmountColumnSample, buildParenthesizedDrCrRunningBalanceSample
+ * PAGE_BOUNDARY_ISOLATION / PAGE_FOOTER_EXCLUSION
+ *   -&gt; buildParenthesizedDrCrRunningBalanceSample
+ * COMPOSITE_STATEMENT / MULTI_ACCOUNT
+ *   -&gt; buildMultiSectionCompositeStatementSample
+ * CREDIT_CARD_SUMMARY_SIGNAL
+ *   -&gt; buildWrappedDescriptionCreditCardSample, buildMultiSectionCompositeStatementSample,
+ *      buildGridMetadataFallbackSample
+ * OFFSET_COLUMN_ANCHORS
+ *   -&gt; buildOffsetColumnAnchorsSample, buildSingularDepositWithdrawalColumnsSample (via the
+ *      leading-amount-in-balance split)
+ * GRID_METADATA_FALLBACK (2-row grid)
+ *   -&gt; buildGridMetadataFallbackSample
+ * GRID_METADATA_TRAILING_LABEL
+ *   -&gt; no PDF fixture here -- exercised directly against PdfMetadataExtractor.extract(List) with
+ *      raw lines in PdfMetadataExtractorTest, since this capability's logic is pure string
+ *      matching and doesn't need a rendered PDF to reach it.
+ * LEADING_NARRATION_CONTINUATION
+ *   -&gt; buildLeadingNarrationContinuationSample
+ * Never Lose Information (whole-document)
+ *   -&gt; buildUnrecognizableDocumentSample
+ * Composability (multiple already-evidenced capabilities firing together in one document)
+ *   -&gt; buildRunningBalanceWrappedDescriptionRepeatedHeaderSample,
+ *      buildOffsetAnchorsGridMetadataPageBoundarySample
+ * </pre>
  */
 public final class PdfFixtureBuilder {
 
@@ -103,58 +149,7 @@ public final class PdfFixtureBuilder {
         }
     }
 
-    /**
-     * A credit-card statement layout where a single Amount column carries a trailing Dr/Cr
-     * suffix (no separate Type/Credit column), no running balance, and the header row repeats
-     * verbatim on a second page -- modeled on Axis Bank's "Neo Rupay" statement, but not specific
-     * to it; any bank/card issuer could ship this same column shape.
-     */
-    public static byte[] buildDrCrSuffixAmountColumnSample() throws IOException {
-        float[] col = {LEFT_MARGIN, 110f, 350f, 470f};
-
-        PageBuilder page1 = new PageBuilder();
-        page1.line("AXIS BANK")
-                .line("Neo Rupay Credit Card Statement")
-                .line("Total Payment Due 27,665.16 Dr Minimum Payment Due 577.00 Dr")
-                .blankLine()
-                .row(col, "DATE", "TRANSACTION DETAILS", "MERCHANT CATEGORY", "AMOUNT (Rs.)")
-                .row(col, "24/06/2026", "UPI/TOBOX VENTURES PRIVATE L/GOKHANA.PAYU@AXISB", "MISC STORE", "37.94 Dr")
-                .row(col, "25/06/2026", "UPI/MANKAR DOSA/PAYTM.S27A881@PTY", "RESTAURANTS", "150.00 Dr")
-                .row(col, "30/06/2026", "BBPS PAYMENT RECEIVED - DP016181142205FXN9QZ", "", "10,081.99 Cr");
-
-        PageBuilder page2 = new PageBuilder();
-        // Same header repeated verbatim on the second page -- PdfTableLocator must recognize this
-        // as "more of the same table," not a new section, and must not stage it as a data row.
-        page2.row(col, "DATE", "TRANSACTION DETAILS", "MERCHANT CATEGORY", "AMOUNT (Rs.)")
-                .row(col, "10/07/2026", "UPI/BLINKIT/BLINKIT.PAYU@HDFCBANK", "DEPT STORES", "249.00 Dr")
-                .row(col, "13/07/2026", "UPI/MYNTRA DESIGNS PRIVATE L/MYNTRA1ONLINE.GPAY", "MISC STORE", "496.00 Dr");
-
-        return render(List.of(page1, page2));
-    }
-
-    /**
-     * A credit-card statement layout with a combined date-and-time column, a leading "+" marking
-     * a credit with no marker at all on a debit row, and a transaction's description that can
-     * continue onto a second, dateless/amountless visual row which must fold into the row above
-     * it -- modeled on HDFC's "Tata Neu Plus" statement, but not specific to it.
-     */
-    public static byte[] buildWrappedDescriptionCreditCardSample() throws IOException {
-        float[] col = {LEFT_MARGIN, 150f, 400f, 470f, 530f};
-
-        PageBuilder page = new PageBuilder();
-        page.line("HDFC BANK")
-                .line("Tata Neu Plus HDFC Bank Credit Card Statement")
-                .line("Total Amount Due 1,817.00 Minimum Due 200.00")
-                .blankLine()
-                .row(col, "DATE & TIME", "TRANSACTION DESCRIPTION", "Base NeuCoins", "AMOUNT", "PI")
-                .row(col, "30/06/2026 14:18", "BPPY CC PAYMENT DP016181141814AHOaZ", "", "+440.00", "l")
-                // Continuation line: description-only, no date, no amount -- must fold into the
-                // row above rather than becoming its own dropped, dateless row.
-                .row(col, null, "(Ref# ST261820084000010394028)", null, null, null)
-                .row(col, "11/07/2026 19:34", "UPI-Amazon India", "", "1,817.02", "l");
-
-        return render(List.of(page));
-    }
+    // ==================== RUNNING_BALANCE / BALANCE_CHAIN_RECONSTRUCTION ====================
 
     /**
      * A savings-account statement layout with an explicit Type (DR/CR) column and a running
@@ -211,32 +206,35 @@ public final class PdfFixtureBuilder {
         return render(List.of(page));
     }
 
+    // ==================== DR_CR_SUFFIX (bare and parenthesized) / REPEATED_HEADER ====================
+
     /**
-     * A multi-section "composite statement" layout: one PDF bundling a savings-account section
-     * and a credit-card section, each introduced by its own account-type marker line and each
-     * with its own, differently-shaped header/table -- the multi-section case
-     * {@code PdfPreviewGenerator.generateSections} exists for. Modeled on HSBC India's "Composite
-     * Statement," but not specific to it -- any bank could ship a multi-account PDF this shape.
+     * A credit-card statement layout where a single Amount column carries a trailing Dr/Cr
+     * suffix (no separate Type/Credit column), no running balance, and the header row repeats
+     * verbatim on a second page -- modeled on Axis Bank's "Neo Rupay" statement, but not specific
+     * to it; any bank/card issuer could ship this same column shape.
      */
-    public static byte[] buildMultiSectionCompositeStatementSample() throws IOException {
-        float[] savingsCol = {LEFT_MARGIN, 130f, 300f, 380f, 460f};
-        float[] ccCol = {LEFT_MARGIN, 150f, 470f};
+    public static byte[] buildDrCrSuffixAmountColumnSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 110f, 350f, 470f};
 
-        PageBuilder page = new PageBuilder();
-        page.line("HSBC")
-                .line("Composite Statement")
+        PageBuilder page1 = new PageBuilder();
+        page1.line("AXIS BANK")
+                .line("Neo Rupay Credit Card Statement")
+                .line("Total Payment Due 27,665.16 Dr Minimum Payment Due 577.00 Dr")
                 .blankLine()
-                .line("SAVINGS ACCOUNT-RES  120-070727-006")
-                .row(savingsCol, "Date", "Transaction Details", "Deposits", "Withdrawals", "Balance")
-                .row(savingsCol, "05/07/2026", "Salary Credit", "55000.00", "", "105000.00")
-                .row(savingsCol, "10/07/2026", "Grocery Store", "", "2000.00", "103000.00")
-                .blankLine()
-                .line("CREDIT CARD ACCOUNT  4862 6989 2271 6048")
-                .line("Total Amount Due 1,817.00 Minimum Due 200.00")
-                .row(ccCol, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
-                .row(ccCol, "15/07/2026", "UPI-Amazon India", "1,817.02 Dr");
+                .row(col, "DATE", "TRANSACTION DETAILS", "MERCHANT CATEGORY", "AMOUNT (Rs.)")
+                .row(col, "24/06/2026", "UPI/TOBOX VENTURES PRIVATE L/GOKHANA.PAYU@AXISB", "MISC STORE", "37.94 Dr")
+                .row(col, "25/06/2026", "UPI/MANKAR DOSA/PAYTM.S27A881@PTY", "RESTAURANTS", "150.00 Dr")
+                .row(col, "30/06/2026", "BBPS PAYMENT RECEIVED - DP016181142205FXN9QZ", "", "10,081.99 Cr");
 
-        return render(List.of(page));
+        PageBuilder page2 = new PageBuilder();
+        // Same header repeated verbatim on the second page -- PdfTableLocator must recognize this
+        // as "more of the same table," not a new section, and must not stage it as a data row.
+        page2.row(col, "DATE", "TRANSACTION DETAILS", "MERCHANT CATEGORY", "AMOUNT (Rs.)")
+                .row(col, "10/07/2026", "UPI/BLINKIT/BLINKIT.PAYU@HDFCBANK", "DEPT STORES", "249.00 Dr")
+                .row(col, "13/07/2026", "UPI/MYNTRA DESIGNS PRIVATE L/MYNTRA1ONLINE.GPAY", "MISC STORE", "496.00 Dr");
+
+        return render(List.of(page1, page2));
     }
 
     /**
@@ -278,55 +276,63 @@ public final class PdfFixtureBuilder {
         return render(List.of(page1, page2));
     }
 
+    // ==================== LEADING_PLUS_CREDIT / DATE_TIME_COLUMN / WRAPPED_DESCRIPTION / CREDIT_CARD_SUMMARY_SIGNAL ====================
+
     /**
-     * A credit-card statement whose payment-summary block lays the Due Date field out as a grid
-     * (a label line ending in "...DUE DATE", an unrelated intervening line, then a value line
-     * whose LAST date-shaped token is the actual due date) rather than a single "Label: Value"
-     * line -- {@link com.finora.imports.pdf.PdfMetadataExtractor}'s bounded-window grid fallback
-     * exists specifically for this shape. Modeled on a real HDFC "Tata Neu Plus" statement, but
-     * the pattern isn't specific to it.
+     * A credit-card statement layout with a combined date-and-time column, a leading "+" marking
+     * a credit with no marker at all on a debit row, and a transaction's description that can
+     * continue onto a second, dateless/amountless visual row which must fold into the row above
+     * it -- modeled on HDFC's "Tata Neu Plus" statement, but not specific to it.
      */
-    public static byte[] buildGridMetadataFallbackSample() throws IOException {
-        float[] col = {LEFT_MARGIN, 150f, 470f};
+    public static byte[] buildWrappedDescriptionCreditCardSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 150f, 400f, 470f, 530f};
 
         PageBuilder page = new PageBuilder();
-        page.line("Credit Card Statement")
-                .line("Total Payment Due 1,500.00 Minimum Amount Due 200.00")
+        page.line("HDFC BANK")
+                .line("Tata Neu Plus HDFC Bank Credit Card Statement")
+                .line("Total Amount Due 1,817.00 Minimum Due 200.00")
                 .blankLine()
-                // The trailing label line the grid fallback looks for -- "AVAILABLE CREDIT LIMIT"
-                // is irrelevant filler proving the fallback keys off the trailing "...DUE DATE"
-                // phrase, not the whole line's content.
-                .line("AVAILABLE CREDIT LIMIT MINIMUM DUE DUE DATE")
-                // An unrelated intervening line (real statements commonly wrap a sub-label like
-                // "(Including Cash)" onto its own line here) -- the fallback's bounded search
-                // window must see past this to the value line below, not stop here.
-                .line("(Including Cash)")
-                // The value line: "200.00" corresponds to MINIMUM DUE, "09 Aug, 2026" to DUE
-                // DATE -- values render in the same left-to-right order as their labels, so the
-                // LAST date-shaped token on this line is the one that matters.
-                .line("5000.00 200.00 09 Aug, 2026")
-                .blankLine()
-                .row(col, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
-                .row(col, "15/07/2026", "Test Merchant Purchase", "500.00 Dr");
+                .row(col, "DATE & TIME", "TRANSACTION DESCRIPTION", "Base NeuCoins", "AMOUNT", "PI")
+                .row(col, "30/06/2026 14:18", "BPPY CC PAYMENT DP016181141814AHOaZ", "", "+440.00", "l")
+                // Continuation line: description-only, no date, no amount -- must fold into the
+                // row above rather than becoming its own dropped, dateless row.
+                .row(col, null, "(Ref# ST261820084000010394028)", null, null, null)
+                .row(col, "11/07/2026 19:34", "UPI-Amazon India", "", "1,817.02", "l");
 
         return render(List.of(page));
     }
 
+    // ==================== COMPOSITE_STATEMENT / MULTI_ACCOUNT ====================
+
     /**
-     * No header row, no table at all -- every line is a free-standing sentence
-     * (`PdfTableLocator.locateAll` never recognizes a section). Exercises the "Never lose
-     * information" whole-document gap: a real file this happens against (a statement in a layout
-     * the engine genuinely doesn't understand yet) used to come back as a well-formed but
-     * completely empty response, indistinguishable from a blank upload.
+     * A multi-section "composite statement" layout: one PDF bundling a savings-account section
+     * and a credit-card section, each introduced by its own account-type marker line and each
+     * with its own, differently-shaped header/table -- the multi-section case
+     * {@code PdfPreviewGenerator.generateSections} exists for. Modeled on HSBC India's "Composite
+     * Statement," but not specific to it -- any bank could ship a multi-account PDF this shape.
      */
-    public static byte[] buildUnrecognizableDocumentSample() throws IOException {
+    public static byte[] buildMultiSectionCompositeStatementSample() throws IOException {
+        float[] savingsCol = {LEFT_MARGIN, 130f, 300f, 380f, 460f};
+        float[] ccCol = {LEFT_MARGIN, 150f, 470f};
+
         PageBuilder page = new PageBuilder();
-        page.line("Some Financial Institution")
-                .line("This statement uses a layout the engine does not recognize yet.")
-                .line("Account summary: nothing here matches a known column header.");
+        page.line("HSBC")
+                .line("Composite Statement")
+                .blankLine()
+                .line("SAVINGS ACCOUNT-RES  120-070727-006")
+                .row(savingsCol, "Date", "Transaction Details", "Deposits", "Withdrawals", "Balance")
+                .row(savingsCol, "05/07/2026", "Salary Credit", "55000.00", "", "105000.00")
+                .row(savingsCol, "10/07/2026", "Grocery Store", "", "2000.00", "103000.00")
+                .blankLine()
+                .line("CREDIT CARD ACCOUNT  4862 6989 2271 6048")
+                .line("Total Amount Due 1,817.00 Minimum Due 200.00")
+                .row(ccCol, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                .row(ccCol, "15/07/2026", "UPI-Amazon India", "1,817.02 Dr");
 
         return render(List.of(page));
     }
+
+    // ==================== OFFSET_COLUMN_ANCHORS ====================
 
     /**
      * A layout where the header row's own column labels don't align with where each column's
@@ -399,6 +405,44 @@ public final class PdfFixtureBuilder {
         return render(List.of(page));
     }
 
+    // ==================== GRID_METADATA_FALLBACK (2-row grid) ====================
+
+    /**
+     * A credit-card statement whose payment-summary block lays the Due Date field out as a grid
+     * (a label line ending in "...DUE DATE", an unrelated intervening line, then a value line
+     * whose LAST date-shaped token is the actual due date) rather than a single "Label: Value"
+     * line -- {@link com.finora.imports.pdf.PdfMetadataExtractor}'s bounded-window grid fallback
+     * exists specifically for this shape. Modeled on a real HDFC "Tata Neu Plus" statement, but
+     * the pattern isn't specific to it.
+     */
+    public static byte[] buildGridMetadataFallbackSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 150f, 470f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Credit Card Statement")
+                .line("Total Payment Due 1,500.00 Minimum Amount Due 200.00")
+                .blankLine()
+                // The trailing label line the grid fallback looks for -- "AVAILABLE CREDIT LIMIT"
+                // is irrelevant filler proving the fallback keys off the trailing "...DUE DATE"
+                // phrase, not the whole line's content.
+                .line("AVAILABLE CREDIT LIMIT MINIMUM DUE DUE DATE")
+                // An unrelated intervening line (real statements commonly wrap a sub-label like
+                // "(Including Cash)" onto its own line here) -- the fallback's bounded search
+                // window must see past this to the value line below, not stop here.
+                .line("(Including Cash)")
+                // The value line: "200.00" corresponds to MINIMUM DUE, "09 Aug, 2026" to DUE
+                // DATE -- values render in the same left-to-right order as their labels, so the
+                // LAST date-shaped token on this line is the one that matters.
+                .line("5000.00 200.00 09 Aug, 2026")
+                .blankLine()
+                .row(col, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                .row(col, "15/07/2026", "Test Merchant Purchase", "500.00 Dr");
+
+        return render(List.of(page));
+    }
+
+    // ==================== LEADING_NARRATION_CONTINUATION ====================
+
     /**
      * A layout where each transaction's narration wraps across several lines BEFORE its own date
      * and amount row, not after -- the reverse of {@code buildWrappedDescriptionCreditCardSample}'s
@@ -435,5 +479,82 @@ public final class PdfFixtureBuilder {
                 .row(new float[]{particularsX}, "Chq: REF789012");
 
         return render(List.of(page));
+    }
+
+    // ==================== Never Lose Information (whole-document) ====================
+
+    /**
+     * No header row, no table at all -- every line is a free-standing sentence
+     * (`PdfTableLocator.locateAll` never recognizes a section). Exercises the "Never lose
+     * information" whole-document gap: a real file this happens against (a statement in a layout
+     * the engine genuinely doesn't understand yet) used to come back as a well-formed but
+     * completely empty response, indistinguishable from a blank upload.
+     */
+    public static byte[] buildUnrecognizableDocumentSample() throws IOException {
+        PageBuilder page = new PageBuilder();
+        page.line("Some Financial Institution")
+                .line("This statement uses a layout the engine does not recognize yet.")
+                .line("Account summary: nothing here matches a known column header.");
+
+        return render(List.of(page));
+    }
+
+    // ==================== Composability (multiple already-evidenced capabilities together) ====================
+    // Refined test-corpus strategy (docs/engineering/financial-document-intelligence-principles.md):
+    // every capability below is individually justified by its own real document elsewhere in this
+    // file -- these two fixtures don't introduce anything new, they combine already-evidenced
+    // capabilities in one document to prove they compose correctly, since a real statement rarely
+    // activates only one capability at a time.
+
+    /**
+     * Combines three independently-evidenced capabilities in one document: a running balance
+     * column (RUNNING_BALANCE), a transaction description that wraps onto a second, dateless row
+     * (WRAPPED_DESCRIPTION), and a header row repeated verbatim on page 2 (REPEATED_HEADER).
+     */
+    public static byte[] buildRunningBalanceWrappedDescriptionRepeatedHeaderSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 150f, 400f, 470f};
+
+        PageBuilder page1 = new PageBuilder();
+        page1.row(col, "Date", "Description", "Amount", "Balance")
+                .row(col, "01/07/2026", "Salary Credit", "50000.00", "50000.00")
+                .row(col, "02/07/2026", "UPI-Amazon India Purchase", "1200.00", "48800.00")
+                // Continuation line: description-only, no date/amount -- must fold into the row
+                // above (WRAPPED_DESCRIPTION), not become its own dropped, dateless row.
+                .row(col, null, "(Ref# ORDER-8817234451)", null, null);
+
+        PageBuilder page2 = new PageBuilder();
+        // Same header repeated verbatim on page 2 -- must be recognized as "more of the same
+        // table" (REPEATED_HEADER), not staged as a garbage data row.
+        page2.row(col, "Date", "Description", "Amount", "Balance")
+                .row(col, "10/07/2026", "Grocery Store", "2000.00", "46800.00");
+
+        return render(List.of(page1, page2));
+    }
+
+    /**
+     * Combines three independently-evidenced capabilities in one document: header labels offset
+     * from where their column's own data actually starts (OFFSET_COLUMN_ANCHORS), a Due Date
+     * field laid out as a 2-row grid (GRID_METADATA_FALLBACK), and a page-number footer line that
+     * must not be folded into the last real transaction row (PAGE_BOUNDARY_ISOLATION).
+     */
+    public static byte[] buildOffsetAnchorsGridMetadataPageBoundarySample() throws IOException {
+        float[] headerCol = {LEFT_MARGIN, 183.5f, 386.5f, 514f};
+        float[] dataCol = {35f, 90f, 372f, 500f};
+
+        PageBuilder page1 = new PageBuilder();
+        page1.line("Credit Card Statement")
+                .line("AVAILABLE CREDIT LIMIT MINIMUM DUE DUE DATE")
+                .line("5000.00 200.00 09 Aug, 2026")
+                .blankLine()
+                .row(headerCol, "DATE", "TRANSACTION DETAILS", "MERCHANT CATEGORY", "AMOUNT (Rs.)")
+                .row(dataCol, "24/06/2026", "UPI/TOBOX VENTURES PRIVATE L/GOKHANA.PAYU@AXISB", "MISC STORE", "37.94 Dr")
+                .row(dataCol, "02/07/2026", "UPI/DR AGARWALS HEALTH CARE", "MEDICAL", "500.00 Dr")
+                .line("Page 1 of 2");
+
+        PageBuilder page2 = new PageBuilder();
+        page2.row(headerCol, "DATE", "TRANSACTION DETAILS", "MERCHANT CATEGORY", "AMOUNT (Rs.)")
+                .row(dataCol, "10/07/2026", "UPI/BLINKIT/BLINKIT.PAYU@HDFCBANK", "DEPT STORES", "249.00 Dr");
+
+        return render(List.of(page1, page2));
     }
 }
