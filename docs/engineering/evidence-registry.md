@@ -107,9 +107,19 @@ against.
     validation pass — investigated and confirmed to be a **terminal rendering artifact only**; the
     actual stored value is correct. Recorded here so the same false alarm isn't re-investigated
     from scratch next time this document (or one like it) is reviewed.
+  - Every transaction row's narration lands under a `"Transaction Id"` key instead of the
+    `"Remarks"` key the header row itself detects — a column-anchor artifact specific to this
+    document (the header token and the actual data values don't share a bucketing anchor).
+    `TransactionNormalizer` never read `"Transaction Id"` as a possible description source, so
+    every row staged with an empty description, which then also broke categorization (nothing to
+    match against) and silently marked every row "low confidence" in the review UI — reported
+    directly by the user from a live import, not found via investigation.
 - **Outcome:**
   - ✓ `GRID_METADATA_TRAILING_LABEL` created (`ACCOUNT_NUMBER_TRAILING_LABEL`,
     `ACCOUNT_NAME_TRAILING_LABEL`, `IFSC_SHAPE`, `STATEMENT_PERIOD_TRAILING_LABEL`).
+  - ✓ `TransactionNormalizer.DESCRIPTION_HINTS` extended with `"transaction id"` as a last-resort
+    fallback (only used when every real description column is absent or blank), with a regression
+    test confirming it never overrides a genuinely populated `"Remarks"`/`"Description"` column.
   - ✓ Re-validated this cycle with no regressions.
   - ✓ Mojibake display investigated and closed as a non-issue (not a capability change).
 

@@ -317,6 +317,40 @@ class TransactionNormalizerTest {
     }
 
     @Test
+    void normalize_fallsBackToTheTransactionIdColumn_whenNoRealDescriptionColumnHasAnyValue() {
+        // Bug fix: verified against a real Union Bank of India statement. Its header row detects
+        // a "Remarks" column, but PdfTableLocator's column-anchor bucketing never actually
+        // produces a "Remarks" key on any real data row for this document -- the narration text
+        // lands under "Transaction Id" instead. Every transaction staged with an empty
+        // description, which then also broke categorization (nothing to match against) and
+        // silently pushed every row to "low confidence" in the review UI, even though the real
+        // narration text was present in the row the whole time, just under an unexpected key.
+        // (Value genericized per the Synthetic Fixture Policy -- only the column shape, a short
+        // ID token followed by narration text in one cell, is the real fact under test.)
+        Map<String, String> row = rowOf(
+                "Date", "01-05-2026", "Transaction Id", "Y00000000 UPIAB/000000000000/CR/GENERIC PAYER",
+                "Amount(", "50000.00(Cr)", "Balance(", "58234.84(Cr)");
+
+        StagedRow result = normalizer.normalize(userId, row);
+
+        assertThat(result.description()).isEqualTo("Y00000000 UPIAB/000000000000/CR/GENERIC PAYER");
+    }
+
+    @Test
+    void normalize_prefersARealDescriptionColumn_overTransactionIdWhenBothArePresent() {
+        // "Transaction Id" is deliberately lowest priority -- a document where "Remarks"/
+        // "Description"/etc. IS populated must never have that real description silently
+        // replaced by a merely-present "Transaction Id" column.
+        Map<String, String> row = rowOf(
+                "Date", "01/07/2026", "Description", "Salary Credit", "Transaction Id", "TXN00012345",
+                "Amount", "50000.00");
+
+        StagedRow result = normalizer.normalize(userId, row);
+
+        assertThat(result.description()).isEqualTo("Salary Credit");
+    }
+
+    @Test
     void normalize_referenceNumberIsNull_whenNoRecognizedColumnIsPresent() {
         Map<String, String> row = rowOf("Date", "01/07/2026", "Amount", "500", "Type", "DR", "Remarks", "x");
 

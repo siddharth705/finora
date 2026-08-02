@@ -24,6 +24,27 @@ cycle's full detail) — this file is the compressed, skimmable summary of the s
 
 ---
 
+## Version 2 — 2026-08-02 (Evidence Cycle 2)
+
+Triggered by a live user-reported bug, not a proactive review — the fastest possible evidence
+loop: real usage surfaced a real gap the same day Cycle 1 closed.
+
+### Learned
+- ✓ `Transaction Id` as a last-resort transaction-description fallback, used only when every real
+  description column (`Description`/`Narration`/`Remarks`/etc.) is absent or blank.
+
+### Protected
+- ✓ A real Union Bank of India statement's transactions were staging with an empty description on
+  every row — reported directly from the review UI, where it looked like the "low confidence"
+  categorization badge had silently replaced the description text entirely, rather than being
+  shown alongside it as designed. Root cause: a column-anchor artifact bucketed every row's real
+  narration under `"Transaction Id"` instead of the `"Remarks"` column the header row itself
+  detects; `TransactionNormalizer` never considered `"Transaction Id"` a possible description
+  source. A regression test also confirms the new fallback never overrides a genuinely populated
+  description column on a different document.
+
+---
+
 ## Version 1 — 2026-08-02 (Evidence Cycle 1)
 
 ### Learned

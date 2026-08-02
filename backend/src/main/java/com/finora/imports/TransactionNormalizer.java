@@ -53,8 +53,21 @@ public class TransactionNormalizer {
     private static final String[] CREDIT_HINTS =
             {"credit", "cr amount", "credit amount", "deposit amt", "deposit amount", "deposit", "deposits"};
     private static final String[] TYPE_HINTS = {"type"};
+    // "transaction id" is deliberately LAST -- lowest priority, only used when none of the real
+    // description columns above have a value at all. Bug fix, verified against a real Union Bank
+    // of India statement: its header row detects a "Remarks" column, but every actual data row's
+    // narration text ends up bucketed under "Transaction Id" instead (a real column-anchor
+    // artifact in this specific document -- the header token and the data values don't share a
+    // column anchor), leaving "Remarks" permanently blank and every transaction staging with an
+    // empty description -- which then also broke categorization (nothing to match against) and
+    // silently pushed every row to "low confidence" in the review UI. "Transaction Id" isn't
+    // treated as a description source in general (a genuine short reference-only "Transaction Id"
+    // column on a different document shouldn't be surfaced as if it were the transaction's own
+    // narration) -- it only fires here as a last resort, once "description"/"narration"/
+    // "remarks"/etc. have all already had their chance and come up empty.
     private static final String[] DESCRIPTION_HINTS =
-            {"description", "narration", "remarks", "particulars", "transaction description", "transaction details"};
+            {"description", "narration", "remarks", "particulars", "transaction description",
+                    "transaction details", "transaction id"};
     private static final String[] CATEGORY_HINTS = {"category"};
     // Phase 1 "capture facts" (docs/engineering/financial-document-intelligence-principles.md):
     // evidenced by a real Canara Bank statement's "Reference / Cheque No." column, silently
