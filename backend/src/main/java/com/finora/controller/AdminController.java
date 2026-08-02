@@ -74,8 +74,8 @@ public class AdminController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
             @RequestParam(defaultValue = "desc") String sortDir) {
-        int safeSize = Math.max(1, Math.min(size, 100));
-        int safePage = Math.max(0, page);
+        int safeSize = com.finora.util.PageBounds.safeSize(size);
+        int safePage = com.finora.util.PageBounds.safePage(page);
         Sort.Direction direction = "asc".equalsIgnoreCase(sortDir) ? Sort.Direction.ASC : Sort.Direction.DESC;
         Pageable pageable = PageRequest.of(safePage, safeSize, Sort.by(direction, "createdAt"));
 

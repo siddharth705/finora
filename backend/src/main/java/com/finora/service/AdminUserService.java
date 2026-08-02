@@ -91,8 +91,8 @@ public class AdminUserService {
     public PagedResponse<UserSummaryDto> list(String q, String status, int page, int size) {
         // Clamped rather than rejected -- an admin typing a huge page size shouldn't 400, it
         // should just get a sane upper bound (mirrors how most paginated admin UIs behave).
-        int safeSize = Math.max(1, Math.min(size, MAX_PAGE_SIZE));
-        int safePage = Math.max(0, page);
+        int safeSize = com.finora.util.PageBounds.safeSize(size, MAX_PAGE_SIZE);
+        int safePage = com.finora.util.PageBounds.safePage(page);
         // Blank search text is the same as "no filter" -- an admin clearing the search box
         // shouldn't have to also know that empty string vs. null behaves differently server-side.
         String normalizedQ = (q == null || q.isBlank()) ? null : q.trim();

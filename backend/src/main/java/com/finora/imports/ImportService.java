@@ -359,7 +359,7 @@ public class ImportService {
             t.setDescription(row.description());
             t.setMerchant(CategoryRules.extractMerchant(row.description()));
             t.setAmount(row.amount());
-            t.setTxnType(Transaction.Type.valueOf(row.type()));
+            t.setTxnType(com.finora.util.EnumParsing.parse(Transaction.Type.class, row.type(), "type"));
             t.setSource(Transaction.Source.CSV_IMPORT);
             t.setReferenceNumber(row.referenceNumber());
             t.setBalanceAfter(row.balanceAfter());

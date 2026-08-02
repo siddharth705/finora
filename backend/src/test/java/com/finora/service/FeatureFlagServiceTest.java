@@ -2,15 +2,16 @@ package com.finora.service;
 
 import com.finora.dto.AdminDtos.FeatureFlagDto;
 import com.finora.entity.FeatureFlag;
+import com.finora.exception.ApiException;
 import com.finora.repository.FeatureFlagRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -80,10 +81,15 @@ class FeatureFlagServiceTest {
 
     @Test
     void setEnabled_throwsForAnUnknownFlagId() {
+        // Bug fix: this used to assert setEnabled() threw a bare NoSuchElementException, which
+        // GlobalExceptionHandler has no specific handler for -- it fell through to the generic
+        // Exception handler and came back as an opaque 500 instead of a 404. Now matches every
+        // other "not found" lookup in this codebase.
         UUID missingId = UUID.randomUUID();
         when(featureFlagRepository.findById(missingId)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> featureFlagService.setEnabled(adminId, missingId, false))
-                .isInstanceOf(NoSuchElementException.class);
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
     }
 }

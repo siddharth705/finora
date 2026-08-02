@@ -2,14 +2,15 @@ package com.finora.service;
 
 import com.finora.dto.AdminDtos.FeatureFlagDto;
 import com.finora.entity.FeatureFlag;
+import com.finora.exception.ApiException;
 import com.finora.repository.FeatureFlagRepository;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
-import java.util.NoSuchElementException;
 import java.util.UUID;
 
 /**
@@ -40,10 +41,14 @@ public class FeatureFlagService {
         return featureFlagRepository.isEnabled(key);
     }
 
+    // Bug fix: an unknown flagId threw a bare NoSuchElementException, which GlobalExceptionHandler
+    // has no specific handler for -- it fell through to the generic Exception handler and came
+    // back as an opaque 500 instead of a 404, unlike every other "not found" lookup in this
+    // codebase (which all throw ApiException(HttpStatus.NOT_FOUND, ...)).
     @Transactional
     public FeatureFlagDto setEnabled(UUID adminUserId, UUID flagId, boolean enabled) {
         FeatureFlag flag = featureFlagRepository.findById(flagId)
-                .orElseThrow(() -> new NoSuchElementException("Feature flag not found: " + flagId));
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Feature flag not found: " + flagId));
         boolean wasEnabled = flag.isEnabled();
         flag.setEnabled(enabled);
         flag.setUpdatedAt(Instant.now());

@@ -80,11 +80,17 @@ public class TransactionService {
                 ? bankManagementService.search(f.keyword()).stream().map(com.finora.accounts.AccountDto.BankDto::id).toList()
                 : List.of();
         List<String> bankIdsParam = matchingBankIds.isEmpty() ? List.of(NO_BANK_MATCH_SENTINEL) : matchingBankIds;
+        // Bug fix: an unclamped negative page or oversized size reached PageRequest.of directly,
+        // which throws IllegalArgumentException -- unhandled in GlobalExceptionHandler, so the
+        // Ledger's own search endpoint 500'd on a malformed page param instead of just clamping it
+        // the way every other paginated endpoint in this codebase does (see PageBounds).
+        int safeSize = com.finora.util.PageBounds.safeSize(f.size() > 0 ? f.size() : 20);
+        int safePage = com.finora.util.PageBounds.safePage(f.page());
         var page = transactionRepository.search(
                 userId, f.accountId(), f.categoryId(),
-                f.type() != null ? Transaction.Type.valueOf(f.type()) : null,
+                com.finora.util.EnumParsing.parseIfPresent(Transaction.Type.class, f.type(), "type"),
                 f.dateFrom(), f.dateTo(), f.amountMin(), f.amountMax(), f.keyword(), bankIdsParam,
-                PageRequest.of(f.page(), f.size() > 0 ? f.size() : 20, sort)
+                PageRequest.of(safePage, safeSize, sort)
         );
         Map<UUID, String> namesById = categoryNamesById(userId);
         return PagedResponse.of(page.map(t -> TransactionDto.from(t, namesById.getOrDefault(t.getCategoryId(), "Uncategorized"))));
@@ -147,7 +153,7 @@ public class TransactionService {
         t.setMerchant(CategoryRules.extractMerchant(req.description()));
         requirePositiveAmount(req.amount());
         t.setAmount(req.amount());
-        t.setTxnType(Transaction.Type.valueOf(req.type()));
+        t.setTxnType(com.finora.util.EnumParsing.parse(Transaction.Type.class, req.type(), "type"));
         t.setTags(req.tags());
         t.setSource(Transaction.Source.MANUAL);
 
@@ -248,7 +254,7 @@ public class TransactionService {
             requirePositiveAmount(req.amount());
             t.setAmount(req.amount());
         }
-        if (req.type() != null) t.setTxnType(Transaction.Type.valueOf(req.type()));
+        if (req.type() != null) t.setTxnType(com.finora.util.EnumParsing.parse(Transaction.Type.class, req.type(), "type"));
         if (req.notes() != null) t.setNotes(req.notes());
         if (req.tags() != null) t.setTags(req.tags());
 
