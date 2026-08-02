@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { safeStorage } from '../lib/safeStorage';
 
 // Bug fix (production-readiness pass): same issue as the user frontend's client.ts (see that
 // file's own doc comment for the full story) -- vite.config.ts's server.proxy only applies to
@@ -53,7 +54,7 @@ const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh
 api.interceptors.request.use((config) => {
   const isAuthEndpoint = AUTH_ENDPOINTS_NO_TOKEN.some((path) => config.url?.includes(path));
   if (!isAuthEndpoint) {
-    const token = localStorage.getItem(TOKEN_KEY);
+    const token = safeStorage.getItem(TOKEN_KEY);
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -62,21 +63,21 @@ api.interceptors.request.use((config) => {
 });
 
 export function clearAdminSession() {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
+  safeStorage.removeItem(TOKEN_KEY);
+  safeStorage.removeItem(REFRESH_TOKEN_KEY);
 }
 
 export function persistAdminSession(token: string, refreshToken: string) {
-  localStorage.setItem(TOKEN_KEY, token);
-  localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+  safeStorage.setItem(TOKEN_KEY, token);
+  safeStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
 }
 
 export function getAdminRefreshToken(): string | null {
-  return localStorage.getItem(REFRESH_TOKEN_KEY);
+  return safeStorage.getItem(REFRESH_TOKEN_KEY);
 }
 
 export function getAdminToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return safeStorage.getItem(TOKEN_KEY);
 }
 
 function unwrapEnvelope(response: any) {

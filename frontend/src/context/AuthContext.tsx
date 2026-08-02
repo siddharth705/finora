@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, type ReactNode } from 'react';
 import { authApi } from '../api/endpoints';
 import { AUTH_CHANGED_EVENT } from './ThemeContext';
+import { safeStorage } from '../lib/safeStorage';
 
 interface AuthState {
   token: string | null;
@@ -22,17 +23,17 @@ interface AuthState {
 const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(localStorage.getItem('finora_token'));
-  const [email, setEmail] = useState<string | null>(localStorage.getItem('finora_email'));
-  const [fullName, setFullName] = useState<string | null>(localStorage.getItem('finora_name'));
-  const [phoneVerified, setPhoneVerifiedState] = useState<boolean>(localStorage.getItem('finora_phone_verified') === 'true');
+  const [token, setToken] = useState<string | null>(safeStorage.getItem('finora_token'));
+  const [email, setEmail] = useState<string | null>(safeStorage.getItem('finora_email'));
+  const [fullName, setFullName] = useState<string | null>(safeStorage.getItem('finora_name'));
+  const [phoneVerified, setPhoneVerifiedState] = useState<boolean>(safeStorage.getItem('finora_phone_verified') === 'true');
 
   function persist(data: { token: string; refreshToken: string; email: string; fullName: string; phoneVerified: boolean }) {
-    localStorage.setItem('finora_token', data.token);
-    localStorage.setItem('finora_refresh_token', data.refreshToken);
-    localStorage.setItem('finora_email', data.email);
-    localStorage.setItem('finora_name', data.fullName);
-    localStorage.setItem('finora_phone_verified', String(data.phoneVerified));
+    safeStorage.setItem('finora_token', data.token);
+    safeStorage.setItem('finora_refresh_token', data.refreshToken);
+    safeStorage.setItem('finora_email', data.email);
+    safeStorage.setItem('finora_name', data.fullName);
+    safeStorage.setItem('finora_phone_verified', String(data.phoneVerified));
     setToken(data.token);
     setEmail(data.email);
     setFullName(data.fullName);
@@ -70,7 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function setPhoneVerified(verified: boolean) {
-    localStorage.setItem('finora_phone_verified', String(verified));
+    safeStorage.setItem('finora_phone_verified', String(verified));
     setPhoneVerifiedState(verified);
   }
 
@@ -78,15 +79,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Best-effort: revoke the refresh token server-side so it can't be used again even if
     // someone captured it. Don't block clearing local state on this succeeding — if the
     // network call fails, the user still expects to be logged out locally.
-    const refreshToken = localStorage.getItem('finora_refresh_token');
+    const refreshToken = safeStorage.getItem('finora_refresh_token');
     if (refreshToken) {
       authApi.logout(refreshToken).catch(() => {});
     }
-    localStorage.removeItem('finora_token');
-    localStorage.removeItem('finora_refresh_token');
-    localStorage.removeItem('finora_email');
-    localStorage.removeItem('finora_name');
-    localStorage.removeItem('finora_phone_verified');
+    safeStorage.removeItem('finora_token');
+    safeStorage.removeItem('finora_refresh_token');
+    safeStorage.removeItem('finora_email');
+    safeStorage.removeItem('finora_name');
+    safeStorage.removeItem('finora_phone_verified');
     setToken(null);
     setEmail(null);
     setFullName(null);

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, Eye, EyeOff, CheckCircle2, Circle, ChevronDown, ChevronUp } from 'lucide-react';
 import { passwordChangeApi } from '../api/endpoints';
+import { safeStorage } from '../lib/safeStorage';
 
 /**
  * The authenticated, OTP-gated Change Password flow (Phase 2) -- current password -> OTP sent to
@@ -147,7 +148,7 @@ export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => voi
 
   async function submitNewPassword() {
     if (!sessionId || !canSubmitNewPassword) return;
-    const currentRefreshToken = localStorage.getItem('finora_refresh_token');
+    const currentRefreshToken = safeStorage.getItem('finora_refresh_token');
     if (!currentRefreshToken) {
       setError('Your session information is missing. Please sign in again and retry.');
       return;

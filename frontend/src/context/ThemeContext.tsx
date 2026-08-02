@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
 import { userApi } from '../api/endpoints';
+import { safeStorage } from '../lib/safeStorage';
 
 export type ThemeSetting = 'light' | 'dark' | 'system';
 
@@ -29,7 +30,7 @@ function systemPrefersDark(): boolean {
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<ThemeSetting>(() => normalize(localStorage.getItem(STORAGE_KEY)));
+  const [theme, setThemeState] = useState<ThemeSetting>(() => normalize(safeStorage.getItem(STORAGE_KEY)));
   const [systemDark, setSystemDark] = useState(systemPrefersDark);
 
   const resolvedTheme: 'light' | 'dark' = theme === 'system' ? (systemDark ? 'dark' : 'light') : theme;
@@ -60,13 +61,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // page reload.
   useEffect(() => {
     function syncFromServer() {
-      if (!localStorage.getItem('finora_token')) return;
+      if (!safeStorage.getItem('finora_token')) return;
       userApi
         .get()
         .then((u) => {
           const remote = normalize(u.theme);
           setThemeState(remote);
-          localStorage.setItem(STORAGE_KEY, remote);
+          safeStorage.setItem(STORAGE_KEY, remote);
         })
         .catch(() => {});
     }
@@ -77,10 +78,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   function setTheme(next: ThemeSetting) {
     setThemeState(next);
-    localStorage.setItem(STORAGE_KEY, next);
+    safeStorage.setItem(STORAGE_KEY, next);
     // Best-effort remote persistence, same pattern as AuthContext.logout(): the local UI change
     // applies immediately and never waits on (or gets rolled back by) the network call.
-    if (localStorage.getItem('finora_token')) {
+    if (safeStorage.getItem('finora_token')) {
       userApi.update({ theme: next }).catch(() => {});
     }
   }

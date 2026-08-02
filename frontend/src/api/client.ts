@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { safeStorage } from '../lib/safeStorage';
 
 // Bug fix (production-readiness pass): this was a hardcoded relative path with no env-driven
 // override at all. That's fine in local dev, where Vite's own dev-server proxy (vite.config.ts's
@@ -64,7 +65,7 @@ const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh
 api.interceptors.request.use((config) => {
   const isAuthEndpoint = AUTH_ENDPOINTS_NO_TOKEN.some((path) => config.url?.includes(path));
   if (!isAuthEndpoint) {
-    const token = localStorage.getItem('finora_token');
+    const token = safeStorage.getItem('finora_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -79,11 +80,11 @@ function clearSessionAndRedirect() {
   // this flag), but it's a real hygiene gap: a stale, unrelated-to-the-next-session value left
   // sitting in storage is exactly the kind of thing that turns into a real bug the moment some
   // future feature reads phoneVerified independently of token presence.
-  localStorage.removeItem('finora_token');
-  localStorage.removeItem('finora_refresh_token');
-  localStorage.removeItem('finora_email');
-  localStorage.removeItem('finora_name');
-  localStorage.removeItem('finora_phone_verified');
+  safeStorage.removeItem('finora_token');
+  safeStorage.removeItem('finora_refresh_token');
+  safeStorage.removeItem('finora_email');
+  safeStorage.removeItem('finora_name');
+  safeStorage.removeItem('finora_phone_verified');
   window.location.href = '/login';
 }
 
@@ -132,13 +133,13 @@ api.interceptors.response.use(
     // gone — clear it and bounce to login rather than looping.
     if (error.response?.status === 401 && !originalRequest._retried && !originalRequest.url?.includes('/auth/refresh')) {
       originalRequest._retried = true;
-      const refreshToken = localStorage.getItem('finora_refresh_token');
+      const refreshToken = safeStorage.getItem('finora_refresh_token');
 
       if (refreshToken) {
         try {
           const refreshed = await refreshAccessToken(refreshToken);
-          localStorage.setItem('finora_token', refreshed.token);
-          localStorage.setItem('finora_refresh_token', refreshed.refreshToken);
+          safeStorage.setItem('finora_token', refreshed.token);
+          safeStorage.setItem('finora_refresh_token', refreshed.refreshToken);
           originalRequest.headers.Authorization = `Bearer ${refreshed.token}`;
           return api(originalRequest);
         } catch {

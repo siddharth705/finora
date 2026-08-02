@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { safeStorage } from '../lib/safeStorage';
 
 export interface SavedView<T extends Record<string, string>> {
   name: string;
@@ -7,7 +8,7 @@ export interface SavedView<T extends Record<string, string>> {
 
 function readViews<T extends Record<string, string>>(storageKey: string): SavedView<T>[] {
   try {
-    const raw = localStorage.getItem(storageKey);
+    const raw = safeStorage.getItem(storageKey);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -38,7 +39,13 @@ export function useSavedViews<T extends Record<string, string>>(storageKey: stri
 
   const persist = useCallback((next: SavedView<T>[]) => {
     setViews(next);
-    localStorage.setItem(storageKey, JSON.stringify(next));
+    // Bug fix: this used to call localStorage.setItem directly, unlike readViews() above --
+    // in a storage-restricted browser (private browsing with 0 quota, a policy blocking site
+    // data), setItem throws INSIDE the click handler after setViews(next) already ran: the UI
+    // shows the view as saved, but nothing actually persisted, and it silently disappears on the
+    // next reload with no error shown. safeStorage.setItem swallows that the same way
+    // readViews()'s own try/catch already does for reads.
+    safeStorage.setItem(storageKey, JSON.stringify(next));
   }, [storageKey]);
 
   /** Overwrites any existing view with the same name -- saving under a name you've already used

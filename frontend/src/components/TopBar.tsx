@@ -8,6 +8,7 @@ import {
 import { useTheme, type ThemeSetting } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { dashboardApi } from '../api/endpoints';
+import { safeStorage } from '../lib/safeStorage';
 
 // Notifications are recomputed fresh from the DB on every /dashboard/summary call (see
 // DashboardService.buildNotifications) rather than being persisted rows with stable IDs, so
@@ -26,7 +27,7 @@ function readStorageKey(email: string | null): string {
 
 function loadReadSet(email: string | null): Set<string> {
   try {
-    return new Set(JSON.parse(localStorage.getItem(readStorageKey(email)) ?? '[]'));
+    return new Set(JSON.parse(safeStorage.getItem(readStorageKey(email)) ?? '[]'));
   } catch {
     return new Set();
   }
@@ -77,7 +78,7 @@ export function TopBar() {
   function markAllRead() {
     const next = new Set(notifications);
     setReadIds(next);
-    localStorage.setItem(readStorageKey(email), JSON.stringify([...next]));
+    safeStorage.setItem(readStorageKey(email), JSON.stringify([...next]));
   }
 
   function toggleMenu(menu: Exclude<OpenMenu, null>) {

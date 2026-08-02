@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { authApi, meApi } from '../api/endpoints';
 import { clearAdminSession, getAdminToken, persistAdminSession } from '../api/client';
+import { safeStorage } from '../lib/safeStorage';
 
 // Any one of these being present is enough to open the admin shell -- deliberately not "must be
 // ADMIN or SUPER_ADMIN," since the backend gates every individual admin endpoint on a specific
@@ -48,15 +49,15 @@ class AdminAccessError extends Error {}
 
 export function AdminAuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(getAdminToken());
-  const [email, setEmail] = useState<string | null>(localStorage.getItem('finora_admin_email'));
-  const [fullName, setFullName] = useState<string | null>(localStorage.getItem('finora_admin_name'));
+  const [email, setEmail] = useState<string | null>(safeStorage.getItem('finora_admin_email'));
+  const [fullName, setFullName] = useState<string | null>(safeStorage.getItem('finora_admin_name'));
   // Mirrors frontend/'s AuthContext phoneVerified tracking exactly -- see ADR-0001. Defaults to
   // true when there's no stored value yet (e.g. a token from before this field existed) so an
   // already-working session isn't suddenly redirected to /verify-phone by this change; a real
   // false value is only ever set by login()/loadAccess() below once we've actually heard
   // otherwise from the backend.
   const [phoneVerified, setPhoneVerifiedState] = useState<boolean>(
-    localStorage.getItem('finora_admin_phone_verified') !== 'false'
+    safeStorage.getItem('finora_admin_phone_verified') !== 'false'
   );
   const [permissions, setPermissions] = useState<string[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
@@ -66,7 +67,7 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState<boolean>(!!getAdminToken());
 
   function setPhoneVerified(verified: boolean) {
-    localStorage.setItem('finora_admin_phone_verified', String(verified));
+    safeStorage.setItem('finora_admin_phone_verified', String(verified));
     setPhoneVerifiedState(verified);
   }
 
@@ -143,8 +144,8 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
     }
 
     persistAdminSession(response.token, response.refreshToken);
-    localStorage.setItem('finora_admin_email', response.email);
-    localStorage.setItem('finora_admin_name', response.fullName);
+    safeStorage.setItem('finora_admin_email', response.email);
+    safeStorage.setItem('finora_admin_name', response.fullName);
     setToken(response.token);
     setEmail(response.email);
     setFullName(response.fullName);
@@ -188,14 +189,14 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
   }
 
   function logout() {
-    const refreshToken = localStorage.getItem('finora_admin_refresh_token');
+    const refreshToken = safeStorage.getItem('finora_admin_refresh_token');
     if (refreshToken) {
       authApi.logout(refreshToken).catch(() => {});
     }
     clearAdminSession();
-    localStorage.removeItem('finora_admin_email');
-    localStorage.removeItem('finora_admin_name');
-    localStorage.removeItem('finora_admin_phone_verified');
+    safeStorage.removeItem('finora_admin_email');
+    safeStorage.removeItem('finora_admin_name');
+    safeStorage.removeItem('finora_admin_phone_verified');
     setToken(null);
     setEmail(null);
     setFullName(null);
