@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { GraduationCap, RotateCcw } from 'lucide-react';
 import { learningApi, merchantsApi } from '../api/endpoints';
 import type { LearningSummary, LearningTimelineEntry } from '../api/endpoints';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 function fmtDateTime(d: string) {
   return new Date(d).toLocaleString('en-IN', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -47,10 +48,22 @@ export default function LearningEngine() {
   const [timeline, setTimeline] = useState<LearningTimelineEntry[] | null>(null);
   const [resettingId, setResettingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { beginRequest } = useAsyncGuard();
 
+  // Bug fix: resetMerchant() below calls load() again after each reset, disabled only for the
+  // specific merchant being reset -- resetting merchant A then quickly resetting merchant B fires
+  // two independent load() calls, and without this guard, whichever's summary/timeline responses
+  // happened to resolve last would win even if it was the OLDER (A's) call, silently reverting the
+  // screen to already-superseded data. Same race class useAsyncGuard was built for (see its own
+  // doc comment's Merchants.tsx example -- an imperative handler, not an effect keyed on a dep).
   function load() {
-    learningApi.summary().then(setSummary).catch(() => setError('Could not load the learning summary.'));
-    learningApi.timeline().then(setTimeline).catch(() => setTimeline([]));
+    const isCurrent = beginRequest();
+    learningApi.summary()
+      .then((s) => { if (isCurrent()) setSummary(s); })
+      .catch(() => { if (isCurrent()) setError('Could not load the learning summary.'); });
+    learningApi.timeline()
+      .then((t) => { if (isCurrent()) setTimeline(t); })
+      .catch(() => { if (isCurrent()) setTimeline([]); });
   }
   useEffect(load, []);
 

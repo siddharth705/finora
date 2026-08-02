@@ -23,6 +23,7 @@ export default function Investments() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [savingSnapshot, setSavingSnapshot] = useState(false);
 
   function load() {
     setLoading(true);
@@ -38,9 +39,18 @@ export default function Investments() {
 
   async function addHolding() {
     if (!name || !value) return;
+    // Bug fix: this only checked presence, not validity -- unlike Goals.tsx/Budgets.tsx's own
+    // amount fields. "-500" or non-numeric text passed straight through: a negative balance
+    // persisted and skewed the Allocation doughnut, or parseFloat returned NaN, which propagated
+    // into fmt()'s Math.round(NaN) and rendered "₹NaN" across the Total Investments card.
+    const currentValue = parseFloat(value);
+    if (!(currentValue > 0)) {
+      setError('Current value must be greater than zero.');
+      return;
+    }
     setAdding(true);
     try {
-      await accountsApi.create({ name, accountType: 'INVESTMENT', balance: parseFloat(value), investmentKind: kind });
+      await accountsApi.create({ name, accountType: 'INVESTMENT', balance: currentValue, investmentKind: kind });
       setName(''); setValue('');
       load();
     } catch {
@@ -61,8 +71,19 @@ export default function Investments() {
   }
 
   async function saveSnapshot() {
-    const nw = await networthApi.saveSnapshot();
-    setNetWorth(nw);
+    // Bug fix: no try/catch and no pending state meant a failed save was an unhandled promise
+    // rejection with zero user feedback, and since the button was never disabled mid-request, a
+    // slow response let someone fire multiple concurrent snapshot-save requests by clicking again.
+    if (savingSnapshot) return;
+    setSavingSnapshot(true);
+    try {
+      const nw = await networthApi.saveSnapshot();
+      setNetWorth(nw);
+    } catch {
+      setError('Could not save today’s snapshot.');
+    } finally {
+      setSavingSnapshot(false);
+    }
   }
 
   if (loading) return <p className="text-muted">Loading…</p>;
@@ -111,8 +132,12 @@ export default function Investments() {
         <div className="bg-card rounded p-5 shadow">
           <div className="flex justify-between items-center mb-3">
             <p className="text-xs uppercase text-gray-500">Net Worth Trend</p>
-            <button onClick={saveSnapshot} className="text-xs uppercase border border-border rounded px-3 py-1.5">
-              Save Today's Snapshot
+            <button
+              onClick={saveSnapshot}
+              disabled={savingSnapshot}
+              className="text-xs uppercase border border-border rounded px-3 py-1.5 disabled:opacity-50"
+            >
+              {savingSnapshot ? 'Saving…' : "Save Today's Snapshot"}
             </button>
           </div>
           {!netWorth || netWorth.history.length < 2 ? (

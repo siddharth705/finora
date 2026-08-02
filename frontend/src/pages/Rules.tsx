@@ -73,13 +73,21 @@ function RulesTab() {
   }
 
   async function toggleEnabled(rule: Rule) {
-    await rulesApi.update(rule.id, { enabled: !rule.enabled });
-    load();
+    try {
+      await rulesApi.update(rule.id, { enabled: !rule.enabled });
+      load();
+    } catch (e: any) {
+      setError(e.response?.data?.message ?? 'Could not update this rule.');
+    }
   }
 
   async function remove(id: string) {
-    await rulesApi.remove(id);
-    load();
+    try {
+      await rulesApi.remove(id);
+      load();
+    } catch (e: any) {
+      setError(e.response?.data?.message ?? 'Could not delete this rule.');
+    }
   }
 
   const valueLabel = actionValueLabel(actionType);
@@ -234,8 +242,12 @@ function RelationshipsTab() {
   }
 
   async function remove(id: string) {
-    await relationshipsApi.remove(id);
-    load();
+    try {
+      await relationshipsApi.remove(id);
+      load();
+    } catch (e: any) {
+      setError(e.response?.data?.message ?? 'Could not delete this relationship.');
+    }
   }
 
   return (
