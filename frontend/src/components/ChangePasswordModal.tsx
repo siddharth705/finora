@@ -131,6 +131,11 @@ export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => voi
       setConfirmation(result);
       setStep('otp');
     } catch (e: any) {
+      // Logged, not just displayed -- a Firebase Auth error (e.g. sendPhoneVerificationCode
+      // throwing auth/too-many-requests, auth/invalid-app-credential) has no response.data.message
+      // and previously vanished into the generic fallback text with zero trace anywhere, making
+      // this exact failure mode undiagnosable from the browser alone.
+      console.error('ChangePasswordModal: submitCurrentPassword failed', e);
       setError(e.response?.data?.message ?? 'Could not start the password change. Please try again.');
     } finally {
       setSubmitting(false);
@@ -146,6 +151,7 @@ export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => voi
       await passwordChangeApi.verifyOtp(sessionId, firebaseIdToken);
       setStep('newPassword');
     } catch (e: any) {
+      console.error('ChangePasswordModal: submitOtp failed', e);
       setError(e.response?.data?.message ?? friendlyFirebaseError(e));
       setOtp('');
     } finally {
@@ -180,6 +186,7 @@ export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => voi
       setStep('success');
       onSuccess?.();
     } catch (e: any) {
+      console.error('ChangePasswordModal: submitNewPassword failed', e);
       setError(e.response?.data?.message ?? 'Could not update your password. Please try again.');
     } finally {
       setSubmitting(false);
