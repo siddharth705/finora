@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   Users, UserCheck, ArrowLeftRight, FileStack, AlertTriangle, ShieldAlert,
-  Activity, Wallet, TrendingUp, RefreshCw, UserPlus, Landmark, KeyRound,
+  Wallet, TrendingUp, RefreshCw, UserPlus, Landmark, KeyRound,
   ScrollText, SlidersHorizontal, Lock, Tag, Copy, CheckCircle2,
 } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
@@ -332,33 +332,6 @@ function DashboardContent() {
               ))}
             </div>
           </div>
-        </div>
-      </div>
-
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-muted uppercase tracking-wide">Recent activity</h2>
-          <Link to="/audit" className="text-xs text-primary font-medium">View full activity feed →</Link>
-        </div>
-        <div className="bg-card border border-border rounded-xl2 shadow-card divide-y divide-border">
-          {isLoading && <p className="text-sm text-muted px-4 py-4">Loading…</p>}
-          {!isLoading && (data?.recentActivity.length ?? 0) === 0 && (
-            <p className="text-sm text-muted px-4 py-4">No activity recorded yet.</p>
-          )}
-          {data?.recentActivity.map((log) => (
-            <div key={log.id} className="flex items-center gap-3 px-4 py-2.5">
-              <Activity size={14} className="text-muted flex-shrink-0" />
-              <span className="text-xs font-mono text-muted flex-shrink-0 w-[140px]">
-                {new Date(log.createdAt).toLocaleString()}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-ink truncate">{log.action}</p>
-              </div>
-              <span className="text-xs font-mono text-muted flex-shrink-0">
-                {log.entityType}{log.entityId ? ` #${log.entityId.slice(0, 8)}` : ''}
-              </span>
-            </div>
-          ))}
         </div>
       </div>
     </div>

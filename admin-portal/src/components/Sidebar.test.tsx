@@ -109,11 +109,14 @@ describe('Sidebar', () => {
 
     // Every label in Sidebar.tsx's links[] -- kept as a literal list (not derived from the
     // component) so this test actually catches a future nav item added without updating it here.
+    // Feature Flags was folded into Settings (same SYSTEM_SETTINGS gate, one less nav entry for
+    // "platform-wide switches an admin can flip") -- no separate nav item for it anymore.
     for (const label of ['Dashboard', 'Users', 'Roles & Permissions', 'Banks', 'Merchant Intelligence',
       'Global Rules', 'Learning Engine', 'Reconciliation Monitor', 'Platform Analytics',
-      'Audit Log', 'System Health', 'Platform Diagnostics', 'Feature Flags', 'Settings']) {
+      'Audit Log', 'System Health', 'Platform Diagnostics', 'Settings']) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
+    expect(screen.queryByText('Feature Flags')).not.toBeInTheDocument();
   });
 
   it('renders the account name from useAdminAuth', () => {

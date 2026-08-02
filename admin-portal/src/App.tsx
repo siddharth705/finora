@@ -21,7 +21,6 @@ import PlatformAnalytics from './pages/PlatformAnalytics';
 import AuditLog from './pages/AuditLog';
 import SystemHealth from './pages/SystemHealth';
 import Diagnostics from './pages/Diagnostics';
-import FeatureFlags from './pages/FeatureFlags';
 import Settings from './pages/Settings';
 
 const queryClient = new QueryClient({
@@ -55,7 +54,6 @@ export default function App() {
               <Route path="/audit" element={<ProtectedRoute><AuditLog /></ProtectedRoute>} />
               <Route path="/health" element={<ProtectedRoute><SystemHealth /></ProtectedRoute>} />
               <Route path="/diagnostics" element={<ProtectedRoute><Diagnostics /></ProtectedRoute>} />
-              <Route path="/feature-flags" element={<ProtectedRoute><FeatureFlags /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
             </Routes>
           </BrowserRouter>

@@ -20,7 +20,6 @@ const links = [
   { to: '/app/investments', label: 'Investments', icon: TrendingUp },
   { to: '/app/reports', label: 'Reports', icon: BarChart3 },
   { to: '/app/insights', label: 'Insights', icon: Sparkles },
-  { to: '/app/settings', label: 'Settings', icon: SettingsIcon },
 ];
 
 function initials(name: string | null) {

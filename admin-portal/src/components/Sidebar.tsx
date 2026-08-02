@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, ShieldCheck, ScrollText, HeartPulse, LogOut, ShieldAlert, Landmark, Settings,
-  ListFilter, Store, Sparkles, GitMerge, BarChart3, Flag, Stethoscope,
+  ListFilter, Store, Sparkles, GitMerge, BarChart3, Stethoscope,
 } from 'lucide-react';
 import { useAdminAuth } from '../context/AdminAuthContext';
 
@@ -21,7 +21,6 @@ const links = [
   { to: '/audit', label: 'Audit Log', icon: ScrollText, end: false, permission: 'AUDIT_VIEW' },
   { to: '/health', label: 'System Health', icon: HeartPulse, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
   { to: '/diagnostics', label: 'Platform Diagnostics', icon: Stethoscope, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
-  { to: '/feature-flags', label: 'Feature Flags', icon: Flag, end: false, permission: 'SYSTEM_SETTINGS' },
   { to: '/settings', label: 'Settings', icon: Settings, end: false, permission: 'SYSTEM_SETTINGS' },
 ] as const;
 
