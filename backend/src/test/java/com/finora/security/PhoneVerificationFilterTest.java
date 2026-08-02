@@ -189,4 +189,44 @@ class PhoneVerificationFilterTest {
         verify(filterChain).doFilter(request, response);
         verify(response, never()).setStatus(HttpServletResponse.SC_FORBIDDEN);
     }
+
+    /**
+     * Regression test: both VerifyPhone.tsx pages (user app and admin portal) call
+     * GET /api/v1/users/me as the very first step of their own verification flow, to learn the
+     * account's real phone number before it can be handed to Firebase -- this filter blocked that
+     * call too, so a brand-new registration's phone verification failed immediately and could
+     * never be completed at all.
+     */
+    @Test
+    void allowsAnUnverifiedUser_toFetchTheirOwnProfile() throws Exception {
+        authenticateAs("unverified@example.com");
+        when(userRepository.findByEmail("unverified@example.com"))
+                .thenReturn(Optional.of(userWithVerification("unverified@example.com", false)));
+
+        HttpServletRequest request = requestFor("/api/v1/users/me");
+        when(request.getMethod()).thenReturn("GET");
+        filter.doFilter(request, response, filterChain);
+
+        verify(filterChain).doFilter(request, response);
+        verify(response, never()).setStatus(HttpServletResponse.SC_FORBIDDEN);
+    }
+
+    /**
+     * The GET-only allowlist for /api/v1/users/me must not widen into letting an unverified user
+     * change their own preferences (PUT, same base path) before ever verifying -- only the read
+     * needed to bootstrap verification is excluded, nothing else on this resource.
+     */
+    @Test
+    void stillBlocksAnUnverifiedUser_fromUpdatingTheirOwnProfile() throws Exception {
+        authenticateAs("unverified@example.com");
+        when(userRepository.findByEmail("unverified@example.com"))
+                .thenReturn(Optional.of(userWithVerification("unverified@example.com", false)));
+
+        HttpServletRequest request = requestFor("/api/v1/users/me");
+        when(request.getMethod()).thenReturn("PUT");
+        filter.doFilter(request, response, filterChain);
+
+        verify(response).setStatus(HttpServletResponse.SC_FORBIDDEN);
+        verify(filterChain, never()).doFilter(any(), any());
+    }
 }

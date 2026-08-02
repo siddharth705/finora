@@ -44,6 +44,16 @@ import java.util.Optional;
  * refreshTokenService.revoke(...)) ever ran. AuthContext.tsx's logout() swallows that failure
  * (.catch(() => {})) and clears local state anyway, so the user *looked* logged out client-side
  * while their refresh token silently stayed valid server-side indefinitely.
+ *
+ * Bug fix: GET /api/v1/users/me (both VerifyPhone.tsx pages -- user app and admin portal -- call
+ * userApi.get() as the very first step of startVerification(), to learn the account's real,
+ * unmasked phone number before it can hand that to Firebase's signInWithPhoneNumber(); the login/
+ * register response only ever carries maskedPhone, never the real number) was never excluded
+ * here, so every brand-new registration's phone-verification step failed immediately with this
+ * same 403 before Firebase was ever reached -- there was no way to become verified at all. Scoped
+ * to GET only (not the whole /api/v1/users/me/** family): PUT /users/me (preference updates) and
+ * the password-change endpoints under this same base path have no reason to be reachable before
+ * verification and should stay blocked.
  */
 @Component
 public class PhoneVerificationFilter extends OncePerRequestFilter {
@@ -55,6 +65,11 @@ public class PhoneVerificationFilter extends OncePerRequestFilter {
     // (see BootstrapService) can ever legitimately reach it.
     private static final AntPathRequestMatcher SETUP_STATUS_ENDPOINT =
             new AntPathRequestMatcher("/api/v1/setup/status", "GET");
+    // GET only, and the exact base path (no /** wildcard) -- must NOT match PUT /api/v1/users/me
+    // (preference updates) or any /api/v1/users/me/** sub-path (password-change, /access), none
+    // of which an unverified user has any legitimate reason to reach.
+    private static final AntPathRequestMatcher USER_ME_ENDPOINT =
+            new AntPathRequestMatcher("/api/v1/users/me", "GET");
 
     private final UserRepository userRepository;
     private final ObjectMapper objectMapper;
@@ -72,7 +87,7 @@ public class PhoneVerificationFilter extends OncePerRequestFilter {
 
         if (auth != null && auth.isAuthenticated() && auth.getPrincipal() instanceof UserDetails userDetails
                 && !PHONE_ENDPOINTS.matches(request) && !AUTH_ENDPOINTS.matches(request)
-                && !SETUP_STATUS_ENDPOINT.matches(request)) {
+                && !SETUP_STATUS_ENDPOINT.matches(request) && !USER_ME_ENDPOINT.matches(request)) {
             Optional<User> user = userRepository.findByEmail(userDetails.getUsername());
             if (user.isPresent() && !user.get().isPhoneVerified()) {
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
