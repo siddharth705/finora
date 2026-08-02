@@ -17,7 +17,12 @@ WORKDIR /app
 # financial data.
 RUN addgroup -S finora && adduser -S finora -G finora
 COPY --from=build /app/target/finora-backend-*.jar app.jar
-RUN chown finora:finora app.jar
+COPY docker-entrypoint.sh docker-entrypoint.sh
+# -R (not just the two files above) because docker-entrypoint.sh's own GOOGLE_APPLICATION_CREDENTIALS_BASE64
+# handling writes a new file into /app at container startup -- the unprivileged finora user needs
+# write access to the directory itself for that, not just execute/read on the files that already
+# existed at build time.
+RUN chown -R finora:finora /app && chmod +x docker-entrypoint.sh
 USER finora
 
 # EXPOSE is documentation only -- it doesn't control which port the app actually binds to (that's
@@ -31,4 +36,9 @@ EXPOSE 8080
 # non-heap JVM overhead (metaspace, thread stacks, direct buffers -- PDFBox/PdfPreviewGenerator's
 # PDF parsing uses some of this) without wasting most of a small container's memory the way the
 # JVM's own default (25%) would on a single-application container like this one.
-ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-jar", "app.jar"]
+#
+# Shell-form entrypoint script now (not exec-form `java -jar` directly) -- see
+# docker-entrypoint.sh's own doc comment: it needs to run BEFORE the JVM starts, to decode
+# GOOGLE_APPLICATION_CREDENTIALS_BASE64 into a real file and export GOOGLE_APPLICATION_CREDENTIALS,
+# since Railway (and most PaaS providers) have no other way to get an actual file into the container.
+ENTRYPOINT ["./docker-entrypoint.sh"]

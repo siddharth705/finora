@@ -48,6 +48,7 @@ to leave at its default: local dev defaults, or must be explicitly set.
 | `EMAIL_FROM` | No | `onboarding@resend.dev` | "From" address for outgoing email | Only if you have your own verified sender |
 | `GOOGLE_APPLICATION_CREDENTIALS` | **Yes — hard boot-time requirement in `prod`** | unset | Absolute path to a Firebase service-account JSON key file; read directly by the Firebase Admin SDK (`FirebaseConfig`), not via a Spring `@ConfigurationProperties` binding — there's no `application.yml` key for this | **No.** `ProductionConfigValidator` refuses to start the `prod` profile unless `PhoneVerificationProvider.isConfigured()` (i.e. this file is present and valid) — see its own doc comment. Phone verification (registration, password reset, authenticated password change) fails with a 503 everywhere else if this is missing. |
 | *(unset)* | — | — | `FirebaseConfig.firebaseApp()` logs a warning and yields `Optional.empty()` — the app still starts (outside `prod`), but any phone-verification-gated flow fails until this is set | Acceptable only outside `prod` |
+| `TWO_FACTOR_API_KEY` | No — soft, non-fatal check only | empty | 2Factor API key for real-time transaction alert SMS (`TwoFactorSmsProvider`) — scoped to `TransactionService.create()`'s manual-entry path only, never authentication OTPs (Firebase Phone Authentication owns those). Empty falls back to `NoOpSmsProvider` (logs instead of sending). | **Yes.** Unlike `RESEND_API_KEY`/`GOOGLE_APPLICATION_CREDENTIALS`, `ProductionConfigValidator` only logs a startup warning if this is unset — never refuses to boot — since a missed transaction alert is a degraded notification, not a security gap (see `SmsProperties`'s own doc comment). |
 | `FINORA_SETUP_KEY` | No | empty (auto-generated + written to `.finora/installation.key`) | First-run bootstrap installation key | See `docs/bootstrap-setup-future-work.md` — set explicitly rather than relying on a written file in any deployment without a persistent, host-readable filesystem |
 | `TRUST_PROXY_HEADERS` | **Yes, on Railway** | `false` | Whether `RateLimitFilter` trusts `X-Forwarded-For` for the real client IP | **Must be `true` on Railway** (or any deployment behind a real reverse proxy) — otherwise every user shares one rate-limit bucket. Must stay `false` anywhere not behind a trusted proxy, or rate limiting can be bypassed by spoofing the header. |
 | `UPLOAD_MAX_FILE_SIZE` / `UPLOAD_MAX_REQUEST_SIZE` | No | `10MB` | Multipart upload size limits (CSV/PDF statement import) | Yes |
@@ -100,6 +101,7 @@ RESEND_API_KEY=<your real Resend API key>
 EMAIL_FROM=<your verified sender address>
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/firebase-service-account.json
 TRUST_PROXY_HEADERS=true
+TWO_FACTOR_API_KEY=<your real 2Factor API key>
 ```
 
 `GOOGLE_APPLICATION_CREDENTIALS` must point at a real, readable file on the deployed instance —
@@ -107,6 +109,12 @@ on Railway that typically means committing the JSON as a "Raw file" volume mount
 from a base64'd env var at container startup, since Railway's Variables tab itself only stores
 strings, not files. Download the service-account key from Firebase Console → Project Settings →
 Service Accounts → "Generate new private key"; never commit it to source control.
+
+`TWO_FACTOR_API_KEY` is a plain string value (unlike the credentials file above), so it's a normal
+Railway "Variable" entry — Variables tab → New Variable → paste the key from your 2Factor
+dashboard. Unlike every other secret in this table, leaving it unset does NOT block startup or
+degrade security; it just means `TwoFactorSmsProvider` falls back to logging transaction alerts
+instead of sending them, and `ProductionConfigValidator` prints one startup warning line about it.
 
 `CORS_ORIGINS` must list **both** frontend origins, comma-separated, no spaces around the comma
 (or trim them — `CorsConfig` already trims each entry) — a mismatch here is exactly what produces
