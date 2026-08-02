@@ -2,7 +2,6 @@ package com.finora.service;
 
 import com.finora.dto.PasswordChangeDtos.*;
 import com.finora.entity.PasswordChangeSession;
-import com.finora.entity.PhoneOtp;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.repository.PasswordChangeSessionRepository;
@@ -22,9 +21,10 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * The OTP-gated, session-based Change Password flow (start -> verify-otp -> complete) --
- * replaces the older single-step version (see git history for AuthServiceChangePasswordTest,
- * removed alongside AuthService.changePassword()). Each step's guard against being run out of
+ * The OTP-gated, session-based Change Password flow (start -> verify-otp -> complete). OTP
+ * verification itself is Firebase Phone Authentication (see PhoneVerificationProvider) --
+ * the frontend's own Firebase client SDK sends and confirms the code directly against Firebase;
+ * this service only ever sees the resulting ID token. Each step's guard against being run out of
  * order / against another user's session / after expiry is exercised directly, since that's the
  * whole point of persisting server-side session state instead of trusting the request body.
  */
@@ -33,7 +33,7 @@ class PasswordChangeServiceTest {
     private UserRepository userRepository;
     private PasswordChangeSessionRepository sessionRepository;
     private PasswordEncoder passwordEncoder;
-    private OtpService otpService;
+    private PhoneVerificationProvider phoneVerificationProvider;
     private RefreshTokenService refreshTokenService;
     private AuditService auditService;
     private PasswordChangeService service;
@@ -44,7 +44,7 @@ class PasswordChangeServiceTest {
         userRepository = mock(UserRepository.class);
         sessionRepository = mock(PasswordChangeSessionRepository.class);
         passwordEncoder = mock(PasswordEncoder.class);
-        otpService = mock(OtpService.class);
+        phoneVerificationProvider = mock(PhoneVerificationProvider.class);
         refreshTokenService = mock(RefreshTokenService.class);
         auditService = mock(AuditService.class);
 
@@ -59,8 +59,8 @@ class PasswordChangeServiceTest {
         });
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        service = new PasswordChangeService(userRepository, sessionRepository, passwordEncoder, otpService,
-                refreshTokenService, auditService);
+        service = new PasswordChangeService(userRepository, sessionRepository, passwordEncoder,
+                phoneVerificationProvider, refreshTokenService, auditService);
     }
 
     private User existingUser() {
@@ -87,24 +87,22 @@ class PasswordChangeServiceTest {
     // --- start() ---
 
     @Test
-    void start_withCorrectCurrentPassword_createsASessionAndIssuesAPasswordChangeOtp() {
+    void start_withCorrectCurrentPassword_createsASessionAndReturnsTheRealPhoneNumberForFirebase() {
         User user = existingUser();
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("OldPass123!", "hashed-old-password")).thenReturn(true);
-        when(otpService.issueOtp(userId, "+919876543210", PhoneOtp.Purpose.PASSWORD_CHANGE))
-                .thenReturn(new OtpService.OtpIssueResult("111222", true));
 
         var response = service.start(userId, new StartRequest("OldPass123!"));
 
         assertThat(response.sessionId()).isNotBlank();
-        assertThat(response.devOtp()).isNull(); // delivered=true -- never echoed back
+        assertThat(response.phoneNumber()).isEqualTo("+919876543210");
         assertThat(response.maskedPhone()).isNotBlank();
         verify(auditService).record(userId, "PASSWORD_CHANGE_STARTED", "User", userId);
         verify(auditService).record(userId, "CURRENT_PASSWORD_VERIFIED", "User", userId);
     }
 
     @Test
-    void start_withWrongCurrentPassword_rejectsAndRecordsAnAuditEvent_withoutIssuingAnyOtp() {
+    void start_withWrongCurrentPassword_rejectsAndRecordsAnAuditEvent() {
         when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser()));
         when(passwordEncoder.matches("WrongPassword", "hashed-old-password")).thenReturn(false);
 
@@ -113,47 +111,66 @@ class PasswordChangeServiceTest {
                 .hasMessageContaining("Current password is incorrect");
 
         verify(auditService).record(userId, "INVALID_CURRENT_PASSWORD", "User", userId);
-        verify(otpService, never()).issueOtp(any(), any(), any());
+        verify(sessionRepository, never()).save(any());
+    }
+
+    @Test
+    void start_onASuspendedAccount_isRejectedBeforeEvenCheckingThePassword() {
+        User user = existingUser();
+        user.setStatus("SUSPENDED");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> service.start(userId, new StartRequest("OldPass123!")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("suspended");
+
+        verify(passwordEncoder, never()).matches(any(), any());
         verify(sessionRepository, never()).save(any());
     }
 
     // --- verifyOtp() ---
 
     @Test
-    void verifyOtp_withCorrectCode_advancesTheSessionToOtpVerified() {
+    void verifyOtp_withAMatchingFirebaseToken_advancesTheSessionToOtpVerified() {
         PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.STARTED, Instant.now().plusSeconds(600));
         when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
-        when(otpService.verifyOtp(userId, "654321", PhoneOtp.Purpose.PASSWORD_CHANGE)).thenReturn(true);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser()));
+        when(phoneVerificationProvider.verifyAndGetPhoneNumber("valid-firebase-token")).thenReturn("+919876543210");
 
-        var response = service.verifyOtp(userId, new VerifyOtpRequest(session.getId().toString(), "654321"));
+        var response = service.verifyOtp(userId, new VerifyOtpRequest(session.getId().toString(), "valid-firebase-token"));
 
-        assertThat(response.verified()).isTrue();
+        assertThat(response.message()).isNotBlank();
         assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.OTP_VERIFIED);
         assertThat(session.getOtpVerifiedAt()).isNotNull();
+        assertThat(session.getVerificationProvider()).isEqualTo("FIREBASE");
+        assertThat(session.getVerifiedPhoneNumber()).isEqualTo("+919876543210");
+        verify(auditService).record(userId, "FIREBASE_PHONE_VERIFIED", "User", userId);
     }
 
     @Test
-    void verifyOtp_withWrongCode_returnsUnverifiedWithoutThrowing_andLeavesSessionInStarted() {
+    void verifyOtp_withATokenForAMismatchedPhoneNumber_throwsAndLeavesSessionInStarted() {
         PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.STARTED, Instant.now().plusSeconds(600));
         when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
-        when(otpService.verifyOtp(userId, "000000", PhoneOtp.Purpose.PASSWORD_CHANGE)).thenReturn(false);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser()));
+        when(phoneVerificationProvider.verifyAndGetPhoneNumber("someone-elses-token")).thenReturn("+911111111111");
 
-        var response = service.verifyOtp(userId, new VerifyOtpRequest(session.getId().toString(), "000000"));
+        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest(session.getId().toString(), "someone-elses-token")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("doesn't match");
 
-        assertThat(response.verified()).isFalse();
         assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.STARTED);
         verify(auditService).record(userId, "INVALID_OTP", "User", userId);
     }
 
     @Test
-    void verifyOtp_onASessionThatAlreadyCompletedThisStep_rejectsWithoutCallingOtpServiceAgain() {
+    void verifyOtp_onASessionThatAlreadyCompletedThisStep_rejectsWithoutCallingFirebaseAgain() {
         PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.OTP_VERIFIED, Instant.now().plusSeconds(600));
         when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
 
-        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest(session.getId().toString(), "654321")))
+        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest(session.getId().toString(), "some-token")))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("already been completed");
-        verify(otpService, never()).verifyOtp(any(), any(), any());
+        verify(phoneVerificationProvider, never()).verifyAndGetPhoneNumber(any());
     }
 
     @Test
@@ -161,7 +178,7 @@ class PasswordChangeServiceTest {
         PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.STARTED, Instant.now().minusSeconds(60));
         when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
 
-        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest(session.getId().toString(), "654321")))
+        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest(session.getId().toString(), "some-token")))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("expired");
 
@@ -173,14 +190,14 @@ class PasswordChangeServiceTest {
     void verifyOtp_onAnUnknownOrForeignSessionId_rejectsCleanly() {
         when(sessionRepository.findByIdAndUserId(any(), eq(userId))).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest(UUID.randomUUID().toString(), "654321")))
+        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest(UUID.randomUUID().toString(), "some-token")))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Invalid password change session");
     }
 
     @Test
     void verifyOtp_withAMalformedSessionId_rejectsCleanlyInsteadOfThrowingAnUnhandledException() {
-        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest("not-a-uuid", "654321")))
+        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest("not-a-uuid", "some-token")))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Invalid password change session");
     }
@@ -202,9 +219,11 @@ class PasswordChangeServiceTest {
         assertThat(user.getPasswordHash()).isEqualTo("hashed-new-password");
         assertThat(user.getPasswordChangedAt()).isNotNull();
         assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.COMPLETED);
+        assertThat(session.getSignedOutOtherDevices()).isFalse();
         assertThat(response.otherDevicesSignedOut()).isFalse();
         verify(refreshTokenService, never()).revokeAllOtherSessionsForUser(any(), any());
         verify(auditService, never()).record(any(), eq("OTHER_SESSIONS_REVOKED"), any(), any());
+        verify(auditService).record(userId, "OTHER_SESSIONS_PRESERVED", "User", userId);
     }
 
     @Test
@@ -220,8 +239,10 @@ class PasswordChangeServiceTest {
                 new CompleteRequest(session.getId().toString(), "NewPass456!", true, "this-devices-refresh-token"));
 
         assertThat(response.otherDevicesSignedOut()).isTrue();
+        assertThat(session.getSignedOutOtherDevices()).isTrue();
         verify(refreshTokenService).revokeAllOtherSessionsForUser(userId, "this-devices-refresh-token");
         verify(auditService).record(userId, "OTHER_SESSIONS_REVOKED", "User", userId);
+        verify(auditService, never()).record(any(), eq("OTHER_SESSIONS_PRESERVED"), any(), any());
     }
 
     @Test
@@ -256,16 +277,24 @@ class PasswordChangeServiceTest {
         verify(userRepository, never()).save(any());
     }
 
+    /** Idempotency, not replay rejection: a session already COMPLETED (the frontend retried after
+     *  a timeout/network hiccup without ever seeing the first response) must return the SAME
+     *  outcome it returned the first time -- not throw, and not re-run the password update or
+     *  session-revocation side effects a second time. */
     @Test
-    void complete_onASessionAlreadyCompleted_rejectsAsReplayProtection() {
+    void complete_onASessionAlreadyCompleted_returnsTheOriginalOutcomeInsteadOfRepeatingTheSideEffects() {
         PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.COMPLETED, Instant.now().plusSeconds(600));
+        session.setSignedOutOtherDevices(true);
         when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
 
-        assertThatThrownBy(() -> service.complete(userId,
-                new CompleteRequest(session.getId().toString(), "NewPass456!", false, "token")))
-                .isInstanceOf(ApiException.class);
+        var response = service.complete(userId,
+                new CompleteRequest(session.getId().toString(), "NewPass456!", false, "token"));
 
+        assertThat(response.otherDevicesSignedOut()).isTrue();
+        assertThat(response.message()).contains("every other device has been signed out");
         verify(userRepository, never()).save(any());
+        verify(refreshTokenService, never()).revokeAllOtherSessionsForUser(any(), any());
+        verify(auditService, never()).record(any(), eq("PASSWORD_CHANGED"), any(), any(), any());
     }
 
     @Test
@@ -286,7 +315,7 @@ class PasswordChangeServiceTest {
         UUID otherUsersSessionId = UUID.randomUUID();
         when(sessionRepository.findByIdAndUserId(otherUsersSessionId, userId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest(otherUsersSessionId.toString(), "654321")))
+        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest(otherUsersSessionId.toString(), "some-token")))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Invalid password change session");
     }

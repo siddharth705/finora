@@ -45,6 +45,25 @@ public class PasswordChangeSession {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
+    // Set once verifyOtp() succeeds -- "FIREBASE" today, the only PhoneVerificationProvider
+    // implementation that exists, kept as a plain string (not an enum) since it's descriptive
+    // metadata for debugging/future-provider-migration purposes, not a value any code branches on.
+    @Column(name = "verification_provider", length = 32)
+    private String verificationProvider;
+
+    // The phone number Firebase actually attested, captured at the moment verifyOtp() confirmed it
+    // matches the account's own number -- useful for debugging a support ticket without having to
+    // cross-reference the audit log's JSON metadata.
+    @Column(name = "verified_phone_number", length = 20)
+    private String verifiedPhoneNumber;
+
+    // Set once complete() runs -- lets a replayed/retried complete() call (see isCompleted()) return
+    // the same outcome it returned the first time, instead of re-deriving it from the request body
+    // (which a legitimate idempotent retry sends unchanged anyway, but this is the authoritative,
+    // already-persisted answer either way).
+    @Column(name = "signed_out_other_devices")
+    private Boolean signedOutOtherDevices;
+
     public UUID getId() { return id; }
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
@@ -59,6 +78,12 @@ public class PasswordChangeSession {
     public Instant getExpiresAt() { return expiresAt; }
     public void setExpiresAt(Instant expiresAt) { this.expiresAt = expiresAt; }
     public Instant getCreatedAt() { return createdAt; }
+    public String getVerificationProvider() { return verificationProvider; }
+    public void setVerificationProvider(String verificationProvider) { this.verificationProvider = verificationProvider; }
+    public String getVerifiedPhoneNumber() { return verifiedPhoneNumber; }
+    public void setVerifiedPhoneNumber(String verifiedPhoneNumber) { this.verifiedPhoneNumber = verifiedPhoneNumber; }
+    public Boolean getSignedOutOtherDevices() { return signedOutOtherDevices; }
+    public void setSignedOutOtherDevices(Boolean signedOutOtherDevices) { this.signedOutOtherDevices = signedOutOtherDevices; }
 
     public boolean isExpired() {
         return expiresAt.isBefore(Instant.now());

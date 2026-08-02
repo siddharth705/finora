@@ -143,4 +143,34 @@ class RateLimitFilterTest {
         assertThat(response.getStatus()).isNotEqualTo(429);
         verify(chain, times(1)).doFilter(any(), any());
     }
+
+    /** The three Change Password steps share one limiter/bucket per IP -- tripping the limit via
+     *  one path must also block the other two, proving they're bucketed together rather than each
+     *  independently allowing a full quota (which would let an attacker get 3x the effective
+     *  budget by rotating across start/verify-otp/complete). */
+    @Test
+    void passwordChangeSteps_shareOneRateLimitBucket() throws Exception {
+        RateLimitFilter filter = newFilter();
+        ReflectionTestUtils.setField(filter, "trustProxyHeaders", false);
+        FilterChain chain = mock(FilterChain.class);
+
+        boolean tripped = false;
+        for (int i = 0; i < 20; i++) {
+            String path = i % 2 == 0
+                    ? "/api/v1/users/me/password-change/start"
+                    : "/api/v1/users/me/password-change/verify-otp";
+            HttpServletRequest request = requestFor(path, "10.0.0.9", null);
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            filter.doFilterInternal(request, response, chain);
+            if (response.getStatus() == 429) tripped = true;
+        }
+        assertThat(tripped).isTrue();
+
+        // The third step, never called yet, is still blocked -- same shared bucket, not a fresh
+        // quota of its own.
+        HttpServletRequest completeRequest = requestFor("/api/v1/users/me/password-change/complete", "10.0.0.9", null);
+        MockHttpServletResponse completeResponse = new MockHttpServletResponse();
+        filter.doFilterInternal(completeRequest, completeResponse, chain);
+        assertThat(completeResponse.getStatus()).isEqualTo(429);
+    }
 }

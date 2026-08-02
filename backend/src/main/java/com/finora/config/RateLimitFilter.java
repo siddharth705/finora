@@ -19,14 +19,31 @@ import java.io.IOException;
  * Rate-limits the handful of endpoints with a real, specific abuse cost: login (credential
  * stuffing — complements account lockout, which is per-account, by also limiting per-IP across
  * many accounts), register (spam account creation), and forgot-password (email enumeration /
- * spam) are all reachable with no credential at all. The OTP-sending endpoints and CSV import
- * staging DO require a valid JWT to call, but are limited anyway because each has a real
- * per-call resource cost even from a legitimate, authenticated client gone wrong (SMS costs
- * actual money per message; import staging persists a real row with the raw file bytes as of
+ * spam) are all reachable with no credential at all. CSV import staging DOES require a valid JWT
+ * to call, but is limited anyway because it has a real per-call resource cost even from a
+ * legitimate, authenticated client gone wrong (persists a real row with the raw file bytes as of
  * ADR-0002, not just an in-memory response — see importStageLimiter's own comment). Everything
  * else is intentionally left unlimited here — blanket rate limiting every endpoint is a
  * different, heavier decision (needs per-endpoint tuning) than protecting specifically the
  * endpoints with a concrete cost.
+ *
+ * Architecture change: phone verification (registration, password reset, authenticated password
+ * change) moved to Firebase Phone Authentication -- this backend no longer triggers any SMS send
+ * itself (see FirebaseConfig's own doc comment), so the OTP-sending rate limiter this class used
+ * to have (justified specifically by "SMS costs real money per message") no longer applies to
+ * anything here. Firebase's own reCAPTCHA-based SMS fraud protection covers that concern now, on
+ * Firebase's side of the boundary. /phone/verify and /auth/reset-password/phone are both cheap,
+ * no-real-cost reads/checks (a Firebase Admin SDK token verification; a DB lookup gated by an
+ * unguessable reset token) -- left unlimited here for the same reason every other low-cost
+ * endpoint in this app is.
+ *
+ * The authenticated Change Password flow (/users/me/password-change/start|verify-otp|complete)
+ * IS limited, unlike the two paragraphs above -- unlike /phone/verify, start() does a real bcrypt
+ * comparison against the account's current password on every call, which is exactly the kind of
+ * per-call cost this class already protects elsewhere (see importStageLimiter). A JWT stolen via
+ * XSS or a compromised device is the realistic threat this defends against: without a limiter, an
+ * attacker holding a stolen-but-still-valid token could hammer this flow long after the
+ * legitimate user would ever call it 15 times in 10 minutes themselves.
  *
  * IP extraction uses request.getRemoteAddr() directly by default — correct when nothing sits
  * between the client and this app, wrong the moment a reverse proxy (Railway's own edge proxy,
@@ -45,7 +62,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final RateLimiter loginLimiter = new RateLimiter(10, 60);           // 10 attempts / min / IP
     private final RateLimiter registerLimiter = new RateLimiter(5, 300);        // 5 registrations / 5 min / IP
     private final RateLimiter forgotPasswordLimiter = new RateLimiter(5, 300);  // 5 requests / 5 min / IP
-    private final RateLimiter sendOtpLimiter = new RateLimiter(3, 600);         // 3 SMS / 10 min / IP — SMS costs real money per message
     // Staging used to be memory-only (parse, return the response, nothing persisted) -- as of
     // ADR-0002 (persisted import sessions), every call writes a real row to import_sessions
     // INCLUDING the raw file bytes, bounded only by a 48h TTL and cleanup that only runs on that
@@ -54,6 +70,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // generous for legitimate use (re-staging after fixing a file, trying a few statements) while
     // still bounding that.
     private final RateLimiter importStageLimiter = new RateLimiter(10, 600);
+    // Shared across all three password-change steps rather than one limiter each -- a caller
+    // working through the flow normally touches all three anyway, so bucketing them together is
+    // both simpler and doesn't require guessing a separate reasonable ceiling for each individual
+    // step. 15/10min is generous for a legitimate user (including a few genuine retries after a
+    // wrong current password or a mistyped code) while still bounding repeated abuse.
+    private final RateLimiter passwordChangeLimiter = new RateLimiter(15, 600);
     // Bug fix: this used to be `new ObjectMapper()` -- a second, freshly-constructed mapper with
     // none of the auto-configuration Spring Boot's own JacksonAutoConfiguration applies to its
     // managed ObjectMapper bean (in particular, no JavaTimeModule). ApiResponse.timestamp is a
@@ -82,13 +104,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
             case "/api/v1/auth/login" -> loginLimiter;
             case "/api/v1/auth/register" -> registerLimiter;
             case "/api/v1/auth/forgot-password" -> forgotPasswordLimiter;
-            // Both of these trigger an actual SMS send via OtpService.issueOtp() -- same real
-            // per-message cost, same limiter. Missing this on the password-reset endpoint when
-            // it was added would have left it as the one unprotected way to spam SMS to an
-            // arbitrary phone number (given a valid reset token, which itself doesn't require
-            // knowing anything about the account beyond having received one email).
-            case "/api/v1/phone/send-otp", "/api/v1/auth/reset-password/request-otp" -> sendOtpLimiter;
             case "/api/v1/import/csv/stage", "/api/v1/import/pdf/stage" -> importStageLimiter;
+            case "/api/v1/users/me/password-change/start", "/api/v1/users/me/password-change/verify-otp",
+                    "/api/v1/users/me/password-change/complete" -> passwordChangeLimiter;
             default -> null;
         };
 
@@ -113,7 +131,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
      *  the first) is whatever the original client chose to send, fully attacker-controlled. A
      *  request with a client-supplied "X-Forwarded-For: 1.2.3.4" header arrives here as
      *  "1.2.3.4, &lt;real address&gt;" -- taking the first entry let every rate limiter in this
-     *  class (login, register, forgot-password, OTP, import staging) be bypassed completely by
+     *  class (login, register, forgot-password, import staging) be bypassed completely by
      *  sending a fresh random value on every request, since each one landed in its own bucket.
      *  Falls back to getRemoteAddr() if the header is missing/blank even when trust is enabled,
      *  rather than resolving to null/empty. */
