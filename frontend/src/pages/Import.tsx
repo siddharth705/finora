@@ -207,7 +207,19 @@ export default function Import() {
 
       setStep('review');
     } catch (e: any) {
-      setError(e.response?.data?.message ?? (isPdf ? 'Could not parse this PDF.' : 'Could not parse this CSV.'));
+      // e.response is only ever populated when the server actually answered the request --
+      // axios leaves it undefined for anything that never got a response at all (network down,
+      // DNS failure, a timeout, or a CORS-blocked preflight). The browser deliberately doesn't
+      // tell JS WHICH of those it was (a CORS block and a genuinely unreachable server look
+      // identical to script code, for security reasons), but "we never even reached the server"
+      // is still a meaningfully different failure than "the server looked at this file and
+      // rejected it" -- conflating the two under "Could not parse this PDF" sent debugging
+      // toward the parser every time this happened, when the parser was never actually involved.
+      if (!e.response) {
+        setError('Unable to reach the import service. The upload request could not be completed — check your connection and try again.');
+      } else {
+        setError(e.response?.data?.message ?? (isPdf ? 'Could not parse this PDF.' : 'Could not parse this CSV.'));
+      }
     } finally {
       setUploadProgress(null);
     }

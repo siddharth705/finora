@@ -169,13 +169,32 @@ describe('Import — file-type routing', () => {
     expect(await screen.findByText(/which account is this statement for/i)).toBeInTheDocument();
   });
 
-  it('surfaces a PDF-specific error message when staging a PDF fails', async () => {
-    vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue(new Error('boom'));
+  it('surfaces a PDF-specific error message when the server rejects a PDF it actually received', async () => {
+    // Shaped like a real axios error the server actually answered (e.res.response is populated,
+    // just with no specific message) -- distinct from the network-failure test below, which has
+    // no .response at all. Only a request that reached the server and was rejected should ever
+    // show a parser-specific message.
+    vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue({ response: { data: {} } });
     const user = userEvent.setup();
     renderImport();
 
     await user.upload(screen.getByTestId('statement-file-input'), pdfFile());
 
     expect(await screen.findByText(/could not parse this pdf/i)).toBeInTheDocument();
+  });
+
+  it('surfaces a transport-failure message, not a parse error, when the request never reaches the server', async () => {
+    // No .response at all -- axios's shape for a request that never got an HTTP response back
+    // (network down, DNS failure, timeout, or a CORS-blocked preflight, all indistinguishable to
+    // JS). This must NOT be reported as "Could not parse this PDF" -- the parser was never
+    // involved, and that message sends debugging in the wrong direction.
+    vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue(new Error('Network Error'));
+    const user = userEvent.setup();
+    renderImport();
+
+    await user.upload(screen.getByTestId('statement-file-input'), pdfFile());
+
+    expect(await screen.findByText(/unable to reach the import service/i)).toBeInTheDocument();
+    expect(screen.queryByText(/could not parse this pdf/i)).not.toBeInTheDocument();
   });
 });
