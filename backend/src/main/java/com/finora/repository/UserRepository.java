@@ -14,6 +14,14 @@ import java.util.UUID;
 public interface UserRepository extends JpaRepository<User, UUID> {
     Optional<User> findByEmail(String email);
     boolean existsByEmail(String email);
+    // Used wherever a user TYPES their email (registration uniqueness, login, forgot-password) --
+    // new registrations are normalized to lowercase going forward (see AuthService.createUserRecord),
+    // but existing rows may still carry whatever case they were originally typed in, so lookups
+    // driven by user input must not be case-sensitive regardless of what's actually stored.
+    // findByEmail/existsByEmail above stay case-sensitive deliberately for internal lookups keyed
+    // on an already-known-exact value (JWT subject, Spring Security username).
+    Optional<User> findByEmailIgnoreCase(String email);
+    boolean existsByEmailIgnoreCase(String email);
     boolean existsByPhoneNumber(String phoneNumber);
     // Backs email-or-phone login (AuthService.resolveEmailForLogin) -- phone numbers aren't
     // normalized at registration time, so callers try a couple of digit/plus-sign variants.

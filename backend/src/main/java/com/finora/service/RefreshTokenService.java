@@ -1,10 +1,13 @@
 package com.finora.service;
 
+import com.finora.config.ClientIpResolver;
 import com.finora.config.JwtProperties;
 import com.finora.entity.RefreshToken;
 import com.finora.exception.ApiException;
 import com.finora.repository.RefreshTokenRepository;
 import com.finora.util.TokenHasher;
+import com.finora.util.UserAgentParser;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,11 +35,16 @@ public class RefreshTokenService {
 
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtProperties jwtProperties;
+    private final HttpServletRequest request;
+    private final ClientIpResolver clientIpResolver;
     private final SecureRandom secureRandom = new SecureRandom();
 
-    public RefreshTokenService(RefreshTokenRepository refreshTokenRepository, JwtProperties jwtProperties) {
+    public RefreshTokenService(RefreshTokenRepository refreshTokenRepository, JwtProperties jwtProperties,
+                                HttpServletRequest request, ClientIpResolver clientIpResolver) {
         this.refreshTokenRepository = refreshTokenRepository;
         this.jwtProperties = jwtProperties;
+        this.request = request;
+        this.clientIpResolver = clientIpResolver;
     }
 
     public record IssuedToken(String rawToken, Instant expiresAt) {}
@@ -52,9 +60,26 @@ public class RefreshTokenService {
         rt.setTokenHash(TokenHasher.sha256(rawToken));
         Instant expiresAt = Instant.now().plusMillis(jwtProperties.getRefreshExpirationMs());
         rt.setExpiresAt(expiresAt);
+        captureDeviceMetadata(rt);
         refreshTokenRepository.save(rt);
 
         return new IssuedToken(rawToken, expiresAt);
+    }
+
+    /** Best-effort device-session labels (see RefreshToken's own doc comment) from the live
+     *  request that's issuing or rotating this token -- never lets a request without the usual
+     *  headers (a test harness, an unusual client) fail the actual token issuance over it. */
+    private void captureDeviceMetadata(RefreshToken rt) {
+        try {
+            String userAgent = request.getHeader("User-Agent");
+            rt.setBrowser(UserAgentParser.browser(userAgent));
+            rt.setDevice(UserAgentParser.device(userAgent));
+            rt.setLastSeenIp(clientIpResolver.resolve(request));
+            rt.setLastSeenAt(Instant.now());
+        } catch (Exception e) {
+            // No active request context (e.g. called outside an HTTP request) -- device metadata
+            // is a nice-to-have, not something that should ever block issuing a real token.
+        }
     }
 
     @Transactional

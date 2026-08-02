@@ -12,6 +12,7 @@ import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
 import com.finora.util.PhoneMasking;
 import com.finora.util.TokenHasher;
+import org.springframework.dao.IncorrectResultSizeDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -24,6 +25,7 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -57,19 +59,21 @@ public class AuthService {
     private final AuthenticationManager authenticationManager;
     private final AuditService auditService;
     private final RefreshTokenService refreshTokenService;
-    private final EmailService emailService;
+    private final EmailProvider emailProvider;
     private final EmailProperties emailProperties;
     private final PhoneVerificationProvider phoneVerificationProvider;
     private final PlatformSettingsService platformSettingsService;
+    private final PasswordHistoryService passwordHistoryService;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public AuthService(UserRepository userRepository, CategoryRepository categoryRepository,
                         PasswordResetTokenRepository resetTokenRepository, PasswordEncoder passwordEncoder,
                         JwtService jwtService, AuthenticationManager authenticationManager,
                         AuditService auditService, RefreshTokenService refreshTokenService,
-                        EmailService emailService, EmailProperties emailProperties,
+                        EmailProvider emailProvider, EmailProperties emailProperties,
                         PhoneVerificationProvider phoneVerificationProvider,
-                        PlatformSettingsService platformSettingsService) {
+                        PlatformSettingsService platformSettingsService,
+                        PasswordHistoryService passwordHistoryService) {
         this.userRepository = userRepository;
         this.categoryRepository = categoryRepository;
         this.resetTokenRepository = resetTokenRepository;
@@ -78,10 +82,11 @@ public class AuthService {
         this.authenticationManager = authenticationManager;
         this.auditService = auditService;
         this.refreshTokenService = refreshTokenService;
-        this.emailService = emailService;
+        this.emailProvider = emailProvider;
         this.emailProperties = emailProperties;
         this.phoneVerificationProvider = phoneVerificationProvider;
         this.platformSettingsService = platformSettingsService;
+        this.passwordHistoryService = passwordHistoryService;
     }
 
     @Transactional
@@ -95,6 +100,7 @@ public class AuthService {
         }
         User user = createUserRecord(request);
         auditService.record(user.getId(), "USER_REGISTERED", "User", user.getId());
+        emailProvider.sendWelcomeEmail(user.getEmail(), user.getFullName());
 
         String accessToken = jwtService.generateToken(user.getId(), user.getEmail());
         String refreshToken = refreshTokenService.issue(user.getId()).rawToken();
@@ -123,18 +129,22 @@ public class AuthService {
      *  needs, regardless of what happens after (register() continues into minting tokens;
      *  adminCreateUser() stops here). */
     private User createUserRecord(RegisterRequest request) {
-        // Trimmed once up front and reused everywhere below -- the duplicate check and the
-        // saved value must agree on the exact same string, or "  jane@example.com" could dodge
-        // the uniqueness check against an existing "jane@example.com" and still get persisted
-        // as a distinct-looking row.
-        String email = request.email().trim();
-        if (userRepository.existsByEmail(email)) {
+        // Trimmed + lowercased once up front and reused everywhere below -- the duplicate check
+        // and the saved value must agree on the exact same string, or "  Jane@Example.com" could
+        // dodge the uniqueness check against an existing "jane@example.com" and still get
+        // persisted as a distinct-looking row that's really the same mailbox (most providers
+        // treat the local part case-insensitively too). existsByEmailIgnoreCase (not the plain,
+        // case-sensitive existsByEmail) is what actually catches this against any pre-existing
+        // row regardless of what case IT happened to be stored in.
+        String email = request.email().trim().toLowerCase();
+        if (userRepository.existsByEmailIgnoreCase(email)) {
             throw new ApiException(HttpStatus.CONFLICT, "An account with this email already exists.");
         }
+        String phoneNumber = normalizePhoneNumber(request.phoneNumber());
         // Previously unchecked -- two different accounts could share a phone number, which also
         // breaks email-or-phone login's assumption that a phone number resolves to at most one
         // account (see AuthService.resolveEmailForLogin).
-        if (userRepository.existsByPhoneNumber(request.phoneNumber())) {
+        if (userRepository.existsByPhoneNumber(phoneNumber)) {
             throw new ApiException(HttpStatus.CONFLICT, "An account with this mobile number already exists.");
         }
 
@@ -147,11 +157,50 @@ public class AuthService {
         // API caller. This is the one place that actually persists, so it's the one place that
         // must not skip it.
         user.setFullName(request.fullName().trim());
-        user.setPhoneNumber(request.phoneNumber());
+        user.setPhoneNumber(phoneNumber);
         user = userRepository.save(user);
+        passwordHistoryService.record(user.getId(), user.getPasswordHash());
 
         seedDefaultCategories(user.getId());
         return user;
+    }
+
+    /** Canonicalizes a registration-time phone number to E.164 ("+919876543210") so every stored
+     *  number has the same shape going forward, rather than relying on phoneNumbersMatch()'s
+     *  digit-only comparison to paper over inconsistent storage everywhere a phone number is
+     *  compared. RegisterRequest's own @Pattern already accepts either a leading "+" or a bare
+     *  10-15 digit string, so this has to handle both. A bare 10-digit number is assumed Indian --
+     *  the only market this app currently supports. */
+    private static String normalizePhoneNumber(String raw) {
+        String digits = raw.replaceAll("[^0-9]", "");
+        if (raw.startsWith("+")) {
+            return "+" + digits;
+        }
+        if (digits.length() == 10) {
+            return "+91" + digits;
+        }
+        return "+" + digits;
+    }
+
+    /**
+     * Bug fix / defensive guard: existsByEmailIgnoreCase() (used at registration) is a COUNT-based
+     * query, but findByEmailIgnoreCase() -- used here, at login and forgot-password -- fetches a
+     * single row and throws IncorrectResultSizeDataAccessException if more than one matches.
+     * Case-insensitive email uniqueness was never enforced before this session (registration only
+     * ever checked case-SENSITIVE uniqueness, and the DB's own UNIQUE constraint on email is
+     * likewise case-sensitive), so it's possible for two pre-existing accounts to differ only by
+     * case (e.g. "Jane@Example.com" and "jane@example.com"). Without this guard, any login or
+     * forgot-password attempt touching either account 500s instead of resolving to the previous,
+     * still-correct case-sensitive behavior -- failing this closed to "no match" is exactly as
+     * safe as the account-not-found path every caller already handles, and never reveals the
+     * ambiguity to the caller (no account enumeration).
+     */
+    private Optional<User> findUserByEmailIgnoreCaseSafely(String email) {
+        try {
+            return userRepository.findByEmailIgnoreCase(email);
+        } catch (IncorrectResultSizeDataAccessException e) {
+            return Optional.empty();
+        }
     }
 
     /**
@@ -162,12 +211,18 @@ public class AuthService {
      */
     /**
      * Users shouldn't have to remember whether they signed up with their email or their phone
-     * number -- a single field should work either way. Registration never normalizes the phone
-     * number (it's stored exactly as typed, "+" prefix and all), so this tries the identifier
-     * as given, then with/without a leading "+", before giving up. If nothing resolves, the
-     * original identifier is returned unchanged so the existing authenticate()-then-catch flow
-     * below still fails with the same generic "Invalid credentials" -- this never reveals
-     * whether an account exists, matching the email-only behavior this replaces.
+     * number -- a single field should work either way. Registration normalizes new phone numbers
+     * to E.164 now (see normalizePhoneNumber()), but accounts created before that change may still
+     * have the number stored exactly as originally typed -- so this tries the identifier as given,
+     * a couple of raw +/no-+ variants (for those pre-normalization rows), AND the fully normalized
+     * form (for rows that already went through normalizePhoneNumber() at registration) before
+     * giving up. Bug fix: this used to only try a bare "+" + digits, which never reconstructs a
+     * "+91"-prefixed stored number from a bare 10-digit login identifier -- a user who registered
+     * with "9876543210" (stored as "+919876543210") and later typed the same bare number to log in
+     * could never resolve to their own account. If nothing resolves, the original identifier is
+     * returned unchanged so the existing authenticate()-then-catch flow below still fails with the
+     * same generic "Invalid credentials" -- this never reveals whether an account exists, matching
+     * the email-only behavior this replaces.
      */
     private String resolveEmailForLogin(String identifier) {
         if (identifier.contains("@")) {
@@ -177,6 +232,7 @@ public class AuthService {
         return userRepository.findByPhoneNumber(identifier)
                 .or(() -> userRepository.findByPhoneNumber("+" + digitsOnly))
                 .or(() -> userRepository.findByPhoneNumber(digitsOnly))
+                .or(() -> userRepository.findByPhoneNumber(normalizePhoneNumber(identifier)))
                 .map(User::getEmail)
                 .orElse(identifier);
     }
@@ -187,7 +243,7 @@ public class AuthService {
         // this line (lockout check, Spring Security authentication, JWT subject) is unchanged
         // and still keyed on email exactly as before.
         String email = resolveEmailForLogin(request.identifier());
-        User user = userRepository.findByEmail(email).orElse(null);
+        User user = findUserByEmailIgnoreCaseSafely(email).orElse(null);
 
         if (user != null && user.getLockedUntil() != null && user.getLockedUntil().isAfter(Instant.now())) {
             throw new ApiException(HttpStatus.LOCKED,
@@ -311,10 +367,10 @@ public class AuthService {
      */
     @Transactional
     public ForgotPasswordResponse forgotPassword(ForgotPasswordRequest request, String requestOrigin) {
-        String genericMessage = emailService.isConfigured()
+        String genericMessage = emailProvider.isConfigured()
                 ? "If an account exists for that email, we've sent a password reset link."
                 : "If an account exists for that email, a reset link has been issued.";
-        var userOpt = userRepository.findByEmail(request.email());
+        var userOpt = findUserByEmailIgnoreCaseSafely(request.email());
         if (userOpt.isEmpty()) {
             return new ForgotPasswordResponse(genericMessage, null);
         }
@@ -339,8 +395,8 @@ public class AuthService {
         String base = emailProperties.resolveBaseUrl(requestOrigin);
         String resetLink = base + "/reset-password?token=" + rawToken;
 
-        if (emailService.isConfigured()) {
-            emailService.sendPasswordResetEmail(userOpt.get().getEmail(), resetLink);
+        if (emailProvider.isConfigured()) {
+            emailProvider.sendPasswordResetEmail(userOpt.get().getEmail(), resetLink);
             // Real email exists — no reason to also hand the link back in the API response.
             return new ForgotPasswordResponse(genericMessage, null);
         }
@@ -389,16 +445,31 @@ public class AuthService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "The verified phone number doesn't match the one on this account.");
         }
 
+        // Bug fix: PasswordChangeService.complete() already rejects a new password identical to
+        // the CURRENT one directly; this path only relied on passwordHistoryService catching it
+        // indirectly (record() runs on every password write, so the current hash is always the
+        // newest history row) -- which silently didn't hold for any account that existed before
+        // password history started being recorded and hasn't changed its password since (zero
+        // history rows). Without this, submitting the same password here returned a false
+        // "Password updated" success, wrote a misleading PASSWORD_RESET audit entry, and sent a
+        // "your password was changed" email for a password that never actually changed.
+        if (passwordEncoder.matches(request.newPassword(), user.getPasswordHash())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "New password must be different from your current password.");
+        }
+        passwordHistoryService.rejectIfRecentlyUsed(user.getId(), request.newPassword());
+
         Instant now = Instant.now();
         user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
         user.setUpdatedAt(now);
         user.setPasswordChangedAt(now);
         userRepository.save(user);
+        passwordHistoryService.record(user.getId(), user.getPasswordHash());
 
         prt.setUsedAt(Instant.now());
         resetTokenRepository.save(prt);
 
         auditService.record(user.getId(), "PASSWORD_RESET", "User", user.getId(), Map.of("method", "firebase_phone"));
+        emailProvider.sendPasswordChangedEmail(user.getEmail());
 
         return new ResetPasswordResponse("Password updated — you can now sign in with your new password.");
     }

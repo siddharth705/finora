@@ -61,8 +61,9 @@ class AuthServiceLoginTest {
         authService = new AuthService(
                 userRepository, mock(CategoryRepository.class), mock(PasswordResetTokenRepository.class),
                 mock(PasswordEncoder.class), mock(JwtService.class), authenticationManager,
-                mock(AuditService.class), refreshTokenService, mock(EmailService.class),
-                new EmailProperties(), mock(PhoneVerificationProvider.class), platformSettingsService
+                mock(AuditService.class), refreshTokenService, mock(EmailProvider.class),
+                new EmailProperties(), mock(PhoneVerificationProvider.class), platformSettingsService,
+                mock(PasswordHistoryService.class)
         );
     }
 
@@ -83,7 +84,7 @@ class AuthServiceLoginTest {
     @Test
     void login_withEmailIdentifier_authenticatesDirectlyWithoutPhoneLookup() {
         User u = user("jane@example.com", "+919876500001");
-        when(userRepository.findByEmail("jane@example.com")).thenReturn(Optional.of(u));
+        when(userRepository.findByEmailIgnoreCase("jane@example.com")).thenReturn(Optional.of(u));
         stubSuccessfulAuthentication();
 
         authService.login(new LoginRequest("jane@example.com", "Password123"));
@@ -101,7 +102,7 @@ class AuthServiceLoginTest {
     @Test
     void login_returnsTheMaskedPhoneNumber_evenThoughItNeverTriggersPhoneVerificationItself() {
         User u = user("jane@example.com", "+919876500001");
-        when(userRepository.findByEmail("jane@example.com")).thenReturn(Optional.of(u));
+        when(userRepository.findByEmailIgnoreCase("jane@example.com")).thenReturn(Optional.of(u));
         stubSuccessfulAuthentication();
 
         var response = authService.login(new LoginRequest("jane@example.com", "Password123"));
@@ -113,7 +114,7 @@ class AuthServiceLoginTest {
     void login_withExactPhoneNumberMatch_resolvesToTheAccountsEmail() {
         User u = user("jane@example.com", "+919876500001");
         when(userRepository.findByPhoneNumber("+919876500001")).thenReturn(Optional.of(u));
-        when(userRepository.findByEmail("jane@example.com")).thenReturn(Optional.of(u));
+        when(userRepository.findByEmailIgnoreCase("jane@example.com")).thenReturn(Optional.of(u));
         stubSuccessfulAuthentication();
 
         authService.login(new LoginRequest("+919876500001", "Password123"));
@@ -135,9 +136,30 @@ class AuthServiceLoginTest {
         assertThat(resolved).isEqualTo("raj@example.com");
     }
 
+    /**
+     * Regression test: registration now normalizes a bare 10-digit number to E.164 by prepending
+     * "+91" (see AuthService.normalizePhoneNumber()) -- a user who registered with "9876500003"
+     * (stored as "+919876500003") and later types that exact same bare number to log in must still
+     * resolve to their account. Before this fix, resolveEmailForLogin only ever tried the raw
+     * identifier, "+" + digits, and digits alone -- none of which reconstruct a "+91"-prefixed
+     * stored number from a bare 10-digit identifier, so this login would silently fail with a
+     * generic "Invalid credentials" for every newly-registered user who logged in this way.
+     */
+    @Test
+    void resolveEmailForLogin_findsAccountRegisteredWithABareTenDigitNumber_nowStoredWithTheLeadingCountryCode() {
+        User u = user("priya@example.com", "+919876500003");
+        when(userRepository.findByPhoneNumber("9876500003")).thenReturn(Optional.empty());
+        when(userRepository.findByPhoneNumber("+9876500003")).thenReturn(Optional.empty());
+        when(userRepository.findByPhoneNumber("+919876500003")).thenReturn(Optional.of(u));
+
+        Object resolved = ReflectionTestUtils.invokeMethod(authService, "resolveEmailForLogin", "9876500003");
+
+        assertThat(resolved).isEqualTo("priya@example.com");
+    }
+
     @Test
     void login_withUnknownIdentifier_doesNotLeakWhetherAccountExists() {
-        when(userRepository.findByEmail("nobody@example.com")).thenReturn(Optional.empty());
+        when(userRepository.findByEmailIgnoreCase("nobody@example.com")).thenReturn(Optional.empty());
         when(authenticationManager.authenticate(any())).thenThrow(new BadCredentialsException("Bad credentials"));
 
         try {
@@ -150,6 +172,29 @@ class AuthServiceLoginTest {
     }
 
     /**
+     * Bug fix: case-insensitive email uniqueness was never enforced before this session, so two
+     * pre-existing accounts could differ only by case. findByEmailIgnoreCase() throws
+     * IncorrectResultSizeDataAccessException if it matches more than one row -- login() must fail
+     * closed to the same generic "Invalid credentials" every other unresolvable identifier gets,
+     * not bubble up as an opaque 500.
+     */
+    @Test
+    void login_whenEmailIgnoreCaseLookupIsAmbiguous_failsClosedInsteadOf500ing() {
+        when(userRepository.findByEmailIgnoreCase("jane@example.com"))
+                .thenThrow(new org.springframework.dao.IncorrectResultSizeDataAccessException(1));
+        when(authenticationManager.authenticate(any())).thenThrow(new BadCredentialsException("Bad credentials"));
+
+        try {
+            authService.login(new LoginRequest("jane@example.com", "whatever"));
+        } catch (Exception e) {
+            assertThat(e).isInstanceOf(com.finora.exception.ApiException.class);
+            assertThat(e.getMessage()).isEqualTo("Invalid credentials");
+            return;
+        }
+        throw new AssertionError("Expected login() to throw, not propagate the ambiguous-lookup exception");
+    }
+
+    /**
      * Locks in that a suspended account (User.status, see V23__user_account_status.sql and
      * AdminUserService.suspend) is rejected before ever reaching Spring Security's
      * authenticationManager -- a suspended user shouldn't get a "your password was correct"
@@ -159,7 +204,7 @@ class AuthServiceLoginTest {
     void login_withSuspendedAccount_isRejectedBeforeAuthenticating() {
         User u = user("suspended@example.com", "+919876500099");
         u.setStatus("SUSPENDED");
-        when(userRepository.findByEmail("suspended@example.com")).thenReturn(Optional.of(u));
+        when(userRepository.findByEmailIgnoreCase("suspended@example.com")).thenReturn(Optional.of(u));
 
         try {
             authService.login(new LoginRequest("suspended@example.com", "whatever"));
@@ -198,7 +243,7 @@ class AuthServiceLoginTest {
         when(platformSettingsService.getEntity()).thenReturn(settings);
 
         User u = user("locksout@example.com", "+919876500077");
-        when(userRepository.findByEmail("locksout@example.com")).thenReturn(Optional.of(u));
+        when(userRepository.findByEmailIgnoreCase("locksout@example.com")).thenReturn(Optional.of(u));
         when(authenticationManager.authenticate(any())).thenThrow(new BadCredentialsException("Bad credentials"));
 
         // First failure: below the configured threshold, no lockout yet.

@@ -1,6 +1,7 @@
 package com.finora.config;
 
 import com.finora.service.PhoneVerificationProvider;
+import com.finora.service.SmsProvider;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.env.Environment;
 
@@ -45,6 +46,12 @@ class ProductionConfigValidatorTest {
         return firebaseWith(false);
     }
 
+    private SmsProvider smsWith(boolean configured) {
+        SmsProvider provider = mock(SmsProvider.class);
+        when(provider.isConfigured()).thenReturn(configured);
+        return provider;
+    }
+
     private Environment envWithProfilesAndDbPassword(String[] profiles, String dbPassword) {
         Environment environment = mock(Environment.class);
         when(environment.getActiveProfiles()).thenReturn(profiles);
@@ -56,7 +63,7 @@ class ProductionConfigValidatorTest {
     void run_inProdProfile_withThePlaceholderJwtSecretStillSet_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
         JwtProperties jwt = jwtWith("change-this-to-a-long-random-secret-in-your-env-file-min-32-chars");
-        var validator = new ProductionConfigValidator(environment, jwt, realEmail(), configuredFirebase());
+        var validator = new ProductionConfigValidator(environment, jwt, realEmail(), configuredFirebase(), mock(SmsProvider.class));
 
         assertThatThrownBy(() -> validator.run(null))
                 .isInstanceOf(IllegalStateException.class)
@@ -67,7 +74,7 @@ class ProductionConfigValidatorTest {
     void run_inProdProfile_withATooShortJwtSecret_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
         JwtProperties jwt = jwtWith("too-short");
-        var validator = new ProductionConfigValidator(environment, jwt, realEmail(), configuredFirebase());
+        var validator = new ProductionConfigValidator(environment, jwt, realEmail(), configuredFirebase(), mock(SmsProvider.class));
 
         assertThatThrownBy(() -> validator.run(null))
                 .isInstanceOf(IllegalStateException.class)
@@ -77,7 +84,7 @@ class ProductionConfigValidatorTest {
     @Test
     void run_inProdProfile_withTheDefaultDbPasswordStillSet_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "finora");
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase());
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
 
         assertThatThrownBy(() -> validator.run(null))
                 .isInstanceOf(IllegalStateException.class)
@@ -93,7 +100,7 @@ class ProductionConfigValidatorTest {
     @Test
     void run_inProdProfile_withNoResendApiKeyConfigured_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
-        var validator = new ProductionConfigValidator(environment, realJwt(), emailWith(null), configuredFirebase());
+        var validator = new ProductionConfigValidator(environment, realJwt(), emailWith(null), configuredFirebase(), mock(SmsProvider.class));
 
         assertThatThrownBy(() -> validator.run(null))
                 .isInstanceOf(IllegalStateException.class)
@@ -103,7 +110,7 @@ class ProductionConfigValidatorTest {
     @Test
     void run_inProdProfile_withABlankResendApiKeyConfigured_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
-        var validator = new ProductionConfigValidator(environment, realJwt(), emailWith("   "), configuredFirebase());
+        var validator = new ProductionConfigValidator(environment, realJwt(), emailWith("   "), configuredFirebase(), mock(SmsProvider.class));
 
         assertThatThrownBy(() -> validator.run(null))
                 .isInstanceOf(IllegalStateException.class)
@@ -113,17 +120,28 @@ class ProductionConfigValidatorTest {
     @Test
     void run_inProdProfile_withFirebaseNotConfigured_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), unconfiguredFirebase());
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), unconfiguredFirebase(), mock(SmsProvider.class));
 
         assertThatThrownBy(() -> validator.run(null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("GOOGLE_APPLICATION_CREDENTIALS");
     }
 
+    /** TWO_FACTOR_API_KEY is deliberately NOT a hard boot-time requirement (see SmsProperties'
+     *  own doc comment) -- an unconfigured SMS provider must only warn, never block startup, even
+     *  with every other required setting otherwise correct. */
+    @Test
+    void run_inProdProfile_withNoTwoFactorApiKeyConfigured_warnsButDoesNotThrow() {
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), smsWith(false));
+
+        assertThat(catchNoThrow(validator)).isTrue();
+    }
+
     @Test
     void run_inProdProfile_withRealSecretsConfigured_doesNotThrow() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase());
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
 
         assertThat(catchNoThrow(validator)).isTrue();
     }
@@ -134,7 +152,7 @@ class ProductionConfigValidatorTest {
         // exactly what makes that possible.
         Environment environment = envWithProfilesAndDbPassword(new String[]{"dev"}, "finora");
         JwtProperties jwt = jwtWith("change-this-to-a-long-random-secret-in-your-env-file-min-32-chars");
-        var validator = new ProductionConfigValidator(environment, jwt, emailWith(null), unconfiguredFirebase());
+        var validator = new ProductionConfigValidator(environment, jwt, emailWith(null), unconfiguredFirebase(), mock(SmsProvider.class));
 
         assertThat(catchNoThrow(validator)).isTrue();
     }
@@ -143,7 +161,7 @@ class ProductionConfigValidatorTest {
     void run_withNoActiveProfilesAtAll_doesNotThrow() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{}, "finora");
         JwtProperties jwt = jwtWith("change-this-to-a-long-random-secret-in-your-env-file-min-32-chars");
-        var validator = new ProductionConfigValidator(environment, jwt, emailWith(null), unconfiguredFirebase());
+        var validator = new ProductionConfigValidator(environment, jwt, emailWith(null), unconfiguredFirebase(), mock(SmsProvider.class));
 
         assertThat(catchNoThrow(validator)).isTrue();
     }

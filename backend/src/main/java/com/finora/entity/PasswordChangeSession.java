@@ -1,5 +1,6 @@
 package com.finora.entity;
 
+import com.finora.service.ProviderType;
 import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.UUID;
@@ -45,11 +46,11 @@ public class PasswordChangeSession {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
-    // Set once verifyOtp() succeeds -- "FIREBASE" today, the only PhoneVerificationProvider
-    // implementation that exists, kept as a plain string (not an enum) since it's descriptive
-    // metadata for debugging/future-provider-migration purposes, not a value any code branches on.
+    // Set once verifyOtp() succeeds -- FIREBASE today, the only PhoneVerificationProvider
+    // implementation that exists.
+    @Enumerated(EnumType.STRING)
     @Column(name = "verification_provider", length = 32)
-    private String verificationProvider;
+    private ProviderType verificationProvider;
 
     // The phone number Firebase actually attested, captured at the moment verifyOtp() confirmed it
     // matches the account's own number -- useful for debugging a support ticket without having to
@@ -78,8 +79,8 @@ public class PasswordChangeSession {
     public Instant getExpiresAt() { return expiresAt; }
     public void setExpiresAt(Instant expiresAt) { this.expiresAt = expiresAt; }
     public Instant getCreatedAt() { return createdAt; }
-    public String getVerificationProvider() { return verificationProvider; }
-    public void setVerificationProvider(String verificationProvider) { this.verificationProvider = verificationProvider; }
+    public ProviderType getVerificationProvider() { return verificationProvider; }
+    public void setVerificationProvider(ProviderType verificationProvider) { this.verificationProvider = verificationProvider; }
     public String getVerifiedPhoneNumber() { return verifiedPhoneNumber; }
     public void setVerifiedPhoneNumber(String verifiedPhoneNumber) { this.verifiedPhoneNumber = verifiedPhoneNumber; }
     public Boolean getSignedOutOtherDevices() { return signedOutOtherDevices; }

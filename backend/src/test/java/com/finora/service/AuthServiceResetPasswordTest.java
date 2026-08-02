@@ -53,8 +53,9 @@ class AuthServiceResetPasswordTest {
         authService = new AuthService(
                 userRepository, mock(CategoryRepository.class), resetTokenRepository,
                 passwordEncoder, mock(JwtService.class), mock(AuthenticationManager.class),
-                mock(AuditService.class), mock(RefreshTokenService.class), mock(EmailService.class),
-                new EmailProperties(), phoneVerificationProvider, mock(PlatformSettingsService.class)
+                mock(AuditService.class), mock(RefreshTokenService.class), mock(EmailProvider.class),
+                new EmailProperties(), phoneVerificationProvider, mock(PlatformSettingsService.class),
+                mock(PasswordHistoryService.class)
         );
     }
 
@@ -96,6 +97,34 @@ class AuthServiceResetPasswordTest {
         assertThat(prt.getUsedAt()).isNotNull();
         verify(resetTokenRepository).save(prt);
         verify(userRepository).save(user);
+    }
+
+    /**
+     * Bug fix: this used to rely entirely on PasswordHistoryService catching a same-as-current
+     * password indirectly (record() runs on every password write, so the current hash is always
+     * the newest history row) -- which silently didn't hold for an account with zero history rows
+     * (any account that existed before password history started being recorded and hasn't changed
+     * its password since). Without a direct check here, resubmitting the unchanged password
+     * returned a false "Password updated" success. Mirrors the same direct check
+     * PasswordChangeService.complete() already has.
+     */
+    @Test
+    void resetPassword_withNewPasswordSameAsCurrent_throwsRegardlessOfPasswordHistory() {
+        String rawToken = "valid-raw-token";
+        PasswordResetToken prt = tokenRecord(rawToken, Instant.now().plusSeconds(900), null);
+        when(resetTokenRepository.findByTokenHash(TokenHasher.sha256(rawToken))).thenReturn(Optional.of(prt));
+        User user = existingUser();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(phoneVerificationProvider.verifyAndGetPhoneNumber("valid-firebase-token")).thenReturn("+919999999999");
+        when(passwordEncoder.matches("SamePassword123", "old-hash")).thenReturn(true);
+
+        assertThatThrownBy(() -> authService.resetPassword(new ResetPasswordRequest(rawToken, "valid-firebase-token", "SamePassword123")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("different from your current password");
+
+        assertThat(user.getPasswordHash()).isEqualTo("old-hash");
+        assertThat(prt.getUsedAt()).isNull();
+        verify(userRepository, never()).save(any());
     }
 
     @Test

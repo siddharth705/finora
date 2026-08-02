@@ -42,16 +42,21 @@ public class PasswordChangeService {
     private final PhoneVerificationProvider phoneVerificationProvider;
     private final RefreshTokenService refreshTokenService;
     private final AuditService auditService;
+    private final EmailProvider emailProvider;
+    private final PasswordHistoryService passwordHistoryService;
 
     public PasswordChangeService(UserRepository userRepository, PasswordChangeSessionRepository sessionRepository,
                                   PasswordEncoder passwordEncoder, PhoneVerificationProvider phoneVerificationProvider,
-                                  RefreshTokenService refreshTokenService, AuditService auditService) {
+                                  RefreshTokenService refreshTokenService, AuditService auditService,
+                                  EmailProvider emailProvider, PasswordHistoryService passwordHistoryService) {
         this.userRepository = userRepository;
         this.sessionRepository = sessionRepository;
         this.passwordEncoder = passwordEncoder;
         this.phoneVerificationProvider = phoneVerificationProvider;
         this.refreshTokenService = refreshTokenService;
         this.auditService = auditService;
+        this.emailProvider = emailProvider;
+        this.passwordHistoryService = passwordHistoryService;
     }
 
     /** Step 1: verify the current password and open a session. Atomic in this design -- there's
@@ -120,7 +125,7 @@ public class PasswordChangeService {
 
         session.setOtpVerifiedAt(Instant.now());
         session.setStatus(PasswordChangeSession.Status.OTP_VERIFIED);
-        session.setVerificationProvider("FIREBASE");
+        session.setVerificationProvider(ProviderType.FIREBASE);
         session.setVerifiedPhoneNumber(verifiedPhone);
         sessionRepository.save(session);
 
@@ -168,12 +173,14 @@ public class PasswordChangeService {
         if (passwordEncoder.matches(request.newPassword(), user.getPasswordHash())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "New password must be different from your current password.");
         }
+        passwordHistoryService.rejectIfRecentlyUsed(userId, request.newPassword());
 
         Instant now = Instant.now();
         user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
         user.setUpdatedAt(now);
         user.setPasswordChangedAt(now);
         userRepository.save(user);
+        passwordHistoryService.record(userId, user.getPasswordHash());
 
         session.setStatus(PasswordChangeSession.Status.COMPLETED);
         session.setCompletedAt(now);
@@ -188,6 +195,7 @@ public class PasswordChangeService {
         }
 
         auditService.record(userId, "PASSWORD_CHANGED", "User", userId, Map.of("method", "authenticated_settings_otp_gated"));
+        emailProvider.sendPasswordChangedEmail(user.getEmail());
 
         return new CompleteResponse(completeMessage(request.signOutOtherDevices()), request.signOutOtherDevices());
     }

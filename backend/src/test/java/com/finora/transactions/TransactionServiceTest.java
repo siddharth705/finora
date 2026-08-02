@@ -3,15 +3,18 @@ package com.finora.transactions;
 import com.finora.entity.Account;
 import com.finora.entity.Category;
 import com.finora.entity.Transaction;
+import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.TransactionRepository;
+import com.finora.repository.UserRepository;
 import com.finora.service.AuditService;
 import com.finora.service.BankManagementService;
 import com.finora.service.CategorizationService;
 import com.finora.service.ReconciliationService;
 import com.finora.service.RecurringService;
+import com.finora.service.SmsProvider;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -40,6 +43,8 @@ class TransactionServiceTest {
     private ReconciliationService reconciliationService;
     private RecurringService recurringService;
     private BankManagementService bankManagementService;
+    private UserRepository userRepository;
+    private SmsProvider smsProvider;
     private TransactionService transactionService;
 
     private final UUID userId = UUID.randomUUID();
@@ -64,9 +69,11 @@ class TransactionServiceTest {
         when(bankManagementService.search(any())).thenAnswer(invocation ->
                 com.finora.util.BankRegistry.search(invocation.getArgument(0)).stream()
                         .map(com.finora.accounts.AccountDto.BankDto::from).toList());
+        userRepository = mock(UserRepository.class);
+        smsProvider = mock(SmsProvider.class);
         transactionService = new TransactionService(transactionRepository, categoryRepository, accountRepository,
                 categorizationService, reconciliationService, recurringService, mock(AuditService.class),
-                bankManagementService);
+                bankManagementService, userRepository, smsProvider);
 
         dummyCategory = new Category();
         ReflectionTestUtils.setField(dummyCategory, "id", UUID.randomUUID());
@@ -118,6 +125,47 @@ class TransactionServiceTest {
         transactionService.create(userId, req);
 
         verify(recurringService).detectForUser(userId);
+    }
+
+    private User userWithPhone(boolean phoneVerified) {
+        User user = new User();
+        ReflectionTestUtils.setField(user, "id", userId);
+        user.setPhoneNumber("+919876543210");
+        user.setPhoneVerified(phoneVerified);
+        return user;
+    }
+
+    /** Real-time transaction alert SMS -- scoped to this manual-entry create() path only (see
+     *  TransactionService.sendTransactionAlert's own doc comment for why bulk statement import
+     *  never triggers this). */
+    @Test
+    void create_sendsATransactionAlertSms_whenThePhoneIsVerified() {
+        when(categorizationService.suggest(eq(userId), anyString(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Dining", "rule", UUID.randomUUID(), Transaction.DecisionSource.KEYWORD_MATCH, null));
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Dining"))).thenReturn(dummyCategory);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(userWithPhone(true)));
+
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), null, LocalDate.now(),
+                "Swiggy order", BigDecimal.valueOf(486), "EXPENSE", List.of());
+
+        transactionService.create(userId, req);
+
+        verify(smsProvider).sendTransactionAlert(eq("+919876543210"), eq("Swiggy order"), eq(BigDecimal.valueOf(486)), eq("EXPENSE"));
+    }
+
+    @Test
+    void create_doesNotSendATransactionAlertSms_whenThePhoneIsNotVerified() {
+        when(categorizationService.suggest(eq(userId), anyString(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Dining", "rule", UUID.randomUUID(), Transaction.DecisionSource.KEYWORD_MATCH, null));
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Dining"))).thenReturn(dummyCategory);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(userWithPhone(false)));
+
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), null, LocalDate.now(),
+                "Swiggy order", BigDecimal.valueOf(486), "EXPENSE", List.of());
+
+        transactionService.create(userId, req);
+
+        verify(smsProvider, never()).sendTransactionAlert(any(), any(), any(), any());
     }
 
     @Test

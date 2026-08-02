@@ -60,7 +60,8 @@ class PasswordChangeServiceTest {
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
         service = new PasswordChangeService(userRepository, sessionRepository, passwordEncoder,
-                phoneVerificationProvider, refreshTokenService, auditService);
+                phoneVerificationProvider, refreshTokenService, auditService, mock(EmailProvider.class),
+                mock(PasswordHistoryService.class));
     }
 
     private User existingUser() {
@@ -142,7 +143,7 @@ class PasswordChangeServiceTest {
         assertThat(response.message()).isNotBlank();
         assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.OTP_VERIFIED);
         assertThat(session.getOtpVerifiedAt()).isNotNull();
-        assertThat(session.getVerificationProvider()).isEqualTo("FIREBASE");
+        assertThat(session.getVerificationProvider()).isEqualTo(ProviderType.FIREBASE);
         assertThat(session.getVerifiedPhoneNumber()).isEqualTo("+919876543210");
         verify(auditService).record(userId, "FIREBASE_PHONE_VERIFIED", "User", userId);
     }

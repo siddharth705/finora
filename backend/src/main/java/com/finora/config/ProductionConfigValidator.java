@@ -1,6 +1,7 @@
 package com.finora.config;
 
 import com.finora.service.PhoneVerificationProvider;
+import com.finora.service.SmsProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
@@ -35,14 +36,17 @@ public class ProductionConfigValidator implements ApplicationRunner {
     private final JwtProperties jwtProperties;
     private final EmailProperties emailProperties;
     private final PhoneVerificationProvider phoneVerificationProvider;
+    private final SmsProvider smsProvider;
 
     public ProductionConfigValidator(Environment environment, JwtProperties jwtProperties,
                                       EmailProperties emailProperties,
-                                      PhoneVerificationProvider phoneVerificationProvider) {
+                                      PhoneVerificationProvider phoneVerificationProvider,
+                                      SmsProvider smsProvider) {
         this.environment = environment;
         this.jwtProperties = jwtProperties;
         this.emailProperties = emailProperties;
         this.phoneVerificationProvider = phoneVerificationProvider;
+        this.smsProvider = smsProvider;
     }
 
     @Override
@@ -68,8 +72,8 @@ public class ProductionConfigValidator implements ApplicationRunner {
 
         // Bug fix: JWT_SECRET/DB_PASSWORD were the only two settings this validator checked, even
         // though EmailConfig has its own silent "convenience default" -- no RESEND_API_KEY falls
-        // back to NoOpEmailService, and AuthService.forgotPassword() branches on
-        // emailService.isConfigured() to decide whether to actually send the reset email or just
+        // back to NoOpEmailProvider, and AuthService.forgotPassword() branches on
+        // emailProvider.isConfigured() to decide whether to actually send the reset email or just
         // return the raw, valid reset link directly in the API response body instead (the same
         // dev-environment convenience CorsConfig's own class doc calls out this validator as
         // existing specifically to catch reaching production). Omitting RESEND_API_KEY from a
@@ -92,6 +96,17 @@ public class ProductionConfigValidator implements ApplicationRunner {
             problems.append("- GOOGLE_APPLICATION_CREDENTIALS is unset or invalid. Without it, the Firebase ")
                     .append("Admin SDK can't verify phone numbers, so registration, password reset, and ")
                     .append("password change can never complete their phone-verification step.\n");
+        }
+
+        // Unlike RESEND_API_KEY/GOOGLE_APPLICATION_CREDENTIALS above, TWO_FACTOR_API_KEY is
+        // deliberately NOT a hard boot-time requirement -- see SmsProperties' own doc comment for
+        // why (transaction alert SMS is a best-effort notification, not a security control; a
+        // missing key just means TwoFactorSmsProvider's NoOp fallback logs instead of sending).
+        // Still surfaced as a startup warning, not silence, so an operator who meant to configure
+        // it notices immediately rather than discovering it the first time a user asks "why didn't
+        // I get an SMS for that transaction."
+        if (!smsProvider.isConfigured()) {
+            log.warn("TWO_FACTOR_API_KEY is unset -- transaction alert SMS will be logged only, never actually sent.");
         }
 
         if (!problems.isEmpty()) {

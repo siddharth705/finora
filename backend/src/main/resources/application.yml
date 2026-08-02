@@ -103,6 +103,9 @@ app:
     # (dev convenience). Set RESEND_API_KEY to switch to sending real emails via Resend.
     api-key: ${RESEND_API_KEY:}
     from-address: ${EMAIL_FROM:onboarding@resend.dev}
+    # Optional display name shown alongside from-address -- unset means every real mail client
+    # just shows the bare address, exactly the previous behavior.
+    from-name: ${EMAIL_FROM_NAME:}
     app-base-url: ${APP_BASE_URL:http://localhost:5173}
     # Optional -- the user frontend and admin portal are two separate deployed apps at two
     # different origins, each with its own /reset-password page, but there's no separate admin
@@ -113,9 +116,17 @@ app:
     admin-app-base-url: ${ADMIN_APP_BASE_URL:http://localhost:5174}
   # Phone verification (registration, password reset, authenticated password change) is Firebase
   # Phone Authentication now -- see FirebaseConfig's own doc comment for the full architecture.
-  # There's no app.sms.* block here anymore: the Firebase Admin SDK reads its own credentials from
-  # the standard GOOGLE_APPLICATION_CREDENTIALS environment variable (a service-account JSON key
-  # file path), not a Spring @ConfigurationProperties binding.
+  # The Firebase Admin SDK reads its own credentials from the standard
+  # GOOGLE_APPLICATION_CREDENTIALS environment variable (a service-account JSON key file path),
+  # not a Spring @ConfigurationProperties binding, so there's no app.sms.* entry for it here.
+  sms:
+    two-factor:
+      # Empty by default — falls back to logging only (NoOpSmsProvider), not a hard boot-time
+      # requirement in prod (see SmsProperties' own doc comment for why: unlike RESEND_API_KEY,
+      # a missing transaction-alert SMS provider is a degraded notification, not a security gap).
+      # 2Factor is used for real-time transaction alerts only -- never authentication OTPs, which
+      # stay on Firebase Phone Authentication.
+      api-key: ${TWO_FACTOR_API_KEY:}
   setup:
     # Empty by default — BootstrapService generates a random key and writes it to
     # .finora/installation.key for local/dev use (see docker-compose.yml's bind mount for that path).

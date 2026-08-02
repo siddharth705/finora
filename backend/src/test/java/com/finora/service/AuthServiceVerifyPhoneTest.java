@@ -43,8 +43,9 @@ class AuthServiceVerifyPhoneTest {
         authService = new AuthService(
                 userRepository, mock(CategoryRepository.class), mock(PasswordResetTokenRepository.class),
                 mock(PasswordEncoder.class), mock(JwtService.class), mock(AuthenticationManager.class),
-                mock(AuditService.class), mock(RefreshTokenService.class), mock(EmailService.class),
-                new EmailProperties(), phoneVerificationProvider, mock(PlatformSettingsService.class)
+                mock(AuditService.class), mock(RefreshTokenService.class), mock(EmailProvider.class),
+                new EmailProperties(), phoneVerificationProvider, mock(PlatformSettingsService.class),
+                mock(PasswordHistoryService.class)
         );
     }
 

@@ -4,16 +4,19 @@ import com.finora.dto.PagedResponse;
 import com.finora.entity.Account;
 import com.finora.entity.Category;
 import com.finora.entity.Transaction;
+import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.TransactionRepository;
+import com.finora.repository.UserRepository;
 import com.finora.security.OwnershipGuard;
 import com.finora.service.AuditService;
 import com.finora.service.BankManagementService;
 import com.finora.service.CategorizationService;
 import com.finora.service.ReconciliationService;
 import com.finora.service.RecurringService;
+import com.finora.service.SmsProvider;
 import com.finora.util.CategoryRules;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -38,6 +41,8 @@ public class TransactionService {
     private final RecurringService recurringService;
     private final AuditService auditService;
     private final BankManagementService bankManagementService;
+    private final UserRepository userRepository;
+    private final SmsProvider smsProvider;
 
     public TransactionService(TransactionRepository transactionRepository, CategoryRepository categoryRepository,
                                AccountRepository accountRepository,
@@ -45,7 +50,9 @@ public class TransactionService {
                                ReconciliationService reconciliationService,
                                RecurringService recurringService,
                                AuditService auditService,
-                               BankManagementService bankManagementService) {
+                               BankManagementService bankManagementService,
+                               UserRepository userRepository,
+                               SmsProvider smsProvider) {
         this.transactionRepository = transactionRepository;
         this.categoryRepository = categoryRepository;
         this.accountRepository = accountRepository;
@@ -54,6 +61,8 @@ public class TransactionService {
         this.recurringService = recurringService;
         this.auditService = auditService;
         this.bankManagementService = bankManagementService;
+        this.userRepository = userRepository;
+        this.smsProvider = smsProvider;
     }
 
     // Never a real bank id (BankRegistry ids are short uppercase codes like "PNB"/"OTHER") --
@@ -211,7 +220,41 @@ public class TransactionService {
         recurringService.detectForUser(userId);
         auditService.record(userId, "TRANSACTION_CREATED", "Transaction", saved.getId(),
                 Map.of("amount", saved.getAmount(), "type", saved.getTxnType().name(), "source", saved.getSource().name()));
+        sendTransactionAlert(userId, saved);
         return TransactionDto.from(saved, category.getName());
+    }
+
+    /** Real-time transaction alert SMS -- scoped deliberately to this one manual-entry path, not
+     *  bulk statement import (CsvImportService/PdfImportService never call create(), so a 200-row
+     *  statement import never fires 200 SMS). Requires a verified phone number, same trust bar as
+     *  every other phone-number-dependent feature (see PhoneVerificationProvider) -- an
+     *  unverified number is exactly the number a stranger could have mistyped at registration.
+     *
+     *  Bug fix: this used to run synchronously inside create()'s own @Transactional method, which
+     *  meant a slow (or hanging) 2Factor API call held the DB connection for create()'s entire
+     *  transaction -- and, worse, could send an alert for a transaction whose surrounding
+     *  transaction later rolled back for an unrelated reason. Deferred to run only after the
+     *  transaction actually commits, via TransactionSynchronizationManager -- falls back to
+     *  sending immediately when no transaction synchronization is active (e.g. a unit test calling
+     *  create() directly against a plain object, with no real Spring transaction in play). */
+    private void sendTransactionAlert(UUID userId, Transaction t) {
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            doSendTransactionAlert(userId, t);
+                        }
+                    });
+        } else {
+            doSendTransactionAlert(userId, t);
+        }
+    }
+
+    private void doSendTransactionAlert(UUID userId, Transaction t) {
+        User user = userRepository.findById(userId).orElse(null);
+        if (user == null || !user.isPhoneVerified() || user.getPhoneNumber() == null) return;
+        smsProvider.sendTransactionAlert(user.getPhoneNumber(), t.getDescription(), t.getAmount(), t.getTxnType().name());
     }
 
     private BigDecimal balanceOf(Transaction t) {
