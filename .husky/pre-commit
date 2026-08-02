@@ -6,6 +6,8 @@
 
 staged=$(git diff --cached --name-only)
 
+sh scripts/check-fixture-hygiene.sh
+
 if echo "$staged" | grep -qE '^(frontend|admin-portal)/'; then
   if echo "$staged" | grep -q '^frontend/'; then
     (cd frontend && npx eslint --fix $(echo "$staged" | grep '^frontend/' | sed 's#^frontend/##') 2>/dev/null || true)

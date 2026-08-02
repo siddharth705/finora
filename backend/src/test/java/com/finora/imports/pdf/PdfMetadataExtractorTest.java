@@ -9,7 +9,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * GRID_METADATA_TRAILING_LABEL: an account-details grid where each row's VALUE comes BEFORE its
- * own label on the same line ("317002010038811 Account Number", "UBIN0531707 IFSC"), the reverse
+ * own label on the same line (e.g. "100200300400599 Account Number", "ABCD0123456 IFSC" --
+ * genericized per the Synthetic Fixture Policy, see the engineering principles doc), the reverse
  * of the ordinary "Label: Value" shape {@code ACCOUNT_HOLDER}/{@code ACCOUNT_NUMBER}/{@code IFSC}
  * already handle. Modeled on a real Union Bank of India statement (see
  * {@code PdfMetadataExtractor}'s own doc comments for the exact lines and reasoning), but the
@@ -36,9 +37,9 @@ class PdfMetadataExtractorTest {
 
     @Test
     void extract_recognizesAnAccountNumber_whenTheValuePrecedesItsLabelOnTheSameLine() {
-        var metadata = extractor.extract(List.of("317002010038811 Account Number"));
+        var metadata = extractor.extract(List.of("100200300400599 Account Number"));
 
-        assertThat(metadata.accountNumberMasked()).endsWith("8811");
+        assertThat(metadata.accountNumberMasked()).endsWith("0599");
     }
 
     @Test
@@ -47,19 +48,21 @@ class PdfMetadataExtractorTest {
         // reaches this class (both landed on the same extracted line) -- IFSC's fixed shape (4
         // letters, a literal 0, 6 more alphanumerics) is found directly, independent of any label
         // or of what else shares its line.
-        var metadata = extractor.extract(List.of("M***************0@GMAIL.COM Email id UBIN0531707 IFSC"));
+        var metadata = extractor.extract(List.of("M***************0@GMAIL.COM Email id ABCD0123456 IFSC"));
 
-        assertThat(metadata.ifscCode()).isEqualTo("UBIN0531707");
+        assertThat(metadata.ifscCode()).isEqualTo("ABCD0123456");
     }
 
     @Test
     void extract_recognizesAnAccountHolderName_fromAnAccountNameFieldEndingTheLine() {
         // The preceding "3,BEHIND" is itself capitalized ("BEHIND") -- the 3-word cap on the
-        // captured name is what keeps it out of the result.
+        // captured name is what keeps it out of the result. (Name genericized per the Synthetic
+        // Fixture Policy -- see the engineering principles doc -- this test originally quoted a
+        // real account holder's name verbatim.)
         var metadata = extractor.extract(List.of(
-                "58 ROAD NO 3,BEHIND  SHIVANI SURESH MOURYA Account Name"));
+                "58 ROAD NO 3,BEHIND  KAVITA RAMESH DESAI Account Name"));
 
-        assertThat(metadata.accountHolderName()).isEqualTo("SHIVANI SURESH MOURYA");
+        assertThat(metadata.accountHolderName()).isEqualTo("KAVITA RAMESH DESAI");
     }
 
     @Test
@@ -85,7 +88,7 @@ class PdfMetadataExtractorTest {
     void extract_recordsGridMetadataTrailingLabel_onDocumentContext_whenATrailingLabelLineMatches() {
         DocumentContext ctx = new DocumentContext("PDF", "PdfMetadataExtractor");
 
-        extractor.extract(List.of("317002010038811 Account Number"), ctx);
+        extractor.extract(List.of("100200300400599 Account Number"), ctx);
 
         assertThat(ctx.capabilities()).extracting(a -> a.capability()).contains("GRID_METADATA_TRAILING_LABEL");
     }
@@ -97,5 +100,202 @@ class PdfMetadataExtractorTest {
         extractor.extract(List.of("Account Holder Name: JOHN DOE"), ctx);
 
         assertThat(ctx.capabilities()).extracting(a -> a.capability()).doesNotContain("GRID_METADATA_TRAILING_LABEL");
+    }
+
+    // LEADING_NAME_LINE: real-document-evidenced (a Bank of Baroda savings account statement, an
+    // Axis Bank Neo Rupay credit card statement, and a Kotak Mahindra Bank savings statement --
+    // three different banks) -- all put the holder's plain name as one of the document's first
+    // few pre-table lines, with no label anywhere identifying it as such.
+
+    @Test
+    void extract_recognizesAnAccountHolderName_fromAnUnlabeledFirstLine_withACourtesyTitle() {
+        var metadata = extractor.extract(List.of("MR. JOHN DOE", "Some other line", "Account Number: 12345"));
+
+        assertThat(metadata.accountHolderName()).isEqualTo("MR. JOHN DOE");
+    }
+
+    @Test
+    void extract_recognizesAnAccountHolderName_fromAnUnlabeledFirstLine_withNoTitleAtAll() {
+        var metadata = extractor.extract(List.of("JOHN DOE", "Some other line"));
+
+        assertThat(metadata.accountHolderName()).isEqualTo("JOHN DOE");
+    }
+
+    @Test
+    void extract_doesNotMisreadAKnownBankNameAsTheAccountHolder_evenThoughItShapeMatchesEqually() {
+        // "AXIS BANK" shape-matches a plausible name just as well as "JOHN DOE" does (two
+        // capitalized words, no digits) -- only the BankRegistry check tells them apart.
+        var metadata = extractor.extract(List.of("AXIS BANK", "Neo Rupay Credit Card Statement"));
+
+        assertThat(metadata.accountHolderName()).isNull();
+    }
+
+    @Test
+    void extract_recognizesAnAccountHolderName_pastGenericTitleAndDateRangeLines() {
+        // Bug fix: verified against a real Kotak Mahindra Bank statement, whose first two
+        // pre-table lines are a generic title ("Account Statement") and a date range before the
+        // holder's name appears on the third -- the original i==0-only restriction missed this
+        // real file entirely. "Account Statement" itself shape-matches the LEADING_NAME_LINE
+        // pattern just as well as a real name does (two capitalized words, no digits) --
+        // LEADING_TITLE_WORDS is what correctly skips it and keeps scanning to the real name.
+        var metadata = extractor.extract(List.of(
+                "Account Statement", "01 Jul 2026 - 31 Jul 2026", "Rahul Verma", "CRN xxxxxx357"));
+
+        assertThat(metadata.accountHolderName()).isEqualTo("Rahul Verma");
+    }
+
+    @Test
+    void extract_doesNotApplyTheLeadingNameLineFallback_beyondTheSearchWindow() {
+        // Five filler lines that each contain a digit (so none of them shape-match
+        // LEADING_NAME_LINE themselves -- it requires letters-only words) push the real name to
+        // index 5, past LEADING_NAME_LINE_SEARCH_WINDOW (5, i.e. valid indices 0-4 only).
+        var metadata = extractor.extract(List.of(
+                "Line 1", "Line 2", "Line 3", "Line 4", "Line 5", "JOHN DOE"));
+
+        assertThat(metadata.accountHolderName()).isNull();
+    }
+
+    @Test
+    void extract_prefersAnExplicitlyLabeledHolderName_overTheLeadingLineFallback() {
+        var metadata = extractor.extract(List.of("Account Holder Name: JANE ROE"));
+
+        assertThat(metadata.accountHolderName()).isEqualTo("JANE ROE");
+    }
+
+    @Test
+    void extract_recognizesCustomerNameAsAnAccountHolderLabelSynonym() {
+        // Bug fix: verified against a real PNB ONE statement, whose "Customer Details" panel
+        // labels the account holder "Customer Name:" rather than any "Account Holder" variant.
+        var metadata = extractor.extract(List.of("Customer Name: ANIL KUMAR"));
+
+        assertThat(metadata.accountHolderName()).isEqualTo("ANIL KUMAR");
+    }
+
+    @Test
+    void extract_recognizesBareNameAsAnAccountHolderLabelSynonym() {
+        // Bug fix: verified against a real Canara Bank e-passbook, whose account-details panel
+        // labels the holder with the single word "Name" (no colon) -- previously fell through to
+        // LEADING_NAME_LINE, which wrongly captured "Name PRIYA NAIR" (the label ITSELF
+        // included in the name) since "name" wasn't in LEADING_TITLE_WORDS either.
+        var metadata = extractor.extract(List.of("Name PRIYA NAIR"));
+
+        assertThat(metadata.accountHolderName()).isEqualTo("PRIYA NAIR");
+    }
+
+    @Test
+    void extract_doesNotMisreadAWordMerelyStartingWithName_asTheBareNameLabel() {
+        // The trailing "\b" on the bare "Name" alternative is what keeps "Named"/"Nameplate"/
+        // etc. from being misread as the label -- without it, labelPattern's own permissive
+        // "zero separator required" shape would let "Named" match too.
+        var metadata = extractor.extract(List.of("Named beneficiary: JOHN DOE"));
+
+        assertThat(metadata.accountHolderName()).isNull();
+    }
+
+    // Multi-column payment-summary grid (real Axis Bank Neo Rupay evidence) -- see
+    // PdfMetadataExtractor.GRID_DUE_DATE_LABEL/GRID_CREDIT_LIMIT_LABEL's own doc comments.
+
+    @Test
+    void extract_findsPaymentDueDate_inAMultiColumnGrid_skippingTheStatementPeriodRangeOnTheSameRow() {
+        var metadata = extractor.extract(List.of(
+                "Total Payment Due Minimum Payment Due Statement Period Payment Due Date Statement Generation Date",
+                "12,345.67 Dr 500.00 Dr 01/06/2026 - 30/06/2026 20/07/2026 30/06/2026"));
+
+        assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 7, 20));
+    }
+
+    @Test
+    void extract_findsCreditLimit_inAMultiColumnGrid_notAvailableCreditLimitOnTheSameRow() {
+        var metadata = extractor.extract(List.of(
+                "Credit Card Number Credit Limit Available Credit Limit Available Cash Limit",
+                "123456******7890 100,000.00 85,000.00 10,000.00"));
+
+        assertThat(metadata.creditLimit()).isEqualByComparingTo("100000.00");
+    }
+
+    /**
+     * Bug fix, verified against a real HDFC "Tata Neu Plus" statement: two compounding real
+     * gaps, both exposed by this exact document. First, its Credit Limit is a WHOLE rupee amount
+     * with no decimal places ("78,000", not "78,000.00") -- AMOUNT_LIKE originally required a
+     * literal decimal suffix. Second, and more subtly: this document's grid header line is
+     * "TOTAL CREDIT LIMIT (Including Cash) AVAILABLE CREDIT LIMIT AVAILABLE CASH LIMIT" -- which
+     * fully satisfies the ORDINARY same-line CREDIT_LIMIT pattern (label matches at the start,
+     * its greedy trailing "(.+)$" just soaks up "AVAILABLE CREDIT LIMIT AVAILABLE CASH LIMIT" as
+     * if that non-numeric text were the value). The old code committed to that as a failed
+     * (null) parse and unconditionally moved to the next line, so the GRID_CREDIT_LIMIT_LABEL
+     * fallback below it never even got a chance to run on this line. Fixing only the decimal
+     * requirement without ALSO fixing the greedy same-line capture would still have left this
+     * real document's credit limit null.
+     */
+    @Test
+    void extract_findsWholeNumberCreditLimit_onARealMultiLabelHeaderLine_thatAlsoSatisfiesTheSameLineLabelPattern() {
+        var metadata = extractor.extract(List.of(
+                "TOTAL CREDIT LIMIT (Including Cash) AVAILABLE CREDIT LIMIT AVAILABLE CASH LIMIT",
+                "78,000 76,183 31,200"));
+
+        assertThat(metadata.creditLimit()).isEqualByComparingTo("78000");
+    }
+
+    // Deferred capability evidence (see the Capability Registry's "Capability Backlog" table in
+    // docs/engineering/financial-document-intelligence-principles.md) -- real structural patterns
+    // found in a real HDFC "Tata Neu Plus" statement that NEITHER capability above handles, kept
+    // here the same way GRID_METADATA_TRAILING_LABEL's own tests are (pure string-matching against
+    // extract(List), no rendered PDF needed) so the evidence survives even though no capability was
+    // built from it yet -- per "Evidence Before Capability," single-document evidence alone doesn't
+    // justify one. Each asserts today's actual (honest) behavior, not a wish -- so if someone later
+    // builds a partial fix, these catch it silently producing a WRONG value instead of remaining
+    // null, which is the specific failure mode "Don't fix it yet, root-cause it" was written to
+    // prevent for the credit-limit case below.
+
+    @Test
+    void extract_doesNotYetRecognizeAnAccountHolderName_fromAValueThenLabelThenNameCompositeLine() {
+        // Real HDFC line shape (masked card number and name genericized): "<card number> Credit
+        // Card No. <NAME>" -- a card number, THEN its own trailing label ("Credit Card No."),
+        // THEN an unlabeled name, all on one line. None of the three existing account-holder
+        // shapes cover "value, label, name" in sequence: ACCOUNT_HOLDER wants "Label: Value";
+        // ACCOUNT_NAME_TRAILING_LABEL wants "<name> Account Name" (the name comes BEFORE its own
+        // label, not after someone else's); LEADING_NAME_LINE wants a line with nothing else on
+        // it at all.
+        //
+        // This is deliberately documented as a general STRUCTURAL pattern, not an HDFC quirk --
+        // "<value> <trailing label for that value> <trailing, unlabeled value for a DIFFERENT
+        // field>" could recur on a loan statement ("Loan Number XXXXXXXX Borrower Name") or
+        // another bank's card statement just as easily. Worth watching for a second independent
+        // document before generalizing -- see "Evidence before capability."
+        var metadata = extractor.extract(List.of("412345XXXXXX6789 Credit Card No. ANIL KUMAR"));
+
+        assertThat(metadata.accountHolderName()).isNull();
+    }
+
+    @Test
+    void extract_doesNotYetFindCreditLimit_inARealGridWhereAnUnrelatedRowSitsBetweenTheLabelAndItsValue() {
+        // Real HDFC lines, in PDFBox's actual extraction order -- the credit-limit label splits
+        // across two lines ("TOTAL CREDIT LIMIT" ... "(Including Cash)"), with an UNRELATED row
+        // ("AVAILABLE CREDIT LIMIT AVAILABLE CASH LIMIT MINIMUM DUE DUE DATE") sitting between
+        // them, and the value rows arrive in reversed order: the Minimum Due/Due Date VALUES
+        // (200.00, 09 Aug 2026) appear BEFORE the Credit Limit VALUES (78,000, 76,183, 31,200),
+        // even though their labels appear in the opposite order. Note the amounts are also
+        // prefixed with a glued "C" (a Rupee-glyph font-encoding artifact) -- that part is NOT
+        // the blocker: CsvParser.parseNumeric already strips it (see its own doc comment). The
+        // real blocker is purely the scrambled row/column order.
+        //
+        // A fix I verified would be actively unsafe rather than merely incomplete: widening
+        // GRID_VALUE_SEARCH_WINDOW enough to reach "C78,000" also reaches "C200.00" (Minimum Due)
+        // FIRST, since it sits in an intervening row -- naively taking the first amount in the
+        // window would silently set creditLimit to 200.00 instead of 78,000.00. Null is the
+        // honest, correct result until a real column-aware (not just "nearest amount") grid
+        // reader exists -- see the "Capability Backlog" entry for this.
+        var metadata = extractor.extract(List.of(
+                "TOTAL CREDIT LIMIT",
+                "AVAILABLE CREDIT LIMIT AVAILABLE CASH LIMIT MINIMUM DUE DUE DATE",
+                "(Including Cash)",
+                "C200.00 09 Aug, 2026",
+                "C78,000 C76,183 C31,200"));
+
+        assertThat(metadata.creditLimit()).isNull();
+        // What DOES already work on this same real grid, for contrast: Payment Due Date isn't
+        // affected by the scrambled Credit Limit columns, since GRID_DUE_DATE_LABEL's own label
+        // ("DUE DATE") and its value ("09 Aug, 2026") both sit within one ordinary window-scan.
+        assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 8, 9));
     }
 }

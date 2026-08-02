@@ -48,7 +48,7 @@ class ReferenceNumberAndBalancePdfPreviewGeneratorTest {
 
         assertThat(response.rows()).hasSize(3);
         assertThat(response.rows()).extracting(r -> r.referenceNumber())
-                .containsExactly("103564825690", "61821112386186", "618211147923");
+                .containsExactly("234567890123", "10203040506070", "345678901234");
     }
 
     @Test
@@ -58,6 +58,6 @@ class ReferenceNumberAndBalancePdfPreviewGeneratorTest {
         assertThat(response.rows()).extracting(r -> r.balanceAfter())
                 .usingElementComparator(BigDecimal::compareTo)
                 .containsExactly(
-                        new BigDecimal("114238.60"), new BigDecimal("115238.60"), new BigDecimal("115088.60"));
+                        new BigDecimal("49000.00"), new BigDecimal("50000.00"), new BigDecimal("49850.00"));
     }
 }

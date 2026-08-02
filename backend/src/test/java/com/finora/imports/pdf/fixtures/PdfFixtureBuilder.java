@@ -53,7 +53,7 @@ import java.util.List;
  * REPEATED_HEADER
  *   -&gt; buildDrCrSuffixAmountColumnSample, buildParenthesizedDrCrRunningBalanceSample
  * PAGE_BOUNDARY_ISOLATION / PAGE_FOOTER_EXCLUSION
- *   -&gt; buildParenthesizedDrCrRunningBalanceSample
+ *   -&gt; buildParenthesizedDrCrRunningBalanceSample, buildStatementClosingMarkerSample
  * COMPOSITE_STATEMENT / MULTI_ACCOUNT
  *   -&gt; buildMultiSectionCompositeStatementSample
  * CREDIT_CARD_SUMMARY_SIGNAL
@@ -63,7 +63,8 @@ import java.util.List;
  *   -&gt; buildOffsetColumnAnchorsSample, buildSingularDepositWithdrawalColumnsSample (via the
  *      leading-amount-in-balance split)
  * GRID_METADATA_FALLBACK (2-row grid)
- *   -&gt; buildGridMetadataFallbackSample
+ *   -&gt; buildGridMetadataFallbackSample, buildMultiColumnPaymentSummaryGridSample (multi-column
+ *      variant + the leading-name-line account-holder pattern, both real-Axis-Bank-evidenced)
  * GRID_METADATA_TRAILING_LABEL
  *   -&gt; no PDF fixture here -- exercised directly against PdfMetadataExtractor.extract(List) with
  *      raw lines in PdfMetadataExtractorTest, since this capability's logic is pure string
@@ -75,6 +76,11 @@ import java.util.List;
  * Composability (multiple already-evidenced capabilities firing together in one document)
  *   -&gt; buildRunningBalanceWrappedDescriptionRepeatedHeaderSample,
  *      buildOffsetAnchorsGridMetadataPageBoundarySample
+ * Deferred capability evidence (real, single-document patterns preserved but NOT yet
+ * implemented -- see the "Capability Backlog" table in the engineering principles doc)
+ *   -&gt; no PDF fixture here either, same reasoning as GRID_METADATA_TRAILING_LABEL above --
+ *      PdfMetadataExtractorTest#extract_doesNotYetRecognizeAnAccountHolderName_fromAValueThenLabelThenNameCompositeLine,
+ *      PdfMetadataExtractorTest#extract_doesNotYetFindCreditLimit_inARealGridWhereAnUnrelatedRowSitsBetweenTheLabelAndItsValue
  * </pre>
  */
 public final class PdfFixtureBuilder {
@@ -186,10 +192,18 @@ public final class PdfFixtureBuilder {
      * {@link #buildReverseChronologicalRunningBalanceSample} on purpose: that fixture's
      * Instrument ID column is always blank (matching the real PNB file it's modeled on), so it
      * can't exercise referenceNumber capture at all.
+     *
+     * Data hygiene note: this fixture's reference numbers, narration name fragments, and balances
+     * were originally lifted verbatim from the real statement above -- a violation of the
+     * Synthetic Fixture Policy (see the engineering principles doc), caught and fixed once this
+     * cycle's Evidence Registry work surfaced it. The values below are fully synthetic; only the
+     * structural properties the regression tests actually depend on (a 14-digit reference number
+     * specifically, to preserve the column-width behavior described below; internally consistent
+     * running-balance arithmetic) were preserved.
      */
     public static byte[] buildReferenceNumberAndBalanceSample() throws IOException {
         // Wider gap between the Reference and Amount columns than other fixtures use -- a
-        // 14-digit reference value (e.g. "61821112386186") at FONT_SIZE runs wide enough to reach
+        // 14-digit reference value (e.g. "10203040506070") at FONT_SIZE runs wide enough to reach
         // a too-narrow next column's anchor and get merged into it by PdfTableLocator's
         // nearest-x bucketing, which every other fixture's shorter/blank Instrument ID values
         // never exercised.
@@ -199,9 +213,9 @@ public final class PdfFixtureBuilder {
         page.line("CANARA BANK")
                 .blankLine()
                 .row(col, "Date", "Particulars", "Reference No", "Amount", "Balance")
-                .row(col, "01/07/2026", "UPI/DR/103564825690/NSE ZERO", "103564825690", "-1000.00", "114238.60")
-                .row(col, "01/07/2026", "MOB-IMPS/CR/MANAS CHAT", "61821112386186", "1000.00", "115238.60")
-                .row(col, "02/07/2026", "UPI/DR/618211147923/RAJA", "618211147923", "-150.00", "115088.60");
+                .row(col, "01/07/2026", "UPI/DR/234567890123/GENERIC MERCHANT", "234567890123", "-1000.00", "49000.00")
+                .row(col, "01/07/2026", "MOB-IMPS/CR/RAHUL VERMA", "10203040506070", "1000.00", "50000.00")
+                .row(col, "02/07/2026", "UPI/DR/345678901234/GENERIC PAYEE", "345678901234", "-150.00", "49850.00");
 
         return render(List.of(page));
     }
@@ -213,6 +227,10 @@ public final class PdfFixtureBuilder {
      * suffix (no separate Type/Credit column), no running balance, and the header row repeats
      * verbatim on a second page -- modeled on Axis Bank's "Neo Rupay" statement, but not specific
      * to it; any bank/card issuer could ship this same column shape.
+     *
+     * Data hygiene note: the BBPS payment reference below was originally lifted from the real
+     * statement above -- genericized per the Synthetic Fixture Policy (see the engineering
+     * principles doc).
      */
     public static byte[] buildDrCrSuffixAmountColumnSample() throws IOException {
         float[] col = {LEFT_MARGIN, 110f, 350f, 470f};
@@ -225,7 +243,7 @@ public final class PdfFixtureBuilder {
                 .row(col, "DATE", "TRANSACTION DETAILS", "MERCHANT CATEGORY", "AMOUNT (Rs.)")
                 .row(col, "24/06/2026", "UPI/TOBOX VENTURES PRIVATE L/GOKHANA.PAYU@AXISB", "MISC STORE", "37.94 Dr")
                 .row(col, "25/06/2026", "UPI/MANKAR DOSA/PAYTM.S27A881@PTY", "RESTAURANTS", "150.00 Dr")
-                .row(col, "30/06/2026", "BBPS PAYMENT RECEIVED - DP016181142205FXN9QZ", "", "10,081.99 Cr");
+                .row(col, "30/06/2026", "BBPS PAYMENT RECEIVED - DP000000000000AAAA", "", "10,081.99 Cr");
 
         PageBuilder page2 = new PageBuilder();
         // Same header repeated verbatim on the second page -- PdfTableLocator must recognize this
@@ -276,6 +294,33 @@ public final class PdfFixtureBuilder {
         return render(List.of(page1, page2));
     }
 
+    /**
+     * A credit-card statement layout ending in a "**** End of Statement ****" closing marker
+     * line, with no date of its own, directly after the last real transaction -- modeled on a
+     * real Axis Bank Neo Rupay statement, where this line was being folded into the last real
+     * transaction's description via the ordinary trailing-continuation merge (the same mechanism
+     * a genuine wrapped description uses) instead of being recognized as boilerplate and
+     * discarded, same underlying capability as {@link #buildParenthesizedDrCrRunningBalanceSample}'s
+     * page-footer exclusion.
+     */
+    public static byte[] buildStatementClosingMarkerSample() throws IOException {
+        // No merchant-category column here (unlike buildDrCrSuffixAmountColumnSample, which this
+        // is otherwise modeled on) -- kept to just DATE/DESCRIPTION/AMOUNT with the amount column
+        // pushed well clear of description, deliberately avoiding the known PDFBox-interleaving
+        // pitfall a long description can trigger against a too-close next column (see
+        // buildSingularDepositWithdrawalColumnsSample's own comment on this); irrelevant to what
+        // this fixture exists to regression-test.
+        float[] col = {LEFT_MARGIN, 110f, 480f};
+
+        PageBuilder page = new PageBuilder();
+        page.row(col, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                .row(col, "24/06/2026", "UPI/TOBOX VENTURES PRIVATE L/GOKHANA.PAYU@AXISB", "37.94 Dr")
+                .row(col, "15/07/2026", "UPI/NATHANI ENTERPRISES/PAYTM.S1TG89W@PTY/73854", "1,240.00 Dr")
+                .line("**** End of Statement ****");
+
+        return render(List.of(page));
+    }
+
     // ==================== LEADING_PLUS_CREDIT / DATE_TIME_COLUMN / WRAPPED_DESCRIPTION / CREDIT_CARD_SUMMARY_SIGNAL ====================
 
     /**
@@ -283,6 +328,10 @@ public final class PdfFixtureBuilder {
      * a credit with no marker at all on a debit row, and a transaction's description that can
      * continue onto a second, dateless/amountless visual row which must fold into the row above
      * it -- modeled on HDFC's "Tata Neu Plus" statement, but not specific to it.
+     *
+     * Data hygiene note: the reference numbers and amounts below were originally lifted from the
+     * real statement above -- genericized per the Synthetic Fixture Policy (see the engineering
+     * principles doc) once this cycle's Evidence Registry work surfaced it.
      */
     public static byte[] buildWrappedDescriptionCreditCardSample() throws IOException {
         float[] col = {LEFT_MARGIN, 150f, 400f, 470f, 530f};
@@ -290,14 +339,14 @@ public final class PdfFixtureBuilder {
         PageBuilder page = new PageBuilder();
         page.line("HDFC BANK")
                 .line("Tata Neu Plus HDFC Bank Credit Card Statement")
-                .line("Total Amount Due 1,817.00 Minimum Due 200.00")
+                .line("Total Amount Due 950.00 Minimum Due 100.00")
                 .blankLine()
                 .row(col, "DATE & TIME", "TRANSACTION DESCRIPTION", "Base NeuCoins", "AMOUNT", "PI")
-                .row(col, "30/06/2026 14:18", "BPPY CC PAYMENT DP016181141814AHOaZ", "", "+440.00", "l")
+                .row(col, "30/06/2026 14:18", "BPPY CC PAYMENT DP000000000000AAA", "", "+355.00", "l")
                 // Continuation line: description-only, no date, no amount -- must fold into the
                 // row above rather than becoming its own dropped, dateless row.
-                .row(col, null, "(Ref# ST261820084000010394028)", null, null, null)
-                .row(col, "11/07/2026 19:34", "UPI-Amazon India", "", "1,817.02", "l");
+                .row(col, null, "(Ref# ST000000000000000000)", null, null, null)
+                .row(col, "11/07/2026 19:34", "UPI-Amazon India", "", "942.50", "l");
 
         return render(List.of(page));
     }
@@ -437,6 +486,40 @@ public final class PdfFixtureBuilder {
                 .blankLine()
                 .row(col, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
                 .row(col, "15/07/2026", "Test Merchant Purchase", "500.00 Dr");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * A credit-card statement whose payment-summary block is a genuine multi-column grid -- FIVE
+     * labels on one header line ("Total Payment Due Minimum Payment Due Statement Period Payment
+     * Due Date Statement Generation Date"), then all five values on the very next line, including
+     * a "start - end" Statement Period range sharing the row with the standalone Payment Due Date
+     * -- and a second such grid for Credit Limit (sharing the substring "Credit Limit" with
+     * "Available Credit Limit" on the same header line). Also opens with the account holder's
+     * plain name as the document's literal first line, no label at all. Modeled on a real Axis
+     * Bank Neo Rupay statement (with a synthetic name/card number, never the real ones), the
+     * combination of real gaps this fixture exists to regression-test:
+     * {@code com.finora.imports.pdf.PdfMetadataExtractor} previously extracted NONE of Payment Due
+     * Date, Credit Limit, or Account Holder Name from this exact real document.
+     */
+    public static byte[] buildMultiColumnPaymentSummaryGridSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 150f, 470f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("RAHUL VERMA")
+                .line("Total Payment Due Minimum Payment Due Statement Period Payment Due Date Statement Generation Date")
+                // Statement Period ("01/06/2026 - 30/06/2026") shares this row with the standalone
+                // Payment Due Date ("20/07/2026") -- the fixture PdfMetadataExtractor's
+                // range-exclusion logic exists to regression-test: without it, the period's own
+                // start or end date would be picked instead of the real due date.
+                .line("12,345.67 Dr 500.00 Dr 01/06/2026 - 30/06/2026 20/07/2026 30/06/2026")
+                .blankLine()
+                .line("Credit Card Number Credit Limit Available Credit Limit Available Cash Limit")
+                .line("123456******7890 100,000.00 85,000.00 10,000.00")
+                .blankLine()
+                .row(col, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                .row(col, "01/06/2026", "Test Merchant Purchase", "500.00 Dr");
 
         return render(List.of(page));
     }

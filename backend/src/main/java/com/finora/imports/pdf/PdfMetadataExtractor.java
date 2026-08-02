@@ -1,6 +1,7 @@
 package com.finora.imports.pdf;
 
 import com.finora.imports.DocumentContext;
+import com.finora.util.BankRegistry;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
@@ -29,7 +30,19 @@ public class PdfMetadataExtractor {
     // Case-insensitive, tolerant of a colon with surrounding whitespace, or just whitespace with
     // no colon (some statement generators use "Account Number    000123456789" with no colon at
     // all) -- (?:...)? makes the colon itself optional while still requiring some separation.
-    private static final Pattern ACCOUNT_HOLDER = labelPattern("Account Holder(?: Name)?");
+    // "Customer Name" added as a synonym label: verified against a real PNB ONE statement, whose
+    // "Customer Details" panel labels the account holder "Customer Name:" rather than any
+    // "Account Holder" variant -- a genuinely different real phrase for the same field, not a
+    // formatting quirk of an already-covered one.
+    //
+    // Bare "Name" added as a further synonym: verified against a real Canara Bank e-passbook,
+    // whose account-details panel labels the holder with the single word "Name" ("Name MANAS
+    // CHATURVEDI", no colon) -- not "Account Holder"/"Customer Name" at all. The trailing "\b" is
+    // load-bearing specifically for this alternative: without it, "Named"/"Nameplate"/"Namely"
+    // (an unrelated word that merely starts with "name") would also match, since labelPattern's
+    // own "\s*:?\s*" allows zero separator before the captured value -- "Account Holder"/
+    // "Customer Name" are unambiguous enough as multi-word phrases not to need the same guard.
+    private static final Pattern ACCOUNT_HOLDER = labelPattern("(?:Account Holder(?: Name)?|Customer Name|Name\\b)");
     private static final Pattern ACCOUNT_NUMBER = labelPattern("Account Number");
     // Bug fix: verified against a real Union Bank of India statement -- its "Branch Address" line
     // is a two-column SECTION HEADER ("Branch Address" | "Statement Details" side by side, same
@@ -44,11 +57,12 @@ public class PdfMetadataExtractor {
 
     // GRID_METADATA_TRAILING_LABEL: a genuine second real-world grid-metadata shape, distinct from
     // GRID_DUE_DATE_LABEL's "label row, then a later value row" layout -- here the VALUE comes
-    // BEFORE its label on the very same line ("317002010038811 Account Number", "UBIN0531707
-    // IFSC"), the reverse of every "Label: Value" pattern above. Verified against the same real
-    // Union Bank of India statement: its account-details panel renders as a two-column grid where
-    // each row is "value label" rather than "label value", and ACCOUNT_HOLDER/ACCOUNT_NUMBER/IFSC
-    // above never match this layout at all (none of their lines start with the label).
+    // BEFORE its label on the very same line (e.g. "100200300400599 Account Number", "ABCD0123456
+    // IFSC" -- genericized per the Synthetic Fixture Policy; see the engineering principles doc),
+    // the reverse of every "Label: Value" pattern above. Verified against a real Union Bank of
+    // India statement: its account-details panel renders as a two-column grid where each row is
+    // "value label" rather than "label value", and ACCOUNT_HOLDER/ACCOUNT_NUMBER/IFSC above never
+    // match this layout at all (none of their lines start with the label).
     //
     // Account holder name specifically: this statement's "Name" field wraps its own value across
     // several lines *before* the "Name" label itself appears (a still-harder shape not attempted
@@ -57,7 +71,7 @@ public class PdfMetadataExtractor {
     // part of this pipeline). The grid's OTHER column has a cleaner "Account Name" field on one
     // line, which this uses instead -- a real, if less complete (no honorific), holder name is a
     // better outcome than none. Capped at 3 space-separated capitalized words specifically so a
-    // preceding, unrelated address fragment ("...3,BEHIND  SHIVANI SURESH MOURYA Account Name")
+    // preceding, unrelated address fragment ("...3,BEHIND  KAVITA RAMESH DESAI Account Name")
     // doesn't get swept into the captured name -- verified this cap is what correctly excludes
     // "BEHIND" (itself capitalized) while still capturing the full 3-word name.
     private static final Pattern ACCOUNT_NAME_TRAILING_LABEL =
@@ -69,7 +83,7 @@ public class PdfMetadataExtractor {
     // IFSC codes have a fixed, distinctive shape (4 letters, a literal 0, 6 more alphanumerics) --
     // reliable enough to find directly by content, independent of any label at all, which sidesteps
     // needing to handle this statement's IFSC line being merged with an unrelated Email field on
-    // the same extracted line ("...@GMAIL.COM Email id UBIN0531707 IFSC").
+    // the same extracted line ("...@GMAIL.COM Email id ABCD0123456 IFSC").
     private static final Pattern IFSC_SHAPE = Pattern.compile("\\b[A-Z]{4}0[A-Z0-9]{6}\\b");
 
     private static final DateTimeFormatter[] DATE_FORMATS = {
@@ -85,14 +99,84 @@ public class PdfMetadataExtractor {
     // lay the payment-summary block out as a genuine grid -- a row of labels ("... MINIMUM DUE
     // DUE DATE"), then a row of values a line or two later ("C200.00 09 Aug, 2026") -- rather
     // than "Label: Value" text PAYMENT_DUE_DATE above can match on a single line. This is a
-    // best-effort fallback for that shape specifically: find a line whose LAST label is "Due
-    // Date", then look at the next few lines for the first date-shaped substring, which by
-    // construction (values render in the same left-to-right order as their labels) corresponds
-    // to it. Bounded to a few lines so it can't wander into unrelated text further down the page.
-    private static final Pattern GRID_DUE_DATE_LABEL = Pattern.compile("(?i).*\\bDUE\\s+DATE\\s*$");
+    // best-effort fallback for that shape specifically: find a line containing the label, then
+    // look at the next few lines for the first value of the expected shape, which by construction
+    // (values render in the same left-to-right order as their labels) corresponds to it. Bounded
+    // to a few lines so it can't wander into unrelated text further down the page.
+    //
+    // Bug fix: verified against a real Axis Bank "Neo Rupay" statement whose PAYMENT SUMMARY grid
+    // has FIVE labels on one header line ("Total Payment Due Minimum Payment Due Statement Period
+    // Payment Due Date Statement Generation Date") -- the label this constant matches is no longer
+    // the LAST thing on the line (that HDFC layout only ever had one grid label per line), so the
+    // original end-anchored pattern silently stopped matching real due-date grids with more than
+    // one column. Widened from "ends with" to "contains." That same real value row also has TWO
+    // other date-shaped values before the actual due date ("24/06/2026 - 22/07/2026", the
+    // Statement Period range) -- findGridValue's own range-exclusion (see its doc comment) is what
+    // keeps this from grabbing the period's start date instead of the real due date.
+    private static final Pattern GRID_DUE_DATE_LABEL = Pattern.compile("(?i)\\bdue\\s+date\\b");
     private static final Pattern DATE_LIKE = Pattern.compile(
             "\\b\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}\\b|\\b\\d{1,2}\\s+[A-Za-z]{3,9}\\.?,?\\s+\\d{4}\\b");
+    // A date immediately preceded or followed by " - " is one half of an explicit range (e.g. a
+    // Statement Period column, "24/06/2026 - 22/07/2026") -- excluded from findGridValue's
+    // date-shape scan so a standalone field like Payment Due Date is never confused with the
+    // period's own start/end date sharing the same grid row.
+    private static final Pattern DATE_RANGE_MEMBER = Pattern.compile("\\s-\\s\\S|\\S\\s-\\s");
+
+    // Bug fix: same real Axis Bank statement's "Credit Limit" column -- also a grid label/value
+    // row, never a same-line "Label: Value" -- see CREDIT_LIMIT above, which only ever matches
+    // that same-line shape. "Available Credit Limit" and "Available Cash Limit" both share the
+    // literal substring "Credit Limit"/"Limit" with the plain "Credit Limit" column this targets,
+    // so the negative lookbehind excludes the "Available " variant specifically (verified this is
+    // the ONLY overlapping label on this real statement's header row).
+    private static final Pattern GRID_CREDIT_LIMIT_LABEL = Pattern.compile("(?i)(?<!available )\\bcredit\\s+limit\\b");
+    // Bug fix: verified against a real HDFC "Tata Neu Plus" statement whose Credit Limit grid
+    // value is a whole rupee amount with no decimal places at all ("78,000", not "78,000.00") --
+    // requiring a literal "\.\d{2}" suffix (the original shape, sized against a DIFFERENT real
+    // statement whose credit limit did have decimals) silently matched nothing on this file.
+    // Widened to require EITHER a decimal suffix OR proper comma-grouped thousands formatting
+    // (not just "requires digits", which would then wrongly match the digit-prefix of a masked
+    // card number like "653047******7550" -- that value has no comma at all, so it still can't
+    // match this pattern; a genuine amount in this locale always has at least one comma group
+    // once it's large enough to need one).
+    private static final Pattern AMOUNT_LIKE = Pattern.compile("\\b\\d{1,3}(?:,\\d{2,3})+(?:\\.\\d{2})?\\b|\\b[\\d,]+\\.\\d{2}\\b");
     private static final int GRID_VALUE_SEARCH_WINDOW = 3;
+
+    // LEADING_NAME_LINE: a third real-world account-holder shape, distinct from both
+    // ACCOUNT_HOLDER's "Label: Value" line and ACCOUNT_NAME_TRAILING_LABEL's "<value> Account
+    // Name" line -- here there's no label AT ALL, anywhere. Verified against two independent real
+    // statements from two different banks (a Bank of Baroda savings account, an Axis Bank Neo
+    // Rupay credit card) -- both put the plain holder name as the literal FIRST line of the
+    // document's own pre-table text, with nothing labeling it as such. Deliberately conservative,
+    // since this is the weakest signal of the three account-holder patterns (no label to anchor
+    // on at all): requires the line to consist of nothing but an optional courtesy title plus 2-4
+    // capitalized words (no digits, no punctuation beyond an optional trailing period on the
+    // title) -- capped the same way ACCOUNT_NAME_TRAILING_LABEL already caps its own word count,
+    // for the same reason (a longer line is prose or a banner, not a name) -- and, critically,
+    // rejected outright if BankRegistry recognizes the line as a bank's own name/alias. Without
+    // that last check this would misread every existing fixture's leading "AXIS BANK"/"HDFC BANK"
+    // letterhead line as if it were the account holder -- both shape-match identically to a real
+    // name (two capitalized words, no digits).
+    //
+    // Bug fix: originally restricted to i==0 exactly, on the assumption the two real documents
+    // that motivated this both had the name as their literal first extracted line. A real Kotak
+    // Mahindra Bank statement breaks that assumption -- its first two lines are a generic title
+    // ("Account Statement") and a date range ("01 Jul 2026 - 31 Jul 2026") before the holder's
+    // name appears on the third. Widened to scan the first few lines (bounded, same spirit as
+    // GRID_VALUE_SEARCH_WINDOW, so it can't wander into the transaction table's own boilerplate),
+    // but that alone isn't safe on its own: "Account Statement" itself shape-matches this pattern
+    // exactly as well as a real name does (two capitalized words, no digits), so LEADING_TITLE_WORDS
+    // rejects any candidate containing one of a small set of generic statement-vocabulary words no
+    // real person is named after -- the same overreach-prevention shape as the BankRegistry check.
+    private static final Pattern LEADING_NAME_LINE = Pattern.compile(
+            "(?i)^(?:(?:mr|mrs|ms|dr|m/s)\\.?\\s+)?[a-z]+(?:\\s+[a-z]+){1,3}\\.?$");
+    private static final int LEADING_NAME_LINE_SEARCH_WINDOW = 5;
+    // "name" included defensively: with ACCOUNT_HOLDER now recognizing a bare "Name" label
+    // (see its own doc comment), a document whose "Name" label line somehow reaches this
+    // fallback anyway (e.g. a future layout where the label and value split across lines) must
+    // not have "Name" itself swept into LEADING_NAME_LINE's captured text.
+    private static final java.util.Set<String> LEADING_TITLE_WORDS = java.util.Set.of(
+            "account", "statement", "card", "credit", "savings", "current", "passbook",
+            "details", "summary", "bank", "name");
 
     private static Pattern labelPattern(String label) {
         return Pattern.compile("(?i)^\\s*" + label + "\\s*:?\\s*(.+)$");
@@ -148,15 +232,41 @@ public class PdfMetadataExtractor {
             // label of the two (a payment-summary block commonly lists both fields on separate
             // lines, and neither regex is a prefix of the other, but ordering follows the same
             // "most specific signal first" convention as the rest of this loop).
+            //
+            // Bug fix: verified against the same real HDFC statement as AMOUNT_LIKE's own doc
+            // comment -- its multi-column header line "TOTAL CREDIT LIMIT (Including Cash)
+            // AVAILABLE CREDIT LIMIT AVAILABLE CASH LIMIT" fully satisfies CREDIT_LIMIT's
+            // same-line pattern (the label matches at the start, and the greedy trailing "(.+)$"
+            // just soaks up "AVAILABLE CREDIT LIMIT AVAILABLE CASH LIMIT" as if THAT were the
+            // value). The old code committed to that non-numeric "value" as null and unconditionally
+            // continued -- permanently skipping this line before the GRID_CREDIT_LIMIT_LABEL
+            // fallback below ever got a chance to run on it. Only commit (and skip the grid
+            // fallback) when the captured text actually parses as the expected type -- same
+            // discipline CsvParser.firstParseableAmount already established for the identical
+            // "label matched, but what follows isn't really the value" shape.
             String limit = firstGroup(CREDIT_LIMIT, line);
-            if (limit != null) { creditLimit = com.finora.imports.CsvParser.parseNumeric(limit); continue; }
+            if (limit != null) {
+                java.math.BigDecimal parsedLimit = com.finora.imports.CsvParser.parseNumeric(limit);
+                if (parsedLimit != null) { creditLimit = parsedLimit; continue; }
+            }
 
             String dueDate = firstGroup(PAYMENT_DUE_DATE, line);
-            if (dueDate != null) { paymentDueDate = parseDate(dueDate); continue; }
+            if (dueDate != null) {
+                LocalDate parsedDueDate = parseDate(dueDate);
+                if (parsedDueDate != null) { paymentDueDate = parsedDueDate; continue; }
+            }
 
-            if (paymentDueDate == null && GRID_DUE_DATE_LABEL.matcher(line).matches()) {
-                paymentDueDate = findGridDueDate(preTableLines, i);
+            if (paymentDueDate == null && GRID_DUE_DATE_LABEL.matcher(line).find()) {
+                String value = findGridValue(preTableLines, i, DATE_LIKE, DATE_RANGE_MEMBER);
+                if (value != null) paymentDueDate = parseDate(value);
                 if (ctx != null && paymentDueDate != null) ctx.record("GRID_METADATA_FALLBACK");
+                continue;
+            }
+
+            if (creditLimit == null && GRID_CREDIT_LIMIT_LABEL.matcher(line).find()) {
+                String value = findGridValue(preTableLines, i, AMOUNT_LIKE, null);
+                if (value != null) creditLimit = com.finora.imports.CsvParser.parseNumeric(value);
+                if (ctx != null && creditLimit != null) ctx.record("GRID_METADATA_FALLBACK");
                 continue;
             }
 
@@ -178,6 +288,19 @@ public class PdfMetadataExtractor {
                     if (ctx != null) ctx.record("GRID_METADATA_TRAILING_LABEL");
                     continue;
                 }
+            }
+            // LEADING_NAME_LINE (see that constant's own doc comment) -- bounded to the first few
+            // lines only, and only once every labeled shape above has already had its chance to
+            // find a holder name a more reliable way. A candidate is rejected (silently, scanning
+            // continues to the next line within the window) if it names a known bank, or if it
+            // contains a generic statement-vocabulary word no real person is named after.
+            if (accountHolderName == null && i < LEADING_NAME_LINE_SEARCH_WINDOW
+                    && LEADING_NAME_LINE.matcher(line.trim()).matches()
+                    && containsNoLeadingTitleWord(line)
+                    && BankRegistry.UNKNOWN_ID.equals(BankRegistry.detect("", List.of(line)).id())) {
+                accountHolderName = line.trim();
+                if (ctx != null) ctx.record("GRID_METADATA_TRAILING_LABEL");
+                continue;
             }
             if (ifscCode == null) {
                 Matcher ifscMatch = IFSC_SHAPE.matcher(line);
@@ -203,17 +326,24 @@ public class PdfMetadataExtractor {
                 periodStart, periodEnd, creditLimit, paymentDueDate);
     }
 
-    /** See {@link #GRID_DUE_DATE_LABEL}'s own doc comment. Scans the few lines after a "...Due
-     *  Date" label line for the first date-shaped substring and parses it -- null (not a thrown
-     *  exception) if nothing date-shaped turns up within the window, same "genuinely null when
-     *  the file didn't carry enough signal" discipline every other field here follows. */
-    private LocalDate findGridDueDate(List<String> lines, int labelLineIndex) {
+    /** Shared by every grid-metadata fallback (see {@link #GRID_DUE_DATE_LABEL}/
+     *  {@link #GRID_CREDIT_LIMIT_LABEL}'s own doc comments): scans the few lines after a label
+     *  line for the first substring matching {@code valuePattern}, skipping any match that also
+     *  matches {@code exclude} (e.g. a date that's one half of an explicit range -- null to skip
+     *  no matches), and returns the raw matched text -- null (not a thrown exception) if nothing
+     *  usable turns up within the window, same "genuinely null when the file didn't carry enough
+     *  signal" discipline every other field here follows. Bounded to a few lines so it can't
+     *  wander into unrelated text further down the page. */
+    private String findGridValue(List<String> lines, int labelLineIndex, Pattern valuePattern, Pattern exclude) {
         int end = Math.min(lines.size(), labelLineIndex + 1 + GRID_VALUE_SEARCH_WINDOW);
         for (int j = labelLineIndex + 1; j < end; j++) {
-            Matcher m = DATE_LIKE.matcher(lines.get(j));
-            if (m.find()) {
-                LocalDate parsed = parseDate(m.group());
-                if (parsed != null) return parsed;
+            String candidateLine = lines.get(j);
+            Matcher m = valuePattern.matcher(candidateLine);
+            while (m.find()) {
+                if (exclude == null || !exclude.matcher(candidateLine.substring(
+                        Math.max(0, m.start() - 3), Math.min(candidateLine.length(), m.end() + 3))).find()) {
+                    return m.group();
+                }
             }
         }
         return null;
@@ -226,6 +356,16 @@ public class PdfMetadataExtractor {
             return value.isEmpty() ? null : value;
         }
         return null;
+    }
+
+    /** See {@link #LEADING_TITLE_WORDS}'s own doc comment -- true unless one of the line's own
+     *  words (case-insensitive, punctuation-stripped) is a generic statement-vocabulary word. */
+    private boolean containsNoLeadingTitleWord(String line) {
+        for (String word : line.trim().split("\\s+")) {
+            String normalized = word.toLowerCase(Locale.ROOT).replaceAll("[^a-z]", "");
+            if (LEADING_TITLE_WORDS.contains(normalized)) return false;
+        }
+        return true;
     }
 
     /** "01-07-2026 to 31-07-2026" -> [start, end]. Either element is null if that half didn't

@@ -94,6 +94,18 @@ public class PdfTableLocator {
     // themselves, not just an isolated quirk this pattern needs to special-case digit-by-digit).
     private static final Pattern PAGE_FOOTER = Pattern.compile("(?i)\\bpage\\b.*\\bof\\b");
 
+    // Same capability as PAGE_FOOTER above (PAGE_BOUNDARY_ISOLATION in the Capability Registry) --
+    // a statement-closing marker line, same as a page-number footer, has no date of its own and
+    // must never be folded into the last real transaction as if it were a continuation of its
+    // description. Found against a real Axis Bank Neo Rupay statement whose last page ends with a
+    // literal "**** End of Statement ****" line: with no exclusion for it, that text was being
+    // appended onto the last real transaction's description via the ordinary trailing-continuation
+    // merge (the same mechanism WRAPPED_DESCRIPTION uses for a genuine wrapped description line),
+    // and the combined row was staged as one low-confidence transaction instead of the boilerplate
+    // being discarded. Matched loosely (asterisks optional, whitespace-tolerant) rather than the
+    // exact literal string, since the surrounding asterisk padding is decorative and could vary.
+    private static final Pattern STATEMENT_CLOSING_MARKER = Pattern.compile("(?i)end\\s+of\\s+statement");
+
     // LEADING_NARRATION_CONTINUATION: how many dateless rows immediately after a transaction's
     // date row are still trusted to be genuinely TRAILING continuations of that same transaction,
     // before a further dateless row is instead treated as the LEADING narration of the NEXT
@@ -231,9 +243,9 @@ public class PdfTableLocator {
 
             if (currentRows == null) {
                 pendingAuxiliary.add(rowLine);
-            } else if (PAGE_FOOTER.matcher(rowLine).find()) {
+            } else if (PAGE_FOOTER.matcher(rowLine).find() || STATEMENT_CLOSING_MARKER.matcher(rowLine).find()) {
                 if (ctx != null) ctx.record("PAGE_BOUNDARY_ISOLATION");
-                continue; // a page-number line is never a transaction or a continuation of one
+                continue; // a page-number line or closing marker is never a transaction or a continuation of one
             } else {
                 Map<String, String> bucketed = bucketRow(row, headerNames, headerAnchors, ctx);
                 if (bucketed.isEmpty()) continue;

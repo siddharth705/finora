@@ -51,7 +51,7 @@ class WrappedDescriptionCreditCardPdfPreviewGeneratorTest {
         assertThat(response.rows()).hasSize(2);
 
         var payment = response.rows().stream().filter(r -> r.description().contains("BPPY CC PAYMENT")).findFirst().orElseThrow();
-        assertThat(payment.description()).contains("Ref# ST261820084000010394028");
+        assertThat(payment.description()).contains("Ref# ST000000000000000000");
         assertThat(payment.date()).isEqualTo(LocalDate.of(2026, 6, 30));
     }
 
@@ -61,11 +61,11 @@ class WrappedDescriptionCreditCardPdfPreviewGeneratorTest {
 
         var payment = response.rows().stream().filter(r -> r.description().contains("BPPY CC PAYMENT")).findFirst().orElseThrow();
         assertThat(payment.type()).isEqualTo("INCOME");
-        assertThat(payment.amount()).isEqualByComparingTo("440.00");
+        assertThat(payment.amount()).isEqualByComparingTo("355.00");
 
         var purchase = response.rows().stream().filter(r -> r.description().contains("Amazon")).findFirst().orElseThrow();
         assertThat(purchase.type()).isEqualTo("EXPENSE");
-        assertThat(purchase.amount()).isEqualByComparingTo("1817.02");
+        assertThat(purchase.amount()).isEqualByComparingTo("942.50");
         assertThat(purchase.date()).isEqualTo(LocalDate.of(2026, 7, 11));
     }
 

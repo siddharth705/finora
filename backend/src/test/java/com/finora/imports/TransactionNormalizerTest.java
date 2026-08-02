@@ -283,17 +283,37 @@ class TransactionNormalizerTest {
     }
 
     @Test
-    void normalize_capturesReferenceNumber_fromTheRealCanaraBankColumnHeaderVerbatim() {
+    void normalize_capturesReferenceNumber_fromTheRealCanaraBankColumnHeaderVariant() {
         // The exact header text a real Canara Bank statement uses -- verified directly against
         // the row map (not a rendered PDF) since PdfFixtureBuilder's synthetic PDFBox rendering
         // has its own column-width quirks unrelated to whether this hint match itself works.
+        // (Cell values are synthetic per the Synthetic Fixture Policy -- see the engineering
+        // principles doc -- only the column header phrasing itself is the real, structural fact
+        // under test here.)
         Map<String, String> row = rowOf(
-                "Date", "01/07/2026", "Particulars", "UPI/DR/103564825690/NSE ZERO",
-                "Reference / Cheque No.", "103564825690", "Amount", "-1000.00", "Balance", "114238.60");
+                "Date", "01/07/2026", "Particulars", "UPI/DR/234567890123/GENERIC MERCHANT",
+                "Reference / Cheque No.", "234567890123", "Amount", "-1000.00", "Balance", "49000.00");
 
         StagedRow result = normalizer.normalize(userId, row);
 
-        assertThat(result.referenceNumber()).isEqualTo("103564825690");
+        assertThat(result.referenceNumber()).isEqualTo("234567890123");
+    }
+
+    @Test
+    void normalize_capturesReferenceNumber_fromTheRealKotakBankColumnHeaderVariant() {
+        // Bug fix: a real Kotak Mahindra Bank statement's column is "Chq/Ref. No." -- periods
+        // after BOTH "Ref" and "No", unlike the "chq/ref no" (no periods) variant already
+        // covered. normalizeHeaderCell only strips a TRAILING parenthetical, never internal
+        // punctuation, so this real header normalized to a literal string nothing else matched.
+        // (Cell values genericized per the Synthetic Fixture Policy -- only the header phrasing
+        // is the real fact under test.)
+        Map<String, String> row = rowOf(
+                "Date", "02 Jul 2026", "Description", "CASHBACK EARNED",
+                "Chq/Ref. No.", "REF1234567890ABC", "Deposit (Cr.)", "1.00", "Balance", "25000.00");
+
+        StagedRow result = normalizer.normalize(userId, row);
+
+        assertThat(result.referenceNumber()).isEqualTo("REF1234567890ABC");
     }
 
     @Test
@@ -331,17 +351,17 @@ class TransactionNormalizerTest {
      *  replacement for it. */
     @Test
     void normalize_balanceColumnStillWorksAsTheAmountFallback_forASummaryRowWithNoDebitCreditColumn() {
-        Map<String, String> row = rowOf("Date", "01/07/2026", "Balance", "115238.60", "Remarks", "OPENING BALANCE");
+        Map<String, String> row = rowOf("Date", "01/07/2026", "Balance", "50000.00", "Remarks", "OPENING BALANCE");
 
         StagedRow result = normalizer.normalize(userId, row);
 
         assertThat(result).isNotNull();
-        assertThat(result.amount()).isEqualByComparingTo(new BigDecimal("115238.60"));
+        assertThat(result.amount()).isEqualByComparingTo(new BigDecimal("50000.00"));
         // And the SAME column also populates balanceAfter now -- both readings of "balance" are
         // legitimate simultaneously for this row shape: it's this row's only usable amount AND
         // its post-transaction balance (they happen to be the same value for an opening-balance
         // summary row specifically).
-        assertThat(result.balanceAfter()).isEqualByComparingTo(new BigDecimal("115238.60"));
+        assertThat(result.balanceAfter()).isEqualByComparingTo(new BigDecimal("50000.00"));
     }
 
     // --- explainFailure() -- "Never lose information": a row normalize() rejects still gets a

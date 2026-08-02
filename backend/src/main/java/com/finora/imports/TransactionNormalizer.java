@@ -62,9 +62,15 @@ public class TransactionNormalizer {
     // PdfTableLocator.bucketRow already capture every column into the row map, this was simply
     // never read back out. "instrument id" was already a PdfTableLocator.HEADER_HINTS entry used
     // only to detect a header row, never to capture a value -- same underlying gap, same fix.
+    //
+    // Bug fix: verified against a real Kotak Mahindra Bank statement, whose column is literally
+    // "Chq/Ref. No." -- periods after BOTH "Ref" and "No", unlike the "chq/ref no" (no periods)
+    // variant already covered. normalizeHeaderCell only strips a TRAILING parenthetical, never
+    // internal punctuation, so this real header normalized to "chq/ref. no." -- a literal string
+    // that matched nothing already in this list.
     private static final String[] REFERENCE_HINTS =
             {"reference number", "ref no", "reference no", "cheque no", "chq no", "chq/ref no",
-                    "instrument id", "reference", "reference / cheque no.", "reference / cheque no"};
+                    "chq/ref. no.", "instrument id", "reference", "reference / cheque no.", "reference / cheque no"};
     // Deliberately separate from AMOUNT_HINTS, even though the literal column names overlap:
     // AMOUNT_HINTS' "balance"/"running balance"/"closing balance" entries exist as a last-resort
     // fallback AMOUNT for a summary row with no debit/credit column at all (see AMOUNT_HINTS' own

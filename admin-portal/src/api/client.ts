@@ -86,6 +86,27 @@ function unwrapEnvelope(response: any) {
   return response;
 }
 
+// Bug fix: same class of bug as the user frontend's client.ts (see that file's own doc comment
+// for the full story) -- refresh tokens rotate server-side on every use, and reusing an
+// already-rotated one is treated as a THEFT signal that revokes every active session for the
+// admin, everywhere. Without this shared promise, N requests 401'ing around the same moment (the
+// access token expiring while idle, then several widgets refetching at once) each independently
+// called authApi.refresh() with the SAME refresh token -- only the first succeeds; the rest trip
+// the backend's theft response over a client-side race, not actual theft.
+let refreshInFlight: Promise<{ token: string; refreshToken: string }> | null = null;
+
+function refreshAccessToken(refreshToken: string): Promise<{ token: string; refreshToken: string }> {
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      const { authApi } = await import('./endpoints');
+      return authApi.refresh(refreshToken);
+    })().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
 api.interceptors.response.use(
   (response) => unwrapEnvelope(response),
   async (error) => {
@@ -103,8 +124,7 @@ api.interceptors.response.use(
 
       if (refreshToken) {
         try {
-          const { authApi } = await import('./endpoints');
-          const refreshed = await authApi.refresh(refreshToken);
+          const refreshed = await refreshAccessToken(refreshToken);
           persistAdminSession(refreshed.token, refreshed.refreshToken);
           originalRequest.headers.Authorization = `Bearer ${refreshed.token}`;
           return api(originalRequest);

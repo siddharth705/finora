@@ -12,6 +12,12 @@ statement-import subsystem. It is not a replacement for `docs/statement-intellig
 (a design-stage spec written before real PDF parsing existed in this codebase, and now stale in
 places — e.g. it specs "rule-based PDF parsers (per bank)," which is exactly the architecture this
 document rules out). If the two ever conflict, this document reflects what's actually true today.
+Two companion documents track evidence over time rather than current rules: the
+[Evidence Registry](evidence-registry.md) (what each real document taught the engine, plus a
+per-cycle metrics snapshot) and the
+[Financial Document Intelligence Changelog](financial-document-intelligence-changelog.md) (the
+same history, compressed into a skimmable Learned/Improved/Protected/Observed/Deferred/Open
+summary per cycle).
 
 ---
 
@@ -297,6 +303,35 @@ numbers). They are useful for debugging exactly once, interactively, and are nev
    rule" above) — this is the step that turns a one-off fix into a permanent capability.
 6. Delete the scratch copy. It never becomes a permanent test fixture.
 
+### Synthetic Fixture Policy
+
+Formalizing a rule this document has followed informally since Phase 1, after an Evidence Cycle 1
+audit found several *pre-existing* violations of it — real names, reference numbers, and balances
+that had been copied verbatim into committed fixtures and tests instead of synthesized, despite
+step 5 above always having said "build the synthetic fixture," not "reuse the real values." The
+principle behind "Handling real documents" was always **real documents are evidence, not source
+code** — this makes it explicit and gives it a name to cite in review.
+
+- Real financial documents may be used during investigation (see "Handling real documents" above).
+- They must never be committed.
+- Any regression fixture derived from a real document must be **fully anonymized and synthesized**
+  before entering the repository — not just the account holder's name, but reference numbers,
+  account/card numbers, IFSC codes, balances, and any other value that came from the real file.
+  Preserve only the *structural* properties a test actually depends on (a value's digit count, a
+  narration's shape, an arithmetic relationship between rows) — never the value itself.
+- Regression tests validate document **structure and parser behavior**, never real customer data.
+  A test asserting `"104238.60"` proves nothing a test asserting `"50000.00"` doesn't; the former
+  just happens to also leak what a real customer's account balance was on a specific day.
+
+This applies uniformly to fixtures, tests, documentation, and examples — including doc comments
+that quote "the exact real line" for context. Quote the *shape* instead ("a bare single-word label
+with no colon"), not values that could re-identify the source document.
+
+A lightweight pre-commit check (`scripts/check-fixture-hygiene.sh`, wired into `.husky/pre-commit`)
+scans newly staged fixtures, tests, and docs for common real-data indicators (long digit runs,
+IFSC-shaped codes, email addresses, phone numbers) and warns — it is not a substitute for this
+policy, just a backstop against forgetting it.
+
 ### Evidence before capability
 
 > A capability may only be introduced when at least one real document demonstrates a structural
@@ -427,11 +462,12 @@ Done
 ✓ Page Boundary Isolation / Page Footer Exclusion
 ✓ Composite Statements (multi-account, multi-section)
 ✓ Credit Card Summary Signal
-✓ Metadata Grid (2-row)
+✓ Metadata Grid (2-row, single- and multi-column label/value rows)
 ✓ Metadata Grid (trailing label -- value precedes its label on the same line)
 ✓ Never Lose Information (unparseable rows surfaced with a reason, not dropped)
 ✓ Offset Column Anchors (header labels not aligned with their own column's data)
 ✓ Leading Narration Continuation (transaction description wraps before the date/amount row, not after)
+✓ Leading Name Line (account holder name with no label at all, as the document's first line)
 
 Planned
 • Excel
@@ -546,13 +582,14 @@ honest proxy for confidence a capability actually works — no test, no claim.
   the start of a new section instead of a repeat.
 
 #### `PAGE_BOUNDARY_ISOLATION` / `PAGE_FOOTER_EXCLUSION`
-- **Purpose:** a page-number footer line, or a per-page repeated title banner, must never merge
-  into the last real transaction row of the page before it.
-- **Supported layouts:** any paginated statement with a "Page X of Y"-style footer and/or a
-  repeated per-page title/account banner.
-- **Implementation:** `PdfTableLocator` (`lastRowPage` page-boundary tracking, `PAGE_FOOTER`
-  pattern).
-- **Regression tests:** `ParenthesizedDrCrRunningBalancePdfPreviewGeneratorTest`.
+- **Purpose:** a page-number footer line, a per-page repeated title banner, or a statement-closing
+  marker line must never merge into the last real transaction row before it.
+- **Supported layouts:** any paginated statement with a "Page X of Y"-style footer, a repeated
+  per-page title/account banner, and/or a closing marker line (e.g. "**** End of Statement ****").
+- **Implementation:** `PdfTableLocator` (`lastRowPage` page-boundary tracking, `PAGE_FOOTER` and
+  `STATEMENT_CLOSING_MARKER` patterns).
+- **Regression tests:** `ParenthesizedDrCrRunningBalancePdfPreviewGeneratorTest`,
+  `StatementClosingMarkerPdfPreviewGeneratorTest`.
 - **Maturity:** Stable.
 - **Known limitations:** the `PAGE_FOOTER` pattern is intentionally loose (tolerant of
   font-encoding artifacts on digits) — a legitimate transaction description that happens to
@@ -627,16 +664,79 @@ honest proxy for confidence a capability actually works — no test, no claim.
   same underlying discovery).
 
 #### `GRID_METADATA_FALLBACK` (2-row grid)
-- **Purpose:** extract account-level metadata (e.g. a Due Date field) from a payment-summary block
-  laid out as a genuine label-row/value-row grid, rather than single-line "Label: Value" text.
-- **Supported layouts:** a 2-row label/value grid where labels and their values are vertically
-  stacked rather than on the same line.
-- **Implementation:** `PdfMetadataExtractor` (bounded-window scan for the first plausible value
-  after a trailing label).
-- **Regression tests:** `GridMetadataFallbackPdfPreviewGeneratorTest`.
+- **Purpose:** extract account-level metadata (e.g. Due Date, Credit Limit) from a payment-summary
+  block laid out as a genuine label-row/value-row grid, rather than single-line "Label: Value" text.
+- **Supported layouts:** an N-column label/value grid where a row of labels and a row of their
+  values are vertically stacked rather than on the same line — originally scoped against a real
+  HDFC statement's single-label-per-row shape; widened against a real Axis Bank Neo Rupay statement
+  whose payment-summary header line carries FIVE labels at once ("Total Payment Due Minimum
+  Payment Due Statement Period Payment Due Date Statement Generation Date"), with a Statement
+  Period *range* ("24/06/2026 - 22/07/2026") sharing the value row with the standalone Payment Due
+  Date field.
+- **Implementation:** `PdfMetadataExtractor` — `findGridValue` (shared bounded-window scan for the
+  first value of an expected shape after a label line), `GRID_DUE_DATE_LABEL`/`DATE_RANGE_MEMBER`
+  (a date immediately adjacent to `" - "` is excluded, so a period's own start/end date is never
+  confused with a standalone due-date field on the same row), `GRID_CREDIT_LIMIT_LABEL` (negative
+  lookbehind excluding "Available Credit Limit," which shares the literal substring "Credit Limit"
+  with the plain field this targets, on the same header line), `AMOUNT_LIKE` (requires either a
+  decimal suffix or comma-grouped thousands formatting, not a decimal specifically — a real HDFC
+  statement's Credit Limit is a whole rupee amount with no decimal places at all). The same-line
+  `CREDIT_LIMIT`/`PAYMENT_DUE_DATE` "Label: Value" checks (above) only commit to a match when the
+  captured text actually parses as the expected type — a real HDFC multi-column header line
+  ("TOTAL CREDIT LIMIT (Including Cash) AVAILABLE CREDIT LIMIT AVAILABLE CASH LIMIT") satisfies
+  the same-line label pattern too, and its greedy trailing capture used to swallow the rest of the
+  line as if THAT were the value, silently failing and skipping past the line before this grid
+  fallback ever got a chance to run on it.
+- **Regression tests:** `GridMetadataFallbackPdfPreviewGeneratorTest`,
+  `MultiColumnPaymentSummaryGridPdfPreviewGeneratorTest`, `PdfMetadataExtractorTest`.
 - **Maturity:** Beta.
-- **Known limitations:** only handles a 2-row grid, and only the "label first" line shape — see
-  the entry directly below for the reversed "value first" shape.
+- **Known limitations:** only the "label row first" line shape — see the entry directly below for
+  the reversed "value first" shape. The header-label match is a "contains" check, not a full
+  positional column-index mapper (see the doc comment on the Test Corpus Strategy's evidence-first
+  discipline for why: real x-position data isn't available at this stage, and a full N-column
+  positional mapper built from plain text alone risks silently picking the WRONG column when
+  labels/values don't line up 1:1 in count, e.g. a range field like Statement Period producing two
+  date tokens for one label) — each field's own value-shape filter (date vs. amount, plus
+  range-exclusion for dates) is what keeps this safe rather than a general column splitter.
+
+#### `LEADING_NAME_LINE`
+- **Purpose:** extract the account holder's name from a document with NO label for it at all —
+  distinct from both `ACCOUNT_HOLDER`'s "Label: Value" shape and `GRID_METADATA_TRAILING_LABEL`'s
+  "value precedes its label" shape.
+- **Supported layouts:** the account holder's plain name as one of the first few lines of a
+  section's pre-table text, with nothing identifying it as a name — verified against three
+  independent real statements from three different banks (a Bank of Baroda savings account, an
+  Axis Bank Neo Rupay credit card statement, a Kotak Mahindra Bank savings statement). The first
+  two put the name as the literal first line; the Kotak statement's first two lines are a generic
+  title ("Account Statement") and a date range before the name appears on the third.
+- **Implementation:** `PdfMetadataExtractor` — `LEADING_NAME_LINE` pattern (optional courtesy
+  title, then 2–4 capitalized words, no digits — capped the same way
+  `ACCOUNT_NAME_TRAILING_LABEL` caps its own word count, same overreach-prevention reasoning),
+  bounded to the first few lines (`LEADING_NAME_LINE_SEARCH_WINDOW`) rather than line 0 only,
+  `LEADING_TITLE_WORDS` (a small denylist — "account," "statement," "card," "credit," "name," ...
+  — since a generic title line like "Account Statement" shape-matches a real name exactly as well
+  as one does), and rejected outright when `BankRegistry.detect()` recognizes the line as a known
+  bank's own name/alias.
+  <br><br>
+  Bug fix: a real Canara Bank e-passbook labels the account holder with the bare word `"Name"`
+  ("Name PRIYA NAIR," no colon) — `ACCOUNT_HOLDER`'s same-line "Label: Value" pattern (the
+  one this capability is the fallback FOR) now recognizes `Name` as a third synonym alongside
+  "Account Holder (Name)" and "Customer Name," so this specific document no longer falls through
+  to `LEADING_NAME_LINE` at all. `"name"` was still added to `LEADING_TITLE_WORDS` defensively —
+  if some future document's "Name" label and its value ever end up split across lines instead of
+  sharing one, the bare word "Name" alone must not be swept into a `LEADING_NAME_LINE` match as if
+  it were part of the person's actual name.
+- **Regression tests:** `MultiColumnPaymentSummaryGridPdfPreviewGeneratorTest` (including a test
+  that existing fixtures' leading "AXIS BANK"/"HDFC BANK" letterhead lines are never misread as an
+  account holder), `PdfMetadataExtractorTest`.
+- **Maturity:** Beta.
+- **Known limitations:** deliberately the most conservative pattern in this pipeline — no label to
+  anchor on at all, so it's gated behind three independent conditions (a bounded line window, a
+  narrow word-count/shape cap plus title-word denylist, and the `BankRegistry` exclusion) rather
+  than firing on shape alone. A statement whose first few lines contain a bank name `BankRegistry`
+  doesn't yet recognize, or a generic title phrase not yet in `LEADING_TITLE_WORDS`, would still
+  risk a false positive; a statement whose holder name appears later than the search window won't
+  match at all.
 
 #### `GRID_METADATA_TRAILING_LABEL`
 - **Purpose:** extract account-level metadata from a grid where each row's VALUE comes BEFORE its
@@ -698,6 +798,54 @@ honest proxy for confidence a capability actually works — no test, no claim.
   leading narration instead. Revisit the constant, not the algorithm, if that real document shows
   up (see "Prefer generalization over accumulation" — widen this capability's own test coverage
   first, rather than reaching for a second, competing mechanism).
+
+#### Open Investigation: HDFC credit-card table over-extension (only 2/40 rows parsed)
+- **Status:** root-caused, deliberately **not fixed yet** — this needs real design work, not a
+  same-session patch (see "Don't fix it yet, root-cause it" below).
+- **Symptom:** a real HDFC "Tata Neu Plus" credit card statement staged only 2 transactions out of
+  40 raw bucketed rows, 38 dropped. Initially mischaracterized (in an earlier draft of this
+  document) as a metadata gap — it is not. `accountHolderName`/`creditLimit` being null on this
+  same file are a separate, already-documented issue (see `GRID_METADATA_TRAILING_LABEL`'s
+  deferred-evidence tests above); this entry is about the transaction TABLE itself.
+- **Root cause (confirmed via `PdfPipelineDiagnostic` against the real file):** `PdfTableLocator`
+  never recognizes where this document's real transaction table ENDS. Once bucketing starts, it
+  continues — under the same `[TRANSACTION DESCRIPTION, DATE & TIME, AMOUNT, PI, Base NeuCoins*]`
+  header — straight through "Benefits on your card," the "IMPORTANT INFORMATION" bullet list, a
+  completely different NeuCoins summary table, Terms & Conditions text, a GST entry table, a
+  "Useful Links" table, and the digital-signature block at the very end of the document. Of the 40
+  rows this produces, only 2 contain anything that resembles a real transaction date — the other
+  38 are all later, unrelated content misbucketed as if it were more rows of the same table.
+  Neither existing trailer-exclusion mechanism catches this: `PAGE_FOOTER`/`STATEMENT_CLOSING_MARKER`
+  both require a specific recognizable marker (a page-footer pattern, "End of Statement" text)
+  that this document's real trailer simply doesn't contain.
+- **Which of the three paths this needs:** not a metadata capability extension (nothing in
+  `PdfMetadataExtractor` is involved) and not a new leaf capability either — this is a
+  **table-detection pipeline gap** in `PdfTableLocator` itself: some notion of "this no longer
+  looks like more of the same table" is missing entirely for the case where trailing content is
+  neither a page footer nor a closing marker, just structurally different text (long free-form
+  sentences, a second table with a different header, a signature block).
+- **Why this isn't being fixed inline:** a hasty heuristic (e.g. "stop after N rows with no
+  date-like value") risks silently breaking the legitimate multi-page tables
+  `PAGE_BOUNDARY_ISOLATION`/`REPEATED_HEADER` already handle correctly for other real documents —
+  the exact failure mode "Prefer generalization over accumulation" warns against. This needs a
+  second real document confirming the general shape before a specific mechanism is designed, per
+  "Evidence before capability" — tracked in the Capability Backlog below, not attempted here.
+
+### Capability Backlog (generated from real-document validation, not yet built)
+
+Real documents keep producing evidence even when no capability gets written from it immediately —
+this table is where that evidence is preserved instead of disappearing once the file itself is
+deleted (see "Handling real documents" above). An entry here is a claim backed by at least one
+real document, with an honest evidence count; it graduates to the Capability Registry once
+"Evidence before capability" is satisfied and the implementation actually lands.
+
+| Capability (candidate name) | Evidence | Priority | Why deferred |
+|---|---|---|---|
+| `ACCOUNT_NUMBER_RECOGNITION` | 6 of 7 real statements in the Aug 2026 validation pass | High | Recurring, not a one-off — `ACCOUNT_NUMBER`/`ACCOUNT_NUMBER_TRAILING_LABEL` only match an explicit "Account Number" label; real statements embed it mid-sentence ("Statement for A/c XXXXXXXXX1455"), under an unrelated label ("Alternate Account Number"), or as a masked card number never labeled "Account Number" at all. Needs its own evidence-gathering pass across these real shapes before a mechanism is designed. |
+| Credit-card table boundary detection (`PdfTableLocator`) | 1 statement (HDFC Tata Neu Plus — see the Open Investigation above) | High | High-impact (2/40 rows parsed) but single-document evidence for the *general* shape of the fix; needs a second real document before a specific mechanism (vs. another one-off marker pattern) is justified. |
+| `VALUE` → trailing label → trailing value (composite account-holder line) | 1 statement (HDFC: `"<card number> Credit Card No. <NAME>"`) | Low | Genuinely a structural pattern, not an HDFC quirk — could recur as `"Loan Number XXXXXXXX Borrower Name"` or similar on another institution's export. Documented as an observed shape to watch for (see the deferred-evidence test in `PdfMetadataExtractorTest`), not built on one document's strength. |
+| Scrambled / split multi-row credit-summary grid | 1 statement (same HDFC file) | Low | The specific column/row scrambling in this one document isn't yet known to generalize; a naive fix was verified to produce a *wrong* value (₹200 instead of ₹78,000), which is worse than the current null — see that same deferred-evidence test's doc comment for the full reasoning. |
+| Embedded narration reference numbers | 1 statement (Canara — reference number embedded inside free-text transaction narration, not a dedicated column) | Medium | Would need free-text mining rather than column-based extraction — a materially different mechanism from every existing capability, not a small extension of one. |
 
 #### Excel, Scanned PDFs / OCR, Images, Handwritten Statements — Planned
 - **Purpose:** additional document formats, each requiring a new implementation of the early
@@ -1133,6 +1281,25 @@ every parser-related PR should be able to answer all twelve before merging:
 
 If the honest answer to any of these is "no" or "not applicable in a way that's actually fine,"
 that's worth writing down in the PR description — not skipped silently.
+
+### Capability Impact Report
+
+Answering PR Checklist question 1 ("what capability is being added?") as prose — "added a Name
+synonym" — loses the before/after shape that makes a capability's own history legible later.
+Every PR that changes an *existing* capability's coverage (not a brand-new one — those get a full
+Capability Registry entry instead) should include a short impact report in this exact shape:
+
+```
+Capability:  ACCOUNT_HOLDER
+Before:      Supported labels — Account Holder (Name), Customer Name
+After:       Supported labels — Account Holder (Name), Customer Name, Name
+Evidence:    Canara Bank e-passbook ("Name PRIYA NAIR", no colon)
+Regression:  PdfMetadataExtractorTest#extract_recognizesBareNameAsAnAccountHolderLabelSynonym,
+             #extract_doesNotMisreadAWordMerelyStartingWithName_asTheBareNameLabel
+```
+
+Cheap to write, and it's what actually lets a future developer (or this document's own Capability
+Registry entries) answer "what changed and why" without reading the diff.
 
 ---
 

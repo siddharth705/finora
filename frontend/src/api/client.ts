@@ -97,6 +97,31 @@ function unwrapEnvelope(response: any) {
   return response;
 }
 
+// Bug fix: refresh tokens rotate server-side on every use (RefreshTokenService.rotate()) --
+// presenting an already-rotated token isn't just rejected, it's treated as a THEFT signal and
+// revokes every active session for the user, everywhere (see that method's own doc comment: "a
+// strong signal it was stolen... revoke every active token for the user"). Without this shared
+// promise, N requests that happen to 401 around the same moment (a very real scenario: the access
+// token expires while a tab is idle, then several components refetch at once when it regains
+// focus) each independently called authApi.refresh() with the SAME refresh token — only the
+// first ever succeeds; the other N-1 present an already-rotated token and trip the backend's
+// theft response, force-logging the user out of every device over a client-side race, not actual
+// theft. Now every 401 arriving while a refresh is already in flight awaits that SAME promise
+// instead of starting its own.
+let refreshInFlight: Promise<{ token: string; refreshToken: string }> | null = null;
+
+function refreshAccessToken(refreshToken: string): Promise<{ token: string; refreshToken: string }> {
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      const { authApi } = await import('./endpoints');
+      return authApi.refresh(refreshToken);
+    })().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
 api.interceptors.response.use(
   (response) => unwrapEnvelope(response),
   async (error) => {
@@ -111,8 +136,7 @@ api.interceptors.response.use(
 
       if (refreshToken) {
         try {
-          const { authApi } = await import('./endpoints');
-          const refreshed = await authApi.refresh(refreshToken);
+          const refreshed = await refreshAccessToken(refreshToken);
           localStorage.setItem('finora_token', refreshed.token);
           localStorage.setItem('finora_refresh_token', refreshed.refreshToken);
           originalRequest.headers.Authorization = `Bearer ${refreshed.token}`;

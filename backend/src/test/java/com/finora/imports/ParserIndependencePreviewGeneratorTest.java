@@ -57,12 +57,13 @@ class ParserIndependencePreviewGeneratorTest {
     @Test
     void sameLogicalStatementData_normalizesIdentically_regardlessOfWhetherItArrivedAsCsvOrPdf() throws Exception {
         // Same headers, same three rows as PdfFixtureBuilder.buildReferenceNumberAndBalanceSample
-        // (already evidenced by a real Canara Bank statement -- see that method's own doc
-        // comment), just expressed as CSV text instead of a rendered PDF table.
+        // (a shape originally evidenced by a real Canara Bank statement -- see that method's own
+        // doc comment, including its data-hygiene note), just expressed as CSV text instead of a
+        // rendered PDF table.
         String csv = "Date,Particulars,Reference No,Amount,Balance\n"
-                + "01/07/2026,UPI/DR/103564825690/NSE ZERO,103564825690,-1000.00,114238.60\n"
-                + "01/07/2026,MOB-IMPS/CR/MANAS CHAT,61821112386186,1000.00,115238.60\n"
-                + "02/07/2026,UPI/DR/618211147923/RAJA,618211147923,-150.00,115088.60\n";
+                + "01/07/2026,UPI/DR/234567890123/GENERIC MERCHANT,234567890123,-1000.00,49000.00\n"
+                + "01/07/2026,MOB-IMPS/CR/RAHUL VERMA,10203040506070,1000.00,50000.00\n"
+                + "02/07/2026,UPI/DR/345678901234/GENERIC PAYEE,345678901234,-150.00,49850.00\n";
 
         UUID userId = UUID.randomUUID();
         List<StagedRow> csvRows = csvGenerator()
@@ -93,7 +94,7 @@ class ParserIndependencePreviewGeneratorTest {
         // comment: a CSV and a PDF sharing the same header set are still different source
         // documents), so this only proves both parsers produce a well-formed, versioned ID.
         String csv = "Date,Particulars,Reference No,Amount,Balance\n"
-                + "01/07/2026,UPI/DR/103564825690/NSE ZERO,103564825690,-1000.00,114238.60\n";
+                + "01/07/2026,UPI/DR/234567890123/GENERIC MERCHANT,234567890123,-1000.00,49000.00\n";
         UUID userId = UUID.randomUUID();
 
         var csvResult = csvGenerator().generateWithContext(userId, "statement.csv",
