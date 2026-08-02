@@ -38,7 +38,7 @@ export default function ActivityTimeline() {
       <p className="text-sm text-gray-500">
         Every change Finora's tracked for your account -- rules, relationships, merchants,
         statement imports, and account/transaction edits. Not yet included: reconciliation runs
-        and recurring-detection passes (see the Reconciliation Monitor page for those).
+        and recurring-detection passes.
       </p>
 
       <div className="bg-card rounded-xl shadow overflow-hidden">
