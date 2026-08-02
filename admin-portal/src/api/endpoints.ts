@@ -1,14 +1,17 @@
 import { api, rawApi, type ApiEnvelope } from './client';
 import type {
-  AccountDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CreateAccountRequest, CreateBankRequest,
-  CreateRuleRequest, CreateUserRequest, FeatureFlagDto, LearningPlatformStatsDto, LearningSummaryDto,
+  AccountDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
+  CreateAccountRequest, CreateBankRequest, CreateRelationshipRequest,
+  CreateRuleRequest, CreateUserRequest, FeatureFlagDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
   LearningTimelineEntry,
   MeAccessDto, MerchantDto, MerchantMergeRequest, MerchantStatDto,
   MerchantUpdateRequest, OperationalDashboardDto, PagedResponse, PermissionDto, PlatformAnalyticsDto,
-  PlatformDiagnosticsDto, PlatformSettingsDto, PlatformStatsDto, ReconciliationStatsDto, RecentImportDto, RoleDto, RuleDto,
+  PlatformDiagnosticsDto, PlatformSettingsDto, PlatformStatsDto, ReconciliationStatsDto, RecentImportDto,
+  RelationshipDto, RelationshipMergeRequest, RoleDto, RuleDto,
   SearchResultDto, SystemHealthDto,
-  TestRuleRequest, TestRuleResult, TransactionDto, UpdateBankRequest, UpdateFeatureFlagRequest,
-  UpdatePlatformSettingsRequest,
+  TestRuleRequest, TestRuleResult, TopCategoryPoint, TopMerchantPoint, TransactionDto, TrendPoint,
+  UpdateBankRequest, UpdateFeatureFlagRequest,
+  UpdatePlatformSettingsRequest, UpdateRelationshipRequest,
   UpdateRuleRequest, UserDetailDto, UserSummaryDto, WorkspaceSummaryDto,
 } from '../types';
 
@@ -241,6 +244,45 @@ export const adminUserMerchantsApi = {
     api.patch<MerchantDto>(`/admin/users/${userId}/merchants/${merchantId}`, request).then((r) => r.data),
   merge: (userId: string, merchantId: string, request: MerchantMergeRequest) =>
     api.post<MerchantDto>(`/admin/users/${userId}/merchants/${merchantId}/merge`, request).then((r) => r.data),
+  // undo rolls back the single most recent learning event; resetLearning clears the merchant's
+  // whole learned-category distribution. Both moved here when the self-service merchant console
+  // was retired -- see AdminUserMerchantController's class comment.
+  undo: (userId: string, merchantId: string) =>
+    api.post<MerchantDto>(`/admin/users/${userId}/merchants/${merchantId}/undo`).then((r) => r.data),
+  resetLearning: (userId: string, merchantId: string) =>
+    api.post<MerchantDto>(`/admin/users/${userId}/merchants/${merchantId}/reset-learning`).then((r) => r.data),
+};
+
+/** Admin, support-assisted relationship (family/friend/own-account) tagging for a specific user
+ *  -- AdminUserRelationshipController proxies the same RelationshipService the self-service
+ *  endpoint used before it was retired. */
+export const adminUserRelationshipsApi = {
+  list: (userId: string) => api.get<RelationshipDto[]>(`/admin/users/${userId}/relationships`).then((r) => r.data),
+  create: (userId: string, request: CreateRelationshipRequest) =>
+    api.post<RelationshipDto>(`/admin/users/${userId}/relationships`, request).then((r) => r.data),
+  update: (userId: string, id: string, request: UpdateRelationshipRequest) =>
+    api.put<RelationshipDto>(`/admin/users/${userId}/relationships/${id}`, request).then((r) => r.data),
+  merge: (userId: string, id: string, request: RelationshipMergeRequest) =>
+    api.post<RelationshipDto>(`/admin/users/${userId}/relationships/${id}/merge`, request).then((r) => r.data),
+  transactions: (userId: string, id: string) =>
+    api.get<TransactionDto[]>(`/admin/users/${userId}/relationships/${id}/transactions`).then((r) => r.data),
+  delete: (userId: string, id: string) => api.delete(`/admin/users/${userId}/relationships/${id}`),
+};
+
+/** Admin, read-only per-user analytics -- AdminUserAnalyticsController proxies the same
+ *  AnalyticsService the self-service Analytics page used. importStatistics is deliberately absent:
+ *  it stays self-service for the signed-in user's own Settings page. */
+export const adminUserAnalyticsApi = {
+  topMerchants: (userId: string, month?: string) =>
+    api.get<TopMerchantPoint[]>(`/admin/users/${userId}/analytics/top-merchants`, { params: { month } }).then((r) => r.data),
+  trend: (userId: string, month?: string) =>
+    api.get<TrendPoint[]>(`/admin/users/${userId}/analytics/trend`, { params: { month } }).then((r) => r.data),
+  categoryConfidence: (userId: string) =>
+    api.get<CategoryConfidencePoint[]>(`/admin/users/${userId}/analytics/category-confidence`).then((r) => r.data),
+  topCategories: (userId: string, month?: string) =>
+    api.get<TopCategoryPoint[]>(`/admin/users/${userId}/analytics/top-categories`, { params: { month } }).then((r) => r.data),
+  learningGrowth: (userId: string) =>
+    api.get<LearningGrowthPoint[]>(`/admin/users/${userId}/analytics/learning-growth`).then((r) => r.data),
 };
 
 export const adminLearningApi = {

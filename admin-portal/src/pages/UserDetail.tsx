@@ -3,19 +3,22 @@ import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft, ShieldBan, ShieldCheck, ShieldAlert, Wallet, ArrowLeftRight, Phone, Mail, Calendar,
-  Pencil, Plus, Trash2, X, Store, ListFilter, Sparkles, GitMerge,
+  Pencil, Plus, Trash2, X, Store, ListFilter, Sparkles, GitMerge, Users, PieChart,
 } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { useNotify } from '../context/NotificationContext';
 import {
-  adminAccountsApi, adminAuditApi, adminRolesApi, adminTransactionsApi, adminUserLearningApi,
-  adminUserMerchantsApi, adminUserRulesApi, adminUsersApi, adminUserWorkspaceApi, banksApi,
+  adminAccountsApi, adminAuditApi, adminRolesApi, adminTransactionsApi, adminUserAnalyticsApi,
+  adminUserLearningApi, adminUserMerchantsApi, adminUserRelationshipsApi, adminUserRulesApi,
+  adminUsersApi, adminUserWorkspaceApi, banksApi,
 } from '../api/endpoints';
 import type {
-  AccountDto, AdminUpdateUserRequest, CreateAccountRequest, CreateRuleRequest, LearningSummaryDto,
-  LearningTimelineEntry, MerchantDto, RuleDto, UpdateRuleRequest, WorkspaceSummaryDto,
+  AccountDto, AdminUpdateUserRequest, CategoryConfidencePoint, CreateAccountRequest,
+  CreateRelationshipRequest, CreateRuleRequest, LearningGrowthPoint, LearningSummaryDto,
+  LearningTimelineEntry, MerchantDto, RelationshipDto, RuleDto, TopCategoryPoint, TopMerchantPoint,
+  TrendPoint, UpdateRelationshipRequest, UpdateRuleRequest, WorkspaceSummaryDto,
 } from '../types';
 
 const ACCOUNT_TYPES = ['SAVINGS', 'CREDIT_CARD', 'WALLET', 'INVESTMENT'];
@@ -441,6 +444,10 @@ function MerchantRow({
 
   function invalidate() {
     void queryClient.invalidateQueries({ queryKey: ['admin-user-merchants', userId] });
+    // Undo/reset write MerchantLearningAudit rows, which LearningSection reads -- without this
+    // its timeline and summary keep showing pre-action state until a manual refresh.
+    void queryClient.invalidateQueries({ queryKey: ['admin-user-learning-summary', userId] });
+    void queryClient.invalidateQueries({ queryKey: ['admin-user-learning-timeline', userId] });
   }
 
   const renameMutation = useMutation({
@@ -470,10 +477,37 @@ function MerchantRow({
       notify.error(msg);
     },
   });
+  const undoMutation = useMutation({
+    mutationFn: () => adminUserMerchantsApi.undo(userId, merchant.id),
+    onSuccess: () => {
+      invalidate();
+      notify.success('Last learning event undone.');
+    },
+    onError: (err: any) => {
+      const msg = errorMessage(err, 'Failed to undo the last learning event.');
+      setError(msg);
+      notify.error(msg);
+    },
+  });
+  const resetLearningMutation = useMutation({
+    mutationFn: () => adminUserMerchantsApi.resetLearning(userId, merchant.id),
+    onSuccess: () => {
+      invalidate();
+      notify.success('Learning reset for this merchant.');
+    },
+    onError: (err: any) => {
+      const msg = errorMessage(err, 'Failed to reset learning for this merchant.');
+      setError(msg);
+      notify.error(msg);
+    },
+  });
 
   // Every OTHER merchant this same user has -- merging absorbs one of them into this row (see
   // MerchantService.merge()'s doc comment on the backend for exactly what that repoints).
   const otherMerchants = allMerchants.filter((m) => m.id !== merchant.id);
+  // Both actions operate on learned categories, so there's nothing to act on until this merchant
+  // has at least one.
+  const hasLearning = merchant.topCategory !== null;
 
   return (
     <div className="flex items-center justify-between text-sm py-2.5 border-b border-border last:border-b-0 gap-3">
@@ -543,6 +577,34 @@ function MerchantRow({
               </button>
             </>
           )}
+          {hasLearning && (
+            <>
+              <button
+                type="button"
+                disabled={undoMutation.isPending}
+                onClick={() => {
+                  if (confirm(`Undo the last learning event for "${merchant.canonicalName}"?`)) {
+                    undoMutation.mutate();
+                  }
+                }}
+                className="text-xs font-semibold text-primary px-2 py-1.5 disabled:opacity-50"
+              >
+                Undo
+              </button>
+              <button
+                type="button"
+                disabled={resetLearningMutation.isPending}
+                onClick={() => {
+                  if (confirm(`Reset ALL learned categories for "${merchant.canonicalName}"? This can't be undone.`)) {
+                    resetLearningMutation.mutate();
+                  }
+                }}
+                className="text-xs font-semibold text-danger px-2 py-1.5 disabled:opacity-50"
+              >
+                Reset learning
+              </button>
+            </>
+          )}
           <button
             type="button"
             title="Rename"
@@ -557,10 +619,10 @@ function MerchantRow({
   );
 }
 
-/** Per-user merchant management, admin-proxy version of the self-service Merchant Management
- *  console (see AdminUserMerchantController's class comment on why confirm-category/undo/
- *  reset-learning aren't mirrored here -- only rename and merge, the two actions that make sense
- *  on a name/duplicate-cleanup basis rather than in the context of one specific transaction). */
+/** Per-user merchant management -- admin-only now that the self-service Merchant Management
+ *  console has been retired. Rename/merge plus Undo/Reset Learning (AdminUserMerchantController's
+ *  full surface, including the three actions originally left off this proxy back when users could
+ *  still do them themselves -- see that controller's class comment). */
 function MerchantsSection({ userId }: { userId: string }) {
   const { hasPermission } = useAdminAuth();
   const canManage = hasPermission('MERCHANT_MANAGE');
@@ -846,11 +908,280 @@ function RulesSection({ userId }: { userId: string }) {
   );
 }
 
+const RELATIONSHIP_TYPES = ['FAMILY', 'FRIEND', 'OWN_ACCOUNT', 'OTHER'];
+const IDENTIFIER_TYPES = ['UPI_ID', 'ACCOUNT_LAST4', 'NAME_PATTERN'];
+const BLANK_RELATIONSHIP_FORM: CreateRelationshipRequest = {
+  label: '', relationshipType: 'FAMILY', identifiers: [{ identifierType: 'UPI_ID', identifierValue: '' }],
+};
+
+/** Compact create/edit form for a single relationship, embedded inline in RelationshipsSection --
+ *  same "no floating modal" convention as InlineRuleForm above. Only a single identifier row --
+ *  the self-service page supported adding several, but a support-assisted edit rarely needs more
+ *  than one and this keeps the form from ballooning; multi-identifier relationships created
+ *  elsewhere still display and merge correctly here, editing just replaces down to one. */
+function InlineRelationshipForm({
+  initial, submitting, error, onCancel, onSubmit,
+}: {
+  initial: CreateRelationshipRequest;
+  submitting: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onSubmit: (values: CreateRelationshipRequest) => void;
+}) {
+  const [form, setForm] = useState<CreateRelationshipRequest>(initial);
+  const identifier = form.identifiers[0] ?? { identifierType: 'UPI_ID', identifierValue: '' };
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSubmit(form);
+      }}
+      className="bg-bg border border-border rounded-lg p-3.5 space-y-2.5"
+    >
+      <div className="grid gap-2 md:grid-cols-2">
+        <input
+          required
+          placeholder="Label (e.g. Mom, Roommate)"
+          value={form.label}
+          onChange={(e) => setForm({ ...form, label: e.target.value })}
+          className="md:col-span-2 bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs"
+        />
+        <select
+          value={form.relationshipType}
+          onChange={(e) => setForm({ ...form, relationshipType: e.target.value })}
+          className="bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs"
+        >
+          {RELATIONSHIP_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <select
+          value={identifier.identifierType}
+          onChange={(e) => setForm({ ...form, identifiers: [{ ...identifier, identifierType: e.target.value }] })}
+          className="bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs"
+        >
+          {IDENTIFIER_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <input
+          required
+          placeholder="Identifier value"
+          value={identifier.identifierValue}
+          onChange={(e) => setForm({ ...form, identifiers: [{ ...identifier, identifierValue: e.target.value }] })}
+          className="md:col-span-2 bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs"
+        />
+      </div>
+      {error && <p className="text-xs text-danger">{error}</p>}
+      <div className="flex items-center gap-2">
+        <button
+          type="submit"
+          disabled={submitting}
+          className="text-xs font-semibold text-white bg-primary hover:bg-primary-dark rounded-lg px-3 py-1.5 disabled:opacity-50"
+        >
+          {submitting ? 'Saving…' : 'Save'}
+        </button>
+        <button type="button" onClick={onCancel} className="text-xs text-muted px-3 py-1.5">
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function RelationshipRow({ userId, relationship, allRelationships }: {
+  userId: string; relationship: RelationshipDto; allRelationships: RelationshipDto[];
+}) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [mergeFrom, setMergeFrom] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  function invalidate() {
+    void queryClient.invalidateQueries({ queryKey: ['admin-user-relationships', userId] });
+  }
+
+  const updateMutation = useMutation({
+    mutationFn: (values: UpdateRelationshipRequest) => adminUserRelationshipsApi.update(userId, relationship.id, values),
+    onSuccess: () => {
+      setEditing(false);
+      setError(null);
+      invalidate();
+    },
+    onError: (err: any) => setError(errorMessage(err, 'Failed to update this relationship.')),
+  });
+  const mergeMutation = useMutation({
+    mutationFn: (mergeFromRelationshipId: string) =>
+      adminUserRelationshipsApi.merge(userId, relationship.id, { mergeFromRelationshipId }),
+    onSuccess: () => {
+      setMergeFrom('');
+      invalidate();
+    },
+    onError: (err: any) => setError(errorMessage(err, 'Failed to merge these relationships.')),
+  });
+  const deleteMutation = useMutation({
+    mutationFn: () => adminUserRelationshipsApi.delete(userId, relationship.id),
+    onSuccess: invalidate,
+  });
+
+  const otherRelationships = allRelationships.filter((r) => r.id !== relationship.id);
+
+  if (editing) {
+    return (
+      <div className="py-2.5 border-b border-border last:border-b-0">
+        <InlineRelationshipForm
+          initial={{
+            label: relationship.label,
+            relationshipType: relationship.relationshipType,
+            linkedAccountId: relationship.linkedAccountId ?? undefined,
+            identifiers: relationship.identifiers.map((i) => ({
+              identifierType: i.identifierType, identifierValue: i.identifierValue,
+            })),
+          }}
+          submitting={updateMutation.isPending}
+          error={error}
+          onCancel={() => {
+            setEditing(false);
+            setError(null);
+          }}
+          onSubmit={(values) => updateMutation.mutate(values)}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between text-sm py-2.5 border-b border-border last:border-b-0 gap-3">
+      <div className="min-w-0 flex-1">
+        <p className="text-ink font-medium truncate">{relationship.label}</p>
+        <p className="text-xs text-muted">
+          {relationship.relationshipType} · {relationship.identifiers.length} identifier
+          {relationship.identifiers.length === 1 ? '' : 's'}
+        </p>
+        {error && <p className="text-xs text-danger mt-1">{error}</p>}
+      </div>
+      <div className="flex items-center gap-1.5 flex-shrink-0">
+        {otherRelationships.length > 0 && (
+          <>
+            <select
+              value={mergeFrom}
+              onChange={(e) => setMergeFrom(e.target.value)}
+              className="bg-bg border border-border rounded-lg px-2 py-1.5 text-xs"
+            >
+              <option value="">Merge from…</option>
+              {otherRelationships.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+            </select>
+            <button
+              type="button"
+              disabled={!mergeFrom || mergeMutation.isPending}
+              onClick={() => {
+                const fromLabel = otherRelationships.find((r) => r.id === mergeFrom)?.label;
+                if (confirm(`Merge "${fromLabel}" into "${relationship.label}"? This can't be undone.`)) {
+                  mergeMutation.mutate(mergeFrom);
+                }
+              }}
+              className="text-xs font-semibold text-primary px-2 py-1.5 disabled:opacity-50"
+            >
+              Merge
+            </button>
+          </>
+        )}
+        <button
+          type="button"
+          title="Edit"
+          onClick={() => setEditing(true)}
+          className="w-7 h-7 rounded-lg hover:bg-bg text-muted hover:text-ink inline-flex items-center justify-center"
+        >
+          <Pencil size={13} />
+        </button>
+        <button
+          type="button"
+          title="Delete"
+          disabled={deleteMutation.isPending}
+          onClick={() => {
+            if (confirm('Delete this relationship?')) deleteMutation.mutate();
+          }}
+          className="w-7 h-7 rounded-lg hover:bg-danger-bg text-muted hover:text-danger inline-flex items-center justify-center"
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Per-user relationship (family/friend/own-account) tagging -- admin-only now that the
+ *  self-service Relationships tab (bundled into the old Rules page) has been retired. Reuses
+ *  RelationshipService's exact USER-scope CRUD/merge logic via AdminUserRelationshipController,
+ *  same shape as RulesSection above. */
+function RelationshipsSection({ userId }: { userId: string }) {
+  const [showCreate, setShowCreate] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+
+  const { data: relationships, isLoading } = useQuery({
+    queryKey: ['admin-user-relationships', userId],
+    queryFn: () => adminUserRelationshipsApi.list(userId),
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (values: CreateRelationshipRequest) => adminUserRelationshipsApi.create(userId, values),
+    onSuccess: () => {
+      setShowCreate(false);
+      setCreateError(null);
+      void queryClient.invalidateQueries({ queryKey: ['admin-user-relationships', userId] });
+    },
+    onError: (err: any) => setCreateError(errorMessage(err, 'Failed to create relationship.')),
+  });
+
+  return (
+    <div className="bg-card border border-border rounded-xl2 shadow-card p-6">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Users size={15} className="text-primary" />
+          <h3 className="text-sm font-semibold text-ink">Relationships</h3>
+        </div>
+        {!showCreate && (
+          <button
+            type="button"
+            onClick={() => {
+              setShowCreate(true);
+              setCreateError(null);
+            }}
+            className="inline-flex items-center gap-1 text-xs font-semibold text-primary"
+          >
+            <Plus size={13} /> New relationship
+          </button>
+        )}
+      </div>
+      {showCreate && (
+        <div className="mb-3">
+          <InlineRelationshipForm
+            initial={BLANK_RELATIONSHIP_FORM}
+            submitting={createMutation.isPending}
+            error={createError}
+            onCancel={() => {
+              setShowCreate(false);
+              setCreateError(null);
+            }}
+            onSubmit={(values) => createMutation.mutate(values)}
+          />
+        </div>
+      )}
+      {isLoading && <p className="text-sm text-muted">Loading…</p>}
+      {!isLoading && (relationships ?? []).length === 0 && (
+        <p className="text-sm text-muted">No relationships tagged for this user yet.</p>
+      )}
+      <div>
+        {relationships?.map((r) => (
+          <RelationshipRow key={r.id} userId={userId} relationship={r} allRelationships={relationships} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** Read-only Learning Engine visibility for a specific user -- AdminUserLearningController
  *  proxies the exact same MerchantLearningService.timeline()/summary() the self-service Learning
- *  Engine page used before it moved off the User Portal's main nav. No actions here on purpose:
- *  confirm/undo/reset live on MerchantController (self-service only), see
- *  AdminUserLearningController's class comment for why they aren't mirrored to the admin console. */
+ *  Engine page used before it was retired. Stays read-only here on purpose: undo/reset are actions
+ *  on a specific merchant, so they live on MerchantsSection above, not duplicated here. */
 function LearningSection({ userId }: { userId: string }) {
   const { data: summary, isLoading: summaryLoading } = useQuery<LearningSummaryDto>({
     queryKey: ['admin-user-learning-summary', userId],
@@ -1036,6 +1367,150 @@ function WorkspaceSection({ userId }: { userId: string }) {
   );
 }
 
+function fmtCurrency(n: number) {
+  return `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+}
+
+/** A single labeled bar-list row, sized relative to the largest value in its list -- same visual
+ *  primitive reused across every Analytics view below rather than pulling in a charting library
+ *  (admin-portal has none today; the removed self-service Analytics.tsx used chart.js in the
+ *  User Portal only). Deliberately simple bars, not a line chart -- good enough for a
+ *  support-assisted glance at one user's spend, not a general-purpose dashboard. */
+function BarListRow({ label, value, max, formattedValue }: { label: string; value: number; max: number; formattedValue: string }) {
+  const pct = max > 0 ? Math.max((value / max) * 100, 2) : 0;
+  return (
+    <div className="text-xs">
+      <div className="flex justify-between mb-0.5">
+        <span className="text-ink truncate">{label}</span>
+        <span className="text-muted flex-shrink-0 ml-2">{formattedValue}</span>
+      </div>
+      <div className="h-1.5 rounded-full bg-black/5 overflow-hidden">
+        <div className="h-full bg-primary rounded-full" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+/** Per-user analytics -- admin-only now that the self-service Analytics page has been retired.
+ *  Reuses AnalyticsService's exact per-user queries via AdminUserAnalyticsController, same read-only
+ *  shape as LearningSection above. importStatistics is intentionally not shown here -- it stays on
+ *  the signed-in user's own Settings page, see AdminUserAnalyticsController's class comment. */
+function AnalyticsSection({ userId }: { userId: string }) {
+  const { data: topMerchants, isLoading: topMerchantsLoading } = useQuery<TopMerchantPoint[]>({
+    queryKey: ['admin-user-analytics-top-merchants', userId],
+    queryFn: () => adminUserAnalyticsApi.topMerchants(userId),
+  });
+  const { data: topCategories, isLoading: topCategoriesLoading } = useQuery<TopCategoryPoint[]>({
+    queryKey: ['admin-user-analytics-top-categories', userId],
+    queryFn: () => adminUserAnalyticsApi.topCategories(userId),
+  });
+  const { data: trend, isLoading: trendLoading } = useQuery<TrendPoint[]>({
+    queryKey: ['admin-user-analytics-trend', userId],
+    queryFn: () => adminUserAnalyticsApi.trend(userId),
+  });
+  const { data: categoryConfidence, isLoading: categoryConfidenceLoading } = useQuery<CategoryConfidencePoint[]>({
+    queryKey: ['admin-user-analytics-category-confidence', userId],
+    queryFn: () => adminUserAnalyticsApi.categoryConfidence(userId),
+  });
+  const { data: learningGrowth, isLoading: learningGrowthLoading } = useQuery<LearningGrowthPoint[]>({
+    queryKey: ['admin-user-analytics-learning-growth', userId],
+    queryFn: () => adminUserAnalyticsApi.learningGrowth(userId),
+  });
+
+  const isLoading = topMerchantsLoading || topCategoriesLoading || trendLoading || categoryConfidenceLoading || learningGrowthLoading;
+  const maxMerchantSpend = Math.max(1, ...(topMerchants ?? []).map((m) => m.totalSpend));
+  const maxCategorySpend = Math.max(1, ...(topCategories ?? []).map((c) => c.totalSpend));
+  const maxTrendSpend = Math.max(1, ...(trend ?? []).map((t) => t.totalSpend));
+
+  return (
+    <div className="bg-card border border-border rounded-xl2 shadow-card p-6">
+      <div className="flex items-center gap-2 mb-3">
+        <PieChart size={15} className="text-primary" />
+        <h3 className="text-sm font-semibold text-ink">Analytics</h3>
+      </div>
+
+      {isLoading && <p className="text-sm text-muted">Loading…</p>}
+
+      {!isLoading && (
+        <div className="grid md:grid-cols-2 gap-x-8 gap-y-5">
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-muted mb-2">Top merchants</p>
+            {(topMerchants ?? []).length === 0 ? (
+              <p className="text-xs text-muted">No merchant-attributed spend yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {topMerchants!.map((m) => (
+                  <BarListRow key={m.merchantId} label={m.merchantName} value={m.totalSpend} max={maxMerchantSpend}
+                    formattedValue={`${fmtCurrency(m.totalSpend)} (${m.transactionCount})`} />
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-muted mb-2">Top categories</p>
+            {(topCategories ?? []).length === 0 ? (
+              <p className="text-xs text-muted">No categorized spend yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {topCategories!.map((c) => (
+                  <BarListRow key={c.categoryId} label={c.categoryName} value={c.totalSpend} max={maxCategorySpend}
+                    formattedValue={`${fmtCurrency(c.totalSpend)} (${c.transactionCount})`} />
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-muted mb-2">Spend trend</p>
+            {(trend ?? []).every((t) => t.totalSpend === 0) ? (
+              <p className="text-xs text-muted">No spend recorded yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {trend!.map((t) => (
+                  <BarListRow key={t.month} label={t.month} value={t.totalSpend} max={maxTrendSpend}
+                    formattedValue={fmtCurrency(t.totalSpend)} />
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-muted mb-2">Category confidence</p>
+            {(categoryConfidence ?? []).length === 0 ? (
+              <p className="text-xs text-muted">No learned categories yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {categoryConfidence!.map((c) => (
+                  <BarListRow key={c.category} label={c.category} value={c.avgConfidence} max={100}
+                    formattedValue={`${c.avgConfidence}% (${c.merchantCount} merchants)`} />
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="md:col-span-2">
+            <p className="text-[11px] uppercase tracking-wide text-muted mb-2">Learning growth</p>
+            {(learningGrowth ?? []).every((g) => g.learnedCount === 0 && g.correctedCount === 0) ? (
+              <p className="text-xs text-muted">No learning activity yet.</p>
+            ) : (
+              <dl className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-xs">
+                {learningGrowth!.map((g) => (
+                  <div key={g.month} className="bg-bg border border-border rounded-lg p-2">
+                    <dt className="text-muted mb-0.5">{g.month}</dt>
+                    <dd className="text-ink font-medium">{g.learnedCount} learned</dd>
+                    <dd className="text-warning">{g.correctedCount} corrected</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UserDetailContent({ id }: { id: string }) {
   const { hasPermission } = useAdminAuth();
   const canModify = hasPermission('USER_DELETE');
@@ -1175,7 +1650,9 @@ function UserDetailContent({ id }: { id: string }) {
       {hasPermission('TRANSACTION_DELETE') && <TransactionsSection userId={id} />}
       {hasPermission('MERCHANT_MANAGE') && <MerchantsSection userId={id} />}
       {hasPermission('RULE_MANAGE') && <RulesSection userId={id} />}
+      {hasPermission('RELATIONSHIP_MANAGE') && <RelationshipsSection userId={id} />}
       {hasPermission('MERCHANT_MANAGE') && <LearningSection userId={id} />}
+      {hasPermission('PLATFORM_ANALYTICS_VIEW') && <AnalyticsSection userId={id} />}
       {hasPermission('RECONCILIATION_VIEW') && <WorkspaceSection userId={id} />}
 
       {canManageRoles && (

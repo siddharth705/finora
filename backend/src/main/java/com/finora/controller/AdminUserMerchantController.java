@@ -2,8 +2,10 @@ package com.finora.controller;
 
 import com.finora.dto.ApiResponse;
 import com.finora.dto.MerchantDto;
+import com.finora.service.MerchantLearningService;
 import com.finora.transactions.TransactionDto;
 import com.finora.service.MerchantService;
+import com.finora.transactions.TransactionService;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -19,11 +21,12 @@ import java.util.UUID;
  * sourced from the path instead of CurrentUser. Same "thin proxy" pattern as
  * AdminTransactionController.
  *
- * confirm-category/undo/reset-learning (MerchantController's other three endpoints) are
- * deliberately NOT mirrored here -- those apply a specific category choice or roll back a
- * specific learning event, which only makes sense in the context of the user actually reviewing
- * their own transaction, not an admin acting on a name/duplicate-cleanup basis. Left out rather
- * than built as an unused surface.
+ * confirm-category/undo/reset-learning were originally left out here because they only made
+ * sense in the context of the user actually reviewing their own transaction. That assumption no
+ * longer holds: MerchantController (the self-service counterpart) has been retired entirely, so
+ * these are now the only way anyone -- including the account's own owner -- can apply a category
+ * choice or roll back a learning event. Mirrored here with the same MerchantLearningService/
+ * TransactionService calls, just with userId sourced from the path.
  */
 @RestController
 @RequestMapping("/api/v1/admin/users/{userId}/merchants")
@@ -31,9 +34,14 @@ import java.util.UUID;
 public class AdminUserMerchantController {
 
     private final MerchantService merchantService;
+    private final MerchantLearningService merchantLearningService;
+    private final TransactionService transactionService;
 
-    public AdminUserMerchantController(MerchantService merchantService) {
+    public AdminUserMerchantController(MerchantService merchantService, MerchantLearningService merchantLearningService,
+                                        TransactionService transactionService) {
         this.merchantService = merchantService;
+        this.merchantLearningService = merchantLearningService;
+        this.transactionService = transactionService;
     }
 
     @GetMapping
@@ -66,5 +74,24 @@ public class AdminUserMerchantController {
     public ApiResponse<MerchantDto> merge(@PathVariable UUID userId, @PathVariable UUID id,
                                            @Valid @RequestBody MerchantDto.MergeRequest request) {
         return ApiResponse.ok(merchantService.merge(userId, id, request.mergeFromMerchantId()), "Merchants merged");
+    }
+
+    @PostMapping("/{merchantId}/confirm-category")
+    public ApiResponse<MerchantDto> confirmCategory(@PathVariable UUID userId, @PathVariable UUID merchantId,
+                                                      @Valid @RequestBody MerchantDto.ConfirmCategoryRequest request) {
+        transactionService.confirmMerchantCategory(userId, merchantId, request.applyToTransactionId(), request.categoryId());
+        return ApiResponse.ok(merchantService.get(userId, merchantId), "Category confirmed");
+    }
+
+    @PostMapping("/{id}/undo")
+    public ApiResponse<MerchantDto> undo(@PathVariable UUID userId, @PathVariable UUID id) {
+        merchantLearningService.undo(userId, id);
+        return ApiResponse.ok(merchantService.get(userId, id), "Last learning event undone");
+    }
+
+    @PostMapping("/{id}/reset-learning")
+    public ApiResponse<MerchantDto> resetLearning(@PathVariable UUID userId, @PathVariable UUID id) {
+        merchantLearningService.reset(userId, id);
+        return ApiResponse.ok(merchantService.get(userId, id), "Learning reset for this merchant");
     }
 }

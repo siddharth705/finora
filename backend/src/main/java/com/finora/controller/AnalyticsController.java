@@ -10,16 +10,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.time.YearMonth;
-
-/** GET /api/v1/analytics/merchants?view=...&month=YYYY-MM -- one endpoint, one query param
- *  selecting which AnalyticsService method backs the response, per spec §5.7/§8 ("not eight
- *  separate endpoints"). Kept as one endpoint for the three new Workspace Analytics views too
- *  (topCategories/importStatistics/learningGrowth) rather than starting a second convention --
- *  same reasoning, same shape, just more views behind the one switch. "merchants" in the path is
- *  now a slight misnomer (not every view is merchant-scoped) but renaming a stable, already-
- *  shipped route for that alone isn't worth the churn -- see AnalyticsService's own doc comment
- *  for why rule usage isn't among the views added here. */
+/** GET /api/v1/analytics/merchants?view=importStatistics -- the one self-service analytics view
+ *  that survives here. The other five views this endpoint used to serve (topMerchants/trend/
+ *  categoryConfidence/topCategories/learningGrowth) moved to AdminUserAnalyticsController when
+ *  the self-service Analytics page was retired in favor of admin-only per-user analytics --
+ *  importStatistics stays self-service because Settings.tsx's Account section still calls it
+ *  directly for the logged-in user's own statement-import tiles. Kept the `view=` query-param
+ *  shape (rather than collapsing to a plain GET) so that call site didn't need to change. */
 @RestController
 @RequestMapping("/api/v1/analytics")
 public class AnalyticsController {
@@ -33,27 +30,11 @@ public class AnalyticsController {
     }
 
     @GetMapping("/merchants")
-    public ApiResponse<?> merchants(@RequestParam String view, @RequestParam(required = false) String month) {
-        YearMonth parsedMonth = parseMonth(month);
+    public ApiResponse<?> merchants(@RequestParam String view) {
         return switch (view) {
-            case "topMerchants" -> ApiResponse.ok(analyticsService.topMerchants(currentUser.id(), parsedMonth));
-            case "trend" -> ApiResponse.ok(analyticsService.merchantTrend(currentUser.id(), parsedMonth));
-            case "categoryConfidence" -> ApiResponse.ok(analyticsService.categoryConfidence(currentUser.id()));
-            case "topCategories" -> ApiResponse.ok(analyticsService.topCategories(currentUser.id(), parsedMonth));
             case "importStatistics" -> ApiResponse.ok(analyticsService.importStatistics(currentUser.id()));
-            case "learningGrowth" -> ApiResponse.ok(analyticsService.learningGrowth(currentUser.id()));
             default -> throw new ApiException(HttpStatus.BAD_REQUEST,
-                    "Unsupported view '" + view + "'. Supported views: topMerchants, trend, categoryConfidence, "
-                            + "topCategories, importStatistics, learningGrowth.");
+                    "Unsupported view '" + view + "'. Supported views: importStatistics.");
         };
-    }
-
-    private YearMonth parseMonth(String month) {
-        if (month == null || month.isBlank()) return null;
-        try {
-            return YearMonth.parse(month);
-        } catch (java.time.format.DateTimeParseException e) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "month must be in YYYY-MM format.");
-        }
     }
 }

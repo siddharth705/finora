@@ -3,7 +3,6 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Wallet, ArrowLeftRight, PiggyBank, Target, UploadCloud, History,
   TrendingUp, BarChart3, Sparkles, Settings as SettingsIcon, ChevronRight, MoreVertical, LogOut,
-  Store, ListFilter, Brain, PieChart, Activity,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -21,11 +20,6 @@ const links = [
   { to: '/app/investments', label: 'Investments', icon: TrendingUp },
   { to: '/app/reports', label: 'Reports', icon: BarChart3 },
   { to: '/app/insights', label: 'Insights', icon: Sparkles },
-  { to: '/app/merchants', label: 'Merchants', icon: Store },
-  { to: '/app/rules', label: 'Rules', icon: ListFilter },
-  { to: '/app/learning', label: 'Learning Engine', icon: Brain },
-  { to: '/app/analytics', label: 'Analytics', icon: PieChart },
-  { to: '/app/activity', label: 'Activity', icon: Activity },
   { to: '/app/settings', label: 'Settings', icon: SettingsIcon },
 ];
 

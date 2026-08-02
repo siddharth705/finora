@@ -2,7 +2,7 @@ import { api, rawApi, type ApiEnvelope } from './client';
 import type {
   Account, AccountStatementGroup, BankInfo, Budget, DashboardSummary, DetectedAccountInfo, Goal,
   ImportSummary, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, Transaction,
-  Merchant, MerchantAuditEntry, Rule, Relationship, WorkspaceSettings, AuditLogEntry, UnparseableRow,
+  WorkspaceSettings, UnparseableRow,
 } from '../types';
 
 // Mirrors the backend's AuthDtos.AuthResponse. maskedPhone (see PhoneMasking on the backend) lets
@@ -432,158 +432,28 @@ export const passwordChangeApi = {
     ).then((r) => r.data),
 };
 
-// --- Merchant Management (docs/financial-intelligence-engine-spec.md §5) ---
+// --- Import statistics ---
+//
+// The only analytics view still exposed to end users -- merchant/rule/relationship/learning
+// management and the rest of the analytics views are admin-only now (see the admin portal's
+// UserDetail page and the backend's AdminUser*Controller family). This one stays because
+// Settings.tsx's Account section shows the signed-in user their own import totals.
 
-export const merchantsApi = {
-  list: () => api.get<Merchant[]>('/merchants').then((r) => r.data),
-  get: (id: string) => api.get<Merchant>(`/merchants/${id}`).then((r) => r.data),
-  audit: (id: string) => api.get<MerchantAuditEntry[]>(`/merchants/${id}/audit`).then((r) => r.data),
-  update: (id: string, body: { canonicalName?: string; website?: string }) =>
-    api.patch<Merchant>(`/merchants/${id}`, body).then((r) => r.data),
-  merge: (id: string, mergeFromMerchantId: string) =>
-    api.post<Merchant>(`/merchants/${id}/merge`, { mergeFromMerchantId }).then((r) => r.data),
-  confirmCategory: (merchantId: string, categoryId: string, applyToTransactionId: string) =>
-    api.post<Merchant>(`/merchants/${merchantId}/confirm-category`, { categoryId, applyToTransactionId }).then((r) => r.data),
-  undo: (id: string) => api.post<Merchant>(`/merchants/${id}/undo`).then((r) => r.data),
-  // Financial Intelligence Workspace, Learning Engine module -- see
-  // MerchantLearningService.reset()'s own doc comment for how this differs from undo().
-  resetLearning: (id: string) => api.post<Merchant>(`/merchants/${id}/reset-learning`).then((r) => r.data),
-};
-
-// --- Learning Engine (Financial Intelligence Workspace) ---
-
-export interface LearningTimelineEntry {
-  id: string;
-  merchantId: string;
-  merchantName: string;
-  action: 'LEARNED' | 'CORRECTED' | 'UNDONE' | 'MERGED' | 'RESET';
-  previousCategoryName: string | null;
-  newCategoryName: string | null;
-  createdAt: string;
-}
-export interface LearningSummary {
-  learnedMerchants: number;
-  totalConfirmations: number;
-  correctedCount: number;
-  resetCount: number;
-}
-export const learningApi = {
-  timeline: () => api.get<LearningTimelineEntry[]>('/learning/timeline').then((r) => r.data),
-  summary: () => api.get<LearningSummary>('/learning/summary').then((r) => r.data),
-};
-
-// --- Rule Engine (docs/rule-engine-relationship-engine-eds.md) ---
-
-export interface RuleCreateRequest {
-  field: string;
-  operator: string;
-  comparisonValue: string;
-  actionType: string;
-  actionValue?: string;
-  priority?: number;
-}
-export interface RuleUpdateRequest {
-  field?: string;
-  operator?: string;
-  comparisonValue?: string;
-  actionType?: string;
-  actionValue?: string;
-  priority?: number;
-  enabled?: boolean;
-}
-export const rulesApi = {
-  list: () => api.get<Rule[]>('/rules').then((r) => r.data),
-  create: (body: RuleCreateRequest) => api.post<Rule>('/rules', body).then((r) => r.data),
-  update: (id: string, body: RuleUpdateRequest) => api.put<Rule>(`/rules/${id}`, body).then((r) => r.data),
-  remove: (id: string) => api.delete(`/rules/${id}`),
-};
-
-// --- Relationship Engine (docs/rule-engine-relationship-engine-eds.md §3.3) ---
-
-export interface RelationshipCreateRequest {
-  label: string;
-  relationshipType: string;
-  linkedAccountId?: string;
-  identifiers: { identifierType: string; identifierValue: string }[];
-}
-// Every field optional -- only supplied ones change, same partial-update convention as the
-// backend's RelationshipDto.UpdateRequest. identifiers, when supplied, REPLACES the relationship's
-// whole identifier list rather than appending -- see that record's own doc comment.
-export interface RelationshipUpdateRequest {
-  label?: string;
-  relationshipType?: string;
-  linkedAccountId?: string;
-  identifiers?: { identifierType: string; identifierValue: string }[];
-}
-export const relationshipsApi = {
-  list: () => api.get<Relationship[]>('/relationships').then((r) => r.data),
-  create: (body: RelationshipCreateRequest) => api.post<Relationship>('/relationships', body).then((r) => r.data),
-  update: (id: string, body: RelationshipUpdateRequest) => api.put<Relationship>(`/relationships/${id}`, body).then((r) => r.data),
-  merge: (id: string, mergeFromRelationshipId: string) =>
-    api.post<Relationship>(`/relationships/${id}/merge`, { mergeFromRelationshipId }).then((r) => r.data),
-  transactions: (id: string) => api.get<Transaction[]>(`/relationships/${id}/transactions`).then((r) => r.data),
-  remove: (id: string) => api.delete(`/relationships/${id}`),
-};
-
-// --- Merchant Analytics (docs/financial-intelligence-engine-spec.md §5.7) ---
-
-export interface TopMerchantPoint {
-  merchantId: string;
-  merchantName: string;
-  totalSpend: number;
-  transactionCount: number;
-}
-export interface TrendPoint {
-  month: string;
-  totalSpend: number;
-}
-export interface CategoryConfidencePoint {
-  category: string;
-  avgConfidence: number;
-  merchantCount: number;
-}
-export interface TopCategoryPoint {
-  categoryId: string;
-  categoryName: string;
-  totalSpend: number;
-  transactionCount: number;
-}
 export interface ImportStatistics {
   totalStatements: number;
   totalTransactionsImported: number;
   totalTransactionsSkipped: number;
   lastImportedAt: string | null;
 }
-export interface LearningGrowthPoint {
-  month: string;
-  learnedCount: number;
-  correctedCount: number;
-}
 export const analyticsApi = {
-  topMerchants: (month?: string) =>
-    api.get<TopMerchantPoint[]>('/analytics/merchants', { params: { view: 'topMerchants', month } }).then((r) => r.data),
-  trend: (month?: string) =>
-    api.get<TrendPoint[]>('/analytics/merchants', { params: { view: 'trend', month } }).then((r) => r.data),
-  categoryConfidence: () =>
-    api.get<CategoryConfidencePoint[]>('/analytics/merchants', { params: { view: 'categoryConfidence' } }).then((r) => r.data),
-  // Financial Intelligence Workspace, Analytics module -- same one-endpoint-many-views route as
-  // the three above, see AnalyticsController's own doc comment.
-  topCategories: (month?: string) =>
-    api.get<TopCategoryPoint[]>('/analytics/merchants', { params: { view: 'topCategories', month } }).then((r) => r.data),
   importStatistics: () =>
     api.get<ImportStatistics>('/analytics/merchants', { params: { view: 'importStatistics' } }).then((r) => r.data),
-  learningGrowth: () =>
-    api.get<LearningGrowthPoint[]>('/analytics/merchants', { params: { view: 'learningGrowth' } }).then((r) => r.data),
 };
 
-// --- Financial Intelligence Workspace: Dashboard + Activity Timeline ---
+// --- Financial Intelligence Workspace: Dashboard ---
 
 export const workspaceApi = {
   getSettings: () => api.get<WorkspaceSettings>('/workspace/settings').then((r) => r.data),
   updateSettings: (body: { autoApplyConfidenceThreshold: number }) =>
     api.put<WorkspaceSettings>('/workspace/settings', body).then((r) => r.data),
-};
-
-export const activityApi = {
-  list: () => api.get<AuditLogEntry[]>('/activity').then((r) => r.data),
 };

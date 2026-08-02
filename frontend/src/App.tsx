@@ -26,11 +26,6 @@ import Goals from './pages/Goals';
 import Investments from './pages/Investments';
 import Reports from './pages/Reports';
 import Insights from './pages/Insights';
-import ActivityTimeline from './pages/ActivityTimeline';
-import Merchants from './pages/Merchants';
-import Rules from './pages/Rules';
-import LearningEngine from './pages/LearningEngine';
-import Analytics from './pages/Analytics';
 import Settings from './pages/Settings';
 import Setup from './pages/Setup';
 
@@ -95,11 +90,6 @@ export default function App() {
           <Route path="/app/investments" element={<Protected><Investments /></Protected>} />
           <Route path="/app/reports" element={<Protected><Reports /></Protected>} />
           <Route path="/app/insights" element={<Protected><Insights /></Protected>} />
-          <Route path="/app/activity" element={<Protected><ActivityTimeline /></Protected>} />
-          <Route path="/app/merchants" element={<Protected><Merchants /></Protected>} />
-          <Route path="/app/rules" element={<Protected><Rules /></Protected>} />
-          <Route path="/app/learning" element={<Protected><LearningEngine /></Protected>} />
-          <Route path="/app/analytics" element={<Protected><Analytics /></Protected>} />
           <Route path="/app/settings" element={<Protected><Settings /></Protected>} />
         </Routes>
       </BrowserRouter>

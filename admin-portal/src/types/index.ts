@@ -392,6 +392,81 @@ export interface LearningSummaryDto {
   resetCount: number;
 }
 
+// --- Relationship Engine (AdminUserRelationshipController) ---
+
+export interface RelationshipIdentifierDto {
+  id: string;
+  identifierType: string;
+  identifierValue: string;
+}
+
+export interface RelationshipDto {
+  id: string;
+  label: string;
+  relationshipType: string;
+  linkedAccountId: string | null;
+  identifiers: RelationshipIdentifierDto[];
+}
+
+export interface RelationshipIdentifierRequest {
+  identifierType: string;
+  identifierValue: string;
+}
+
+export interface CreateRelationshipRequest {
+  label: string;
+  relationshipType: string;
+  linkedAccountId?: string;
+  identifiers: RelationshipIdentifierRequest[];
+}
+
+/** Every field optional -- only supplied ones change. identifiers, when supplied, REPLACES the
+ *  relationship's whole identifier list rather than appending; see the backend's
+ *  RelationshipDto.UpdateRequest for why a full replace is the one unambiguous contract. */
+export interface UpdateRelationshipRequest {
+  label?: string;
+  relationshipType?: string;
+  linkedAccountId?: string;
+  identifiers?: RelationshipIdentifierRequest[];
+}
+
+export interface RelationshipMergeRequest {
+  mergeFromRelationshipId: string;
+}
+
+// --- Per-user analytics (AdminUserAnalyticsController) ---
+
+export interface TopMerchantPoint {
+  merchantId: string;
+  merchantName: string;
+  totalSpend: number;
+  transactionCount: number;
+}
+
+export interface TrendPoint {
+  month: string;
+  totalSpend: number;
+}
+
+export interface CategoryConfidencePoint {
+  category: string;
+  avgConfidence: number;
+  merchantCount: number;
+}
+
+export interface TopCategoryPoint {
+  categoryId: string;
+  categoryName: string;
+  totalSpend: number;
+  transactionCount: number;
+}
+
+export interface LearningGrowthPoint {
+  month: string;
+  learnedCount: number;
+  correctedCount: number;
+}
+
 export interface LearningGrowthPoint {
   month: string;
   learnedCount: number;

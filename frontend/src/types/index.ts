@@ -237,78 +237,11 @@ export interface ReimportResult {
   accountName: string;
 }
 
-// --- Merchant Management (docs/financial-intelligence-engine-spec.md §5) ---
-
-export interface MerchantDistributionEntry {
-  category: string;
-  confirmationCount: number;
-  confidence: number;
-}
-
-export interface Merchant {
-  id: string;
-  canonicalName: string;
-  logoUrl: string | null;
-  website: string | null;
-  topCategory: string | null;
-  topCategoryConfidence: number | null;
-  distribution: MerchantDistributionEntry[];
-}
-
-export interface MerchantAuditEntry {
-  action: 'LEARNED' | 'CORRECTED' | 'UNDONE' | 'MERGED';
-  previousCategory: string | null;
-  newCategory: string | null;
-  createdAt: string;
-}
-
-// --- Rule Engine (docs/rule-engine-relationship-engine-eds.md) ---
-
-export interface Rule {
-  id: string;
-  scope: 'GLOBAL' | 'USER';
-  field: 'DESCRIPTION' | 'AMOUNT' | 'MERCHANT' | 'ACCOUNT_TYPE';
-  operator: 'CONTAINS' | 'EQUALS' | 'STARTS_WITH' | 'GT' | 'LT' | 'BETWEEN';
-  comparisonValue: string;
-  actionType: 'ASSIGN_CATEGORY' | 'MARK_TRANSFER' | 'MARK_INVESTMENT' | 'MARK_SUBSCRIPTION' | 'ADD_TAG';
-  actionValue: string | null;
-  priority: number;
-  enabled: boolean;
-  // Financial Intelligence Workspace, Rule Management module -- see
-  // RuleEngineService.recordMatch's doc comment for exactly when these increment. For a GLOBAL
-  // rule this is a count across every user (one shared row), not just the current user's own.
-  matchCount: number;
-  lastMatchedAt: string | null;
-}
-
-// --- Relationship Engine (docs/rule-engine-relationship-engine-eds.md §3.3) ---
-
-export interface RelationshipIdentifierEntry {
-  id: string;
-  identifierType: 'UPI_ID' | 'ACCOUNT_LAST4' | 'NAME_PATTERN';
-  identifierValue: string;
-}
-
-export interface Relationship {
-  id: string;
-  label: string;
-  relationshipType: 'FAMILY' | 'FRIEND' | 'OWN_ACCOUNT' | 'OTHER';
-  linkedAccountId: string | null;
-  identifiers: RelationshipIdentifierEntry[];
-}
-
 // --- Financial Intelligence Workspace (docs/team-message-financial-intelligence-workspace-kickoff.md) ---
-
-export interface AuditLogEntry {
-  id: string;
-  userId: string;
-  action: string;
-  entityType: string;
-  entityId: string | null;
-  metadata: Record<string, unknown> | null;
-  requestId: string | null;
-  createdAt: string;
-}
+//
+// Merchant/Rule/Relationship/AuditLogEntry types used to live here, backing the self-service
+// Merchants/Rules/Learning Engine/Analytics/Activity pages. Those are admin-only now -- the
+// equivalent types live in the admin portal's own types/index.ts, mirroring the same backend DTOs.
 
 // Financial Intelligence Workspace, System Settings module. Just the one real, persisted field --
 // see backend WorkspaceSettingsService's class comment for why the rest of the System Settings
