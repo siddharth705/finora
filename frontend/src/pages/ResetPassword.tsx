@@ -90,7 +90,9 @@ export default function ResetPassword() {
     try {
       await authApi.resetPassword(token, otp, password);
       setDone(true);
-      setTimeout(() => navigate('/login'), 2000);
+      setTimeout(() => navigate('/login', {
+        state: { message: 'Password reset successfully. Please sign in using your new password.' },
+      }), 2000);
     } catch (err: any) {
       setError(err.response?.data?.message ?? 'Could not reset password. The code may be wrong or the link may have expired.');
     } finally {

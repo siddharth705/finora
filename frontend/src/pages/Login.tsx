@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useState, type FormEvent } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Sparkles, ShieldCheck, UploadCloud, TrendingUp, PiggyBank, Target, LineChart,
   Wallet, PieChart as PieChartIcon, BarChart3, ArrowRight,
@@ -22,10 +22,25 @@ const FEATURES = [
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // A one-time confirmation from ChangePasswordModal/ResetPassword's own post-success redirect
+  // (e.g. "Password updated successfully. Please sign in using your new password.") -- captured
+  // once on mount, not read reactively, so it can't reappear after being dismissed or on an
+  // unrelated re-render. Purely client-side router state, never a URL param or server round-trip,
+  // so it can't leak into a shared link or a server log.
+  const [banner] = useState<string | null>(() => (location.state as { message?: string } | null)?.message ?? null);
+
+  // Clears the router state right after reading it -- history.state otherwise survives a manual
+  // page refresh (unlike the in-memory banner state above), which would re-show a stale "password
+  // updated" confirmation on an unrelated future visit to this same history entry.
+  useEffect(() => {
+    if (banner) navigate(location.pathname, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Deliberately no format-restricting regex here (unlike Register's phone/email fields) --
   // this single field has to accept either a full email address or a mobile number, so it
@@ -114,6 +129,9 @@ export default function Login() {
           <h2 className="text-2xl font-bold text-ink mb-1">Sign in</h2>
           <p className="text-sm text-muted mb-6">Enter your details to access your account</p>
 
+          {banner && (
+            <p className="text-success text-sm bg-success-bg rounded-lg px-3 py-2 mb-4">{banner}</p>
+          )}
           {error && <p className="text-danger text-sm mb-4">{error}</p>}
 
           {/* Accepts either identifier -- users shouldn't have to remember which one they
