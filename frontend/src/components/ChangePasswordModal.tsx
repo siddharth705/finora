@@ -136,6 +136,16 @@ export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => voi
       // and previously vanished into the generic fallback text with zero trace anywhere, making
       // this exact failure mode undiagnosable from the browser alone.
       console.error('ChangePasswordModal: submitCurrentPassword failed', e);
+      // Bug fix: getRecaptchaVerifier() caches one RecaptchaVerifier instance at module scope and
+      // previously only cleared it when the modal unmounted -- so retrying "Send code" in place
+      // after ANY failure (wrong password, a network blip, anything) reused an
+      // already-consumed/expired invisible-reCAPTCHA widget on the next attempt, which
+      // signInWithPhoneNumber rejects with auth/argument-error regardless of whether the retry's
+      // password and phone number were perfectly valid. Resetting here is harmless when the
+      // failure happened before sendPhoneVerificationCode ever ran (e.g. a wrong-password 400
+      // from passwordChangeApi.start()) -- resetPhoneVerification() is a no-op on an
+      // already-null/unused verifier -- so it's safe to call unconditionally on any failure here.
+      resetPhoneVerification();
       setError(e.response?.data?.message ?? 'Could not start the password change. Please try again.');
     } finally {
       setSubmitting(false);
@@ -217,6 +227,16 @@ export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => voi
               </button>
             </div>
 
+            {/* Anchor for Firebase's invisible reCAPTCHA -- never visibly rendered, but must exist
+                in the DOM before sendPhoneVerificationCode() runs. Bug fix: this used to be
+                rendered only inside the 'otp' step's JSX, but sendPhoneVerificationCode() is
+                actually called from submitCurrentPassword() while step is still 'password' --
+                the container element didn't exist yet at the moment RecaptchaVerifier needed it,
+                so signInWithPhoneNumber() failed with auth/argument-error on every attempt, not
+                just retries. Rendered unconditionally here (outside any step-specific block) so
+                it's always present for the whole time the modal is mounted. */}
+            <div id={RECAPTCHA_CONTAINER_ID} />
+
             {step === 'password' && (
               <div className="space-y-3">
                 <p className="text-xs text-muted">Enter your current password to get started. We'll send a verification code to the phone on file.</p>
@@ -252,9 +272,6 @@ export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => voi
                   disabled={!confirmation}
                   className="bg-white text-gray-900 w-full border border-border rounded-lg px-3 py-2.5 text-center text-lg tracking-[0.4em] font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
                 />
-                {/* Anchor for Firebase's invisible reCAPTCHA -- never visibly rendered, but must
-                    exist in the DOM before sendPhoneVerificationCode() runs. */}
-                <div id={RECAPTCHA_CONTAINER_ID} />
                 {error && <p className="text-danger text-xs">{error}</p>}
                 <div className="flex items-center justify-between pt-3 border-t border-border">
                   <button type="button" onClick={startOver} className="text-primary text-[11px] font-medium">

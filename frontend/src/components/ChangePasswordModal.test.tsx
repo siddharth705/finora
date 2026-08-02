@@ -69,6 +69,29 @@ describe('ChangePasswordModal', () => {
       expect(screen.getByText(/\+•••••••••705/)).toBeInTheDocument();
     });
 
+    it('renders the reCAPTCHA container in the DOM before sendPhoneVerificationCode() is called', async () => {
+      // Regression test: sendPhoneVerificationCode()/RecaptchaVerifier require their container
+      // element to already exist in the DOM at call time -- Firebase throws auth/argument-error
+      // otherwise. This bug shipped once already: the container div used to be rendered only
+      // inside the OTP step's JSX, but submitCurrentPassword() calls sendPhoneVerificationCode()
+      // while still on the *password* step, before that step (and its div) ever renders -- so
+      // the call always failed, on every attempt, in production, while every other test in this
+      // file kept passing because sendPhoneVerificationCode is fully mocked below and never
+      // actually touches the real DOM requirement. This test doesn't mock that requirement away:
+      // it inspects the real document at the moment the mock is invoked.
+      let containerExistedAtCallTime = false;
+      vi.mocked(sendPhoneVerificationCode).mockImplementationOnce(async (_phone, containerId) => {
+        containerExistedAtCallTime = document.getElementById(containerId) !== null;
+        return FAKE_CONFIRMATION;
+      });
+      const user = userEvent.setup();
+      renderModal();
+
+      await advanceToOtpStep(user);
+
+      expect(containerExistedAtCallTime).toBe(true);
+    });
+
     it('shows the server error inline (e.g. wrong current password) without advancing', async () => {
       vi.mocked(passwordChangeApi.start).mockReset().mockRejectedValue({
         response: { data: { message: 'Current password is incorrect.' } },
