@@ -46,11 +46,16 @@ to leave at its default: local dev defaults, or must be explicitly set.
 | `ADMIN_APP_BASE_URL` | Recommended | `http://localhost:5174` | Same purpose as `APP_BASE_URL`, but for the admin portal specifically — see `EmailProperties.resolveBaseUrl()`. The user frontend and admin portal are separate deployed apps at separate origins, each with its own `/reset-password` page, but there's no separate admin auth service; without this set, an admin's "Forgot Password" links to the *user* app's reset page instead of the admin portal's own. Picked automatically from the request's `Origin` header — no frontend changes needed either way. | Leave unset only if you're fine with admin password resets linking to the wrong app |
 | `RESEND_API_KEY` | **Yes — hard boot-time requirement in `prod`** | empty | Resend API key; empty falls back to `NoOpEmailService` (logs the link instead of sending) | **No.** Unset, this used to just mean silent no-op emails; `ProductionConfigValidator` now refuses to *start* the `prod` profile at all if this is blank, because the actual failure mode is worse than "no email" — `NoOpEmailService.isConfigured()` returning `false` makes `AuthService.forgotPassword()` return the raw, valid reset link directly in the API response instead, a full account-takeover primitive for anyone who knows a user's email address. |
 | `EMAIL_FROM` | No | `onboarding@resend.dev` | "From" address for outgoing email | Only if you have your own verified sender |
+| `EMAIL_FROM_NAME` | No | empty | Optional display name shown alongside `EMAIL_FROM` in outgoing mail; unset just means the recipient's mail client shows the bare address | Yes |
 | `GOOGLE_APPLICATION_CREDENTIALS` | **Yes — hard boot-time requirement in `prod`** | unset | Absolute path to a Firebase service-account JSON key file; read directly by the Firebase Admin SDK (`FirebaseConfig`), not via a Spring `@ConfigurationProperties` binding — there's no `application.yml` key for this | **No.** `ProductionConfigValidator` refuses to start the `prod` profile unless `PhoneVerificationProvider.isConfigured()` (i.e. this file is present and valid) — see its own doc comment. Phone verification (registration, password reset, authenticated password change) fails with a 503 everywhere else if this is missing. |
 | *(unset)* | — | — | `FirebaseConfig.firebaseApp()` logs a warning and yields `Optional.empty()` — the app still starts (outside `prod`), but any phone-verification-gated flow fails until this is set | Acceptable only outside `prod` |
+| `GOOGLE_APPLICATION_CREDENTIALS_BASE64` | Only if you use this instead of a mounted/volume file | unset | Railway-friendly alternative to `GOOGLE_APPLICATION_CREDENTIALS`: the entire Firebase service-account JSON key, base64-encoded, as one plain-string variable (Railway's Variables tab stores strings, not files). `backend/docker-entrypoint.sh` decodes it to `/app/firebase-service-account.json` and exports `GOOGLE_APPLICATION_CREDENTIALS` pointing at that file *before* the JVM starts — only when `GOOGLE_APPLICATION_CREDENTIALS` isn't already set directly, so this never overwrites an explicit value. | Same requirement as `GOOGLE_APPLICATION_CREDENTIALS` above — set one or the other |
 | `TWO_FACTOR_API_KEY` | No — soft, non-fatal check only | empty | 2Factor API key for real-time transaction alert SMS (`TwoFactorSmsProvider`) — scoped to `TransactionService.create()`'s manual-entry path only, never authentication OTPs (Firebase Phone Authentication owns those). Empty falls back to `NoOpSmsProvider` (logs instead of sending). | **Yes.** Unlike `RESEND_API_KEY`/`GOOGLE_APPLICATION_CREDENTIALS`, `ProductionConfigValidator` only logs a startup warning if this is unset — never refuses to boot — since a missed transaction alert is a degraded notification, not a security gap (see `SmsProperties`'s own doc comment). |
 | `FINORA_SETUP_KEY` | No | empty (auto-generated + written to `.finora/installation.key`) | First-run bootstrap installation key | See `docs/bootstrap-setup-future-work.md` — set explicitly rather than relying on a written file in any deployment without a persistent, host-readable filesystem |
-| `TRUST_PROXY_HEADERS` | **Yes, on Railway** | `false` | Whether `RateLimitFilter` trusts `X-Forwarded-For` for the real client IP | **Must be `true` on Railway** (or any deployment behind a real reverse proxy) — otherwise every user shares one rate-limit bucket. Must stay `false` anywhere not behind a trusted proxy, or rate limiting can be bypassed by spoofing the header. |
+| `TRUST_PROXY_HEADERS` | **Yes, on Railway** | `false` | Whether `RateLimitFilter` trusts `X-Forwarded-For` for the real client IP | **Must be `true` on Railway** (or any deployment behind a real reverse proxy) — otherwise every user shares one rate-limit bucket. Must stay `false` anywhere not behind a trusted proxy, or rate limiting can be bypassed by spoofing the header. Like `TWO_FACTOR_API_KEY` above, `ProductionConfigValidator` only logs a startup warning if this is left at its default in `prod` — it never refuses to boot over this one. |
+| `PASSWORD_CHANGE_SESSION_EXPIRY_MINUTES` | No | `15` | How long a started Change Password flow (`PasswordChangeSession`) stays usable before `verify-otp`/`complete` start rejecting it | Yes |
+| `IMPORT_MAX_CONCURRENT` | No | `6` | Max concurrent statement-import requests (`ImportConcurrencyLimiter`), deliberately conservative relative to `DB_POOL_MAX_SIZE` so imports can't starve every other endpoint's DB usage | Yes |
+| `IMPORT_ACQUIRE_TIMEOUT_MS` | No | `20000` | How long an import request waits in the FIFO queue for a processing slot before giving up with a "try again shortly" response | Yes |
 | `UPLOAD_MAX_FILE_SIZE` / `UPLOAD_MAX_REQUEST_SIZE` | No | `10MB` | Multipart upload size limits (CSV/PDF statement import) | Yes |
 
 ## Local development
@@ -65,6 +70,14 @@ Requires a local Postgres running with the `finora`/`finora`/`finora` db/user/pa
 in `frontend/` and `admin-portal/`), each proxying `/api` to `localhost:8080` — see each app's
 `vite.config.ts`. Neither frontend needs any env var set for local dev; `VITE_API_BASE_URL` /
 `VITE_BACKEND_ORIGIN` are only relevant once deployed (see below).
+
+**Without `GOOGLE_APPLICATION_CREDENTIALS` set, you can't get past registration.** Phone
+verification is enforced server-side (`PhoneVerificationFilter`) before any account reaches the
+dashboard, and every verification call 503s until the Firebase Admin SDK is configured
+(`FirebaseConfig`). See the `GOOGLE_APPLICATION_CREDENTIALS` / `GOOGLE_APPLICATION_CREDENTIALS_BASE64`
+rows in the [environment variable audit](#environment-variable-audit-backend) above, plus the six
+`VITE_FIREBASE_*` vars in [Frontend environment variables](#frontend-environment-variables), for
+what a fresh clone needs before phone verification actually works.
 
 ## Docker (docker-compose)
 
@@ -99,15 +112,19 @@ APP_BASE_URL=https://finora-cng.pages.dev
 ADMIN_APP_BASE_URL=https://finora-admin.pages.dev
 RESEND_API_KEY=<your real Resend API key>
 EMAIL_FROM=<your verified sender address>
+# Either a mounted file path directly, or GOOGLE_APPLICATION_CREDENTIALS_BASE64 instead (see below
+# and the environment variable audit table above) -- Railway's Variables tab only stores strings.
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/firebase-service-account.json
 TRUST_PROXY_HEADERS=true
 TWO_FACTOR_API_KEY=<your real 2Factor API key>
 ```
 
 `GOOGLE_APPLICATION_CREDENTIALS` must point at a real, readable file on the deployed instance —
-on Railway that typically means committing the JSON as a "Raw file" volume mount or writing it out
-from a base64'd env var at container startup, since Railway's Variables tab itself only stores
-strings, not files. Download the service-account key from Firebase Console → Project Settings →
+on Railway that typically means a "Raw file" volume mount, or setting `GOOGLE_APPLICATION_CREDENTIALS_BASE64`
+instead (the whole service-account JSON, base64-encoded, as a plain string variable) and letting
+`backend/docker-entrypoint.sh` decode it to a real file and export `GOOGLE_APPLICATION_CREDENTIALS`
+before the JVM starts, since Railway's Variables tab itself only stores strings, not files.
+Download the service-account key from Firebase Console → Project Settings →
 Service Accounts → "Generate new private key"; never commit it to source control.
 
 `TWO_FACTOR_API_KEY` is a plain string value (unlike the credentials file above), so it's a normal

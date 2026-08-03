@@ -140,6 +140,14 @@ backend at `http://localhost:8080`. API docs (dev profile only): `http://localho
 Both frontends' Vite dev servers proxy `/api/*` to the backend (see each app's own
 `vite.config.ts`), so there's no CORS friction while developing either one.
 
+**This alone won't get you past registration.** `docker-compose.yml` sets no
+`GOOGLE_APPLICATION_CREDENTIALS`, and phone verification is enforced server-side
+(`PhoneVerificationFilter`) before any account reaches the dashboard — every verification call
+503s until the Firebase Admin SDK is configured. See `docs/engineering/deployment-guide.md`'s
+environment variable audit for `GOOGLE_APPLICATION_CREDENTIALS` /
+`GOOGLE_APPLICATION_CREDENTIALS_BASE64` and the frontend `VITE_FIREBASE_*` vars before expecting a
+fresh clone to reach the app past sign-up.
+
 **Before running anywhere but your own machine:** change `JWT_SECRET` in
 `docker-compose.yml` to a real random 32+ character value, and never commit
 real secrets to the repo — use a `.env` file (gitignored) instead.
@@ -165,9 +173,16 @@ What's in it today:
   now, more later" approach as the rest of this project (see Known Gaps below).
 - **Audit Log** — the platform-wide activity feed, paginated, plus a per-user drill-down from
   each user's detail page.
-- **System Health** — wraps Spring Boot Actuator's own health indicators (DB connectivity, disk
-  space) with full detail, gated behind `SYSTEM_SETTINGS` rather than the public
-  `/actuator/health` endpoint (which deliberately returns no detail — see `application.yml`).
+- **System Health** — built on a `HealthProvider` extensibility interface
+  (`backend/src/main/java/com/finora/health/`): `AdminHealthRegistryService` auto-collects every
+  Spring bean implementing it (`List<HealthProvider>`, zero manual registration) into one
+  worst-status-wins rollup, gated behind `SYSTEM_SETTINGS` rather than the public
+  `/actuator/health` endpoint (which deliberately returns no detail — see `application.yml`). Five
+  providers exist today, grouped by category: **Platform** — Database (wraps Actuator's own DB/disk-space/ping
+  indicators); **Notifications** — Email Provider, SMS Provider; **Financial Intelligence** — Financial
+  Intelligence Engine (reconciliation) and Statement Import Pipeline. Adding observability for a new
+  module (Redis, a job queue, etc.) is one new `@Component` away, with zero changes to the
+  dashboard or alerts panel.
 - **Dashboard** — signup/transaction/account volume stat tiles + a live system-status summary.
 
 An account needs `phoneVerified = true` to reach *any* protected endpoint, admin ones included
@@ -184,4 +199,4 @@ to complete that, then come back.
 5. Set up CI (GitHub Actions: `mvn test` + `npm run build`) before adding more surface area
 6. **Password Policy Standardization** — `AuthDtos.PASSWORD_SIZE_MESSAGE` (used for register/reset/change-password) only enforces 8-72 characters; `ChangePasswordModal.tsx`'s strength checklist (uppercase/lowercase/number/special character) is currently framed as a suggestion specifically *because* the backend doesn't enforce it. **Frontend guidance and backend validation must eventually enforce the same policy** — don't let them drift permanently. Before a production release, decide on one real policy and make both sides agree — either the backend starts enforcing the fuller rule (update `PASSWORD_SIZE_MESSAGE`'s `@Pattern`/validation and this same message everywhere it's used), or the frontend checklist gets relabeled as permanently optional guidance. Do not implement complexity enforcement in the frontend alone first and leave the backend behind — update both together.
 7. **Prevent password reuse** — `PasswordChangeService.complete()` only rejects `newPassword == currentPassword` (a single comparison, no history). Storing the last N password hashes (e.g. 5) and checking new attempts against all of them is a natural follow-up once there's a real need for it.
-8. **Security section growth** — today it's just Password + Phone Verification (see `Settings.tsx`). The natural next additions, each gated on its own real backend capability existing first (no UI ahead of the capability, same discipline as everywhere else in this doc): Active Sessions (list + revoke — the groundwork already exists in `RefreshTokenService`, just no listing endpoint yet), Trusted Devices, and a Recent Security Activity feed reading from `AuditLog` (`PASSWORD_CHANGED`/`PASSWORD_RESET`/`OTHER_SESSIONS_REVOKED` already carry a `method`/purpose-tagged metadata and `createdAt` — enough to back a "Password changed · 2 Aug 2026 · Authenticated Settings" row whenever that screen gets built; nothing further needs to change on the backend for that specific screen). `PasswordChangeSession`/`PhoneOtp.Purpose` also don't yet track IP address or device — no request-context-capture infrastructure exists anywhere in this codebase today (confirmed by grep), so those fields were deliberately left out rather than added unpopulated; add them together with a real `HttpServletRequest`-reading filter the day a real need justifies one.
+8. **Security section growth** — today it's just Password + Phone Verification (see `Settings.tsx`). Active Sessions (list + revoke) is already built end-to-end on the backend — `DeviceController`'s `GET`/`DELETE /api/v1/users/me/devices` on top of `RefreshTokenService` — just no frontend UI for it yet in Settings. The remaining natural additions, each gated on its own real backend capability existing first (no UI ahead of the capability, same discipline as everywhere else in this doc): Trusted Devices, and a Recent Security Activity feed reading from `AuditLog` (`PASSWORD_CHANGED`/`PASSWORD_RESET`/`OTHER_SESSIONS_REVOKED` already carry a `method`/purpose-tagged metadata and `createdAt` — enough to back a "Password changed · 2 Aug 2026 · Authenticated Settings" row whenever that screen gets built; nothing further needs to change on the backend for that specific screen). `PasswordChangeSession`/`PhoneOtp.Purpose` also don't yet track IP address or device — no request-context-capture infrastructure exists anywhere in this codebase today (confirmed by grep), so those fields were deliberately left out rather than added unpopulated; add them together with a real `HttpServletRequest`-reading filter the day a real need justifies one.
