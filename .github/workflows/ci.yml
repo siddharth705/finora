@@ -1,0 +1,124 @@
+name: CI
+
+# The README has claimed this file existed since the "Architecture hardening, round 2" section,
+# but it was never actually committed -- every push and PR has been unverified until now. Each job
+# below was run locally against this exact tree before being written here, so the pipeline starts
+# green rather than needing to be debugged in CI.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# A new push to the same branch makes the in-flight run obsolete. Cancelling it keeps queue times
+# down on a shared runner allowance -- but never for main, where every commit's result is a record
+# worth keeping rather than something to discard when the next one lands.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  backend:
+    name: Backend (Java 21, 934 tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          # Keys off pom.xml, so a dependency change busts it and nothing else does.
+          cache: 'maven'
+
+      # No explicit Docker setup step: the suite's Testcontainers integration tests need a Docker
+      # daemon, and ubuntu-latest runners already have one running. Verified locally against a
+      # real daemon -- all 934 tests pass, including the Testcontainers ones.
+      - name: Run tests
+        working-directory: backend
+        run: ./mvnw -B --no-transfer-progress test
+
+  frontend:
+    name: User frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the engines field in frontend/package.json (">=20.19.0").
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      # `npm ci` (not `npm install`) so the lockfile is authoritative and CI can't silently
+      # resolve a different dependency tree than a developer machine.
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Test
+        working-directory: frontend
+        run: npm test
+
+      # `npm run build` is `tsc -b && vite build`, so this type-checks as well as bundles.
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+  admin-portal:
+    name: Admin portal
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: admin-portal/package-lock.json
+
+      - name: Install
+        working-directory: admin-portal
+        run: npm ci
+
+      - name: Test
+        working-directory: admin-portal
+        run: npm test
+
+      - name: Build
+        working-directory: admin-portal
+        run: npm run build
+
+  mobile:
+    name: Mobile (Expo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install
+        working-directory: mobile
+        run: npm ci
+
+      - name: Type-check
+        working-directory: mobile
+        run: npm run typecheck
+
+      # There are no mobile tests yet (see the roadmap's testing phase), so a Metro bundle is the
+      # real signal here: it catches broken imports, bad JSX, and anything that type-checks but
+      # can't actually be packaged. This is JS-only -- it does NOT compile native code or produce
+      # an installable app, which needs EAS Build and, for iOS, a macOS runner.
+      #
+      # EXPO_PUBLIC_API_BASE_URL is required at import time by src/api/client.ts, which throws
+      # when it's unset rather than silently falling back to a broken relative path. The value is
+      # never contacted during a bundle -- it just has to exist for the module to evaluate.
+      - name: Bundle (Metro)
+        working-directory: mobile
+        env:
+          EXPO_PUBLIC_API_BASE_URL: https://ci.invalid
+        run: npx expo export --platform android --output-dir /tmp/mobile-ci-bundle
