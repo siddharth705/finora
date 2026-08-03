@@ -1,11 +1,11 @@
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, useColorScheme, View } from 'react-native';
 import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { useColorScheme } from 'react-native';
 import { LoginScreen } from '../screens/LoginScreen';
 import { RegisterScreen } from '../screens/RegisterScreen';
 import { ForgotPasswordScreen } from '../screens/ForgotPasswordScreen';
 import { VerifyPhoneScreen } from '../screens/VerifyPhoneScreen';
+import { AppTabs } from './AppTabs';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../theme';
 import type { AuthStackParamList } from './types';
@@ -57,32 +57,9 @@ export function RootNavigator() {
           <AppStack.Screen name="VerifyPhone" component={VerifyPhoneScreen} />
         </AppStack.Navigator>
       ) : (
-        <AppStack.Navigator screenOptions={{ headerShown: false }}>
-          <AppStack.Screen name="Home" component={PlaceholderHome} />
-        </AppStack.Navigator>
+        <AppTabs />
       )}
     </NavigationContainer>
-  );
-}
-
-// Stands in for the bottom-tab navigator that Phase 2 introduces (Dashboard, Ledger, Import,
-// Insights, More). Present only so the signed-in-and-verified branch renders something real.
-function PlaceholderHome() {
-  const c = useTheme();
-  const { email, logout } = useAuth();
-  return (
-    <View style={[styles.splash, { backgroundColor: c.bg }]}>
-      <Text style={[styles.placeholderTitle, { color: c.ink }]}>Signed in</Text>
-      <Text style={[styles.placeholderBody, { color: c.muted }]}>{email}</Text>
-      <Text style={[styles.placeholderBody, { color: c.muted }]}>
-        Phone verified. Dashboard and the rest of the app arrive in Phase 2.
-      </Text>
-      <View style={styles.placeholderAction}>
-        <Text style={[styles.signOut, { color: c.primary }]} onPress={logout}>
-          Sign out
-        </Text>
-      </View>
-    </View>
   );
 }
 
@@ -92,22 +69,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
-  },
-  placeholderTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  placeholderBody: {
-    fontSize: 13,
-    textAlign: 'center',
-    marginBottom: 4,
-  },
-  placeholderAction: {
-    marginTop: 24,
-  },
-  signOut: {
-    fontSize: 14,
-    fontWeight: '600',
   },
 });

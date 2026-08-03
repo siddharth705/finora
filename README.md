@@ -196,10 +196,16 @@ A third app: React Native + Expo, targeting iOS and Android, talking to the same
 web apps. **User-facing only** — there's no mobile admin portal, matching the same User/Admin
 split the web apps already have.
 
-Currently at **Phase 1 (auth)**: sign in, register, forgot password, and phone verification all
-work end-to-end against the real backend, on top of the Phase 0 foundation (API client, endpoint
-layer, shared types, TanStack Query). The signed-in-and-verified branch is still a placeholder —
-Dashboard and the rest of the app arrive in Phase 2.
+Currently at **Phase 2 (core screens)**. Working end-to-end against the real backend: sign in,
+register, forgot password, phone verification, and a three-tab app shell — **Home** (dashboard
+KPIs, cash-flow chart, spend-by-category donut, recent transactions, goals, insights),
+**Transactions** (infinite-scroll ledger with debounced search, type filter, long-press delete),
+and **More** (profile, read-only Accounts, sign out). Import lands in Phase 3; Budgets, Goals,
+Reports, Insights, and Settings follow in Phases 4–5.
+
+Charts are hand-rolled on `react-native-svg` (`src/components/charts/`) rather than a charting
+library: the shapes needed are one ring of arcs and two polylines, and every RN chart package
+would add a native dependency to re-validate against each Expo SDK bump for that.
 
 Route protection is expressed the way React Navigation intends, rather than as a port of the
 web's `ProtectedRoute`: `src/navigation/RootNavigator.tsx` derives *which stack exists at all*

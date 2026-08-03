@@ -1,0 +1,231 @@
+import { useMemo, useState } from 'react';
+import {
+  ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View,
+} from 'react-native';
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { transactionsApi, type TransactionFilters } from '../api/endpoints';
+import { invalidateFinancialData } from '../lib/invalidateFinancialData';
+import { useDebouncedValue } from '../lib/useDebouncedValue';
+import { fmtCurrency } from '../lib/format';
+import { radius, spacing, useTheme } from '../theme';
+import type { Transaction } from '../types';
+
+const PAGE_SIZE = 20;
+type TypeFilter = 'ALL' | 'INCOME' | 'EXPENSE';
+
+export function LedgerScreen() {
+  const c = useTheme();
+  const insets = useSafeAreaInsets();
+  const queryClient = useQueryClient();
+  const [keywordInput, setKeywordInput] = useState('');
+  const debouncedKeyword = useDebouncedValue(keywordInput, 300);
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('ALL');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const filters: TransactionFilters = useMemo(
+    () => ({
+      size: PAGE_SIZE,
+      sortField: 'date',
+      sortDir: 'desc',
+      keyword: debouncedKeyword || undefined,
+      type: typeFilter === 'ALL' ? undefined : typeFilter,
+    }),
+    [debouncedKeyword, typeFilter]
+  );
+
+  /**
+   * Infinite scroll rather than the web's Previous/Next pagination -- the plan's recommended
+   * mobile adaptation. This also removes a whole class of bug the web version needs an effect to
+   * handle: deleting the last row of the last page can leave the web ledger on an out-of-range
+   * page with no way back, so it watches the server's totalPages and clamps. Here there is no
+   * current page to strand -- an invalidation just refetches from page 0 forward.
+   */
+  const { data, isLoading, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage, refetch } =
+    useInfiniteQuery({
+      queryKey: ['transactions', filters],
+      queryFn: ({ pageParam }) => transactionsApi.search({ ...filters, page: pageParam }),
+      initialPageParam: 0,
+      // The backend's PagedResponse carries a real totalPages, so "is there more" is answered by
+      // the server rather than inferred from whether a page came back full.
+      getNextPageParam: (lastPage) =>
+        lastPage.page + 1 < lastPage.totalPages ? lastPage.page + 1 : undefined,
+    });
+
+  const txns = data?.pages.flatMap((p) => p.content) ?? [];
+  const totalElements = data?.pages[0]?.totalElements ?? 0;
+
+  function confirmDelete(t: Transaction) {
+    // Alert.alert replaces the web's window.confirm(), which doesn't exist in React Native.
+    Alert.alert(
+      'Delete transaction?',
+      `"${t.description || t.merchant}" (${fmtCurrency(t.amount)}) can't be recovered.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => void handleDelete(t) },
+      ]
+    );
+  }
+
+  async function handleDelete(t: Transaction) {
+    setDeletingId(t.id);
+    setError(null);
+    try {
+      await transactionsApi.remove(t.id);
+      // Editing/deleting shifts category totals, the account balance, budget progress, goals, and
+      // any insight built from spend patterns -- see invalidateFinancialData's own comment.
+      invalidateFinancialData(queryClient);
+    } catch (e: any) {
+      setError(e.response?.data?.message ?? 'Could not delete this transaction.');
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  return (
+    <View style={[styles.flex, { backgroundColor: c.bg, paddingTop: insets.top }]}>
+      <View style={styles.header}>
+        <Text style={[styles.title, { color: c.ink }]}>Transactions</Text>
+        <Text style={[styles.count, { color: c.muted }]}>
+          {isLoading ? '' : `${totalElements.toLocaleString('en-IN')} total`}
+        </Text>
+      </View>
+
+      <TextInput
+        value={keywordInput}
+        onChangeText={setKeywordInput}
+        placeholder="Search description, merchant, bank…"
+        placeholderTextColor={c.muted}
+        autoCapitalize="none"
+        autoCorrect={false}
+        style={[styles.search, { backgroundColor: c.card, borderColor: c.border, color: c.ink }]}
+      />
+
+      <View style={styles.filterRow}>
+        {(['ALL', 'INCOME', 'EXPENSE'] as TypeFilter[]).map((t) => (
+          <Pressable
+            key={t}
+            onPress={() => setTypeFilter(t)}
+            style={[
+              styles.chip,
+              { borderColor: c.border },
+              typeFilter === t && { backgroundColor: c.primaryLight, borderColor: c.primary },
+            ]}
+          >
+            <Text style={[styles.chipText, { color: typeFilter === t ? c.primary : c.muted }]}>
+              {t === 'ALL' ? 'All' : t === 'INCOME' ? 'Income' : 'Expense'}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {error ? <Text style={[styles.error, { color: c.danger }]}>{error}</Text> : null}
+
+      {isLoading ? (
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={c.primary} />
+        </View>
+      ) : (
+        <FlatList
+          data={txns}
+          keyExtractor={(t) => t.id}
+          onEndReached={() => {
+            if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
+          }}
+          onEndReachedThreshold={0.4}
+          refreshing={isFetching && !isFetchingNextPage}
+          onRefresh={() => void refetch()}
+          contentContainerStyle={styles.listContent}
+          ListEmptyComponent={
+            <Text style={[styles.empty, { color: c.muted }]}>
+              {debouncedKeyword || typeFilter !== 'ALL'
+                ? 'No transactions match these filters.'
+                : 'No transactions yet. Import a statement to get started.'}
+            </Text>
+          }
+          ListFooterComponent={
+            isFetchingNextPage ? <ActivityIndicator style={styles.footer} color={c.primary} /> : null
+          }
+          renderItem={({ item: t }) => (
+            <Pressable
+              onLongPress={() => confirmDelete(t)}
+              style={[styles.row, { backgroundColor: c.card, borderColor: c.border }]}
+              android_ripple={{ color: c.border }}
+            >
+              <View style={styles.rowMain}>
+                <Text style={[styles.desc, { color: c.ink }]} numberOfLines={1}>
+                  {t.description || t.merchant || 'Transaction'}
+                </Text>
+                <Text style={[styles.meta, { color: c.muted }]} numberOfLines={1}>
+                  {t.categoryName} · {t.date}
+                  {t.reconciliationStatus === 'DUPLICATE' ? ' · Duplicate' : ''}
+                </Text>
+              </View>
+              {deletingId === t.id ? (
+                <ActivityIndicator size="small" color={c.muted} />
+              ) : (
+                <Text style={[styles.amount, { color: t.type === 'INCOME' ? c.success : c.ink }]}>
+                  {t.type === 'INCOME' ? '+' : '-'}
+                  {fmtCurrency(Math.abs(t.amount))}
+                </Text>
+              )}
+            </Pressable>
+          )}
+        />
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  flex: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+  },
+  title: { fontSize: 22, fontWeight: '700' },
+  count: { fontSize: 12 },
+  search: {
+    marginHorizontal: spacing.md,
+    marginTop: spacing.sm,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  chip: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
+  chipText: { fontSize: 12, fontWeight: '600' },
+  error: { fontSize: 13, paddingHorizontal: spacing.md, paddingBottom: spacing.sm },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  listContent: { paddingHorizontal: spacing.md, paddingBottom: spacing.xl },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: radius.md,
+    padding: 12,
+    marginBottom: spacing.sm,
+  },
+  rowMain: { flex: 1, marginRight: spacing.sm },
+  desc: { fontSize: 14, fontWeight: '500' },
+  meta: { fontSize: 11, marginTop: 2 },
+  amount: { fontSize: 14, fontWeight: '700' },
+  empty: { fontSize: 13, textAlign: 'center', paddingVertical: spacing.xl },
+  footer: { paddingVertical: spacing.md },
+});
