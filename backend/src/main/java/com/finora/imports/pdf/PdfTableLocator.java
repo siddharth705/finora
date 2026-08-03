@@ -219,7 +219,7 @@ public class PdfTableLocator {
             Matcher sectionMarker = SECTION_MARKER.matcher(rowLine);
             if (sectionMarker.find()) {
                 // Bug fix, verified against a real Bank of Baroda statement: this banner is
-                // printed at the top of EVERY page ("MRINAL SHUKLA SAVINGS ACCOUNT  - 29560100016145"),
+                // printed at the top of EVERY page ("<HOLDER NAME> SAVINGS ACCOUNT  - <14 digits>"),
                 // so a single 3-page savings statement was split into three separate "accounts" --
                 // each offered to the user as its own account to create. The marker alone only says
                 // "an account is named here", not "a DIFFERENT account starts here"; the account

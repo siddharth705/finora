@@ -21,10 +21,17 @@
 # were committed into a test file while this script printed a warning that scrolled past unread.
 # The policy is the last line of defense, but the hook should make violating it require intent.
 #
-# Scope: only newly ADDED lines in files this policy governs -- test code, fixtures, docs.
+# Scope: only newly ADDED lines, in every source and doc file.
+#
+# This used to cover test code, fixtures and docs only -- and a real customer's name and 14-digit
+# account number sat in a MAIN-source doc comment for weeks, invisible to this check, because
+# PdfTableLocator.java is not a test file. It was then copied out of that comment into a new
+# fixture, where the check finally caught it. Real statement data reaches source comments by
+# exactly the route it reaches fixtures: someone documenting what a real document looked like.
+# Scoping a PII check by directory assumes people only paste customer data in one kind of file.
 
 staged=$(git diff --cached --name-only --diff-filter=ACM)
-targets=$(printf '%s\n' "$staged" | grep -E '(^|/)(test|fixtures|resources)/|Test\.java$|\.md$')
+targets=$(printf '%s\n' "$staged" | grep -E '\.(java|ts|tsx|js|jsx|sql|yml|yaml|json|md|txt|trace)$')
 [ -z "$targets" ] && exit 0
 
 warn=$(mktemp)
