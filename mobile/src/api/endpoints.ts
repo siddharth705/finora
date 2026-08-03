@@ -119,6 +119,15 @@ export const transactionsApi = {
     api.post('/transactions/bulk-category', { ids, category }),
 };
 
+/**
+ * Mirrors the backend's ImportDto.ConfirmedRow exactly.
+ *
+ * Declared against the backend record rather than copied from the web app's own interface, which
+ * omits the last two: the web code passes them anyway (excess-property checking doesn't apply once
+ * an object literal has been through a variable), so its type understates what it sends. Both are
+ * carried straight through from staging and must survive review unchanged, or the ledger loses the
+ * statement's reference numbers and running balances.
+ */
 export interface ConfirmedRowPayload {
   date: string;
   description: string;
@@ -129,8 +138,22 @@ export interface ConfirmedRowPayload {
   categorySource: string;
   ruleId: string | null;
   likelyDuplicate: boolean;
+  referenceNumber: string | null;
+  balanceAfter: number | null;
 }
 
+/**
+ * Mirrors the backend's ImportDto.NewAccountRequest.
+ *
+ * Everything from `detectedProduct` down is echoed back unchanged from what staging detected --
+ * the review screen displays these read-only, so there is nothing here for a client to have gotten
+ * wrong. Dropping them is silent and expensive: a fixed deposit becomes an empty savings account,
+ * and without `productIdentityHash` a re-import cannot tell "the deposit I already hold" from a new
+ * one, so it double-counts in net worth.
+ *
+ * `productIdentityHash` is already a hash by the time the client sees it -- no unmasked account
+ * number ever leaves the server -- so echoing it back discloses nothing.
+ */
 export interface NewAccountPayload {
   name: string;
   accountType: 'SAVINGS' | 'CREDIT_CARD' | 'WALLET' | 'INVESTMENT';
@@ -142,6 +165,15 @@ export interface NewAccountPayload {
   bankId?: string | null;
   branchName?: string | null;
   ifscCode?: string | null;
+  detectedProduct?: string | null;
+  productIdentityHash?: string | null;
+  principalAmount?: number | null;
+  interestRate?: number | null;
+  maturityDate?: string | null;
+  maturityAmount?: number | null;
+  installmentAmount?: number | null;
+  installmentsPaid?: number | null;
+  installmentsTotal?: number | null;
 }
 
 export interface ConfirmPayload {
