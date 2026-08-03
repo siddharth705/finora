@@ -59,17 +59,20 @@ public class MerchantLearningService {
     private final MerchantRepository merchantRepository;
     private final CategoryRepository categoryRepository;
     private final ConfidenceEngine confidenceEngine;
+    private final AuditService auditService;
 
     public MerchantLearningService(MerchantCategoryLearningRepository learningRepository,
                                     MerchantLearningAuditRepository auditRepository,
                                     MerchantRepository merchantRepository,
                                     CategoryRepository categoryRepository,
-                                    ConfidenceEngine confidenceEngine) {
+                                    ConfidenceEngine confidenceEngine,
+                                    AuditService auditService) {
         this.learningRepository = learningRepository;
         this.auditRepository = auditRepository;
         this.merchantRepository = merchantRepository;
         this.categoryRepository = categoryRepository;
         this.confidenceEngine = confidenceEngine;
+        this.auditService = auditService;
     }
 
     public record LearningResult(List<MerchantCategoryLearning> distribution, MerchantLearningAudit auditEntry) {}
@@ -182,6 +185,15 @@ public class MerchantLearningService {
         undoEntry.setNewCategoryId(null);
         auditRepository.save(undoEntry);
 
+        // Bug fix: undo()/reset() are the only two mutating actions in this class that never
+        // called AuditService, unlike every other mutating service in the codebase (and unlike
+        // MerchantService.rename()/merge(), which had this exact gap fixed for the same reason --
+        // see that class's own doc comment). Both are now reachable ONLY via
+        // AdminUserMerchantController (self-service MerchantController was retired), making this
+        // an admin action against another user's data with previously zero trace in the general
+        // activity feed -- only merchant_learning_audit (scoped to that one merchant) recorded it.
+        auditService.record(userId, "MERCHANT_LEARNING_UNDONE", "Merchant", merchantId);
+
         return new LearningResult(learningRepository.findByUserIdAndMerchantId(userId, merchantId), undoEntry);
     }
 
@@ -215,7 +227,12 @@ public class MerchantLearningService {
         resetEntry.setAction(MerchantLearningAudit.Action.RESET);
         resetEntry.setPreviousCategoryId(previousTopCategoryId);
         resetEntry.setNewCategoryId(null);
-        return auditRepository.save(resetEntry);
+        MerchantLearningAudit saved = auditRepository.save(resetEntry);
+
+        // See undo()'s own comment above -- same gap, same fix.
+        auditService.record(userId, "MERCHANT_LEARNING_RESET", "Merchant", merchantId);
+
+        return saved;
     }
 
     /** Financial Intelligence Workspace, Learning Engine module -- every learning event across

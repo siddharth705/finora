@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * CRUD for relationships (family/friend/own-account tags) + the identifier matching
@@ -61,9 +62,24 @@ public class RelationshipService {
         this.auditService = auditService;
     }
 
+    // Bug fix: this used to call toDto(r) per relationship, and toDto() itself ran
+    // identifierRepository.findByRelationshipId() -- one query per relationship on top of the one
+    // query for the relationship list itself. Same bulk-fetch-then-group-in-memory fix as
+    // MerchantService.listForUser(): one query for every identifier across all of this user's
+    // relationships, instead of one per relationship in a loop.
     @Transactional(readOnly = true)
     public List<RelationshipDto> listForUser(UUID userId) {
-        return relationshipRepository.findByUserId(userId).stream().map(this::toDto).toList();
+        List<Relationship> relationships = relationshipRepository.findByUserId(userId);
+        if (relationships.isEmpty()) return List.of();
+
+        List<UUID> relationshipIds = relationships.stream().map(Relationship::getId).toList();
+        Map<UUID, List<RelationshipIdentifier>> identifiersByRelationship = identifierRepository
+                .findByRelationshipIdIn(relationshipIds).stream()
+                .collect(Collectors.groupingBy(RelationshipIdentifier::getRelationshipId));
+
+        return relationships.stream()
+                .map(r -> toDto(r, identifiersByRelationship.getOrDefault(r.getId(), List.of())))
+                .toList();
     }
 
     @Transactional
@@ -283,7 +299,11 @@ public class RelationshipService {
     }
 
     private RelationshipDto toDto(Relationship r) {
-        List<RelationshipDto.IdentifierDto> identifiers = identifierRepository.findByRelationshipId(r.getId()).stream()
+        return toDto(r, identifierRepository.findByRelationshipId(r.getId()));
+    }
+
+    private RelationshipDto toDto(Relationship r, List<RelationshipIdentifier> rawIdentifiers) {
+        List<RelationshipDto.IdentifierDto> identifiers = rawIdentifiers.stream()
                 .map(i -> new RelationshipDto.IdentifierDto(i.getId(), i.getIdentifierType().name(), i.getIdentifierValue()))
                 .toList();
         return new RelationshipDto(r.getId(), r.getLabel(), r.getRelationshipType().name(), r.getLinkedAccountId(), identifiers);

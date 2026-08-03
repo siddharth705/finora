@@ -1,6 +1,7 @@
 package com.finora.dto;
 
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 
 import java.time.Instant;
 import java.util.List;
@@ -17,8 +18,10 @@ public record MerchantDto(
     public record DistributionEntry(String category, int confirmationCount, int confidence) {}
 
     /** Every field optional -- only supplied ones change (same partial-update convention as
-     *  TransactionDto.UpdateRequest / RuleDto.UpdateRequest). */
-    public record UpdateRequest(String canonicalName, String website) {}
+     *  TransactionDto.UpdateRequest / RuleDto.UpdateRequest). @Size bounds match
+     *  merchants.canonical_name VARCHAR(255)/website VARCHAR(500) -- without these, an oversized
+     *  value threw a raw DB constraint-violation (unhandled 500) instead of a clean 400. */
+    public record UpdateRequest(@Size(max = 255) String canonicalName, @Size(max = 500) String website) {}
 
     public record MergeRequest(@NotNull(message = "mergeFromMerchantId is required") UUID mergeFromMerchantId) {}
 

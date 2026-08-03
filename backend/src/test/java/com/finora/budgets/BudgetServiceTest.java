@@ -8,6 +8,7 @@ import com.finora.repository.BudgetRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
+import com.finora.service.AuditService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -52,7 +53,7 @@ class BudgetServiceTest {
         categoryRepository = mock(CategoryRepository.class);
         transactionRepository = mock(TransactionRepository.class);
         userRepository = mock(UserRepository.class);
-        budgetService = new BudgetService(budgetRepository, categoryRepository, transactionRepository, userRepository);
+        budgetService = new BudgetService(budgetRepository, categoryRepository, transactionRepository, userRepository, mock(AuditService.class));
         when(userRepository.findById(any())).thenReturn(Optional.empty());
     }
 

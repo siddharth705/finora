@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -496,13 +497,18 @@ public class AuthService {
         return prt;
     }
 
+    // Bug fix: this issued DEFAULT_CATEGORIES.size() individual INSERTs (one save() call per
+    // category) on every registration -- an easily-avoidable per-signup latency cost fixed by
+    // building the whole batch in memory and writing it in one saveAll() call.
     private void seedDefaultCategories(java.util.UUID userId) {
+        List<Category> categories = new ArrayList<>();
         for (String name : DEFAULT_CATEGORIES) {
             Category c = new Category();
             c.setUserId(userId);
             c.setName(name);
             c.setSystem(true);
-            categoryRepository.save(c);
+            categories.add(c);
         }
+        categoryRepository.saveAll(categories);
     }
 }

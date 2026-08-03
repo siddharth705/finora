@@ -3,6 +3,7 @@ package com.finora.goals;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.repository.UserRepository;
+import com.finora.service.AuditService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -42,7 +43,7 @@ class GoalServiceTest {
         goalRepository = mock(GoalRepository.class);
         contributionRepository = mock(GoalContributionRepository.class);
         userRepository = mock(UserRepository.class);
-        service = new GoalService(goalRepository, contributionRepository, userRepository);
+        service = new GoalService(goalRepository, contributionRepository, userRepository, mock(AuditService.class));
         when(goalRepository.save(any(Goal.class))).thenAnswer(inv -> inv.getArgument(0));
         // Default: no user found -> safeZoneId falls back to Asia/Kolkata. Individual tests that
         // care about a specific timezone override this.

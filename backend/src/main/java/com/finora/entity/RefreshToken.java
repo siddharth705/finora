@@ -43,6 +43,16 @@ public class RefreshToken {
     @Column(name = "last_seen_at")
     private Instant lastSeenAt;
 
+    // Bug fix: rotate() reads this row, checks revokedAt/expiresAt, then writes revokedAt --
+    // with no locking, two concurrent requests presenting the same still-valid token could both
+    // pass the check before either commit, both minting a new token pair instead of the second
+    // one tripping reuse-detection. @Version makes the loser's save() throw
+    // ObjectOptimisticLockingFailureException (already handled cleanly by GlobalExceptionHandler)
+    // instead of silently racing.
+    @Version
+    @Column(nullable = false)
+    private Long version = 0L;
+
     public UUID getId() { return id; }
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }

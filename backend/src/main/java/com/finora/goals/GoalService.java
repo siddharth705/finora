@@ -3,6 +3,7 @@ package com.finora.goals;
 import com.finora.entity.User;
 import com.finora.repository.UserRepository;
 import com.finora.security.OwnershipGuard;
+import com.finora.service.AuditService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -10,6 +11,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -18,12 +20,14 @@ public class GoalService {
     private final GoalRepository goalRepository;
     private final GoalContributionRepository contributionRepository;
     private final UserRepository userRepository;
+    private final AuditService auditService;
 
     public GoalService(GoalRepository goalRepository, GoalContributionRepository contributionRepository,
-                        UserRepository userRepository) {
+                        UserRepository userRepository, AuditService auditService) {
         this.goalRepository = goalRepository;
         this.contributionRepository = contributionRepository;
         this.userRepository = userRepository;
+        this.auditService = auditService;
     }
 
     @Transactional(readOnly = true)
@@ -62,6 +66,12 @@ public class GoalService {
             gc.setContributedAt(LocalDate.now(safeZoneId(userId)));
             contributionRepository.save(gc);
         }
+        // Bug fix: GoalService never called AuditService at all, unlike every other mutating
+        // service in the codebase (see AuditService's own class doc, which names Budget/Goal as
+        // the known-remaining gap) -- goal creation/contributions/deletion were invisible in the
+        // general activity feed, with no way to answer "who/when changed this goal."
+        auditService.record(userId, "GOAL_CREATED", "Goal", saved.getId(),
+                Map.of("name", saved.getName(), "targetAmount", saved.getTargetAmount()));
         return new GoalDto(saved.getId(), saved.getName(), saved.getTargetAmount(), saved.getCurrentAmount(), saved.getTargetDate());
     }
 
@@ -84,11 +94,15 @@ public class GoalService {
         gc.setContributedAt(LocalDate.now(safeZoneId(userId)));
         contributionRepository.save(gc);
 
+        auditService.record(userId, "GOAL_CONTRIBUTION_ADDED", "Goal", goalId, Map.of("amount", amount));
         return new GoalDto(saved.getId(), saved.getName(), saved.getTargetAmount(), saved.getCurrentAmount(), saved.getTargetDate());
     }
 
+    @Transactional
     public void delete(UUID userId, UUID goalId) {
-        goalRepository.delete(getOwned(userId, goalId));
+        Goal goal = getOwned(userId, goalId);
+        goalRepository.delete(goal);
+        auditService.record(userId, "GOAL_DELETED", "Goal", goalId, Map.of("name", goal.getName()));
     }
 
     private Goal getOwned(UUID userId, UUID goalId) {

@@ -3,6 +3,8 @@ package com.finora.accounts;
 import com.finora.entity.Account;
 import com.finora.entity.StatementImport;
 import com.finora.util.BankRegistry;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -120,8 +122,19 @@ public record AccountDto(
                 "ACTIVE");
     }
 
-    public record CreateRequest(String name, String accountType, BigDecimal balance,
-                                 BigDecimal creditLimit, LocalDate dueDate, String investmentKind,
-                                 String accountHolderName, String accountNumberMasked, String bankId,
-                                 String branchName, String ifscCode) {}
+    // Bug fix: this record had zero Bean Validation, and neither AccountController.create() nor
+    // update() applied @Valid -- a null/blank name threw a raw NullPointerException/
+    // DataIntegrityViolationException (unhandled 500) against accounts.name's NOT NULL VARCHAR(120)
+    // constraint instead of a clean 400; every other free-text field had the same "let the DB
+    // reject it" gap against its own column width. accountType is deliberately NOT annotated here
+    // -- AccountService already hand-validates it with a clean 400 via parseAccountType(), and
+    // that's a closed, known enum, not a free-text length concern.
+    public record CreateRequest(@NotBlank @Size(max = 120) String name, String accountType, BigDecimal balance,
+                                 BigDecimal creditLimit, LocalDate dueDate,
+                                 @Size(max = 40) String investmentKind,
+                                 @Size(max = 255) String accountHolderName,
+                                 @Size(max = 64) String accountNumberMasked,
+                                 @Size(max = 32) String bankId,
+                                 @Size(max = 120) String branchName,
+                                 @Size(max = 11) String ifscCode) {}
 }

@@ -2,6 +2,7 @@ package com.finora.accounts;
 
 import com.finora.dto.ApiResponse;
 import com.finora.security.CurrentUser;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -26,12 +27,12 @@ public class AccountController {
     }
 
     @PostMapping
-    public ResponseEntity<ApiResponse<AccountDto>> create(@RequestBody AccountDto.CreateRequest request) {
+    public ResponseEntity<ApiResponse<AccountDto>> create(@Valid @RequestBody AccountDto.CreateRequest request) {
         return ResponseEntity.ok(ApiResponse.ok(accountService.create(currentUser.id(), request), "Account created"));
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<ApiResponse<AccountDto>> update(@PathVariable UUID id, @RequestBody AccountDto.CreateRequest request) {
+    public ResponseEntity<ApiResponse<AccountDto>> update(@PathVariable UUID id, @Valid @RequestBody AccountDto.CreateRequest request) {
         return ResponseEntity.ok(ApiResponse.ok(accountService.update(currentUser.id(), id, request), "Account updated"));
     }
 
