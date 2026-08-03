@@ -1,6 +1,7 @@
 package com.finora.exception;
 
 import com.finora.dto.ApiResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.env.Environment;
@@ -36,11 +37,28 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(ApiException.class)
-    public ResponseEntity<ApiResponse<Void>> handleApiException(ApiException ex) {
+    public ResponseEntity<ApiResponse<Void>> handleApiException(ApiException ex, HttpServletRequest request) {
         // ex.getCode() is null for the many existing throw sites still using the plain
         // (status, message) constructor — falls back to the status name exactly as before this
         // was introduced. See ErrorCode's class doc: codes get adopted call-site by call-site.
         String errorCode = ex.getCode() != null ? ex.getCode().code() : ex.getStatus().name();
+
+        // Bug fix: a 5xx ApiException returned a server error with NO log line at all. Every 4xx
+        // here is a deliberate, expected rejection (bad input, missing record, failed permission)
+        // and correctly stays silent -- but a 5xx is this server saying it failed, and those were
+        // invisible: IMPORT_SYSTEM_BUSY (503) and the Firebase-unconfigured 503 both produced a
+        // failing response and left nothing behind to find it by. Found while hunting a production
+        // 500 whose stack trace could not be located, which is exactly the cost of this gap.
+        //
+        // Logged WITH the stack trace, since a 5xx that was thrown deliberately still needs its
+        // origin identified, and with the request line so the endpoint is known without correlating
+        // by timestamp. Deliberately not logging query string or body -- this is a financial API
+        // and those carry customer data.
+        if (ex.getStatus().is5xxServerError()) {
+            log.error("Server-error ApiException [{}] on {} {}: {}",
+                    errorCode, request.getMethod(), request.getRequestURI(), ex.getMessage(), ex);
+        }
+
         return ResponseEntity.status(ex.getStatus())
                 .body(ApiResponse.error(ex.getMessage(), errorCode, ex.getDetails()));
     }
@@ -110,8 +128,12 @@ public class GlobalExceptionHandler {
      * withholds the raw message specifically in the prod profile.
      */
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiResponse<Void>> handleGeneric(Exception ex) {
-        log.error("Unhandled exception", ex);
+    public ResponseEntity<ApiResponse<Void>> handleGeneric(Exception ex, HttpServletRequest request) {
+        // The request line is included because "Unhandled exception" alone forced anyone reading
+        // the log to correlate by timestamp to work out WHICH endpoint failed. Method + path costs
+        // nothing and is the first thing you want. Deliberately no query string or body -- this is
+        // a financial API and both carry customer data.
+        log.error("Unhandled exception on {} {}", request.getMethod(), request.getRequestURI(), ex);
         boolean isProd = Arrays.asList(environment.getActiveProfiles()).contains("prod");
         String message = isProd ? "Unexpected error" : "Unexpected error: " + ex.getMessage();
         return ResponseEntity.internalServerError().body(ApiResponse.error(message, "INTERNAL_ERROR"));

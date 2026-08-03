@@ -17,13 +17,21 @@ import static org.mockito.Mockito.when;
  */
 class GlobalExceptionHandlerTest {
 
+    /** handleGeneric reads only the method and path, to name the failing endpoint in the log. */
+    private static jakarta.servlet.http.HttpServletRequest request() {
+        var request = mock(jakarta.servlet.http.HttpServletRequest.class);
+        when(request.getMethod()).thenReturn("POST");
+        when(request.getRequestURI()).thenReturn("/api/v1/import/pdf/stage");
+        return request;
+    }
+
     @Test
     void handleGeneric_inProdProfile_withholdsTheRawExceptionMessage() {
         Environment environment = mock(Environment.class);
         when(environment.getActiveProfiles()).thenReturn(new String[]{"prod"});
         GlobalExceptionHandler handler = new GlobalExceptionHandler(environment);
 
-        var response = handler.handleGeneric(new RuntimeException("column \"ssn\" violates not-null constraint"));
+        var response = handler.handleGeneric(new RuntimeException("column \"ssn\" violates not-null constraint"), request());
 
         assertThat(response.getBody().message()).isEqualTo("Unexpected error");
         assertThat(response.getBody().message()).doesNotContain("ssn", "constraint");
@@ -35,7 +43,7 @@ class GlobalExceptionHandlerTest {
         when(environment.getActiveProfiles()).thenReturn(new String[]{"dev"});
         GlobalExceptionHandler handler = new GlobalExceptionHandler(environment);
 
-        var response = handler.handleGeneric(new RuntimeException("boom"));
+        var response = handler.handleGeneric(new RuntimeException("boom"), request());
 
         assertThat(response.getBody().message()).isEqualTo("Unexpected error: boom");
     }
@@ -48,7 +56,7 @@ class GlobalExceptionHandlerTest {
         when(environment.getActiveProfiles()).thenReturn(new String[]{});
         GlobalExceptionHandler handler = new GlobalExceptionHandler(environment);
 
-        var response = handler.handleGeneric(new RuntimeException("boom"));
+        var response = handler.handleGeneric(new RuntimeException("boom"), request());
 
         assertThat(response.getBody().message()).isEqualTo("Unexpected error: boom");
     }
@@ -59,7 +67,7 @@ class GlobalExceptionHandlerTest {
         when(environment.getActiveProfiles()).thenReturn(new String[]{"prod"});
         GlobalExceptionHandler handler = new GlobalExceptionHandler(environment);
 
-        var response = handler.handleGeneric(new RuntimeException("boom"));
+        var response = handler.handleGeneric(new RuntimeException("boom"), request());
 
         assertThat(response.getStatusCode().value()).isEqualTo(500);
         assertThat(response.getBody().errorCode()).isEqualTo("INTERNAL_ERROR");
@@ -82,5 +90,69 @@ class GlobalExceptionHandlerTest {
         assertThat(response.getStatusCode().value()).isEqualTo(409);
         assertThat(response.getBody().errorCode()).isEqualTo("CONFLICT");
         assertThat(response.getBody().message()).contains("refresh and try again");
+    }
+
+    /**
+     * Bug fix: a 5xx ApiException returned a server error with NO log line at all.
+     *
+     * Every 4xx here is a deliberate, expected rejection and correctly stays silent -- but a 5xx is
+     * this server saying it failed, and those were invisible. IMPORT_SYSTEM_BUSY (503) and the
+     * Firebase-unconfigured 503 both produced a failing response leaving nothing behind to find it
+     * by. Found while hunting a production 500 whose stack trace could not be located anywhere,
+     * which is exactly what this gap costs.
+     *
+     * Asserted through a captured appender rather than by eyeballing output, so "it logs" is a
+     * fact the build checks rather than a claim in a comment.
+     */
+    @Test
+    void handleApiException_logsA5xx_soAServerFailureIsNeverSilent() {
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(GlobalExceptionHandler.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class));
+
+            var response = handler.handleApiException(
+                    new ApiException(ErrorCode.IMPORT_SYSTEM_BUSY), request());
+
+            assertThat(response.getStatusCode().value()).isEqualTo(503);
+            assertThat(appender.list).hasSize(1);
+            assertThat(appender.list.get(0).getLevel())
+                    .isEqualTo(ch.qos.logback.classic.Level.ERROR);
+            // The endpoint has to be in the line, or finding which call failed means correlating
+            // by timestamp -- the exact problem that made the production 500 so hard to locate.
+            assertThat(appender.list.get(0).getFormattedMessage())
+                    .contains("/api/v1/import/pdf/stage")
+                    .contains("IMPORT_006");
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    /**
+     * The other half, and the reason this isn't just "log everything": a 4xx is the server working
+     * correctly. Logging every rejected password or malformed upload at ERROR would bury the real
+     * failures this change exists to surface.
+     */
+    @Test
+    void handleApiException_staysSilentForA4xx_whichIsTheServerWorkingCorrectly() {
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(GlobalExceptionHandler.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class));
+
+            var response = handler.handleApiException(
+                    new ApiException(ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND), request());
+
+            assertThat(response.getStatusCode().value()).isEqualTo(422);
+            assertThat(appender.list).isEmpty();
+        } finally {
+            logger.detachAppender(appender);
+        }
     }
 }

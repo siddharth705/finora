@@ -60,6 +60,27 @@ export function brandfetchUrl(domain: string | null, sizePx: number, clientId: s
 type Stage = 'brandfetch' | 'local' | 'initials';
 
 /**
+ * Circuit breaker: once Brandfetch has actually rejected a request, stop asking it for the rest of
+ * this page session.
+ *
+ * Every logo on a page resolves independently, so a Brandfetch outage or a rejected client ID cost
+ * one failed round-trip PER BANK -- an accounts list with eight banks fired eight requests that
+ * were all going to fail for the same reason, each one burning its own 1.5s timeout before falling
+ * back, and each one logging its own console error. Observed in production as a wall of
+ * `403 (Forbidden)` entries.
+ *
+ * Deliberately tripped only by a real error response, not by the timeout: a timeout is one slow
+ * request and may not repeat, while a 403/404 is the CDN telling us this configuration will not
+ * work. Module-level rather than React state because it is a fact about the CDN, not about any one
+ * component, and it must outlive every unmount.
+ *
+ * Not persisted beyond the page session on purpose. Whatever caused the rejection -- an expired
+ * client ID, a domain not on the key's allowlist -- is fixable server-side, and a reload should
+ * pick that up rather than a stale localStorage flag suppressing it for days.
+ */
+let brandfetchRejected = false;
+
+/**
  * Provider-chain logo resolution, per the brief: Brandfetch (a real, always-current official
  * logo, via their free Logo API) -> a locally dropped-in SVG (see src/assets/banks/README.md)
  * -> a colored-initials badge. Every page just renders <BankLogo bank={x.bank} /> exactly as
@@ -86,7 +107,9 @@ export function BankLogo({ bank, size = 40, className = '' }: BankLogoProps) {
   // Fetched at 2x the rendered size (min 64px) so it stays crisp on high-DPI screens without
   // the caller having to think about it.
   const sizePx = Math.max(64, Math.round(size * 2));
-  const brandfetchSrc = brandfetchUrl(domain, sizePx, BRANDFETCH_CLIENT_ID);
+  // Null once the circuit breaker has tripped, which skips the Brandfetch stage entirely for every
+  // logo mounted afterwards -- straight to the local asset or initials, no request, no timeout.
+  const brandfetchSrc = brandfetchRejected ? null : brandfetchUrl(domain, sizePx, BRANDFETCH_CLIENT_ID);
 
   const [stage, setStage] = useState<Stage>(() => (brandfetchSrc ? 'brandfetch' : 'local'));
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -121,7 +144,14 @@ export function BankLogo({ bank, size = 40, className = '' }: BankLogoProps) {
         className={`rounded-xl object-contain flex-shrink-0 ${className}`}
         style={{ width: size, height: size }}
         onLoad={clearBrandfetchTimeout}
-        onError={() => { clearBrandfetchTimeout(); setStage('local'); }}
+        onError={() => {
+          clearBrandfetchTimeout();
+          // A real rejection (403 for a bad/domain-restricted client ID, 404 for an unknown
+          // domain) means every other logo on this page is about to fail the same way. Trip the
+          // breaker so they don't all have to find that out individually.
+          brandfetchRejected = true;
+          setStage('local');
+        }}
       />
     );
   }
