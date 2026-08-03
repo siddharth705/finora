@@ -65,6 +65,15 @@ public class PasswordChangeSession {
     @Column(name = "signed_out_other_devices")
     private Boolean signedOutOtherDevices;
 
+    // Bug fix: complete() reads this row, checks status == OTP_VERIFIED, then writes COMPLETED --
+    // with no locking, two concurrent complete() calls for the same session (double-submit) could
+    // both pass the check before either commit, producing two password writes, two audit rows,
+    // and two "your password was changed" emails for one user action. Same fix as RefreshToken's
+    // own @Version field -- see that entity's doc comment.
+    @Version
+    @Column(nullable = false)
+    private Long version = 0L;
+
     public UUID getId() { return id; }
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }

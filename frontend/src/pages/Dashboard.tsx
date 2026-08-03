@@ -104,6 +104,12 @@ export default function Dashboard() {
     .filter((d): d is NonNullable<typeof d> => !!d);
 
   const loading = summaryQ.isLoading || accountsQ.isLoading || recentTxnsQ.isLoading || goalsQ.isLoading;
+  // Bug fix: TanStack Query's isLoading flips to false once a query SETTLES, including settling
+  // with an error -- so a failed summary/accounts/transactions/goals fetch used to fall straight
+  // through to `if (!summary) return null`, rendering a blank page on the app's own landing route
+  // with zero indication anything went wrong. isError only ever reflects the queries `loading`
+  // itself is already built from, so this can't introduce a new spinner-that-never-resolves case.
+  const hasError = summaryQ.isError || accountsQ.isError || recentTxnsQ.isError || goalsQ.isError;
   const summary = summaryQ.data;
   const accounts = (accountsQ.data ?? []).filter((acc) => acc.accountType !== 'INVESTMENT').slice(0, 4);
   const recentTxns = recentTxnsQ.data?.content ?? [];
@@ -113,7 +119,7 @@ export default function Dashboard() {
   const movers = (insightsQ.data?.movers ?? []).filter((m) => m.pctChange !== null).slice(0, 2);
 
   if (loading) return <p className="text-muted">Loading…</p>;
-  if (!summary) return null;
+  if (hasError || !summary) return <p className="text-muted">Couldn't load your dashboard — please try again later.</p>;
 
   const firstName = fullName?.split(' ')[0] ?? 'there';
   const categoryEntries = Object.entries(summary.spendByCategory).sort((a, b) => b[1] - a[1]);

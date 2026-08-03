@@ -1,5 +1,6 @@
 package com.finora.service;
 
+import com.finora.accounts.AccountBalanceConvention;
 import com.finora.dto.NetWorthDto;
 import com.finora.entity.Account;
 import com.finora.entity.NetWorthSnapshot;
@@ -37,7 +38,7 @@ public class NetWorthService {
         BigDecimal investments = sum(accounts, Account.Type.INVESTMENT);
         BigDecimal liabilities = sum(accounts, Account.Type.CREDIT_CARD);
         BigDecimal totalAssets = liquid.add(investments);
-        BigDecimal netWorth = totalAssets.subtract(liabilities);
+        BigDecimal netWorth = netWorthOf(accounts);
 
         List<NetWorthDto.SnapshotPoint> history = snapshotRepository.findByUserIdOrderBySnapshotDateAsc(userId)
                 .stream().map(s -> new NetWorthDto.SnapshotPoint(s.getSnapshotDate(), s.getNetWorth())).toList();
@@ -58,7 +59,7 @@ public class NetWorthService {
         BigDecimal investments = sum(accounts, Account.Type.INVESTMENT);
         BigDecimal liabilities = sum(accounts, Account.Type.CREDIT_CARD);
         BigDecimal totalAssets = liquid.add(investments);
-        BigDecimal netWorth = totalAssets.subtract(liabilities);
+        BigDecimal netWorth = netWorthOf(accounts);
         LocalDate today = LocalDate.now(safeZoneId(userRepository.findById(userId).map(User::getTimezone).orElse(null)));
 
         NetWorthSnapshot snap = snapshotRepository.findByUserIdAndSnapshotDate(userId, today)
@@ -103,6 +104,21 @@ public class NetWorthService {
         } catch (Exception e) {
             return ZoneId.of("Asia/Kolkata");
         }
+    }
+
+    /**
+     * Net worth as the sum of every account's own contribution, rather than
+     * {@code assets.subtract(liabilities)} written out by hand here and in two other services.
+     *
+     * The two agree for every non-negative liability balance, so this is not a behaviour change for
+     * ordinary data -- it is the removal of a rule that was duplicated four ways (see
+     * {@link AccountBalanceConvention}). It also stays correct for a credit balance on a card,
+     * which the subtraction form only handles by coincidence.
+     */
+    private BigDecimal netWorthOf(List<Account> accounts) {
+        return accounts.stream()
+                .map(a -> AccountBalanceConvention.netWorthContribution(a.getAccountType(), a.getBalance()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     private BigDecimal sum(List<Account> accounts, Account.Type type) {

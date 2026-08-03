@@ -182,11 +182,33 @@ public class PdfMetadataExtractor {
         return Pattern.compile("(?i)^\\s*" + label + "\\s*:?\\s*(.+)$");
     }
 
+    /**
+     * @param accountNumberFullForHashingOnly the unmasked account number, present ONLY so
+     *        {@link com.finora.imports.product.ProductIdentity} can hash it into a stable key.
+     *        Never persisted, never returned over the API, never logged -- the hash travels, the
+     *        number does not. Kept out of {@code toString()} for the same reason (see below).
+     */
     public record ExtractedMetadata(
             String accountHolderName, String accountNumberMasked, String branchName,
             String ifscCode, LocalDate statementPeriodStart, LocalDate statementPeriodEnd,
-            java.math.BigDecimal creditLimit, LocalDate paymentDueDate
-    ) {}
+            java.math.BigDecimal creditLimit, LocalDate paymentDueDate,
+            String accountNumberFullForHashingOnly
+    ) {
+        /** Overridden so an unmasked account number can never reach a log line, an exception
+         *  message, or a debugger-friendly dump by someone printing the record. The masked form is
+         *  already in here and is what anyone reading this actually wants. */
+        @Override
+        public String toString() {
+            return "ExtractedMetadata[accountHolderName=" + accountHolderName
+                    + ", accountNumberMasked=" + accountNumberMasked
+                    + ", branchName=" + branchName + ", ifscCode=" + ifscCode
+                    + ", statementPeriodStart=" + statementPeriodStart
+                    + ", statementPeriodEnd=" + statementPeriodEnd
+                    + ", creditLimit=" + creditLimit + ", paymentDueDate=" + paymentDueDate
+                    + ", accountNumberFullForHashingOnly=" 
+                    + (accountNumberFullForHashingOnly == null ? "null" : "<redacted>") + "]";
+        }
+    }
 
     public ExtractedMetadata extract(List<String> preTableLines) {
         return extract(preTableLines, null);
@@ -199,6 +221,7 @@ public class PdfMetadataExtractor {
     public ExtractedMetadata extract(List<String> preTableLines, DocumentContext ctx) {
         String accountHolderName = null;
         String accountNumberMasked = null;
+        String accountNumberFull = null;
         String branchName = null;
         String ifscCode = null;
         LocalDate periodStart = null;
@@ -212,7 +235,11 @@ public class PdfMetadataExtractor {
             if (holder != null) { accountHolderName = holder; continue; }
 
             String acctNo = firstGroup(ACCOUNT_NUMBER, line);
-            if (acctNo != null) { accountNumberMasked = com.finora.imports.CsvParser.maskAccountNumber(acctNo); continue; }
+            if (acctNo != null) {
+                accountNumberFull = acctNo;
+                accountNumberMasked = com.finora.imports.CsvParser.maskAccountNumber(acctNo);
+                continue;
+            }
 
             String branch = firstGroup(BRANCH, line);
             if (branch != null) { branchName = branch; continue; }
@@ -276,6 +303,7 @@ public class PdfMetadataExtractor {
             if (accountNumberMasked == null) {
                 Matcher acctNoMatch = ACCOUNT_NUMBER_TRAILING_LABEL.matcher(line);
                 if (acctNoMatch.matches()) {
+                    accountNumberFull = acctNoMatch.group(1);
                     accountNumberMasked = com.finora.imports.CsvParser.maskAccountNumber(acctNoMatch.group(1));
                     if (ctx != null) ctx.record("GRID_METADATA_TRAILING_LABEL");
                     continue;
@@ -323,7 +351,7 @@ public class PdfMetadataExtractor {
         }
 
         return new ExtractedMetadata(accountHolderName, accountNumberMasked, branchName, ifscCode,
-                periodStart, periodEnd, creditLimit, paymentDueDate);
+                periodStart, periodEnd, creditLimit, paymentDueDate, accountNumberFull);
     }
 
     /** Shared by every grid-metadata fallback (see {@link #GRID_DUE_DATE_LABEL}/

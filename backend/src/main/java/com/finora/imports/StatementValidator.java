@@ -3,6 +3,8 @@ package com.finora.imports;
 import com.finora.accounts.AccountDto;
 import com.finora.dto.ImportDto.DetectedAccountInfo;
 import com.finora.dto.ImportDto.StagedRow;
+import com.finora.imports.product.ProductDiscovery;
+import com.finora.imports.product.ProductEvidenceCollector;
 import com.finora.util.BankRegistry;
 import org.springframework.stereotype.Component;
 
@@ -23,6 +25,12 @@ import java.util.Map;
  */
 @Component
 public class StatementValidator {
+
+    private final ProductDiscovery productDiscovery;
+
+    public StatementValidator(ProductDiscovery productDiscovery) {
+        this.productDiscovery = productDiscovery;
+    }
 
     /** Accumulates account-level signal across a whole file's rows. One instance per import;
      *  callers scan each row via {@link #scanRow} and pass the accumulator to
@@ -119,13 +127,35 @@ public class StatementValidator {
         List<String> bankTextHints = collectBankTextHints(allRows, headerIdx);
         BankRegistry.BankInfo bank = BankRegistry.detect(filename, bankTextHints);
 
+        // Financial Product Discovery runs on CSV exactly as it does on PDF -- the four stages
+        // consume column names and surrounding text, neither of which is format-specific. Wiring
+        // only the PDF path would have made "which product is this" a question the engine could
+        // answer for one input format and not the other, for no reason other than where the work
+        // started.
+        List<String> headerNames = headerIdx >= 0 && headerIdx < allRows.size()
+                ? List.of(allRows.get(headerIdx)) : List.of();
+        ProductDiscovery.DiscoveredProduct product = productDiscovery.discover(
+                new ProductEvidenceCollector.Section(headerNames, bankTextHints, null, staged.size()));
+
         return new DetectedAccountInfo(
                 suggestedAccountName(bank),
                 acc.creditCardSignals ? "CREDIT_CARD" : "SAVINGS",
                 openingBalance, closingBalance, statementStart, statementEnd,
                 acc.accountNumberMasked, acc.creditLimit, acc.dueDate, acc.accountHolderName,
                 acc.branchName, acc.ifscCode,
-                AccountDto.BankDto.from(bank)
+                AccountDto.BankDto.from(bank),
+                product.type().name(), product.confidence(), product.needsReview(), product.report(),
+                // CSV's account-number detection already masks before this point (see
+                // AccountSignalAccumulator), so there is no unmasked number here to hash. The
+                // masked digits still make a PROBABLE match possible, which is the honest ceiling
+                // for a format that never gave us the full value.
+                null,
+                // Deposit-attribute extraction and one-row-per-product splitting are PDF-only for
+                // now (see PdfPreviewGenerator) -- no real CSV export in the current corpus
+                // represents a multi-deposit FD/RD schedule the way a combined-statement PDF does,
+                // and inventing that handling with no real document behind it is exactly what the
+                // Test Corpus Strategy's "evidence before capability" rule warns against.
+                null, null, null, null, null, null, null
         );
     }
 

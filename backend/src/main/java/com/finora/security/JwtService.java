@@ -4,6 +4,8 @@ import com.finora.config.JwtProperties;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import javax.crypto.SecretKey;
@@ -14,6 +16,8 @@ import java.util.function.Function;
 
 @Service
 public class JwtService {
+
+    private static final Logger log = LoggerFactory.getLogger(JwtService.class);
 
     private final JwtProperties jwtProperties;
     private final SecretKey signingKey;
@@ -48,6 +52,14 @@ public class JwtService {
         try {
             return !extractClaim(token, Claims::getExpiration).before(new Date());
         } catch (Exception e) {
+            // Bug fix: this silently returned false for every failure reason alike (expired,
+            // malformed, tampered signature, or a real bug in extractClaim itself) with no log
+            // line and no comment explaining why -- indistinguishable from an ordinary expired
+            // token, with zero trace for a user reporting unexpected logouts or repeated
+            // malformed/tampered-token presentations against protected endpoints. debug, not
+            // warn/error -- an expired token is the overwhelmingly common, entirely routine case
+            // here, not something worth alarming on.
+            log.debug("Rejecting invalid token: {}", e.getMessage());
             return false;
         }
     }

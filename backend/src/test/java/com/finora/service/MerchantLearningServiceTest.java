@@ -46,6 +46,7 @@ class MerchantLearningServiceTest {
     private MerchantLearningAuditRepository auditRepository;
     private MerchantRepository merchantRepository;
     private CategoryRepository categoryRepository;
+    private AuditService auditService;
     private MerchantLearningService service;
 
     private final UUID userId = UUID.randomUUID();
@@ -62,7 +63,8 @@ class MerchantLearningServiceTest {
         auditRepository = mock(MerchantLearningAuditRepository.class);
         merchantRepository = mock(MerchantRepository.class);
         categoryRepository = mock(CategoryRepository.class);
-        service = new MerchantLearningService(learningRepository, auditRepository, merchantRepository, categoryRepository, new ConfidenceEngine());
+        auditService = mock(AuditService.class);
+        service = new MerchantLearningService(learningRepository, auditRepository, merchantRepository, categoryRepository, new ConfidenceEngine(), auditService);
 
         distribution = new ArrayList<>();
         auditHistory = new ArrayList<>();
@@ -173,6 +175,10 @@ class MerchantLearningServiceTest {
         assertThat(result.auditEntry().getAction()).isEqualTo(MerchantLearningAudit.Action.UNDONE);
         assertThat(result.auditEntry().getPreviousCategoryId()).isEqualTo(shoppingCategoryId);
         assertThat(result.auditEntry().getNewCategoryId()).isNull();
+        // Bug fix regression: undo() used to never call AuditService at all, so an admin's undo
+        // (the only way this is reachable today -- see AdminUserMerchantController) left zero
+        // trace in the general activity feed.
+        verify(auditService).record(userId, "MERCHANT_LEARNING_UNDONE", "Merchant", merchantId);
     }
 
     @Test
@@ -297,6 +303,8 @@ class MerchantLearningServiceTest {
         assertThat(result.getAction()).isEqualTo(MerchantLearningAudit.Action.RESET);
         assertThat(result.getPreviousCategoryId()).isEqualTo(electronicsCategoryId); // whatever was top going in
         assertThat(result.getNewCategoryId()).isNull();
+        // Same bug-fix regression as undo() above.
+        verify(auditService).record(userId, "MERCHANT_LEARNING_RESET", "Merchant", merchantId);
     }
 
     @Test

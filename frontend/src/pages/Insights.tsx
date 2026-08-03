@@ -11,18 +11,20 @@ export default function Insights() {
   const [data, setData] = useState<InsightsData | null>(null);
   const [recurring, setRecurring] = useState<RecurringItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
     Promise.all([insightsApi.get(), recurringApi.list()])
       .then(([insights, rec]) => { setData(insights); setRecurring(rec); })
-      // `data` stays null on failure, which the existing `if (!data) return null` below already
-      // renders as gracefully as this page currently distinguishes "still loading" from "failed".
-      .catch(() => {})
+      .catch(() => setError(true))
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) return <p className="text-muted">Loading…</p>;
-  if (!data) return null;
+  // Bug fix: `data` staying null on failure used to fall through to `return null`, rendering a
+  // blank page with no indication anything went wrong -- same fix as Dashboard.tsx, matching
+  // Reports.tsx's existing "Couldn't load ... — please try again later" convention.
+  if (error || !data) return <p className="text-muted">Couldn't load your insights — please try again later.</p>;
 
   const movers = data.movers.filter((m) => m.pctChange !== null).slice(0, 6);
 

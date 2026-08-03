@@ -21,37 +21,37 @@ class EmailPropertiesTest {
 
     @Test
     void resolvesToAdminBaseUrl_whenOriginMatchesIt() {
-        var props = propsWith("https://finora-cng.pages.dev", "https://finora-admin.pages.dev");
-        assertThat(props.resolveBaseUrl("https://finora-admin.pages.dev")).isEqualTo("https://finora-admin.pages.dev");
+        var props = propsWith("https://app.finoratech.info", "https://admin.finoratech.info");
+        assertThat(props.resolveBaseUrl("https://admin.finoratech.info")).isEqualTo("https://admin.finoratech.info");
     }
 
     @Test
     void resolvesToUserBaseUrl_whenOriginMatchesIt() {
-        var props = propsWith("https://finora-cng.pages.dev", "https://finora-admin.pages.dev");
-        assertThat(props.resolveBaseUrl("https://finora-cng.pages.dev")).isEqualTo("https://finora-cng.pages.dev");
+        var props = propsWith("https://app.finoratech.info", "https://admin.finoratech.info");
+        assertThat(props.resolveBaseUrl("https://app.finoratech.info")).isEqualTo("https://app.finoratech.info");
     }
 
     @Test
     void isCaseInsensitiveAndIgnoresATrailingSlashOnEitherSide() {
-        var props = propsWith("https://finora-cng.pages.dev", "https://finora-admin.pages.dev/");
-        assertThat(props.resolveBaseUrl("HTTPS://FINORA-ADMIN.PAGES.DEV")).isEqualTo("https://finora-admin.pages.dev/");
+        var props = propsWith("https://app.finoratech.info", "https://admin.finoratech.info/");
+        assertThat(props.resolveBaseUrl("HTTPS://ADMIN.FINORATECH.INFO")).isEqualTo("https://admin.finoratech.info/");
     }
 
     @Test
     void fallsBackToUserBaseUrl_whenOriginIsNull() {
-        var props = propsWith("https://finora-cng.pages.dev", "https://finora-admin.pages.dev");
-        assertThat(props.resolveBaseUrl(null)).isEqualTo("https://finora-cng.pages.dev");
+        var props = propsWith("https://app.finoratech.info", "https://admin.finoratech.info");
+        assertThat(props.resolveBaseUrl(null)).isEqualTo("https://app.finoratech.info");
     }
 
     @Test
     void fallsBackToUserBaseUrl_whenAdminBaseUrlIsUnconfigured() {
-        var props = propsWith("https://finora-cng.pages.dev", null);
-        assertThat(props.resolveBaseUrl("https://finora-admin.pages.dev")).isEqualTo("https://finora-cng.pages.dev");
+        var props = propsWith("https://app.finoratech.info", null);
+        assertThat(props.resolveBaseUrl("https://admin.finoratech.info")).isEqualTo("https://app.finoratech.info");
     }
 
     @Test
     void fallsBackToUserBaseUrl_whenOriginMatchesNeitherConfiguredValue() {
-        var props = propsWith("https://finora-cng.pages.dev", "https://finora-admin.pages.dev");
-        assertThat(props.resolveBaseUrl("https://some-other-site.example")).isEqualTo("https://finora-cng.pages.dev");
+        var props = propsWith("https://app.finoratech.info", "https://admin.finoratech.info");
+        assertThat(props.resolveBaseUrl("https://some-other-site.example")).isEqualTo("https://app.finoratech.info");
     }
 }

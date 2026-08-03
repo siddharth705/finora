@@ -63,7 +63,7 @@ class AuthServiceLoginTest {
                 mock(PasswordEncoder.class), mock(JwtService.class), authenticationManager,
                 mock(AuditService.class), refreshTokenService, mock(EmailProvider.class),
                 new EmailProperties(), mock(PhoneVerificationProvider.class), platformSettingsService,
-                mock(PasswordHistoryService.class)
+                mock(PasswordHistoryService.class), new IdentityLookup(userRepository)
         );
     }
 
@@ -84,14 +84,16 @@ class AuthServiceLoginTest {
     @Test
     void login_withEmailIdentifier_authenticatesDirectlyWithoutPhoneLookup() {
         User u = user("jane@example.com", "+919876500001");
-        when(userRepository.findByEmailIgnoreCase("jane@example.com")).thenReturn(Optional.of(u));
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("jane@example.com", "USER")).thenReturn(Optional.of(u));
         stubSuccessfulAuthentication();
 
-        authService.login(new LoginRequest("jane@example.com", "Password123"));
+        authService.login(new LoginRequest("jane@example.com", "Password123", "USER"));
 
+        // Authenticated by ID, not email: the Spring Security principal is the user id, because
+        // an email identifies an account only within a portal scope since V52.
         verify(authenticationManager).authenticate(argThat(token ->
-                "jane@example.com".equals(token.getPrincipal())));
-        verify(userRepository, never()).findByPhoneNumber(any());
+                u.getId().toString().equals(token.getPrincipal())));
+        verify(userRepository, never()).findByPhoneNumberAndAccountScope(anyString(), anyString());
     }
 
     /**
@@ -102,10 +104,10 @@ class AuthServiceLoginTest {
     @Test
     void login_returnsTheMaskedPhoneNumber_evenThoughItNeverTriggersPhoneVerificationItself() {
         User u = user("jane@example.com", "+919876500001");
-        when(userRepository.findByEmailIgnoreCase("jane@example.com")).thenReturn(Optional.of(u));
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("jane@example.com", "USER")).thenReturn(Optional.of(u));
         stubSuccessfulAuthentication();
 
-        var response = authService.login(new LoginRequest("jane@example.com", "Password123"));
+        var response = authService.login(new LoginRequest("jane@example.com", "Password123", "USER"));
 
         assertThat(response.maskedPhone()).isEqualTo("+•••••••••001");
     }
@@ -113,14 +115,14 @@ class AuthServiceLoginTest {
     @Test
     void login_withExactPhoneNumberMatch_resolvesToTheAccountsEmail() {
         User u = user("jane@example.com", "+919876500001");
-        when(userRepository.findByPhoneNumber("+919876500001")).thenReturn(Optional.of(u));
-        when(userRepository.findByEmailIgnoreCase("jane@example.com")).thenReturn(Optional.of(u));
+        when(userRepository.findByPhoneNumberAndAccountScope("+919876500001", "USER")).thenReturn(Optional.of(u));
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("jane@example.com", "USER")).thenReturn(Optional.of(u));
         stubSuccessfulAuthentication();
 
-        authService.login(new LoginRequest("+919876500001", "Password123"));
+        authService.login(new LoginRequest("+919876500001", "Password123", "USER"));
 
         verify(authenticationManager).authenticate(argThat(token ->
-                "jane@example.com".equals(token.getPrincipal())));
+                u.getId().toString().equals(token.getPrincipal())));
     }
 
     @Test
@@ -128,10 +130,10 @@ class AuthServiceLoginTest {
         // Stored exactly as the registration form's own placeholder shows it ("+91XXXXXXXXXX"),
         // but the user drops the "+" when typing it back in at login.
         User u = user("raj@example.com", "+919876500002");
-        when(userRepository.findByPhoneNumber("919876500002")).thenReturn(Optional.empty());
-        when(userRepository.findByPhoneNumber("+919876500002")).thenReturn(Optional.of(u));
+        when(userRepository.findByPhoneNumberAndAccountScope("919876500002", "USER")).thenReturn(Optional.empty());
+        when(userRepository.findByPhoneNumberAndAccountScope("+919876500002", "USER")).thenReturn(Optional.of(u));
 
-        Object resolved = ReflectionTestUtils.invokeMethod(authService, "resolveEmailForLogin", "919876500002");
+        Object resolved = ReflectionTestUtils.invokeMethod(authService, "resolveEmailForLogin", "919876500002", "USER");
 
         assertThat(resolved).isEqualTo("raj@example.com");
     }
@@ -148,22 +150,22 @@ class AuthServiceLoginTest {
     @Test
     void resolveEmailForLogin_findsAccountRegisteredWithABareTenDigitNumber_nowStoredWithTheLeadingCountryCode() {
         User u = user("priya@example.com", "+919876500003");
-        when(userRepository.findByPhoneNumber("9876500003")).thenReturn(Optional.empty());
-        when(userRepository.findByPhoneNumber("+9876500003")).thenReturn(Optional.empty());
-        when(userRepository.findByPhoneNumber("+919876500003")).thenReturn(Optional.of(u));
+        when(userRepository.findByPhoneNumberAndAccountScope("9876500003", "USER")).thenReturn(Optional.empty());
+        when(userRepository.findByPhoneNumberAndAccountScope("+9876500003", "USER")).thenReturn(Optional.empty());
+        when(userRepository.findByPhoneNumberAndAccountScope("+919876500003", "USER")).thenReturn(Optional.of(u));
 
-        Object resolved = ReflectionTestUtils.invokeMethod(authService, "resolveEmailForLogin", "9876500003");
+        Object resolved = ReflectionTestUtils.invokeMethod(authService, "resolveEmailForLogin", "9876500003", "USER");
 
         assertThat(resolved).isEqualTo("priya@example.com");
     }
 
     @Test
     void login_withUnknownIdentifier_doesNotLeakWhetherAccountExists() {
-        when(userRepository.findByEmailIgnoreCase("nobody@example.com")).thenReturn(Optional.empty());
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("nobody@example.com", "USER")).thenReturn(Optional.empty());
         when(authenticationManager.authenticate(any())).thenThrow(new BadCredentialsException("Bad credentials"));
 
         try {
-            authService.login(new LoginRequest("nobody@example.com", "whatever"));
+            authService.login(new LoginRequest("nobody@example.com", "whatever", "USER"));
         } catch (Exception e) {
             assertThat(e.getMessage()).isEqualTo("Invalid credentials");
             return;
@@ -173,19 +175,19 @@ class AuthServiceLoginTest {
 
     /**
      * Bug fix: case-insensitive email uniqueness was never enforced before this session, so two
-     * pre-existing accounts could differ only by case. findByEmailIgnoreCase() throws
+     * pre-existing accounts could differ only by case. findByEmailIgnoreCaseAndAccountScope(, "USER") throws
      * IncorrectResultSizeDataAccessException if it matches more than one row -- login() must fail
      * closed to the same generic "Invalid credentials" every other unresolvable identifier gets,
      * not bubble up as an opaque 500.
      */
     @Test
     void login_whenEmailIgnoreCaseLookupIsAmbiguous_failsClosedInsteadOf500ing() {
-        when(userRepository.findByEmailIgnoreCase("jane@example.com"))
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("jane@example.com", "USER"))
                 .thenThrow(new org.springframework.dao.IncorrectResultSizeDataAccessException(1));
         when(authenticationManager.authenticate(any())).thenThrow(new BadCredentialsException("Bad credentials"));
 
         try {
-            authService.login(new LoginRequest("jane@example.com", "whatever"));
+            authService.login(new LoginRequest("jane@example.com", "whatever", "USER"));
         } catch (Exception e) {
             assertThat(e).isInstanceOf(com.finora.exception.ApiException.class);
             assertThat(e.getMessage()).isEqualTo("Invalid credentials");
@@ -204,10 +206,10 @@ class AuthServiceLoginTest {
     void login_withSuspendedAccount_isRejectedBeforeAuthenticating() {
         User u = user("suspended@example.com", "+919876500099");
         u.setStatus("SUSPENDED");
-        when(userRepository.findByEmailIgnoreCase("suspended@example.com")).thenReturn(Optional.of(u));
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("suspended@example.com", "USER")).thenReturn(Optional.of(u));
 
         try {
-            authService.login(new LoginRequest("suspended@example.com", "whatever"));
+            authService.login(new LoginRequest("suspended@example.com", "whatever", "USER"));
         } catch (Exception e) {
             assertThat(e.getMessage()).contains("suspended");
             verify(authenticationManager, never()).authenticate(any());
@@ -218,9 +220,9 @@ class AuthServiceLoginTest {
 
     @Test
     void resolveEmailForLogin_returnsOriginalIdentifierUnchanged_whenNoPhoneNumberMatchesAnyVariant() {
-        when(userRepository.findByPhoneNumber(anyString())).thenReturn(Optional.empty());
+        when(userRepository.findByPhoneNumberAndAccountScope(anyString(), anyString())).thenReturn(Optional.empty());
 
-        Object resolved = ReflectionTestUtils.invokeMethod(authService, "resolveEmailForLogin", "0000000000");
+        Object resolved = ReflectionTestUtils.invokeMethod(authService, "resolveEmailForLogin", "0000000000", "USER");
 
         // Falls through to the original identifier so the existing authenticate()-then-catch
         // path in login() still fails with the same generic "Invalid credentials" -- exactly
@@ -243,18 +245,18 @@ class AuthServiceLoginTest {
         when(platformSettingsService.getEntity()).thenReturn(settings);
 
         User u = user("locksout@example.com", "+919876500077");
-        when(userRepository.findByEmailIgnoreCase("locksout@example.com")).thenReturn(Optional.of(u));
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("locksout@example.com", "USER")).thenReturn(Optional.of(u));
         when(authenticationManager.authenticate(any())).thenThrow(new BadCredentialsException("Bad credentials"));
 
         // First failure: below the configured threshold, no lockout yet.
         try {
-            authService.login(new LoginRequest("locksout@example.com", "wrong"));
+            authService.login(new LoginRequest("locksout@example.com", "wrong", "USER"));
         } catch (Exception ignored) { /* expected */ }
         assertThat(u.getLockedUntil()).isNull();
 
         // Second failure: hits the configured max of 2 (not the old hardcoded 5) -- locked now.
         try {
-            authService.login(new LoginRequest("locksout@example.com", "wrong"));
+            authService.login(new LoginRequest("locksout@example.com", "wrong", "USER"));
         } catch (Exception ignored) { /* expected */ }
         assertThat(u.getLockedUntil()).isNotNull();
         assertThat(u.getLockedUntil()).isAfter(java.time.Instant.now().plusSeconds(29 * 60));

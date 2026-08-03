@@ -46,6 +46,16 @@ export interface Account {
   // Always "ACTIVE" today -- there's no archive/close-account feature yet. See AccountDto's own
   // comment on the backend for why this is still a real field rather than assumed client-side.
   status: string;
+
+  // Deposit attributes -- see DetectedAccountInfo's own note. Populated only for FD/RD imported
+  // from a statement; null for every hand-created account and every ledger account.
+  principalAmount?: number | null;
+  interestRate?: number | null;
+  maturityDate?: string | null;
+  maturityAmount?: number | null;
+  installmentAmount?: number | null;
+  installmentsPaid?: number | null;
+  installmentsTotal?: number | null;
 }
 
 export interface Transaction {
@@ -157,7 +167,46 @@ export interface DetectedAccountInfo {
   branchName: string | null;
   ifscCode: string | null;
   bank: BankInfo;
+
+  // Financial Product Discovery (backend: com.finora.imports.product). What this section actually
+  // IS, as opposed to what to prefill the account-type field with. The two are different questions:
+  // suggestedAccountType always has to name something for the form, while detectedProduct is
+  // allowed to say 'UNKNOWN' -- which is a successful outcome, not a failure. When
+  // productNeedsReview is true the type above is a prefill and nothing more; the user names the
+  // product once rather than having one guessed into their net worth.
+  detectedProduct: FinancialProductType;
+  productConfidence: number;
+  productNeedsReview: boolean;
+  productEvidence: string[];
+
+  // Opaque to the client. A one-way hash of institution + this product's own number, computed
+  // server-side at staging (the only point the full number exists) so that confirming a statement
+  // recognises a deposit already held instead of creating a second one and double-counting it in
+  // net worth. Echo it back unchanged on confirm; never display it.
+  productIdentityHash: string | null;
+
+  // What makes a deposit a DEPOSIT rather than a name and a balance. All null for a ledger
+  // account, and null on a deposit for fields its own type doesn't have (a fixed deposit has no
+  // installmentAmount; a recurring deposit's value builds up over the schedule so it has no
+  // principalAmount).
+  principalAmount: number | null;
+  interestRate: number | null;
+  maturityDate: string | null;
+  maturityAmount: number | null;
+  installmentAmount: number | null;
+  installmentsPaid: number | null;
+  installmentsTotal: number | null;
 }
+
+// Mirrors the backend FinancialProductType enum. FD/RD/PPF/EPF/NPS/mutual fund/demat route to the
+// Investments module rather than a separate Deposits one; LOAN/INSURANCE/FOREX_CARD are recognised
+// but not modelled yet, so they surface on the review screen instead of creating anything.
+export type FinancialProductType =
+  | 'SAVINGS' | 'CURRENT' | 'OVERDRAFT' | 'WALLET'
+  | 'CREDIT_CARD'
+  | 'FIXED_DEPOSIT' | 'RECURRING_DEPOSIT' | 'PPF' | 'EPF' | 'NPS' | 'MUTUAL_FUND' | 'DEMAT'
+  | 'LOAN' | 'INSURANCE' | 'FOREX_CARD'
+  | 'UNKNOWN';
 
 // One detected account section within a single multi-account PDF upload (e.g. an HSBC-style
 // "Composite Statement" bundling a savings account and a credit-card account in one file) --
@@ -178,6 +227,7 @@ export interface ImportSummary {
   transfersIdentified: number;
   newMerchantsLearned: number;
   accountsCreated: string[];
+  productsCreated: Record<string, number>;
   categoriesAssigned: Record<string, number>;
   warnings: string[];
   // Everything needed to render a "professional import summary" without a second round-trip --

@@ -125,10 +125,10 @@ class AdminUserServiceTest {
         User target = user(targetId, "ACTIVE");
         target.setPhoneNumber("+919876500001");
         when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
-        when(userRepository.existsByPhoneNumber("+919876500099")).thenReturn(true);
+        when(userRepository.existsByPhoneNumberAndAccountScope("+919876500099", "USER")).thenReturn(true);  // synthetic-ok: sequential test number, not a real subscriber
 
         try {
-            adminUserService.updateProfile(adminId, targetId, new AdminUpdateUserRequest(null, "+919876500099", null, null));
+            adminUserService.updateProfile(adminId, targetId, new AdminUpdateUserRequest(null, "+919876500099", null, null));  // synthetic-ok: sequential test number, not a real subscriber
         } catch (ApiException e) {
             assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
             verify(userRepository, never()).save(any());

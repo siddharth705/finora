@@ -9,6 +9,11 @@ import com.finora.dto.ImportDto.UnparseableRow;
 import com.finora.imports.CsvParser;
 import com.finora.imports.DocumentContext;
 import com.finora.imports.TransactionNormalizer;
+import com.finora.imports.product.ProductAttributeExtractor;
+import com.finora.imports.product.ProductAttributes;
+import com.finora.imports.product.ProductDiscovery;
+import com.finora.imports.product.ProductIdentity;
+import com.finora.imports.product.ProductEvidenceCollector;
 import com.finora.util.BankRegistry;
 import org.springframework.stereotype.Component;
 
@@ -52,13 +57,18 @@ public class PdfPreviewGenerator {
     private final PdfTableLocator tableLocator;
     private final PdfMetadataExtractor metadataExtractor;
     private final TransactionNormalizer transactionNormalizer;
+    private final ProductDiscovery productDiscovery;
+    private final ProductAttributeExtractor attributeExtractor;
 
     public PdfPreviewGenerator(PdfTextExtractor textExtractor, PdfTableLocator tableLocator,
-                                PdfMetadataExtractor metadataExtractor, TransactionNormalizer transactionNormalizer) {
+                                PdfMetadataExtractor metadataExtractor, TransactionNormalizer transactionNormalizer,
+                                ProductDiscovery productDiscovery, ProductAttributeExtractor attributeExtractor) {
         this.textExtractor = textExtractor;
         this.tableLocator = tableLocator;
         this.metadataExtractor = metadataExtractor;
         this.transactionNormalizer = transactionNormalizer;
+        this.productDiscovery = productDiscovery;
+        this.attributeExtractor = attributeExtractor;
     }
 
     /** Single-account convenience wrapper over {@link #generateSections} -- returns the FIRST
@@ -103,20 +113,101 @@ public class PdfPreviewGenerator {
             // extracted text is surfaced here instead, since without a recognized table there's no
             // header to key a structured row by.
             PdfTableLocator.LocatedTable empty = tableLocator.locate(positioned, ctx);
-            StagedAccountSection section = buildSection(userId, filename,
-                    new PdfTableLocator.LocatedSection(empty.preTableLines(), List.of()), ctx);
+            PdfTableLocator.LocatedSection emptySection =
+                    new PdfTableLocator.LocatedSection(empty.preTableLines(), List.of());
+            // Goes straight to buildLedgerSection rather than through buildSections' product-vs-
+            // ledger routing: with no rows and no header at all, classification can only ever
+            // return UNKNOWN, and UNKNOWN's own hasTransactions()==false would otherwise divert
+            // this into buildProductSections -- losing "Never lose information"'s unparseable-text
+            // reporting below, which is the one thing this branch exists to preserve.
+            ProductDiscovery.DiscoveredProduct unknown = productDiscovery.discover(
+                    new ProductEvidenceCollector.Section(List.of(), emptySection.auxiliaryText(), null, 0));
+            StagedAccountSection section = buildLedgerSection(userId, filename, emptySection, unknown, ctx);
             return new PdfGenerationResult(List.of(surfaceUnrecognizedText(section, empty.preTableLines())), ctx);
         }
 
         List<StagedAccountSection> result = new ArrayList<>();
-        for (PdfTableLocator.LocatedSection section : doc.sections()) {
-            result.add(buildSection(userId, filename, section, ctx));
+        List<UnparseableRow> unparseableAcrossDocument = new ArrayList<>();
+        for (int i = 0; i < doc.sections().size(); i++) {
+            List<StagedAccountSection> staged = buildSections(userId, filename, doc.sections().get(i),
+                    i, doc.sections().size(), ctx);
+            for (StagedAccountSection s : staged) unparseableAcrossDocument.addAll(s.unparseableRows());
+            result.addAll(staged);
         }
+        // One document's worth, across every section -- the DocumentContext is per-file, and a
+        // combined statement's sections all failed (or didn't) as part of the same parse run.
+        ctx.recordUnparseable(unparseableAcrossDocument);
         return new PdfGenerationResult(result, ctx);
     }
 
-    private StagedAccountSection buildSection(UUID userId, String filename, PdfTableLocator.LocatedSection section,
-                                               DocumentContext ctx) {
+    /**
+     * One located section becomes ONE staged section for a ledger product (a savings account, a
+     * credit card) -- but for a deposit product it can become SEVERAL: a fixed-deposit section
+     * lists every FD the customer holds as its own row, and each is its own product with its own
+     * principal, rate and maturity date. Classifying is done ONCE here, up front, using the
+     * section's raw rows and auxiliary text -- exactly the same inputs {@code buildDetectedAccountInfo}
+     * always classified on -- so a ledger section's own classification is byte-for-byte what it was
+     * before this method existed; only the branch taken afterward is new.
+     *
+     * This is also what stops a deposit's own principal/date from being fed to
+     * {@link TransactionNormalizer} as if it were a transaction candidate: a real fixed-deposit row
+     * ("Principal Amount", "Start Date", ...) has both a date-shaped and an amount-shaped column,
+     * which is exactly what the normalizer looks for, and a section that was never a ledger to
+     * begin with used to have its deposit rows silently treated as one anyway -- landing in
+     * "unparseable" at best, or staged as a fabricated transaction at worst, once product routing
+     * had already decided the account itself belonged in Investments.
+     */
+    private List<StagedAccountSection> buildSections(UUID userId, String filename,
+                                                      PdfTableLocator.LocatedSection section,
+                                                      int sectionIndex, int sectionCount, DocumentContext ctx) {
+        List<String> columns = section.rows().isEmpty() ? List.of() : List.copyOf(section.rows().get(0).keySet());
+        ProductDiscovery.DiscoveredProduct product = productDiscovery.discover(
+                new ProductEvidenceCollector.Section(columns, section.auxiliaryText(), null,
+                        section.rows().size(), sectionIndex, sectionCount));
+        if (ctx != null) ctx.record("FINANCIAL_PRODUCT_CLASSIFICATION");
+
+        // Skipping transaction parsing requires the product to be PROVEN a non-ledger, not merely
+        // suspected of it. UNKNOWN's own hasTransactions() is false too (its domain needs user
+        // input), so gating on that alone diverted every unclassified section into the deposit path
+        // and silently dropped all of its rows -- caught by thirteen existing capability tests
+        // going to zero staged rows at once. "Unknown-first" means a graceful UNKNOWN, and losing
+        // the entire statement is not graceful: an unproven product keeps the ledger path, gets its
+        // rows parsed exactly as before, and is held back from auto-creating anything by
+        // productNeedsReview instead.
+        if (product.validation().isValidated() && !product.type().hasTransactions()) {
+            return buildProductSections(filename, section, product, ctx);
+        }
+        return List.of(buildLedgerSection(userId, filename, section, product, ctx));
+    }
+
+    /**
+     * A fixed/recurring deposit, PPF, or any other non-ledger product: no transaction parsing at
+     * all -- see {@link #buildSections}'s own doc comment for why running it here used to be
+     * actively wrong -- just attribute extraction and, for a fixed deposit with more than one row,
+     * one {@link StagedAccountSection} per deposit.
+     */
+    private List<StagedAccountSection> buildProductSections(String filename, PdfTableLocator.LocatedSection section,
+                                                             ProductDiscovery.DiscoveredProduct product,
+                                                             DocumentContext ctx) {
+        SharedSectionFacts facts = sharedFacts(filename, section, ctx);
+        List<ProductAttributes> attributes = attributeExtractor.extract(product.type(), section.rows());
+        String suggestedAccountType = suggestedAccountTypeFor(product, facts.creditCardSignals());
+
+        List<StagedAccountSection> result = new ArrayList<>();
+        for (ProductAttributes attrs : attributes) {
+            // No opening/closing balance, no statement period -- neither concept applies to a
+            // deposit schedule the way it does to a ledger's own transaction date range.
+            DetectedAccountInfo detected = facts.toDetectedAccountInfo(product, suggestedAccountType,
+                    null, null, facts.metadata().statementPeriodStart(), facts.metadata().statementPeriodEnd(), attrs);
+            result.add(new StagedAccountSection(detected, List.of(), 0, 0, List.of()));
+        }
+        return result;
+    }
+
+    private StagedAccountSection buildLedgerSection(UUID userId, String filename,
+                                                    PdfTableLocator.LocatedSection section,
+                                                    ProductDiscovery.DiscoveredProduct product,
+                                                    DocumentContext ctx) {
         List<StagedRow> staged = new ArrayList<>();
         // "Never lose information" (see the engineering principles doc) -- a row that fails to
         // normalize is reported with WHY, not just silently absent from the row count. Real cost
@@ -155,7 +246,7 @@ public class PdfPreviewGenerator {
         staged.sort(Comparator.comparing(StagedRow::date));
 
         int dupCount = (int) staged.stream().filter(StagedRow::likelyDuplicate).count();
-        DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, staged, balancePoints, ctx);
+        DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, staged, balancePoints, product, ctx);
         return new StagedAccountSection(detected, staged, staged.size(), dupCount, unparseable);
     }
 
@@ -177,16 +268,19 @@ public class PdfPreviewGenerator {
 
     private DetectedAccountInfo buildDetectedAccountInfo(String filename, PdfTableLocator.LocatedSection section,
                                                            List<StagedRow> staged, List<BalancePoint> balancePoints,
+                                                           ProductDiscovery.DiscoveredProduct product,
                                                            DocumentContext ctx) {
-        PdfMetadataExtractor.ExtractedMetadata metadata = metadataExtractor.extract(section.auxiliaryText(), ctx);
-
-        LocalDate statementStart = metadata.statementPeriodStart() != null ? metadata.statementPeriodStart()
-                : staged.stream().map(StagedRow::date).min(LocalDate::compareTo).orElse(null);
-        LocalDate statementEnd = metadata.statementPeriodEnd() != null ? metadata.statementPeriodEnd()
-                : staged.stream().map(StagedRow::date).max(LocalDate::compareTo).orElse(null);
-
+        LocalDate statementStart = null;
+        LocalDate statementEnd = null;
         BigDecimal openingBalance = null;
         BigDecimal closingBalance = null;
+
+        SharedSectionFacts facts = sharedFacts(filename, section, ctx);
+        statementStart = facts.metadata().statementPeriodStart() != null ? facts.metadata().statementPeriodStart()
+                : staged.stream().map(StagedRow::date).min(LocalDate::compareTo).orElse(null);
+        statementEnd = facts.metadata().statementPeriodEnd() != null ? facts.metadata().statementPeriodEnd()
+                : staged.stream().map(StagedRow::date).max(LocalDate::compareTo).orElse(null);
+
         if (!balancePoints.isEmpty()) {
             LocalDate minDate = balancePoints.stream().map(BalancePoint::date).min(LocalDate::compareTo).orElseThrow();
             LocalDate maxDate = balancePoints.stream().map(BalancePoint::date).max(LocalDate::compareTo).orElseThrow();
@@ -218,8 +312,20 @@ public class PdfPreviewGenerator {
             closingBalance = trueLastOfDay.balance();
         }
 
-        List<String> bankTextHints = new ArrayList<>(section.auxiliaryText());
-        BankRegistry.BankInfo bank = BankRegistry.detect(filename, bankTextHints);
+        return facts.toDetectedAccountInfo(product, suggestedAccountTypeFor(product, facts.creditCardSignals()),
+                openingBalance, closingBalance, statementStart, statementEnd, ProductAttributes.empty());
+    }
+
+    /**
+     * Metadata, bank identity and the credit-card text signal -- every fact about a section that
+     * applies whether it turns out to be a ledger or a deposit schedule. Factored out once both
+     * {@link #buildDetectedAccountInfo} (ledger) and {@link #buildProductSections} (deposit) needed
+     * it, rather than the classification-and-metadata block that used to live only in the former.
+     */
+    private SharedSectionFacts sharedFacts(String filename, PdfTableLocator.LocatedSection section,
+                                           DocumentContext ctx) {
+        PdfMetadataExtractor.ExtractedMetadata metadata = metadataExtractor.extract(section.auxiliaryText(), ctx);
+        BankRegistry.BankInfo bank = BankRegistry.detect(filename, new ArrayList<>(section.auxiliaryText()));
         String suggestedName = bank.officialName() != null ? bank.officialName() : "Bank Statement Import";
 
         // A credit-card statement's own signal rarely lives in a table COLUMN the way CSV's
@@ -232,13 +338,57 @@ public class PdfPreviewGenerator {
                 || section.auxiliaryText().stream().anyMatch(this::containsCreditCardTextSignal);
         if (ctx != null && creditCardSignals) ctx.record("CREDIT_CARD_SUMMARY_SIGNAL");
 
-        return new DetectedAccountInfo(
-                suggestedName,
-                creditCardSignals ? "CREDIT_CARD" : "SAVINGS",
-                openingBalance, closingBalance, statementStart, statementEnd,
-                metadata.accountNumberMasked(), metadata.creditLimit(), metadata.paymentDueDate(),
-                metadata.accountHolderName(), metadata.branchName(), metadata.ifscCode(),
-                AccountDto.BankDto.from(bank));
+        return new SharedSectionFacts(metadata, bank, suggestedName, creditCardSignals);
+    }
+
+    private record SharedSectionFacts(PdfMetadataExtractor.ExtractedMetadata metadata, BankRegistry.BankInfo bank,
+                                      String suggestedName, boolean creditCardSignals) {
+
+        DetectedAccountInfo toDetectedAccountInfo(ProductDiscovery.DiscoveredProduct product,
+                                                  String suggestedAccountType, BigDecimal openingBalance,
+                                                  BigDecimal closingBalance, LocalDate statementStart,
+                                                  LocalDate statementEnd, ProductAttributes attrs) {
+            return new DetectedAccountInfo(
+                    suggestedName, suggestedAccountType,
+                    openingBalance, closingBalance, statementStart, statementEnd,
+                    metadata.accountNumberMasked(), metadata.creditLimit(), metadata.paymentDueDate(),
+                    metadata.accountHolderName(), metadata.branchName(), metadata.ifscCode(),
+                    AccountDto.BankDto.from(bank),
+                    product.type().name(), product.confidence(), product.needsReview(), product.report(),
+                    // Hashed here and only here: this is the last point in the pipeline where the
+                    // unmasked number exists, and it must not travel any further than this call.
+                    //
+                    // The deposit discriminator is what keeps several deposits listed under ONE
+                    // section's account number distinguishable -- that number is the customer's
+                    // relationship number, not any one deposit's. Null for a ledger account, whose
+                    // number identifies it on its own. See ProductIdentity.forDeposit.
+                    ProductIdentity.of(bank.id(), product.type(),
+                            metadata.accountNumberFullForHashingOnly(), metadata.accountNumberMasked(),
+                            ProductIdentity.forDeposit(attrs.principalAmount(), attrs.maturityDate(),
+                                    attrs.installmentAmount()))
+                            .strongKey(),
+                    attrs.principalAmount(), attrs.interestRate(), attrs.maturityDate(), attrs.maturityAmount(),
+                    attrs.installmentAmount(), attrs.installmentsPaid(), attrs.installmentsTotal());
+        }
+    }
+
+    /**
+     * What to prefill the review form's account-type field with.
+     *
+     * Deliberately conservative, and deliberately NOT the same question as {@code detectedProduct}.
+     * The existing credit-card text signal is a proven capability with its own regression coverage,
+     * so it still wins where it fires; product discovery only gets to choose the type when it has
+     * actually validated a product, which is what lets a term deposit prefill INVESTMENT instead of
+     * being offered as a savings account. Everything else keeps the long-standing SAVINGS default
+     * -- an UNKNOWN product still has to put something in the form, and {@code productNeedsReview}
+     * is what tells the review screen not to trust it.
+     */
+    private String suggestedAccountTypeFor(ProductDiscovery.DiscoveredProduct product, boolean creditCardSignals) {
+        if (creditCardSignals) return "CREDIT_CARD";
+        if (product.mayCreateAutomatically() && product.type().accountType() != null) {
+            return product.type().accountType().name();
+        }
+        return "SAVINGS";
     }
 
     private boolean containsCreditCardTextSignal(String line) {

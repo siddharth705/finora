@@ -1,8 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Navigate, useNavigate, Link } from 'react-router-dom';
-import { ShieldAlert } from 'lucide-react';
+import { Navigate, useLocation, useNavigate, Link } from 'react-router-dom';
 import { useAdminAuth } from '../context/AdminAuthContext';
+import logoMark from '../assets/logo-mark.png';
 import { setupApi } from '../api/endpoints';
+import { ADMIN_SESSION_ENDED_REASON_KEY } from '../api/client';
+import { safeStorage } from '../lib/safeStorage';
 
 /**
  * The only two post-login destinations that exist today. Deliberately a plain function over a
@@ -20,12 +22,25 @@ function nextRouteFor(phoneVerified: boolean): '/' | '/verify-phone' {
 export default function Login() {
   const { token, phoneVerified, login } = useAdminAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [setupRequired, setSetupRequired] = useState(false);
   const [checkingSetup, setCheckingSetup] = useState(true);
+  // A one-time confirmation from ResetPassword's own post-success redirect ("Password reset
+  // successfully..."). This page previously never read location.state at all, so ResetPassword.tsx
+  // passing this message did nothing -- an admin who reset their password landed here with no
+  // acknowledgment it worked. Mirrors the user app's Login.tsx `banner` exactly, including reading
+  // it once on mount rather than reactively, so it can't reappear after being dismissed.
+  const [banner] = useState<string | null>(() => (location.state as { message?: string } | null)?.message ?? null);
+  // Why the admin is looking at this screen when they didn't ask to be -- stashed by
+  // endSessionAndRedirect() in api/client.ts, whose full-page navigation unmounts React and takes
+  // any in-memory state with it. Read once into state, deleted immediately (see the effect below)
+  // so it can't resurface on a later visit. Mirrors the user app's Login.tsx exactly.
+  const [sessionEndedReason] = useState<string | null>(
+    () => safeStorage.getItem(ADMIN_SESSION_ENDED_REASON_KEY));
 
   useEffect(() => {
     // Checked once, unauthenticated -- lets a fresh install land on /setup automatically instead
@@ -37,6 +52,16 @@ export default function Login() {
       .then((status) => setSetupRequired(status.setupRequired))
       .catch(() => {})
       .finally(() => setCheckingSetup(false));
+    // Consumed on read: it lives in storage, so without this it would outlive not just this render
+    // but the whole tab, and reappear on an unrelated future visit to the login screen.
+    if (safeStorage.getItem(ADMIN_SESSION_ENDED_REASON_KEY)) {
+      safeStorage.removeItem(ADMIN_SESSION_ENDED_REASON_KEY);
+    }
+    // history.state otherwise survives a manual page refresh (unlike the in-memory banner state
+    // above), which would re-show a stale "password reset" confirmation on an unrelated future
+    // visit to this same history entry.
+    if (banner) navigate(location.pathname, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (setupRequired) return <Navigate to="/setup" replace />;
@@ -72,8 +97,8 @@ export default function Login() {
     <div className="min-h-screen bg-bg flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="flex items-center gap-2.5 justify-center mb-8">
-          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-rose-400 to-primary-dark flex items-center justify-center">
-            <ShieldAlert size={18} className="text-white" strokeWidth={2.5} />
+          <div className="w-9 h-9 rounded-lg overflow-hidden flex-shrink-0">
+            <img src={logoMark} alt="" className="w-full h-full object-cover" />
           </div>
           <span className="font-extrabold tracking-wide text-xl text-ink">FINORA ADMIN</span>
         </div>
@@ -104,6 +129,15 @@ export default function Login() {
             />
           </div>
 
+          {banner && (
+            <p className="text-sm text-success bg-success-bg rounded-lg px-3.5 py-2.5">{banner}</p>
+          )}
+          {/* Styled as a warning rather than an error: nothing the admin did was wrong, and it
+              clears the moment they sign in again. Hidden once a real submit error arrives, so a
+              stale "you were signed out" note doesn't sit above a fresh "wrong password" one. */}
+          {sessionEndedReason && !error && (
+            <p role="status" className="text-sm text-warning bg-warning-bg rounded-lg px-3.5 py-2.5">{sessionEndedReason}</p>
+          )}
           {error && (
             <p className="text-sm text-danger bg-danger-bg rounded-lg px-3.5 py-2.5">{error}</p>
           )}

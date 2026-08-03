@@ -6,6 +6,7 @@ import com.finora.entity.Category;
 import com.finora.entity.PasswordResetToken;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
+import com.finora.exception.ErrorCode;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.PasswordResetTokenRepository;
 import com.finora.repository.UserRepository;
@@ -23,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -64,6 +66,7 @@ public class AuthService {
     private final PhoneVerificationProvider phoneVerificationProvider;
     private final PlatformSettingsService platformSettingsService;
     private final PasswordHistoryService passwordHistoryService;
+    private final IdentityLookup identityLookup;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public AuthService(UserRepository userRepository, CategoryRepository categoryRepository,
@@ -73,7 +76,8 @@ public class AuthService {
                         EmailProvider emailProvider, EmailProperties emailProperties,
                         PhoneVerificationProvider phoneVerificationProvider,
                         PlatformSettingsService platformSettingsService,
-                        PasswordHistoryService passwordHistoryService) {
+                        PasswordHistoryService passwordHistoryService,
+                        IdentityLookup identityLookup) {
         this.userRepository = userRepository;
         this.categoryRepository = categoryRepository;
         this.resetTokenRepository = resetTokenRepository;
@@ -87,6 +91,7 @@ public class AuthService {
         this.phoneVerificationProvider = phoneVerificationProvider;
         this.platformSettingsService = platformSettingsService;
         this.passwordHistoryService = passwordHistoryService;
+        this.identityLookup = identityLookup;
     }
 
     @Transactional
@@ -98,7 +103,7 @@ public class AuthService {
         if (!platformSettingsService.getEntity().isRegistrationsEnabled()) {
             throw new ApiException(HttpStatus.FORBIDDEN, "New registrations are currently disabled.");
         }
-        User user = createUserRecord(request);
+        User user = createUserRecord(request, User.SCOPE_USER);
         auditService.record(user.getId(), "USER_REGISTERED", "User", user.getId());
         EmailResult welcomeEmailResult = emailProvider.sendWelcomeEmail(user.getEmail(), user.getFullName());
         auditService.record(user.getId(), "EMAIL_SENT", "User", user.getId(), Map.of(
@@ -121,7 +126,18 @@ public class AuthService {
      */
     @Transactional
     public User adminCreateUser(RegisterRequest request, UUID actingAdminId) {
-        User user = createUserRecord(request);
+        return adminCreateUser(request, actingAdminId, User.SCOPE_USER);
+    }
+
+    /**
+     * @param accountScope which portal the created account belongs to. The admin portal's
+     *        "add a user" creates a {@code USER}-scope account -- it is creating a customer, not a
+     *        colleague. Setup creates an {@code ADMIN}-scope one, which is what lets an
+     *        administrator hold an admin account under the same email as their personal one.
+     */
+    @Transactional
+    public User adminCreateUser(RegisterRequest request, UUID actingAdminId, String accountScope) {
+        User user = createUserRecord(request, accountScope);
         auditService.record(user.getId(), "USER_CREATED_BY_ADMIN", "User", user.getId(),
                 Map.of("createdBy", actingAdminId.toString()));
         return user;
@@ -130,7 +146,7 @@ public class AuthService {
     /** The uniqueness checks + row creation + default-category seeding every user-creation path
      *  needs, regardless of what happens after (register() continues into minting tokens;
      *  adminCreateUser() stops here). */
-    private User createUserRecord(RegisterRequest request) {
+    private User createUserRecord(RegisterRequest request, String accountScope) {
         // Trimmed + lowercased once up front and reused everywhere below -- the duplicate check
         // and the saved value must agree on the exact same string, or "  Jane@Example.com" could
         // dodge the uniqueness check against an existing "jane@example.com" and still get
@@ -138,20 +154,24 @@ public class AuthService {
         // treat the local part case-insensitively too). existsByEmailIgnoreCase (not the plain,
         // case-sensitive existsByEmail) is what actually catches this against any pre-existing
         // row regardless of what case IT happened to be stored in.
+        // Uniqueness is per SCOPE since V52: the same person may hold a USER-scope account and an
+        // ADMIN-scope account under one email and one mobile number. Within a scope the rule is
+        // unchanged -- one email, one mobile, one account.
         String email = request.email().trim().toLowerCase();
-        if (userRepository.existsByEmailIgnoreCase(email)) {
+        if (userRepository.existsByEmailIgnoreCaseAndAccountScope(email, accountScope)) {
             throw new ApiException(HttpStatus.CONFLICT, "An account with this email already exists.");
         }
         String phoneNumber = normalizePhoneNumber(request.phoneNumber());
-        // Previously unchecked -- two different accounts could share a phone number, which also
+        // Previously unchecked -- two accounts in the SAME scope could share a phone number, which
         // breaks email-or-phone login's assumption that a phone number resolves to at most one
-        // account (see AuthService.resolveEmailForLogin).
-        if (userRepository.existsByPhoneNumber(phoneNumber)) {
+        // account within the scope it is logging into (see resolveEmailForLogin).
+        if (userRepository.existsByPhoneNumberAndAccountScope(phoneNumber, accountScope)) {
             throw new ApiException(HttpStatus.CONFLICT, "An account with this mobile number already exists.");
         }
 
         User user = new User();
         user.setEmail(email);
+        user.setAccountScope(accountScope);
         user.setPasswordHash(passwordEncoder.encode(request.password()));
         // Trimmed server-side too -- the frontend already trims before sending, but the
         // @Pattern on fullName deliberately tolerates surrounding whitespace (so a stray space
@@ -197,9 +217,9 @@ public class AuthService {
      * safe as the account-not-found path every caller already handles, and never reveals the
      * ambiguity to the caller (no account enumeration).
      */
-    private Optional<User> findUserByEmailIgnoreCaseSafely(String email) {
+    private Optional<User> findUserByEmailIgnoreCaseSafely(String email, String scope) {
         try {
-            return userRepository.findByEmailIgnoreCase(email);
+            return userRepository.findByEmailIgnoreCaseAndAccountScope(email, scope);
         } catch (IncorrectResultSizeDataAccessException e) {
             return Optional.empty();
         }
@@ -226,17 +246,33 @@ public class AuthService {
      * same generic "Invalid credentials" -- this never reveals whether an account exists, matching
      * the email-only behavior this replaces.
      */
-    private String resolveEmailForLogin(String identifier) {
+    private String resolveEmailForLogin(String identifier, String scope) {
         if (identifier.contains("@")) {
             return identifier;
         }
-        String digitsOnly = identifier.replaceAll("[^0-9]", "");
-        return userRepository.findByPhoneNumber(identifier)
-                .or(() -> userRepository.findByPhoneNumber("+" + digitsOnly))
-                .or(() -> userRepository.findByPhoneNumber(digitsOnly))
-                .or(() -> userRepository.findByPhoneNumber(normalizePhoneNumber(identifier)))
+        // Delegates the stored-format variants to IdentityLookup, so the normalisation used when a
+        // number is WRITTEN and the variants tried when one is READ cannot drift apart.
+        return identityLookup.byPhoneNumber(identifier, scope)
                 .map(User::getEmail)
                 .orElse(identifier);
+    }
+
+    /**
+     * Which portal's account this request is authenticating against.
+     *
+     * Since V52 an email and a phone number identify a user only within a scope, so login has to
+     * know which one it is resolving in. An absent value means USER: that is what every existing
+     * client sends today, and it keeps a client that has not been updated behaving exactly as
+     * before rather than failing.
+     *
+     * This is not an authorization input and cannot be used as one. It selects WHICH ROW to check a
+     * password against; what that row is then allowed to do is decided entirely by its roles. A
+     * caller who asks for ADMIN scope still needs the admin account's own password, and still gets
+     * only the authorities that account actually holds -- so sending ADMIN from the user portal is
+     * equivalent to visiting the admin portal, not a way to gain anything.
+     */
+    private static String scopeOf(LoginRequest request) {
+        return User.SCOPE_ADMIN.equalsIgnoreCase(request.scope()) ? User.SCOPE_ADMIN : User.SCOPE_USER;
     }
 
     @Transactional
@@ -244,8 +280,9 @@ public class AuthService {
         // Resolve email-or-phone down to the user's actual email up front -- everything below
         // this line (lockout check, Spring Security authentication, JWT subject) is unchanged
         // and still keyed on email exactly as before.
-        String email = resolveEmailForLogin(request.identifier());
-        User user = findUserByEmailIgnoreCaseSafely(email).orElse(null);
+        String scope = scopeOf(request);
+        String email = resolveEmailForLogin(request.identifier(), scope);
+        User user = findUserByEmailIgnoreCaseSafely(email, scope).orElse(null);
 
         if (user != null && user.getLockedUntil() != null && user.getLockedUntil().isAfter(Instant.now())) {
             throw new ApiException(HttpStatus.LOCKED,
@@ -260,8 +297,13 @@ public class AuthService {
         }
 
         try {
-            authenticationManager.authenticate(
-                    new UsernamePasswordAuthenticationToken(email, request.password()));
+            // Authenticated by the resolved user's ID, not their email: the Spring Security
+            // principal is the id (see CurrentUserDetailsService), and an email would be ambiguous
+            // across scopes. A null user here means no account matched -- passing a non-UUID
+            // through keeps the same generic "Invalid credentials" failure rather than leaking
+            // that no such account exists.
+            authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(
+                    user != null ? user.getId().toString() : "no-such-account", request.password()));
         } catch (org.springframework.security.core.AuthenticationException e) {
             // Broadened from BadCredentialsException specifically: DaoAuthenticationProvider can
             // throw other AuthenticationException subtypes too (e.g. if a UserDetailsService
@@ -271,7 +313,7 @@ public class AuthService {
             if (user != null) {
                 registerFailedLogin(user);
             }
-            throw new ApiException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
+            throw new ApiException(ErrorCode.AUTH_INVALID_CREDENTIALS, "Invalid credentials");
         }
 
         // user is guaranteed non-null here — authenticate() would have thrown otherwise.
@@ -372,7 +414,8 @@ public class AuthService {
         String genericMessage = emailProvider.isConfigured()
                 ? "If an account exists for that email, we've sent a password reset link."
                 : "If an account exists for that email, a reset link has been issued.";
-        var userOpt = findUserByEmailIgnoreCaseSafely(request.email());
+        var userOpt = findUserByEmailIgnoreCaseSafely(request.email(),
+                User.SCOPE_ADMIN.equalsIgnoreCase(request.scope()) ? User.SCOPE_ADMIN : User.SCOPE_USER);
         if (userOpt.isEmpty()) {
             return new ForgotPasswordResponse(genericMessage, null);
         }
@@ -496,13 +539,18 @@ public class AuthService {
         return prt;
     }
 
+    // Bug fix: this issued DEFAULT_CATEGORIES.size() individual INSERTs (one save() call per
+    // category) on every registration -- an easily-avoidable per-signup latency cost fixed by
+    // building the whole batch in memory and writing it in one saveAll() call.
     private void seedDefaultCategories(java.util.UUID userId) {
+        List<Category> categories = new ArrayList<>();
         for (String name : DEFAULT_CATEGORIES) {
             Category c = new Category();
             c.setUserId(userId);
             c.setName(name);
             c.setSystem(true);
-            categoryRepository.save(c);
+            categories.add(c);
         }
+        categoryRepository.saveAll(categories);
     }
 }

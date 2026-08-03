@@ -68,7 +68,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<ApiResponse<Void>> handleAccessDenied(AccessDeniedException ex) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                .body(ApiResponse.error("You don't have permission to do that", "AUTH_003"));
+                .body(ApiResponse.error(ErrorCode.AUTH_FORBIDDEN.defaultMessage(), ErrorCode.AUTH_FORBIDDEN.code()));
     }
 
     /**

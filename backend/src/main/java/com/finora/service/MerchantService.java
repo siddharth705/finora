@@ -26,6 +26,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Merchant Management API backing service -- list/detail/audit-history/rename/merge, per
@@ -73,16 +74,25 @@ public class MerchantService {
         this.auditService = auditService;
     }
 
+    // Bug fix: this used to call toDto(userId, m, categoryNames) per merchant, and toDto() itself
+    // ran learningRepository.findByUserIdAndMerchantId() -- one query per merchant on top of the
+    // one query for the merchant list itself. A user with a multi-year import history routinely
+    // has 100-500+ merchants (MerchantNormalizationEngine creates one per distinct normalized
+    // payee ever seen), so this endpoint issued 100-500+ sequential queries on every single
+    // request. Same fix AnalyticsService.categoryConfidence() already applies: one bulk
+    // learningRepository.findByUserId() call, grouped in memory by merchantId.
     public List<MerchantDto> listForUser(UUID userId) {
         Map<UUID, String> categoryNames = categoryNamesFor(userId);
+        Map<UUID, List<MerchantCategoryLearning>> pairsByMerchant = learningRepository.findByUserId(userId).stream()
+                .collect(Collectors.groupingBy(MerchantCategoryLearning::getMerchantId));
         return merchantRepository.findByUserId(userId).stream()
-                .map(m -> toDto(userId, m, categoryNames))
+                .map(m -> toDto(m, pairsByMerchant.getOrDefault(m.getId(), List.of()), categoryNames))
                 .toList();
     }
 
     public MerchantDto get(UUID userId, UUID merchantId) {
         Merchant merchant = requireOwnedMerchant(userId, merchantId);
-        return toDto(userId, merchant, categoryNamesFor(userId));
+        return toDto(merchant, learningRepository.findByUserIdAndMerchantId(userId, merchant.getId()), categoryNamesFor(userId));
     }
 
     /** Financial Intelligence Workspace, Module 2 (Merchant Management) -- the one endpoint that
@@ -129,7 +139,7 @@ public class MerchantService {
         merchantRepository.save(merchant);
         auditService.record(userId, "MERCHANT_UPDATED", "Merchant", merchant.getId(),
                 Map.of("previousName", previousName, "newName", merchant.getCanonicalName()));
-        return toDto(userId, merchant, categoryNamesFor(userId));
+        return toDto(merchant, learningRepository.findByUserIdAndMerchantId(userId, merchant.getId()), categoryNamesFor(userId));
     }
 
     /**
@@ -229,8 +239,10 @@ public class MerchantService {
                 Map.of("survivingMerchantId", surviving.getId(), "mergeFromMerchantId", absorbed.getId(),
                         "mergeFromName", absorbed.getCanonicalName()));
 
-        // 5. Return the freshly recomputed distribution, not a stale pre-merge snapshot.
-        return toDto(userId, surviving, categoryNamesFor(userId));
+        // 5. Return the freshly recomputed distribution, not a stale pre-merge snapshot -- reuses
+        // finalPairs (already computed above in step 4) instead of re-querying for what's already
+        // sitting in memory.
+        return toDto(surviving, finalPairs, categoryNamesFor(userId));
     }
 
     private Merchant requireOwnedMerchant(UUID userId, UUID merchantId) {
@@ -246,9 +258,7 @@ public class MerchantService {
         return names;
     }
 
-    private MerchantDto toDto(UUID userId, Merchant merchant, Map<UUID, String> categoryNames) {
-        List<MerchantCategoryLearning> pairs = learningRepository.findByUserIdAndMerchantId(userId, merchant.getId());
-
+    private MerchantDto toDto(Merchant merchant, List<MerchantCategoryLearning> pairs, Map<UUID, String> categoryNames) {
         List<MerchantDto.DistributionEntry> distribution = pairs.stream()
                 .sorted(Comparator.comparingInt(MerchantCategoryLearning::getConfirmationCount).reversed())
                 .map(p -> new MerchantDto.DistributionEntry(

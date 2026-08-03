@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Wallet, ArrowLeftRight, PiggyBank, Target, UploadCloud, History,
-  TrendingUp, BarChart3, Sparkles, Settings as SettingsIcon, ChevronRight, MoreVertical, LogOut,
+  TrendingUp, BarChart3, Sparkles, User, Settings as SettingsIcon, MoreVertical, LogOut,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import logoMark from '../assets/logo-mark.png';
 
 const links = [
   { to: '/app', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -45,8 +46,8 @@ export function Sidebar() {
     <aside className="w-64 flex-shrink-0 bg-sidebar min-h-screen flex flex-col py-6 px-4">
       {/* Logo -- links back to the Dashboard, same as clicking the "Dashboard" nav item below. */}
       <NavLink to="/app" end className="flex items-center gap-2.5 px-2 mb-8">
-        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-400 to-primary-dark flex items-center justify-center flex-shrink-0">
-          <Sparkles size={16} className="text-white" strokeWidth={2.5} />
+        <div className="w-8 h-8 rounded-lg overflow-hidden flex-shrink-0">
+          <img src={logoMark} alt="" className="w-full h-full object-cover" />
         </div>
         <span className="text-white font-extrabold tracking-wide text-lg">FINORA</span>
       </NavLink>
@@ -70,17 +71,6 @@ export function Sidebar() {
         ))}
       </nav>
 
-      {/* Upgrade card */}
-      <div className="bg-gradient-to-br from-indigo-500 to-primary-dark rounded-xl p-4 mb-4">
-        <p className="text-white font-semibold text-sm mb-1">Upgrade to Pro</p>
-        <p className="text-indigo-100 text-xs leading-relaxed mb-3">
-          Unlock advanced insights, custom categories and much more.
-        </p>
-        <button className="w-full bg-white text-primary-dark text-xs font-semibold rounded-lg py-2 flex items-center justify-center gap-1">
-          Upgrade Now <ChevronRight size={14} />
-        </button>
-      </div>
-
       {/* User */}
       <div className="relative">
         <button
@@ -103,6 +93,13 @@ export function Sidebar() {
             {/* Invisible full-screen overlay so clicking anywhere outside closes the menu. */}
             <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
             <div className="absolute bottom-full left-0 right-0 mb-2 bg-sidebar-hover border border-white/10 rounded-lg shadow-xl py-1.5 z-20">
+              <NavLink
+                to="/app/profile"
+                onClick={() => setMenuOpen(false)}
+                className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-gray-300 hover:text-white hover:bg-white/5"
+              >
+                <User size={15} /> Profile
+              </NavLink>
               <NavLink
                 to="/app/settings"
                 onClick={() => setMenuOpen(false)}

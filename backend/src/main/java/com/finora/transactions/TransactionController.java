@@ -3,6 +3,7 @@ package com.finora.transactions;
 import com.finora.dto.ApiResponse;
 import com.finora.dto.PagedResponse;
 import com.finora.security.CurrentUser;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -52,7 +53,7 @@ public class TransactionController {
     }
 
     @PostMapping
-    public ResponseEntity<ApiResponse<TransactionDto>> create(@RequestBody TransactionDto.CreateRequest request) {
+    public ResponseEntity<ApiResponse<TransactionDto>> create(@Valid @RequestBody TransactionDto.CreateRequest request) {
         return ResponseEntity.ok(ApiResponse.ok(transactionService.create(currentUser.id(), request), "Transaction created"));
     }
 
@@ -65,7 +66,7 @@ public class TransactionController {
      *  exactly which fields this covers (everything except which account it belongs to). */
     @PutMapping("/{id}")
     public ResponseEntity<ApiResponse<TransactionDto>> update(
-            @PathVariable UUID id, @RequestBody TransactionDto.UpdateRequest request) {
+            @PathVariable UUID id, @Valid @RequestBody TransactionDto.UpdateRequest request) {
         return ResponseEntity.ok(ApiResponse.ok(transactionService.update(currentUser.id(), id, request), "Transaction updated"));
     }
 

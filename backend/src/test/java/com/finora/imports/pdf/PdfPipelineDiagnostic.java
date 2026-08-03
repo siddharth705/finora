@@ -9,6 +9,12 @@ import com.finora.service.CategorizationService;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
+import com.finora.imports.pdf.fixtures.PdfTrace;
+import com.finora.imports.pdf.fixtures.PdfTraceRedactor;
+import com.finora.imports.pdf.fixtures.TraceMetadata;
+import com.finora.imports.pdf.fixtures.TraceQualityReport;
+import com.finora.imports.pdf.fixtures.TraceValidator;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -80,6 +86,76 @@ class PdfPipelineDiagnostic {
         run(Path.of(pathArg));
     }
 
+    /**
+     * Turns a real statement into a committable regression fixture:
+     *
+     * <pre>
+     *   mvn test -Dtest=PdfPipelineDiagnostic#captureRedactedTrace \
+     *            -DpdfPath=scratch-pdf/whatever.pdf -DtraceName=hdfc-txn-date-header
+     * </pre>
+     *
+     * Writes {@code src/test/resources/traces/&lt;traceName&gt;.trace} -- the document's text layer
+     * with coordinates intact and every non-structural token masked (see {@link PdfTraceRedactor}).
+     * This is the step that makes "every production bug becomes a permanent regression case"
+     * affordable: it takes one command rather than an afternoon of hand-authoring a synthetic PDF
+     * that approximates the layout and usually fails to reproduce the bug.
+     *
+     * The trace is VALIDATED before it is written (see {@link TraceValidator}): a capture that
+     * still contains unmasked customer data, or that lost the structural evidence it was captured
+     * to preserve, is refused rather than written for someone to notice later. "Read the file
+     * before committing" was the previous control, and a customer's name and account number
+     * reached the repository under it.
+     *
+     * Provenance is recorded into the file itself -- which redactor and which allowlist produced
+     * it, what it protects, and why it exists -- so a later change to either can identify the
+     * traces it invalidated. See {@code docs/engineering/trace-lifecycle.md}.
+     */
+    @Test
+    void captureRedactedTrace() throws Exception {
+        String pathArg = System.getProperty("pdfPath");
+        String traceName = System.getProperty("traceName");
+        Assumptions.assumeTrue(pathArg != null && traceName != null,
+                "Set -DpdfPath=<file> -DtraceName=<name> to capture a trace fixture");
+
+        List<PositionedText> positioned = new PdfTextExtractor().extract(Files.readAllBytes(Path.of(pathArg)));
+        List<PositionedText> redacted = PdfTraceRedactor.redact(positioned);
+
+        TraceMetadata metadata = new TraceMetadata(
+                TraceMetadata.CURRENT_TRACE_VERSION,
+                PdfTraceRedactor.REDACTOR_VERSION,
+                PdfTraceRedactor.allowlistFingerprint(),
+                java.time.LocalDate.now().toString(),
+                System.getProperty("source", "unspecified"),
+                csvProperty("capabilities"),
+                csvProperty("regressions"),
+                System.getProperty("motivation", ""),
+                csvProperty("requiredHeaders"));
+
+        String content = PdfTrace.format(redacted, metadata);
+        TraceValidator.Result result = TraceValidator.validate(traceName, content);
+
+        System.out.println();
+        System.out.println(TraceQualityReport.render(result));
+
+        if (!result.isCommittable()) {
+            // Deliberately not written. A refused capture that still lands on disk is one `git add`
+            // away from being committed by someone who did not read this output.
+            throw new AssertionError("Trace REFUSED -- not written. "
+                    + result.blockers().size() + " blocker(s) above must be resolved first.");
+        }
+
+        Path out = Path.of("src/test/resources/traces", traceName + ".trace");
+        Files.createDirectories(out.getParent());
+        Files.writeString(out, content);
+        System.out.println("Written -> " + out.toAbsolutePath());
+    }
+
+    private static java.util.List<String> csvProperty(String name) {
+        String raw = System.getProperty(name, "");
+        if (raw.isBlank()) return java.util.List.of();
+        return java.util.Arrays.stream(raw.split(",")).map(String::trim).filter(s -> !s.isBlank()).toList();
+    }
+
     void run(Path pdfPath) throws Exception {
         byte[] bytes = Files.readAllBytes(pdfPath);
         System.out.println("=== Diagnosing: " + pdfPath + " (" + bytes.length + " bytes) ===\n");
@@ -93,6 +169,9 @@ class PdfPipelineDiagnostic {
         System.out.println("Stage 2 -- Table location: " + doc.sections().size() + " section(s) found");
         if (doc.sections().size() > 1) {
             System.out.println("  [CAPABILITY] COMPOSITE_STATEMENT / MULTI_ACCOUNT -- more than one section detected");
+        }
+        if (doc.sections().isEmpty()) {
+            reportHeaderDetectionFailure(tableLocator, positioned);
         }
         System.out.println();
 
@@ -157,12 +236,55 @@ class PdfPipelineDiagnostic {
             System.out.println();
         }
 
-        PdfPreviewGenerator generator = new PdfPreviewGenerator(textExtractor, tableLocator, metadataExtractor, transactionNormalizer);
+        PdfPreviewGenerator generator = new PdfPreviewGenerator(textExtractor, tableLocator, metadataExtractor, transactionNormalizer, com.finora.imports.product.ProductDiscovery.standard(), new com.finora.imports.product.ProductAttributeExtractor());
         List<StagedAccountSection> finalSections = generator.generateSections(UUID.randomUUID(), pdfPath.getFileName().toString(), bytes);
         System.out.println("=== Final staged output: " + finalSections.size() + " account section(s) ===");
         for (var s : finalSections) {
             System.out.println("  rows=" + s.rows().size() + " account=" + s.detectedAccount());
         }
+    }
+
+    /**
+     * Bug fix: when table location found NOTHING, this diagnostic used to print a bare
+     * "0 section(s) found" and then skip the entire per-section loop -- going completely silent in
+     * the exact case an engineer most needs it (a document that imported "successfully" with zero
+     * transactions). Two real statements hit this. Now it dumps the reconstructed lines and, for
+     * each, scores it against the two conditions {@code looksLikeHeaderRow} actually requires
+     * (a cell normalizing to "date", plus >= 2 recognized header names), so the near-miss line is
+     * visible immediately rather than needing a separate one-off probe to find.
+     */
+    private void reportHeaderDetectionFailure(PdfTableLocator tableLocator, List<PositionedText> positioned) {
+        // locate() (single-table wrapper) returns every reconstructed line as preTableLines when no
+        // header was ever recognized -- exactly the "what did the parser actually see" view needed
+        // here, without duplicating PdfTableLocator's private line-grouping logic.
+        List<String> lines = tableLocator.locate(positioned).preTableLines();
+        System.out.println("  [HEADER DETECTION FAILED] No row satisfied: a cell normalizing to \"date\""
+                + " AND >= 2 cells matching known header names.");
+        System.out.println("  Reconstructed lines (" + lines.size() + "), scored as header candidates:");
+        List<String> nearMisses = new ArrayList<>();
+        for (int i = 0; i < lines.size(); i++) {
+            String line = lines.get(i);
+            int hits = 0;
+            boolean hasDate = false;
+            for (String cell : line.split("\\s{2,}|\\t")) {
+                String normalized = CsvParser.normalizeHeaderCell(cell);
+                if (TransactionNormalizer.recognizedColumnNames().contains(normalized.toLowerCase())) hits++;
+                if (normalized.equals("date") || normalized.equals("date & time")) hasDate = true;
+            }
+            if (hits > 0 || hasDate) {
+                nearMisses.add("    line " + i + " [hints=" + hits + " date=" + hasDate + "] " + line);
+            }
+        }
+        if (nearMisses.isEmpty()) {
+            System.out.println("    (no line contained even ONE recognized column name -- this is likely a"
+                    + " scanned/image-only PDF with no text layer, or a layout with no tabular header at all)");
+        } else {
+            System.out.println("    Candidate lines containing at least one recognized column name:");
+            nearMisses.forEach(System.out::println);
+        }
+        int dumpCap = Math.min(lines.size(), 60);
+        System.out.println("    First " + dumpCap + " raw lines:");
+        for (int i = 0; i < dumpCap; i++) System.out.println("      | " + lines.get(i));
     }
 
     private void reportNullMetadataAsWarnings(PdfMetadataExtractor.ExtractedMetadata metadata, int sectionIndex, List<String> warnings) {

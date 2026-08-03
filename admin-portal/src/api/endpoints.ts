@@ -1,5 +1,6 @@
 import { api, rawApi, type ApiEnvelope } from './client';
 import type {
+
   AccountDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
   CreateAccountRequest, CreateBankRequest, CreateRelationshipRequest,
   CreateRuleRequest, CreateUserRequest, FeatureFlagDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
@@ -15,6 +16,12 @@ import type {
   UpdateRuleRequest, UserDetailDto, UserSummaryDto, WorkspaceSummaryDto,
 } from '../types';
 
+// Which portal this account belongs to. The same person may hold a USER account and an ADMIN
+// account under one email and one mobile number, so login and password reset have to say which
+// one they mean. Not an authorization signal -- what an account may do is decided by its roles.
+const PORTAL_SCOPE = 'ADMIN';
+
+
 // Auth reuses the exact same /auth/* endpoints the user app calls -- there is only one backend,
 // one user table, one login flow. What makes this "an admin session" is entirely client-side
 // (AdminAuthContext gating entry on meAccessApi.get() returning at least one admin permission),
@@ -22,7 +29,7 @@ import type {
 export const authApi = {
   login: (identifier: string, password: string) =>
     api.post<{ token: string; refreshToken: string; email: string; fullName: string; phoneVerified: boolean }>(
-      '/auth/login', { identifier, password }).then((r) => r.data),
+      '/auth/login', { identifier, password, scope: PORTAL_SCOPE }).then((r) => r.data),
   refresh: (refreshToken: string) =>
     rawApi.post<ApiEnvelope<{ token: string; refreshToken: string }>>('/auth/refresh', { refreshToken }).then((r) => r.data.data),
   logout: (refreshToken: string) =>
@@ -31,7 +38,7 @@ export const authApi = {
   // already calls -- there's no separate admin-specific password reset mechanism, just one
   // shared implementation, same reasoning as login() above and the phone verification endpoints.
   forgotPassword: (email: string) =>
-    api.post<{ message: string; devResetLink: string | null }>('/auth/forgot-password', { email }).then((r) => r.data),
+    api.post<{ message: string; devResetLink: string | null }>('/auth/forgot-password', { email, scope: PORTAL_SCOPE }).then((r) => r.data),
   // Second factor for password reset -- the reset token alone (proof of email access) is no
   // longer sufficient; a phone OTP via Firebase Phone Authentication (proof of phone access) is
   // required too. The backend never sends the OTP itself, only reveals the real phone number so
@@ -335,7 +342,7 @@ export const setupApi = {
   status: () => rawApi.get<ApiEnvelope<{ setupRequired: boolean; installationKeyAvailable: boolean }>>('/setup/status').then((r) => r.data.data),
   loginAsBootstrap: (identifier: string, password: string) =>
     rawApi.post<ApiEnvelope<{ token: string; refreshToken: string; email: string; fullName: string }>>(
-      '/auth/login', { identifier, password }
+      '/auth/login', { identifier, password, scope: PORTAL_SCOPE }
     ).then((r) => r.data.data),
   complete: (bootstrapToken: string, request: { email: string; password: string; fullName: string; phoneNumber: string }) =>
     rawApi.post<ApiEnvelope<null>>('/setup/complete', request, {

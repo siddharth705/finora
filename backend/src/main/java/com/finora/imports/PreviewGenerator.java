@@ -75,6 +75,7 @@ public class PreviewGenerator {
                 unparseable.add(new UnparseableRow(raw, "No column header row was recognized anywhere in this file"));
             }
             DetectedAccountInfo empty = statementValidator.buildDetectedAccountInfo(filename, allRows, -1, staged, signals);
+            ctx.recordUnparseable(unparseable);
             return new CsvGenerationResult(new StagingResponse(staged, 0, 0, empty, unparseable), ctx);
         }
         String[] headerRow = allRows.get(headerIdx);
@@ -101,6 +102,7 @@ public class PreviewGenerator {
 
         int dupCount = (int) staged.stream().filter(StagedRow::likelyDuplicate).count();
         DetectedAccountInfo detected = statementValidator.buildDetectedAccountInfo(filename, allRows, headerIdx, staged, signals);
+        ctx.recordUnparseable(unparseable);
         return new CsvGenerationResult(new StagingResponse(staged, staged.size(), dupCount, detected, unparseable), ctx);
     }
 }

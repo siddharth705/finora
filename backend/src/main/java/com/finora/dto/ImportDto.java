@@ -101,7 +101,38 @@ public class ImportDto {
             String accountHolderName,      // only set if an account-holder-like column was present
             String branchName,             // only set if a branch-name-like column was present
             String ifscCode,               // only set if an IFSC-like column was present
-            AccountDto.BankDto bank        // resolved bank metadata (name/color/initials); id "OTHER" if undetected
+            AccountDto.BankDto bank,       // resolved bank metadata (name/color/initials); id "OTHER" if undetected
+
+            // --- Financial Product Discovery (com.finora.imports.product) --------------------------
+            // What this section actually IS, as opposed to what account to prefill. The two are
+            // different questions: suggestedAccountType above has always had to name SOMETHING for
+            // the review form, while detectedProduct is allowed to say UNKNOWN -- which is a
+            // successful outcome, not a failure. A section the engine cannot identify is shown to
+            // the user to name once; it is never guessed into an account, because a wrong product
+            // silently writes wrong data into someone's net worth.
+            String detectedProduct,        // FinancialProductType name, e.g. "SAVINGS", "FIXED_DEPOSIT", "UNKNOWN"
+            double productConfidence,      // 0..0.95
+            boolean productNeedsReview,    // true unless the product was identified, proved itself, and is modelled
+            List<String> productEvidence,  // the reasoning, so a wrong answer can be argued with
+
+            // A one-way hash of institution + this product's own full number, computed at STAGING
+            // because that is the only point the full number exists -- it is hashed there and
+            // discarded, so the number never reaches a session, a database column or a log. Lets
+            // next month's statement recognise the same deposit instead of creating a second one
+            // and double-counting it. Null when the document gave no usable number.
+            String productIdentityHash,
+
+            // What makes a deposit a DEPOSIT rather than a name and a balance -- see
+            // com.finora.imports.product.ProductAttributes for the full reasoning. All seven
+            // nullable; a field not relevant to this product's type is simply never populated (a
+            // fixed deposit has no installmentAmount; a recurring deposit has no principalAmount).
+            BigDecimal principalAmount,
+            BigDecimal interestRate,
+            LocalDate maturityDate,
+            BigDecimal maturityAmount,
+            BigDecimal installmentAmount,
+            Integer installmentsPaid,
+            Integer installmentsTotal
     ) {}
 
     public record StagingResponse(List<StagedRow> rows, int totalParsed, int flaggedDuplicates,
@@ -174,10 +205,27 @@ public class ImportDto {
             BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance
     ) {}
 
+    /**
+     * @param detectedProduct      the FinancialProductType the review screen is confirming, echoed
+     *                             back from staging. Null from an older client, which then behaves
+     *                             exactly as before.
+     * @param productIdentityHash  echoed back from {@link DetectedAccountInfo}, so confirm can tell
+     *                             "the deposit I already hold" from "a new one". Already a hash
+     *                             when it reaches the client -- no unmasked number ever leaves the
+     *                             server, so a client cannot forge one into a different product's
+     *                             identity without already knowing that product's full number.
+     */
     public record NewAccountRequest(
             String name, String accountType, BigDecimal openingBalance, BigDecimal creditLimit, LocalDate dueDate,
             String accountHolderName, String accountNumberMasked, String bankId,
-            String branchName, String ifscCode
+            String branchName, String ifscCode,
+            String detectedProduct, String productIdentityHash,
+            // Echoed back unchanged from DetectedAccountInfo, same round-trip as detectedProduct
+            // above -- these are server-detected values the review screen displays read-only, not
+            // something the user edits, so there is nothing here for a client to have gotten wrong.
+            BigDecimal principalAmount, BigDecimal interestRate, LocalDate maturityDate,
+            BigDecimal maturityAmount, BigDecimal installmentAmount,
+            Integer installmentsPaid, Integer installmentsTotal
     ) {}
 
     public record ConfirmedRow(
@@ -206,6 +254,10 @@ public class ImportDto {
             int transfersIdentified,
             int newMerchantsLearned,
             List<String> accountsCreated,
+            // What was created, counted by PRODUCT rather than by account -- so the summary can say
+            // "1 Savings, 1 Fixed Deposit" instead of "3 accounts", which for a combined statement
+            // was both less informative and wrong: two of those three were never accounts.
+            Map<String, Integer> productsCreated,
             Map<String, Integer> categoriesAssigned,
             List<String> warnings,
             AccountDto account,

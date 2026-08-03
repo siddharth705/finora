@@ -3,6 +3,8 @@ package com.finora.accounts;
 import com.finora.entity.Account;
 import com.finora.entity.StatementImport;
 import com.finora.util.BankRegistry;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -39,7 +41,18 @@ public record AccountDto(
         // level) is by definition still active. Kept as a real field rather than hardcoded in
         // the frontend so a future archive feature only has to start setting this to
         // "INACTIVE" here, without any UI changes.
-        String status
+        String status,
+
+        // What makes a deposit a DEPOSIT rather than a name and a balance -- see
+        // com.finora.imports.product.ProductAttributes. All nullable; populated only for the
+        // product types they apply to.
+        BigDecimal principalAmount,
+        BigDecimal interestRate,
+        LocalDate maturityDate,
+        BigDecimal maturityAmount,
+        BigDecimal installmentAmount,
+        Integer installmentsPaid,
+        Integer installmentsTotal
 ) {
     /** Everything BankLogo and the bank picker need to render/search a bank, resolved
      *  server-side from BankRegistry so the frontend never hardcodes bank metadata.
@@ -117,11 +130,42 @@ public record AccountDto(
                 latestImport != null ? latestImport.getStatementPeriodStart() : null,
                 latestImport != null ? latestImport.getStatementPeriodEnd() : null,
                 statementsCount, transactionsCount,
-                "ACTIVE");
+                "ACTIVE",
+                a.getPrincipalAmount(), a.getInterestRate(), a.getMaturityDate(), a.getMaturityAmount(),
+                a.getInstallmentAmount(), a.getInstallmentsPaid(), a.getInstallmentsTotal());
     }
 
-    public record CreateRequest(String name, String accountType, BigDecimal balance,
-                                 BigDecimal creditLimit, LocalDate dueDate, String investmentKind,
-                                 String accountHolderName, String accountNumberMasked, String bankId,
-                                 String branchName, String ifscCode) {}
+    // Bug fix: this record had zero Bean Validation, and neither AccountController.create() nor
+    // update() applied @Valid -- a null/blank name threw a raw NullPointerException/
+    // DataIntegrityViolationException (unhandled 500) against accounts.name's NOT NULL VARCHAR(120)
+    // constraint instead of a clean 400; every other free-text field had the same "let the DB
+    // reject it" gap against its own column width. accountType is deliberately NOT annotated here
+    // -- AccountService already hand-validates it with a clean 400 via parseAccountType(), and
+    // that's a closed, known enum, not a free-text length concern.
+    public record CreateRequest(@NotBlank @Size(max = 120) String name, String accountType, BigDecimal balance,
+                                 BigDecimal creditLimit, LocalDate dueDate,
+                                 @Size(max = 40) String investmentKind,
+                                 @Size(max = 255) String accountHolderName,
+                                 @Size(max = 64) String accountNumberMasked,
+                                 @Size(max = 32) String bankId,
+                                 @Size(max = 120) String branchName,
+                                 @Size(max = 11) String ifscCode,
+                                 // Only ImportService's confirm() ever populates these, from a
+                                 // classified deposit's own DetectedAccountInfo/NewAccountRequest.
+                                 // Every other caller (manual account creation from the Accounts
+                                 // page) uses the 10-arg overload below and gets null for all seven
+                                 // -- correct, since a hand-created account has none of these until
+                                 // a statement is imported into it.
+                                 BigDecimal principalAmount, BigDecimal interestRate, LocalDate maturityDate,
+                                 BigDecimal maturityAmount, BigDecimal installmentAmount,
+                                 Integer installmentsPaid, Integer installmentsTotal) {
+
+        public CreateRequest(String name, String accountType, BigDecimal balance, BigDecimal creditLimit,
+                             LocalDate dueDate, String investmentKind, String accountHolderName,
+                             String accountNumberMasked, String bankId, String branchName, String ifscCode) {
+            this(name, accountType, balance, creditLimit, dueDate, investmentKind, accountHolderName,
+                    accountNumberMasked, bankId, branchName, ifscCode,
+                    null, null, null, null, null, null, null);
+        }
+    }
 }

@@ -7,11 +7,15 @@ import com.finora.entity.Category;
 import com.finora.entity.StatementImport;
 import com.finora.entity.Transaction;
 import com.finora.exception.ApiException;
+import com.finora.exception.ErrorCode;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.MerchantRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.accounts.AccountService;
+import com.finora.imports.product.FinancialProductType;
+import com.finora.imports.product.ProductIdentity;
+import com.finora.imports.product.ProductIdentityResolver;
 import com.finora.security.OwnershipGuard;
 import com.finora.service.CategorizationService;
 import com.finora.service.RecurringService;
@@ -75,6 +79,7 @@ public class ImportService {
     private final ImportRuleLearningService ruleLearningService;
     private final ImportSessionService importSessionService;
     private final com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator;
+    private final ProductIdentityResolver productIdentityResolver;
 
     public ImportService(AccountRepository accountRepository, AccountService accountService,
                           TransactionRepository transactionRepository, MerchantRepository merchantRepository,
@@ -86,7 +91,9 @@ public class ImportService {
                           DuplicateDetector duplicateDetector,
                           ImportRuleLearningService ruleLearningService,
                           ImportSessionService importSessionService,
-                          com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator) {
+                          com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator,
+                          ProductIdentityResolver productIdentityResolver) {
+        this.productIdentityResolver = productIdentityResolver;
         this.accountRepository = accountRepository;
         this.accountService = accountService;
         this.transactionRepository = transactionRepository;
@@ -112,6 +119,7 @@ public class ImportService {
         String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "statement.csv";
         var result = previewGenerator.generateWithContext(userId, fileName, new java.io.ByteArrayInputStream(fileContent));
         StagingResponse staged = result.response();
+        rejectIfNothingWasExtracted(staged, result.documentContext());
         var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount(),
                 result.documentContext());
         return new StagingSessionResponse(session.getId(), staged);
@@ -131,7 +139,7 @@ public class ImportService {
         byte[] fileContent = file.getBytes();
         String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "statement.pdf";
         var result = pdfPreviewGenerator.generateSectionsWithContext(userId, fileName, fileContent);
-        List<StagedAccountSection> sections = result.sections();
+        List<StagedAccountSection> sections = onlySectionsThatAreActuallyAccounts(result.sections());
 
         if (sections.size() <= 1) {
             // The common case (and the only case a CSV upload can ever produce): behaves exactly
@@ -139,6 +147,7 @@ public class ImportService {
             StagingResponse staged = sections.isEmpty()
                     ? new StagingResponse(List.of(), 0, 0, null, List.of())
                     : toStagingResponse(sections.get(0));
+            rejectIfNothingWasExtracted(staged, result.documentContext());
             var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount(),
                     result.documentContext());
             return new PdfStagingSessionResponse(session.getId(), false, staged, null);
@@ -146,6 +155,78 @@ public class ImportService {
 
         var session = importSessionService.createMultiSection(userId, fileName, fileContent, sections, result.documentContext());
         return new PdfStagingSessionResponse(session.getId(), true, null, sections);
+    }
+
+    /**
+     * Stops offering a located table as a transaction ACCOUNT when it plainly isn't one, without
+     * throwing its contents away.
+     *
+     * INTERIM. A real HDFC combined statement carries a term-deposit summary and a recurring-deposit
+     * installment schedule alongside the savings account. Those are genuine financial products the
+     * customer holds, and the correct end state is that they become Investments -- see the planned
+     * product-classification stage, which will identify what each section IS (savings, current, FD,
+     * RD, loan, overdraft, credit card, demat) and route it to the matching Finora domain before
+     * anything is imported. Until that exists this method must not pretend to do it.
+     *
+     * What it fixes today is narrower and purely a defect: all three sections were presented as
+     * ACCOUNTS, so the user was offered two empty ones to confirm. That is the same failure as the
+     * repeated-account-banner bug by a different route -- asserting something is an account on
+     * evidence that only shows it is a table.
+     *
+     * So a section with no transactions stops being offered as an account, and its rows move onto
+     * the first surviving section as unparseable so the deposit details still surface for review
+     * ("never lose information"). Nothing is discarded, and nothing here encodes a guess about what
+     * those sections are -- that judgement belongs to product classification, not to a filter.
+     * When every section is empty, the caller's zero-transaction guard reports the failure instead.
+     */
+    private List<StagedAccountSection> onlySectionsThatAreActuallyAccounts(List<StagedAccountSection> sections) {
+        if (sections.size() <= 1) return sections;
+
+        List<StagedAccountSection> accounts = sections.stream().filter(s -> !s.rows().isEmpty()).toList();
+        if (accounts.isEmpty() || accounts.size() == sections.size()) return accounts.isEmpty() ? sections : accounts;
+
+        List<UnparseableRow> carriedOver = new ArrayList<>(accounts.get(0).unparseableRows());
+        for (StagedAccountSection dropped : sections) {
+            if (dropped.rows().isEmpty()) carriedOver.addAll(dropped.unparseableRows());
+        }
+        StagedAccountSection first = accounts.get(0);
+        List<StagedAccountSection> merged = new ArrayList<>(accounts);
+        merged.set(0, new StagedAccountSection(first.detectedAccount(), first.rows(), first.totalParsed(),
+                first.flaggedDuplicates(), carriedOver));
+        return merged;
+    }
+
+    /**
+     * An extraction that produced no transactions is a failed extraction, not an empty statement,
+     * and must not be handed back as a staged session.
+     *
+     * This was reported against a real HDFC statement holding 100+ transactions: the upload
+     * returned 200, the review screen rendered an empty table, and Confirm was live -- so the
+     * pipeline's total failure to read the document was indistinguishable, to the person using it,
+     * from a quiet month. Confirming it would have created a real account with no transactions in
+     * it. Refusing here means every path into an import session is guaranteed to carry at least one
+     * row, so "staged successfully" keeps its meaning.
+     *
+     * The two outcomes are reported as different error codes because they need different responses:
+     * no table located at all is a layout the engine can't yet read, while a located table whose
+     * every row was rejected is a parsing problem inside a layout it did recognize. Both attach the
+     * text that WAS recovered ("never lose information" -- see the engineering principles doc), so
+     * whoever picks up the report can see what the document actually contained without needing the
+     * file itself.
+     */
+    private void rejectIfNothingWasExtracted(StagingResponse staged, DocumentContext ctx) {
+        if (!staged.rows().isEmpty()) return;
+
+        boolean locatedATable = ctx != null && ctx.buildMetadata().tables() > 0;
+        int recoveredLines = staged.unparseableRows() == null ? 0 : staged.unparseableRows().size();
+        throw new ApiException(
+                locatedATable ? ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND : ErrorCode.IMPORT_NO_HEADER_DETECTED,
+                (locatedATable
+                        ? "Finora found a transaction table in this statement but could not read any transactions from it."
+                        : "Finora could not find a transaction table anywhere in this statement.")
+                        + (recoveredLines > 0
+                        ? " " + recoveredLines + " line(s) of text were recovered and recorded for review."
+                        : ""));
     }
 
     private StagingResponse toStagingResponse(StagedAccountSection section) {
@@ -244,7 +325,8 @@ public class ImportService {
                     sectionConfirm.rows(), sectionConfirm.existingAccountId(), sectionConfirm.newAccount(),
                     sectionConfirm.statementOpeningBalance(), sectionConfirm.statementClosingBalance());
             responses.add(confirm(userId, session.getFileName(), session.getFileContent(), perAccountRequest, i,
-                    session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson()));
+                    session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
+                session.getUnparseableSummaryJson()));
         }
         return new MultiAccountConfirmResponse(responses);
     }
@@ -282,7 +364,8 @@ public class ImportService {
         }
 
         return confirm(userId, session.getFileName(), session.getFileContent(), request, null,
-                session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson());
+                session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
+                session.getUnparseableSummaryJson());
     }
 
     /**
@@ -296,7 +379,7 @@ public class ImportService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request) {
-        return confirm(userId, fileName, fileContent, request, null, null, null, null);
+        return confirm(userId, fileName, fileContent, request, null, null, null, null, null);
     }
 
     /**
@@ -308,7 +391,7 @@ public class ImportService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request, Integer sourceSectionIndex) {
-        return confirm(userId, fileName, fileContent, request, sourceSectionIndex, null, null, null);
+        return confirm(userId, fileName, fileContent, request, sourceSectionIndex, null, null, null, null);
     }
 
     /**
@@ -322,11 +405,16 @@ public class ImportService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request, Integer sourceSectionIndex,
-                                    String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson) {
+                                    String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson,
+                                    String unparseableSummaryJson) {
         long startedAtMs = System.currentTimeMillis();
         List<String> accountsCreated = new ArrayList<>();
+        // What was created, by PRODUCT rather than by account. The summary says "1 Savings, 1 Fixed
+        // Deposit" instead of "3 accounts" -- which was both less informative and, for a combined
+        // statement, wrong: two of those three were never accounts.
+        Map<String, Integer> productsCreated = new LinkedHashMap<>();
 
-        UUID accountId = resolveTargetAccount(userId, request, accountsCreated);
+        UUID accountId = resolveTargetAccount(userId, request, accountsCreated, productsCreated);
 
         long merchantsBefore = merchantRepository.findByUserId(userId).size();
 
@@ -410,6 +498,7 @@ public class ImportService {
         statementImport.setLayoutMetadataJson(layoutMetadataJson);
         statementImport.setLayoutFingerprint(layoutFingerprint);
         statementImport.setActivatedCapabilitiesJson(activatedCapabilitiesJson);
+        statementImport.setUnparseableSummaryJson(unparseableSummaryJson);
         statementImport.setFileContent(fileContent);
         statementImport.setStatementPeriodStart(minDate);
         statementImport.setStatementPeriodEnd(maxDate);
@@ -473,7 +562,7 @@ public class ImportService {
                 .orElse(null);
 
         return new ConfirmResponse(imported, skipped, duplicatesDetected, transfersIdentified,
-                newMerchantsLearned, accountsCreated, categoryTally, warnings,
+                newMerchantsLearned, accountsCreated, productsCreated, categoryTally, warnings,
                 accountSnapshot, totalCredits, totalDebits,
                 request.statementOpeningBalance(), request.statementClosingBalance(),
                 minDate, maxDate,
@@ -488,7 +577,36 @@ public class ImportService {
                 .allMatch(si -> si.getStatementPeriodEnd() == null || !si.getStatementPeriodEnd().isAfter(thisStatementEnd));
     }
 
-    private UUID resolveTargetAccount(UUID userId, ConfirmRequest request, List<String> accountsCreated) {
+    /** What the review screen says this product is, falling back to the coarse account type when a
+     *  client hasn't been updated to echo the classification back. Never guesses a finer product
+     *  than it was told: an unstated FD stays SAVINGS here rather than being invented. */
+    private FinancialProductType productTypeOf(NewAccountRequest na) {
+        if (na.detectedProduct() != null && !na.detectedProduct().isBlank()) {
+            try {
+                return FinancialProductType.valueOf(na.detectedProduct());
+            } catch (IllegalArgumentException e) {
+                // An unknown value from a client is not worth failing an import over.
+            }
+        }
+        // Nothing detected, so the form's own account type is all there is. Mapped only where an
+        // account type names exactly ONE product; INVESTMENT does not (it covers FD, RD, PPF, mutual
+        // funds and more), so it yields UNKNOWN, whose null accountType() lets the user's choice
+        // through untouched in resolveTargetAccount.
+        //
+        // Bug fix: this used to fall through to SAVINGS for anything that wasn't CREDIT_CARD or
+        // WALLET, and SAVINGS's own routing then OVERRODE the form -- so a user who explicitly
+        // picked Investment on the review screen got a Savings account. Inventing a product the
+        // user's own choice contradicts is the one thing this fallback must not do.
+        return switch (na.accountType() == null ? "" : na.accountType()) {
+            case "CREDIT_CARD" -> FinancialProductType.CREDIT_CARD;
+            case "WALLET" -> FinancialProductType.WALLET;
+            case "SAVINGS" -> FinancialProductType.SAVINGS;
+            default -> FinancialProductType.UNKNOWN;
+        };
+    }
+
+    private UUID resolveTargetAccount(UUID userId, ConfirmRequest request, List<String> accountsCreated,
+                                       Map<String, Integer> productsCreated) {
         if (request.existingAccountId() != null) {
             return OwnershipGuard.requireOwned(accountRepository.findById(request.existingAccountId()),
                     Account::getUserId, userId, "Account").getId();
@@ -498,11 +616,52 @@ public class ImportService {
             if (na.name() == null || na.name().isBlank()) {
                 throw new ApiException(HttpStatus.BAD_REQUEST, "The new account needs a name.");
             }
+
+            // Before creating anything: is this a product the user already holds?
+            //
+            // Classification finds the same fixed deposit in every monthly statement, so without
+            // this check each re-import creates another one and double-counts it in net worth --
+            // and unpicking that afterwards is a data migration plus a merge UI, not a bug fix.
+            // Only an EXACT identity match (same institution AND same product number) redirects
+            // silently. A merely PROBABLE one deliberately falls through and creates the account
+            // the user asked for: quietly importing into the wrong deposit corrupts two products
+            // at once, which is worse than a duplicate the user can see and merge.
+            ProductIdentity discovered = ProductIdentity.stored(
+                    na.bankId(), productTypeOf(na), na.productIdentityHash(), na.accountNumberMasked());
+            ProductIdentityResolver.ProductMatch match = productIdentityResolver.resolve(userId, discovered);
+            if (match.mayImportWithoutAsking()) {
+                return match.account().getId();
+            }
+
+            // Route the product to where it actually belongs. FinancialProductType carries its own
+            // routing, so a term deposit becomes an INVESTMENT with investmentKind "FD" -- landing
+            // in the Investments module alongside mutual funds and PPF -- rather than an empty
+            // savings account, which is what every deposit section used to become.
+            //
+            // The user's own choice still wins when they made one: accountType comes from the
+            // review screen, and an UNKNOWN product has nothing to route by, so it falls back to
+            // whatever they picked. That fallback IS the correction loop -- they name it once.
+            FinancialProductType product = productTypeOf(na);
+            String accountType = product.accountType() != null
+                    ? product.accountType().name() : na.accountType();
             AccountDto created = accountService.create(userId, new AccountDto.CreateRequest(
-                    na.name(), na.accountType(), na.openingBalance(), na.creditLimit(), na.dueDate(), null,
+                    na.name(), accountType, na.openingBalance(), na.creditLimit(), na.dueDate(),
+                    product.investmentKind(),
                     na.accountHolderName(), na.accountNumberMasked(), na.bankId(),
-                    na.branchName(), na.ifscCode()));
+                    na.branchName(), na.ifscCode(),
+                    na.principalAmount(), na.interestRate(), na.maturityDate(), na.maturityAmount(),
+                    na.installmentAmount(), na.installmentsPaid(), na.installmentsTotal()));
             accountsCreated.add(created.name());
+            productsCreated.merge(product.name(), 1, Integer::sum);
+
+            // Stamp the identity so the NEXT import of this product recognises it. Done here rather
+            // than through AccountDto.CreateRequest so the public account API stays unchanged --
+            // these two columns exist for the importer, not for anyone creating an account by hand.
+            accountRepository.findById(created.id()).ifPresent(account -> {
+                account.setProductType(discovered.type().name());
+                account.setProductIdentityHash(discovered.strongKey());
+                accountRepository.save(account);
+            });
             return created.id();
         }
         throw new ApiException(HttpStatus.BAD_REQUEST, "Choose an existing account or provide details for a new one.");

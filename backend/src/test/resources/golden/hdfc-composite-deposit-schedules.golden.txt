@@ -1,0 +1,37 @@
+trace: hdfc-composite-deposit-schedules
+sections: 3
+
+[section 0]
+  columns: [Txn Date, Narration, Withdrawals, Deposits, Closing Balance]
+  rows: 136
+  auxLines: 45
+  accountNumberMasked: ••••9999
+  accountHolderName: Xxxxxxx Xxxxxx Xxxxxx
+  ifscCode: HDFC0XXXXXX
+  statementPeriod: null .. null
+  product: SAVINGS (87%, VALIDATED)
+  mayCreateAutomatically: true
+
+[section 1]
+  columns: [Amount(Xx), Xxxxx Date, Deposit(Xxxx), Xxxxxxxx Date, Amount(Xx)*]
+  rows: 2
+  auxLines: 0
+  accountNumberMasked: null
+  accountHolderName: null
+  ifscCode: null
+  statementPeriod: null .. null
+  product: UNKNOWN (26%, UNIDENTIFIED)
+  mayCreateAutomatically: false
+
+[section 2]
+  columns: [Number, Due Date, Amount Xxxx, Due, Status, Xxxxxxx balance**]
+  rows: 2
+  auxLines: 0
+  accountNumberMasked: null
+  accountHolderName: null
+  ifscCode: null
+  statementPeriod: null .. null
+  product: UNKNOWN (40%, UNIDENTIFIED)
+  mayCreateAutomatically: false
+
+capabilities: [COMPOSITE_STATEMENT, LEADING_NARRATION_CONTINUATION, OFFSET_COLUMN_ANCHORS, PAGE_BOUNDARY_ISOLATION, REPEATED_HEADER, WRAPPED_DESCRIPTION]

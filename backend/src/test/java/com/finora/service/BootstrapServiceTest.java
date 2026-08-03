@@ -57,7 +57,7 @@ class BootstrapServiceTest {
     @Test
     void createsABootstrapAccount_whenSetupIsNotCompleteAndNoneExistsYet() throws Exception {
         when(platformSettingsService.getEntity()).thenReturn(settingsWith(false));
-        when(userRepository.findByEmail("BOOTSTRAP_ADMIN")).thenReturn(Optional.empty());
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("BOOTSTRAP_ADMIN", "ADMIN")).thenReturn(Optional.empty());
         Role bootstrapRole = new Role();
         ReflectionTestUtils.setField(bootstrapRole, "id", UUID.randomUUID());
         bootstrapRole.setName("BOOTSTRAP_ADMIN");
@@ -94,7 +94,7 @@ class BootstrapServiceTest {
         when(platformSettingsService.getEntity()).thenReturn(settingsWith(false));
         User existing = new User();
         existing.setEmail("BOOTSTRAP_ADMIN");
-        when(userRepository.findByEmail("BOOTSTRAP_ADMIN")).thenReturn(Optional.of(existing));
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("BOOTSTRAP_ADMIN", "ADMIN")).thenReturn(Optional.of(existing));
 
         bootstrapService.run(null);
 
@@ -114,7 +114,7 @@ class BootstrapServiceTest {
     @Test
     void doesNotCrashApplicationStartup_whenAnotherInstanceWinsTheRaceToCreateBootstrap() {
         when(platformSettingsService.getEntity()).thenReturn(settingsWith(false));
-        when(userRepository.findByEmail("BOOTSTRAP_ADMIN")).thenReturn(Optional.empty());
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("BOOTSTRAP_ADMIN", "ADMIN")).thenReturn(Optional.empty());
         when(userRepository.saveAndFlush(any(User.class)))
                 .thenThrow(new DataIntegrityViolationException("duplicate key value violates unique constraint"));
 
@@ -129,7 +129,7 @@ class BootstrapServiceTest {
     @Test
     void usesTheOperatorSuppliedKey_andNeverWritesAFile_whenFinoraSetupKeyIsConfigured() throws Exception {
         when(platformSettingsService.getEntity()).thenReturn(settingsWith(false));
-        when(userRepository.findByEmail("BOOTSTRAP_ADMIN")).thenReturn(Optional.empty());
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("BOOTSTRAP_ADMIN", "ADMIN")).thenReturn(Optional.empty());
         Role bootstrapRole = new Role();
         ReflectionTestUtils.setField(bootstrapRole, "id", UUID.randomUUID());
         bootstrapRole.setName("BOOTSTRAP_ADMIN");
@@ -147,7 +147,7 @@ class BootstrapServiceTest {
     @Test
     void fallsBackToLogging_whenWritingTheKeyFileFails() throws Exception {
         when(platformSettingsService.getEntity()).thenReturn(settingsWith(false));
-        when(userRepository.findByEmail("BOOTSTRAP_ADMIN")).thenReturn(Optional.empty());
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("BOOTSTRAP_ADMIN", "ADMIN")).thenReturn(Optional.empty());
         Role bootstrapRole = new Role();
         ReflectionTestUtils.setField(bootstrapRole, "id", UUID.randomUUID());
         bootstrapRole.setName("BOOTSTRAP_ADMIN");

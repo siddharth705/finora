@@ -3,7 +3,9 @@ package com.finora.imports;
 import com.finora.accounts.AccountService;
 import com.finora.dto.ImportDto.ConfirmRequest;
 import com.finora.dto.ImportDto.ConfirmedRow;
+import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.dto.ImportDto.StagedRow;
+import com.finora.dto.ImportDto.UnparseableRow;
 import com.finora.entity.Account;
 import com.finora.entity.ImportSession;
 import com.finora.exception.ApiException;
@@ -13,9 +15,11 @@ import com.finora.service.ReconciliationService;
 import com.finora.service.RecurringService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -40,6 +44,7 @@ class ImportServiceSessionTest {
     private final UUID userId = UUID.randomUUID();
     private final UUID accountId = UUID.randomUUID();
     private AccountRepository accountRepository;
+    private com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator;
 
     @BeforeEach
     void setUp() {
@@ -65,14 +70,16 @@ class ImportServiceSessionTest {
         });
         CsvParser csvParser = new CsvParser();
         TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector);
-        StatementValidator statementValidator = new StatementValidator();
+        StatementValidator statementValidator = new StatementValidator(com.finora.imports.product.ProductDiscovery.standard());
         PreviewGenerator previewGenerator = new PreviewGenerator(csvParser, transactionNormalizer, statementValidator);
         ImportRuleLearningService ruleLearningService = new ImportRuleLearningService(categorizationService);
 
+        pdfPreviewGenerator = mock(com.finora.imports.pdf.PdfPreviewGenerator.class);
+        var productIdentityResolver = new com.finora.imports.product.ProductIdentityResolver(accountRepository);
         importService = new ImportService(accountRepository, accountService, transactionRepository,
                 merchantRepository, statementImportRepository, categorizationService, reconciliationService,
                 recurringService, previewGenerator, duplicateDetector, ruleLearningService, importSessionService,
-                mock(com.finora.imports.pdf.PdfPreviewGenerator.class));
+                pdfPreviewGenerator, productIdentityResolver);
 
         Account account = new Account();
         ReflectionTestUtils.setField(account, "id", accountId);
@@ -119,6 +126,72 @@ class ImportServiceSessionTest {
     private StagedRow stagedRow() {
         return new StagedRow(LocalDate.of(2026, 7, 1), "Coffee Shop", new BigDecimal("150.00"),
                 "EXPENSE", "Food & Dining", "rule", null, false, null, null);
+    }
+
+    /**
+     * Reported against a real HDFC statement holding 100+ transactions: the pipeline read none of
+     * them, the upload returned 200 anyway, and the review screen showed an empty table with a live
+     * Confirm button -- a total extraction failure was indistinguishable from a quiet month. These
+     * two tests hold the line that an import producing no transactions is never staged, so every
+     * session that does exist is guaranteed to have something in it.
+     */
+    @Test
+    void aFileWithNoRecognizableTransactionTable_isRejectedRatherThanStagedAsAnEmptySession() {
+        MockMultipartFile file = new MockMultipartFile("file", "statement.csv", "text/csv",
+                ("Dear Customer\nYour e-statement is attached.\nThis is a computer generated document.\n")
+                        .getBytes(StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> importService.parseAndStageWithSession(userId, file))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("could not find a transaction table")
+                // "Never lose information": the text we DID recover is reported alongside the
+                // failure, so this is diagnosable without the original file.
+                .hasMessageContaining("3 line(s) of text were recovered");
+
+        verifyNoInteractions(importSessionService);
+    }
+
+    @Test
+    void aFileWhoseTableWasFoundButYieldedNoRows_isRejectedWithADifferentCodeThanAMissingTable() {
+        // The table IS located here -- the header is recognized -- there is simply nothing under
+        // it. That is a different failure from "this layout defeated table detection", needs
+        // different follow-up, and so must not collapse into the same error.
+        MockMultipartFile file = new MockMultipartFile("file", "statement.csv", "text/csv",
+                "Date,Description,Amount\n".getBytes(StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> importService.parseAndStageWithSession(userId, file))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("could not read any transactions from it");
+
+        verifyNoInteractions(importSessionService);
+    }
+
+    @Test
+    void tablesInACombinedStatementThatHoldNoTransactions_areNotOfferedAsAccounts() throws Exception {
+        // A real HDFC combined statement: the savings account, plus a term-deposit summary and a
+        // recurring-deposit installment schedule. All three are genuine tables, and all three were
+        // presented as ACCOUNTS -- so the user was shown two empty accounts to confirm. Until the
+        // product-classification stage exists to say what those two actually ARE, they must not be
+        // asserted to be accounts on evidence that only shows they are tables.
+        var savings = new StagedAccountSection(null, List.of(stagedRow()), 1, 0, List.of());
+        var termDeposit = new StagedAccountSection(null, List.of(), 0, 0,
+                List.of(new UnparseableRow(
+                        java.util.Map.of("Maturity Date", "01/06/2027"), "no date column")));
+        var recurringDeposit = new StagedAccountSection(null, List.of(), 0, 0, List.of());
+        when(importSessionService.createSession(any(), any(), any(), any(), any(), any()))
+                .thenReturn(sessionWith(UUID.randomUUID(), new byte[]{1}, ImportSession.STATUS_STAGED));
+        when(pdfPreviewGenerator.generateSectionsWithContext(any(), any(), any())).thenReturn(
+                new com.finora.imports.pdf.PdfPreviewGenerator.PdfGenerationResult(
+                        List.<StagedAccountSection>of(savings, termDeposit, recurringDeposit),
+                        new DocumentContext("PDF", "test")));
+
+        var response = importService.parseAndStagePdfWithSession(userId,
+                new MockMultipartFile("file", "combined.pdf", "application/pdf", new byte[]{1}));
+
+        assertThat(response.multiAccount()).as("one account, not three").isFalse();
+        // "Never lose information": the deposit table's contents survive as unparseable rows on the
+        // surviving section rather than vanishing with the section that held them.
+        assertThat(response.staging().unparseableRows()).hasSize(1);
     }
 
     @Test

@@ -26,6 +26,7 @@ import Goals from './pages/Goals';
 import Investments from './pages/Investments';
 import Reports from './pages/Reports';
 import Insights from './pages/Insights';
+import Profile from './pages/Profile';
 import Settings from './pages/Settings';
 import Setup from './pages/Setup';
 
@@ -90,6 +91,7 @@ export default function App() {
           <Route path="/app/investments" element={<Protected><Investments /></Protected>} />
           <Route path="/app/reports" element={<Protected><Reports /></Protected>} />
           <Route path="/app/insights" element={<Protected><Insights /></Protected>} />
+          <Route path="/app/profile" element={<Protected><Profile /></Protected>} />
           <Route path="/app/settings" element={<Protected><Settings /></Protected>} />
         </Routes>
       </BrowserRouter>

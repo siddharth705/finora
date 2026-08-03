@@ -92,4 +92,55 @@ describe('api response interceptor', () => {
     expect(refreshMock).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem('finora_admin_token')).toBe('new-access-token');
   });
+
+  /**
+   * When a session genuinely DOES end, the backend's explanation used to be discarded by the
+   * hard `window.location.href` navigation, so the admin landed on the login screen with no idea
+   * why -- and no way to tell an ordinary expiry apart from every session being revoked after a
+   * suspected stolen token. The reason is now handed off through storage for Login.tsx to read
+   * once. Same fix, same shape, as the user frontend's client.ts.
+   */
+  it('hands the backend reason for a real session expiry to the login page', async () => {
+    localStorage.setItem('finora_admin_refresh_token', 'an-expired-token');
+    refreshMock.mockReset();
+    refreshMock.mockRejectedValue({
+      response: {
+        status: 401,
+        data: {
+          message: 'For your security, all sessions were signed out. Please sign in again.',
+          errorCode: 'AUTH_004',
+        },
+      },
+    });
+
+    await rejectedHandler()({
+      response: { status: 401, data: { message: 'Unauthorized', errorCode: null } },
+      config: { url: '/users', _retried: false, headers: {} },
+    }).catch(() => { /* the original 401 is still rejected to the caller */ });
+
+    expect(localStorage.getItem('finora_admin_session_ended_reason'))
+      .toBe('For your security, all sessions were signed out. Please sign in again.');
+    expect(localStorage.getItem('finora_admin_refresh_token')).toBeNull();
+  });
+
+  it('falls back to generic copy when there was no refresh token to explain the sign-out', async () => {
+    refreshMock.mockReset();
+
+    await rejectedHandler()({
+      response: { status: 401, data: { message: 'Unauthorized', errorCode: null } },
+      config: { url: '/users', _retried: false, headers: {} },
+    }).catch(() => { /* no-op */ });
+
+    expect(localStorage.getItem('finora_admin_session_ended_reason'))
+      .toBe('Your session has ended. Please sign in again to continue.');
+  });
+
+  it('leaves no sign-out notice behind for a wrong-password 401, which is not a session ending', async () => {
+    await rejectedHandler()({
+      response: { status: 401, data: { message: 'Invalid credentials', errorCode: 'AUTH_001' } },
+      config: { url: '/auth/login', _retried: false, headers: {} },
+    }).catch(() => { /* Login.tsx's own catch renders this inline */ });
+
+    expect(localStorage.getItem('finora_admin_session_ended_reason')).toBeNull();
+  });
 });

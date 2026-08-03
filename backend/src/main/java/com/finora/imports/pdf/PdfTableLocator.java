@@ -52,10 +52,23 @@ public class PdfTableLocator {
     private static final List<String> DATE_HINTS = List.of(
             "date", "transaction date", "txn date", "value date", "date & time");
 
+    // Description-ish column names, kept in sync with TransactionNormalizer's own DESCRIPTION_HINTS
+    // for the same reason DATE_HINTS above is -- used only to find where narration text that
+    // mis-bucketed into the date column should be rehomed (see mergeInto).
+    private static final List<String> DESCRIPTION_COLUMN_HINTS = List.of(
+            "description", "narration", "remarks", "particulars",
+            "transaction description", "transaction details");
+
+    // Singular forms ("withdrawal"/"deposit") and "narration"/"particulars" were added after two
+    // real HDFC statements failed header detection entirely -- their columns read "Withdrawal Amt.",
+    // "Deposit Amt." and "Narration", none of which matched the plural/absent entries here. Matched
+    // per-word by matchesAnyHint, so these also cover the qualified forms ("Closing Balance" ->
+    // "balance") without needing an entry per qualifier.
     private static final List<String> HEADER_HINTS = List.of(
             "date", "description", "debit", "credit", "balance",
             "amount", "transaction details", "transaction description", "merchant category",
-            "type", "remarks", "deposits", "withdrawals", "instrument id", "details", "date & time");
+            "type", "remarks", "deposits", "withdrawals", "deposit", "withdrawal",
+            "narration", "particulars", "instrument id", "details", "date & time");
 
     // A line naming an account-type word alongside an account-number-shaped digit run marks the
     // start of a brand-new account section -- e.g. HSBC's composite-statement banner
@@ -63,8 +76,32 @@ public class PdfTableLocator {
     // single PDF. Seeing this while a section is already active closes it immediately; this is a
     // stronger, more explicit signal than the header-signature-difference fallback below, so it's
     // checked first.
+    // Two banner shapes, because real statements use both.
+    //
+    // The first requires the literal word ACCOUNT ("SAVINGS ACCOUNT - <14 digits>") and is
+    // unchanged. The second covers a deposit banner that names the product WITHOUT it -- a real
+    // HDFC combined statement's deposit sections are headed "<kind> DEPOSIT - <number>", and the
+    // committed hdfc-composite-deposit-schedules trace shows exactly that shape. Unrecognised, the
+    // banner is not a marker at all, so it falls through to the dateless-row path and merges
+    // BACKWARD into the last row of the section above it -- corrupting that row's final cell
+    // ("24053.00 RECURRING DEPOSIT - 30000000000003", which then no longer parses as an amount).
+    // The sections still split, via the header-signature-change fallback, which is why this hid:
+    // the split looked right and only the last row of each preceding section was quietly wrong.
+    //
+    // The dash is mandatory in the second form, deliberately. "DEPOSIT" on its own is a ledger
+    // column heading ("Deposits") and appears in ordinary narration text, and SECTION_MARKER's
+    // digit requirement alone would not save it -- a transfer narration naming a destination
+    // account has both. Requiring "DEPOSIT" immediately followed by a dash separator is what makes
+    // this a banner shape rather than a word that happens to appear (see COMPOSITE_STATEMENT's own
+    // "Known limitations" for the same false-positive class this is avoiding).
     private static final Pattern SECTION_MARKER = Pattern.compile(
-            "(?i)\\b(SAVINGS|CURRENT|CREDIT\\s+CARD|DEPOSIT|LOAN)\\s+ACCOUNT\\b.*\\d{4,}");
+            "(?i)\\b(SAVINGS|CURRENT|CREDIT\\s+CARD|DEPOSIT|LOAN)\\s+ACCOUNT\\b.*\\d{4,}"
+                    + "|(?i)\\bDEPOSIT\\b\\s*-\\s*.*\\d{4,}");
+
+    // The account-number-shaped run within a SECTION_MARKER banner -- 4+ digits, matching the same
+    // "\\d{4,}" shape SECTION_MARKER itself requires, and tolerating the separators real account
+    // numbers are printed with (HSBC's "120-070727-006"). See accountIdentityIn.
+    private static final Pattern ACCOUNT_NUMBER_IN_MARKER = Pattern.compile("\\d[\\d-]{3,}\\d|\\d{4,}");
 
     // A trailing amount (optionally Dr/Cr-suffixed) embedded at the end of an otherwise-ordinary
     // cell's text, e.g. "FUEL SURCHARGE                                  10.00 Dr" or
@@ -181,6 +218,10 @@ public class PdfTableLocator {
         List<String> headerNames = null;
         List<Float> headerAnchors = null;
         Set<String> currentHeaderSignature = null;
+        // Account number named by the SECTION_MARKER banner that opened the active section, so a
+        // later banner naming the SAME account is recognized as a repeated page header rather than
+        // a new account -- see the marker-handling block below.
+        String currentSectionAccountId = null;
         Integer lastRowPage = null; // page index of the most recently added row in currentRows
         int trailingCountSinceLastAnchor = 0;
         // LEADING_NARRATION_CONTINUATION: dateless rows that arrive once trailingCountSinceLastAnchor
@@ -194,7 +235,27 @@ public class PdfTableLocator {
         for (List<PositionedText> row : rows) {
             String rowLine = lineOf(row);
 
-            if (SECTION_MARKER.matcher(rowLine).find()) {
+            Matcher sectionMarker = SECTION_MARKER.matcher(rowLine);
+            if (sectionMarker.find()) {
+                // Bug fix, verified against a real Bank of Baroda statement: this banner is
+                // printed at the top of EVERY page ("<HOLDER NAME> SAVINGS ACCOUNT  - <14 digits>"),
+                // so a single 3-page savings statement was split into three separate "accounts" --
+                // each offered to the user as its own account to create. The marker alone only says
+                // "an account is named here", not "a DIFFERENT account starts here"; the account
+                // number it names is the actual identity signal, and it was never compared. Same
+                // account number as the section already in progress => this is a repeated page
+                // banner, exactly analogous to the REPEATED_HEADER case below, and must not split.
+                // (Independently corroborated on that file: the three sections' balances chain
+                // perfectly, 38458.16 -> 31470.16 -> 48725.01 -> 45301.91, which three genuinely
+                // distinct accounts would not do.)
+                String markerAccountId = accountIdentityIn(rowLine);
+                boolean sameAccountBannerRepeated = currentRows != null
+                        && markerAccountId != null
+                        && markerAccountId.equals(currentSectionAccountId);
+                if (sameAccountBannerRepeated) {
+                    if (ctx != null) ctx.record("REPEATED_ACCOUNT_BANNER");
+                    continue; // repeated per-page banner for the account already in progress
+                }
                 if (currentRows != null) {
                     flushPendingLeading(currentRows, pendingLeading);
                     sections.add(new LocatedSection(pendingAuxiliary, currentRows));
@@ -205,6 +266,7 @@ public class PdfTableLocator {
                 headerNames = null;
                 headerAnchors = null;
                 currentHeaderSignature = null;
+                currentSectionAccountId = markerAccountId;
                 lastRowPage = null;
                 trailingCountSinceLastAnchor = 0;
                 pendingLeading = null;
@@ -280,7 +342,12 @@ public class PdfTableLocator {
                     // order it actually appeared), then this row becomes the new anchor, open to
                     // its own (capped) trailing continuations.
                     if (pendingLeading != null) {
-                        mergeLeadingInto(bucketed, pendingLeading);
+                        if (!mergeLeadingInto(bucketed, pendingLeading)) {
+                            // Refused: this buffer is a standalone noise line, not this
+                            // transaction's leading narration -- see mergeLeadingInto. Kept as its
+                            // own row so it still surfaces as unparseable rather than vanishing.
+                            currentRows.add(pendingLeading);
+                        }
                         pendingLeading = null;
                     }
                     currentRows.add(bucketed);
@@ -333,8 +400,26 @@ public class PdfTableLocator {
         }
     }
 
+    /**
+     * Bug fix, verified against a real Bank of Baroda statement: this used to ask only "is the date
+     * column non-blank", which is not the same question as "is this row a new transaction." A
+     * wrapped narration line's text frequently lands in the DATE column via nearest-X bucketing
+     * (that column's anchor is leftmost, and a continuation line's text starts at the left margin) --
+     * e.g. "UPI/124008948334/02:44:32/UPI/paytm.s25j48". Under the old check that row looked like a
+     * brand-new transaction anchor, so it was never merged into the transaction above it as a
+     * continuation. Two failures fell out of that single misclassification: the row itself was
+     * dropped at normalization ("didn't match any known date format" -- 114 of 169 rows on that one
+     * file), AND the transaction it actually belonged to kept an empty/truncated description,
+     * which is what surfaced in the review UI as a blank Description column.
+     *
+     * The reliable question is whether the date column holds something that actually parses as a
+     * date -- CsvParser.parseDate is the same parser TransactionNormalizer itself uses to accept or
+     * reject the row later, and the same one bucketRow already consults a few lines below, so this
+     * now agrees with both instead of contradicting them.
+     */
     private boolean hasDateValue(Map<String, String> bucketed) {
-        return CsvParser.firstNonBlank(bucketed, DATE_HINTS.toArray(new String[0])) != null;
+        String dateRaw = CsvParser.firstNonBlank(bucketed, DATE_HINTS.toArray(new String[0]));
+        return dateRaw != null && CsvParser.parseDate(dateRaw.trim()) != null;
     }
 
     /** Merges a continuation row's non-blank column values into the transaction row above it --
@@ -345,20 +430,84 @@ public class PdfTableLocator {
         for (Map.Entry<String, String> e : continuation.entrySet()) {
             if (e.getValue() == null || e.getValue().isBlank()) continue;
             String existing = target.get(e.getKey());
+
+            // Bug fix: a continuation row's wrapped narration very often mis-buckets into the DATE
+            // column (that column's anchor is leftmost, and a wrapped line starts at the left
+            // margin) -- e.g. "UPI/124008948334/02:44:32/UPI/paytm.s25j48". Appending that onto the
+            // anchor row's own valid date produced "02/05/25 UPI/1240089..." which no longer parses
+            // as a date, so the merge DESTROYED the very transaction it was supposed to complete --
+            // every row on a real Bank of Baroda statement dropped this way. The anchor's date is
+            // authoritative and must never be appended to; the incoming text is narration, so it's
+            // redirected into the description column rather than discarded ("never lose
+            // information" -- see the engineering principles doc).
+            // Generalized from the date case to every structured column: a continuation merge is
+            // additive enrichment, so it must never INVALIDATE a value the anchor row already
+            // holds. A wrapped narration fragment mis-buckets into whichever column its x lands
+            // nearest -- the date column (Bank of Baroda) or the amount column (a fine-print
+            // paragraph landing on the row above it) -- and appending it turned "04/07/2026" into
+            // unparseable text, or "10.00 Dr" into "10.00 Dr levied", dropping a transaction that
+            // had parsed perfectly well a moment earlier. Text that would break an already-valid
+            // date or amount is narration, so it goes to the description column instead of
+            // overwriting real data (and is never simply discarded).
+            boolean wouldBreakValidDate = isDateColumn(e.getKey()) && existing != null
+                    && CsvParser.parseDate(existing.trim()) != null;
+            boolean wouldBreakValidAmount = isAmountColumn(e.getKey()) && existing != null
+                    && CsvParser.parseNumeric(existing.trim()) != null
+                    && CsvParser.parseNumeric((existing + " " + e.getValue()).trim()) == null;
+            if (wouldBreakValidDate || wouldBreakValidAmount) {
+                String descriptionColumn = descriptionColumnIn(target);
+                if (descriptionColumn != null) {
+                    String currentDescription = target.get(descriptionColumn);
+                    target.put(descriptionColumn, (currentDescription == null || currentDescription.isBlank())
+                            ? e.getValue() : currentDescription + " " + e.getValue());
+                }
+                continue;
+            }
+
             target.put(e.getKey(), (existing == null || existing.isBlank()) ? e.getValue() : existing + " " + e.getValue());
         }
+    }
+
+    /** The description-ish column actually present in this row, or null when the layout has none --
+     *  used to rehome narration text that mis-bucketed into the date column (see mergeInto). */
+    private String descriptionColumnIn(Map<String, String> row) {
+        for (String column : row.keySet()) {
+            if (matchesAnyHint(column, DESCRIPTION_COLUMN_HINTS)) return column;
+        }
+        return null;
     }
 
     /** Same column-merge semantics as {@link #mergeInto}, but PREPENDS instead of appending --
      *  used only for {@code pendingLeading} (see {@link #locateAll}): a leading narration buffer's
      *  text chronologically precedes whatever the new anchor row's own bucketed values already
      *  hold, so it has to read before them, not after. */
-    private void mergeLeadingInto(Map<String, String> target, Map<String, String> leading) {
+    private boolean mergeLeadingInto(Map<String, String> target, Map<String, String> leading) {
+        // Bug fix, exposed by tightening hasDateValue to require a PARSEABLE date: a per-page title
+        // banner ("Savings Account" at the top of page 2) has no date of its own, so it is no
+        // longer mistaken for a transaction anchor -- correct -- but it was then buffered as
+        // LEADING narration and prepended into the next real transaction. Its text sits in the date
+        // column, so the prepend produced "Savings Account 02-05-2026", which no longer parses, and
+        // the genuine transaction it was prepended to was dropped entirely. A buffer that would
+        // destroy the anchor's own valid date is not that transaction's narration; it is a
+        // standalone noise line. Refusing the merge here lets the caller keep it as its own row, so
+        // it still surfaces as an unparseable row ("never lose information") instead of either
+        // vanishing or corrupting a real transaction.
+        for (Map.Entry<String, String> e : leading.entrySet()) {
+            if (e.getValue() == null || e.getValue().isBlank()) continue;
+            if (isDateColumn(e.getKey())) {
+                String existing = target.get(e.getKey());
+                if (existing != null && CsvParser.parseDate(existing.trim()) != null
+                        && CsvParser.parseDate((e.getValue() + " " + existing).trim()) == null) {
+                    return false;
+                }
+            }
+        }
         for (Map.Entry<String, String> e : leading.entrySet()) {
             if (e.getValue() == null || e.getValue().isBlank()) continue;
             String existing = target.get(e.getKey());
             target.put(e.getKey(), (existing == null || existing.isBlank()) ? e.getValue() : e.getValue() + " " + existing);
         }
+        return true;
     }
 
     /** Groups text runs into visual rows: same page, sorted top-to-bottom (ascending y --
@@ -409,23 +558,99 @@ public class PdfTableLocator {
     // the real transaction section early and opening a second, bogus one (fine print masquerading
     // as a second account). A genuine header row is a short, deliberate list of column names; a
     // 13-cell row is prose, not a header, regardless of what two of its words happen to be.
-    private static final int MAX_HEADER_ROW_CELLS = 8;
+    // Raised from 8 to 16 once the density check in looksLikeHeaderRow took over the real work of
+    // rejecting prose: 8 was low enough to reject a genuine 7-column header that PDFBox split into
+    // 11 runs (a real HDFC statement). Kept as a cheap absolute backstop against pathological rows,
+    // not as the primary discriminator it used to be.
+    private static final int MAX_HEADER_ROW_CELLS = 16;
 
+    /**
+     * Bug fix, verified against two real HDFC Bank statements that each extracted ZERO
+     * transactions while reporting a successful import. Two independent over-strictnesses here,
+     * both of which had to be wrong for a real, perfectly ordinary statement to be invisible:
+     *
+     * 1. The date check accepted only an exact "date"/"date & time" cell -- so a header reading
+     *    "Txn Date Narration Withdrawals Deposits Closing Balance" was rejected outright, despite
+     *    this same class's own {@link #DATE_HINTS} already listing "txn date" (and "transaction
+     *    date"/"value date") as date-column names for its continuation-merge logic. The class
+     *    contradicted itself: one notion of "the date column" for merging, a stricter one for
+     *    detection. Now both use DATE_HINTS.
+     *
+     * 2. Hint matching was exact string equality against the whole normalized cell, so the very
+     *    common real-world column names "Closing Balance", "Withdrawal Amt.", "Deposit Amt." and
+     *    "Narration" all failed to match "balance"/"withdrawals"/"deposits" -- a header reading
+     *    "Date Narration Chq./Ref.No. Value Dt Withdrawal Amt. Deposit Amt. Closing Balance"
+     *    scored exactly 1 (only "Date") against a >= 2 requirement and was rejected. Matching is
+     *    now token-aware: a cell matches a hint if any of its own words matches, so a qualifier
+     *    ("closing", "amt.") no longer hides the column name it qualifies.
+     *
+     * Token matching is deliberately NOT the unbounded substring matching that caused a separate
+     * bank-misdetection bug (see BankRegistry.matchAlias's own comment): it is scoped to a single
+     * already-tokenized header cell in a row of at most MAX_HEADER_ROW_CELLS cells, and compares
+     * whole words, so it cannot fabricate a match out of two unrelated words running together.
+     */
     private boolean looksLikeHeaderRow(List<PositionedText> row) {
         if (row.size() > MAX_HEADER_ROW_CELLS) return false;
         int matches = 0;
         for (PositionedText t : row) {
-            String normalized = CsvParser.normalizeHeaderCell(t.text());
-            if (HEADER_HINTS.contains(normalized)) matches++;
+            if (matchesAnyHint(t.text(), HEADER_HINTS)) matches++;
         }
-        // "date" + at least one other recognized column name -- same two-signal requirement
+        // A date column + at least one other recognized column name -- same two-signal requirement
         // CsvParser.findHeaderRowIndex uses for CSV, adapted to this row's token set instead of
         // a whole line's raw text.
-        boolean hasDate = row.stream().anyMatch(t -> {
-            String normalized = CsvParser.normalizeHeaderCell(t.text());
-            return normalized.equals("date") || normalized.equals("date & time");
-        });
-        return hasDate && matches >= 2;
+        boolean hasDate = row.stream().anyMatch(t -> matchesAnyHint(t.text(), DATE_HINTS));
+        // Third bug fix from the same real HDFC statement (see this method's own doc comment):
+        // a genuine 7-column header "Date | Narration | Chq./Ref.No. | Value Dt | Withdrawal Amt. |
+        // Deposit Amt. | Closing Balance" extracts as ELEVEN text runs, because PDFBox splits
+        // multi-word cells ("Withdrawal" and "Amt." arrive separately). The old flat cap of 8 cells
+        // therefore rejected it outright before any hint could be scored. The cap exists to stop
+        // prose being misread as a header (see MAX_HEADER_ROW_CELLS' own comment) -- but cell COUNT
+        // was never the property that distinguishes the two. Density is: a real header is mostly
+        // column names, while a prose sentence that happens to contain "date" and "amount" is
+        // mostly ordinary words. Requiring a third of the cells to be recognized column names
+        // rejects that 13-cell/2-match sentence exactly as before, while accepting this 11-cell/
+        // 5-match header, so the original protection is kept rather than traded away.
+        boolean denseEnoughToBeAHeader = matches * 3 >= row.size();
+        return hasDate && matches >= 2 && denseEnoughToBeAHeader;
+    }
+
+    /** True when {@code cell} names one of {@code hints} -- either as the whole normalized cell
+     *  ("transaction details"), or as one of its own whitespace-separated words ("Closing Balance"
+     *  -> "balance"). Multi-word hints are only ever compared against the whole cell, since a
+     *  single word can't match one. */
+    private boolean matchesAnyHint(String cell, List<String> hints) {
+        String normalized = CsvParser.normalizeHeaderCell(cell);
+        if (normalized.isBlank()) return false;
+        if (hints.contains(normalized)) return true;
+        // Edge punctuation is stripped per word because normalizeHeaderCell only removes a
+        // trailing parenthetical -- a real header cell "Withdrawal Amt." tokenizes to
+        // ["withdrawal", "amt."], and the trailing period must not hide the match.
+        String[] words = normalized.split("\\s+");
+        for (String hint : hints) {
+            if (hint.contains(" ")) continue; // multi-word hint: whole-cell comparison above only
+            for (String word : words) {
+                if (word.replaceAll("^[^a-z0-9]+|[^a-z0-9]+$", "").equals(hint)) return true;
+            }
+        }
+        return false;
+    }
+
+    /** The account-number-shaped digit run a {@link #SECTION_MARKER} banner names, or null when the
+     *  line names none -- the identity signal used to tell a repeated per-page banner for the SAME
+     *  account (must not split) from a banner introducing a genuinely different account (must
+     *  split). Takes the LONGEST digit run on the line: a banner commonly also carries shorter
+     *  incidental numbers (a branch code, a page number), and the account number is reliably the
+     *  longest of them. Returns null rather than guessing when nothing is long enough to be an
+     *  account number, which makes the caller fall back to the pre-existing always-split behavior
+     *  -- an unrecognizable banner is not evidence that two sections are the same account. */
+    private String accountIdentityIn(String markerLine) {
+        Matcher digits = ACCOUNT_NUMBER_IN_MARKER.matcher(markerLine);
+        String longest = null;
+        while (digits.find()) {
+            String candidate = digits.group();
+            if (longest == null || candidate.length() > longest.length()) longest = candidate;
+        }
+        return longest;
     }
 
     /** Normalized set of this header row's own column names -- used to tell "the same table's
@@ -553,9 +778,12 @@ public class PdfTableLocator {
         }
     }
 
+    /** Same over-strictness fixed in {@link #looksLikeHeaderRow} applied here: a "Txn Date"/
+     *  "Value Date" column is just as much the date column as a bare "Date" one, and this is
+     *  consulted by bucketRow's duplicate-date guard, which silently did nothing on such a
+     *  document. Now shares DATE_HINTS with every other date-column decision in this class. */
     private boolean isDateColumn(String columnName) {
-        String normalized = CsvParser.normalizeHeaderCell(columnName);
-        return normalized.equals("date") || normalized.equals("date & time");
+        return matchesAnyHint(columnName, DATE_HINTS);
     }
 
     private static final List<String> AMOUNT_COLUMN_HINTS =

@@ -3,6 +3,7 @@ import { Doughnut, Line } from 'react-chartjs-2';
 import { Chart as ChartJS, ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend } from 'chart.js';
 import { accountsApi, networthApi, type NetWorthData } from '../api/endpoints';
 import type { Account } from '../types';
+import { formatDate } from '../utils/date';
 
 ChartJS.register(ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend);
 
@@ -13,6 +14,28 @@ function fmt(n: number) {
 }
 
 const COLORS = ['#a9803a', '#2f6e5c', '#9c3f3f', '#5b7fa6', '#7a6248', '#8a6d9e'];
+
+/**
+ * The terms of a deposit -- what distinguishes an FD or RD from any other holding sitting in this
+ * module. Renders nothing at all when there are no terms to show, which is every hand-created
+ * holding and every mutual fund/stock, so this only appears where it actually says something.
+ */
+function DepositTerms({ holding }: { holding: Account }) {
+  const terms: string[] = [];
+  if (holding.principalAmount != null) terms.push(`Principal ${fmt(holding.principalAmount)}`);
+  if (holding.installmentAmount != null) terms.push(`${fmt(holding.installmentAmount)}/month`);
+  if (holding.installmentsPaid != null && holding.installmentsTotal != null) {
+    terms.push(`${holding.installmentsPaid} of ${holding.installmentsTotal} paid`);
+  }
+  if (holding.interestRate != null) terms.push(`${holding.interestRate}% p.a.`);
+  if (holding.maturityDate) {
+    terms.push(`Matures ${formatDate(holding.maturityDate)}`);
+  }
+  if (holding.maturityAmount != null) terms.push(`Worth ${fmt(holding.maturityAmount)} at maturity`);
+
+  if (terms.length === 0) return null;
+  return <p className="text-[11px] text-gray-500 mt-0.5">{terms.join(' · ')}</p>;
+}
 
 export default function Investments() {
   const [holdings, setHoldings] = useState<Account[]>([]);
@@ -167,16 +190,16 @@ export default function Investments() {
         <p className="text-xs uppercase text-gray-500 mb-4">Add Investment / Asset</p>
         <div className="grid md:grid-cols-4 gap-2 items-end mb-4">
           <div>
-            <label className="block text-xs uppercase text-gray-500 mb-1">Name</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
+            <label htmlFor="investment-name" className="block text-xs uppercase text-gray-500 mb-1">Name</label>
+            <input id="investment-name" value={name} onChange={(e) => setName(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
           </div>
           <div>
-            <label className="block text-xs uppercase text-gray-500 mb-1">Current value</label>
-            <input type="number" value={value} onChange={(e) => setValue(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
+            <label htmlFor="investment-value" className="block text-xs uppercase text-gray-500 mb-1">Current value</label>
+            <input id="investment-value" type="number" value={value} onChange={(e) => setValue(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
           </div>
           <div>
-            <label className="block text-xs uppercase text-gray-500 mb-1">Type</label>
-            <select value={kind} onChange={(e) => setKind(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full">
+            <label htmlFor="investment-type" className="block text-xs uppercase text-gray-500 mb-1">Type</label>
+            <select id="investment-type" value={kind} onChange={(e) => setKind(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full">
               <option>Mutual Fund</option><option>Stocks</option><option>FD</option><option>PPF/NPS</option><option>Other</option>
             </select>
           </div>
@@ -188,12 +211,15 @@ export default function Investments() {
         ) : (
           <div className="space-y-2">
             {holdings.map((h) => (
-              <div key={h.id} className="flex justify-between items-center text-sm border-b border-dashed py-2">
-                <span>{h.name} <span className="text-[10px] uppercase text-gray-400 ml-2">{h.investmentKind}</span></span>
-                <span className="flex items-center gap-3">
-                  {fmt(h.balance)}
-                  <button onClick={() => removeHolding(h.id)} className="text-danger border border-danger rounded px-2 py-0.5 text-[10px] uppercase">Delete</button>
-                </span>
+              <div key={h.id} className="border-b border-dashed py-2">
+                <div className="flex justify-between items-center text-sm">
+                  <span>{h.name} <span className="text-[10px] uppercase text-gray-400 ml-2">{h.investmentKind}</span></span>
+                  <span className="flex items-center gap-3">
+                    {fmt(h.balance)}
+                    <button onClick={() => removeHolding(h.id)} className="text-danger border border-danger rounded px-2 py-0.5 text-[10px] uppercase">Delete</button>
+                  </span>
+                </div>
+                <DepositTerms holding={h} />
               </div>
             ))}
           </div>

@@ -4,6 +4,7 @@ import com.finora.config.ClientIpResolver;
 import com.finora.config.JwtProperties;
 import com.finora.entity.RefreshToken;
 import com.finora.exception.ApiException;
+import com.finora.exception.ErrorCode;
 import com.finora.repository.RefreshTokenRepository;
 import com.finora.util.TokenHasher;
 import com.finora.util.UserAgentParser;
@@ -85,15 +86,15 @@ public class RefreshTokenService {
     @Transactional
     public RotationResult rotate(String rawToken) {
         RefreshToken rt = refreshTokenRepository.findByTokenHash(TokenHasher.sha256(rawToken))
-                .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "Invalid refresh token"));
+                .orElseThrow(() -> new ApiException(ErrorCode.AUTH_TOKEN_EXPIRED, "Invalid refresh token"));
 
         if (rt.getRevokedAt() != null) {
             revokeAllForUser(rt.getUserId());
-            throw new ApiException(HttpStatus.UNAUTHORIZED,
+            throw new ApiException(ErrorCode.AUTH_SESSION_REVOKED,
                     "This refresh token has already been used. All sessions have been signed out as a precaution.");
         }
         if (rt.getExpiresAt().isBefore(Instant.now())) {
-            throw new ApiException(HttpStatus.UNAUTHORIZED, "Refresh token expired — please sign in again.");
+            throw new ApiException(ErrorCode.AUTH_TOKEN_EXPIRED, "Refresh token expired — please sign in again.");
         }
 
         rt.setRevokedAt(Instant.now());

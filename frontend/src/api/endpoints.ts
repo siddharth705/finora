@@ -1,9 +1,16 @@
 import { api, rawApi, type ApiEnvelope } from './client';
 import type {
+
   Account, AccountStatementGroup, BankInfo, Budget, DashboardSummary, DetectedAccountInfo, Goal,
   ImportSummary, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, Transaction,
   WorkspaceSettings, UnparseableRow,
 } from '../types';
+
+// Which portal this account belongs to. The same person may hold a USER account and an ADMIN
+// account under one email and one mobile number, so login and password reset have to say which
+// one they mean. Not an authorization signal -- what an account may do is decided by its roles.
+const PORTAL_SCOPE = 'USER';
+
 
 // Mirrors the backend's AuthDtos.AuthResponse. maskedPhone (see PhoneMasking on the backend) lets
 // VerifyPhone.tsx show which number a code was sent to -- e.g. "+•••••••••705" -- so a wrong or
@@ -26,9 +33,9 @@ export const authApi = {
   // AuthService.resolveEmailForLogin on the backend, which resolves either down to the
   // account's real email before authenticating.
   login: (identifier: string, password: string) =>
-    api.post<AuthResponseDto>('/auth/login', { identifier, password }),
+    api.post<AuthResponseDto>('/auth/login', { identifier, password, scope: PORTAL_SCOPE }),
   forgotPassword: (email: string) =>
-    api.post<{ message: string; devResetLink: string | null }>('/auth/forgot-password', { email }).then((r) => r.data),
+    api.post<{ message: string; devResetLink: string | null }>('/auth/forgot-password', { email, scope: PORTAL_SCOPE }).then((r) => r.data),
   // Reveals the account's real phone number for a valid, unused reset link -- needed to call
   // Firebase Phone Authentication directly (Firebase's own client SDK sends the OTP; this
   // backend never does). token is the same raw reset-link token from forgotPassword.
@@ -430,6 +437,25 @@ export const passwordChangeApi = {
     api.post<{ message: string; otherDevicesSignedOut: boolean }>(
       '/users/me/password-change/complete', { sessionId, newPassword, signOutOtherDevices, currentRefreshToken }
     ).then((r) => r.data),
+};
+
+// Self-service view of the caller's own active refresh-token sessions -- backs Settings.tsx's
+// Active Sessions list under Security. Mirrors the backend's DeviceSessionDto exactly; browser/
+// device/lastSeenIp are best-effort labels captured from whichever request last issued/rotated
+// that token, not a durable per-device fingerprint (see RefreshToken's own doc comment on the
+// backend), so any of them can legitimately be null.
+export interface DeviceSession {
+  id: string;
+  browser: string | null;
+  device: string | null;
+  lastSeenIp: string | null;
+  lastSeenAt: string | null;
+  createdAt: string;
+  expiresAt: string;
+}
+export const deviceApi = {
+  list: () => api.get<DeviceSession[]>('/users/me/devices').then((r) => r.data),
+  revoke: (id: string) => api.delete(`/users/me/devices/${id}`),
 };
 
 // --- Import statistics ---

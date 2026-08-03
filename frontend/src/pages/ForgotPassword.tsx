@@ -67,8 +67,9 @@ export default function ForgotPassword() {
 
             {error && <p className="text-danger text-sm mb-4">{error}</p>}
 
-            <label className="block text-xs font-medium text-muted mb-1">Email</label>
+            <label htmlFor="forgot-password-email" className="block text-xs font-medium text-muted mb-1">Email</label>
             <input
+              id="forgot-password-email"
               type="email"
               required
               value={email}

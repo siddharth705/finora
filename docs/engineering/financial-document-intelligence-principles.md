@@ -468,6 +468,7 @@ Done
 ✓ Offset Column Anchors (header labels not aligned with their own column's data)
 ✓ Leading Narration Continuation (transaction description wraps before the date/amount row, not after)
 ✓ Leading Name Line (account holder name with no label at all, as the document's first line)
+✓ Financial Product Discovery (four stages: Evidence Collection → Classification → Validation → Persistence)
 
 Planned
 • Excel
@@ -499,11 +500,21 @@ read, recorded now so it isn't retroactively unavailable once (if) that gate is 
 
 ### Capability Registry
 
-The single source of truth for every capability the engine understands. `Coverage`/`Confidence`
-as live, queryable metrics need real instrumentation that doesn't exist yet (see Phase 3) — raw
-per-document activation *events* now exist (see "Instrumentation" above), but nothing aggregates
-or scores them yet, so the distinction still holds. Until it does, "Regression tests" is the
-honest proxy for confidence a capability actually works — no test, no claim.
+The single source of truth for every capability the engine understands.
+
+`Coverage` is now a real, queryable metric: `CapabilityCoverageService` aggregates the
+per-document activation events recorded since Phase 1 into how many imports each capability fired
+on, plus — the useful half — which registry capabilities have never fired at all, which is either
+dead code or a hole in the corpus. It also aggregates unparseable rows by failure reason and column
+shape, giving the Capability Backlog below real frequency counts instead of the hand-counted "1
+statement" / "6 of 7" evidence notes it still carries in places.
+
+`Confidence` as a live metric still does not exist and is still gated (see Phase 3). Deliberately,
+the coverage numbers produce **counts and nothing else** — no scoring, no thresholds, no
+auto-review decisions — because the sequencing this document insists on is collect, store,
+VALIDATE, then dashboard, then decide, and these numbers have not been checked against known cases
+yet. Until confidence exists, "Regression tests" remains the honest proxy for whether a capability
+actually works — no test, no claim.
 
 #### `RUNNING_BALANCE` / `BALANCE_CHAIN_RECONSTRUCTION`
 - **Purpose:** reconstruct which transaction happened first when a statement lists a running
@@ -798,6 +809,73 @@ honest proxy for confidence a capability actually works — no test, no claim.
   leading narration instead. Revisit the constant, not the algorithm, if that real document shows
   up (see "Prefer generalization over accumulation" — widen this capability's own test coverage
   first, rather than reaching for a second, competing mechanism).
+
+#### `FINANCIAL_PRODUCT_DISCOVERY`
+- **Purpose:** answer "which financial PRODUCT is this section?" before transactions are parsed,
+  instead of "which account is this?" — a question with no honest answer for a term-deposit summary
+  or an installment schedule, which were therefore forced into being accounts or dropped.
+- **Supported layouts:** any section, of any document format. The stages consume column names,
+  section-scoped text and row counts, none of which are PDF-specific — wired into both the PDF
+  (`PdfPreviewGenerator`) and CSV (`StatementValidator`) paths.
+- **Implementation:** four stages that never blend, in `com.finora.imports.product`:
+  `ProductEvidenceCollector` (Stage 1 — records `ObservedFact`s, makes no decisions and does no
+  scoring), `FinancialProductClassifier` (Stage 2 — scores facts against every `ProductHypothesis`),
+  `ProductValidator` (Stage 3 — can the winner PROVE what it claims), and `ProductDiscovery`
+  (Stage 4 — the persistence gate, `mayCreateAutomatically()`). Three rules carry the weight, each
+  from a real failure: **no single signal decides** (a hypothesis needs two independent positive
+  signals); **contradiction disqualifies rather than subtracts** (a signal a product should never
+  carry means the reading is wrong, not marginally less likely); and **where a name was found
+  outweighs which name it was** (`EvidenceSource`).
+- **Regression tests:** `FinancialProductClassifierTest`,
+  `CompositeMultiProductClassificationTest` (all three sections of a composite statement classified
+  correctly), `DepositAttributeExtractionPdfPreviewGeneratorTest`, `DepositIdentityPerDepositTest`,
+  `ProductIdentityTest`/`ProductIdentityResolverTest`, `ProductAttributeExtractorTest`.
+- **Maturity:** Beta.
+- **Identity, attributes, and routing (added after the entry above was first written):** a
+  discovered product carries a stable `ProductIdentity` — a hash of institution + the product's own
+  number, never the number itself — so re-importing next month's statement recognises the same
+  deposit instead of creating another one. A deposit also carries its own terms (principal, rate,
+  maturity date, installment amount), and a fixed-deposit section splits into one product PER ROW,
+  since a real FD section lists every deposit the customer holds separately. A recurring deposit
+  deliberately does not split: its rows are installments of one product, and splitting them would
+  multiply one real deposit into several phantom accounts.
+- **Known limitations:** the `MIN_CORROBORATING_SIGNALS = 2` rule means a genuinely single-signal
+  document reaches UNKNOWN rather than a correct answer — deliberate, since UNKNOWN costs one
+  question on the review screen while a confident wrong product silently writes wrong data into
+  someone's net worth. Products with no structural vocabulary yet (PPF/EPF/NPS/demat/mutual fund)
+  are recognised by name only and always report UNPROVEN, so they can never auto-create. Identity
+  requires a recognised institution AND a full account number: `BankRegistry`'s `OTHER` sentinel is
+  not treated as an institution (that would make every product from an unrecognised bank identical),
+  so a statement from an unknown bank gets no strong identity and falls back to a masked-digit
+  PROBABLE match at best. Deposit attribute extraction and per-row splitting are **PDF-only** — no
+  real CSV export in the corpus represents a multi-deposit schedule, and building that handling with
+  no real document behind it is what "Evidence before capability" rules out.
+
+#### Closed: auxiliary text is not section-scoped
+- **Status:** **closed** by `FINANCIAL_PRODUCT_DISCOVERY` above. Previously documented as a known
+  gap in `FinancialProductClassifier`'s `NAMED_IN_TEXT_WEIGHT` and asserted honestly in its test.
+- **What the gap actually was — the documented explanation was wrong.** It was recorded as "a
+  combined statement prints 'Savings Accounts' in its relationship summary and that phrase ends up
+  in the auxiliary text of the deposit sections further down." Dumping the real trace's sections
+  showed the deposit sections have *zero* auxiliary text. The leak was never the cause. The actual
+  cause was that `looksLikeALedger` fired on **any one** ledger word, and a fixed-deposit schedule
+  has a `Deposit(Mnth)` column — the monthly contribution amount, not money moving in. One keyword
+  made the whole section a transaction account.
+- **Fix:** a ledger is now a *combination* — a date column AND a free-text description column AND
+  some form of amount AND rows (`SectionEvidence.looksLikeALedger`). A deposit schedule has no
+  narration column, because it records amounts against dates rather than events. Separately, and
+  still worth having, `EvidenceSource` now distinguishes document-level from section-level text,
+  and free text naming two or more distinct products is demoted to document level automatically
+  (one section is one product, so an enumeration cannot be describing one section) — that closes
+  the leak the original note *described*, even though it was not the bug it was blamed for.
+- **Corpus damage found along the way:** `PdfTraceRedactor`'s allowlist had no deposit vocabulary,
+  so the committed trace had `"Maturity Date"` redacted to `"Xxxxxxxx Date"` and `"Deposit(Mnth)"`
+  to `"Deposit(Xxxx)"` — the exact column headers product classification keys on, removed from the
+  fixture meant to regression-test classifying them. The allowlist is fixed, but **a committed
+  trace cannot be un-redacted**: traces captured before this need re-capturing from their real
+  source files to exercise product classification. Until then the composite-statement test asserts
+  the deposit sections are *not accounts* (true, and the regression that mattered) rather than that
+  they are deposits (unprovable from a fixture whose evidence was redacted away).
 
 #### Open Investigation: HDFC credit-card table over-extension (only 2/40 rows parsed)
 - **Status:** root-caused, deliberately **not fixed yet** — this needs real design work, not a

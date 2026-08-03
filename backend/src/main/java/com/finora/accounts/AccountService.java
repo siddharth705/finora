@@ -90,6 +90,13 @@ public class AccountService {
         a.setAccountNumberMasked(req.accountNumberMasked());
         a.setBranchName(req.branchName());
         a.setIfscCode(req.ifscCode());
+        a.setPrincipalAmount(req.principalAmount());
+        a.setInterestRate(req.interestRate());
+        a.setMaturityDate(req.maturityDate());
+        a.setMaturityAmount(req.maturityAmount());
+        a.setInstallmentAmount(req.installmentAmount());
+        a.setInstallmentsPaid(req.installmentsPaid());
+        a.setInstallmentsTotal(req.installmentsTotal());
         // bankManagementService.resolve() checks custom banks first, then falls back to
         // BankRegistry.get() -- which itself resolves an unrecognized/blank id to OTHER rather
         // than throwing, so a manually-added account (no bank picked) or a caller that hasn't

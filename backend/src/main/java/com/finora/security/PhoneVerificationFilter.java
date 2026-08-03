@@ -88,7 +88,10 @@ public class PhoneVerificationFilter extends OncePerRequestFilter {
         if (auth != null && auth.isAuthenticated() && auth.getPrincipal() instanceof UserDetails userDetails
                 && !PHONE_ENDPOINTS.matches(request) && !AUTH_ENDPOINTS.matches(request)
                 && !SETUP_STATUS_ENDPOINT.matches(request) && !USER_ME_ENDPOINT.matches(request)) {
-            Optional<User> user = userRepository.findByEmail(userDetails.getUsername());
+            // The principal's username is the user id (see CurrentUserDetailsService) -- an email
+            // would be ambiguous since V52, and could check phone verification against the wrong
+            // one of the two accounts a person may hold under one address.
+            Optional<User> user = parseId(userDetails.getUsername()).flatMap(userRepository::findById);
             if (user.isPresent() && !user.get().isPhoneVerified()) {
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                 response.setContentType(MediaType.APPLICATION_JSON_VALUE);
@@ -99,5 +102,14 @@ public class PhoneVerificationFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+    /** A principal that isn't a UUID cannot resolve to a user -- treated as "no user found", which
+     *  lets this filter fall through rather than throwing inside the filter chain. */
+    private static Optional<java.util.UUID> parseId(String raw) {
+        try {
+            return Optional.of(java.util.UUID.fromString(raw));
+        } catch (IllegalArgumentException e) {
+            return Optional.empty();
+        }
     }
 }

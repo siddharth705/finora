@@ -44,6 +44,47 @@ public class Account extends BaseEntity {
     @Column(name = "investment_kind")
     private String investmentKind;
 
+    // Financial Product Discovery (V49). productType is strictly finer-grained than accountType --
+    // SAVINGS/CURRENT/OVERDRAFT all store as accountType SAVINGS, and every deposit/fund kind
+    // stores as INVESTMENT -- so keeping the classification means the day a current account needs
+    // different treatment, the information is already here rather than needing re-derivation from
+    // a statement nobody kept.
+    @Column(name = "product_type", length = 32)
+    private String productType;
+
+    // A one-way hash of institution + this product's own full number, so re-importing next month's
+    // statement recognises the same fixed deposit instead of creating another one and
+    // double-counting it. A hash rather than the number: equality is all this column is for, and
+    // accountNumberMasked already covers display. See ProductIdentity.
+    @Column(name = "product_identity_hash", length = 64)
+    private String productIdentityHash;
+
+    // What makes a deposit a DEPOSIT rather than a name and a balance (V51). All nullable and
+    // populated only for the product types they apply to -- see
+    // com.finora.imports.product.ProductAttributes for the full reasoning. A fixed deposit has no
+    // installmentAmount; a recurring deposit has no principalAmount, since its value builds up
+    // over the schedule rather than starting as a lump sum.
+    @Column(name = "principal_amount", precision = 14, scale = 2)
+    private BigDecimal principalAmount;
+
+    @Column(name = "interest_rate", precision = 6, scale = 2)
+    private BigDecimal interestRate;
+
+    @Column(name = "maturity_date")
+    private LocalDate maturityDate;
+
+    @Column(name = "maturity_amount", precision = 14, scale = 2)
+    private BigDecimal maturityAmount;
+
+    @Column(name = "installment_amount", precision = 14, scale = 2)
+    private BigDecimal installmentAmount;
+
+    @Column(name = "installments_paid")
+    private Integer installmentsPaid;
+
+    @Column(name = "installments_total")
+    private Integer installmentsTotal;
+
     // Neither is required — most accounts are still created with just a name/type/balance the
     // way they always were. Populated automatically when a statement's own header carries an
     // "Account Holder" / account-number-like column (see CsvImportService's detection), or set
@@ -89,6 +130,24 @@ public class Account extends BaseEntity {
     public void setDueDate(LocalDate dueDate) { this.dueDate = dueDate; }
     public String getInvestmentKind() { return investmentKind; }
     public void setInvestmentKind(String investmentKind) { this.investmentKind = investmentKind; }
+    public String getProductType() { return productType; }
+    public void setProductType(String productType) { this.productType = productType; }
+    public String getProductIdentityHash() { return productIdentityHash; }
+    public void setProductIdentityHash(String productIdentityHash) { this.productIdentityHash = productIdentityHash; }
+    public BigDecimal getPrincipalAmount() { return principalAmount; }
+    public void setPrincipalAmount(BigDecimal principalAmount) { this.principalAmount = principalAmount; }
+    public BigDecimal getInterestRate() { return interestRate; }
+    public void setInterestRate(BigDecimal interestRate) { this.interestRate = interestRate; }
+    public LocalDate getMaturityDate() { return maturityDate; }
+    public void setMaturityDate(LocalDate maturityDate) { this.maturityDate = maturityDate; }
+    public BigDecimal getMaturityAmount() { return maturityAmount; }
+    public void setMaturityAmount(BigDecimal maturityAmount) { this.maturityAmount = maturityAmount; }
+    public BigDecimal getInstallmentAmount() { return installmentAmount; }
+    public void setInstallmentAmount(BigDecimal installmentAmount) { this.installmentAmount = installmentAmount; }
+    public Integer getInstallmentsPaid() { return installmentsPaid; }
+    public void setInstallmentsPaid(Integer installmentsPaid) { this.installmentsPaid = installmentsPaid; }
+    public Integer getInstallmentsTotal() { return installmentsTotal; }
+    public void setInstallmentsTotal(Integer installmentsTotal) { this.installmentsTotal = installmentsTotal; }
     public String getAccountHolderName() { return accountHolderName; }
     public void setAccountHolderName(String accountHolderName) { this.accountHolderName = accountHolderName; }
     public String getAccountNumberMasked() { return accountNumberMasked; }

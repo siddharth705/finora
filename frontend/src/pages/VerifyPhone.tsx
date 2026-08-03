@@ -100,8 +100,9 @@ export default function VerifyPhone() {
         {error && <p className="text-danger text-sm mb-4">{error}</p>}
 
         <form onSubmit={handleVerify}>
-          <label className="block text-xs font-medium text-muted mb-1">Verification code</label>
+          <label htmlFor="verify-phone-otp" className="block text-xs font-medium text-muted mb-1">Verification code</label>
           <input
+            id="verify-phone-otp"
             value={otp}
             onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
             required

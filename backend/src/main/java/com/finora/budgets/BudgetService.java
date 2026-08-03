@@ -8,6 +8,7 @@ import com.finora.repository.BudgetRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
+import com.finora.service.AuditService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,13 +28,16 @@ public class BudgetService {
     private final CategoryRepository categoryRepository;
     private final TransactionRepository transactionRepository;
     private final UserRepository userRepository;
+    private final AuditService auditService;
 
     public BudgetService(BudgetRepository budgetRepository, CategoryRepository categoryRepository,
-                          TransactionRepository transactionRepository, UserRepository userRepository) {
+                          TransactionRepository transactionRepository, UserRepository userRepository,
+                          AuditService auditService) {
         this.budgetRepository = budgetRepository;
         this.categoryRepository = categoryRepository;
         this.transactionRepository = transactionRepository;
         this.userRepository = userRepository;
+        this.auditService = auditService;
     }
 
     @Transactional(readOnly = true)
@@ -110,6 +114,12 @@ public class BudgetService {
             saved.setMonthlyLimit(req.monthlyLimit());
             saved = budgetRepository.save(saved);
         }
+        // Bug fix: this service never called AuditService at all, unlike every other mutating
+        // service in the codebase (see AuditService's own class doc, which names Budget/Goal as
+        // the known-remaining gap) -- a budget limit change was invisible in the general activity
+        // feed with no way to answer "who/when changed this budget."
+        auditService.record(userId, "BUDGET_UPSERTED", "Budget", saved.getId(),
+                Map.of("category", category.getName(), "monthlyLimit", req.monthlyLimit()));
         return new BudgetDto(saved.getId(), category.getId(), category.getName(), saved.getMonthlyLimit(), BigDecimal.ZERO);
     }
 

@@ -31,7 +31,7 @@ class CapabilityActivationPreviewGeneratorTest {
         when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
         DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
         TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector);
-        return new PreviewGenerator(new CsvParser(), transactionNormalizer, new StatementValidator());
+        return new PreviewGenerator(new CsvParser(), transactionNormalizer, new StatementValidator(com.finora.imports.product.ProductDiscovery.standard()));
     }
 
     private List<String> activatedCapabilities(String csv) throws Exception {

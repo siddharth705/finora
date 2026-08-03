@@ -29,16 +29,14 @@ function renderRegister() {
   );
 }
 
-async function fillValidFormExceptPhone(user: ReturnType<typeof userEvent.setup>, container: HTMLElement) {
+async function fillValidFormExceptPhone(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByPlaceholderText('Enter your full name'), 'Jane Doe');
   await user.type(screen.getByPlaceholderText('you@example.com'), 'jane@example.com');
   await user.type(screen.getByPlaceholderText('XXXXXXXXXX'), '9876543210');
-  // PasswordInput's <label> has no htmlFor/id linking it to the input it labels (a pre-existing
-  // gap, not something this change introduces) -- getByLabelText can't resolve it, so target the
-  // two password-type inputs directly instead, in their known DOM order (password, then confirm).
-  const passwordInputs = container.querySelectorAll<HTMLInputElement>('input[type="password"]');
-  await user.type(passwordInputs[0], 'Str0ng!Pass');
-  await user.type(passwordInputs[1], 'Str0ng!Pass');
+  // Bug fix regression: PasswordInput now accepts an id prop wired to a matching label htmlFor,
+  // so these resolve via getByLabelText instead of the previous querySelectorAll workaround.
+  await user.type(screen.getByLabelText('Password (min 8 characters)'), 'Str0ng!Pass');
+  await user.type(screen.getByLabelText('Confirm password'), 'Str0ng!Pass');
   await user.click(screen.getByRole('checkbox'));
 }
 
@@ -95,9 +93,9 @@ describe('Register — mobile number field', () => {
 
   it('submits the phone number with +91 prepended, not stored with it', async () => {
     const user = userEvent.setup();
-    const { container } = renderRegister();
+    renderRegister();
 
-    await fillValidFormExceptPhone(user, container);
+    await fillValidFormExceptPhone(user);
     await user.click(screen.getByRole('button', { name: /Create account/i }));
 
     expect(registerMock).toHaveBeenCalledWith(

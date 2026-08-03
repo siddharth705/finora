@@ -72,7 +72,7 @@ class ImportServiceAskOnceTest {
         DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
         CsvParser csvParser = new CsvParser();
         TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector);
-        StatementValidator statementValidator = new StatementValidator();
+        StatementValidator statementValidator = new StatementValidator(com.finora.imports.product.ProductDiscovery.standard());
         PreviewGenerator previewGenerator = new PreviewGenerator(csvParser, transactionNormalizer, statementValidator);
         ImportRuleLearningService ruleLearningService = new ImportRuleLearningService(categorizationService);
 
@@ -85,7 +85,8 @@ class ImportServiceAskOnceTest {
         importService = new ImportService(accountRepository, accountService, transactionRepository,
                 merchantRepository, statementImportRepository, categorizationService, reconciliationService,
                 recurringService, previewGenerator, duplicateDetector, ruleLearningService,
-                mock(ImportSessionService.class), mock(com.finora.imports.pdf.PdfPreviewGenerator.class));
+                mock(ImportSessionService.class), mock(com.finora.imports.pdf.PdfPreviewGenerator.class),
+                new com.finora.imports.product.ProductIdentityResolver(accountRepository));
 
         Account account = new Account();
         ReflectionTestUtils.setField(account, "id", accountId);
@@ -264,11 +265,13 @@ class ImportServiceAskOnceTest {
                 new AccountDto(newAccountId, "HDFC Savings", "SAVINGS", BigDecimal.valueOf(15000), null, null, null, null, null,
                         null, null,
                         AccountDto.BankDto.from(com.finora.util.BankRegistry.get("OTHER")), null, null, null,
-                        0, 0L, "ACTIVE"));
+                        0, 0L, "ACTIVE",
+                        null, null, null, null, null, null, null));
 
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
                 BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
-        var newAccount = new NewAccountRequest("HDFC Savings", "SAVINGS", BigDecimal.valueOf(15000), null, null, null, null, null, null, null);
+        var newAccount = new NewAccountRequest("HDFC Savings", "SAVINGS", BigDecimal.valueOf(15000), null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null);
         var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null);
 
         var response = importService.confirm(userId, dummyFile(), request);
@@ -280,6 +283,101 @@ class ImportServiceAskOnceTest {
         ArgumentCaptor<List<Transaction>> captor = ArgumentCaptor.forClass(List.class);
         verify(transactionRepository).saveAll(captor.capture());
         assertThat(captor.getValue().get(0).getAccountId()).isEqualTo(newAccountId);
+    }
+
+    @Test
+    void confirm_routesATermDepositToInvestments_notToAnEmptySavingsAccount() throws Exception {
+        // Phase 3 step 8. A deposit section used to become a savings account with no transactions
+        // in it, because the review form only ever offered account types. FinancialProductType
+        // carries its own routing, so the product decides where it lands: INVESTMENT with an
+        // investmentKind of "FD", alongside mutual funds and PPF in the Investments module.
+        UUID newAccountId = UUID.randomUUID();
+        when(accountService.create(eq(userId), any())).thenReturn(
+                new AccountDto(newAccountId, "HDFC Term Deposit", "INVESTMENT", BigDecimal.valueOf(100000),
+                        null, null, null, null, null, null, null,
+                        AccountDto.BankDto.from(com.finora.util.BankRegistry.get("OTHER")), null, null, null,
+                        0, 0L, "ACTIVE",
+                        null, null, null, null, null, null, null));
+
+        var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "Deposit",
+                BigDecimal.valueOf(100000), "INCOME", "Dining", true, "rule", null, false, null, null);
+        // The review screen echoes the classification back; accountType stays what the form had.
+        var newAccount = new NewAccountRequest("HDFC Term Deposit", "SAVINGS", BigDecimal.valueOf(100000),
+                null, null, null, null, null, null, null, "FIXED_DEPOSIT", null,
+                null, null, null, null, null, null, null);
+        var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null);
+
+        var response = importService.confirm(userId, dummyFile(), request);
+
+        ArgumentCaptor<AccountDto.CreateRequest> captor =
+                ArgumentCaptor.forClass(AccountDto.CreateRequest.class);
+        verify(accountService).create(eq(userId), captor.capture());
+        assertThat(captor.getValue().accountType())
+                .as("the product's own routing wins over the form's default")
+                .isEqualTo("INVESTMENT");
+        assertThat(captor.getValue().investmentKind()).isEqualTo("FD");
+        assertThat(response.productsCreated())
+                .as("the summary names products, not a count of accounts")
+                .containsEntry("FIXED_DEPOSIT", 1);
+    }
+
+    @Test
+    void confirm_leavesAnUnknownProductToWhateverTypeTheUserPicked() throws Exception {
+        // The correction loop's backstop: an unclassifiable product has nothing to route by, so the
+        // user's one-time answer on the review screen is what decides -- never a guess.
+        UUID newAccountId = UUID.randomUUID();
+        when(accountService.create(eq(userId), any())).thenReturn(
+                new AccountDto(newAccountId, "Mystery", "WALLET", BigDecimal.ZERO, null, null, null, null,
+                        null, null, null,
+                        AccountDto.BankDto.from(com.finora.util.BankRegistry.get("OTHER")), null, null, null,
+                        0, 0L, "ACTIVE",
+                        null, null, null, null, null, null, null));
+
+        var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "Something",
+                BigDecimal.valueOf(10), "EXPENSE", "Other", true, "rule", null, false, null, null);
+        var newAccount = new NewAccountRequest("Mystery", "WALLET", BigDecimal.ZERO, null, null,
+                null, null, null, null, null, "UNKNOWN", null,
+                null, null, null, null, null, null, null);
+        var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null);
+
+        importService.confirm(userId, dummyFile(), request);
+
+        ArgumentCaptor<AccountDto.CreateRequest> captor =
+                ArgumentCaptor.forClass(AccountDto.CreateRequest.class);
+        verify(accountService).create(eq(userId), captor.capture());
+        assertThat(captor.getValue().accountType()).isEqualTo("WALLET");
+        assertThat(captor.getValue().investmentKind()).isNull();
+    }
+
+    @Test
+    void confirm_honoursAnInvestmentChoice_evenWhenTheClientSendsNoDetectedProduct() throws Exception {
+        // Bug: the no-detected-product fallback mapped anything that wasn't CREDIT_CARD or WALLET to
+        // SAVINGS, and SAVINGS's own routing then overrode the form -- so a user who explicitly
+        // picked Investment on the review screen got a Savings account. Only reachable from a client
+        // that doesn't echo detectedProduct back (an older build), which is exactly the case that
+        // should degrade to "do what the user said", not "invent a product they didn't choose".
+        UUID newAccountId = UUID.randomUUID();
+        when(accountService.create(eq(userId), any())).thenReturn(
+                new AccountDto(newAccountId, "Gold Fund", "INVESTMENT", BigDecimal.ZERO, null, null, null, null,
+                        null, null, null,
+                        AccountDto.BankDto.from(com.finora.util.BankRegistry.get("OTHER")), null, null, null,
+                        0, 0L, "ACTIVE",
+                        null, null, null, null, null, null, null));
+
+        var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "Something",
+                BigDecimal.valueOf(10), "EXPENSE", "Other", true, "rule", null, false, null, null);
+        var newAccount = new NewAccountRequest("Gold Fund", "INVESTMENT", BigDecimal.ZERO, null, null,
+                null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null);
+
+        importService.confirm(userId, dummyFile(), new ConfirmRequest(null, List.of(row), null, newAccount, null, null));
+
+        ArgumentCaptor<AccountDto.CreateRequest> captor =
+                ArgumentCaptor.forClass(AccountDto.CreateRequest.class);
+        verify(accountService).create(eq(userId), captor.capture());
+        assertThat(captor.getValue().accountType())
+                .as("the user's own choice must survive when nothing was detected")
+                .isEqualTo("INVESTMENT");
     }
 
     @Test
@@ -522,13 +620,15 @@ class ImportServiceAskOnceTest {
                 new AccountDto(newAccountId, "SBI Savings", "SAVINGS", BigDecimal.valueOf(25000), null, null, null,
                         "Siddharth Tiwari", "4587", null, null,
                         AccountDto.BankDto.from(com.finora.util.BankRegistry.get("SBI")), null, null, null,
-                        0, 0L, "ACTIVE"));
+                        0, 0L, "ACTIVE",
+                        null, null, null, null, null, null, null));
 
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
                 BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
         var newAccount = new com.finora.dto.ImportDto.NewAccountRequest(
                 "SBI Savings", "SAVINGS", BigDecimal.valueOf(25000), null, null,
-                "Siddharth Tiwari", "4587", "SBI", null, null);
+                "Siddharth Tiwari", "4587", "SBI", null, null, null, null,
+                null, null, null, null, null, null, null);
         var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null);
 
         importService.confirm(userId, dummyFile(), request);

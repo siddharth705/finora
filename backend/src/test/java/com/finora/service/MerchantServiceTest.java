@@ -105,6 +105,12 @@ class MerchantServiceTest {
         when(learningRepository.findByUserIdAndMerchantId(any(), any())).thenAnswer(inv -> new ArrayList<>(learningPairs.stream()
                 .filter(p -> p.getUserId().equals(inv.getArgument(0)) && p.getMerchantId().equals(inv.getArgument(1)))
                 .toList()));
+        // Backs listForUser()'s bulk-fetch-then-group-in-memory N+1 fix -- without this stub,
+        // Mockito's default ReturnsEmptyValues answer silently returns an empty list for every
+        // call, so every merchant would appear to have no learning distribution at all.
+        when(learningRepository.findByUserId(any())).thenAnswer(inv -> new ArrayList<>(learningPairs.stream()
+                .filter(p -> p.getUserId().equals(inv.getArgument(0)))
+                .toList()));
         when(learningRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
         // deleteAll(Iterable) returns void -- can't be stubbed via when(mock.method()), needs
         // doAnswer().when(mock).method() instead.

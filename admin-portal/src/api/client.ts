@@ -67,6 +67,30 @@ export function clearAdminSession() {
   safeStorage.removeItem(REFRESH_TOKEN_KEY);
 }
 
+/**
+ * Where a forced-sign-out reason waits for the login page to pick it up. Mirrors the user app's
+ * SESSION_ENDED_REASON_KEY exactly (frontend/src/api/client.ts) -- same problem, same shape, so the
+ * two apps behave identically when a session ends under someone.
+ *
+ * The redirect below is a FULL page navigation, so React unmounts and any in-memory or router state
+ * goes with it. Without this handoff the backend's explanation was simply dropped: an admin got
+ * bounced to the login screen with no indication of whether their session merely expired or every
+ * session was revoked after a suspected stolen token.
+ */
+export const ADMIN_SESSION_ENDED_REASON_KEY = 'finora_admin_session_ended_reason';
+
+/**
+ * Deliberately separate from clearAdminSession(), which is also called for an ordinary user-
+ * initiated logout -- that case should NOT leave a "your session ended" notice behind, because
+ * nothing unexpected happened and the admin already knows why they're back at the login screen.
+ */
+function endSessionAndRedirect(reason?: string) {
+  clearAdminSession();
+  safeStorage.setItem(ADMIN_SESSION_ENDED_REASON_KEY,
+    reason || 'Your session has ended. Please sign in again to continue.');
+  window.location.href = '/login';
+}
+
 export function persistAdminSession(token: string, refreshToken: string) {
   safeStorage.setItem(TOKEN_KEY, token);
   safeStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
@@ -129,14 +153,16 @@ api.interceptors.response.use(
           persistAdminSession(refreshed.token, refreshed.refreshToken);
           originalRequest.headers.Authorization = `Bearer ${refreshed.token}`;
           return api(originalRequest);
-        } catch {
-          clearAdminSession();
-          window.location.href = '/login';
+        } catch (refreshError: any) {
+          // The REFRESH call's own failure is what explains the sign-out, not the original 401 --
+          // that one only says "your access token is stale", which is routine here. The refresh
+          // response is where the backend distinguishes an ordinary expiry (AUTH_002) from a reused
+          // token that revoked every session as a theft precaution (AUTH_004).
+          endSessionAndRedirect(refreshError?.response?.data?.message);
           return Promise.reject(error);
         }
       } else {
-        clearAdminSession();
-        window.location.href = '/login';
+        endSessionAndRedirect();
       }
     }
 

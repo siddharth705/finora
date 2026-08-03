@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { useScrollReveal } from '../hooks/useScrollReveal';
 import { useTheme } from '../context/ThemeContext';
+import logoMark from '../assets/logo-mark.png';
 
 /* ------------------------------------------------------------------ */
 /*  Shared bits                                                        */
@@ -17,8 +18,8 @@ import { useTheme } from '../context/ThemeContext';
 function Logo() {
   return (
     <span className="flex items-center gap-2">
-      <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-400 to-primary-dark flex items-center justify-center text-white font-black text-sm">
-        F
+      <span className="w-8 h-8 rounded-lg overflow-hidden flex-shrink-0">
+        <img src={logoMark} alt="" className="w-full h-full object-cover" />
       </span>
       <span className="font-extrabold tracking-wide text-ink">Finora</span>
     </span>
@@ -417,7 +418,13 @@ export default function Landing() {
               onMouseEnter={() => setResourcesOpen(true)}
               onMouseLeave={() => setResourcesOpen(false)}
             >
-              <button className="flex items-center gap-1 hover:text-ink transition-colors">
+              <button
+                type="button"
+                onClick={() => setResourcesOpen((v) => !v)}
+                aria-haspopup="true"
+                aria-expanded={resourcesOpen}
+                className="flex items-center gap-1 hover:text-ink transition-colors"
+              >
                 Resources <ChevronDown size={14} />
               </button>
               {resourcesOpen && (

@@ -45,8 +45,13 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         try {
             if (jwtService.isTokenValid(token) && SecurityContextHolder.getContext().getAuthentication() == null) {
-                String email = jwtService.extractEmail(token);
-                UserDetails userDetails = userDetailsService.loadUserByUsername(email);
+                // Resolved by the token's SUBJECT (the user id), not its email claim. Since V52 an
+                // email identifies a user only within a portal scope, so loading by email would
+                // pick an arbitrary one of the two accounts a person may hold under it -- and
+                // could authenticate a request as the wrong account entirely. The id was already
+                // in the token; this simply stops ignoring it.
+                UserDetails userDetails = userDetailsService.loadUserByUsername(
+                        jwtService.extractUserId(token).toString());
 
                 var authToken = new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
                 authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));

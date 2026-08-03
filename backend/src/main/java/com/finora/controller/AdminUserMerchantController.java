@@ -66,7 +66,7 @@ public class AdminUserMerchantController {
 
     @PatchMapping("/{id}")
     public ApiResponse<MerchantDto> update(@PathVariable UUID userId, @PathVariable UUID id,
-                                            @RequestBody MerchantDto.UpdateRequest request) {
+                                            @Valid @RequestBody MerchantDto.UpdateRequest request) {
         return ApiResponse.ok(merchantService.rename(userId, id, request), "Merchant updated");
     }
 

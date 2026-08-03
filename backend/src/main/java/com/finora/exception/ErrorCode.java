@@ -33,14 +33,33 @@ public enum ErrorCode {
     IMPORT_ACCOUNT_NOT_FOUND("IMPORT_005", HttpStatus.NOT_FOUND, "Account not found"),
     IMPORT_SYSTEM_BUSY("IMPORT_006", HttpStatus.SERVICE_UNAVAILABLE,
             "Finora is processing a lot of statement imports right now. Please try again in a moment."),
+    // Deliberately separate from IMPORT_001 even though both mean "you got nothing". They fail at
+    // different stages and need different follow-up: 001 means the document's layout defeated
+    // table detection, 007 means the table WAS found and every row inside it was rejected. Folding
+    // them into one code is what let a real statement import as a silent, confirmable no-op.
+    IMPORT_NO_TRANSACTIONS_FOUND("IMPORT_007", HttpStatus.UNPROCESSABLE_ENTITY,
+            "Found a transaction table in this file but could not read any transactions from it"),
 
     // Accounts
     ACCOUNT_NOT_FOUND("ACC_001", HttpStatus.NOT_FOUND, "Account not found"),
 
     // Auth / security
+    //
+    // These carry codes rather than only messages because the frontend has to TELL THEM APART, not
+    // just print them. A 401 saying "wrong password" must leave the user on the login form with an
+    // inline error; a 401 saying "your session ended" must clear stored credentials and explain the
+    // sign-out. Branching on message text to decide that would break the moment anyone reworded a
+    // string -- which is exactly what is planned.
     AUTH_INVALID_CREDENTIALS("AUTH_001", HttpStatus.UNAUTHORIZED, "Invalid credentials"),
     AUTH_TOKEN_EXPIRED("AUTH_002", HttpStatus.UNAUTHORIZED, "Session expired, please sign in again"),
     AUTH_FORBIDDEN("AUTH_003", HttpStatus.FORBIDDEN, "You don't have permission to do that"),
+    // Deliberately distinct from AUTH_002 even though both end in "sign in again". A refresh token
+    // presented twice is treated as evidence of theft (RefreshTokenService.rotate()) and revokes
+    // EVERY session for that user, not just this one. Folding it into "session expired" would hide
+    // a security event behind routine copy -- the user should know their other devices were signed
+    // out, and support should be able to tell the two apart in logs.
+    AUTH_SESSION_REVOKED("AUTH_004", HttpStatus.UNAUTHORIZED,
+            "For your security, all sessions were signed out. Please sign in again."),
 
     // Generic fallbacks — used by GlobalExceptionHandler when no more specific code applies
     VALIDATION_ERROR("VAL_001", HttpStatus.BAD_REQUEST, "Validation failed"),

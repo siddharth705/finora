@@ -64,7 +64,7 @@ class AuthServiceResetPasswordTest {
                 passwordEncoder, mock(JwtService.class), mock(AuthenticationManager.class),
                 auditService, mock(RefreshTokenService.class), emailProvider,
                 new EmailProperties(), phoneVerificationProvider, mock(PlatformSettingsService.class),
-                mock(PasswordHistoryService.class)
+                mock(PasswordHistoryService.class), new IdentityLookup(userRepository)
         );
     }
 

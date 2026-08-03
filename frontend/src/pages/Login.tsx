@@ -1,11 +1,14 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Sparkles, ShieldCheck, UploadCloud, TrendingUp, PiggyBank, Target, LineChart,
+  ShieldCheck, UploadCloud, TrendingUp, PiggyBank, Target, LineChart,
   Wallet, PieChart as PieChartIcon, BarChart3, ArrowRight,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import logoMark from '../assets/logo-mark.png';
 import { PasswordInput } from '../components/PasswordInput';
+import { SESSION_ENDED_REASON_KEY } from '../api/client';
+import { safeStorage } from '../lib/safeStorage';
 
 // Mirrors Register.tsx's marketing panel exactly -- same feature list, same layout, same
 // decorative flourish -- so the two auth screens read as one continuous product rather than
@@ -34,11 +37,25 @@ export default function Login() {
   // so it can't leak into a shared link or a server log.
   const [banner] = useState<string | null>(() => (location.state as { message?: string } | null)?.message ?? null);
 
+  // The other way a message arrives here: api/client.ts's clearSessionAndRedirect() stashes WHY the
+  // session ended, because its `window.location.href` navigation unmounts React and takes any
+  // router state with it. Read once into state and deleted immediately below, so it behaves exactly
+  // like the router-state banner -- one-shot, never resurfacing on a later visit.
+  //
+  // Held separately from `banner` rather than merged: a session ending is a warning ("you were
+  // signed out"), while the router-state banner is a success confirmation ("password updated"), and
+  // they render with different styling. They also can't collide -- a forced sign-out is a full page
+  // load, which discards any router state that might have been in flight.
+  const [sessionEndedReason] = useState<string | null>(() => safeStorage.getItem(SESSION_ENDED_REASON_KEY));
+
   // Clears the router state right after reading it -- history.state otherwise survives a manual
   // page refresh (unlike the in-memory banner state above), which would re-show a stale "password
-  // updated" confirmation on an unrelated future visit to this same history entry.
+  // updated" confirmation on an unrelated future visit to this same history entry. The stashed
+  // sign-out reason needs the same treatment for the same reason, minus the history nuance: it
+  // lives in storage, so it would otherwise outlive not just this render but the whole tab.
   useEffect(() => {
     if (banner) navigate(location.pathname, { replace: true });
+    if (sessionEndedReason) safeStorage.removeItem(SESSION_ENDED_REASON_KEY);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -71,8 +88,8 @@ export default function Login() {
             feel like one continuous flow rather than a redesigned page next to a stale one. */}
         <div className="hidden lg:block">
           <Link to="/" className="flex items-center gap-2.5 mb-8 w-fit">
-            <span className="w-9 h-9 rounded-lg bg-gradient-to-br from-indigo-400 to-primary-dark flex items-center justify-center">
-              <Sparkles size={18} className="text-white" strokeWidth={2.5} />
+            <span className="w-9 h-9 rounded-lg overflow-hidden flex-shrink-0">
+              <img src={logoMark} alt="" className="w-full h-full object-cover" />
             </span>
             <span className="font-extrabold tracking-wide text-ink text-xl">FINORA</span>
           </Link>
@@ -119,8 +136,8 @@ export default function Login() {
         <form onSubmit={handleSubmit} noValidate className="bg-card rounded-xl2 p-8 w-full shadow-soft border border-border">
           <div className="flex items-center gap-2 mb-6 lg:hidden">
             <Link to="/" className="flex items-center gap-2 w-fit">
-              <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-400 to-primary-dark flex items-center justify-center">
-                <Sparkles size={14} className="text-white" strokeWidth={2.5} />
+              <span className="w-7 h-7 rounded-lg overflow-hidden flex-shrink-0">
+                <img src={logoMark} alt="" className="w-full h-full object-cover" />
               </span>
               <span className="font-extrabold tracking-wide text-ink">FINORA</span>
             </Link>
@@ -132,12 +149,21 @@ export default function Login() {
           {banner && (
             <p className="text-success text-sm bg-success-bg rounded-lg px-3 py-2 mb-4">{banner}</p>
           )}
+          {/* Why the user is looking at this screen when they didn't ask to be -- see
+              SESSION_ENDED_REASON_KEY in api/client.ts. Styled as a warning, not an error: nothing
+              the user did was wrong, and it clears the moment they sign in again. Hidden once they
+              submit and get a real error back, so the stale "you were signed out" note doesn't sit
+              above a fresh "wrong password" one. */}
+          {sessionEndedReason && !error && (
+            <p role="status" className="text-warning text-sm bg-warning-bg rounded-lg px-3 py-2 mb-4">{sessionEndedReason}</p>
+          )}
           {error && <p className="text-danger text-sm mb-4">{error}</p>}
 
           {/* Accepts either identifier -- users shouldn't have to remember which one they
               registered with. See AuthService.resolveEmailForLogin on the backend. */}
-          <label className="block text-xs font-medium text-muted mb-1">Email or mobile number</label>
+          <label htmlFor="login-identifier" className="block text-xs font-medium text-muted mb-1">Email or mobile number</label>
           <input
+            id="login-identifier"
             type="text"
             required
             autoComplete="username"
@@ -147,8 +173,9 @@ export default function Login() {
             className="w-full border border-border rounded-lg px-3 py-2.5 mb-4 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
 
-          <label className="block text-xs font-medium text-muted mb-1">Password</label>
+          <label htmlFor="login-password" className="block text-xs font-medium text-muted mb-1">Password</label>
           <PasswordInput
+            id="login-password"
             value={password}
             onChange={setPassword}
             required

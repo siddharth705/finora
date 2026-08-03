@@ -555,6 +555,7 @@ function MerchantRow({
           {otherMerchants.length > 0 && (
             <>
               <select
+                aria-label="Merge from"
                 value={mergeFrom}
                 onChange={(e) => setMergeFrom(e.target.value)}
                 className="bg-bg border border-border rounded-lg px-2 py-1.5 text-xs"
@@ -948,6 +949,7 @@ function InlineRelationshipForm({
           className="md:col-span-2 bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs"
         />
         <select
+          aria-label="Relationship type"
           value={form.relationshipType}
           onChange={(e) => setForm({ ...form, relationshipType: e.target.value })}
           className="bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs"
@@ -955,6 +957,7 @@ function InlineRelationshipForm({
           {RELATIONSHIP_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
         <select
+          aria-label="Identifier type"
           value={identifier.identifierType}
           onChange={(e) => setForm({ ...form, identifiers: [{ ...identifier, identifierType: e.target.value }] })}
           className="bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs"
@@ -990,6 +993,7 @@ function RelationshipRow({ userId, relationship, allRelationships }: {
   userId: string; relationship: RelationshipDto; allRelationships: RelationshipDto[];
 }) {
   const queryClient = useQueryClient();
+  const notify = useNotify();
   const [editing, setEditing] = useState(false);
   const [mergeFrom, setMergeFrom] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -1004,8 +1008,13 @@ function RelationshipRow({ userId, relationship, allRelationships }: {
       setEditing(false);
       setError(null);
       invalidate();
+      notify.success('Relationship updated.');
     },
-    onError: (err: any) => setError(errorMessage(err, 'Failed to update this relationship.')),
+    onError: (err: any) => {
+      const msg = errorMessage(err, 'Failed to update this relationship.');
+      setError(msg);
+      notify.error(msg);
+    },
   });
   const mergeMutation = useMutation({
     mutationFn: (mergeFromRelationshipId: string) =>
@@ -1013,12 +1022,28 @@ function RelationshipRow({ userId, relationship, allRelationships }: {
     onSuccess: () => {
       setMergeFrom('');
       invalidate();
+      notify.success('Relationships merged.');
     },
-    onError: (err: any) => setError(errorMessage(err, 'Failed to merge these relationships.')),
+    onError: (err: any) => {
+      const msg = errorMessage(err, 'Failed to merge these relationships.');
+      setError(msg);
+      notify.error(msg);
+    },
   });
+  // Bug fix: this mutation had no onError at all -- unlike every other mutation in this file
+  // (including its own siblings above), a failed delete (403, FK conflict) closed the confirm
+  // dialog and left the user with zero feedback that nothing actually happened.
   const deleteMutation = useMutation({
     mutationFn: () => adminUserRelationshipsApi.delete(userId, relationship.id),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      invalidate();
+      notify.success('Relationship deleted.');
+    },
+    onError: (err: any) => {
+      const msg = errorMessage(err, 'Failed to delete this relationship.');
+      setError(msg);
+      notify.error(msg);
+    },
   });
 
   const otherRelationships = allRelationships.filter((r) => r.id !== relationship.id);
@@ -1061,6 +1086,7 @@ function RelationshipRow({ userId, relationship, allRelationships }: {
         {otherRelationships.length > 0 && (
           <>
             <select
+              aria-label="Merge from"
               value={mergeFrom}
               onChange={(e) => setMergeFrom(e.target.value)}
               className="bg-bg border border-border rounded-lg px-2 py-1.5 text-xs"
@@ -1116,7 +1142,7 @@ function RelationshipsSection({ userId }: { userId: string }) {
   const [createError, setCreateError] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
-  const { data: relationships, isLoading } = useQuery({
+  const { data: relationships, isLoading, isError } = useQuery({
     queryKey: ['admin-user-relationships', userId],
     queryFn: () => adminUserRelationshipsApi.list(userId),
   });
@@ -1166,11 +1192,14 @@ function RelationshipsSection({ userId }: { userId: string }) {
         </div>
       )}
       {isLoading && <p className="text-sm text-muted">Loading…</p>}
-      {!isLoading && (relationships ?? []).length === 0 && (
+      {!isLoading && isError && (
+        <p className="text-sm text-danger">Couldn't load relationships for this user — please try again later.</p>
+      )}
+      {!isLoading && !isError && (relationships ?? []).length === 0 && (
         <p className="text-sm text-muted">No relationships tagged for this user yet.</p>
       )}
       <div>
-        {relationships?.map((r) => (
+        {!isError && relationships?.map((r) => (
           <RelationshipRow key={r.id} userId={userId} relationship={r} allRelationships={relationships} />
         ))}
       </div>
@@ -1367,8 +1396,11 @@ function WorkspaceSection({ userId }: { userId: string }) {
   );
 }
 
+// Bug fix: negative amounts (a refund-heavy category, a merchant net-credited overall) rendered
+// as "₹-500" instead of "-₹500" -- same string-concatenation-order bug already fixed in both
+// frontends' own fmt() helpers (see e.g. Dashboard.tsx), just not carried over to this one.
 function fmtCurrency(n: number) {
-  return `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+  return (n < 0 ? '-₹' : '₹') + Math.abs(n).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 }
 
 /** A single labeled bar-list row, sized relative to the largest value in its list -- same visual
@@ -1377,7 +1409,10 @@ function fmtCurrency(n: number) {
  *  User Portal only). Deliberately simple bars, not a line chart -- good enough for a
  *  support-assisted glance at one user's spend, not a general-purpose dashboard. */
 function BarListRow({ label, value, max, formattedValue }: { label: string; value: number; max: number; formattedValue: string }) {
-  const pct = max > 0 ? Math.max((value / max) * 100, 2) : 0;
+  // Bug fix: Math.max(..., 2) floored every row to a visible 2%-width bar, including a genuine
+  // zero -- indistinguishable from a small nonzero value. Only floor when there's an actual
+  // nonzero value to make visible at all.
+  const pct = max > 0 && value > 0 ? Math.max((value / max) * 100, 2) : 0;
   return (
     <div className="text-xs">
       <div className="flex justify-between mb-0.5">
@@ -1396,28 +1431,33 @@ function BarListRow({ label, value, max, formattedValue }: { label: string; valu
  *  shape as LearningSection above. importStatistics is intentionally not shown here -- it stays on
  *  the signed-in user's own Settings page, see AdminUserAnalyticsController's class comment. */
 function AnalyticsSection({ userId }: { userId: string }) {
-  const { data: topMerchants, isLoading: topMerchantsLoading } = useQuery<TopMerchantPoint[]>({
+  const { data: topMerchants, isLoading: topMerchantsLoading, isError: topMerchantsError } = useQuery<TopMerchantPoint[]>({
     queryKey: ['admin-user-analytics-top-merchants', userId],
     queryFn: () => adminUserAnalyticsApi.topMerchants(userId),
   });
-  const { data: topCategories, isLoading: topCategoriesLoading } = useQuery<TopCategoryPoint[]>({
+  const { data: topCategories, isLoading: topCategoriesLoading, isError: topCategoriesError } = useQuery<TopCategoryPoint[]>({
     queryKey: ['admin-user-analytics-top-categories', userId],
     queryFn: () => adminUserAnalyticsApi.topCategories(userId),
   });
-  const { data: trend, isLoading: trendLoading } = useQuery<TrendPoint[]>({
+  const { data: trend, isLoading: trendLoading, isError: trendError } = useQuery<TrendPoint[]>({
     queryKey: ['admin-user-analytics-trend', userId],
     queryFn: () => adminUserAnalyticsApi.trend(userId),
   });
-  const { data: categoryConfidence, isLoading: categoryConfidenceLoading } = useQuery<CategoryConfidencePoint[]>({
+  const { data: categoryConfidence, isLoading: categoryConfidenceLoading, isError: categoryConfidenceError } = useQuery<CategoryConfidencePoint[]>({
     queryKey: ['admin-user-analytics-category-confidence', userId],
     queryFn: () => adminUserAnalyticsApi.categoryConfidence(userId),
   });
-  const { data: learningGrowth, isLoading: learningGrowthLoading } = useQuery<LearningGrowthPoint[]>({
+  const { data: learningGrowth, isLoading: learningGrowthLoading, isError: learningGrowthError } = useQuery<LearningGrowthPoint[]>({
     queryKey: ['admin-user-analytics-learning-growth', userId],
     queryFn: () => adminUserAnalyticsApi.learningGrowth(userId),
   });
 
   const isLoading = topMerchantsLoading || topCategoriesLoading || trendLoading || categoryConfidenceLoading || learningGrowthLoading;
+  // Bug fix: none of these 5 queries' isError was ever checked -- a failed GET (500, 403, timeout)
+  // left isLoading false and data undefined, which every empty-state check below then rendered
+  // identically to "this user genuinely has no data," misleading an admin investigating a broken
+  // account into thinking the account is just empty.
+  const isError = topMerchantsError || topCategoriesError || trendError || categoryConfidenceError || learningGrowthError;
   const maxMerchantSpend = Math.max(1, ...(topMerchants ?? []).map((m) => m.totalSpend));
   const maxCategorySpend = Math.max(1, ...(topCategories ?? []).map((c) => c.totalSpend));
   const maxTrendSpend = Math.max(1, ...(trend ?? []).map((t) => t.totalSpend));
@@ -1430,8 +1470,9 @@ function AnalyticsSection({ userId }: { userId: string }) {
       </div>
 
       {isLoading && <p className="text-sm text-muted">Loading…</p>}
+      {!isLoading && isError && <p className="text-sm text-danger">Couldn't load analytics for this user — please try again later.</p>}
 
-      {!isLoading && (
+      {!isLoading && !isError && (
         <div className="grid md:grid-cols-2 gap-x-8 gap-y-5">
           <div>
             <p className="text-[11px] uppercase tracking-wide text-muted mb-2">Top merchants</p>

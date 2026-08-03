@@ -34,6 +34,10 @@ public class DocumentContext {
     private final List<CapabilityActivation> capabilities = new ArrayList<>();
     private int pages;
     private int tables;
+    // What failed to parse, as a reason/shape histogram -- a fact of this parse run exactly like
+    // the header list or the capability activations, and recorded the same way. Never the rows
+    // themselves: see UnparseableRowSummary.
+    private UnparseableRowSummary unparseable;
 
     public DocumentContext(String sourceFormat, String parser) {
         this.sourceFormat = sourceFormat;
@@ -52,6 +56,14 @@ public class DocumentContext {
 
     public void recordTable() {
         this.tables++;
+    }
+
+    public void recordUnparseable(java.util.List<com.finora.dto.ImportDto.UnparseableRow> rows) {
+        this.unparseable = UnparseableRowSummary.of(rows);
+    }
+
+    public UnparseableRowSummary unparseable() {
+        return unparseable;
     }
 
     public void recordTables(int tableCount) {

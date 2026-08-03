@@ -35,7 +35,7 @@ class MultiSectionCompositeStatementPdfPreviewGeneratorTest {
         TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector);
 
         return new PdfPreviewGenerator(new PdfTextExtractor(), new PdfTableLocator(),
-                new PdfMetadataExtractor(), transactionNormalizer);
+                new PdfMetadataExtractor(), transactionNormalizer, com.finora.imports.product.ProductDiscovery.standard(), new com.finora.imports.product.ProductAttributeExtractor());
     }
 
     private List<StagedAccountSection> generateSections() throws Exception {

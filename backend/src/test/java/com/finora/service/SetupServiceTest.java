@@ -66,7 +66,7 @@ class SetupServiceTest {
                 "admin@example.com", "correct-horse-battery-staple", "Real Admin", "+919876543210");
         UUID newAdminId = UUID.randomUUID();
         User newAdmin = userWith(newAdminId, "admin@example.com");
-        when(authService.adminCreateUser(request, bootstrapUserId)).thenReturn(newAdmin);
+        when(authService.adminCreateUser(request, bootstrapUserId, "ADMIN")).thenReturn(newAdmin);
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
         User bootstrap = userWith(bootstrapUserId, "BOOTSTRAP_ADMIN");
         when(userRepository.findById(bootstrapUserId)).thenReturn(Optional.of(bootstrap));
@@ -103,7 +103,7 @@ class SetupServiceTest {
                 "admin@example.com", "correct-horse-battery-staple", "Real Admin", "+919876543210");
         UUID newAdminId = UUID.randomUUID();
         User newAdmin = userWith(newAdminId, "admin@example.com");
-        when(authService.adminCreateUser(request, bootstrapUserId)).thenReturn(newAdmin);
+        when(authService.adminCreateUser(request, bootstrapUserId, "ADMIN")).thenReturn(newAdmin);
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
         User bootstrap = userWith(bootstrapUserId, "BOOTSTRAP_ADMIN");
         when(userRepository.findById(bootstrapUserId)).thenReturn(Optional.of(bootstrap));

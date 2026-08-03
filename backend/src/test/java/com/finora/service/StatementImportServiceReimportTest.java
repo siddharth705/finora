@@ -78,7 +78,7 @@ class StatementImportServiceReimportTest {
                 .thenReturn(Optional.of(statementWithFile("sbi_statement.pdf", "PDF")));
         when(importService.parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("sbi_statement.pdf"), any(), isNull()))
                 .thenReturn(new StagingResponse(List.of(), 0, 0,
-                        new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null, null, null, null), List.of()));
+                        new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null, null, null, null, null, 0.0, true, java.util.List.of(), null, null, null, null, null, null, null, null), List.of()));
 
         service.reimport(userId, statementImportId);
 
@@ -93,7 +93,7 @@ class StatementImportServiceReimportTest {
                 .thenReturn(Optional.of(statementWithFile("hdfc_statement.csv", "CSV")));
         when(importService.parseAndStageAnyFormat(eq(userId), eq("CSV"), eq("hdfc_statement.csv"), any(), isNull()))
                 .thenReturn(new StagingResponse(List.of(), 0, 0,
-                        new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null, null, null, null), List.of()));
+                        new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null, null, null, null, null, 0.0, true, java.util.List.of(), null, null, null, null, null, null, null, null), List.of()));
 
         var result = service.reimport(userId, statementImportId);
 
@@ -111,7 +111,7 @@ class StatementImportServiceReimportTest {
                 .thenReturn(Optional.of(statementWithFile("export.dat", "PDF")));
         when(importService.parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("export.dat"), any(), isNull()))
                 .thenReturn(new StagingResponse(List.of(), 0, 0,
-                        new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null, null, null, null), List.of()));
+                        new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null, null, null, null, null, 0.0, true, java.util.List.of(), null, null, null, null, null, null, null, null), List.of()));
 
         service.reimport(userId, statementImportId);
 

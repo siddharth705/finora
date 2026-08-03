@@ -13,9 +13,9 @@ vi.mock('../api/endpoints', () => ({
   setupApi: { status: vi.fn() },
 }));
 
-function renderLogin() {
+function renderLogin(state?: { message?: string }) {
   return render(
-    <MemoryRouter initialEntries={['/login']}>
+    <MemoryRouter initialEntries={[{ pathname: '/login', state }]}>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/setup" element={<div>Setup page</div>} />
@@ -74,5 +74,25 @@ describe('Login', () => {
     renderLogin();
 
     await waitFor(() => expect(screen.getByText('Verify phone page')).toBeInTheDocument());
+  });
+
+  // This page previously never read location.state at all -- ResetPassword.tsx's
+  // navigate('/login', { state: { message } }) on a successful reset did nothing, so an admin who
+  // reset their password landed here with zero acknowledgment it worked.
+  it('shows the confirmation message when arriving with router state from a password reset', async () => {
+    vi.mocked(setupApi.status).mockResolvedValue({ setupRequired: false, installationKeyAvailable: true });
+
+    renderLogin({ message: 'Password reset successfully. Please sign in using your new password.' });
+
+    expect(await screen.findByText(/password reset successfully/i)).toBeInTheDocument();
+  });
+
+  it('shows no banner on an ordinary, direct visit with no router state', async () => {
+    vi.mocked(setupApi.status).mockResolvedValue({ setupRequired: false, installationKeyAvailable: true });
+
+    renderLogin();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument());
+    expect(screen.queryByText(/please sign in using your new password/i)).not.toBeInTheDocument();
   });
 });

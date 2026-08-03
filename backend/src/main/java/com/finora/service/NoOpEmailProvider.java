@@ -21,7 +21,15 @@ public class NoOpEmailProvider implements EmailProvider, SilentProductionFallbac
 
     @Override
     public EmailResult sendPasswordResetEmail(String toEmail, String resetLink) {
-        log.info("No email provider configured — would have sent a password reset link to {} ({})", toEmail, resetLink);
+        // Bug fix: this used to log the raw, valid reset link at INFO -- the exact same value
+        // ProductionConfigValidator hard-fails prod boot over leaking anywhere reachable by a
+        // non-owner (see that class's own doc comment: a full account-takeover primitive). The
+        // link itself is still returned directly in the API response in this no-provider-
+        // configured path (AuthService.forgotPassword()'s documented dev-convenience fallback),
+        // so logging it too adds a second, unnecessary place it could leak from (e.g. a
+        // long-retained log aggregator) for no operational benefit -- the log line doesn't need
+        // the link to be useful.
+        log.info("No email provider configured — would have sent a password reset link to {}", toEmail);
         return EmailResult.failure(ProviderType.RESEND, "No email provider configured");
     }
 
