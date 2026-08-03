@@ -26,6 +26,7 @@ export function AskOnceCard() {
   const [resolving, setResolving] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
+  const [error, setError] = useState<string | null>(null);
 
   function load() {
     setLoading(true);
@@ -56,6 +57,7 @@ export function AskOnceCard() {
     const category = picks[id];
     if (!category) return;
     setResolving(id);
+    setError(null);
     try {
       await transactionsApi.updateCategory(id, category);
       setItems((prev) => prev.filter((t) => t.id !== id));
@@ -75,6 +77,12 @@ export function AskOnceCard() {
       void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
       void queryClient.invalidateQueries({ queryKey: ['insights'] });
       void queryClient.invalidateQueries({ queryKey: ['budgets'] });
+    } catch {
+      // Bug fix: this had no catch at all -- a failed updateCategory() (network error, 500)
+      // became an unhandled promise rejection with zero feedback to the user. The spinner still
+      // cleared via `finally`, but the row silently stayed in the "needs review" list with no
+      // explanation that the save didn't actually happen.
+      setError("Couldn't save that category — please try again.");
     } finally {
       setResolving(null);
     }
@@ -91,6 +99,7 @@ export function AskOnceCard() {
       <p className="text-xs text-muted mb-4">
         Pick a category once — Finora will remember it for every future transaction from the same merchant.
       </p>
+      {error && <p className="text-xs text-danger mb-3">{error}</p>}
       <div className="space-y-3">
         {pageItems.map((t) => (
           <div key={t.id} className="flex items-center gap-3 flex-wrap sm:flex-nowrap">

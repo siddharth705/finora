@@ -11,16 +11,22 @@ interface PasswordInputProps {
   className?: string;
   placeholder?: string;
   autoComplete?: string;
+  // Bug fix: this component rendered no <label> of its own and had no way for a caller to give
+  // its <input> an id to pair one with -- every page using it (Login/Register/ResetPassword) had
+  // a <label> that was just a visual sibling, never programmatically associated via htmlFor/id.
+  // Optional so existing callers that render their own unlabeled input (rare) keep compiling.
+  id?: string;
 }
 
 export function PasswordInput({
-  value, onChange, onBlur, required, minLength, maxLength, className, placeholder, autoComplete,
+  value, onChange, onBlur, required, minLength, maxLength, className, placeholder, autoComplete, id,
 }: PasswordInputProps) {
   const [visible, setVisible] = useState(false);
 
   return (
     <div className="relative">
       <input
+        id={id}
         type={visible ? 'text' : 'password'}
         value={value}
         onChange={(e) => onChange(e.target.value)}

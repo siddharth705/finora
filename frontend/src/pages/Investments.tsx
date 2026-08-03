@@ -167,16 +167,16 @@ export default function Investments() {
         <p className="text-xs uppercase text-gray-500 mb-4">Add Investment / Asset</p>
         <div className="grid md:grid-cols-4 gap-2 items-end mb-4">
           <div>
-            <label className="block text-xs uppercase text-gray-500 mb-1">Name</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
+            <label htmlFor="investment-name" className="block text-xs uppercase text-gray-500 mb-1">Name</label>
+            <input id="investment-name" value={name} onChange={(e) => setName(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
           </div>
           <div>
-            <label className="block text-xs uppercase text-gray-500 mb-1">Current value</label>
-            <input type="number" value={value} onChange={(e) => setValue(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
+            <label htmlFor="investment-value" className="block text-xs uppercase text-gray-500 mb-1">Current value</label>
+            <input id="investment-value" type="number" value={value} onChange={(e) => setValue(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
           </div>
           <div>
-            <label className="block text-xs uppercase text-gray-500 mb-1">Type</label>
-            <select value={kind} onChange={(e) => setKind(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full">
+            <label htmlFor="investment-type" className="block text-xs uppercase text-gray-500 mb-1">Type</label>
+            <select id="investment-type" value={kind} onChange={(e) => setKind(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full">
               <option>Mutual Fund</option><option>Stocks</option><option>FD</option><option>PPF/NPS</option><option>Other</option>
             </select>
           </div>

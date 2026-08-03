@@ -145,7 +145,7 @@ export default function ResetPassword() {
 
             {token && (
               <div className="mb-4">
-                <label className="block text-xs font-medium text-muted mb-1">Verification code</label>
+                <label htmlFor="reset-otp" className="block text-xs font-medium text-muted mb-1">Verification code</label>
                 <p className="text-xs text-muted mb-2">
                   {confirmation
                     ? `Enter the 6-digit code sent to ${phoneNumber ? maskPhone(phoneNumber) : 'the phone number on file'}.`
@@ -153,6 +153,7 @@ export default function ResetPassword() {
                 </p>
                 {otpError && <p className="text-danger text-xs mb-2">{otpError}</p>}
                 <input
+                  id="reset-otp"
                   value={otp}
                   onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
                   onBlur={() => markTouched('otp')}
@@ -177,8 +178,9 @@ export default function ResetPassword() {
               </div>
             )}
 
-            <label className="block text-xs font-medium text-muted mb-1">New password</label>
+            <label htmlFor="reset-new-password" className="block text-xs font-medium text-muted mb-1">New password</label>
             <PasswordInput
+              id="reset-new-password"
               value={password}
               onChange={setPassword}
               onBlur={() => markTouched('password')}
@@ -204,8 +206,9 @@ export default function ResetPassword() {
               )}
             </p>
 
-            <label className="block text-xs font-medium text-muted mb-1">Confirm password</label>
+            <label htmlFor="reset-confirm-password" className="block text-xs font-medium text-muted mb-1">Confirm password</label>
             <PasswordInput
+              id="reset-confirm-password"
               value={confirm}
               onChange={setConfirm}
               onBlur={() => markTouched('confirm')}

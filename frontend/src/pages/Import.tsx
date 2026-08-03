@@ -379,8 +379,23 @@ export default function Import() {
       {step === 'upload' && (
         <div
           data-testid="statement-dropzone"
+          role="button"
+          tabIndex={uploadProgress === null ? 0 : -1}
+          aria-disabled={uploadProgress !== null}
           className={`bg-card rounded p-8 shadow border-2 border-dashed border-border text-center ${uploadProgress === null ? 'cursor-pointer' : 'cursor-default'}`}
           onClick={() => uploadProgress === null && fileInput.current?.click()}
+          // Bug fix: the actual <input type="file"> is visually hidden (className="hidden",
+          // display:none), which removes it from the tab order entirely -- a keyboard-only user
+          // had no way to open the file picker on this page at all, the primary way data enters
+          // Finora. This div is now itself a focusable, keyboard-operable trigger (Enter/Space),
+          // matching the standard accessible-clickable-div pattern.
+          onKeyDown={(e) => {
+            if (uploadProgress !== null) return;
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              fileInput.current?.click();
+            }
+          }}
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault();
@@ -675,6 +690,7 @@ function AccountChoiceFields({
 
       {accountChoice === 'existing' ? (
         <select
+          aria-label="Select an existing account"
           value={selectedAccountId}
           onChange={(e) => setSelectedAccountId(e.target.value)}
           className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full max-w-sm"
@@ -697,12 +713,12 @@ function AccountChoiceFields({
             </div>
           )}
           <div>
-            <label className="block text-xs uppercase text-muted mb-1">Account name</label>
-            <input value={newName} onChange={(e) => setNewName(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
+            <label htmlFor="import-account-name" className="block text-xs uppercase text-muted mb-1">Account name</label>
+            <input id="import-account-name" value={newName} onChange={(e) => setNewName(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
           </div>
           <div>
-            <label className="block text-xs uppercase text-muted mb-1">Account type</label>
-            <select value={newType} onChange={(e) => setNewType(e.target.value as Account['accountType'])} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full">
+            <label htmlFor="import-account-type" className="block text-xs uppercase text-muted mb-1">Account type</label>
+            <select id="import-account-type" value={newType} onChange={(e) => setNewType(e.target.value as Account['accountType'])} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full">
               <option value="SAVINGS">Savings</option>
               <option value="CREDIT_CARD">Credit Card</option>
               <option value="WALLET">Wallet</option>
@@ -710,44 +726,44 @@ function AccountChoiceFields({
             </select>
           </div>
           <div>
-            <label className="block text-xs uppercase text-muted mb-1">
+            <label htmlFor="import-opening-balance" className="block text-xs uppercase text-muted mb-1">
               Opening balance {detectedAccount?.openingBalance != null && <span className="normal-case text-primary">(detected)</span>}
             </label>
-            <input type="number" value={newOpeningBalance} onChange={(e) => setNewOpeningBalance(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
+            <input id="import-opening-balance" type="number" value={newOpeningBalance} onChange={(e) => setNewOpeningBalance(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
           </div>
           {detectedAccount?.accountHolderName && (
             <div>
-              <label className="block text-xs uppercase text-muted mb-1">Account holder (detected)</label>
-              <input value={detectedAccount.accountHolderName} disabled className="border border-border rounded-lg px-3 py-2 text-sm w-full bg-bg text-muted" />
+              <label htmlFor="import-account-holder" className="block text-xs uppercase text-muted mb-1">Account holder (detected)</label>
+              <input id="import-account-holder" value={detectedAccount.accountHolderName} disabled className="border border-border rounded-lg px-3 py-2 text-sm w-full bg-bg text-muted" />
             </div>
           )}
           {detectedAccount?.accountNumberMasked && (
             <div>
-              <label className="block text-xs uppercase text-muted mb-1">Account number (detected)</label>
-              <input value={detectedAccount.accountNumberMasked} disabled className="border border-border rounded-lg px-3 py-2 text-sm w-full bg-bg text-muted" />
+              <label htmlFor="import-account-number" className="block text-xs uppercase text-muted mb-1">Account number (detected)</label>
+              <input id="import-account-number" value={detectedAccount.accountNumberMasked} disabled className="border border-border rounded-lg px-3 py-2 text-sm w-full bg-bg text-muted" />
             </div>
           )}
           {detectedAccount?.branchName && (
             <div>
-              <label className="block text-xs uppercase text-muted mb-1">Branch (detected)</label>
-              <input value={detectedAccount.branchName} disabled className="border border-border rounded-lg px-3 py-2 text-sm w-full bg-bg text-muted" />
+              <label htmlFor="import-branch" className="block text-xs uppercase text-muted mb-1">Branch (detected)</label>
+              <input id="import-branch" value={detectedAccount.branchName} disabled className="border border-border rounded-lg px-3 py-2 text-sm w-full bg-bg text-muted" />
             </div>
           )}
           {detectedAccount?.ifscCode && (
             <div>
-              <label className="block text-xs uppercase text-muted mb-1">IFSC code (detected)</label>
-              <input value={detectedAccount.ifscCode} disabled className="border border-border rounded-lg px-3 py-2 text-sm w-full bg-bg text-muted" />
+              <label htmlFor="import-ifsc" className="block text-xs uppercase text-muted mb-1">IFSC code (detected)</label>
+              <input id="import-ifsc" value={detectedAccount.ifscCode} disabled className="border border-border rounded-lg px-3 py-2 text-sm w-full bg-bg text-muted" />
             </div>
           )}
           {newType === 'CREDIT_CARD' && (
             <>
               <div>
-                <label className="block text-xs uppercase text-muted mb-1">Credit limit</label>
-                <input type="number" value={newCreditLimit} onChange={(e) => setNewCreditLimit(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
+                <label htmlFor="import-credit-limit" className="block text-xs uppercase text-muted mb-1">Credit limit</label>
+                <input id="import-credit-limit" type="number" value={newCreditLimit} onChange={(e) => setNewCreditLimit(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
               </div>
               <div>
-                <label className="block text-xs uppercase text-muted mb-1">Payment due date</label>
-                <input type="date" value={newDueDate} onChange={(e) => setNewDueDate(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
+                <label htmlFor="import-due-date" className="block text-xs uppercase text-muted mb-1">Payment due date</label>
+                <input id="import-due-date" type="date" value={newDueDate} onChange={(e) => setNewDueDate(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
               </div>
             </>
           )}

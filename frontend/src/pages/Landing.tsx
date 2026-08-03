@@ -417,7 +417,13 @@ export default function Landing() {
               onMouseEnter={() => setResourcesOpen(true)}
               onMouseLeave={() => setResourcesOpen(false)}
             >
-              <button className="flex items-center gap-1 hover:text-ink transition-colors">
+              <button
+                type="button"
+                onClick={() => setResourcesOpen((v) => !v)}
+                aria-haspopup="true"
+                aria-expanded={resourcesOpen}
+                className="flex items-center gap-1 hover:text-ink transition-colors"
+              >
                 Resources <ChevronDown size={14} />
               </button>
               {resourcesOpen && (

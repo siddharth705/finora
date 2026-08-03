@@ -192,10 +192,11 @@ export default function Register() {
 
           {error && <p className="text-danger text-sm mb-4">{error}</p>}
 
-          <label className="block text-xs font-medium text-muted mb-1">Full name</label>
+          <label htmlFor="register-fullname" className="block text-xs font-medium text-muted mb-1">Full name</label>
           <div className="relative mb-1">
             <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
             <input
+              id="register-fullname"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               onBlur={() => markTouched('fullName')}
@@ -210,10 +211,11 @@ export default function Register() {
             )}
           </p>
 
-          <label className="block text-xs font-medium text-muted mb-1">Email</label>
+          <label htmlFor="register-email" className="block text-xs font-medium text-muted mb-1">Email</label>
           <div className="relative mb-1">
             <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
             <input
+              id="register-email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -230,7 +232,7 @@ export default function Register() {
             {touched.email && !emailValid && <span className="text-danger">Enter a valid email address.</span>}
           </p>
 
-          <label className="block text-xs font-medium text-muted mb-1">Mobile number</label>
+          <label htmlFor="register-phone" className="block text-xs font-medium text-muted mb-1">Mobile number</label>
           <div className="relative mb-1">
             {/* Fixed, non-editable prefix -- the country code is no longer something typed into
                 the field at all (see sanitizeLocalPhoneNumber's own comment), so there's nothing
@@ -242,6 +244,7 @@ export default function Register() {
               <span className="w-px h-4 bg-border" />
             </div>
             <input
+              id="register-phone"
               type="tel"
               inputMode="numeric"
               value={phoneNumber}
@@ -264,8 +267,9 @@ export default function Register() {
             )}
           </p>
 
-          <label className="block text-xs font-medium text-muted mb-1">Password (min 8 characters)</label>
+          <label htmlFor="register-password" className="block text-xs font-medium text-muted mb-1">Password (min 8 characters)</label>
           <PasswordInput
+            id="register-password"
             value={password}
             onChange={setPassword}
             onBlur={() => markTouched('password')}
@@ -290,8 +294,9 @@ export default function Register() {
             )}
           </p>
 
-          <label className="block text-xs font-medium text-muted mb-1">Confirm password</label>
+          <label htmlFor="register-confirm-password" className="block text-xs font-medium text-muted mb-1">Confirm password</label>
           <PasswordInput
+            id="register-confirm-password"
             value={confirmPassword}
             onChange={setConfirmPassword}
             onBlur={() => markTouched('confirmPassword')}

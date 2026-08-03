@@ -313,42 +313,42 @@ function EditTransactionModal({
 
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div>
-              <label className="block text-[11px] uppercase text-muted mb-1">Date</label>
-              <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
+              <label htmlFor="edit-txn-date" className="block text-[11px] uppercase text-muted mb-1">Date</label>
+              <input id="edit-txn-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
             </div>
             <div>
-              <label className="block text-[11px] uppercase text-muted mb-1">Type</label>
-              <select value={type} onChange={(e) => setType(e.target.value as 'INCOME' | 'EXPENSE')} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full">
+              <label htmlFor="edit-txn-type" className="block text-[11px] uppercase text-muted mb-1">Type</label>
+              <select id="edit-txn-type" value={type} onChange={(e) => setType(e.target.value as 'INCOME' | 'EXPENSE')} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full">
                 <option value="INCOME">Income</option>
                 <option value="EXPENSE">Expense</option>
               </select>
             </div>
             <div className="col-span-2">
-              <label className="block text-[11px] uppercase text-muted mb-1">Description</label>
-              <input value={description} onChange={(e) => setDescription(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
+              <label htmlFor="edit-txn-description" className="block text-[11px] uppercase text-muted mb-1">Description</label>
+              <input id="edit-txn-description" value={description} onChange={(e) => setDescription(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
             </div>
             <div className="col-span-2">
-              <label className="block text-[11px] uppercase text-muted mb-1">Merchant</label>
-              <input value={merchant} onChange={(e) => setMerchant(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
+              <label htmlFor="edit-txn-merchant" className="block text-[11px] uppercase text-muted mb-1">Merchant</label>
+              <input id="edit-txn-merchant" value={merchant} onChange={(e) => setMerchant(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
             </div>
             <div>
-              <label className="block text-[11px] uppercase text-muted mb-1">Amount</label>
-              <input type="number" min="0.01" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
+              <label htmlFor="edit-txn-amount" className="block text-[11px] uppercase text-muted mb-1">Amount</label>
+              <input id="edit-txn-amount" type="number" min="0.01" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
             </div>
             <div>
-              <label className="block text-[11px] uppercase text-muted mb-1">Category</label>
-              <select value={category} onChange={(e) => setCategory(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full">
+              <label htmlFor="edit-txn-category" className="block text-[11px] uppercase text-muted mb-1">Category</label>
+              <select id="edit-txn-category" value={category} onChange={(e) => setCategory(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full">
                 {!categories.includes(category) && <option value={category}>{category}</option>}
                 {categories.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
             <div className="col-span-2">
-              <label className="block text-[11px] uppercase text-muted mb-1">Notes</label>
-              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
+              <label htmlFor="edit-txn-notes" className="block text-[11px] uppercase text-muted mb-1">Notes</label>
+              <textarea id="edit-txn-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
             </div>
             <div className="col-span-2">
-              <label className="block text-[11px] uppercase text-muted mb-1">Tags (comma-separated)</label>
-              <input value={tagsInput} onChange={(e) => setTagsInput(e.target.value)} placeholder="e.g. shared, recurring" className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
+              <label htmlFor="edit-txn-tags" className="block text-[11px] uppercase text-muted mb-1">Tags (comma-separated)</label>
+              <input id="edit-txn-tags" value={tagsInput} onChange={(e) => setTagsInput(e.target.value)} placeholder="e.g. shared, recurring" className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
             </div>
           </div>
 

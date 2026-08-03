@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Wallet, ArrowLeftRight, PiggyBank, Target, UploadCloud, History,
-  TrendingUp, BarChart3, Sparkles, Settings as SettingsIcon, ChevronRight, MoreVertical, LogOut,
+  TrendingUp, BarChart3, Sparkles, Settings as SettingsIcon, MoreVertical, LogOut,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -69,17 +69,6 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
-
-      {/* Upgrade card */}
-      <div className="bg-gradient-to-br from-indigo-500 to-primary-dark rounded-xl p-4 mb-4">
-        <p className="text-white font-semibold text-sm mb-1">Upgrade to Pro</p>
-        <p className="text-indigo-100 text-xs leading-relaxed mb-3">
-          Unlock advanced insights, custom categories and much more.
-        </p>
-        <button className="w-full bg-white text-primary-dark text-xs font-semibold rounded-lg py-2 flex items-center justify-center gap-1">
-          Upgrade Now <ChevronRight size={14} />
-        </button>
-      </div>
 
       {/* User */}
       <div className="relative">

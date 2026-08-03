@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { PublicLayout, PublicSection } from '../components/PublicLayout';
 
 export default function Terms() {
@@ -52,7 +53,7 @@ export default function Terms() {
         <p>
           When you import a bank or credit card statement, Finora processes that file to extract transactions,
           detect accounts, and generate categorization suggestions. This processing happens so the Service can
-          function — see our <a href="/privacy" className="text-primary hover:underline">Privacy Policy</a> for
+          function — see our <Link to="/privacy" className="text-primary hover:underline">Privacy Policy</Link> for
           full detail on what is collected, how it's stored, and your rights over it.
         </p>
       </PublicSection>

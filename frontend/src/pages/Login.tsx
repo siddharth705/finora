@@ -136,8 +136,9 @@ export default function Login() {
 
           {/* Accepts either identifier -- users shouldn't have to remember which one they
               registered with. See AuthService.resolveEmailForLogin on the backend. */}
-          <label className="block text-xs font-medium text-muted mb-1">Email or mobile number</label>
+          <label htmlFor="login-identifier" className="block text-xs font-medium text-muted mb-1">Email or mobile number</label>
           <input
+            id="login-identifier"
             type="text"
             required
             autoComplete="username"
@@ -147,8 +148,9 @@ export default function Login() {
             className="w-full border border-border rounded-lg px-3 py-2.5 mb-4 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
 
-          <label className="block text-xs font-medium text-muted mb-1">Password</label>
+          <label htmlFor="login-password" className="block text-xs font-medium text-muted mb-1">Password</label>
           <PasswordInput
+            id="login-password"
             value={password}
             onChange={setPassword}
             required

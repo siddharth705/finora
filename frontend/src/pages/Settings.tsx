@@ -266,27 +266,28 @@ export default function Settings() {
       <SectionCard icon={<User size={18} />} title="Profile" subtitle="Your personal information">
         <div className="grid md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs uppercase text-muted mb-1">Full name</label>
+            <label htmlFor="settings-full-name" className="block text-xs uppercase text-muted mb-1">Full name</label>
             <input
+              id="settings-full-name"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               className="bg-card text-ink w-full border border-border rounded-lg px-3 py-2 text-sm"
             />
           </div>
           <div>
-            <label className="block text-xs uppercase text-muted mb-1">Email</label>
-            <input value={email} readOnly className="text-ink w-full border border-border rounded-lg px-3 py-2 text-sm bg-black/5" />
+            <label htmlFor="settings-email" className="block text-xs uppercase text-muted mb-1">Email</label>
+            <input id="settings-email" value={email} readOnly className="text-ink w-full border border-border rounded-lg px-3 py-2 text-sm bg-black/5" />
           </div>
           <div>
-            <label className="block text-xs uppercase text-muted mb-1">Phone number</label>
+            <label htmlFor="settings-phone" className="block text-xs uppercase text-muted mb-1">Phone number</label>
             <div className="flex items-center gap-2">
-              <input value={phoneNumber || '—'} readOnly className="text-ink w-full border border-border rounded-lg px-3 py-2 text-sm bg-black/5" />
+              <input id="settings-phone" value={phoneNumber || '—'} readOnly className="text-ink w-full border border-border rounded-lg px-3 py-2 text-sm bg-black/5" />
               {phoneVerified && <VerifiedBadge />}
             </div>
           </div>
           <div>
-            <label className="block text-xs uppercase text-muted mb-1">Member since</label>
-            <input value={formatMonthYear(createdAt)} readOnly className="text-ink w-full border border-border rounded-lg px-3 py-2 text-sm bg-black/5" />
+            <label htmlFor="settings-member-since" className="block text-xs uppercase text-muted mb-1">Member since</label>
+            <input id="settings-member-since" value={formatMonthYear(createdAt)} readOnly className="text-ink w-full border border-border rounded-lg px-3 py-2 text-sm bg-black/5" />
           </div>
         </div>
         <div className="flex items-center justify-end gap-3 mt-5 pt-4 border-t border-border">
@@ -304,8 +305,9 @@ export default function Settings() {
       <SectionCard icon={<SlidersHorizontal size={18} />} title="Preferences" subtitle="Customize your Finora experience">
         <div className="grid md:grid-cols-3 gap-4">
           <div>
-            <label className="block text-xs uppercase text-muted mb-1">Low balance alert</label>
+            <label htmlFor="settings-low-balance-threshold" className="block text-xs uppercase text-muted mb-1">Low balance alert</label>
             <input
+              id="settings-low-balance-threshold"
               type="number"
               value={lowBalanceThreshold}
               onChange={(e) => setLowBalanceThreshold(e.target.value)}
@@ -313,8 +315,9 @@ export default function Settings() {
             />
           </div>
           <div>
-            <label className="block text-xs uppercase text-muted mb-1">Timezone</label>
+            <label htmlFor="settings-timezone" className="block text-xs uppercase text-muted mb-1">Timezone</label>
             <select
+              id="settings-timezone"
               value={timezone}
               onChange={(e) => setTimezone(e.target.value)}
               className="bg-card text-ink w-full border border-border rounded-lg px-3 py-2 text-sm"
@@ -324,8 +327,9 @@ export default function Settings() {
             </select>
           </div>
           <div>
-            <label className="block text-xs uppercase text-muted mb-1">Theme</label>
+            <label htmlFor="settings-theme" className="block text-xs uppercase text-muted mb-1">Theme</label>
             <select
+              id="settings-theme"
               value={theme}
               onChange={(e) => setTheme(e.target.value as 'light' | 'dark' | 'system')}
               className="bg-card text-ink w-full border border-border rounded-lg px-3 py-2 text-sm"
@@ -361,10 +365,11 @@ export default function Settings() {
         ) : (
           <>
             <div className="max-w-md">
-              <label className="block text-xs uppercase text-muted mb-1">
+              <label htmlFor="settings-confidence-threshold" className="block text-xs uppercase text-muted mb-1">
                 Confidence threshold — {confidenceThreshold}%
               </label>
               <input
+                id="settings-confidence-threshold"
                 type="range"
                 min={0}
                 max={100}
