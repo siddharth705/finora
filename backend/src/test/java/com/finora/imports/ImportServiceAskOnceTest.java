@@ -72,7 +72,7 @@ class ImportServiceAskOnceTest {
         DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
         CsvParser csvParser = new CsvParser();
         TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector);
-        StatementValidator statementValidator = new StatementValidator();
+        StatementValidator statementValidator = new StatementValidator(com.finora.imports.product.ProductDiscovery.standard());
         PreviewGenerator previewGenerator = new PreviewGenerator(csvParser, transactionNormalizer, statementValidator);
         ImportRuleLearningService ruleLearningService = new ImportRuleLearningService(categorizationService);
 

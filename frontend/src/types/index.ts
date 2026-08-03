@@ -157,7 +157,28 @@ export interface DetectedAccountInfo {
   branchName: string | null;
   ifscCode: string | null;
   bank: BankInfo;
+
+  // Financial Product Discovery (backend: com.finora.imports.product). What this section actually
+  // IS, as opposed to what to prefill the account-type field with. The two are different questions:
+  // suggestedAccountType always has to name something for the form, while detectedProduct is
+  // allowed to say 'UNKNOWN' -- which is a successful outcome, not a failure. When
+  // productNeedsReview is true the type above is a prefill and nothing more; the user names the
+  // product once rather than having one guessed into their net worth.
+  detectedProduct: FinancialProductType;
+  productConfidence: number;
+  productNeedsReview: boolean;
+  productEvidence: string[];
 }
+
+// Mirrors the backend FinancialProductType enum. FD/RD/PPF/EPF/NPS/mutual fund/demat route to the
+// Investments module rather than a separate Deposits one; LOAN/INSURANCE/FOREX_CARD are recognised
+// but not modelled yet, so they surface on the review screen instead of creating anything.
+export type FinancialProductType =
+  | 'SAVINGS' | 'CURRENT' | 'OVERDRAFT' | 'WALLET'
+  | 'CREDIT_CARD'
+  | 'FIXED_DEPOSIT' | 'RECURRING_DEPOSIT' | 'PPF' | 'EPF' | 'NPS' | 'MUTUAL_FUND' | 'DEMAT'
+  | 'LOAN' | 'INSURANCE' | 'FOREX_CARD'
+  | 'UNKNOWN';
 
 // One detected account section within a single multi-account PDF upload (e.g. an HSBC-style
 // "Composite Statement" bundling a savings account and a credit-card account in one file) --

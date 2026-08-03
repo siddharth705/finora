@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class StatementValidatorTest {
 
-    private final StatementValidator validator = new StatementValidator();
+    private final StatementValidator validator = new StatementValidator(com.finora.imports.product.ProductDiscovery.standard());
 
     private StagedRow row(String date, BigDecimal amount, String type) {
         return new StagedRow(LocalDate.parse(date), "txn", amount, type, "Other", "default", null, false, null, null);

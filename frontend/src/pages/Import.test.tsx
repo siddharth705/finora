@@ -44,6 +44,10 @@ const detectedAccount: DetectedAccountInfo = {
   accountHolderName: null,
   branchName: null,
   ifscCode: null,
+  detectedProduct: 'SAVINGS',
+  productConfidence: 0.85,
+  productNeedsReview: false,
+  productEvidence: [],
   bank: {
     id: 'OTHER',
     officialName: null,

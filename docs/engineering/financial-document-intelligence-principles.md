@@ -468,6 +468,7 @@ Done
 ✓ Offset Column Anchors (header labels not aligned with their own column's data)
 ✓ Leading Narration Continuation (transaction description wraps before the date/amount row, not after)
 ✓ Leading Name Line (account holder name with no label at all, as the document's first line)
+✓ Financial Product Discovery (four stages: Evidence Collection → Classification → Validation → Persistence)
 
 Planned
 • Excel
@@ -798,6 +799,62 @@ honest proxy for confidence a capability actually works — no test, no claim.
   leading narration instead. Revisit the constant, not the algorithm, if that real document shows
   up (see "Prefer generalization over accumulation" — widen this capability's own test coverage
   first, rather than reaching for a second, competing mechanism).
+
+#### `FINANCIAL_PRODUCT_DISCOVERY`
+- **Purpose:** answer "which financial PRODUCT is this section?" before transactions are parsed,
+  instead of "which account is this?" — a question with no honest answer for a term-deposit summary
+  or an installment schedule, which were therefore forced into being accounts or dropped.
+- **Supported layouts:** any section, of any document format. The stages consume column names,
+  section-scoped text and row counts, none of which are PDF-specific — wired into both the PDF
+  (`PdfPreviewGenerator`) and CSV (`StatementValidator`) paths.
+- **Implementation:** four stages that never blend, in `com.finora.imports.product`:
+  `ProductEvidenceCollector` (Stage 1 — records `ObservedFact`s, makes no decisions and does no
+  scoring), `FinancialProductClassifier` (Stage 2 — scores facts against every `ProductHypothesis`),
+  `ProductValidator` (Stage 3 — can the winner PROVE what it claims), and `ProductDiscovery`
+  (Stage 4 — the persistence gate, `mayCreateAutomatically()`). Three rules carry the weight, each
+  from a real failure: **no single signal decides** (a hypothesis needs two independent positive
+  signals); **contradiction disqualifies rather than subtracts** (a signal a product should never
+  carry means the reading is wrong, not marginally less likely); and **where a name was found
+  outweighs which name it was** (`EvidenceSource`).
+- **Regression tests:** `FinancialProductClassifierTest` (14 tests, including the real
+  `hdfc-composite-deposit-schedules` trace).
+- **Maturity:** Beta.
+- **Known limitations:** the `MIN_CORROBORATING_SIGNALS = 2` rule means a genuinely single-signal
+  document reaches UNKNOWN rather than a correct answer — deliberate, since UNKNOWN costs one
+  question on the review screen while a confident wrong product silently writes wrong data into
+  someone's net worth. Products with no structural vocabulary yet (PPF/EPF/NPS/demat/mutual fund)
+  are recognised by name only and always report UNPROVEN, so they can never auto-create. The
+  routing to a *validated* product only reaches the review form's prefill
+  (`suggestedAccountType`); the review UI does not yet surface `productNeedsReview` or
+  `productEvidence` to the user, so an UNKNOWN section still prefills SAVINGS in the form even
+  though the API now says plainly that it shouldn't be trusted. That UI is the next step, not a
+  claim this milestone makes.
+
+#### Closed: auxiliary text is not section-scoped
+- **Status:** **closed** by `FINANCIAL_PRODUCT_DISCOVERY` above. Previously documented as a known
+  gap in `FinancialProductClassifier`'s `NAMED_IN_TEXT_WEIGHT` and asserted honestly in its test.
+- **What the gap actually was — the documented explanation was wrong.** It was recorded as "a
+  combined statement prints 'Savings Accounts' in its relationship summary and that phrase ends up
+  in the auxiliary text of the deposit sections further down." Dumping the real trace's sections
+  showed the deposit sections have *zero* auxiliary text. The leak was never the cause. The actual
+  cause was that `looksLikeALedger` fired on **any one** ledger word, and a fixed-deposit schedule
+  has a `Deposit(Mnth)` column — the monthly contribution amount, not money moving in. One keyword
+  made the whole section a transaction account.
+- **Fix:** a ledger is now a *combination* — a date column AND a free-text description column AND
+  some form of amount AND rows (`SectionEvidence.looksLikeALedger`). A deposit schedule has no
+  narration column, because it records amounts against dates rather than events. Separately, and
+  still worth having, `EvidenceSource` now distinguishes document-level from section-level text,
+  and free text naming two or more distinct products is demoted to document level automatically
+  (one section is one product, so an enumeration cannot be describing one section) — that closes
+  the leak the original note *described*, even though it was not the bug it was blamed for.
+- **Corpus damage found along the way:** `PdfTraceRedactor`'s allowlist had no deposit vocabulary,
+  so the committed trace had `"Maturity Date"` redacted to `"Xxxxxxxx Date"` and `"Deposit(Mnth)"`
+  to `"Deposit(Xxxx)"` — the exact column headers product classification keys on, removed from the
+  fixture meant to regression-test classifying them. The allowlist is fixed, but **a committed
+  trace cannot be un-redacted**: traces captured before this need re-capturing from their real
+  source files to exercise product classification. Until then the composite-statement test asserts
+  the deposit sections are *not accounts* (true, and the regression that mattered) rather than that
+  they are deposits (unprovable from a fixture whose evidence was redacted away).
 
 #### Open Investigation: HDFC credit-card table over-extension (only 2/40 rows parsed)
 - **Status:** root-caused, deliberately **not fixed yet** — this needs real design work, not a

@@ -39,7 +39,7 @@ class ParserIndependencePreviewGeneratorTest {
         when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
         DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
         TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector);
-        return new PreviewGenerator(new CsvParser(), transactionNormalizer, new StatementValidator());
+        return new PreviewGenerator(new CsvParser(), transactionNormalizer, new StatementValidator(com.finora.imports.product.ProductDiscovery.standard()));
     }
 
     private PdfPreviewGenerator pdfGenerator() {
@@ -51,7 +51,7 @@ class ParserIndependencePreviewGeneratorTest {
         DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
         TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector);
         return new PdfPreviewGenerator(new PdfTextExtractor(), new PdfTableLocator(),
-                new PdfMetadataExtractor(), transactionNormalizer);
+                new PdfMetadataExtractor(), transactionNormalizer, com.finora.imports.product.ProductDiscovery.standard());
     }
 
     @Test

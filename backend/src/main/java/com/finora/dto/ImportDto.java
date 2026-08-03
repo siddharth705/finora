@@ -101,7 +101,19 @@ public class ImportDto {
             String accountHolderName,      // only set if an account-holder-like column was present
             String branchName,             // only set if a branch-name-like column was present
             String ifscCode,               // only set if an IFSC-like column was present
-            AccountDto.BankDto bank        // resolved bank metadata (name/color/initials); id "OTHER" if undetected
+            AccountDto.BankDto bank,       // resolved bank metadata (name/color/initials); id "OTHER" if undetected
+
+            // --- Financial Product Discovery (com.finora.imports.product) --------------------------
+            // What this section actually IS, as opposed to what account to prefill. The two are
+            // different questions: suggestedAccountType above has always had to name SOMETHING for
+            // the review form, while detectedProduct is allowed to say UNKNOWN -- which is a
+            // successful outcome, not a failure. A section the engine cannot identify is shown to
+            // the user to name once; it is never guessed into an account, because a wrong product
+            // silently writes wrong data into someone's net worth.
+            String detectedProduct,        // FinancialProductType name, e.g. "SAVINGS", "FIXED_DEPOSIT", "UNKNOWN"
+            double productConfidence,      // 0..0.95
+            boolean productNeedsReview,    // true unless the product was identified, proved itself, and is modelled
+            List<String> productEvidence   // the reasoning, so a wrong answer can be argued with
     ) {}
 
     public record StagingResponse(List<StagedRow> rows, int totalParsed, int flaggedDuplicates,

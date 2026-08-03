@@ -9,6 +9,8 @@ import com.finora.dto.ImportDto.UnparseableRow;
 import com.finora.imports.CsvParser;
 import com.finora.imports.DocumentContext;
 import com.finora.imports.TransactionNormalizer;
+import com.finora.imports.product.ProductDiscovery;
+import com.finora.imports.product.ProductEvidenceCollector;
 import com.finora.util.BankRegistry;
 import org.springframework.stereotype.Component;
 
@@ -52,13 +54,16 @@ public class PdfPreviewGenerator {
     private final PdfTableLocator tableLocator;
     private final PdfMetadataExtractor metadataExtractor;
     private final TransactionNormalizer transactionNormalizer;
+    private final ProductDiscovery productDiscovery;
 
     public PdfPreviewGenerator(PdfTextExtractor textExtractor, PdfTableLocator tableLocator,
-                                PdfMetadataExtractor metadataExtractor, TransactionNormalizer transactionNormalizer) {
+                                PdfMetadataExtractor metadataExtractor, TransactionNormalizer transactionNormalizer,
+                                ProductDiscovery productDiscovery) {
         this.textExtractor = textExtractor;
         this.tableLocator = tableLocator;
         this.metadataExtractor = metadataExtractor;
         this.transactionNormalizer = transactionNormalizer;
+        this.productDiscovery = productDiscovery;
     }
 
     /** Single-account convenience wrapper over {@link #generateSections} -- returns the FIRST
@@ -232,13 +237,42 @@ public class PdfPreviewGenerator {
                 || section.auxiliaryText().stream().anyMatch(this::containsCreditCardTextSignal);
         if (ctx != null && creditCardSignals) ctx.record("CREDIT_CARD_SUMMARY_SIGNAL");
 
+        // Financial Product Discovery: Evidence Collection -> Classification -> Validation. Runs on
+        // this section's own columns and its own auxiliary text, so a combined statement's opening
+        // summary can't name a product for a table it has nothing to do with.
+        ProductDiscovery.DiscoveredProduct product = productDiscovery.discover(
+                new ProductEvidenceCollector.Section(
+                        section.rows().isEmpty() ? List.of() : List.copyOf(section.rows().get(0).keySet()),
+                        section.auxiliaryText(), null, section.rows().size()));
+        if (ctx != null) ctx.record("FINANCIAL_PRODUCT_CLASSIFICATION");
+
         return new DetectedAccountInfo(
                 suggestedName,
-                creditCardSignals ? "CREDIT_CARD" : "SAVINGS",
+                suggestedAccountTypeFor(product, creditCardSignals),
                 openingBalance, closingBalance, statementStart, statementEnd,
                 metadata.accountNumberMasked(), metadata.creditLimit(), metadata.paymentDueDate(),
                 metadata.accountHolderName(), metadata.branchName(), metadata.ifscCode(),
-                AccountDto.BankDto.from(bank));
+                AccountDto.BankDto.from(bank),
+                product.type().name(), product.confidence(), product.needsReview(), product.report());
+    }
+
+    /**
+     * What to prefill the review form's account-type field with.
+     *
+     * Deliberately conservative, and deliberately NOT the same question as {@code detectedProduct}.
+     * The existing credit-card text signal is a proven capability with its own regression coverage,
+     * so it still wins where it fires; product discovery only gets to choose the type when it has
+     * actually validated a product, which is what lets a term deposit prefill INVESTMENT instead of
+     * being offered as a savings account. Everything else keeps the long-standing SAVINGS default
+     * -- an UNKNOWN product still has to put something in the form, and {@code productNeedsReview}
+     * is what tells the review screen not to trust it.
+     */
+    private String suggestedAccountTypeFor(ProductDiscovery.DiscoveredProduct product, boolean creditCardSignals) {
+        if (creditCardSignals) return "CREDIT_CARD";
+        if (product.mayCreateAutomatically() && product.type().accountType() != null) {
+            return product.type().accountType().name();
+        }
+        return "SAVINGS";
     }
 
     private boolean containsCreditCardTextSignal(String line) {

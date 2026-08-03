@@ -37,7 +37,7 @@ class GridMetadataFallbackPdfPreviewGeneratorTest {
         TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector);
 
         return new PdfPreviewGenerator(new PdfTextExtractor(), new PdfTableLocator(),
-                new PdfMetadataExtractor(), transactionNormalizer);
+                new PdfMetadataExtractor(), transactionNormalizer, com.finora.imports.product.ProductDiscovery.standard());
     }
 
     private StagingResponse generate() throws Exception {

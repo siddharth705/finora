@@ -52,7 +52,8 @@ class ImportSessionServiceTest {
 
     private DetectedAccountInfo sampleDetected() {
         return new DetectedAccountInfo("Test Bank", "SAVINGS", new BigDecimal("1000"), new BigDecimal("900"),
-                LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31), null, null, null, null, null, null, null);
+                LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31), null, null, null, null, null, null, null,
+                "SAVINGS", 0.85, false, java.util.List.of());
     }
 
     private ImportSession sessionOwnedBy(UUID owner, Instant expiresAt, String status) {

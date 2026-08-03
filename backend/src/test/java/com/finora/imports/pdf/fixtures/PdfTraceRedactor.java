@@ -69,6 +69,18 @@ public final class PdfTraceRedactor {
             "fd", "hold", "unclear", "withdrawable", "available", "card", "number", "due",
             "minimum", "payment", "page", "of", "continued", "brought", "carried", "forward",
             "cust", "cif", "ccy",
+            // Financial-product vocabulary. Added after a captured trace was found to have redacted
+            // "Maturity Date" to "Xxxxxxxx Date" and "Deposit(Mnth)" to "Deposit(Xxxx)" -- the exact
+            // column headers ProductEvidenceCollector classifies on, gone from the fixture that was
+            // supposed to regression-test classifying them. None of these words identify anybody;
+            // they are statement furniture in precisely the sense this allowlist exists to keep.
+            // A committed trace cannot be un-redacted, so traces captured before this are missing
+            // this vocabulary permanently and need re-capturing to exercise product classification.
+            "maturity", "matures", "principal", "interest", "rate", "roi", "tenure", "tenor",
+            "installment", "instalment", "installments", "instalments", "recurring", "term",
+            "monthly", "mnth", "frequency", "paid", "due", "start", "end", "renewal", "scheme",
+            "emi", "loan", "outstanding", "disbursed", "repayment", "overdraft", "folio", "nav",
+            "units", "isin", "demat", "ppf", "epf", "nps", "uan", "pran", "rd", "running",
             // Transaction-instrument prefixes. Structural (they classify the row), and they carry
             // no identity on their own -- the counterparty that follows them is what gets masked.
             "upi", "neft", "imps", "rtgs", "ach", "atm", "pos", "ecs", "nach", "int", "chgs",
