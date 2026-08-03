@@ -7,6 +7,7 @@ import {
 import { statementImportsApi } from '../api/endpoints';
 import { BankLogo } from '../components/BankLogo';
 import type { AccountStatementGroup, StatementSummary, Transaction } from '../types';
+import { formatDate } from '../utils/date';
 
 function fmt(n: number | null) {
   if (n === null || n === undefined) return '—';
@@ -15,8 +16,10 @@ function fmt(n: number | null) {
 }
 
 function fmtDate(d: string | null) {
+  // This page formats BOTH a date-only statement period and an importedAt timestamp through here;
+  // formatDate distinguishes them by shape so only the former is parsed as a local calendar date.
   if (!d) return '—';
-  return new Date(d).toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: 'numeric' });
+  return formatDate(d);
 }
 
 // Mirrors the backend's 7-day retention window (see StatementImportService.DELETED_ACCOUNT_RETENTION)

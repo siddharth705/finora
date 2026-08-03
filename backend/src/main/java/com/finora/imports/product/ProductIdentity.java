@@ -53,8 +53,60 @@ public record ProductIdentity(String institutionId, FinancialProductType type, S
      */
     public static ProductIdentity of(String institutionId, FinancialProductType type,
                                      String fullNumber, String maskedNumber) {
+        return of(institutionId, type, fullNumber, maskedNumber, null);
+    }
+
+    /**
+     * @param discriminator distinguishes several products that share one account number, or null
+     *        when the number alone identifies the product.
+     *
+     *        Needed because a deposit section's account number is the CUSTOMER's relationship
+     *        number: it appears once in the section's metadata and says nothing about which of the
+     *        deposits listed underneath it is which. Without a discriminator every deposit in the
+     *        section hashed to the same key, and the consequence was not a cosmetic duplicate --
+     *        {@link ProductIdentityResolver} found exactly one EXACT match for the second deposit,
+     *        so confirm() silently redirected it into the first deposit's account instead of
+     *        creating it, and the second deposit disappeared. That is the mirror image of the
+     *        double-counting this class exists to prevent, and worse: a duplicate is visible in the
+     *        UI, a deposit that was never created is not.
+     *
+     *        Must be built from a product's STABLE terms only -- see
+     *        {@link #forDeposit} for what qualifies and what does not.
+     */
+    public static ProductIdentity of(String institutionId, FinancialProductType type,
+                                     String fullNumber, String maskedNumber, String discriminator) {
         return new ProductIdentity(normalize(institutionId), type,
-                hash(institutionId, fullNumber), normalizeDigits(maskedNumber));
+                hash(institutionId, fullNumber, discriminator), normalizeDigits(maskedNumber));
+    }
+
+    /**
+     * A deposit's discriminator: its principal, its maturity date, and its installment amount.
+     *
+     * Every one of these is fixed for the life of the deposit, which is what makes the identity
+     * repeatable -- next month's statement lists the same deposit with the same terms and computes
+     * the same key, so it is recognised rather than created again.
+     *
+     * Deliberately NOT the current balance or the number of installments PAID, both of which change
+     * every month. Including either would give the same deposit a different identity in every
+     * statement, turning a re-import into a new account each time -- exactly the failure identity
+     * exists to prevent, just arrived at from the other direction.
+     *
+     * Returns null when the deposit has no terms at all, so a product with nothing to distinguish
+     * it falls back to number-only identity rather than to a hash of three nulls (which would make
+     * every attribute-less deposit identical again).
+     */
+    public static String forDeposit(java.math.BigDecimal principalAmount, java.time.LocalDate maturityDate,
+                                    java.math.BigDecimal installmentAmount) {
+        if (principalAmount == null && maturityDate == null && installmentAmount == null) return null;
+        // Plain toString on BigDecimal keeps scale ("5000.00" != "5000"), so the same amount printed
+        // with different precision across two statements would otherwise be two identities.
+        // stripTrailingZeros normalises that; toPlainString avoids scientific notation.
+        return normalizeAmount(principalAmount) + "|" + (maturityDate == null ? "" : maturityDate)
+                + "|" + normalizeAmount(installmentAmount);
+    }
+
+    private static String normalizeAmount(java.math.BigDecimal amount) {
+        return amount == null ? "" : amount.stripTrailingZeros().toPlainString();
     }
 
     /** Rebuilds an identity from what a stored account already has, for comparison against a
@@ -78,6 +130,17 @@ public record ProductIdentity(String institutionId, FinancialProductType type, S
 
         if (strongKey != null && strongKey.equals(other.strongKey)) return Match.EXACT;
 
+        // Two strong keys that DISAGREE settle the question -- these are different products, and
+        // there is nothing for the weaker fallback below to add.
+        //
+        // Without this, several deposits listed under one section's account number all share that
+        // section's masked digits, so every pair of them matched PROBABLE on the fallback and each
+        // one was flagged "might be the same product" forever, pushing every deposit to manual
+        // review permanently. The masked fallback exists for the case where no full number was
+        // available; when both sides have one, disagreement is positive evidence of difference
+        // rather than absence of evidence.
+        if (strongKey != null && other.strongKey != null) return Match.NONE;
+
         // Falling back to the masked digits requires the product TYPE to agree too. A savings
         // account and a fixed deposit at the same bank ending in the same four digits are a
         // coincidence, not one product -- and without the type check this fallback would happily
@@ -93,12 +156,14 @@ public record ProductIdentity(String institutionId, FinancialProductType type, S
         return institutionId != null && strongKey != null;
     }
 
-    private static String hash(String institutionId, String fullNumber) {
+    private static String hash(String institutionId, String fullNumber, String discriminator) {
         String digits = normalizeDigits(fullNumber);
         if (institutionId == null || digits == null || digits.length() < 4) return null;
         try {
             MessageDigest sha = MessageDigest.getInstance("SHA-256");
-            byte[] out = sha.digest((normalize(institutionId) + ':' + digits).getBytes(StandardCharsets.UTF_8));
+            String material = normalize(institutionId) + ':' + digits
+                    + (discriminator == null ? "" : ':' + discriminator);
+            byte[] out = sha.digest(material.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(out);
         } catch (NoSuchAlgorithmException e) {
             // SHA-256 is required of every JVM; if it is genuinely absent, failing loudly beats

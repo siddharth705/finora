@@ -357,8 +357,15 @@ public class PdfPreviewGenerator {
                     product.type().name(), product.confidence(), product.needsReview(), product.report(),
                     // Hashed here and only here: this is the last point in the pipeline where the
                     // unmasked number exists, and it must not travel any further than this call.
+                    //
+                    // The deposit discriminator is what keeps several deposits listed under ONE
+                    // section's account number distinguishable -- that number is the customer's
+                    // relationship number, not any one deposit's. Null for a ledger account, whose
+                    // number identifies it on its own. See ProductIdentity.forDeposit.
                     ProductIdentity.of(bank.id(), product.type(),
-                            metadata.accountNumberFullForHashingOnly(), metadata.accountNumberMasked())
+                            metadata.accountNumberFullForHashingOnly(), metadata.accountNumberMasked(),
+                            ProductIdentity.forDeposit(attrs.principalAmount(), attrs.maturityDate(),
+                                    attrs.installmentAmount()))
                             .strongKey(),
                     attrs.principalAmount(), attrs.interestRate(), attrs.maturityDate(), attrs.maturityAmount(),
                     attrs.installmentAmount(), attrs.installmentsPaid(), attrs.installmentsTotal());

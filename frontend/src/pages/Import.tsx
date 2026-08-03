@@ -5,6 +5,7 @@ import { CheckCircle2, UploadCloud, AlertTriangle, Clock, FileText, FileSpreadsh
 import { importApi, statementImportsApi, categoriesApi, accountsApi } from '../api/endpoints';
 import { BankLogo } from '../components/BankLogo';
 import type { Account, DetectedAccountInfo, ImportSummary, ReimportResult, StagedAccountSection, StagedRow, UnparseableRow } from '../types';
+import { formatDate } from '../utils/date';
 
 type Step = 'upload' | 'review' | 'summary';
 type AccountChoice = 'existing' | 'new';
@@ -977,8 +978,8 @@ function ImportSummaryScreen({
 }) {
   const categoryEntries = Object.entries(summary.categoriesAssigned).sort((a, b) => b[1] - a[1]);
   const account = summary.account;
-  const periodStart = summary.statementPeriodStart ? new Date(summary.statementPeriodStart).toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: 'numeric' }) : null;
-  const periodEnd = summary.statementPeriodEnd ? new Date(summary.statementPeriodEnd).toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: 'numeric' }) : null;
+  const periodStart = summary.statementPeriodStart ? formatDate(summary.statementPeriodStart) : null;
+  const periodEnd = summary.statementPeriodEnd ? formatDate(summary.statementPeriodEnd) : null;
   const durationLabel = summary.importDurationMs < 1000 ? `${summary.importDurationMs} ms` : `${(summary.importDurationMs / 1000).toFixed(1)} s`;
   return (
     <div className="bg-card rounded-xl2 shadow-card border border-border p-6 max-w-xl">

@@ -350,6 +350,37 @@ class ImportServiceAskOnceTest {
     }
 
     @Test
+    void confirm_honoursAnInvestmentChoice_evenWhenTheClientSendsNoDetectedProduct() throws Exception {
+        // Bug: the no-detected-product fallback mapped anything that wasn't CREDIT_CARD or WALLET to
+        // SAVINGS, and SAVINGS's own routing then overrode the form -- so a user who explicitly
+        // picked Investment on the review screen got a Savings account. Only reachable from a client
+        // that doesn't echo detectedProduct back (an older build), which is exactly the case that
+        // should degrade to "do what the user said", not "invent a product they didn't choose".
+        UUID newAccountId = UUID.randomUUID();
+        when(accountService.create(eq(userId), any())).thenReturn(
+                new AccountDto(newAccountId, "Gold Fund", "INVESTMENT", BigDecimal.ZERO, null, null, null, null,
+                        null, null, null,
+                        AccountDto.BankDto.from(com.finora.util.BankRegistry.get("OTHER")), null, null, null,
+                        0, 0L, "ACTIVE",
+                        null, null, null, null, null, null, null));
+
+        var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "Something",
+                BigDecimal.valueOf(10), "EXPENSE", "Other", true, "rule", null, false, null, null);
+        var newAccount = new NewAccountRequest("Gold Fund", "INVESTMENT", BigDecimal.ZERO, null, null,
+                null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null);
+
+        importService.confirm(userId, dummyFile(), new ConfirmRequest(null, List.of(row), null, newAccount, null, null));
+
+        ArgumentCaptor<AccountDto.CreateRequest> captor =
+                ArgumentCaptor.forClass(AccountDto.CreateRequest.class);
+        verify(accountService).create(eq(userId), captor.capture());
+        assertThat(captor.getValue().accountType())
+                .as("the user's own choice must survive when nothing was detected")
+                .isEqualTo("INVESTMENT");
+    }
+
+    @Test
     void confirm_throws_whenNeitherExistingAccountNorNewAccountIsProvided() {
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
                 BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);

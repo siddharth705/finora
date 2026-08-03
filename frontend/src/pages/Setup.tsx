@@ -7,6 +7,7 @@ import {
 import { accountsApi, banksApi } from '../api/endpoints';
 import { BankLogo } from '../components/BankLogo';
 import type { Account, BankInfo } from '../types';
+import { formatDate } from '../utils/date';
 
 const TYPE_LABEL: Record<Account['accountType'], string> = {
   SAVINGS: 'Savings Account',
@@ -21,8 +22,10 @@ function fmt(n: number | null | undefined) {
 }
 
 function fmtDate(d: string | null) {
+  // Keeps this page's own null sentinel; the formatting itself is shared so a date-only value
+  // (statement period) isn't shifted a day by a UTC parse -- see utils/date.
   if (!d) return null;
-  return new Date(d).toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: 'numeric' });
+  return formatDate(d);
 }
 
 // How long a revealed account number stays visible before auto-hiding again -- a common banking

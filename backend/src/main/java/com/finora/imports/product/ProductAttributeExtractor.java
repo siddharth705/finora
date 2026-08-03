@@ -89,10 +89,14 @@ public class ProductAttributeExtractor {
      * guess in.
      */
     private ProductAttributes aggregateInstallments(List<Map<String, String>> rows) {
-        Map<String, String> first = rows.get(0);
-        BigDecimal rate = amount(first, "rate of interest", "interest rate", "roi", "rate");
-        LocalDate maturityDate = date(first, "maturity date", "date of maturity");
-        BigDecimal installmentAmount = amount(first, "installment paid", "installment amount",
+        // Scanned across every row rather than read off row 0. These are the schedule's shared
+        // terms, so any row carrying them carries the right value -- but the FIRST row is not
+        // reliably the one that does: a real schedule may print the rate once on a later line, and
+        // a bucketing glitch on one row would otherwise silently lose the whole product's rate and
+        // maturity date even though the other rows had them.
+        BigDecimal rate = firstAmountAcross(rows, "rate of interest", "interest rate", "roi", "rate");
+        LocalDate maturityDate = firstDateAcross(rows, "maturity date", "date of maturity");
+        BigDecimal installmentAmount = firstAmountAcross(rows, "installment paid", "installment amount",
                 "amount paid", "monthly installment");
 
         boolean hasStatusColumn = rows.stream()
@@ -107,6 +111,24 @@ public class ProductAttributeExtractor {
 
         return new ProductAttributes(null, rate, maturityDate, null, installmentAmount,
                 paidCount, rows.size());
+    }
+
+    /** The first non-null value for these keys across every row -- for a schedule's SHARED terms
+     *  only (rate, maturity, installment amount), never for a per-row value. */
+    private BigDecimal firstAmountAcross(List<Map<String, String>> rows, String... keys) {
+        for (Map<String, String> row : rows) {
+            BigDecimal value = amount(row, keys);
+            if (value != null) return value;
+        }
+        return null;
+    }
+
+    private LocalDate firstDateAcross(List<Map<String, String>> rows, String... keys) {
+        for (Map<String, String> row : rows) {
+            LocalDate value = date(row, keys);
+            if (value != null) return value;
+        }
+        return null;
     }
 
     private BigDecimal amount(Map<String, String> row, String... keys) {

@@ -3,6 +3,7 @@ import { Doughnut, Line } from 'react-chartjs-2';
 import { Chart as ChartJS, ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend } from 'chart.js';
 import { accountsApi, networthApi, type NetWorthData } from '../api/endpoints';
 import type { Account } from '../types';
+import { formatDate } from '../utils/date';
 
 ChartJS.register(ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend);
 
@@ -28,9 +29,7 @@ function DepositTerms({ holding }: { holding: Account }) {
   }
   if (holding.interestRate != null) terms.push(`${holding.interestRate}% p.a.`);
   if (holding.maturityDate) {
-    terms.push(`Matures ${new Date(holding.maturityDate).toLocaleDateString('en-IN', {
-      day: 'numeric', month: 'short', year: 'numeric',
-    })}`);
+    terms.push(`Matures ${formatDate(holding.maturityDate)}`);
   }
   if (holding.maturityAmount != null) terms.push(`Worth ${fmt(holding.maturityAmount)} at maturity`);
 

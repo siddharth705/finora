@@ -110,6 +110,23 @@ class ProductAttributeExtractorTest {
     }
 
     @Test
+    void aRecurringDepositsSharedTermsAreFoundOnWhicheverRowCarriesThem() {
+        // These are the schedule's shared terms, so any row carrying them carries the right value --
+        // but the first row is not reliably the one that does. Reading only row 0 silently lost the
+        // whole product's rate and maturity date when a bucketing glitch blanked them on that one
+        // row, even though every other row had them.
+        var rows = List.of(
+                row("Due Date", "05/05/2026", "Installment Paid", "5000.00"),
+                row("Due Date", "05/06/2026", "Installment Paid", "5000.00",
+                        "Rate of Interest", "6.75", "Maturity Date", "05/05/2027"));
+
+        var attrs = extractor.extract(FinancialProductType.RECURRING_DEPOSIT, rows);
+
+        assertThat(attrs.get(0).interestRate()).isEqualByComparingTo("6.75");
+        assertThat(attrs.get(0).maturityDate()).isEqualTo(LocalDate.of(2027, 5, 5));
+    }
+
+    @Test
     void aProductWithNoStructuralVocabularyYieldsEmptyAttributesRatherThanGuessing() {
         var attrs = extractor.extract(FinancialProductType.MUTUAL_FUND,
                 List.of(row("Folio", "12345")));

@@ -588,9 +588,21 @@ public class ImportService {
                 // An unknown value from a client is not worth failing an import over.
             }
         }
-        return "CREDIT_CARD".equals(na.accountType()) ? FinancialProductType.CREDIT_CARD
-                : "WALLET".equals(na.accountType()) ? FinancialProductType.WALLET
-                : FinancialProductType.SAVINGS;
+        // Nothing detected, so the form's own account type is all there is. Mapped only where an
+        // account type names exactly ONE product; INVESTMENT does not (it covers FD, RD, PPF, mutual
+        // funds and more), so it yields UNKNOWN, whose null accountType() lets the user's choice
+        // through untouched in resolveTargetAccount.
+        //
+        // Bug fix: this used to fall through to SAVINGS for anything that wasn't CREDIT_CARD or
+        // WALLET, and SAVINGS's own routing then OVERRODE the form -- so a user who explicitly
+        // picked Investment on the review screen got a Savings account. Inventing a product the
+        // user's own choice contradicts is the one thing this fallback must not do.
+        return switch (na.accountType() == null ? "" : na.accountType()) {
+            case "CREDIT_CARD" -> FinancialProductType.CREDIT_CARD;
+            case "WALLET" -> FinancialProductType.WALLET;
+            case "SAVINGS" -> FinancialProductType.SAVINGS;
+            default -> FinancialProductType.UNKNOWN;
+        };
     }
 
     private UUID resolveTargetAccount(UUID userId, ConfirmRequest request, List<String> accountsCreated,
