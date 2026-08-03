@@ -1,6 +1,8 @@
 package com.finora.imports.product;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -52,8 +54,25 @@ public record ProductHypothesis(FinancialProductType type, Set<ProductSignal> ex
     private static void define(FinancialProductType type, List<ProductSignal> expected,
                                List<ProductSignal> forbidden, List<ProductSignal> proof,
                                boolean requiresExplicitNaming) {
-        BY_TYPE.put(type, new ProductHypothesis(type, Set.copyOf(expected), Set.copyOf(forbidden),
-                Set.copyOf(proof), requiresExplicitNaming));
+        BY_TYPE.put(type, new ProductHypothesis(type, ordered(expected), ordered(forbidden),
+                ordered(proof), requiresExplicitNaming));
+    }
+
+    /**
+     * Declaration-ordered, NOT {@code Set.copyOf}.
+     *
+     * Found by the golden-output snapshot on its first run: the same document classified as SAVINGS
+     * at 87% on one run and 88% on the next. {@code Set.copyOf} deliberately randomises iteration
+     * order per JVM run (a salted hash, to stop code depending on it), the classifier sums a double
+     * per expected signal, and floating-point addition is not associative -- so the accumulated
+     * score differed in its last bits and landed either side of a rounding boundary.
+     *
+     * A confidence that changes between runs on identical input is not a confidence. It also makes
+     * every downstream snapshot, threshold and stored evidence record unreproducible. Iteration
+     * order here is load-bearing and must stay stable.
+     */
+    private static Set<ProductSignal> ordered(List<ProductSignal> signals) {
+        return Collections.unmodifiableSet(new LinkedHashSet<>(signals));
     }
 
     static {

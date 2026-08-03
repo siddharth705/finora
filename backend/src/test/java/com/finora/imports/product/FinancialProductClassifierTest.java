@@ -191,6 +191,26 @@ class FinancialProductClassifierTest {
     }
 
     @Test
+    void confidenceIsDeterministicForIdenticalInput() {
+        // Found by the golden-output snapshot on its first run: the same document scored 87% on one
+        // JVM and 88% on the next, because ProductHypothesis built its signal sets with Set.copyOf
+        // -- whose iteration order is deliberately randomised per run -- and summing a double per
+        // signal in a different order lands either side of a rounding boundary. A confidence that
+        // moves on identical input is not a confidence, and it makes stored evidence
+        // unreproducible.
+        var section = Section.of(
+                List.of("Txn Date", "Narration", "Withdrawals", "Deposits", "Closing Balance"),
+                List.of("Opening Balance", "Closing Balance"), 42);
+
+        double first = classifier.classify(section).confidence();
+        for (int i = 0; i < 50; i++) {
+            assertThat(classifier.classify(section).confidence())
+                    .as("run %d disagreed with the first", i)
+                    .isEqualTo(first);
+        }
+    }
+
+    @Test
     void theRealCombinedStatementsThreeSectionsAreNotAllAccounts() {
         // Against the captured trace of a real HDFC combined statement -- the document that exposed
         // all three sections being offered as accounts.
