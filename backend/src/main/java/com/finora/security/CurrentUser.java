@@ -21,10 +21,20 @@ public class CurrentUser {
         this.userRepository = userRepository;
     }
 
+    /**
+     * The authenticated user's id.
+     *
+     * The principal's "username" IS the id (see {@link CurrentUserDetailsService}), so this is a
+     * parse rather than a lookup. It used to resolve the email to a row on every single call --
+     * one database query per authenticated request, for a value the principal already carried,
+     * and ambiguous since V52 made an email unique only within a portal scope.
+     */
     public UUID id() {
         UserDetails principal = (UserDetails) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        return userRepository.findByEmail(principal.getUsername())
-                .orElseThrow(() -> new IllegalStateException("Authenticated user not found in database"))
-                .getId();
+        try {
+            return UUID.fromString(principal.getUsername());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException("Authenticated principal is not a user id", e);
+        }
     }
 }

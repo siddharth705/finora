@@ -80,7 +80,7 @@ class AuthServiceRegisterTest {
 
     @Test
     void register_withAnEmailAlreadyOnFile_isRejectedBeforeAnyUserIsSaved() {
-        when(userRepository.existsByEmailIgnoreCase("jane@example.com")).thenReturn(true);
+        when(userRepository.existsByEmailIgnoreCaseAndAccountScope("jane@example.com", "USER")).thenReturn(true);
 
         try {
             authService.register(request("jane@example.com", "+919876500001"));
@@ -93,13 +93,13 @@ class AuthServiceRegisterTest {
         verify(userRepository, never()).save(any());
         // The email check is deliberately checked first -- a duplicate email should never even
         // reach the phone-number lookup.
-        verify(userRepository, never()).existsByPhoneNumber(anyString());
+        verify(userRepository, never()).existsByPhoneNumberAndAccountScope(anyString(), anyString());
     }
 
     @Test
     void register_withAPhoneNumberAlreadyOnFile_isRejectedBeforeAnyUserIsSaved() {
-        when(userRepository.existsByEmailIgnoreCase("newperson@example.com")).thenReturn(false);
-        when(userRepository.existsByPhoneNumber("+919876500001")).thenReturn(true);
+        when(userRepository.existsByEmailIgnoreCaseAndAccountScope("newperson@example.com", "USER")).thenReturn(false);
+        when(userRepository.existsByPhoneNumberAndAccountScope("+919876500001", "USER")).thenReturn(true);
 
         try {
             authService.register(request("newperson@example.com", "+919876500001"));
@@ -114,8 +114,8 @@ class AuthServiceRegisterTest {
 
     @Test
     void register_withAUniqueEmailAndPhoneNumber_proceedsToSaveTheNewUser() {
-        when(userRepository.existsByEmailIgnoreCase("newperson@example.com")).thenReturn(false);
-        when(userRepository.existsByPhoneNumber("+919876500002")).thenReturn(false);
+        when(userRepository.existsByEmailIgnoreCaseAndAccountScope("newperson@example.com", "USER")).thenReturn(false);
+        when(userRepository.existsByPhoneNumberAndAccountScope("+919876500002", "USER")).thenReturn(false);
         when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
             User u = invocation.getArgument(0);
             ReflectionTestUtils.setField(u, "id", UUID.randomUUID());
@@ -137,8 +137,8 @@ class AuthServiceRegisterTest {
      */
     @Test
     void register_returnsTheMaskedPhoneNumber_forVerifyPhoneToDisplay() {
-        when(userRepository.existsByEmailIgnoreCase(anyString())).thenReturn(false);
-        when(userRepository.existsByPhoneNumber(anyString())).thenReturn(false);
+        when(userRepository.existsByEmailIgnoreCaseAndAccountScope(anyString(), anyString())).thenReturn(false);
+        when(userRepository.existsByPhoneNumberAndAccountScope(anyString(), anyString())).thenReturn(false);
         when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
             User u = invocation.getArgument(0);
             ReflectionTestUtils.setField(u, "id", UUID.randomUUID());
@@ -158,8 +158,8 @@ class AuthServiceRegisterTest {
         // both the duplicate-email check and the persisted row use the trimmed value, not the
         // raw one, so "  jane@example.com" can't slip past a uniqueness check keyed on
         // "jane@example.com".
-        when(userRepository.existsByEmailIgnoreCase("jane@example.com")).thenReturn(false);
-        when(userRepository.existsByPhoneNumber(anyString())).thenReturn(false);
+        when(userRepository.existsByEmailIgnoreCaseAndAccountScope("jane@example.com", "USER")).thenReturn(false);
+        when(userRepository.existsByPhoneNumberAndAccountScope(anyString(), anyString())).thenReturn(false);
         when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
             User u = invocation.getArgument(0);
             ReflectionTestUtils.setField(u, "id", UUID.randomUUID());
@@ -168,7 +168,7 @@ class AuthServiceRegisterTest {
 
         authService.register(new RegisterRequest("  jane@example.com  ", "Password123", "  Jane Doe  ", "+919876500003"));
 
-        verify(userRepository).existsByEmailIgnoreCase("jane@example.com");
+        verify(userRepository).existsByEmailIgnoreCaseAndAccountScope("jane@example.com", "USER");
         ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
         verify(userRepository).save(captor.capture());
         assertThat(captor.getValue().getEmail()).isEqualTo("jane@example.com");
@@ -193,7 +193,7 @@ class AuthServiceRegisterTest {
             assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
         }
 
-        verify(userRepository, never()).existsByEmailIgnoreCase(anyString());
+        verify(userRepository, never()).existsByEmailIgnoreCaseAndAccountScope(anyString(), anyString());
         verify(userRepository, never()).save(any());
     }
 
@@ -207,8 +207,8 @@ class AuthServiceRegisterTest {
         var settings = new com.finora.entity.PlatformSettings();
         settings.setRegistrationsEnabled(false);
         when(platformSettingsService.getEntity()).thenReturn(settings);
-        when(userRepository.existsByEmailIgnoreCase("supportcreated@example.com")).thenReturn(false);
-        when(userRepository.existsByPhoneNumber("+919876500010")).thenReturn(false);
+        when(userRepository.existsByEmailIgnoreCaseAndAccountScope("supportcreated@example.com", "USER")).thenReturn(false);
+        when(userRepository.existsByPhoneNumberAndAccountScope("+919876500010", "USER")).thenReturn(false);  // synthetic-ok: sequential test number, not a real subscriber
         when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
             User u = invocation.getArgument(0);
             ReflectionTestUtils.setField(u, "id", UUID.randomUUID());
@@ -216,7 +216,7 @@ class AuthServiceRegisterTest {
         });
 
         User created = authService.adminCreateUser(
-                request("supportcreated@example.com", "+919876500010"), UUID.randomUUID());
+                request("supportcreated@example.com", "+919876500010"), UUID.randomUUID());  // synthetic-ok: sequential test number, not a real subscriber
 
         assertThat(created.getEmail()).isEqualTo("supportcreated@example.com");
         verify(userRepository).save(any(User.class));

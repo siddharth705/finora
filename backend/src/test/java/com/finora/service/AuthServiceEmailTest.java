@@ -48,7 +48,7 @@ class AuthServiceEmailTest {
         User user = new User();
         ReflectionTestUtils.setField(user, "id", userId);
         user.setEmail("test@example.com");
-        when(userRepository.findByEmailIgnoreCase("test@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("test@example.com", "USER")).thenReturn(Optional.of(user));
 
         authService = new AuthService(
                 userRepository, mock(CategoryRepository.class), resetTokenRepository,
@@ -65,7 +65,7 @@ class AuthServiceEmailTest {
         when(emailProvider.sendPasswordResetEmail(any(), any()))
                 .thenReturn(EmailResult.success(ProviderType.RESEND, "test-message-id"));
 
-        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com"), null);
+        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com", "USER"), null);
 
         verify(emailProvider).sendPasswordResetEmail(eq("test@example.com"), contains("/reset-password?token="));
         assertThat(response.devResetLink()).isNull();
@@ -77,7 +77,7 @@ class AuthServiceEmailTest {
     void forgotPassword_returnsLinkDirectly_andDoesNotSendEmail_whenNoProviderConfigured() {
         when(emailProvider.isConfigured()).thenReturn(false);
 
-        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com"), null);
+        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com", "USER"), null);
 
         verify(emailProvider, never()).sendPasswordResetEmail(any(), any());
         assertThat(response.devResetLink()).contains("/reset-password?token=");
@@ -85,17 +85,17 @@ class AuthServiceEmailTest {
 
     /**
      * Bug fix: case-insensitive email uniqueness was never enforced before this session, so two
-     * pre-existing accounts could differ only by case. findByEmailIgnoreCase() throws
+     * pre-existing accounts could differ only by case. findByEmailIgnoreCaseAndAccountScope(, "USER") throws
      * IncorrectResultSizeDataAccessException if it matches more than one row -- forgotPassword()
      * must fail closed to the same generic "if an account exists..." response every unresolvable
      * email gets, not bubble up as an opaque 500.
      */
     @Test
     void forgotPassword_whenEmailIgnoreCaseLookupIsAmbiguous_failsClosedInsteadOf500ing() {
-        when(userRepository.findByEmailIgnoreCase("jane@example.com"))
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("jane@example.com", "USER"))
                 .thenThrow(new org.springframework.dao.IncorrectResultSizeDataAccessException(1));
 
-        var response = authService.forgotPassword(new ForgotPasswordRequest("jane@example.com"), null);
+        var response = authService.forgotPassword(new ForgotPasswordRequest("jane@example.com", "USER"), null);
 
         verify(emailProvider, never()).sendPasswordResetEmail(any(), any());
         assertThat(response.devResetLink()).isNull();
@@ -103,10 +103,10 @@ class AuthServiceEmailTest {
 
     @Test
     void forgotPassword_doesNotSendEmailOrLeakWhetherAccountExists_forUnknownEmail() {
-        when(userRepository.findByEmailIgnoreCase("nobody@example.com")).thenReturn(Optional.empty());
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("nobody@example.com", "USER")).thenReturn(Optional.empty());
         when(emailProvider.isConfigured()).thenReturn(true);
 
-        var response = authService.forgotPassword(new ForgotPasswordRequest("nobody@example.com"), null);
+        var response = authService.forgotPassword(new ForgotPasswordRequest("nobody@example.com", "USER"), null);
 
         verify(emailProvider, never()).sendPasswordResetEmail(any(), any());
         assertThat(response.devResetLink()).isNull();
@@ -125,7 +125,7 @@ class AuthServiceEmailTest {
         emailProperties.setAdminAppBaseUrl("http://localhost:5174");
         when(emailProvider.isConfigured()).thenReturn(false);
 
-        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com"), "http://localhost:5174");
+        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com", "USER"), "http://localhost:5174");
 
         assertThat(response.devResetLink()).startsWith("http://localhost:5174/reset-password?token=");
     }
@@ -135,7 +135,7 @@ class AuthServiceEmailTest {
         emailProperties.setAdminAppBaseUrl("http://localhost:5174");
         when(emailProvider.isConfigured()).thenReturn(false);
 
-        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com"), "http://localhost:5173");
+        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com", "USER"), "http://localhost:5173");
 
         assertThat(response.devResetLink()).startsWith("http://localhost:5173/reset-password?token=");
     }
@@ -146,7 +146,7 @@ class AuthServiceEmailTest {
         // as it did before this fix, not start failing or linking somewhere blank.
         when(emailProvider.isConfigured()).thenReturn(false);
 
-        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com"), "http://localhost:5174");
+        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com", "USER"), "http://localhost:5174");
 
         assertThat(response.devResetLink()).startsWith("http://localhost:5173/reset-password?token=");
     }
@@ -158,7 +158,7 @@ class AuthServiceEmailTest {
         emailProperties.setAdminAppBaseUrl("http://localhost:5174");
         when(emailProvider.isConfigured()).thenReturn(false);
 
-        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com"), null);
+        var response = authService.forgotPassword(new ForgotPasswordRequest("test@example.com", "USER"), null);
 
         assertThat(response.devResetLink()).startsWith("http://localhost:5173/reset-password?token=");
     }

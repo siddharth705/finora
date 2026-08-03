@@ -69,16 +69,24 @@ class PhoneVerificationFilterTest {
         return request;
     }
 
+    /** The Spring Security principal is the user's ID, not their email (see
+     *  CurrentUserDetailsService) -- an email identifies a user only within a portal scope since
+     *  V52, so a principal keyed on one could resolve to the wrong account. These helpers derive a
+     *  stable UUID per email so a test can still read in terms of who it is authenticating as. */
+    private static UUID idFor(String email) {
+        return UUID.nameUUIDFromBytes(email.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
     private void authenticateAs(String email) {
         var principal = org.springframework.security.core.userdetails.User
-                .withUsername(email).password("irrelevant").authorities("ROLE_USER").build();
+                .withUsername(idFor(email).toString()).password("irrelevant").authorities("ROLE_USER").build();
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities()));
     }
 
     private User userWithVerification(String email, boolean verified) {
         User user = new User();
-        ReflectionTestUtils.setField(user, "id", UUID.randomUUID());
+        ReflectionTestUtils.setField(user, "id", idFor(email));
         user.setEmail(email);
         user.setPhoneVerified(verified);
         return user;
@@ -87,7 +95,7 @@ class PhoneVerificationFilterTest {
     @Test
     void blocksAnUnverifiedUser_fromAProtectedEndpoint() throws Exception {
         authenticateAs("unverified@example.com");
-        when(userRepository.findByEmail("unverified@example.com"))
+        when(userRepository.findById(idFor("unverified@example.com")))
                 .thenReturn(Optional.of(userWithVerification("unverified@example.com", false)));
 
         filter.doFilter(requestFor("/api/v1/accounts"), response, filterChain);
@@ -100,7 +108,7 @@ class PhoneVerificationFilterTest {
     @Test
     void allowsAVerifiedUser_throughToTheProtectedEndpoint() throws Exception {
         authenticateAs("verified@example.com");
-        when(userRepository.findByEmail("verified@example.com"))
+        when(userRepository.findById(idFor("verified@example.com")))
                 .thenReturn(Optional.of(userWithVerification("verified@example.com", true)));
 
         HttpServletRequest request = requestFor("/api/v1/accounts");
@@ -114,7 +122,7 @@ class PhoneVerificationFilterTest {
     void allowsAnUnverifiedUser_toReachThePhoneVerificationEndpointsThemselves() throws Exception {
         // Otherwise nobody could ever complete verification in the first place.
         authenticateAs("unverified@example.com");
-        when(userRepository.findByEmail("unverified@example.com"))
+        when(userRepository.findById(idFor("unverified@example.com")))
                 .thenReturn(Optional.of(userWithVerification("unverified@example.com", false)));
 
         HttpServletRequest request = requestFor("/api/v1/phone/verify-otp");
@@ -133,7 +141,7 @@ class PhoneVerificationFilterTest {
         filter.doFilter(request, response, filterChain);
 
         verify(filterChain).doFilter(request, response);
-        verify(userRepository, never()).findByEmail(any());
+        verify(userRepository, never()).findById(any());
     }
 
     /**
@@ -145,7 +153,7 @@ class PhoneVerificationFilterTest {
     @Test
     void allowsAnUnverifiedUser_toLogOut() throws Exception {
         authenticateAs("unverified@example.com");
-        when(userRepository.findByEmail("unverified@example.com"))
+        when(userRepository.findById(idFor("unverified@example.com")))
                 .thenReturn(Optional.of(userWithVerification("unverified@example.com", false)));
 
         HttpServletRequest request = requestFor("/api/v1/auth/logout");
@@ -158,7 +166,7 @@ class PhoneVerificationFilterTest {
     @Test
     void allowsAnUnverifiedUser_toRefreshTheirToken() throws Exception {
         authenticateAs("unverified@example.com");
-        when(userRepository.findByEmail("unverified@example.com"))
+        when(userRepository.findById(idFor("unverified@example.com")))
                 .thenReturn(Optional.of(userWithVerification("unverified@example.com", false)));
 
         HttpServletRequest request = requestFor("/api/v1/auth/refresh");
@@ -179,7 +187,7 @@ class PhoneVerificationFilterTest {
     @Test
     void allowsAnUnverifiedUser_toCheckSetupStatus() throws Exception {
         authenticateAs("unverified@example.com");
-        when(userRepository.findByEmail("unverified@example.com"))
+        when(userRepository.findById(idFor("unverified@example.com")))
                 .thenReturn(Optional.of(userWithVerification("unverified@example.com", false)));
 
         HttpServletRequest request = requestFor("/api/v1/setup/status");
@@ -200,7 +208,7 @@ class PhoneVerificationFilterTest {
     @Test
     void allowsAnUnverifiedUser_toFetchTheirOwnProfile() throws Exception {
         authenticateAs("unverified@example.com");
-        when(userRepository.findByEmail("unverified@example.com"))
+        when(userRepository.findById(idFor("unverified@example.com")))
                 .thenReturn(Optional.of(userWithVerification("unverified@example.com", false)));
 
         HttpServletRequest request = requestFor("/api/v1/users/me");
@@ -219,7 +227,7 @@ class PhoneVerificationFilterTest {
     @Test
     void stillBlocksAnUnverifiedUser_fromUpdatingTheirOwnProfile() throws Exception {
         authenticateAs("unverified@example.com");
-        when(userRepository.findByEmail("unverified@example.com"))
+        when(userRepository.findById(idFor("unverified@example.com")))
                 .thenReturn(Optional.of(userWithVerification("unverified@example.com", false)));
 
         HttpServletRequest request = requestFor("/api/v1/users/me");

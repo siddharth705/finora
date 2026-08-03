@@ -34,9 +34,18 @@ public class AuthDtos {
      * resolves this to the user's actual email before delegating to Spring Security (the rest of
      * the auth stack -- UserDetailsService, JWT subject -- is still keyed on email underneath).
      */
+    /**
+     * @param scope which portal is authenticating: {@code "USER"} or {@code "ADMIN"}. Optional --
+     *        absent means USER, so a client that has not been updated behaves exactly as before.
+     *        Needed because since V52 an email and a phone number identify a user only within a
+     *        scope, so the same person can hold one account in each. NOT an authorization input:
+     *        it selects which row to check a password against, while what that row may do is
+     *        decided entirely by its roles.
+     */
     public record LoginRequest(
             @NotBlank String identifier,
-            @NotBlank String password
+            @NotBlank String password,
+            String scope
     ) {}
 
     /** token = short-lived access token (15 min default); refreshToken = long-lived (30 days),
@@ -57,7 +66,10 @@ public class AuthDtos {
             String maskedPhone
     ) {}
 
-    public record ForgotPasswordRequest(@Email @NotBlank String email) {}
+    /** @param scope see {@link LoginRequest#scope()} -- a reset link must be issued for the
+     *  account in the portal the request came from, not an arbitrary one of the two a person may
+     *  hold under one email. */
+    public record ForgotPasswordRequest(@Email @NotBlank String email, String scope) {}
 
     /**
      * devResetLink is only populated because this environment has no email service wired up —

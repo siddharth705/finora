@@ -76,7 +76,9 @@ public class BootstrapService implements ApplicationRunner {
             return;
         }
 
-        if (userRepository.findByEmail(BOOTSTRAP_IDENTIFIER).isPresent()) {
+        // The bootstrap account is an admin-portal account by definition.
+        if (userRepository.findByEmailIgnoreCaseAndAccountScope(
+                BOOTSTRAP_IDENTIFIER, User.SCOPE_ADMIN).isPresent()) {
             log.warn("Setup is not complete and a bootstrap admin account already exists. If you "
                     + "still have the installation key from when this account was first created, "
                     + "use it to continue setup. If it's lost, delete this user row from the "
@@ -89,6 +91,7 @@ public class BootstrapService implements ApplicationRunner {
 
         User bootstrap = new User();
         bootstrap.setEmail(BOOTSTRAP_IDENTIFIER);
+        bootstrap.setAccountScope(User.SCOPE_ADMIN);
         bootstrap.setPasswordHash(passwordEncoder.encode(rawPassword));
         bootstrap.setFullName("Bootstrap Installer");
         // Bypasses PhoneVerificationFilter -- there's no real phone number to verify, and this

@@ -103,7 +103,10 @@ public class SetupService {
             throw new ApiException(HttpStatus.CONFLICT, "Setup has already been completed.");
         }
 
-        User newAdmin = authService.adminCreateUser(request, bootstrapUserId);
+        // ADMIN scope: this is the account that signs into the admin portal. Creating it in its own
+        // scope is what lets an administrator use the same email and mobile number they already
+        // signed up with personally, instead of having to invent a second address.
+        User newAdmin = authService.adminCreateUser(request, bootstrapUserId, User.SCOPE_ADMIN);
         newAdmin.setRole("SUPER_ADMIN");
         userRepository.save(newAdmin);
         roleService.assignRole(newAdmin.getId(), "SUPER_ADMIN");

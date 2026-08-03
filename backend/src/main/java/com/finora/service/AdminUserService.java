@@ -73,7 +73,10 @@ public class AdminUserService {
         User user = requireUser(userId);
         if (req.fullName() != null && !req.fullName().isBlank()) user.setFullName(req.fullName());
         if (req.phoneNumber() != null && !req.phoneNumber().isBlank() && !req.phoneNumber().equals(user.getPhoneNumber())) {
-            if (userRepository.existsByPhoneNumber(req.phoneNumber())) {
+            // Scoped to the account's own portal: the same person may legitimately use one mobile
+            // number for their USER account and their ADMIN account, so a clash only matters
+            // within a scope.
+            if (userRepository.existsByPhoneNumberAndAccountScope(req.phoneNumber(), user.getAccountScope())) {
                 throw new ApiException(HttpStatus.CONFLICT, "Another account already uses this phone number.");
             }
             user.setPhoneNumber(req.phoneNumber());

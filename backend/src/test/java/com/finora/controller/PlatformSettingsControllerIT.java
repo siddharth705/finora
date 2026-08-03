@@ -120,7 +120,7 @@ class PlatformSettingsControllerIT extends AbstractIntegrationTest {
         ResponseEntity<String> registerResponse = restTemplate.postForEntity(
                 "/api/v1/auth/register", new HttpEntity<>(registerBody, publicHeaders), String.class);
         assertThat(registerResponse.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
-        assertThat(userRepository.findByEmail(blockedEmail)).isEmpty();
+        assertThat(userRepository.findByEmailIgnoreCaseAndAccountScope(blockedEmail, "USER")).isEmpty();
 
         // USER_CREATE is SUPER_ADMIN-only (V16), so a support-assisted signup while registrations
         // are off needs a SUPER_ADMIN caller here, not the ADMIN used for the settings toggle.

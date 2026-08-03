@@ -15,8 +15,33 @@ public class User {
     @GeneratedValue
     private UUID id;
 
-    @Column(nullable = false, unique = true)
+    // NOT unique on its own since V52: the same person may hold a USER-scope account and an
+    // ADMIN-scope account under one email. Uniqueness is (LOWER(email), account_scope), enforced
+    // by uq_users_email_scope -- a functional index, so it cannot be expressed as a column
+    // constraint here.
+    @Column(nullable = false)
     private String email;
+
+    /**
+     * Which portal this account belongs to: {@code USER} or {@code ADMIN}.
+     *
+     * The rule is one email and one mobile number per user -- scoped to a portal rather than
+     * global, so an administrator who also uses Finora personally does not have to invent a second
+     * email address to sign up with.
+     *
+     * Deliberately NOT derived from {@link #role}. Roles change (a user is promoted, an admin
+     * demoted) and since V16 one account can hold several at once, so uniqueness keyed on them
+     * would start rejecting legitimate role changes as duplicates. This answers a different and
+     * stable question -- which portal is this account FOR -- and is what login disambiguates on.
+     *
+     * It grants nothing. Authorization stays role-based, so an ADMIN-scope account holding no
+     * admin role has exactly the access its roles give it, which is none.
+     */
+    @Column(name = "account_scope", nullable = false, length = 10)
+    private String accountScope = SCOPE_USER;
+
+    public static final String SCOPE_USER = "USER";
+    public static final String SCOPE_ADMIN = "ADMIN";
 
     @Column(name = "password_hash", nullable = false)
     private String passwordHash;
@@ -106,6 +131,8 @@ public class User {
     public void setFullName(String fullName) { this.fullName = fullName; }
     public String getRole() { return role; }
     public void setRole(String role) { this.role = role; }
+    public String getAccountScope() { return accountScope; }
+    public void setAccountScope(String accountScope) { this.accountScope = accountScope; }
     public Set<Role> getRoles() { return roles; }
     public void setRoles(Set<Role> roles) { this.roles = roles; }
     public BigDecimal getLowBalanceThreshold() { return lowBalanceThreshold; }

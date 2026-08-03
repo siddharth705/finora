@@ -1,9 +1,16 @@
 import { api, rawApi, type ApiEnvelope } from './client';
 import type {
+
   Account, AccountStatementGroup, BankInfo, Budget, DashboardSummary, DetectedAccountInfo, Goal,
   ImportSummary, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, Transaction,
   WorkspaceSettings, UnparseableRow,
 } from '../types';
+
+// Which portal this account belongs to. The same person may hold a USER account and an ADMIN
+// account under one email and one mobile number, so login and password reset have to say which
+// one they mean. Not an authorization signal -- what an account may do is decided by its roles.
+const PORTAL_SCOPE = 'USER';
+
 
 // Mirrors the backend's AuthDtos.AuthResponse. maskedPhone (see PhoneMasking on the backend) lets
 // VerifyPhone.tsx show which number a code was sent to -- e.g. "+•••••••••705" -- so a wrong or
@@ -26,9 +33,9 @@ export const authApi = {
   // AuthService.resolveEmailForLogin on the backend, which resolves either down to the
   // account's real email before authenticating.
   login: (identifier: string, password: string) =>
-    api.post<AuthResponseDto>('/auth/login', { identifier, password }),
+    api.post<AuthResponseDto>('/auth/login', { identifier, password, scope: PORTAL_SCOPE }),
   forgotPassword: (email: string) =>
-    api.post<{ message: string; devResetLink: string | null }>('/auth/forgot-password', { email }).then((r) => r.data),
+    api.post<{ message: string; devResetLink: string | null }>('/auth/forgot-password', { email, scope: PORTAL_SCOPE }).then((r) => r.data),
   // Reveals the account's real phone number for a valid, unused reset link -- needed to call
   // Firebase Phone Authentication directly (Firebase's own client SDK sends the OTP; this
   // backend never does). token is the same raw reset-link token from forgotPassword.
