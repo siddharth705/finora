@@ -66,7 +66,7 @@ public class DashboardService {
         BigDecimal investments = sumBalances(accounts, Account.Type.INVESTMENT);
         BigDecimal liabilities = sumBalances(accounts, Account.Type.CREDIT_CARD);
         BigDecimal totalAssets = liquid.add(investments);
-        BigDecimal netWorth = totalAssets.subtract(liabilities);
+        BigDecimal netWorth = netWorthOf(accounts);
 
         List<String> months = active.stream().map(t -> YearMonth.from(t.getTxnDate()).toString())
                 .distinct().sorted().toList();
@@ -149,6 +149,16 @@ public class DashboardService {
         } catch (Exception e) {
             return ZoneId.of("Asia/Kolkata");
         }
+    }
+
+    /** Same single definition {@link com.finora.accounts.AccountBalanceConvention} gives
+     *  NetWorthService -- this service used to write the assets-minus-liabilities rule out a third
+     *  time by hand. */
+    private BigDecimal netWorthOf(List<Account> accounts) {
+        return accounts.stream()
+                .map(a -> com.finora.accounts.AccountBalanceConvention
+                        .netWorthContribution(a.getAccountType(), a.getBalance()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     private BigDecimal sumBalances(List<Account> accounts, Account.Type type) {
