@@ -467,12 +467,6 @@ export interface LearningGrowthPoint {
   correctedCount: number;
 }
 
-export interface LearningGrowthPoint {
-  month: string;
-  learnedCount: number;
-  correctedCount: number;
-}
-
 export interface LearningPlatformStatsDto {
   learnedMerchantPairs: number;
   totalConfirmations: number;
