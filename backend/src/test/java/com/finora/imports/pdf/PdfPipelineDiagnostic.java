@@ -94,6 +94,9 @@ class PdfPipelineDiagnostic {
         if (doc.sections().size() > 1) {
             System.out.println("  [CAPABILITY] COMPOSITE_STATEMENT / MULTI_ACCOUNT -- more than one section detected");
         }
+        if (doc.sections().isEmpty()) {
+            reportHeaderDetectionFailure(tableLocator, positioned);
+        }
         System.out.println();
 
         PdfMetadataExtractor metadataExtractor = new PdfMetadataExtractor();
@@ -163,6 +166,49 @@ class PdfPipelineDiagnostic {
         for (var s : finalSections) {
             System.out.println("  rows=" + s.rows().size() + " account=" + s.detectedAccount());
         }
+    }
+
+    /**
+     * Bug fix: when table location found NOTHING, this diagnostic used to print a bare
+     * "0 section(s) found" and then skip the entire per-section loop -- going completely silent in
+     * the exact case an engineer most needs it (a document that imported "successfully" with zero
+     * transactions). Two real statements hit this. Now it dumps the reconstructed lines and, for
+     * each, scores it against the two conditions {@code looksLikeHeaderRow} actually requires
+     * (a cell normalizing to "date", plus >= 2 recognized header names), so the near-miss line is
+     * visible immediately rather than needing a separate one-off probe to find.
+     */
+    private void reportHeaderDetectionFailure(PdfTableLocator tableLocator, List<PositionedText> positioned) {
+        // locate() (single-table wrapper) returns every reconstructed line as preTableLines when no
+        // header was ever recognized -- exactly the "what did the parser actually see" view needed
+        // here, without duplicating PdfTableLocator's private line-grouping logic.
+        List<String> lines = tableLocator.locate(positioned).preTableLines();
+        System.out.println("  [HEADER DETECTION FAILED] No row satisfied: a cell normalizing to \"date\""
+                + " AND >= 2 cells matching known header names.");
+        System.out.println("  Reconstructed lines (" + lines.size() + "), scored as header candidates:");
+        List<String> nearMisses = new ArrayList<>();
+        for (int i = 0; i < lines.size(); i++) {
+            String line = lines.get(i);
+            int hits = 0;
+            boolean hasDate = false;
+            for (String cell : line.split("\\s{2,}|\\t")) {
+                String normalized = CsvParser.normalizeHeaderCell(cell);
+                if (TransactionNormalizer.recognizedColumnNames().contains(normalized.toLowerCase())) hits++;
+                if (normalized.equals("date") || normalized.equals("date & time")) hasDate = true;
+            }
+            if (hits > 0 || hasDate) {
+                nearMisses.add("    line " + i + " [hints=" + hits + " date=" + hasDate + "] " + line);
+            }
+        }
+        if (nearMisses.isEmpty()) {
+            System.out.println("    (no line contained even ONE recognized column name -- this is likely a"
+                    + " scanned/image-only PDF with no text layer, or a layout with no tabular header at all)");
+        } else {
+            System.out.println("    Candidate lines containing at least one recognized column name:");
+            nearMisses.forEach(System.out::println);
+        }
+        int dumpCap = Math.min(lines.size(), 60);
+        System.out.println("    First " + dumpCap + " raw lines:");
+        for (int i = 0; i < dumpCap; i++) System.out.println("      | " + lines.get(i));
     }
 
     private void reportNullMetadataAsWarnings(PdfMetadataExtractor.ExtractedMetadata metadata, int sectionIndex, List<String> warnings) {
