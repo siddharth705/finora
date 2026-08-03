@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Navigate, useLocation, useNavigate, Link } from 'react-router-dom';
-import { ShieldAlert } from 'lucide-react';
 import { useAdminAuth } from '../context/AdminAuthContext';
+import logoMark from '../assets/logo-mark.png';
 import { setupApi } from '../api/endpoints';
 import { ADMIN_SESSION_ENDED_REASON_KEY } from '../api/client';
 import { safeStorage } from '../lib/safeStorage';
@@ -97,8 +97,8 @@ export default function Login() {
     <div className="min-h-screen bg-bg flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="flex items-center gap-2.5 justify-center mb-8">
-          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-rose-400 to-primary-dark flex items-center justify-center">
-            <ShieldAlert size={18} className="text-white" strokeWidth={2.5} />
+          <div className="w-9 h-9 rounded-lg overflow-hidden flex-shrink-0">
+            <img src={logoMark} alt="" className="w-full h-full object-cover" />
           </div>
           <span className="font-extrabold tracking-wide text-xl text-ink">FINORA ADMIN</span>
         </div>

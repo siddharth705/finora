@@ -5,6 +5,7 @@ import {
   TrendingUp, BarChart3, Sparkles, User, Settings as SettingsIcon, MoreVertical, LogOut,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import logoMark from '../assets/logo-mark.png';
 
 const links = [
   { to: '/app', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -45,8 +46,8 @@ export function Sidebar() {
     <aside className="w-64 flex-shrink-0 bg-sidebar min-h-screen flex flex-col py-6 px-4">
       {/* Logo -- links back to the Dashboard, same as clicking the "Dashboard" nav item below. */}
       <NavLink to="/app" end className="flex items-center gap-2.5 px-2 mb-8">
-        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-400 to-primary-dark flex items-center justify-center flex-shrink-0">
-          <Sparkles size={16} className="text-white" strokeWidth={2.5} />
+        <div className="w-8 h-8 rounded-lg overflow-hidden flex-shrink-0">
+          <img src={logoMark} alt="" className="w-full h-full object-cover" />
         </div>
         <span className="text-white font-extrabold tracking-wide text-lg">FINORA</span>
       </NavLink>
