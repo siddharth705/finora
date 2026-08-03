@@ -72,6 +72,10 @@ public final class BankRegistry {
     private static final Map<String, String> ALIAS_TO_ID = new LinkedHashMap<>();
     private static final Map<String, String> IFSC_PREFIX_TO_ID = new LinkedHashMap<>();
 
+    /** An IFSC code: 4 letters identifying the bank, then a reserved '0', then 6 branch characters. */
+    private static final java.util.regex.Pattern IFSC_TOKEN =
+            java.util.regex.Pattern.compile("\\b([A-Z]{4})0[A-Z0-9]{6}\\b");
+
     static {
         // ---------------- Public Sector Banks ----------------
         register("SBI", "State Bank of India", "SBI", "#22409A", "SBI", "sbi",
@@ -227,76 +231,193 @@ public final class BankRegistry {
 
     /**
      * Multi-signal detection, in priority order (most to least reliable):
-     *   1. Bank name found in the statement's own header/metadata text (extraTextHints) --
-     *      the bank's own letterhead is a stronger signal than anything the user could rename.
-     *   2. IFSC prefix found anywhere in that same statement text -- RBI-assigned, unambiguous
-     *      when present (see {@link #detectFromIfsc}).
-     *   3. Bank name/alias found in the filename -- weakest reliable signal, since users rename
+     *   1. The account's OWN IFSC -- an IFSC-shaped token on a line that also carries the literal
+     *      label "IFSC". RBI-assigned and unambiguous, and the label is what distinguishes the
+     *      statement's own code from a counterparty's (see below).
+     *   2. Bank name/alias found in the statement's own header/metadata text -- the bank's own
+     *      letterhead, stronger than anything the user could rename.
+     *   3. An UNLABELLED IFSC-shaped token, and only when every such token in the document agrees
+     *      on one bank.
+     *   4. Bank name/alias found in the filename -- weakest reliable signal, since users rename
      *      files freely (this was the exact bug report that motivated this registry: a renamed
      *      file was previously shown verbatim as the account's bank name).
-     * A 4th signal -- CSV column-layout signatures per bank -- is intentionally NOT implemented:
-     * doing it honestly would require real sample exports from each bank to derive a genuine
-     * signature from, which this project doesn't have for most of the 40 banks above. Rather
-     * than fabricate signatures that would silently misdetect, this step is skipped entirely.
-     * A 5th signal, PDF template matching, doesn't apply -- PDF import isn't implemented (see
-     * CsvImportService). The final fallback, manual user selection, happens one layer up: the
-     * frontend lets the user pick/correct the bank on the import review screen before confirming,
-     * which is passed through as an explicit bankId that overrides whatever this method returns.
+     * At every step, evidence pointing at two different banks is treated as no evidence and falls
+     * through to the next signal rather than picking by registration order. A detection nobody can
+     * justify is worse than OTHER, which the review screen prompts the user to correct.
+     *
+     * Ordering rationale, all three points evidenced by real statements rather than assumed:
+     *  - IFSC ranks above the letterhead now (it did not before) because it is a regulator-issued
+     *    identifier while a bank name is just a word that can appear anywhere -- including in a
+     *    merchant's UPI handle ("...@HDFCBANK-...") inside someone else's statement.
+     *  - But an IFSC is only decisive when LABELLED. Indian UPI/NEFT narrations embed the
+     *    counterparty's IFSC in the transaction text, so a single HDFC statement legitimately
+     *    contains "YESB0MCHUPI", "YESB0PTMUPI" and "ICIC0099999" alongside its own "HDFC0000007",
+     *    and they can easily outnumber it. Frequency therefore cannot break the tie -- structure
+     *    can: the account's own code is the one printed next to the word "IFSC".
+     *  - Alias matching is anchored to whole words (see {@link #containsWholeWordAlias}). It
+     *    previously ran over text with every separator stripped out, which let short aliases match
+     *    across word boundaries: "Rewards Bill" -> "REWARD[SBI]LL" detected State Bank of India,
+     *    and "ATM Balance" -> "A[TMB]ALANCE" detected Tamilnad Mercantile Bank.
+     *
+     * A further signal -- CSV column-layout signatures per bank -- is intentionally NOT
+     * implemented: doing it honestly would require real sample exports from each bank to derive a
+     * genuine signature from, which this project doesn't have for most of the 40 banks above.
+     * Rather than fabricate signatures that would silently misdetect, this step is skipped
+     * entirely. The final fallback, manual user selection, happens one layer up: the frontend lets
+     * the user pick/correct the bank on the import review screen before confirming, which is
+     * passed through as an explicit bankId that overrides whatever this method returns.
      */
     public static BankInfo detect(String filename, List<String> extraTextHints) {
-        String hintsCombined = normalize(joinHints(extraTextHints));
+        // Signal 1: the account's own, labelled IFSC.
+        String byLabelledIfsc = unanimousBankFromIfsc(extraTextHints, true);
+        if (byLabelledIfsc != null) return REGISTRY.get(byLabelledIfsc);
 
-        // Signal 1: bank name/alias inside the statement's own text.
-        BankInfo byHintAlias = matchAlias(hintsCombined);
-        if (byHintAlias != null) return byHintAlias;
+        // Signal 2: bank name/alias inside the statement's own text.
+        String byTextAlias = bestCorroboratedAlias(extraTextHints);
+        if (byTextAlias != null) return REGISTRY.get(byTextAlias);
 
-        // Signal 2: IFSC prefix inside the statement's own text.
-        BankInfo byIfsc = detectFromIfsc(extraTextHints);
-        if (byIfsc != null) return byIfsc;
+        // Signal 3: unlabelled IFSC, accepted only when nothing contradicts it.
+        String byBareIfsc = unanimousBankFromIfsc(extraTextHints, false);
+        if (byBareIfsc != null) return REGISTRY.get(byBareIfsc);
 
-        // Signal 3: filename.
-        BankInfo byFilename = matchAlias(normalize(filename));
-        if (byFilename != null) return byFilename;
+        // Signal 4: filename.
+        String byFilename = soleAliasMatch(tokenize(filename));
+        if (byFilename != null) return REGISTRY.get(byFilename);
 
         return REGISTRY.get(UNKNOWN_ID);
     }
 
-    private static String joinHints(List<String> extraTextHints) {
-        if (extraTextHints == null) return "";
-        StringBuilder sb = new StringBuilder();
-        for (String hint : extraTextHints) {
-            if (hint != null && !hint.isBlank()) sb.append(' ').append(hint);
-        }
-        return sb.toString();
-    }
+    /**
+     * Uppercased alphanumerics with the word boundaries of the original text carried alongside, so
+     * an alias can be required to cover whole words. {@code startsWord[i]}/{@code endsWord[i]} say
+     * whether squashed character i began/ended a word before the separators were removed.
+     * Squashing rather than splitting is deliberate: aliases are registered separator-free
+     * ("BANKOFBARODA") precisely so they match however the bank chose to space its own name.
+     */
+    private record TokenizedText(String squashed, boolean[] startsWord, boolean[] endsWord) {}
 
-    private static BankInfo matchAlias(String normalizedHaystack) {
-        if (normalizedHaystack.isEmpty()) return null;
-        for (Map.Entry<String, String> alias : ALIAS_TO_ID.entrySet()) {
-            if (!alias.getKey().isEmpty() && normalizedHaystack.contains(alias.getKey())) {
-                return REGISTRY.get(alias.getValue());
+    private static TokenizedText tokenize(String raw) {
+        if (raw == null || raw.isEmpty()) return new TokenizedText("", new boolean[0], new boolean[0]);
+        String upper = raw.toUpperCase(Locale.ROOT);
+        StringBuilder squashed = new StringBuilder(upper.length());
+        boolean[] startsWord = new boolean[upper.length()];
+        boolean[] endsWord = new boolean[upper.length()];
+        boolean afterSeparator = true;
+        for (int i = 0; i < upper.length(); i++) {
+            char c = upper.charAt(i);
+            if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+                startsWord[squashed.length()] = afterSeparator;
+                squashed.append(c);
+                afterSeparator = false;
+            } else {
+                if (squashed.length() > 0) endsWord[squashed.length() - 1] = true;
+                afterSeparator = true;
             }
         }
-        return null;
+        if (squashed.length() > 0) endsWord[squashed.length() - 1] = true;
+        return new TokenizedText(squashed.toString(), startsWord, endsWord);
     }
 
-    /** Scans raw (non-normalized -- case matters for this one, since IFSC codes are conventionally
-     *  upper-case and this regex requires it to avoid false-positives on ordinary lowercase text)
-     *  hint text for an 11-character IFSC-shaped token (4 letters, then '0', then 6 alphanumerics)
-     *  and looks its 4-letter prefix up against known bank prefixes. */
-    private static BankInfo detectFromIfsc(List<String> extraTextHints) {
+    /** True when the alias appears in the text covering one or more WHOLE words -- it must begin
+     *  where a word began and end where a word ended. This is what stops "SBI" matching the middle
+     *  of "Rewards Bill" while still letting "BANKOFBARODA" match "Bank of Baroda". */
+    private static boolean containsWholeWordAlias(TokenizedText text, String alias) {
+        if (alias.isEmpty() || text.squashed().isEmpty()) return false;
+        for (int from = 0; ; ) {
+            int start = text.squashed().indexOf(alias, from);
+            if (start < 0) return false;
+            if (text.startsWord()[start] && text.endsWord()[start + alias.length() - 1]) return true;
+            from = start + 1;
+        }
+    }
+
+    /** The bank matching the most distinct hint lines, or null if nothing matched or two banks tie.
+     *  Counting distinct LINES (not total hits) means a letterhead reprinted on every page
+     *  outweighs a one-off mention, without letting a single line's repeated aliases inflate it. */
+    private static String bestCorroboratedAlias(List<String> extraTextHints) {
         if (extraTextHints == null) return null;
-        java.util.regex.Pattern ifscPattern = java.util.regex.Pattern.compile("\\b([A-Z]{4})0[A-Z0-9]{6}\\b");
+        Map<String, Integer> linesPerBank = new LinkedHashMap<>();
+        for (String hint : extraTextHints) {
+            if (hint == null || hint.isBlank()) continue;
+            for (String bankId : banksWithLongestAliasMatch(tokenize(hint))) {
+                linesPerBank.merge(bankId, 1, Integer::sum);
+            }
+        }
+        return strictLeader(linesPerBank);
+    }
+
+    /** The single bank whose alias appears in this text, or null if none or two banks are equally
+     *  well supported. */
+    private static String soleAliasMatch(TokenizedText text) {
+        var banks = banksWithLongestAliasMatch(text);
+        return banks.size() == 1 ? banks.iterator().next() : null;
+    }
+
+    /**
+     * The bank(s) whose alias covers the most characters of this text -- normally exactly one.
+     *
+     * Longest-match-wins is what keeps genuinely overlapping bank names apart: "State Bank of
+     * India" contains "Bank of India" as whole words, so both SBI and BOI match it and a plain
+     * one-vote-each count would deadlock on every SBI statement. The longer alias is strictly more
+     * of the line accounted for, so it is the better-supported reading. Only a true tie at the
+     * same length -- two different banks genuinely named on one line -- returns both, which
+     * propagates the ambiguity upward instead of hiding it.
+     */
+    private static java.util.Set<String> banksWithLongestAliasMatch(TokenizedText text) {
+        java.util.Set<String> best = new java.util.LinkedHashSet<>();
+        int longest = 0;
+        for (Map.Entry<String, String> alias : ALIAS_TO_ID.entrySet()) {
+            String aliasText = alias.getKey();
+            if (aliasText.length() < longest || !containsWholeWordAlias(text, aliasText)) continue;
+            if (aliasText.length() > longest) {
+                longest = aliasText.length();
+                best.clear();
+            }
+            best.add(alias.getValue());
+        }
+        return best;
+    }
+
+    /** Scans raw (non-normalized -- case matters here, since IFSC codes are conventionally
+     *  upper-case and this regex requires it to avoid false-positives on ordinary lowercase text)
+     *  hint text for 11-character IFSC-shaped tokens (4 letters, then '0', then 6 alphanumerics)
+     *  and resolves their 4-letter prefixes against known bank prefixes. Returns the bank only if
+     *  every resolvable token agrees; two banks in the evidence means we don't know.
+     *  When {@code requireLabel} is set, only tokens on a line that also contains the word "IFSC"
+     *  count -- that label is what separates the account's own code from the counterparty codes
+     *  that UPI/NEFT narrations carry. */
+    private static String unanimousBankFromIfsc(List<String> extraTextHints, boolean requireLabel) {
+        if (extraTextHints == null) return null;
+        String agreedBankId = null;
         for (String hint : extraTextHints) {
             if (hint == null) continue;
-            var matcher = ifscPattern.matcher(hint);
+            if (requireLabel && !hint.toUpperCase(Locale.ROOT).contains("IFSC")) continue;
+            var matcher = IFSC_TOKEN.matcher(hint);
             while (matcher.find()) {
-                String prefix = matcher.group(1);
-                String bankId = IFSC_PREFIX_TO_ID.get(prefix);
-                if (bankId != null) return REGISTRY.get(bankId);
+                String bankId = IFSC_PREFIX_TO_ID.get(matcher.group(1));
+                if (bankId == null) continue;
+                if (agreedBankId != null && !agreedBankId.equals(bankId)) return null;
+                agreedBankId = bankId;
             }
         }
-        return null;
+        return agreedBankId;
+    }
+
+    /** The key with the strictly highest count, or null when the map is empty or the top is tied. */
+    private static String strictLeader(Map<String, Integer> counts) {
+        String leader = null;
+        int best = 0;
+        boolean tied = false;
+        for (Map.Entry<String, Integer> e : counts.entrySet()) {
+            if (e.getValue() > best) {
+                best = e.getValue();
+                leader = e.getKey();
+                tied = false;
+            } else if (e.getValue() == best) {
+                tied = true;
+            }
+        }
+        return tied ? null : leader;
     }
 
     /** Never null -- an unrecognized/blank id resolves to the OTHER entry rather than throwing,
