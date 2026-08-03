@@ -18,7 +18,10 @@ concurrency:
 
 jobs:
   backend:
-    name: Backend (Java 21, 934 tests)
+    # No test count in the name: it was "934" while the suite was already at 936, because a
+    # hardcoded total goes stale on the very next commit that adds a test and nothing fails when
+    # it does. The job reports its own real count in the run output.
+    name: Backend (Java 21)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +35,7 @@ jobs:
 
       # No explicit Docker setup step: the suite's Testcontainers integration tests need a Docker
       # daemon, and ubuntu-latest runners already have one running. Verified locally against a
-      # real daemon -- all 934 tests pass, including the Testcontainers ones.
+      # real daemon -- the full suite passes, including the Testcontainers ones.
       - name: Run tests
         working-directory: backend
         run: ./mvnw -B --no-transfer-progress test
