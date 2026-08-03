@@ -1,48 +1,106 @@
 #!/bin/sh
-# Warns (never blocks) when newly staged fixtures, tests, or docs look like they might contain
-# real financial data copied from a real document instead of fully synthesized values -- see the
-# "Synthetic Fixture Policy" in docs/engineering/financial-document-intelligence-principles.md.
+# Guards the "Synthetic Fixture Policy" (docs/engineering/financial-document-intelligence-
+# principles.md): real customer statement data must never enter the repository.
 #
-# Deliberately imprecise (regex heuristics, not a real PII scanner) and warn-only, never blocking
-# -- a hard block on an imperfect heuristic just gets bypassed with --no-verify in practice, same
-# reasoning the rest of .husky/pre-commit already follows. It exists to prompt a reviewer (or the
-# person committing) to look twice, not to be the last line of defense; the policy itself is that.
+# TIERED, because precision differs enormously between these heuristics and a blanket block on a
+# noisy one just trains people to reach for --no-verify (the reasoning the rest of .husky/pre-commit
+# follows, and the reason this script was warn-only to begin with):
 #
-# Scope: only newly ADDED lines (git diff --cached, "+" lines) in files this policy actually
-# governs -- test code, fixture builders, and markdown docs -- so it doesn't nag about unrelated
-# pre-existing lines or unrelated file types every time anything nearby changes.
+#   BLOCK  patterns that are specific enough that a hit is almost certainly real customer data --
+#          email addresses, IFSC codes, Indian mobile numbers. A placeholder of the same shape is
+#          recognised and allowed (see is_placeholder), so writing a synthetic fixture is never
+#          fought by this check.
+#   WARN   long digit sequences. Real account/reference numbers look exactly like timestamps, ids
+#          and coordinates, so this one cannot be blocked without constant false positives.
+#
+# Escape hatch is deliberately NOT --no-verify: put "synthetic-ok" in a comment on the same line.
+# That keeps the exception visible in the diff and reviewable, instead of silently disabling every
+# check in the repo for that commit.
+#
+# Warn-only was not enough in practice: real account numbers, a real IFSC and real UPI references
+# were committed into a test file while this script printed a warning that scrolled past unread.
+# The policy is the last line of defense, but the hook should make violating it require intent.
+#
+# Scope: only newly ADDED lines in files this policy governs -- test code, fixtures, docs.
 
 staged=$(git diff --cached --name-only --diff-filter=ACM)
-targets=$(printf '%s\n' "$staged" | grep -E '(^|/)(test|fixtures)/|Test\.java$|\.md$')
+targets=$(printf '%s\n' "$staged" | grep -E '(^|/)(test|fixtures|resources)/|Test\.java$|\.md$')
 [ -z "$targets" ] && exit 0
 
-tmp=$(mktemp)
-trap 'rm -f "$tmp"' EXIT
+warn=$(mktemp)
+block=$(mktemp)
+trap 'rm -f "$warn" "$block"' EXIT
+
+# A deliberate placeholder: a run of 4+ identical characters (XXXX, 999999), or a word marking it
+# as fake. Note this is applied to the WHOLE token for emails/phones but only to an IFSC's 6-char
+# branch part -- real Indian IFSCs routinely contain runs of zeros (HDFC0000007), so the looser
+# test would wave real ones straight through.
+is_placeholder() {
+  printf '%s' "$1" | grep -qiE '(.)\1{3,}|example|sample|test|dummy|fake|placeholder|redacted|noreply|localhost'
+}
 
 printf '%s\n' "$targets" | while IFS= read -r f; do
   [ -f "$f" ] || continue
-  added=$(git diff --cached -- "$f" | grep -E '^\+[^+]')
+  added=$(git diff --cached -- "$f" | grep -E '^\+[^+]' | grep -v 'synthetic-ok')
   [ -z "$added" ] && continue
 
-  echo "$added" | grep -oE '[0-9]{10,}' | sort -u \
-    | sed "s|^|$f: long digit sequence (account/card/reference number?) - |" >> "$tmp"
-  echo "$added" | grep -oE '\b[A-Z]{4}0[A-Z0-9]{6}\b' | sort -u \
-    | sed "s|^|$f: IFSC-shaped code - |" >> "$tmp"
-  echo "$added" | grep -oE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' | sort -u \
-    | sed "s|^|$f: email address - |" >> "$tmp"
-  echo "$added" | grep -oE '(\+?91[-. ]?)?[6-9][0-9]{9}\b' | sort -u \
-    | sed "s|^|$f: phone-number-shaped value - |" >> "$tmp"
+  echo "$added" | grep -oE '[0-9]{10,}' | sort -u | while IFS= read -r hit; do
+    [ -n "$hit" ] && echo "$f: long digit sequence (account/card/reference number?) - $hit" >> "$warn"
+  done
+
+  echo "$added" | grep -oE '\b[A-Z]{4}0[A-Z0-9]{6}\b' | sort -u | while IFS= read -r hit; do
+    [ -z "$hit" ] && continue
+    branch=$(printf '%s' "$hit" | cut -c6-11)
+    if printf '%s' "$branch" | grep -qE '^(.)\1{5}$'; then
+      echo "$f: IFSC-shaped placeholder (allowed) - $hit" >> "$warn"
+    else
+      echo "$f: IFSC code - $hit" >> "$block"
+    fi
+  done
+
+  echo "$added" | grep -oE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' | sort -u | while IFS= read -r hit; do
+    [ -z "$hit" ] && continue
+    if is_placeholder "$hit"; then
+      echo "$f: example email (allowed) - $hit" >> "$warn"
+    else
+      echo "$f: email address - $hit" >> "$block"
+    fi
+  done
+
+  echo "$added" | grep -oE '(\+?91[-. ]?)?[6-9][0-9]{9}\b' | sort -u | while IFS= read -r hit; do
+    [ -z "$hit" ] && continue
+    if is_placeholder "$hit"; then
+      echo "$f: placeholder phone (allowed) - $hit" >> "$warn"
+    else
+      echo "$f: phone number - $hit" >> "$block"
+    fi
+  done
 done
 
-if [ -s "$tmp" ]; then
+if [ -s "$warn" ]; then
   echo "" >&2
-  echo "WARNING: staged fixtures/tests/docs contain values that look like real financial data" >&2
+  echo "NOTE: staged fixtures/tests/docs contain values worth a second look" >&2
   echo "(Synthetic Fixture Policy -- docs/engineering/financial-document-intelligence-principles.md):" >&2
-  sed 's/^/  /' "$tmp" >&2
+  sed 's/^/  /' "$warn" >&2
   echo "" >&2
-  echo "  If these are already-synthetic placeholder values, this is a false positive and the" >&2
-  echo "  commit proceeds as normal -- this check never blocks." >&2
+  echo "  These do not block. Confirm they are synthetic before pushing." >&2
   echo "" >&2
+fi
+
+if [ -s "$block" ]; then
+  echo "" >&2
+  echo "COMMIT BLOCKED: real customer data must never enter this repository" >&2
+  echo "(Synthetic Fixture Policy -- docs/engineering/financial-document-intelligence-principles.md):" >&2
+  sed 's/^/  /' "$block" >&2
+  echo "" >&2
+  echo "  Replace these with synthetic placeholders. Keep only the structure under test --" >&2
+  echo "  an IFSC's 4-letter bank prefix is meaningful, its branch code is not: HDFC0XXXXXX." >&2
+  echo "  Capture real layouts as redacted extraction traces rather than copying values by hand." >&2
+  echo "" >&2
+  echo "  If a value genuinely is synthetic and this is a false positive, mark that line with a" >&2
+  echo "  'synthetic-ok' comment so the exception stays visible in review." >&2
+  echo "" >&2
+  exit 1
 fi
 
 exit 0
