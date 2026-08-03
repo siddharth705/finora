@@ -1,0 +1,202 @@
+import {
+  buildNewAccountPayload, buildRowPayload, initialAccountForm, initialCategories, initialInclusion,
+  type NewAccountForm,
+} from './importPayload';
+import type { DetectedAccountInfo, StagedRow } from '../types';
+
+const row = (over: Partial<StagedRow> = {}): StagedRow => ({
+  date: '2026-08-01',
+  description: 'ACME STORES',
+  amount: 1200,
+  type: 'EXPENSE',
+  suggestedCategory: 'Shopping',
+  categorySource: 'rule',
+  ruleId: null,
+  likelyDuplicate: false,
+  referenceNumber: null,
+  balanceAfter: null,
+  ...over,
+});
+
+const detected = (over: Partial<DetectedAccountInfo> = {}): DetectedAccountInfo =>
+  ({
+    suggestedName: 'HDFC Savings',
+    suggestedAccountType: 'SAVINGS',
+    openingBalance: 1000,
+    closingBalance: 2000,
+    statementPeriodStart: '2026-07-01',
+    statementPeriodEnd: '2026-07-31',
+    accountNumberMasked: '••••4802',
+    creditLimit: null,
+    paymentDueDate: null,
+    accountHolderName: 'A Holder',
+    branchName: 'Some Branch',
+    ifscCode: 'HDFC0XXXXXX',
+    bank: { id: 'hdfc' },
+    detectedProduct: 'SAVINGS_ACCOUNT',
+    productConfidence: 0.9,
+    productNeedsReview: false,
+    productEvidence: [],
+    productIdentityHash: 'hash-abc',
+    principalAmount: null,
+    interestRate: null,
+    maturityDate: null,
+    maturityAmount: null,
+    installmentAmount: null,
+    installmentsPaid: null,
+    installmentsTotal: null,
+    ...over,
+  }) as unknown as DetectedAccountInfo;
+
+const form: NewAccountForm = {
+  name: 'My Account',
+  accountType: 'SAVINGS',
+  openingBalance: '1000',
+  creditLimit: '',
+  dueDate: '',
+};
+
+describe('buildRowPayload', () => {
+  // These two were absent from the mobile types until they were re-synced against the backend
+  // record. Nothing failed -- the ledger just lost them.
+  it('carries referenceNumber and balanceAfter through from staging', () => {
+    const rows = [row({ referenceNumber: 'CHQ-77', balanceAfter: 8400 })];
+    const [out] = buildRowPayload(rows, [true], ['Shopping']);
+    expect(out.referenceNumber).toBe('CHQ-77');
+    expect(out.balanceAfter).toBe(8400);
+  });
+
+  // The backend uses these to decide whether a category was a real decision worth teaching the
+  // merchant map, or an unresolved guess the user left alone.
+  it('preserves categorySource and ruleId unchanged through review', () => {
+    const rows = [row({ categorySource: 'user_rule', ruleId: 'rule-1' })];
+    const [out] = buildRowPayload(rows, [true], ['Groceries']);
+    expect(out.categorySource).toBe('user_rule');
+    expect(out.ruleId).toBe('rule-1');
+  });
+
+  it('uses the reviewed category, not the suggested one', () => {
+    const [out] = buildRowPayload([row({ suggestedCategory: 'Other' })], [true], ['Dining']);
+    expect(out.category).toBe('Dining');
+  });
+
+  it('reflects the include toggle per row', () => {
+    const out = buildRowPayload([row(), row(), row()], [true, false, true], ['A', 'B', 'C']);
+    expect(out.map((r) => r.include)).toEqual([true, false, true]);
+  });
+
+  it('reports likelyDuplicate honestly rather than hiding excluded rows', () => {
+    const [out] = buildRowPayload([row({ likelyDuplicate: true })], [false], ['Shopping']);
+    expect(out.likelyDuplicate).toBe(true);
+    expect(out.include).toBe(false);
+  });
+});
+
+describe('buildNewAccountPayload', () => {
+  // Dropping these is what turns a fixed deposit into an empty savings account.
+  it('echoes the deposit block back unchanged', () => {
+    const out = buildNewAccountPayload(form, detected({
+      principalAmount: 100000,
+      interestRate: 7.1,
+      maturityDate: '2027-08-01',
+      maturityAmount: 107100,
+      installmentAmount: null,
+      installmentsPaid: null,
+      installmentsTotal: null,
+    }));
+
+    expect(out.principalAmount).toBe(100000);
+    expect(out.interestRate).toBe(7.1);
+    expect(out.maturityDate).toBe('2027-08-01');
+    expect(out.maturityAmount).toBe(107100);
+  });
+
+  // Without this a re-import cannot tell an already-held deposit from a new one, and double-counts.
+  it('echoes productIdentityHash', () => {
+    expect(buildNewAccountPayload(form, detected()).productIdentityHash).toBe('hash-abc');
+  });
+
+  it('sends detectedProduct when the engine was confident', () => {
+    expect(buildNewAccountPayload(form, detected()).detectedProduct).toBe('SAVINGS_ACCOUNT');
+  });
+
+  // The user's own choice must win. Re-asserting a low-confidence guess would silently override
+  // the correction they just made on the review screen.
+  it('drops detectedProduct when the engine flagged it for review', () => {
+    const out = buildNewAccountPayload(form, detected({ productNeedsReview: true }));
+    expect(out.detectedProduct).toBeNull();
+    expect(out.productIdentityHash).toBe('hash-abc'); // identity is still echoed
+  });
+
+  it('keeps bank, holder, branch and IFSC from detection', () => {
+    const out = buildNewAccountPayload(form, detected());
+    expect(out.bankId).toBe('hdfc');
+    expect(out.accountHolderName).toBe('A Holder');
+    expect(out.branchName).toBe('Some Branch');
+    expect(out.ifscCode).toBe('HDFC0XXXXXX');
+  });
+
+  it('only sends credit-card fields for a credit card', () => {
+    const savings = buildNewAccountPayload(
+      { ...form, accountType: 'SAVINGS', creditLimit: '50000', dueDate: '2026-09-01' },
+      detected()
+    );
+    expect(savings.creditLimit).toBeNull();
+    expect(savings.dueDate).toBeNull();
+
+    const card = buildNewAccountPayload(
+      { ...form, accountType: 'CREDIT_CARD', creditLimit: '50000', dueDate: '2026-09-01' },
+      detected()
+    );
+    expect(card.creditLimit).toBe(50000);
+    expect(card.dueDate).toBe('2026-09-01');
+  });
+
+  it('treats blank and unparseable amounts as null rather than NaN', () => {
+    const out = buildNewAccountPayload({ ...form, openingBalance: '' }, detected());
+    expect(out.openingBalance).toBeNull();
+
+    const bad = buildNewAccountPayload({ ...form, openingBalance: 'abc' }, detected());
+    expect(bad.openingBalance).toBeNull();
+  });
+
+  it('falls back to a placeholder name rather than sending an empty one', () => {
+    expect(buildNewAccountPayload({ ...form, name: '   ' }, detected()).name).toBe('Imported Account');
+  });
+
+  it('survives having no detected account at all', () => {
+    const out = buildNewAccountPayload(form, null);
+    expect(out.bankId).toBeNull();
+    expect(out.detectedProduct).toBeNull();
+    expect(out.principalAmount).toBeNull();
+  });
+});
+
+describe('initial review state', () => {
+  // Confirming without reading every row must not silently double-import.
+  it('excludes flagged duplicates by default', () => {
+    expect(initialInclusion([row(), row({ likelyDuplicate: true }), row()])).toEqual([true, false, true]);
+  });
+
+  it('starts each row at its suggested category', () => {
+    expect(initialCategories([row({ suggestedCategory: 'Dining' }), row({ suggestedCategory: 'Fuel' })]))
+      .toEqual(['Dining', 'Fuel']);
+  });
+
+  it('prefills the account form from detection', () => {
+    const out = initialAccountForm(detected({ openingBalance: 2500 }));
+    expect(out.name).toBe('HDFC Savings');
+    expect(out.accountType).toBe('SAVINGS');
+    expect(out.openingBalance).toBe('2500');
+  });
+
+  it('has sane defaults when nothing was detected', () => {
+    expect(initialAccountForm(null)).toEqual({
+      name: '',
+      accountType: 'SAVINGS',
+      openingBalance: '',
+      creditLimit: '',
+      dueDate: '',
+    });
+  });
+});

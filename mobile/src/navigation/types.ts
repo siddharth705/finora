@@ -18,12 +18,13 @@ export type MoreStackParamList = {
 };
 
 /**
- * Only the tabs whose screens actually exist. The roadmap's target IA also has an Import tab
- * (Phase 3) and an Insights tab grouping Reports/Insights/Investments (Phase 4) -- they're added
- * when there's something behind them, rather than mounted now as empty placeholders.
+ * Only the tabs whose screens actually exist. The roadmap's target IA also has an Insights tab
+ * grouping Reports/Insights/Investments (Phase 4) -- added when there's something behind it,
+ * rather than mounted now as an empty placeholder.
  */
 export type AppTabParamList = {
   Home: undefined;
   Transactions: undefined;
+  Import: undefined;
   More: undefined;
 };

@@ -4,6 +4,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { DashboardScreen } from '../screens/DashboardScreen';
 import { LedgerScreen } from '../screens/LedgerScreen';
 import { AccountsScreen } from '../screens/AccountsScreen';
+import { ImportScreen } from '../screens/import/ImportScreen';
 import { MoreScreen } from '../screens/MoreScreen';
 import { useTheme } from '../theme';
 import type { AppTabParamList, MoreStackParamList } from './types';
@@ -32,6 +33,7 @@ function MoreNavigator() {
 const TAB_ICON: Record<keyof AppTabParamList, { active: string; inactive: string }> = {
   Home: { active: 'home', inactive: 'home-outline' },
   Transactions: { active: 'swap-horizontal', inactive: 'swap-horizontal-outline' },
+  Import: { active: 'add-circle', inactive: 'add-circle-outline' },
   More: { active: 'menu', inactive: 'menu-outline' },
 };
 
@@ -54,6 +56,9 @@ export function AppTabs() {
     >
       <Tab.Screen name="Home" component={DashboardScreen} />
       <Tab.Screen name="Transactions" component={LedgerScreen} />
+      {/* Sits centre-left of More rather than as a floating action button: importing a statement
+          is a deliberate, occasional task, not a one-tap action, and it has a full screen behind it. */}
+      <Tab.Screen name="Import" component={ImportScreen} />
       <Tab.Screen name="More" component={MoreNavigator} />
     </Tab.Navigator>
   );

@@ -52,6 +52,7 @@ const config: ExpoConfig = {
   },
   plugins: [
     'expo-secure-store',
+    'expo-sharing',
     '@react-native-firebase/app',
     '@react-native-firebase/auth',
     [
