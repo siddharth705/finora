@@ -1,0 +1,59 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+import App from './App';
+
+// App mounts the whole provider stack; nothing here should reach the network.
+vi.mock('./api/endpoints', () => ({
+  authApi: { login: vi.fn(), logout: vi.fn(), register: vi.fn(), refresh: vi.fn() },
+  userApi: { get: vi.fn(), update: vi.fn() },
+}));
+
+/**
+ * Bug fix regression test: <Routes> had no catch-all, so any unmatched path matched no <Route> and
+ * rendered null -- a completely blank white page, verified in a browser as #root with empty
+ * innerHTML. This is not a dev-only curiosity: wrangler.json sets
+ * assets.not_found_handling = "single-page-application", so Cloudflare serves index.html for every
+ * unknown path in production too. A typo'd URL, a stale bookmark, or a link to a route that has
+ * since moved all produced a blank screen with no message and no way back.
+ */
+describe('App routing — unmatched paths', () => {
+  beforeEach(() => {
+    window.history.pushState({}, '', '/');
+  });
+
+  it.each([
+    '/app/this-route-does-not-exist',
+    '/definitely-not-a-page',
+    '/app/transactions/extra/segments',
+  ])('redirects %s to the landing page instead of rendering a blank screen', async (path) => {
+    window.history.pushState({}, '', path);
+
+    const { container } = render(<App />);
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'));
+    // Something real is on screen. Asserted as "the render is not empty" rather than by hunting
+    // for a specific string, because an empty render is precisely and entirely what the bug was.
+    await waitFor(() => expect(container.textContent?.trim()).not.toBe(''));
+    expect(await screen.findAllByText(/Get Started Free/i)).not.toHaveLength(0);
+  });
+
+  it('leaves a route that does exist alone', async () => {
+    window.history.pushState({}, '', '/login');
+
+    render(<App />);
+
+    await waitFor(() => expect(window.location.pathname).toBe('/login'));
+  });
+
+  it('replaces rather than pushes, so Back does not bounce into the bad URL again', async () => {
+    window.history.pushState({}, '', '/login');
+    window.history.pushState({}, '', '/definitely-not-a-page');
+
+    render(<App />);
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'));
+
+    window.history.back();
+    await waitFor(() => expect(window.location.pathname).toBe('/login'));
+  });
+});

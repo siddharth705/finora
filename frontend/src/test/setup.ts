@@ -28,3 +28,27 @@ if (!window.matchMedia) {
     dispatchEvent: () => false,
   }) as unknown as MediaQueryList;
 }
+
+// Same story as matchMedia: jsdom doesn't implement IntersectionObserver, and useScrollReveal
+// constructs one unconditionally in an effect. Any test rendering a page that uses it (Landing,
+// and every marketing page built on the same hook) died with "IntersectionObserver is not
+// defined" thrown from inside React's commit phase -- which reads as a mysterious render crash
+// rather than a missing browser API, and is a large part of why none of those pages had a test.
+//
+// Never reports an intersection, so reveal-on-scroll content stays in its initial state. That is
+// the honest default for a zero-height jsdom viewport where nothing is ever actually scrolled
+// into view; a test that wants to assert the revealed state should drive the callback itself
+// rather than have this pretend everything is visible.
+if (!window.IntersectionObserver) {
+  class NoopIntersectionObserver implements IntersectionObserver {
+    readonly root = null;
+    readonly rootMargin = '';
+    readonly thresholds: ReadonlyArray<number> = [];
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords(): IntersectionObserverEntry[] { return []; }
+  }
+  window.IntersectionObserver = NoopIntersectionObserver as unknown as typeof IntersectionObserver;
+  globalThis.IntersectionObserver = window.IntersectionObserver;
+}

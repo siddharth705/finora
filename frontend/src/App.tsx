@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './context/AuthContext';
@@ -93,6 +93,17 @@ export default function App() {
           <Route path="/app/insights" element={<Protected><Insights /></Protected>} />
           <Route path="/app/profile" element={<Protected><Profile /></Protected>} />
           <Route path="/app/settings" element={<Protected><Settings /></Protected>} />
+
+          {/* Bug fix: there was no catch-all, and wrangler.json sets
+              assets.not_found_handling = "single-page-application" -- so Cloudflare answers EVERY
+              unmatched path with index.html, React Router then matches no <Route>, and <Routes>
+              renders null. The result was a completely blank white page (verified: #root's
+              innerHTML was empty) with no message and no way back, for any typo'd URL, any stale
+              bookmark, and any link to a route that has since moved. Redirecting rather than
+              rendering a 404 page keeps this a fix to broken routing rather than a new screen;
+              `replace` keeps the bad URL out of history, so Back doesn't bounce straight into it
+              again. */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

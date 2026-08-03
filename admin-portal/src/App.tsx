@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AdminAuthProvider } from './context/AdminAuthContext';
 import { NotificationProvider } from './context/NotificationContext';
@@ -55,6 +55,12 @@ export default function App() {
               <Route path="/health" element={<ProtectedRoute><SystemHealth /></ProtectedRoute>} />
               <Route path="/diagnostics" element={<ProtectedRoute><Diagnostics /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+
+              {/* Same bug, same fix as the user app's App.tsx: with no catch-all, any unmatched
+                  path rendered a completely blank page instead of going anywhere. "/" is the
+                  Dashboard behind ProtectedRoute, so an unauthenticated visitor still lands on
+                  Login rather than being handed an admin screen. */}
+              <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </BrowserRouter>
         </AdminAuthProvider>
