@@ -6,7 +6,12 @@
 
 staged=$(git diff --cached --name-only)
 
-sh scripts/check-fixture-hygiene.sh
+# The exit code must be honoured. This was previously called bare, so the script could print
+# "COMMIT BLOCKED: real customer data must never enter this repository", exit 1, and the commit
+# would proceed anyway -- the hook simply carried on to the next statement and exited 0. A guard
+# that announces a block it does not enforce is worse than no guard: it reads as protection in
+# review while letting exactly what it warns about through.
+sh scripts/check-fixture-hygiene.sh || exit 1
 
 if echo "$staged" | grep -qE '^(frontend|admin-portal)/'; then
   if echo "$staged" | grep -q '^frontend/'; then

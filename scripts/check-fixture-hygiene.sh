@@ -31,7 +31,14 @@
 # Scoping a PII check by directory assumes people only paste customer data in one kind of file.
 
 staged=$(git diff --cached --name-only --diff-filter=ACM)
-targets=$(printf '%s\n' "$staged" | grep -E '\.(java|ts|tsx|js|jsx|sql|yml|yaml|json|md|txt|trace)$')
+# Lockfiles are excluded deliberately, and they are the one exception worth making: they are
+# generated dependency metadata that no human pastes into, they routinely contain maintainer
+# email addresses (npm records them), and being strict JSON they cannot carry a synthetic-ok
+# marker to annotate the false positive away. Left in scope, every lockfile change would trip the
+# block, and a check that fires on routine commits is a check people learn to bypass.
+targets=$(printf '%s\n' "$staged" \
+  | grep -E '\.(java|ts|tsx|js|jsx|sql|yml|yaml|json|md|txt|trace)$' \
+  | grep -vE '(^|/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml)$')
 [ -z "$targets" ] && exit 0
 
 warn=$(mktemp)

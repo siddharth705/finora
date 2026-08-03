@@ -99,8 +99,8 @@ Real bugs already hit here. Each cost time; none are obvious from the code.
 
 **Never put `maxLength` on an input whose `onChangeText` sanitizes.** React Native applies
 `maxLength` to *pasted* text, truncating before the handler runs. A `maxLength={10}` phone field
-turns a pasted `+919876543210` into the wrong number, and a `maxLength={6}` OTP field turns a
-pasted SMS into an empty string. The web app dodges this with a separate `onPaste` reading the
+turns a pasted number-with-country-code into a different, wrong number, and a `maxLength={6}` OTP
+field turns a pasted SMS into an empty string. The web app dodges this with a separate `onPaste` reading the
 clipboard directly — RN has no equivalent. Let the sanitizer cap instead; see
 `lib/validation.ts` and its tests.
 
