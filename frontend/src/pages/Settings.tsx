@@ -1,24 +1,29 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { CheckCircle2, User, SlidersHorizontal, Sparkles, ShieldCheck, Info } from 'lucide-react';
-import { userApi, workspaceApi, analyticsApi, type ImportStatistics } from '../api/endpoints';
+import { useEffect, useState } from 'react';
+import { SlidersHorizontal, Sparkles, ShieldCheck, Info, Smartphone, X } from 'lucide-react';
+import { userApi, workspaceApi, analyticsApi, deviceApi, type ImportStatistics, type DeviceSession } from '../api/endpoints';
 import { useTheme } from '../context/ThemeContext';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
 import { maskPhone } from '../lib/maskPhone';
+import { formatDayMonthYear, formatRelativeTime, SectionCard, VerifiedBadge, SaveStatus, MetricTile } from '../components/AccountUI';
 
 // v1 scope is deliberately capabilities-first, not roadmap-first: every section below reflects a
 // real, backed setting or fact. No "Coming soon" placeholders for 2FA, API keys, integrations,
-// notifications, AI preferences, data export/delete, active sessions, or storage usage -- none of
-// those exist yet, so none of them get a settings control. Add a section here the same day the
-// backend capability it configures actually ships, not before.
+// email/SMS notification preferences, or storage usage -- none of those exist yet, so none of
+// them get a settings control. Add a section here the same day the backend capability it
+// configures actually ships, not before.
 //
 // One thing deliberately absent, on purpose:
 // - Plan/Subscription: there's no subscription model on the backend at all (no plan field on
 //   User, no billing). A hardcoded "Free" label tends to outlive the "temporary" caveat next to
 //   it, so it's hidden entirely rather than displayed as a fact that isn't one yet.
 //
-// Change Password is real now (see ChangePasswordModal) -- an authenticated
-// POST /api/v1/users/me/change-password, genuinely separate from the forgot-password flow used
+// Personal identity fields (name/email/phone/member-since) live on Profile.tsx now, not here --
+// this page is "how Finora behaves for you," not "who you are." Change Password stays here (a
+// Security *action*, not an identity fact) via ChangePasswordModal -- an authenticated
+// POST /api/v1/users/me/password-change/*, genuinely separate from the forgot-password flow used
 // by someone who can't log in at all. See that component's own doc comment for the full reasoning.
+// Active Sessions is new: DeviceController/RefreshTokenService already existed on the backend with
+// no frontend caller at all until this page wired one up.
 
 // Falls back to a curated list of common zones on browsers that predate
 // Intl.supportedValuesOf (Safari < 15, older WebViews) rather than leaving the dropdown empty.
@@ -37,96 +42,17 @@ function availableTimezones(): string[] {
   ];
 }
 
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '?';
-}
-
-function formatMonthYear(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  try {
-    return new Date(iso).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
-  } catch {
-    return '—';
-  }
-}
-
-function formatDayMonthYear(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  try {
-    return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-  } catch {
-    return '—';
-  }
-}
-
-function formatRelativeTime(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return null;
-  const days = Math.floor((Date.now() - then) / (1000 * 60 * 60 * 24));
-  if (days < 1) return 'today';
-  if (days === 1) return 'yesterday';
-  if (days < 30) return `${days} days ago`;
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months} month${months === 1 ? '' : 's'} ago`;
-  const years = Math.floor(months / 12);
-  return `${years} year${years === 1 ? '' : 's'} ago`;
-}
-
-function SectionCard({ icon, title, subtitle, children }: { icon: ReactNode; title: string; subtitle: string; children: ReactNode }) {
-  return (
-    <section className="bg-card rounded-xl2 p-6 shadow-card border border-border">
-      <div className="flex items-start gap-3 mb-5">
-        <div className="w-9 h-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">{icon}</div>
-        <div>
-          <h2 className="font-serif text-lg font-semibold text-ink">{title}</h2>
-          <p className="text-sm text-muted">{subtitle}</p>
-        </div>
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function VerifiedBadge() {
-  return (
-    <span className="inline-flex items-center gap-1 text-xs font-medium text-success bg-success-bg rounded-full px-2 py-0.5 flex-shrink-0">
-      <CheckCircle2 size={12} /> Verified
-    </span>
-  );
-}
-
-/** Per-section save state: a section is either clean (nothing to show), dirty (unsaved edits),
- *  mid-save, freshly saved (a brief confirmation), or errored -- one indicator, four sections,
- *  so "did my change stick" always looks and behaves the same way across the page. */
-function SaveStatus({ dirty, saving, justSaved, error }: { dirty: boolean; saving: boolean; justSaved: boolean; error: boolean }) {
-  if (error) return <span className="text-danger text-xs">Couldn't save — please try again.</span>;
-  if (saving) return <span className="text-muted text-xs">Saving…</span>;
-  if (justSaved) return (
-    <span className="text-success text-xs inline-flex items-center gap-1"><CheckCircle2 size={12} /> Saved</span>
-  );
-  if (dirty) return <span className="text-warning text-xs">Unsaved changes</span>;
-  return null;
-}
-
-function MetricTile({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="bg-bg rounded-lg border border-border px-4 py-3">
-      <p className="text-xs uppercase text-muted mb-1">{label}</p>
-      <p className="text-lg font-semibold text-ink">{value}</p>
-    </div>
-  );
+/** "Chrome on Windows" -- browser/device are both nullable (see DeviceSession's own doc comment,
+ *  best-effort labels, not a guaranteed fingerprint), so this degrades gracefully either way. */
+function deviceLabel(session: DeviceSession): string {
+  if (session.browser && session.device) return `${session.browser} on ${session.device}`;
+  return session.browser || session.device || 'Unknown device';
 }
 
 export default function Settings() {
   const { theme, setTheme } = useTheme();
-  const [email, setEmail] = useState('');
-  const [fullName, setFullName] = useState('');
-  const [savedFullName, setSavedFullName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [phoneVerified, setPhoneVerified] = useState(false);
-  const [createdAt, setCreatedAt] = useState<string | null>(null);
   const [passwordChangedAt, setPasswordChangedAt] = useState<string | null>(null);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [lowBalanceThreshold, setLowBalanceThreshold] = useState('2000');
@@ -136,10 +62,6 @@ export default function Settings() {
   const [timezones] = useState<string[]>(availableTimezones);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
-
-  const [profileSaving, setProfileSaving] = useState(false);
-  const [profileJustSaved, setProfileJustSaved] = useState(false);
-  const [profileError, setProfileError] = useState(false);
 
   const [prefsSaving, setPrefsSaving] = useState(false);
   const [prefsJustSaved, setPrefsJustSaved] = useState(false);
@@ -154,18 +76,27 @@ export default function Settings() {
 
   const [importStats, setImportStats] = useState<ImportStatistics | null>(null);
 
-  const profileDirty = fullName.trim() !== savedFullName;
+  const [sessions, setSessions] = useState<DeviceSession[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
+  const [sessionsError, setSessionsError] = useState(false);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+
   const prefsDirty = lowBalanceThreshold !== savedLowBalanceThreshold || timezone !== savedTimezone;
   const intelDirty = confidenceThreshold !== savedConfidenceThreshold;
 
+  function loadSessions() {
+    setSessionsLoading(true);
+    setSessionsError(false);
+    deviceApi.list()
+      .then(setSessions)
+      .catch(() => setSessionsError(true))
+      .finally(() => setSessionsLoading(false));
+  }
+
   useEffect(() => {
     userApi.get().then((u) => {
-      setEmail(u.email);
-      setFullName(u.fullName);
-      setSavedFullName(u.fullName);
       setPhoneNumber(u.phoneNumber);
       setPhoneVerified(u.phoneVerified);
-      setCreatedAt(u.createdAt);
       setPasswordChangedAt(u.passwordChangedAt);
       setLowBalanceThreshold(String(u.lowBalanceThreshold));
       setSavedLowBalanceThreshold(String(u.lowBalanceThreshold));
@@ -181,26 +112,11 @@ export default function Settings() {
       setSavedConfidenceThreshold(s.autoApplyConfidenceThreshold);
       setIntelLoading(false);
     }).catch(() => setIntelLoading(false));
-    // Best-effort — the Account section shows "—" for any stat that doesn't load rather than
+    // Best-effort — the Data section shows "—" for any stat that doesn't load rather than
     // blocking the rest of the page on it.
     analyticsApi.importStatistics().then(setImportStats).catch(() => {});
+    loadSessions();
   }, []);
-
-  async function saveProfile() {
-    setProfileSaving(true);
-    setProfileError(false);
-    try {
-      const updated = await userApi.update({ fullName: fullName.trim() });
-      setFullName(updated.fullName);
-      setSavedFullName(updated.fullName);
-      setProfileJustSaved(true);
-      setTimeout(() => setProfileJustSaved(false), 2000);
-    } catch {
-      setProfileError(true);
-    } finally {
-      setProfileSaving(false);
-    }
-  }
 
   async function savePreferences() {
     setPrefsSaving(true);
@@ -234,6 +150,19 @@ export default function Settings() {
     }
   }
 
+  async function revokeSession(id: string) {
+    setRevokingId(id);
+    try {
+      await deviceApi.revoke(id);
+      setSessions((prev) => prev.filter((s) => s.id !== id));
+    } catch {
+      // Best-effort UI -- the list simply keeps the row and the user can retry; no dedicated
+      // error state for a single row action on an otherwise-working list.
+    } finally {
+      setRevokingId(null);
+    }
+  }
+
   if (loading) return <p className="text-muted">Loading…</p>;
 
   if (loadError) return <p className="text-muted">Couldn't load your settings — please try again later.</p>;
@@ -242,67 +171,10 @@ export default function Settings() {
     <div className="space-y-6 max-w-3xl">
       <div>
         <h1 className="font-serif text-2xl font-semibold text-ink">Settings</h1>
-        <p className="text-sm text-muted mt-1">Manage your profile, preferences and account settings.</p>
+        <p className="text-sm text-muted mt-1">Manage your preferences, security, and account data.</p>
       </div>
 
-      {/* Account summary -- reflects the SAVED name/email, not an in-progress edit below, so it
-          never flickers ahead of what Profile's own "Unsaved changes" indicator is reporting. */}
-      <div className="bg-card rounded-xl2 p-6 shadow-card border border-border flex items-center gap-4">
-        <div className="w-14 h-14 rounded-full bg-primary flex items-center justify-center text-white text-lg font-semibold flex-shrink-0">
-          {initials(savedFullName)}
-        </div>
-        <div className="min-w-0">
-          <p className="font-serif text-xl font-semibold text-ink truncate">{savedFullName || 'Your account'}</p>
-          <p className="text-sm text-muted truncate">{email}</p>
-          <div className="flex items-center gap-3 mt-1.5 text-xs text-muted flex-wrap">
-            {phoneVerified && (
-              <span className="inline-flex items-center gap-1 text-success"><CheckCircle2 size={12} /> Phone verified</span>
-            )}
-            <span>Member since {formatMonthYear(createdAt)}</span>
-          </div>
-        </div>
-      </div>
-
-      <SectionCard icon={<User size={18} />} title="Profile" subtitle="Your personal information">
-        <div className="grid md:grid-cols-2 gap-4">
-          <div>
-            <label htmlFor="settings-full-name" className="block text-xs uppercase text-muted mb-1">Full name</label>
-            <input
-              id="settings-full-name"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              className="bg-card text-ink w-full border border-border rounded-lg px-3 py-2 text-sm"
-            />
-          </div>
-          <div>
-            <label htmlFor="settings-email" className="block text-xs uppercase text-muted mb-1">Email</label>
-            <input id="settings-email" value={email} readOnly className="text-ink w-full border border-border rounded-lg px-3 py-2 text-sm bg-black/5" />
-          </div>
-          <div>
-            <label htmlFor="settings-phone" className="block text-xs uppercase text-muted mb-1">Phone number</label>
-            <div className="flex items-center gap-2">
-              <input id="settings-phone" value={phoneNumber || '—'} readOnly className="text-ink w-full border border-border rounded-lg px-3 py-2 text-sm bg-black/5" />
-              {phoneVerified && <VerifiedBadge />}
-            </div>
-          </div>
-          <div>
-            <label htmlFor="settings-member-since" className="block text-xs uppercase text-muted mb-1">Member since</label>
-            <input id="settings-member-since" value={formatMonthYear(createdAt)} readOnly className="text-ink w-full border border-border rounded-lg px-3 py-2 text-sm bg-black/5" />
-          </div>
-        </div>
-        <div className="flex items-center justify-end gap-3 mt-5 pt-4 border-t border-border">
-          <SaveStatus dirty={profileDirty} saving={profileSaving} justSaved={profileJustSaved} error={profileError} />
-          <button
-            onClick={saveProfile}
-            disabled={profileSaving || !profileDirty || !fullName.trim()}
-            className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
-          >
-            {profileSaving ? 'Saving…' : 'Save changes'}
-          </button>
-        </div>
-      </SectionCard>
-
-      <SectionCard icon={<SlidersHorizontal size={18} />} title="Preferences" subtitle="Customize your Finora experience">
+      <SectionCard icon={<SlidersHorizontal size={18} />} title="General" subtitle="Customize your Finora experience">
         <div className="grid md:grid-cols-3 gap-4">
           <div>
             <label htmlFor="settings-low-balance-threshold" className="block text-xs uppercase text-muted mb-1">Low balance alert</label>
@@ -355,11 +227,71 @@ export default function Settings() {
         </div>
       </SectionCard>
 
-      <SectionCard
-        icon={<Sparkles size={18} />}
-        title="Intelligence Preferences"
-        subtitle="Control how Finora reviews and understands your financial documents"
-      >
+      <SectionCard icon={<ShieldCheck size={18} />} title="Security" subtitle="Manage your password, verification, and active sessions">
+        <div className="border-b border-border py-3 text-sm">
+          <p className="text-ink font-medium">Password</p>
+          <p className="text-muted text-xs mt-0.5">
+            {formatRelativeTime(passwordChangedAt) ? `Last changed ${formatRelativeTime(passwordChangedAt)}` : 'Never changed'}
+          </p>
+          <p className="text-muted text-[11px] mt-1">Keep your account secure by using a unique password.</p>
+          <button
+            onClick={() => setChangePasswordOpen(true)}
+            className="mt-3 border border-border rounded-lg px-3 py-1.5 text-xs uppercase font-medium text-ink hover:bg-black/5"
+          >
+            Change Password
+          </button>
+        </div>
+        <div className="flex items-center justify-between border-b border-border py-3 text-sm">
+          <div>
+            <p className="text-ink font-medium">Phone verification</p>
+            <p className="text-muted text-xs">{phoneNumber ? maskPhone(phoneNumber) : 'No phone number on file'}</p>
+          </div>
+          {phoneVerified ? <VerifiedBadge /> : <span className="text-xs text-muted flex-shrink-0">Not verified</span>}
+        </div>
+
+        <div className="pt-3">
+          <p className="text-ink font-medium text-sm">Active Sessions</p>
+          <p className="text-muted text-[11px] mt-0.5 mb-3">
+            Every device currently signed in to your account. Signing one out here ends that
+            session the next time it needs to refresh.
+          </p>
+          {sessionsLoading ? (
+            <p className="text-xs text-muted">Loading…</p>
+          ) : sessionsError ? (
+            <p className="text-xs text-danger">Couldn't load your active sessions — please try again later.</p>
+          ) : sessions.length === 0 ? (
+            <p className="text-xs text-muted italic">No active sessions found.</p>
+          ) : (
+            <div className="space-y-2">
+              {sessions.map((s) => (
+                <div key={s.id} className="flex items-center justify-between gap-3 border border-border rounded-lg px-3 py-2.5">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Smartphone size={15} className="text-muted flex-shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-sm text-ink truncate">{deviceLabel(s)}</p>
+                      <p className="text-[11px] text-muted truncate">
+                        {s.lastSeenAt ? `Last active ${formatRelativeTime(s.lastSeenAt) ?? 'recently'}` : 'Not used yet'}
+                        {s.lastSeenIp ? ` · ${s.lastSeenIp}` : ''}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    title="Sign out this device"
+                    disabled={revokingId === s.id}
+                    onClick={() => revokeSession(s.id)}
+                    className="w-7 h-7 rounded-lg hover:bg-danger-bg text-muted hover:text-danger inline-flex items-center justify-center flex-shrink-0 disabled:opacity-50"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </SectionCard>
+
+      <SectionCard icon={<Sparkles size={18} />} title="AI" subtitle="Control how Finora reviews and understands your financial documents">
         {intelLoading ? (
           <p className="text-muted text-sm">Loading…</p>
         ) : (
@@ -395,35 +327,12 @@ export default function Settings() {
         )}
       </SectionCard>
 
-      <SectionCard icon={<ShieldCheck size={18} />} title="Security" subtitle="Manage your password and account protection">
-        <div className="border-b border-border py-3 text-sm">
-          <p className="text-ink font-medium">Password</p>
-          <p className="text-muted text-xs mt-0.5">
-            {formatRelativeTime(passwordChangedAt) ? `Last changed ${formatRelativeTime(passwordChangedAt)}` : 'Never changed'}
-          </p>
-          <p className="text-muted text-[11px] mt-1">Keep your account secure by using a unique password.</p>
-          <button
-            onClick={() => setChangePasswordOpen(true)}
-            className="mt-3 border border-border rounded-lg px-3 py-1.5 text-xs uppercase font-medium text-ink hover:bg-black/5"
-          >
-            Change Password
-          </button>
-        </div>
-        <div className="flex items-center justify-between py-3 text-sm">
-          <div>
-            <p className="text-ink font-medium">Phone verification</p>
-            <p className="text-muted text-xs">{phoneNumber ? maskPhone(phoneNumber) : 'No phone number on file'}</p>
-          </div>
-          {phoneVerified ? <VerifiedBadge /> : <span className="text-xs text-muted flex-shrink-0">Not verified</span>}
-        </div>
-      </SectionCard>
-
-      <SectionCard icon={<Info size={18} />} title="Account" subtitle="Information about your Finora workspace">
+      <SectionCard icon={<Info size={18} />} title="Data" subtitle="Your imported statements and transaction history">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <MetricTile label="Statements Imported" value={importStats ? importStats.totalStatements.toLocaleString('en-IN') : '—'} />
           <MetricTile label="Transactions" value={importStats ? importStats.totalTransactionsImported.toLocaleString('en-IN') : '—'} />
+          <MetricTile label="Rows Skipped" value={importStats ? importStats.totalTransactionsSkipped.toLocaleString('en-IN') : '—'} />
           <MetricTile label="Last Import" value={formatDayMonthYear(importStats?.lastImportedAt)} />
-          <MetricTile label="Member Since" value={formatMonthYear(createdAt)} />
         </div>
       </SectionCard>
 

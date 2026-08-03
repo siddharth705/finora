@@ -432,6 +432,25 @@ export const passwordChangeApi = {
     ).then((r) => r.data),
 };
 
+// Self-service view of the caller's own active refresh-token sessions -- backs Settings.tsx's
+// Active Sessions list under Security. Mirrors the backend's DeviceSessionDto exactly; browser/
+// device/lastSeenIp are best-effort labels captured from whichever request last issued/rotated
+// that token, not a durable per-device fingerprint (see RefreshToken's own doc comment on the
+// backend), so any of them can legitimately be null.
+export interface DeviceSession {
+  id: string;
+  browser: string | null;
+  device: string | null;
+  lastSeenIp: string | null;
+  lastSeenAt: string | null;
+  createdAt: string;
+  expiresAt: string;
+}
+export const deviceApi = {
+  list: () => api.get<DeviceSession[]>('/users/me/devices').then((r) => r.data),
+  revoke: (id: string) => api.delete(`/users/me/devices/${id}`),
+};
+
 // --- Import statistics ---
 //
 // The only analytics view still exposed to end users -- merchant/rule/relationship/learning

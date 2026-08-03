@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Wallet, ArrowLeftRight, PiggyBank, Target, UploadCloud, History,
-  TrendingUp, BarChart3, Sparkles, Settings as SettingsIcon, MoreVertical, LogOut,
+  TrendingUp, BarChart3, Sparkles, User, Settings as SettingsIcon, MoreVertical, LogOut,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -92,6 +92,13 @@ export function Sidebar() {
             {/* Invisible full-screen overlay so clicking anywhere outside closes the menu. */}
             <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
             <div className="absolute bottom-full left-0 right-0 mb-2 bg-sidebar-hover border border-white/10 rounded-lg shadow-xl py-1.5 z-20">
+              <NavLink
+                to="/app/profile"
+                onClick={() => setMenuOpen(false)}
+                className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-gray-300 hover:text-white hover:bg-white/5"
+              >
+                <User size={15} /> Profile
+              </NavLink>
               <NavLink
                 to="/app/settings"
                 onClick={() => setMenuOpen(false)}
