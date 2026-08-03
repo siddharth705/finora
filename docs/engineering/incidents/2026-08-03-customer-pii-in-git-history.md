@@ -141,7 +141,45 @@ Only once all four are confirmed should the rewrite be executed.
   the capturer reading the file (see [`trace-lifecycle.md`](../trace-lifecycle.md)).
 - `TraceCorpusHealthTest` fails the build on unmasked PII in any committed trace.
 
-## 8. What this says about the control that failed
+## 8. Remaining items to close this incident
+
+**Engineering — one task**
+
+- [ ] Re-capture the three `.trace` fixtures from the original PDFs, now that the redactor allowlist
+      includes deposit vocabulary. **Use `./scripts/trace-capture.sh`** — see the note below on why
+      this is not "capture, then review carefully".
+- [ ] Replace the synthetic composite fixture with the regenerated real traces, and point
+      `CompositeMultiProductClassificationTest`'s trace half back at asserting
+      `FIXED_DEPOSIT`/`RECURRING_DEPOSIT` rather than "not accounts".
+- [ ] Delete `buildCompositeMultiProductStatementSample` once the real traces cover it.
+
+> **On reviewing regenerated traces.** The natural instruction here is "carefully review each trace
+> before committing to ensure no PII is exposed". That was the control in force when this incident
+> happened, and it is the reason it happened — a trace is thousands of coordinate lines, nobody
+> reads one, and asking people to is how a customer's account number reaches a repository while
+> everyone believes it was reviewed.
+>
+> That control is now automated. `./scripts/trace-capture.sh` **refuses to write** a trace
+> containing an unmasked email, phone number or IFSC branch code, and equally refuses one that lost
+> the structural evidence it was captured for. It prints a summary with a verdict. Human review is
+> approving that verdict — a decision that takes seconds — not scanning the file.
+>
+> Please point the team at the script rather than at manual review. Re-establishing manual review as
+> the primary control would undo the main preventive measure taken here.
+
+**Governance — must be complete before the incident is closed**
+
+- [ ] §3 exposure assessment answered in full, including CI/CD logs, artifacts and backups
+- [ ] §4 option chosen
+- [ ] §5 pre-rewrite confirmations obtained (Option B only)
+- [ ] §6 decision and rationale recorded
+
+**Standing constraint.** No history rewrite or force-push to `main` may be performed without
+Siddharth's explicit approval, given after confirming every developer has pushed their work. This is
+a repository-level decision, not an engineering one — a rewrite orphans unpushed commits
+irrecoverably, because the remote no longer contains what they were based on.
+
+## 9. What this says about the control that failed
 
 The hygiene hook was scoped by *directory*, which encodes an assumption that customer data only
 arrives through fixtures. It doesn't. It arrives wherever someone is documenting what a real
