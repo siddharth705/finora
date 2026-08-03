@@ -45,7 +45,8 @@ to leave at its default: local dev defaults, or must be explicitly set.
 | `APP_BASE_URL` | Yes | `http://localhost:5173` | Base URL used to build links in emails (password reset, etc. — see `EmailConfig`) | **No** — must be your real deployed frontend's URL, or generated links point at localhost |
 | `ADMIN_APP_BASE_URL` | Recommended | `http://localhost:5174` | Same purpose as `APP_BASE_URL`, but for the admin portal specifically — see `EmailProperties.resolveBaseUrl()`. The user frontend and admin portal are separate deployed apps at separate origins, each with its own `/reset-password` page, but there's no separate admin auth service; without this set, an admin's "Forgot Password" links to the *user* app's reset page instead of the admin portal's own. Picked automatically from the request's `Origin` header — no frontend changes needed either way. | Leave unset only if you're fine with admin password resets linking to the wrong app |
 | `RESEND_API_KEY` | **Yes — hard boot-time requirement in `prod`** | empty | Resend API key; empty falls back to `NoOpEmailService` (logs the link instead of sending) | **No.** Unset, this used to just mean silent no-op emails; `ProductionConfigValidator` now refuses to *start* the `prod` profile at all if this is blank, because the actual failure mode is worse than "no email" — `NoOpEmailService.isConfigured()` returning `false` makes `AuthService.forgotPassword()` return the raw, valid reset link directly in the API response instead, a full account-takeover primitive for anyone who knows a user's email address. |
-| `EMAIL_FROM` | No | `onboarding@resend.dev` | "From" address for outgoing email | Only if you have your own verified sender |
+| `EMAIL_FROM` | No | `onboarding@resend.dev`<!-- synthetic-ok: Resend's own published sandbox sender address, not customer data --> | "From" address for outgoing email | Only if you have your own verified sender — Resend requires the sending domain to be verified (SPF/DKIM DNS records added in Resend's dashboard) before it will actually send as that address; until verified, sends silently fail or land in spam rather than erroring at boot |
+| `EMAIL_FROM_NAME` | No | unset | Optional display name shown alongside `EMAIL_FROM` (`app.email.from-name` — see `EmailProperties`) — e.g. set to `Finora` so outgoing mail shows as `Finora <noreply@yourdomain>` instead of the bare address | Cosmetic only; leaving it unset is safe, just less polished in the recipient's inbox |
 | `GOOGLE_APPLICATION_CREDENTIALS` | **Yes — hard boot-time requirement in `prod`** | unset | Absolute path to a Firebase service-account JSON key file; read directly by the Firebase Admin SDK (`FirebaseConfig`), not via a Spring `@ConfigurationProperties` binding — there's no `application.yml` key for this | **No.** `ProductionConfigValidator` refuses to start the `prod` profile unless `PhoneVerificationProvider.isConfigured()` (i.e. this file is present and valid) — see its own doc comment. Phone verification (registration, password reset, authenticated password change) fails with a 503 everywhere else if this is missing. |
 | *(unset)* | — | — | `FirebaseConfig.firebaseApp()` logs a warning and yields `Optional.empty()` — the app still starts (outside `prod`), but any phone-verification-gated flow fails until this is set | Acceptable only outside `prod` |
 | `TWO_FACTOR_API_KEY` | No — soft, non-fatal check only | empty | 2Factor API key for real-time transaction alert SMS (`TwoFactorSmsProvider`) — scoped to `TransactionService.create()`'s manual-entry path only, never authentication OTPs (Firebase Phone Authentication owns those). Empty falls back to `NoOpSmsProvider` (logs instead of sending). | **Yes.** Unlike `RESEND_API_KEY`/`GOOGLE_APPLICATION_CREDENTIALS`, `ProductionConfigValidator` only logs a startup warning if this is unset — never refuses to boot — since a missed transaction alert is a degraded notification, not a security gap (see `SmsProperties`'s own doc comment). |
@@ -94,11 +95,12 @@ DB_NAME=<Railway Postgres database name>
 DB_USER=<Railway Postgres username>
 DB_PASSWORD=<Railway Postgres password>
 JWT_SECRET=<a real random 32+ character value — generate one, don't reuse any example>
-CORS_ORIGINS=https://finora-cng.pages.dev,https://finora-admin.pages.dev
-APP_BASE_URL=https://finora-cng.pages.dev
-ADMIN_APP_BASE_URL=https://finora-admin.pages.dev
+CORS_ORIGINS=https://app.finoratech.info,https://admin.finoratech.info
+APP_BASE_URL=https://app.finoratech.info
+ADMIN_APP_BASE_URL=https://admin.finoratech.info
 RESEND_API_KEY=<your real Resend API key>
-EMAIL_FROM=<your verified sender address>
+EMAIL_FROM=noreply@finoratech.info
+EMAIL_FROM_NAME=Finora
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/firebase-service-account.json
 TRUST_PROXY_HEADERS=true
 TWO_FACTOR_API_KEY=<your real 2Factor API key>
@@ -186,11 +188,33 @@ is just the origin, used to build a Swagger UI link directly).
 
 **Also verify `CORS_ORIGINS` on the Railway backend matches your ACTUAL deployed frontend
 origin(s) exactly** — scheme, host, no trailing slash. Cloudflare Pages assigns its own
-`<project-name>.pages.dev` domain (and a different one per preview deployment) — confirm the
-production domain in the Cloudflare dashboard rather than assuming it matches whatever was
-planned or referenced elsewhere, and update `CORS_ORIGINS` to match it exactly. A mismatch here
-produces the same "blocked by CORS policy" browser error as the `/api/v1` bug above, so if
-requests still fail after fixing `VITE_API_BASE_URL`, this is the next thing to check.
+`<project-name>.pages.dev` domain (and a different one per preview deployment) by default; once a
+custom domain is attached (Pages project → Custom domains — e.g. `app.finoratech.info` /
+`admin.finoratech.info`, both proxied through the same Cloudflare account the apex domain's DNS
+lives in), that becomes the real production origin and `CORS_ORIGINS`/`APP_BASE_URL`/
+`ADMIN_APP_BASE_URL` on the backend must be updated to match it — the `.pages.dev` origin keeps
+working alongside a custom domain (Cloudflare doesn't disable it), so nothing breaks immediately if
+you forget, but it means the "production" URL and the URL the backend actually trusts have quietly
+diverged. A mismatch here produces the same "blocked by CORS policy" browser error as the
+`/api/v1` bug above, so if requests still fail after fixing `VITE_API_BASE_URL`, this is the next
+thing to check. Attaching a custom domain to an existing Pages project does **not** require a new
+build — unlike a `VITE_*` variable change, this one takes effect without a redeploy.
+
+**Two things a domain migration is easy to forget, neither of which fails loudly:**
+- **Resend domain verification.** `EMAIL_FROM`/`RESEND_API_KEY` being set is not the same as Resend
+  being *willing* to send as that address — the sending domain must be added and verified in
+  Resend's dashboard (Domains → Add Domain), which means adding the SPF/DKIM records Resend
+  provides to the domain's DNS (Cloudflare, in our case). Skip this and sends either fail silently
+  or land in spam; `ProductionConfigValidator` has no way to check it, since "is this domain
+  verified" is a fact that lives entirely on Resend's side.
+- **Firebase Authorized Domains.** Phone verification (registration, password reset, authenticated
+  password change — see `FirebaseConfig`) runs client-side via the Firebase Web SDK, which refuses
+  to complete `signInWithPhoneNumber` from any origin not on Firebase Console → Authentication →
+  Settings → **Authorized domains**. The `.pages.dev` domains are on that list today; the new custom
+  domains are a **different origin** and won't be, until added there manually. Nothing else in this
+  guide's checklist (CORS, `APP_BASE_URL`, Resend) touches this list — it's tracked only by Firebase,
+  so it's the one step a domain cutover silently breaks if skipped: every OTP screen on the new
+  domain fails with `auth/unauthorized-domain` while the rest of the app works normally.
 
 ## Frontend environment variables
 
