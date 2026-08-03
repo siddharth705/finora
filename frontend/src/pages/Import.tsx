@@ -267,6 +267,16 @@ export default function Import() {
               bankId: detectedAccount?.bank.id ?? null,
               branchName: detectedAccount?.branchName ?? null,
               ifscCode: detectedAccount?.ifscCode ?? null,
+              // Echoed back so the server can route the product where it belongs -- a term deposit
+              // becomes an Investment rather than an empty savings account. Deliberately dropped
+              // when the engine wasn't sure: in that case the type the user just picked above is
+              // the answer, and re-asserting a guess here would override their correction.
+              detectedProduct:
+                detectedAccount && !detectedAccount.productNeedsReview
+                  ? detectedAccount.detectedProduct
+                  : null,
+              // Opaque; lets a re-import recognise a product already held instead of duplicating it.
+              productIdentityHash: detectedAccount?.productIdentityHash ?? null,
             }
           : null;
 
@@ -628,6 +638,88 @@ function updateSection(
 // The existing-vs-new account picker + new-account detail fields -- shared between the
 // single-account review step and each account card in the multi-account review step, so the two
 // stay pixel-identical instead of drifting apart as separate copies.
+/**
+ * "1 Savings Account, 1 Fixed Deposit" rather than a bare list of account names.
+ *
+ * A combined statement used to report "3 accounts created", which was both less informative and
+ * wrong -- two of those three were deposits, which are not accounts. Falls back to the account
+ * names when the server hasn't sent product counts (an older response), so the summary never goes
+ * blank on a shape it doesn't recognise.
+ */
+function formatProductsCreated(summary: { accountsCreated: string[]; productsCreated?: Record<string, number> }): string {
+  const counts = Object.entries(summary.productsCreated ?? {});
+  if (counts.length === 0) return summary.accountsCreated.join(', ');
+  return counts.map(([product, n]) => `${n} ${productLabel(product)}${n > 1 ? 's' : ''}`).join(', ');
+}
+
+/** Human labels for FinancialProductType. Kept here rather than derived by replacing underscores
+ *  so "PPF" and "Fixed Deposit" both read correctly. */
+const PRODUCT_LABELS: Record<string, string> = {
+  SAVINGS: 'Savings Account', CURRENT: 'Current Account', OVERDRAFT: 'Overdraft',
+  WALLET: 'Wallet', CREDIT_CARD: 'Credit Card',
+  FIXED_DEPOSIT: 'Fixed Deposit', RECURRING_DEPOSIT: 'Recurring Deposit',
+  PPF: 'PPF', EPF: 'EPF', NPS: 'NPS', MUTUAL_FUND: 'Mutual Fund', DEMAT: 'Demat',
+  LOAN: 'Loan', INSURANCE: 'Insurance', FOREX_CARD: 'Forex Card', UNKNOWN: 'Unidentified product',
+};
+
+export function productLabel(product: string): string {
+  return PRODUCT_LABELS[product] ?? product.replace(/_/g, ' ');
+}
+
+/**
+ * What the engine thinks this section is, and how sure it is.
+ *
+ * Two deliberately different messages. A confident, validated product is a one-line confirmation.
+ * Anything the engine could not identify or could not prove asks the user instead of quietly
+ * prefilling a guess -- because a wrong product writes wrong data into their net worth silently,
+ * while asking costs one dropdown. The evidence is shown on demand so the answer can be argued
+ * with rather than taken on trust.
+ */
+function ProductDetectionNotice({ detected }: { detected: DetectedAccountInfo }) {
+  const [showEvidence, setShowEvidence] = useState(false);
+  const confidence = Math.round((detected.productConfidence ?? 0) * 100);
+
+  if (!detected.productNeedsReview && detected.detectedProduct !== 'UNKNOWN') {
+    return (
+      <div className="md:col-span-2 flex items-center gap-2 text-xs text-muted">
+        <span aria-hidden="true">✓</span>
+        <p>
+          Detected a <span className="font-semibold text-ink">{productLabel(detected.detectedProduct)}</span>
+          {confidence > 0 && <span> ({confidence}% confidence)</span>}.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="md:col-span-2 bg-amber-50 dark:bg-amber-500/10 border border-amber-300/60 rounded-lg px-3 py-2.5">
+      <p className="text-xs text-ink">
+        {detected.detectedProduct === 'UNKNOWN'
+          ? 'We found a financial product in this statement but couldn’t identify what kind it is.'
+          : `This looks like a ${productLabel(detected.detectedProduct)}, but we couldn’t confirm it from the statement.`}
+        {' '}Please pick the right type below — we’ll remember it.
+      </p>
+      {detected.productEvidence?.length > 0 && (
+        <>
+          <button
+            type="button"
+            onClick={() => setShowEvidence((v) => !v)}
+            aria-expanded={showEvidence}
+            className="mt-1.5 text-xs text-primary underline underline-offset-2"
+          >
+            {showEvidence ? 'Hide' : 'Why?'}
+          </button>
+          {showEvidence && (
+            <ul className="mt-1.5 space-y-0.5 text-[11px] text-muted list-disc list-inside">
+              {detected.productEvidence.map((line, i) => <li key={i}>{line}</li>)}
+            </ul>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function AccountChoiceFields({
   existingAccounts,
   detectedAccount,
@@ -704,6 +796,7 @@ function AccountChoiceFields({
         </select>
       ) : (
         <div className="grid md:grid-cols-2 gap-3">
+          {detectedAccount && <ProductDetectionNotice detected={detectedAccount} />}
           {detectedAccount && detectedAccount.bank.id !== 'OTHER' && (
             <div className="md:col-span-2 flex items-center gap-2.5 bg-primary-light border border-primary/20 rounded-lg px-3 py-2">
               <BankLogo bank={detectedAccount.bank} size={28} />
@@ -933,7 +1026,7 @@ function ImportSummaryScreen({
 
       {summary.accountsCreated.length > 0 && (
         <p className="text-xs text-muted mb-3">
-          Created: <span className="text-ink font-medium">{summary.accountsCreated.join(', ')}</span>
+          Created: <span className="text-ink font-medium">{formatProductsCreated(summary)}</span>
         </p>
       )}
 

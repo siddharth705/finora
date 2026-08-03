@@ -406,8 +406,12 @@ public class ImportService {
                                     String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson) {
         long startedAtMs = System.currentTimeMillis();
         List<String> accountsCreated = new ArrayList<>();
+        // What was created, by PRODUCT rather than by account. The summary says "1 Savings, 1 Fixed
+        // Deposit" instead of "3 accounts" -- which was both less informative and, for a combined
+        // statement, wrong: two of those three were never accounts.
+        Map<String, Integer> productsCreated = new LinkedHashMap<>();
 
-        UUID accountId = resolveTargetAccount(userId, request, accountsCreated);
+        UUID accountId = resolveTargetAccount(userId, request, accountsCreated, productsCreated);
 
         long merchantsBefore = merchantRepository.findByUserId(userId).size();
 
@@ -554,7 +558,7 @@ public class ImportService {
                 .orElse(null);
 
         return new ConfirmResponse(imported, skipped, duplicatesDetected, transfersIdentified,
-                newMerchantsLearned, accountsCreated, categoryTally, warnings,
+                newMerchantsLearned, accountsCreated, productsCreated, categoryTally, warnings,
                 accountSnapshot, totalCredits, totalDebits,
                 request.statementOpeningBalance(), request.statementClosingBalance(),
                 minDate, maxDate,
@@ -585,7 +589,8 @@ public class ImportService {
                 : FinancialProductType.SAVINGS;
     }
 
-    private UUID resolveTargetAccount(UUID userId, ConfirmRequest request, List<String> accountsCreated) {
+    private UUID resolveTargetAccount(UUID userId, ConfirmRequest request, List<String> accountsCreated,
+                                       Map<String, Integer> productsCreated) {
         if (request.existingAccountId() != null) {
             return OwnershipGuard.requireOwned(accountRepository.findById(request.existingAccountId()),
                     Account::getUserId, userId, "Account").getId();
@@ -612,11 +617,24 @@ public class ImportService {
                 return match.account().getId();
             }
 
+            // Route the product to where it actually belongs. FinancialProductType carries its own
+            // routing, so a term deposit becomes an INVESTMENT with investmentKind "FD" -- landing
+            // in the Investments module alongside mutual funds and PPF -- rather than an empty
+            // savings account, which is what every deposit section used to become.
+            //
+            // The user's own choice still wins when they made one: accountType comes from the
+            // review screen, and an UNKNOWN product has nothing to route by, so it falls back to
+            // whatever they picked. That fallback IS the correction loop -- they name it once.
+            FinancialProductType product = productTypeOf(na);
+            String accountType = product.accountType() != null
+                    ? product.accountType().name() : na.accountType();
             AccountDto created = accountService.create(userId, new AccountDto.CreateRequest(
-                    na.name(), na.accountType(), na.openingBalance(), na.creditLimit(), na.dueDate(), null,
+                    na.name(), accountType, na.openingBalance(), na.creditLimit(), na.dueDate(),
+                    product.investmentKind(),
                     na.accountHolderName(), na.accountNumberMasked(), na.bankId(),
                     na.branchName(), na.ifscCode()));
             accountsCreated.add(created.name());
+            productsCreated.merge(product.name(), 1, Integer::sum);
 
             // Stamp the identity so the NEXT import of this product recognises it. Done here rather
             // than through AccountDto.CreateRequest so the public account API stays unchanged --

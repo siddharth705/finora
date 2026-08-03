@@ -236,6 +236,10 @@ public class ImportDto {
             int transfersIdentified,
             int newMerchantsLearned,
             List<String> accountsCreated,
+            // What was created, counted by PRODUCT rather than by account -- so the summary can say
+            // "1 Savings, 1 Fixed Deposit" instead of "3 accounts", which for a combined statement
+            // was both less informative and wrong: two of those three were never accounts.
+            Map<String, Integer> productsCreated,
             Map<String, Integer> categoriesAssigned,
             List<String> warnings,
             AccountDto account,

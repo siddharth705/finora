@@ -284,6 +284,66 @@ class ImportServiceAskOnceTest {
     }
 
     @Test
+    void confirm_routesATermDepositToInvestments_notToAnEmptySavingsAccount() throws Exception {
+        // Phase 3 step 8. A deposit section used to become a savings account with no transactions
+        // in it, because the review form only ever offered account types. FinancialProductType
+        // carries its own routing, so the product decides where it lands: INVESTMENT with an
+        // investmentKind of "FD", alongside mutual funds and PPF in the Investments module.
+        UUID newAccountId = UUID.randomUUID();
+        when(accountService.create(eq(userId), any())).thenReturn(
+                new AccountDto(newAccountId, "HDFC Term Deposit", "INVESTMENT", BigDecimal.valueOf(100000),
+                        null, null, null, null, null, null, null,
+                        AccountDto.BankDto.from(com.finora.util.BankRegistry.get("OTHER")), null, null, null,
+                        0, 0L, "ACTIVE"));
+
+        var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "Deposit",
+                BigDecimal.valueOf(100000), "INCOME", "Dining", true, "rule", null, false, null, null);
+        // The review screen echoes the classification back; accountType stays what the form had.
+        var newAccount = new NewAccountRequest("HDFC Term Deposit", "SAVINGS", BigDecimal.valueOf(100000),
+                null, null, null, null, null, null, null, "FIXED_DEPOSIT", null);
+        var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null);
+
+        var response = importService.confirm(userId, dummyFile(), request);
+
+        ArgumentCaptor<AccountDto.CreateRequest> captor =
+                ArgumentCaptor.forClass(AccountDto.CreateRequest.class);
+        verify(accountService).create(eq(userId), captor.capture());
+        assertThat(captor.getValue().accountType())
+                .as("the product's own routing wins over the form's default")
+                .isEqualTo("INVESTMENT");
+        assertThat(captor.getValue().investmentKind()).isEqualTo("FD");
+        assertThat(response.productsCreated())
+                .as("the summary names products, not a count of accounts")
+                .containsEntry("FIXED_DEPOSIT", 1);
+    }
+
+    @Test
+    void confirm_leavesAnUnknownProductToWhateverTypeTheUserPicked() throws Exception {
+        // The correction loop's backstop: an unclassifiable product has nothing to route by, so the
+        // user's one-time answer on the review screen is what decides -- never a guess.
+        UUID newAccountId = UUID.randomUUID();
+        when(accountService.create(eq(userId), any())).thenReturn(
+                new AccountDto(newAccountId, "Mystery", "WALLET", BigDecimal.ZERO, null, null, null, null,
+                        null, null, null,
+                        AccountDto.BankDto.from(com.finora.util.BankRegistry.get("OTHER")), null, null, null,
+                        0, 0L, "ACTIVE"));
+
+        var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "Something",
+                BigDecimal.valueOf(10), "EXPENSE", "Other", true, "rule", null, false, null, null);
+        var newAccount = new NewAccountRequest("Mystery", "WALLET", BigDecimal.ZERO, null, null,
+                null, null, null, null, null, "UNKNOWN", null);
+        var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null);
+
+        importService.confirm(userId, dummyFile(), request);
+
+        ArgumentCaptor<AccountDto.CreateRequest> captor =
+                ArgumentCaptor.forClass(AccountDto.CreateRequest.class);
+        verify(accountService).create(eq(userId), captor.capture());
+        assertThat(captor.getValue().accountType()).isEqualTo("WALLET");
+        assertThat(captor.getValue().investmentKind()).isNull();
+    }
+
+    @Test
     void confirm_throws_whenNeitherExistingAccountNorNewAccountIsProvided() {
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
                 BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);

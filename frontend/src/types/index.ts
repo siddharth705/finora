@@ -205,6 +205,7 @@ export interface ImportSummary {
   transfersIdentified: number;
   newMerchantsLearned: number;
   accountsCreated: string[];
+  productsCreated: Record<string, number>;
   categoriesAssigned: Record<string, number>;
   warnings: string[];
   // Everything needed to render a "professional import summary" without a second round-trip --

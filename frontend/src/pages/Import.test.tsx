@@ -203,3 +203,67 @@ describe('Import — file-type routing', () => {
     expect(screen.queryByText(/could not parse this pdf/i)).not.toBeInTheDocument();
   });
 });
+
+describe('Import — Financial Product Discovery on the review screen', () => {
+  beforeEach(() => {
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  function stageWithProduct(overrides: Partial<DetectedAccountInfo>) {
+    const detected = { ...detectedAccount, ...overrides };
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'session-1',
+      multiAccount: false,
+      sections: null,
+      staging: { rows: [], totalParsed: 0, flaggedDuplicates: 0, detectedAccount: detected, unparseableRows: [] },
+    });
+  }
+
+  it('confirms a validated product in one line rather than interrogating the user', async () => {
+    stageWithProduct({ detectedProduct: 'SAVINGS', productConfidence: 0.87, productNeedsReview: false });
+    const user = userEvent.setup();
+    renderImport();
+
+    await user.upload(screen.getByTestId('statement-file-input'), pdfFile());
+
+    expect(await screen.findByText(/detected a/i)).toBeInTheDocument();
+    expect(screen.getByText(/savings account/i)).toBeInTheDocument();
+    expect(screen.queryByText(/couldn’t identify/i)).not.toBeInTheDocument();
+  });
+
+  it('asks the user to name an unidentified product instead of prefilling a guess', async () => {
+    // The decision that matters: a wrong product writes wrong data into net worth silently, while
+    // asking costs one dropdown.
+    stageWithProduct({ detectedProduct: 'UNKNOWN', productConfidence: 0, productNeedsReview: true });
+    const user = userEvent.setup();
+    renderImport();
+
+    await user.upload(screen.getByTestId('statement-file-input'), pdfFile());
+
+    expect(await screen.findByText(/couldn’t identify what kind it is/i)).toBeInTheDocument();
+  });
+
+  it('shows the evidence behind an unproven classification on demand', async () => {
+    // Explainability is the point of the evidence engine -- a classification the user cannot
+    // interrogate is one they can only accept or distrust wholesale.
+    stageWithProduct({
+      detectedProduct: 'FIXED_DEPOSIT',
+      productConfidence: 0.5,
+      productNeedsReview: true,
+      productEvidence: ['POSITIVE: MATURITY_FIELD (1.0) -- observed in column headers'],
+    });
+    const user = userEvent.setup();
+    renderImport();
+
+    await user.upload(screen.getByTestId('statement-file-input'), pdfFile());
+
+    const why = await screen.findByRole('button', { name: /why\?/i });
+    expect(screen.queryByText(/MATURITY_FIELD/)).not.toBeInTheDocument();
+
+    await user.click(why);
+
+    expect(screen.getByText(/MATURITY_FIELD/)).toBeInTheDocument();
+    expect(why).toHaveAttribute('aria-expanded', 'true');
+  });
+});
