@@ -117,9 +117,22 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
-    // A 401 on anything other than the refresh call itself: try exactly once to refresh the
-    // access token and replay the original request.
-    if (error.response?.status === 401 && !originalRequest._retried && !originalRequest.url?.includes('/auth/refresh')) {
+    // A 401 on anything other than an auth endpoint: try exactly once to refresh the access token
+    // and replay the original request.
+    //
+    // Bug fix: this used to exclude only '/auth/refresh', not the whole AUTH_ENDPOINTS_NO_TOKEN
+    // list the request interceptor above already uses -- the web app's client.ts carries this
+    // exact fix and its reasoning, and the port to mobile didn't bring it across. A 401 from
+    // /auth/login means "wrong password", not "your session expired", but this branch treated the
+    // two identically. For a signed-out user with a stale refresh token still in SecureStore (an
+    // app killed mid-logout, or a logout whose network call failed), one mistyped password sent
+    // that stale token to /auth/refresh -- and presenting an already-rotated refresh token is
+    // exactly what RefreshTokenService.rotate() treats as a theft signal, revoking every active
+    // session for that user on every device. A typo on the sign-in screen could sign you out
+    // everywhere.
+    const isAuthEndpoint = AUTH_ENDPOINTS_NO_TOKEN.some((path) => originalRequest.url?.includes(path));
+
+    if (error.response?.status === 401 && !originalRequest._retried && !isAuthEndpoint) {
       originalRequest._retried = true;
       const refreshToken = await safeStorage.getItem(REFRESH_TOKEN_KEY);
 
