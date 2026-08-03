@@ -65,6 +65,7 @@ public class AuthService {
     private final PhoneVerificationProvider phoneVerificationProvider;
     private final PlatformSettingsService platformSettingsService;
     private final PasswordHistoryService passwordHistoryService;
+    private final IdentityLookup identityLookup;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public AuthService(UserRepository userRepository, CategoryRepository categoryRepository,
@@ -74,7 +75,8 @@ public class AuthService {
                         EmailProvider emailProvider, EmailProperties emailProperties,
                         PhoneVerificationProvider phoneVerificationProvider,
                         PlatformSettingsService platformSettingsService,
-                        PasswordHistoryService passwordHistoryService) {
+                        PasswordHistoryService passwordHistoryService,
+                        IdentityLookup identityLookup) {
         this.userRepository = userRepository;
         this.categoryRepository = categoryRepository;
         this.resetTokenRepository = resetTokenRepository;
@@ -88,6 +90,7 @@ public class AuthService {
         this.phoneVerificationProvider = phoneVerificationProvider;
         this.platformSettingsService = platformSettingsService;
         this.passwordHistoryService = passwordHistoryService;
+        this.identityLookup = identityLookup;
     }
 
     @Transactional
@@ -246,11 +249,9 @@ public class AuthService {
         if (identifier.contains("@")) {
             return identifier;
         }
-        String digitsOnly = identifier.replaceAll("[^0-9]", "");
-        return userRepository.findByPhoneNumberAndAccountScope(identifier, scope)
-                .or(() -> userRepository.findByPhoneNumberAndAccountScope("+" + digitsOnly, scope))
-                .or(() -> userRepository.findByPhoneNumberAndAccountScope(digitsOnly, scope))
-                .or(() -> userRepository.findByPhoneNumberAndAccountScope(normalizePhoneNumber(identifier), scope))
+        // Delegates the stored-format variants to IdentityLookup, so the normalisation used when a
+        // number is WRITTEN and the variants tried when one is READ cannot drift apart.
+        return identityLookup.byPhoneNumber(identifier, scope)
                 .map(User::getEmail)
                 .orElse(identifier);
     }

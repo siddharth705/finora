@@ -70,7 +70,7 @@ class AuthServiceRegisterTest {
                 mock(PasswordEncoder.class), mock(JwtService.class), mock(AuthenticationManager.class),
                 auditService, refreshTokenService, emailProvider,
                 new EmailProperties(), mock(PhoneVerificationProvider.class), platformSettingsService,
-                mock(PasswordHistoryService.class)
+                mock(PasswordHistoryService.class), new IdentityLookup(userRepository)
         );
     }
 

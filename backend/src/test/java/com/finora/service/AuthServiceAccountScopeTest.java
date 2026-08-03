@@ -155,6 +155,7 @@ class AuthServiceAccountScopeTest {
                 mock(com.finora.config.EmailProperties.class),
                 mock(PhoneVerificationProvider.class),
                 settings,
-                mock(PasswordHistoryService.class));
+                mock(PasswordHistoryService.class),
+                new IdentityLookup(userRepository));
     }
 }
