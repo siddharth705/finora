@@ -48,6 +48,7 @@ const detectedAccount: DetectedAccountInfo = {
   productConfidence: 0.85,
   productNeedsReview: false,
   productEvidence: [],
+  productIdentityHash: null,
   bank: {
     id: 'OTHER',
     officialName: null,

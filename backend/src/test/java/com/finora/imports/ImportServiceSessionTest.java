@@ -75,10 +75,11 @@ class ImportServiceSessionTest {
         ImportRuleLearningService ruleLearningService = new ImportRuleLearningService(categorizationService);
 
         pdfPreviewGenerator = mock(com.finora.imports.pdf.PdfPreviewGenerator.class);
+        var productIdentityResolver = new com.finora.imports.product.ProductIdentityResolver(accountRepository);
         importService = new ImportService(accountRepository, accountService, transactionRepository,
                 merchantRepository, statementImportRepository, categorizationService, reconciliationService,
                 recurringService, previewGenerator, duplicateDetector, ruleLearningService, importSessionService,
-                pdfPreviewGenerator);
+                pdfPreviewGenerator, productIdentityResolver);
 
         Account account = new Account();
         ReflectionTestUtils.setField(account, "id", accountId);

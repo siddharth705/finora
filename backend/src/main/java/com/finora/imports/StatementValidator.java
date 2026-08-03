@@ -144,7 +144,12 @@ public class StatementValidator {
                 acc.accountNumberMasked, acc.creditLimit, acc.dueDate, acc.accountHolderName,
                 acc.branchName, acc.ifscCode,
                 AccountDto.BankDto.from(bank),
-                product.type().name(), product.confidence(), product.needsReview(), product.report()
+                product.type().name(), product.confidence(), product.needsReview(), product.report(),
+                // CSV's account-number detection already masks before this point (see
+                // AccountSignalAccumulator), so there is no unmasked number here to hash. The
+                // masked digits still make a PROBABLE match possible, which is the honest ceiling
+                // for a format that never gave us the full value.
+                null
         );
     }
 

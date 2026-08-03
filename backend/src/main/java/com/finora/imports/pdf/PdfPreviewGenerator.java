@@ -10,6 +10,7 @@ import com.finora.imports.CsvParser;
 import com.finora.imports.DocumentContext;
 import com.finora.imports.TransactionNormalizer;
 import com.finora.imports.product.ProductDiscovery;
+import com.finora.imports.product.ProductIdentity;
 import com.finora.imports.product.ProductEvidenceCollector;
 import com.finora.util.BankRegistry;
 import org.springframework.stereotype.Component;
@@ -253,7 +254,12 @@ public class PdfPreviewGenerator {
                 metadata.accountNumberMasked(), metadata.creditLimit(), metadata.paymentDueDate(),
                 metadata.accountHolderName(), metadata.branchName(), metadata.ifscCode(),
                 AccountDto.BankDto.from(bank),
-                product.type().name(), product.confidence(), product.needsReview(), product.report());
+                product.type().name(), product.confidence(), product.needsReview(), product.report(),
+                // Hashed here and only here: this is the last point in the pipeline where the
+                // unmasked number exists, and it must not travel any further than this call.
+                ProductIdentity.of(bank.id(), product.type(),
+                        metadata.accountNumberFullForHashingOnly(), metadata.accountNumberMasked())
+                        .strongKey());
     }
 
     /**

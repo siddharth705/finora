@@ -168,6 +168,12 @@ export interface DetectedAccountInfo {
   productConfidence: number;
   productNeedsReview: boolean;
   productEvidence: string[];
+
+  // Opaque to the client. A one-way hash of institution + this product's own number, computed
+  // server-side at staging (the only point the full number exists) so that confirming a statement
+  // recognises a deposit already held instead of creating a second one and double-counting it in
+  // net worth. Echo it back unchanged on confirm; never display it.
+  productIdentityHash: string | null;
 }
 
 // Mirrors the backend FinancialProductType enum. FD/RD/PPF/EPF/NPS/mutual fund/demat route to the

@@ -83,7 +83,11 @@ public record ProductHypothesis(FinancialProductType type, Set<ProductSignal> ex
                 List.of(DATE_COLUMN, DESCRIPTION_COLUMN, DEBIT_CREDIT_COLUMNS, RUNNING_BALANCE_COLUMN,
                         TRANSACTION_ROWS, OPENING_BALANCE_FIELD, CLOSING_BALANCE_FIELD),
                 List.of(MATURITY_FIELD, INSTALLMENT_FIELD, EMI_FIELD, MINIMUM_DUE_FIELD, TOTAL_DUE_FIELD),
-                List.of(DATE_COLUMN, DESCRIPTION_COLUMN, TRANSACTION_ROWS));
+                // Proof: a transaction account proves itself with a reconcilable ledger -- rows
+                // between an opening and a closing balance. A section with a narration column and
+                // no balances is a list, not an account statement.
+                List.of(DATE_COLUMN, DESCRIPTION_COLUMN, TRANSACTION_ROWS,
+                        OPENING_BALANCE_FIELD, CLOSING_BALANCE_FIELD));
 
         // Structurally identical to SAVINGS -- only the document's own words separate them.
         define(FinancialProductType.CURRENT,
@@ -118,7 +122,8 @@ public record ProductHypothesis(FinancialProductType type, Set<ProductSignal> ex
         define(FinancialProductType.RECURRING_DEPOSIT,
                 List.of(INSTALLMENT_FIELD, MATURITY_FIELD, DATE_COLUMN, INTEREST_RATE_FIELD),
                 List.of(DESCRIPTION_COLUMN, MINIMUM_DUE_FIELD, EMI_FIELD),
-                List.of(INSTALLMENT_FIELD));
+                // Proof: an installment, and the maturity it is paying towards.
+                List.of(INSTALLMENT_FIELD, MATURITY_FIELD));
 
         // A fixed deposit is a principal, a rate and a maturity -- and NO ledger. The forbidden set
         // is what stops a savings account whose narration mentions a deposit from reading as one:
@@ -126,12 +131,15 @@ public record ProductHypothesis(FinancialProductType type, Set<ProductSignal> ex
         define(FinancialProductType.FIXED_DEPOSIT,
                 List.of(MATURITY_FIELD, INTEREST_RATE_FIELD, PRINCIPAL_FIELD, DATE_COLUMN),
                 List.of(DESCRIPTION_COLUMN, INSTALLMENT_FIELD, MINIMUM_DUE_FIELD, EMI_FIELD),
-                List.of(MATURITY_FIELD));
+                // Proof: a principal, the rate it earns, and when it matures. A "maturity date"
+                // alone is a date on a page.
+                List.of(PRINCIPAL_FIELD, INTEREST_RATE_FIELD, MATURITY_FIELD));
 
         define(FinancialProductType.LOAN,
                 List.of(EMI_FIELD, OUTSTANDING_FIELD, TENURE_FIELD, INTEREST_RATE_FIELD),
                 List.of(MINIMUM_DUE_FIELD, CARD_NUMBER_FIELD),
-                List.of(OUTSTANDING_FIELD));
+                // Proof: what is outstanding, and the EMI servicing it.
+                List.of(OUTSTANDING_FIELD, EMI_FIELD));
 
         // Investment wrappers Finora recognises but has little structural vocabulary for yet. They
         // are named-only: an empty expectation set means nothing but the document's own words can

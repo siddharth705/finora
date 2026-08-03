@@ -113,7 +113,14 @@ public class ImportDto {
             String detectedProduct,        // FinancialProductType name, e.g. "SAVINGS", "FIXED_DEPOSIT", "UNKNOWN"
             double productConfidence,      // 0..0.95
             boolean productNeedsReview,    // true unless the product was identified, proved itself, and is modelled
-            List<String> productEvidence   // the reasoning, so a wrong answer can be argued with
+            List<String> productEvidence,  // the reasoning, so a wrong answer can be argued with
+
+            // A one-way hash of institution + this product's own full number, computed at STAGING
+            // because that is the only point the full number exists -- it is hashed there and
+            // discarded, so the number never reaches a session, a database column or a log. Lets
+            // next month's statement recognise the same deposit instead of creating a second one
+            // and double-counting it. Null when the document gave no usable number.
+            String productIdentityHash
     ) {}
 
     public record StagingResponse(List<StagedRow> rows, int totalParsed, int flaggedDuplicates,
@@ -186,10 +193,21 @@ public class ImportDto {
             BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance
     ) {}
 
+    /**
+     * @param detectedProduct      the FinancialProductType the review screen is confirming, echoed
+     *                             back from staging. Null from an older client, which then behaves
+     *                             exactly as before.
+     * @param productIdentityHash  echoed back from {@link DetectedAccountInfo}, so confirm can tell
+     *                             "the deposit I already hold" from "a new one". Already a hash
+     *                             when it reaches the client -- no unmasked number ever leaves the
+     *                             server, so a client cannot forge one into a different product's
+     *                             identity without already knowing that product's full number.
+     */
     public record NewAccountRequest(
             String name, String accountType, BigDecimal openingBalance, BigDecimal creditLimit, LocalDate dueDate,
             String accountHolderName, String accountNumberMasked, String bankId,
-            String branchName, String ifscCode
+            String branchName, String ifscCode,
+            String detectedProduct, String productIdentityHash
     ) {}
 
     public record ConfirmedRow(

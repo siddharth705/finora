@@ -13,6 +13,9 @@ import com.finora.repository.MerchantRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.accounts.AccountService;
+import com.finora.imports.product.FinancialProductType;
+import com.finora.imports.product.ProductIdentity;
+import com.finora.imports.product.ProductIdentityResolver;
 import com.finora.security.OwnershipGuard;
 import com.finora.service.CategorizationService;
 import com.finora.service.RecurringService;
@@ -76,6 +79,7 @@ public class ImportService {
     private final ImportRuleLearningService ruleLearningService;
     private final ImportSessionService importSessionService;
     private final com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator;
+    private final ProductIdentityResolver productIdentityResolver;
 
     public ImportService(AccountRepository accountRepository, AccountService accountService,
                           TransactionRepository transactionRepository, MerchantRepository merchantRepository,
@@ -87,7 +91,9 @@ public class ImportService {
                           DuplicateDetector duplicateDetector,
                           ImportRuleLearningService ruleLearningService,
                           ImportSessionService importSessionService,
-                          com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator) {
+                          com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator,
+                          ProductIdentityResolver productIdentityResolver) {
+        this.productIdentityResolver = productIdentityResolver;
         this.accountRepository = accountRepository;
         this.accountService = accountService;
         this.transactionRepository = transactionRepository;
@@ -563,6 +569,22 @@ public class ImportService {
                 .allMatch(si -> si.getStatementPeriodEnd() == null || !si.getStatementPeriodEnd().isAfter(thisStatementEnd));
     }
 
+    /** What the review screen says this product is, falling back to the coarse account type when a
+     *  client hasn't been updated to echo the classification back. Never guesses a finer product
+     *  than it was told: an unstated FD stays SAVINGS here rather than being invented. */
+    private FinancialProductType productTypeOf(NewAccountRequest na) {
+        if (na.detectedProduct() != null && !na.detectedProduct().isBlank()) {
+            try {
+                return FinancialProductType.valueOf(na.detectedProduct());
+            } catch (IllegalArgumentException e) {
+                // An unknown value from a client is not worth failing an import over.
+            }
+        }
+        return "CREDIT_CARD".equals(na.accountType()) ? FinancialProductType.CREDIT_CARD
+                : "WALLET".equals(na.accountType()) ? FinancialProductType.WALLET
+                : FinancialProductType.SAVINGS;
+    }
+
     private UUID resolveTargetAccount(UUID userId, ConfirmRequest request, List<String> accountsCreated) {
         if (request.existingAccountId() != null) {
             return OwnershipGuard.requireOwned(accountRepository.findById(request.existingAccountId()),
@@ -573,11 +595,37 @@ public class ImportService {
             if (na.name() == null || na.name().isBlank()) {
                 throw new ApiException(HttpStatus.BAD_REQUEST, "The new account needs a name.");
             }
+
+            // Before creating anything: is this a product the user already holds?
+            //
+            // Classification finds the same fixed deposit in every monthly statement, so without
+            // this check each re-import creates another one and double-counts it in net worth --
+            // and unpicking that afterwards is a data migration plus a merge UI, not a bug fix.
+            // Only an EXACT identity match (same institution AND same product number) redirects
+            // silently. A merely PROBABLE one deliberately falls through and creates the account
+            // the user asked for: quietly importing into the wrong deposit corrupts two products
+            // at once, which is worse than a duplicate the user can see and merge.
+            ProductIdentity discovered = ProductIdentity.stored(
+                    na.bankId(), productTypeOf(na), na.productIdentityHash(), na.accountNumberMasked());
+            ProductIdentityResolver.ProductMatch match = productIdentityResolver.resolve(userId, discovered);
+            if (match.mayImportWithoutAsking()) {
+                return match.account().getId();
+            }
+
             AccountDto created = accountService.create(userId, new AccountDto.CreateRequest(
                     na.name(), na.accountType(), na.openingBalance(), na.creditLimit(), na.dueDate(), null,
                     na.accountHolderName(), na.accountNumberMasked(), na.bankId(),
                     na.branchName(), na.ifscCode()));
             accountsCreated.add(created.name());
+
+            // Stamp the identity so the NEXT import of this product recognises it. Done here rather
+            // than through AccountDto.CreateRequest so the public account API stays unchanged --
+            // these two columns exist for the importer, not for anyone creating an account by hand.
+            accountRepository.findById(created.id()).ifPresent(account -> {
+                account.setProductType(discovered.type().name());
+                account.setProductIdentityHash(discovered.strongKey());
+                accountRepository.save(account);
+            });
             return created.id();
         }
         throw new ApiException(HttpStatus.BAD_REQUEST, "Choose an existing account or provide details for a new one.");

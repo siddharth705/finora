@@ -85,7 +85,8 @@ class ImportServiceAskOnceTest {
         importService = new ImportService(accountRepository, accountService, transactionRepository,
                 merchantRepository, statementImportRepository, categorizationService, reconciliationService,
                 recurringService, previewGenerator, duplicateDetector, ruleLearningService,
-                mock(ImportSessionService.class), mock(com.finora.imports.pdf.PdfPreviewGenerator.class));
+                mock(ImportSessionService.class), mock(com.finora.imports.pdf.PdfPreviewGenerator.class),
+                new com.finora.imports.product.ProductIdentityResolver(accountRepository));
 
         Account account = new Account();
         ReflectionTestUtils.setField(account, "id", accountId);
@@ -268,7 +269,7 @@ class ImportServiceAskOnceTest {
 
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
                 BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
-        var newAccount = new NewAccountRequest("HDFC Savings", "SAVINGS", BigDecimal.valueOf(15000), null, null, null, null, null, null, null);
+        var newAccount = new NewAccountRequest("HDFC Savings", "SAVINGS", BigDecimal.valueOf(15000), null, null, null, null, null, null, null, null, null);
         var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null);
 
         var response = importService.confirm(userId, dummyFile(), request);
@@ -528,7 +529,7 @@ class ImportServiceAskOnceTest {
                 BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
         var newAccount = new com.finora.dto.ImportDto.NewAccountRequest(
                 "SBI Savings", "SAVINGS", BigDecimal.valueOf(25000), null, null,
-                "Siddharth Tiwari", "4587", "SBI", null, null);
+                "Siddharth Tiwari", "4587", "SBI", null, null, null, null);
         var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null);
 
         importService.confirm(userId, dummyFile(), request);
