@@ -83,7 +83,7 @@ public class RelationshipService {
     }
 
     @Transactional
-    public RelationshipDto create(UUID userId, RelationshipDto.CreateRequest req) {
+    public RelationshipDto create(UUID userId, RelationshipDto.CreateRequest req, UUID actingAdminId) {
         Relationship.Type type = parseType(req.relationshipType());
         UUID linkedAccountId = type == Relationship.Type.OWN_ACCOUNT
                 ? requireOwnedAccount(userId, req.linkedAccountId()) : null;
@@ -98,7 +98,7 @@ public class RelationshipService {
         saveIdentifiers(saved.getId(), req.identifiers());
 
         auditService.record(userId, "RELATIONSHIP_CREATED", "Relationship", saved.getId(),
-                Map.of("label", saved.getLabel(), "type", type.name()));
+                Map.of("label", saved.getLabel(), "type", type.name(), "actorId", actingAdminId.toString()));
         return toDto(saved);
     }
 
@@ -106,7 +106,7 @@ public class RelationshipService {
      *  RelationshipDto.UpdateRequest's own doc comment for the identifiers-replace-not-append
      *  contract. */
     @Transactional
-    public RelationshipDto update(UUID userId, UUID relationshipId, RelationshipDto.UpdateRequest req) {
+    public RelationshipDto update(UUID userId, UUID relationshipId, RelationshipDto.UpdateRequest req, UUID actingAdminId) {
         Relationship relationship = getOwned(userId, relationshipId);
 
         if (req.label() != null) {
@@ -136,7 +136,8 @@ public class RelationshipService {
         }
 
         auditService.record(userId, "RELATIONSHIP_UPDATED", "Relationship", relationshipId,
-                Map.of("label", relationship.getLabel(), "type", relationship.getRelationshipType().name()));
+                Map.of("label", relationship.getLabel(), "type", relationship.getRelationshipType().name(),
+                        "actorId", actingAdminId.toString()));
         return toDto(relationship);
     }
 
@@ -150,7 +151,7 @@ public class RelationshipService {
      * checking the same identifier twice.
      */
     @Transactional
-    public RelationshipDto merge(UUID userId, UUID survivingId, UUID mergeFromId) {
+    public RelationshipDto merge(UUID userId, UUID survivingId, UUID mergeFromId, UUID actingAdminId) {
         if (survivingId.equals(mergeFromId)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Can't merge a relationship into itself.");
         }
@@ -177,7 +178,7 @@ public class RelationshipService {
 
         auditService.record(userId, "RELATIONSHIP_MERGED", "Relationship", surviving.getId(),
                 Map.of("survivingRelationshipId", surviving.getId(), "mergeFromRelationshipId", absorbed.getId(),
-                        "mergeFromLabel", absorbed.getLabel()));
+                        "mergeFromLabel", absorbed.getLabel(), "actorId", actingAdminId.toString()));
         return toDto(surviving);
     }
 
@@ -212,11 +213,12 @@ public class RelationshipService {
     }
 
     @Transactional
-    public void delete(UUID userId, UUID relationshipId) {
+    public void delete(UUID userId, UUID relationshipId, UUID actingAdminId) {
         Relationship relationship = getOwned(userId, relationshipId);
         identifierRepository.deleteByRelationshipId(relationshipId);
         relationshipRepository.delete(relationship);
-        auditService.record(userId, "RELATIONSHIP_DELETED", "Relationship", relationshipId);
+        auditService.record(userId, "RELATIONSHIP_DELETED", "Relationship", relationshipId,
+                Map.of("actorId", actingAdminId.toString()));
     }
 
     private UUID requireOwnedAccount(UUID userId, UUID accountId) {

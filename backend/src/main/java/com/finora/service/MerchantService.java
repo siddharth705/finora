@@ -123,7 +123,7 @@ public class MerchantService {
     }
 
     @Transactional
-    public MerchantDto rename(UUID userId, UUID merchantId, MerchantDto.UpdateRequest request) {
+    public MerchantDto rename(UUID userId, UUID merchantId, MerchantDto.UpdateRequest request, UUID actingAdminId) {
         Merchant merchant = requireOwnedMerchant(userId, merchantId);
         String previousName = merchant.getCanonicalName();
         if (request.canonicalName() != null) {
@@ -138,7 +138,8 @@ public class MerchantService {
         merchant.setUpdatedAt(Instant.now());
         merchantRepository.save(merchant);
         auditService.record(userId, "MERCHANT_UPDATED", "Merchant", merchant.getId(),
-                Map.of("previousName", previousName, "newName", merchant.getCanonicalName()));
+                Map.of("previousName", previousName, "newName", merchant.getCanonicalName(),
+                        "actorId", actingAdminId.toString()));
         return toDto(merchant, learningRepository.findByUserIdAndMerchantId(userId, merchant.getId()), categoryNamesFor(userId));
     }
 
@@ -157,7 +158,7 @@ public class MerchantService {
      * would contradict that design, so it's preserved.
      */
     @Transactional
-    public MerchantDto merge(UUID userId, UUID survivingMerchantId, UUID mergeFromMerchantId) {
+    public MerchantDto merge(UUID userId, UUID survivingMerchantId, UUID mergeFromMerchantId, UUID actingAdminId) {
         if (survivingMerchantId.equals(mergeFromMerchantId)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Can't merge a merchant into itself.");
         }
@@ -237,7 +238,7 @@ public class MerchantService {
         // recently" would look at.
         auditService.record(userId, "MERCHANT_MERGED", "Merchant", surviving.getId(),
                 Map.of("survivingMerchantId", surviving.getId(), "mergeFromMerchantId", absorbed.getId(),
-                        "mergeFromName", absorbed.getCanonicalName()));
+                        "mergeFromName", absorbed.getCanonicalName(), "actorId", actingAdminId.toString()));
 
         // 5. Return the freshly recomputed distribution, not a stale pre-merge snapshot -- reuses
         // finalPairs (already computed above in step 4) instead of re-querying for what's already

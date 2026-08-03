@@ -2,6 +2,7 @@ package com.finora.controller;
 
 import com.finora.dto.ApiResponse;
 import com.finora.dto.RelationshipDto;
+import com.finora.security.CurrentUser;
 import com.finora.service.RelationshipService;
 import com.finora.transactions.TransactionDto;
 import jakarta.validation.Valid;
@@ -25,9 +26,11 @@ import java.util.UUID;
 public class AdminUserRelationshipController {
 
     private final RelationshipService relationshipService;
+    private final CurrentUser currentUser;
 
-    public AdminUserRelationshipController(RelationshipService relationshipService) {
+    public AdminUserRelationshipController(RelationshipService relationshipService, CurrentUser currentUser) {
         this.relationshipService = relationshipService;
+        this.currentUser = currentUser;
     }
 
     @GetMapping
@@ -37,19 +40,19 @@ public class AdminUserRelationshipController {
 
     @PostMapping
     public ApiResponse<RelationshipDto> create(@PathVariable UUID userId, @Valid @RequestBody RelationshipDto.CreateRequest request) {
-        return ApiResponse.ok(relationshipService.create(userId, request), "Relationship created");
+        return ApiResponse.ok(relationshipService.create(userId, request, currentUser.id()), "Relationship created");
     }
 
     @PutMapping("/{id}")
     public ApiResponse<RelationshipDto> update(@PathVariable UUID userId, @PathVariable UUID id,
                                                 @Valid @RequestBody RelationshipDto.UpdateRequest request) {
-        return ApiResponse.ok(relationshipService.update(userId, id, request), "Relationship updated");
+        return ApiResponse.ok(relationshipService.update(userId, id, request, currentUser.id()), "Relationship updated");
     }
 
     @PostMapping("/{id}/merge")
     public ApiResponse<RelationshipDto> merge(@PathVariable UUID userId, @PathVariable UUID id,
                                                @Valid @RequestBody RelationshipDto.MergeRequest request) {
-        return ApiResponse.ok(relationshipService.merge(userId, id, request.mergeFromRelationshipId()), "Relationships merged");
+        return ApiResponse.ok(relationshipService.merge(userId, id, request.mergeFromRelationshipId(), currentUser.id()), "Relationships merged");
     }
 
     @GetMapping("/{id}/transactions")
@@ -59,7 +62,7 @@ public class AdminUserRelationshipController {
 
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable UUID userId, @PathVariable UUID id) {
-        relationshipService.delete(userId, id);
+        relationshipService.delete(userId, id, currentUser.id());
         return ApiResponse.ok(null, "Relationship deleted");
     }
 }

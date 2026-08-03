@@ -58,6 +58,7 @@ class MerchantServiceTest {
     private final UUID userId = UUID.randomUUID();
     private final UUID shoppingCategoryId = UUID.randomUUID();
     private final UUID electronicsCategoryId = UUID.randomUUID();
+    private final UUID actingAdminId = UUID.randomUUID();
 
     private List<Merchant> merchants;
     private List<MerchantAlias> aliases;
@@ -276,7 +277,7 @@ class MerchantServiceTest {
         Merchant m = merchant("Amazn");
         m.setWebsite("https://old.example");
 
-        MerchantDto updated = service.rename(userId, m.getId(), new MerchantDto.UpdateRequest("Amazon", null));
+        MerchantDto updated = service.rename(userId, m.getId(), new MerchantDto.UpdateRequest("Amazon", null), actingAdminId);
 
         assertThat(updated.canonicalName()).isEqualTo("Amazon");
         assertThat(m.getWebsite()).isEqualTo("https://old.example"); // untouched -- null means "don't change"
@@ -286,7 +287,7 @@ class MerchantServiceTest {
     void rename_blankCanonicalName_throws() {
         Merchant m = merchant("Amazon");
 
-        assertThatThrownBy(() -> service.rename(userId, m.getId(), new MerchantDto.UpdateRequest("   ", null)))
+        assertThatThrownBy(() -> service.rename(userId, m.getId(), new MerchantDto.UpdateRequest("   ", null), actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("blank");
     }
@@ -298,9 +299,19 @@ class MerchantServiceTest {
         // merchant_learning_audit only tracks LEARNED/CORRECTED/UNDONE/MERGED, never a rename.
         Merchant m = merchant("Amazn");
 
-        service.rename(userId, m.getId(), new MerchantDto.UpdateRequest("Amazon", null));
+        service.rename(userId, m.getId(), new MerchantDto.UpdateRequest("Amazon", null), actingAdminId);
 
         org.mockito.Mockito.verify(auditService).record(eq(userId), eq("MERCHANT_UPDATED"), eq("Merchant"), eq(m.getId()), any());
+    }
+
+    @Test
+    void rename_recordsActorIdInAuditMetadata() {
+        Merchant m = merchant("Amazn");
+
+        service.rename(userId, m.getId(), new MerchantDto.UpdateRequest("Amazon", null), actingAdminId);
+
+        org.mockito.Mockito.verify(auditService).record(eq(userId), eq("MERCHANT_UPDATED"), eq("Merchant"), eq(m.getId()),
+                org.mockito.ArgumentMatchers.argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
     }
 
     // --- merge ---
@@ -308,7 +319,7 @@ class MerchantServiceTest {
     @Test
     void merge_intoItself_throws() {
         Merchant m = merchant("Amazon");
-        assertThatThrownBy(() -> service.merge(userId, m.getId(), m.getId()))
+        assertThatThrownBy(() -> service.merge(userId, m.getId(), m.getId(), actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("itself");
     }
@@ -321,7 +332,7 @@ class MerchantServiceTest {
         Transaction t1 = transaction(absorbed.getId());
         Transaction t2 = transaction(absorbed.getId());
 
-        service.merge(userId, surviving.getId(), absorbed.getId());
+        service.merge(userId, surviving.getId(), absorbed.getId(), actingAdminId);
 
         assertThat(aliases).allSatisfy(a -> assertThat(a.getMerchantId()).isEqualTo(surviving.getId()));
         assertThat(t1.getMerchantId()).isEqualTo(surviving.getId());
@@ -336,7 +347,7 @@ class MerchantServiceTest {
         pair(surviving.getId(), shoppingCategoryId, 147, 100);
         pair(absorbed.getId(), shoppingCategoryId, 23, 100);
 
-        MerchantDto result = service.merge(userId, surviving.getId(), absorbed.getId());
+        MerchantDto result = service.merge(userId, surviving.getId(), absorbed.getId(), actingAdminId);
 
         assertThat(result.distribution()).hasSize(1);
         assertThat(result.distribution().get(0).confirmationCount()).isEqualTo(170); // 147 + 23, summed not replaced
@@ -350,7 +361,7 @@ class MerchantServiceTest {
         pair(surviving.getId(), shoppingCategoryId, 100, 100);
         pair(absorbed.getId(), electronicsCategoryId, 50, 100); // no conflict -- surviving has no Electronics pair
 
-        MerchantDto result = service.merge(userId, surviving.getId(), absorbed.getId());
+        MerchantDto result = service.merge(userId, surviving.getId(), absorbed.getId(), actingAdminId);
 
         assertThat(result.distribution()).hasSize(2);
         var electronics = result.distribution().stream().filter(d -> d.category().equals("Electronics")).findFirst().orElseThrow();
@@ -364,7 +375,7 @@ class MerchantServiceTest {
         Merchant surviving = merchant("Amazon");
         Merchant absorbed = merchant("AMAZON SELLER SERVICES");
 
-        service.merge(userId, surviving.getId(), absorbed.getId());
+        service.merge(userId, surviving.getId(), absorbed.getId(), actingAdminId);
 
         List<MerchantLearningAudit> survivingAudit = auditEntries.stream()
                 .filter(a -> a.getMerchantId().equals(surviving.getId())).toList();
@@ -379,9 +390,20 @@ class MerchantServiceTest {
         Merchant surviving = merchant("Amazon");
         Merchant absorbed = merchant("AMAZON SELLER SERVICES");
 
-        service.merge(userId, surviving.getId(), absorbed.getId());
+        service.merge(userId, surviving.getId(), absorbed.getId(), actingAdminId);
 
         org.mockito.Mockito.verify(auditService).record(eq(userId), eq("MERCHANT_MERGED"), eq("Merchant"), eq(surviving.getId()), any());
+    }
+
+    @Test
+    void merge_recordsActorIdInAuditMetadata() {
+        Merchant surviving = merchant("Amazon");
+        Merchant absorbed = merchant("AMAZON SELLER SERVICES");
+
+        service.merge(userId, surviving.getId(), absorbed.getId(), actingAdminId);
+
+        org.mockito.Mockito.verify(auditService).record(eq(userId), eq("MERCHANT_MERGED"), eq("Merchant"), eq(surviving.getId()),
+                org.mockito.ArgumentMatchers.argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
     }
 
     @Test
@@ -396,7 +418,7 @@ class MerchantServiceTest {
         priorLearn.setNewCategoryId(shoppingCategoryId);
         auditEntries.add(priorLearn);
 
-        service.merge(userId, surviving.getId(), absorbed.getId());
+        service.merge(userId, surviving.getId(), absorbed.getId(), actingAdminId);
 
         // The old LEARNED entry from before the merge must still exist, now attributed to the
         // surviving merchant -- NOT cascade-deleted along with the absorbed merchant row.
@@ -411,7 +433,7 @@ class MerchantServiceTest {
         UUID otherUser = UUID.randomUUID();
         notMine.setUserId(otherUser);
 
-        assertThatThrownBy(() -> service.merge(userId, surviving.getId(), notMine.getId()))
+        assertThatThrownBy(() -> service.merge(userId, surviving.getId(), notMine.getId(), actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("not found");
     }

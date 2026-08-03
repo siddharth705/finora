@@ -24,6 +24,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
@@ -40,8 +41,10 @@ class RelationshipServiceTest {
     private TransactionRepository transactionRepository;
     private CategoryRepository categoryRepository;
     private RelationshipService relationshipService;
+    private AuditService auditService;
     private final UUID userId = UUID.randomUUID();
     private final UUID otherUserId = UUID.randomUUID();
+    private final UUID actingAdminId = UUID.randomUUID();
 
     // Backing list standing in for "the identifiers table" -- lets merge()'s
     // findByRelationshipId/delete/save calls all see each other's effects within one test, the
@@ -55,8 +58,9 @@ class RelationshipServiceTest {
         accountRepository = mock(AccountRepository.class);
         transactionRepository = mock(TransactionRepository.class);
         categoryRepository = mock(CategoryRepository.class);
+        auditService = mock(AuditService.class);
         relationshipService = new RelationshipService(relationshipRepository, identifierRepository,
-                accountRepository, transactionRepository, categoryRepository, mock(AuditService.class));
+                accountRepository, transactionRepository, categoryRepository, auditService);
 
         when(relationshipRepository.save(any(Relationship.class))).thenAnswer(inv -> {
             Relationship r = inv.getArgument(0);
@@ -96,7 +100,7 @@ class RelationshipServiceTest {
 
     @Test
     void create_ownAccount_requiresLinkedAccountId() {
-        assertThatThrownBy(() -> relationshipService.create(userId, ownAccountRequest(null)))
+        assertThatThrownBy(() -> relationshipService.create(userId, ownAccountRequest(null), actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("linkedAccountId");
     }
@@ -106,7 +110,7 @@ class RelationshipServiceTest {
         UUID accountId = UUID.randomUUID();
         when(accountRepository.findById(accountId)).thenReturn(Optional.of(account(accountId, otherUserId)));
 
-        assertThatThrownBy(() -> relationshipService.create(userId, ownAccountRequest(accountId)))
+        assertThatThrownBy(() -> relationshipService.create(userId, ownAccountRequest(accountId), actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("does not belong to you");
     }
@@ -116,7 +120,7 @@ class RelationshipServiceTest {
         UUID accountId = UUID.randomUUID();
         when(accountRepository.findById(accountId)).thenReturn(Optional.of(account(accountId, userId)));
 
-        var result = relationshipService.create(userId, ownAccountRequest(accountId));
+        var result = relationshipService.create(userId, ownAccountRequest(accountId), actingAdminId);
 
         assertThat(result.relationshipType()).isEqualTo("OWN_ACCOUNT");
         assertThat(result.linkedAccountId()).isEqualTo(accountId);
@@ -129,11 +133,22 @@ class RelationshipServiceTest {
         var req = new RelationshipDto.CreateRequest("Mom", "FAMILY", null,
                 List.of(new RelationshipDto.IdentifierRequest("UPI_ID", "mom@okhdfcbank")));
 
-        var result = relationshipService.create(userId, req);
+        var result = relationshipService.create(userId, req, actingAdminId);
 
         assertThat(result.relationshipType()).isEqualTo("FAMILY");
         assertThat(result.linkedAccountId()).isNull();
         verify(accountRepository, never()).findById(any());
+    }
+
+    @Test
+    void create_recordsActorIdInAuditMetadata() {
+        var req = new RelationshipDto.CreateRequest("Mom", "FAMILY", null,
+                List.of(new RelationshipDto.IdentifierRequest("UPI_ID", "mom@okhdfcbank")));
+
+        var result = relationshipService.create(userId, req, actingAdminId);
+
+        verify(auditService).record(eq(userId), eq("RELATIONSHIP_CREATED"), eq("Relationship"), eq(result.id()),
+                argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
     }
 
     @Test
@@ -183,7 +198,7 @@ class RelationshipServiceTest {
         r.setUserId(otherUserId);
         when(relationshipRepository.findById(relationshipId)).thenReturn(Optional.of(r));
 
-        assertThatThrownBy(() -> relationshipService.delete(userId, relationshipId))
+        assertThatThrownBy(() -> relationshipService.delete(userId, relationshipId, actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("does not belong to you");
     }
@@ -196,10 +211,12 @@ class RelationshipServiceTest {
         r.setUserId(userId);
         when(relationshipRepository.findById(relationshipId)).thenReturn(Optional.of(r));
 
-        relationshipService.delete(userId, relationshipId);
+        relationshipService.delete(userId, relationshipId, actingAdminId);
 
         verify(identifierRepository).deleteByRelationshipId(relationshipId);
         verify(relationshipRepository).delete(r);
+        verify(auditService).record(eq(userId), eq("RELATIONSHIP_DELETED"), eq("Relationship"), eq(relationshipId),
+                argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
     }
 
     private Relationship relationship(UUID id, UUID owner, Relationship.Type type) {
@@ -220,10 +237,21 @@ class RelationshipServiceTest {
         Relationship r = relationship(id, userId, Relationship.Type.FAMILY);
         r.setLabel("Mom");
 
-        var result = relationshipService.update(userId, id, new RelationshipDto.UpdateRequest("Mother", null, null, null));
+        var result = relationshipService.update(userId, id, new RelationshipDto.UpdateRequest("Mother", null, null, null), actingAdminId);
 
         assertThat(result.label()).isEqualTo("Mother");
         assertThat(result.relationshipType()).isEqualTo("FAMILY"); // untouched
+    }
+
+    @Test
+    void update_recordsActorIdInAuditMetadata() {
+        UUID id = UUID.randomUUID();
+        relationship(id, userId, Relationship.Type.FAMILY);
+
+        relationshipService.update(userId, id, new RelationshipDto.UpdateRequest("Mother", null, null, null), actingAdminId);
+
+        verify(auditService).record(eq(userId), eq("RELATIONSHIP_UPDATED"), eq("Relationship"), eq(id),
+                argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
     }
 
     @Test
@@ -231,7 +259,7 @@ class RelationshipServiceTest {
         UUID id = UUID.randomUUID();
         relationship(id, userId, Relationship.Type.FAMILY);
 
-        assertThatThrownBy(() -> relationshipService.update(userId, id, new RelationshipDto.UpdateRequest("   ", null, null, null)))
+        assertThatThrownBy(() -> relationshipService.update(userId, id, new RelationshipDto.UpdateRequest("   ", null, null, null), actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("blank");
     }
@@ -242,7 +270,7 @@ class RelationshipServiceTest {
         relationship(id, userId, Relationship.Type.FAMILY);
 
         assertThatThrownBy(() -> relationshipService.update(userId, id,
-                new RelationshipDto.UpdateRequest(null, "OWN_ACCOUNT", null, null)))
+                new RelationshipDto.UpdateRequest(null, "OWN_ACCOUNT", null, null), actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("linkedAccountId");
     }
@@ -254,7 +282,7 @@ class RelationshipServiceTest {
         UUID accountId = UUID.randomUUID();
         r.setLinkedAccountId(accountId);
 
-        var result = relationshipService.update(userId, id, new RelationshipDto.UpdateRequest(null, "FRIEND", null, null));
+        var result = relationshipService.update(userId, id, new RelationshipDto.UpdateRequest(null, "FRIEND", null, null), actingAdminId);
 
         assertThat(result.relationshipType()).isEqualTo("FRIEND");
         assertThat(result.linkedAccountId()).isNull();
@@ -267,7 +295,7 @@ class RelationshipServiceTest {
         identifierStore.add(existingIdentifier(id, RelationshipIdentifier.Type.UPI_ID, "old@upi"));
 
         var result = relationshipService.update(userId, id, new RelationshipDto.UpdateRequest(
-                null, null, null, List.of(new RelationshipDto.IdentifierRequest("UPI_ID", "new@upi"))));
+                null, null, null, List.of(new RelationshipDto.IdentifierRequest("UPI_ID", "new@upi"))), actingAdminId);
 
         assertThat(result.identifiers()).hasSize(1);
         // Normalized at write time, same as create() -- "@" doesn't survive CategoryRules.normalize().
@@ -280,7 +308,7 @@ class RelationshipServiceTest {
         relationship(id, userId, Relationship.Type.FAMILY);
         identifierStore.add(existingIdentifier(id, RelationshipIdentifier.Type.UPI_ID, "mom@upi"));
 
-        var result = relationshipService.update(userId, id, new RelationshipDto.UpdateRequest("Mother", null, null, null));
+        var result = relationshipService.update(userId, id, new RelationshipDto.UpdateRequest("Mother", null, null, null), actingAdminId);
 
         assertThat(result.identifiers()).hasSize(1);
         assertThat(result.identifiers().get(0).identifierValue()).isEqualTo("mom upi"); // normalized when originally stored
@@ -293,7 +321,7 @@ class RelationshipServiceTest {
         UUID id = UUID.randomUUID();
         relationship(id, userId, Relationship.Type.FAMILY);
 
-        assertThatThrownBy(() -> relationshipService.merge(userId, id, id))
+        assertThatThrownBy(() -> relationshipService.merge(userId, id, id, actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("itself");
     }
@@ -306,7 +334,7 @@ class RelationshipServiceTest {
         Relationship absorbed = relationship(absorbedId, userId, Relationship.Type.FAMILY);
         identifierStore.add(existingIdentifier(absorbedId, RelationshipIdentifier.Type.UPI_ID, "mom@upi"));
 
-        relationshipService.merge(userId, survivingId, absorbedId);
+        relationshipService.merge(userId, survivingId, absorbedId, actingAdminId);
 
         assertThat(identifierStore).hasSize(1);
         assertThat(identifierStore.get(0).getRelationshipId()).isEqualTo(survivingId);
@@ -322,9 +350,22 @@ class RelationshipServiceTest {
         identifierStore.add(existingIdentifier(survivingId, RelationshipIdentifier.Type.UPI_ID, "mom@upi"));
         identifierStore.add(existingIdentifier(absorbedId, RelationshipIdentifier.Type.UPI_ID, "mom@upi")); // same value
 
-        relationshipService.merge(userId, survivingId, absorbedId);
+        relationshipService.merge(userId, survivingId, absorbedId, actingAdminId);
 
         assertThat(identifierStore).hasSize(1); // not duplicated
+    }
+
+    @Test
+    void merge_recordsActorIdInAuditMetadata() {
+        UUID survivingId = UUID.randomUUID();
+        UUID absorbedId = UUID.randomUUID();
+        relationship(survivingId, userId, Relationship.Type.FAMILY);
+        relationship(absorbedId, userId, Relationship.Type.FAMILY);
+
+        relationshipService.merge(userId, survivingId, absorbedId, actingAdminId);
+
+        verify(auditService).record(eq(userId), eq("RELATIONSHIP_MERGED"), eq("Relationship"), eq(survivingId),
+                argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
     }
 
     // --- transactionsFor (Financial Intelligence Workspace, Module 4) ---

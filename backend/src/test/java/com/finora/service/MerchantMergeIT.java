@@ -67,6 +67,7 @@ class MerchantMergeIT extends AbstractIntegrationTest {
     private UUID userId;
     private UUID accountId;
     private UUID shoppingCategoryId;
+    private final UUID actingAdminId = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
@@ -148,7 +149,7 @@ class MerchantMergeIT extends AbstractIntegrationTest {
         priorHistory.setNewCategoryId(shoppingCategoryId);
         priorHistory = auditRepository.save(priorHistory);
 
-        var result = merchantService.merge(userId, surviving.getId(), absorbed.getId());
+        var result = merchantService.merge(userId, surviving.getId(), absorbed.getId(), actingAdminId);
 
         // Distribution summed (147 + 23 = 170), not replaced -- spec §5.4 step 3.
         assertThat(result.distribution()).hasSize(1);
@@ -181,7 +182,7 @@ class MerchantMergeIT extends AbstractIntegrationTest {
         Merchant m = merchant("Amazon");
         alias(m.getId(), "amazon");
 
-        assertThatThrownBy(() -> merchantService.merge(userId, m.getId(), m.getId()))
+        assertThatThrownBy(() -> merchantService.merge(userId, m.getId(), m.getId(), actingAdminId))
                 .isInstanceOf(ApiException.class);
 
         assertThat(merchantRepository.findById(m.getId())).isPresent();
@@ -204,7 +205,7 @@ class MerchantMergeIT extends AbstractIntegrationTest {
         doThrow(new DataAccessException("Simulated failure during transaction repointing") {})
                 .when(transactionRepository).saveAll(anyList());
 
-        assertThatThrownBy(() -> merchantService.merge(userId, surviving.getId(), absorbed.getId()))
+        assertThatThrownBy(() -> merchantService.merge(userId, surviving.getId(), absorbed.getId(), actingAdminId))
                 .isInstanceOf(DataAccessException.class);
 
         // Clear the persistence context so the assertions below hit the real DB state, not
@@ -239,7 +240,7 @@ class MerchantMergeIT extends AbstractIntegrationTest {
         merchantLearningService.confirm(userId, merchant.getId(), shoppingCategoryId);
         assertThat(learningRepository.findByUserIdAndMerchantId(userId, merchant.getId())).hasSize(1);
 
-        merchantLearningService.undo(userId, merchant.getId());
+        merchantLearningService.undo(userId, merchant.getId(), actingAdminId);
 
         assertThat(learningRepository.findByUserIdAndMerchantId(userId, merchant.getId())).isEmpty();
         List<MerchantLearningAudit> history = auditRepository.findByUserIdAndMerchantIdOrderByCreatedAtDesc(userId, merchant.getId());

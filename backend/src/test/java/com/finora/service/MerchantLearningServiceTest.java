@@ -16,6 +16,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -53,6 +54,7 @@ class MerchantLearningServiceTest {
     private final UUID merchantId = UUID.randomUUID();
     private final UUID shoppingCategoryId = UUID.randomUUID();
     private final UUID electronicsCategoryId = UUID.randomUUID();
+    private final UUID actingAdminId = UUID.randomUUID();
 
     private List<MerchantCategoryLearning> distribution;
     private List<MerchantLearningAudit> auditHistory;
@@ -169,7 +171,7 @@ class MerchantLearningServiceTest {
     @Test
     void undo_afterFirstConfirmation_removesThePairEntirely_andAuditsUndone() {
         service.confirm(userId, merchantId, shoppingCategoryId);
-        var result = service.undo(userId, merchantId);
+        var result = service.undo(userId, merchantId, actingAdminId);
 
         assertThat(result.distribution()).isEmpty(); // count dropped to 0 -> pair removed
         assertThat(result.auditEntry().getAction()).isEqualTo(MerchantLearningAudit.Action.UNDONE);
@@ -177,15 +179,26 @@ class MerchantLearningServiceTest {
         assertThat(result.auditEntry().getNewCategoryId()).isNull();
         // Bug fix regression: undo() used to never call AuditService at all, so an admin's undo
         // (the only way this is reachable today -- see AdminUserMerchantController) left zero
-        // trace in the general activity feed.
-        verify(auditService).record(userId, "MERCHANT_LEARNING_UNDONE", "Merchant", merchantId);
+        // trace in the general activity feed. actorId is the second half of that: WHICH admin,
+        // not just that it happened -- without it an admin action reads as the user's own.
+        verify(auditService).record(userId, "MERCHANT_LEARNING_UNDONE", "Merchant", merchantId,
+                Map.of("actorId", actingAdminId.toString()));
+    }
+
+    @Test
+    void undo_recordsActorIdInGeneralActivityFeedEntry() {
+        service.confirm(userId, merchantId, shoppingCategoryId);
+        service.undo(userId, merchantId, actingAdminId);
+
+        verify(auditService).record(eq(userId), eq("MERCHANT_LEARNING_UNDONE"), eq("Merchant"), eq(merchantId),
+                argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
     }
 
     @Test
     void undo_afterReinforcingConfirmation_decrementsCountRatherThanRemoving() {
         service.confirm(userId, merchantId, shoppingCategoryId);
         service.confirm(userId, merchantId, shoppingCategoryId); // count=2
-        var result = service.undo(userId, merchantId);
+        var result = service.undo(userId, merchantId, actingAdminId);
 
         assertThat(result.distribution()).hasSize(1);
         assertThat(result.distribution().get(0).getConfirmationCount()).isEqualTo(1);
@@ -196,7 +209,7 @@ class MerchantLearningServiceTest {
     void undo_afterConflictingConfirmation_revertsTheNewlyCorrectedCategory_notTheOriginal() {
         service.confirm(userId, merchantId, shoppingCategoryId);
         service.confirm(userId, merchantId, electronicsCategoryId); // conflict; Electronics is now most-recent
-        var result = service.undo(userId, merchantId);
+        var result = service.undo(userId, merchantId, actingAdminId);
 
         assertThat(result.distribution()).hasSize(1);
         assertThat(result.distribution().get(0).getCategoryId()).isEqualTo(shoppingCategoryId);
@@ -205,7 +218,7 @@ class MerchantLearningServiceTest {
 
     @Test
     void undo_withNoLearningHistory_throwsClearError() {
-        assertThatThrownBy(() -> service.undo(userId, merchantId))
+        assertThatThrownBy(() -> service.undo(userId, merchantId, actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("No learning history");
     }
@@ -213,9 +226,9 @@ class MerchantLearningServiceTest {
     @Test
     void undo_calledTwiceInARow_secondCallThrowsRatherThanAttemptingARedo() {
         service.confirm(userId, merchantId, shoppingCategoryId);
-        service.undo(userId, merchantId);
+        service.undo(userId, merchantId, actingAdminId);
 
-        assertThatThrownBy(() -> service.undo(userId, merchantId))
+        assertThatThrownBy(() -> service.undo(userId, merchantId, actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("can't be undone");
     }
@@ -231,9 +244,9 @@ class MerchantLearningServiceTest {
     @Test
     void undo_afterAReset_throwsRatherThanSilentlyNoOpingWithAMisleadingUndoneEntry() {
         service.confirm(userId, merchantId, shoppingCategoryId);
-        service.reset(userId, merchantId);
+        service.reset(userId, merchantId, actingAdminId);
 
-        assertThatThrownBy(() -> service.undo(userId, merchantId))
+        assertThatThrownBy(() -> service.undo(userId, merchantId, actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("can't be undone");
 
@@ -280,7 +293,7 @@ class MerchantLearningServiceTest {
         // The other user has never confirmed anything for this same merchantId -- their own
         // scoped history is empty, so undo() must throw for them rather than falling through
         // to (or ever touching) the real user's history above.
-        assertThatThrownBy(() -> service.undo(otherUserId, merchantId))
+        assertThatThrownBy(() -> service.undo(otherUserId, merchantId, actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("No learning history");
 
@@ -297,19 +310,30 @@ class MerchantLearningServiceTest {
         service.confirm(userId, merchantId, shoppingCategoryId);
         service.confirm(userId, merchantId, electronicsCategoryId); // two pairs now, Electronics is top
 
-        MerchantLearningAudit result = service.reset(userId, merchantId);
+        MerchantLearningAudit result = service.reset(userId, merchantId, actingAdminId);
 
         assertThat(distribution).isEmpty();
         assertThat(result.getAction()).isEqualTo(MerchantLearningAudit.Action.RESET);
         assertThat(result.getPreviousCategoryId()).isEqualTo(electronicsCategoryId); // whatever was top going in
         assertThat(result.getNewCategoryId()).isNull();
-        // Same bug-fix regression as undo() above.
-        verify(auditService).record(userId, "MERCHANT_LEARNING_RESET", "Merchant", merchantId);
+        // Same bug-fix regression as undo() above, actorId included.
+        verify(auditService).record(userId, "MERCHANT_LEARNING_RESET", "Merchant", merchantId,
+                Map.of("actorId", actingAdminId.toString()));
+    }
+
+    @Test
+    void reset_recordsActorIdInGeneralActivityFeedEntry() {
+        service.confirm(userId, merchantId, shoppingCategoryId);
+
+        service.reset(userId, merchantId, actingAdminId);
+
+        verify(auditService).record(eq(userId), eq("MERCHANT_LEARNING_RESET"), eq("Merchant"), eq(merchantId),
+                argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
     }
 
     @Test
     void reset_withNoLearningHistory_throwsClearError() {
-        assertThatThrownBy(() -> service.reset(userId, merchantId))
+        assertThatThrownBy(() -> service.reset(userId, merchantId, actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("no learning history");
     }
@@ -323,7 +347,7 @@ class MerchantLearningServiceTest {
         service.confirm(userId, merchantId, shoppingCategoryId);
         service.confirm(userId, otherMerchantId, electronicsCategoryId);
 
-        service.reset(userId, merchantId);
+        service.reset(userId, merchantId, actingAdminId);
 
         assertThat(distribution).isEmpty();
         assertThat(otherDistribution).hasSize(1); // untouched
@@ -377,7 +401,7 @@ class MerchantLearningServiceTest {
         when(categoryRepository.findByUserId(userId)).thenReturn(List.of(category(shoppingCategoryId, "Shopping")));
 
         service.confirm(userId, merchantId, shoppingCategoryId);
-        service.reset(userId, merchantId);
+        service.reset(userId, merchantId, actingAdminId);
 
         List<LearningDto.TimelineEntry> timeline = service.timeline(userId);
 
@@ -428,7 +452,7 @@ class MerchantLearningServiceTest {
         when(learningRepository.findByUserId(userId)).thenAnswer(inv -> new ArrayList<>(distribution));
 
         service.confirm(userId, merchantId, shoppingCategoryId);
-        service.reset(userId, merchantId);
+        service.reset(userId, merchantId, actingAdminId);
 
         LearningDto.Summary summary = service.summary(userId);
 

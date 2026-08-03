@@ -137,7 +137,7 @@ public class MerchantLearningService {
      * milestone), so this throws rather than guessing.
      */
     @Transactional
-    public LearningResult undo(UUID userId, UUID merchantId) {
+    public LearningResult undo(UUID userId, UUID merchantId, UUID actingAdminId) {
         List<MerchantLearningAudit> history = auditRepository.findByUserIdAndMerchantIdOrderByCreatedAtDesc(userId, merchantId);
         MerchantLearningAudit mostRecent = history.stream().findFirst()
                 .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, "No learning history to undo for this merchant."));
@@ -192,7 +192,13 @@ public class MerchantLearningService {
         // AdminUserMerchantController (self-service MerchantController was retired), making this
         // an admin action against another user's data with previously zero trace in the general
         // activity feed -- only merchant_learning_audit (scoped to that one merchant) recorded it.
-        auditService.record(userId, "MERCHANT_LEARNING_UNDONE", "Merchant", merchantId);
+        //
+        // actorId is the second half of that fix: the entry above records that the action happened
+        // and to whose data, this records WHICH ADMIN did it. Without it an admin action is
+        // indistinguishable from the user's own, which is the question an audit trail exists to
+        // answer. Matches the pattern in AdminUserService.
+        auditService.record(userId, "MERCHANT_LEARNING_UNDONE", "Merchant", merchantId,
+                Map.of("actorId", actingAdminId.toString()));
 
         return new LearningResult(learningRepository.findByUserIdAndMerchantId(userId, merchantId), undoEntry);
     }
@@ -211,7 +217,7 @@ public class MerchantLearningService {
      * past transactions are untouched; this only clears what future suggestions would draw on.
      */
     @Transactional
-    public MerchantLearningAudit reset(UUID userId, UUID merchantId) {
+    public MerchantLearningAudit reset(UUID userId, UUID merchantId, UUID actingAdminId) {
         List<MerchantCategoryLearning> pairs = learningRepository.findByUserIdAndMerchantId(userId, merchantId);
         if (pairs.isEmpty()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "This merchant has no learning history to reset.");
@@ -229,8 +235,9 @@ public class MerchantLearningService {
         resetEntry.setNewCategoryId(null);
         MerchantLearningAudit saved = auditRepository.save(resetEntry);
 
-        // See undo()'s own comment above -- same gap, same fix.
-        auditService.record(userId, "MERCHANT_LEARNING_RESET", "Merchant", merchantId);
+        // See undo()'s own comment above -- same gap, same fix, including actorId.
+        auditService.record(userId, "MERCHANT_LEARNING_RESET", "Merchant", merchantId,
+                Map.of("actorId", actingAdminId.toString()));
 
         return saved;
     }

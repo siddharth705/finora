@@ -2,6 +2,7 @@ package com.finora.controller;
 
 import com.finora.dto.ApiResponse;
 import com.finora.dto.MerchantDto;
+import com.finora.security.CurrentUser;
 import com.finora.service.MerchantLearningService;
 import com.finora.transactions.TransactionDto;
 import com.finora.service.MerchantService;
@@ -36,12 +37,14 @@ public class AdminUserMerchantController {
     private final MerchantService merchantService;
     private final MerchantLearningService merchantLearningService;
     private final TransactionService transactionService;
+    private final CurrentUser currentUser;
 
     public AdminUserMerchantController(MerchantService merchantService, MerchantLearningService merchantLearningService,
-                                        TransactionService transactionService) {
+                                        TransactionService transactionService, CurrentUser currentUser) {
         this.merchantService = merchantService;
         this.merchantLearningService = merchantLearningService;
         this.transactionService = transactionService;
+        this.currentUser = currentUser;
     }
 
     @GetMapping
@@ -67,13 +70,13 @@ public class AdminUserMerchantController {
     @PatchMapping("/{id}")
     public ApiResponse<MerchantDto> update(@PathVariable UUID userId, @PathVariable UUID id,
                                             @Valid @RequestBody MerchantDto.UpdateRequest request) {
-        return ApiResponse.ok(merchantService.rename(userId, id, request), "Merchant updated");
+        return ApiResponse.ok(merchantService.rename(userId, id, request, currentUser.id()), "Merchant updated");
     }
 
     @PostMapping("/{id}/merge")
     public ApiResponse<MerchantDto> merge(@PathVariable UUID userId, @PathVariable UUID id,
                                            @Valid @RequestBody MerchantDto.MergeRequest request) {
-        return ApiResponse.ok(merchantService.merge(userId, id, request.mergeFromMerchantId()), "Merchants merged");
+        return ApiResponse.ok(merchantService.merge(userId, id, request.mergeFromMerchantId(), currentUser.id()), "Merchants merged");
     }
 
     @PostMapping("/{merchantId}/confirm-category")
@@ -85,13 +88,13 @@ public class AdminUserMerchantController {
 
     @PostMapping("/{id}/undo")
     public ApiResponse<MerchantDto> undo(@PathVariable UUID userId, @PathVariable UUID id) {
-        merchantLearningService.undo(userId, id);
+        merchantLearningService.undo(userId, id, currentUser.id());
         return ApiResponse.ok(merchantService.get(userId, id), "Last learning event undone");
     }
 
     @PostMapping("/{id}/reset-learning")
     public ApiResponse<MerchantDto> resetLearning(@PathVariable UUID userId, @PathVariable UUID id) {
-        merchantLearningService.reset(userId, id);
+        merchantLearningService.reset(userId, id, currentUser.id());
         return ApiResponse.ok(merchantService.get(userId, id), "Learning reset for this merchant");
     }
 }
