@@ -54,11 +54,36 @@ public class FinancialProductClassifier {
         CONTRADICTORY
     }
 
-    /** One line of the reasoning, in a form that survives into an import report. */
-    public record Evidence(EvidenceKind kind, ProductSignal signal, String detail) {
+    /**
+     * One line of the reasoning, in a form that survives into an import report.
+     *
+     * {@code confidence} is PER SIGNAL, not a share of some overall total: it is how much this one
+     * observation is worth, which is decided by where it was observed ({@link EvidenceSource}). A
+     * result therefore reads "DESCRIPTION_COLUMN 1.0, PRODUCT_NAME 0.15" rather than a single
+     * blended 0.93 that cannot be argued with. Zero for negative and contradictory evidence --
+     * absence and contradiction are not observations with a strength, they are the absence of one
+     * and the refutation of one.
+     */
+    public record Evidence(EvidenceKind kind, ProductSignal signal, double confidence, String detail) {
+
+        static Evidence positive(ProductSignal signal, EvidenceSource source, String detail) {
+            return new Evidence(EvidenceKind.POSITIVE, signal, weightOf(source), detail);
+        }
+
+        static Evidence negative(ProductSignal signal, String detail) {
+            return new Evidence(EvidenceKind.NEGATIVE, signal, 0, detail);
+        }
+
+        static Evidence contradictory(ProductSignal signal, String detail) {
+            return new Evidence(EvidenceKind.CONTRADICTORY, signal, 0, detail);
+        }
+
         @Override
         public String toString() {
-            return kind + ": " + signal + (detail == null || detail.isBlank() ? "" : " -- " + detail);
+            String weight = kind == EvidenceKind.POSITIVE
+                    ? " (" + round(confidence) + ")" : "";
+            return kind + ": " + signal + weight
+                    + (detail == null || detail.isBlank() ? "" : " -- " + detail);
         }
     }
 
@@ -157,7 +182,7 @@ public class FinancialProductClassifier {
 
         if (winner == null) {
             List<Evidence> why = new ArrayList<>();
-            why.add(new Evidence(EvidenceKind.NEGATIVE, ProductSignal.PRODUCT_NAME,
+            why.add(Evidence.negative(ProductSignal.PRODUCT_NAME,
                     "no product hypothesis survived the evidence"));
             why.addAll(rejections);
             return new ProductClassification(FinancialProductType.UNKNOWN, 0.0, why, collected);
@@ -166,7 +191,7 @@ public class FinancialProductClassifier {
         double confidence = Math.min(winningScore, 0.95);
         if (confidence < CONFIDENCE_THRESHOLD) {
             List<Evidence> evidence = new ArrayList<>(winningEvidence);
-            evidence.add(new Evidence(EvidenceKind.NEGATIVE, ProductSignal.PRODUCT_NAME,
+            evidence.add(Evidence.negative(ProductSignal.PRODUCT_NAME,
                     "best candidate " + winner.type() + " scored " + round(confidence)
                             + ", below the " + CONFIDENCE_THRESHOLD + " threshold -- asking the user"));
             return new ProductClassification(FinancialProductType.UNKNOWN, confidence, evidence, collected);
@@ -191,7 +216,7 @@ public class FinancialProductClassifier {
             // A contradiction seen only in document-level text is not this section's contradiction
             // -- the same scoping rule that stops a leaked product name from deciding anything.
             if (where == EvidenceSource.DOCUMENT_TEXT) continue;
-            evidence.add(new Evidence(EvidenceKind.CONTRADICTORY, forbidden,
+            evidence.add(Evidence.contradictory(forbidden,
                     hypothesis.type() + " should not carry this, but it is present in "
                             + where.name().toLowerCase().replace('_', ' ')));
             contradicted = true;
@@ -210,7 +235,7 @@ public class FinancialProductClassifier {
         }
 
         if (hypothesis.requiresExplicitNaming() && namedHere == null) {
-            evidence.add(new Evidence(EvidenceKind.NEGATIVE, ProductSignal.PRODUCT_NAME,
+            evidence.add(Evidence.negative(ProductSignal.PRODUCT_NAME,
                     hypothesis.type() + " is structurally indistinguishable from a more common "
                             + "product, so it is only claimed when the document names it -- and it "
                             + "does not"));
@@ -223,7 +248,7 @@ public class FinancialProductClassifier {
         // without a human. The min-corroboration rule below governs products the engine can
         // actually read structurally.
         if (hypothesis.expected().isEmpty()) {
-            evidence.add(new Evidence(EvidenceKind.POSITIVE, ProductSignal.PRODUCT_NAME,
+            evidence.add(Evidence.positive(ProductSignal.PRODUCT_NAME, namedHere.source(),
                     "named \"" + namedHere.observed() + "\" in "
                             + namedHere.source().name().toLowerCase().replace('_', ' ')
                             + "; recognised by name only, so it cannot be created without review"));
@@ -242,10 +267,10 @@ public class FinancialProductClassifier {
                 earned += weightOf(where);
                 corroborating++;
                 counted.add(expected);
-                evidence.add(new Evidence(EvidenceKind.POSITIVE, expected,
+                evidence.add(Evidence.positive(expected, where,
                         "observed in " + where.name().toLowerCase().replace('_', ' ')));
             } else {
-                evidence.add(new Evidence(EvidenceKind.NEGATIVE, expected, "expected but absent"));
+                evidence.add(Evidence.negative(expected, "expected but absent"));
             }
         }
 
@@ -259,14 +284,14 @@ public class FinancialProductClassifier {
             if (naming.source() != EvidenceSource.DOCUMENT_TEXT && counted.add(ProductSignal.PRODUCT_NAME)) {
                 corroborating++;
             }
-            evidence.add(new Evidence(EvidenceKind.POSITIVE, ProductSignal.PRODUCT_NAME,
+            evidence.add(Evidence.positive(ProductSignal.PRODUCT_NAME, naming.source(),
                     "named \"" + naming.observed() + "\" in "
                             + naming.source().name().toLowerCase().replace('_', ' ')));
         }
 
         if (available == 0) return 0;
         if (corroborating < MIN_CORROBORATING_SIGNALS) {
-            evidence.add(new Evidence(EvidenceKind.NEGATIVE, ProductSignal.PRODUCT_NAME,
+            evidence.add(Evidence.negative(ProductSignal.PRODUCT_NAME,
                     "only " + corroborating + " independent signal(s) support " + hypothesis.type()
                             + "; " + MIN_CORROBORATING_SIGNALS + " required, so no single signal can decide"));
             return 0;

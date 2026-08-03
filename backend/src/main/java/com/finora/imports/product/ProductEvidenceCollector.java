@@ -130,7 +130,12 @@ public class ProductEvidenceCollector {
      * @param rowCount     how many rows the section produced
      */
     public record Section(List<String> columnNames, List<String> sectionText,
-                          List<String> documentText, int rowCount) {
+                          List<String> documentText, int rowCount, int index, int of) {
+
+        public Section(List<String> columnNames, List<String> sectionText,
+                       List<String> documentText, int rowCount) {
+            this(columnNames, sectionText, documentText, rowCount, 0, 1);
+        }
 
         public static Section of(List<String> columnNames, List<String> sectionText, int rowCount) {
             return new Section(columnNames, sectionText, null, rowCount);
@@ -157,6 +162,8 @@ public class ProductEvidenceCollector {
                     section.rowCount() + " rows"));
         }
 
+        collectContext(facts, section);
+
         collectProductNames(facts, columns, EvidenceSource.COLUMN_HEADERS);
         collectProductNames(facts, documentText, EvidenceSource.DOCUMENT_TEXT);
 
@@ -165,6 +172,66 @@ public class ProductEvidenceCollector {
         facts.addAll(demoteEnumeratedNames(inSectionText));
 
         return SectionEvidence.of(facts);
+    }
+
+    /**
+     * Contextual facts: table shape, account-number shape, position, heading.
+     *
+     * Nothing scores on these yet. They are collected because Stage 1's job is to record what is
+     * there rather than what today's hypotheses happen to consult -- evidence that was never
+     * gathered cannot be re-scored later, and re-gathering it means re-reading a document the
+     * Synthetic Fixture Policy requires us to have deleted.
+     */
+    private void collectContext(List<ObservedFact> facts, Section section) {
+        if (section.columnNames() != null && !section.columnNames().isEmpty()) {
+            facts.add(ObservedFact.of(ProductSignal.TABLE_STRUCTURE, EvidenceSource.COLUMN_HEADERS,
+                    section.columnNames().size() + " columns"));
+        }
+        if (section.of() > 1) {
+            facts.add(ObservedFact.of(ProductSignal.SECTION_POSITION, EvidenceSource.ROW_DATA,
+                    "section " + (section.index() + 1) + " of " + section.of()));
+        }
+        List<String> text = section.sectionText();
+        if (text != null && !text.isEmpty()) {
+            String heading = text.get(0);
+            if (heading != null && !heading.isBlank()) {
+                facts.add(ObservedFact.of(ProductSignal.HEADING_TEXT, EvidenceSource.SECTION_TEXT,
+                        heading.length() > 80 ? heading.substring(0, 80) : heading));
+            }
+        }
+        String shape = accountNumberShape(section);
+        if (shape != null) {
+            facts.add(ObservedFact.of(ProductSignal.ACCOUNT_NUMBER_FORMAT, EvidenceSource.SECTION_TEXT, shape));
+        }
+    }
+
+    /**
+     * The SHAPE of the longest digit run in the section's text -- "14 digits", never the digits.
+     *
+     * Deliberately records no part of the number itself. Deposits, cards and loans are numbered
+     * differently and the length is genuinely a signal, but an account number in a durable evidence
+     * store is customer data in a place nobody would think to look for it. Length carries the
+     * signal; the digits carry only risk.
+     */
+    private String accountNumberShape(Section section) {
+        if (section.sectionText() == null) return null;
+        int longest = 0;
+        for (String line : section.sectionText()) {
+            if (line == null) continue;
+            int run = 0;
+            for (int i = 0; i <= line.length(); i++) {
+                boolean digit = i < line.length() && Character.isDigit(line.charAt(i));
+                if (digit) {
+                    run++;
+                } else {
+                    longest = Math.max(longest, run);
+                    run = 0;
+                }
+            }
+        }
+        // Below 8 digits is a date, an amount or a reference, not an account identifier -- the same
+        // threshold check-fixture-hygiene.sh uses to decide a digit run is worth looking at.
+        return longest >= 8 ? longest + " digits" : null;
     }
 
     /**

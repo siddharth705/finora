@@ -381,6 +381,67 @@ public final class PdfFixtureBuilder {
         return render(List.of(page));
     }
 
+    // ==================== FINANCIAL_PRODUCT_DISCOVERY ====================
+
+    /**
+     * A combined statement carrying three DIFFERENT products: a savings ledger, a fixed-deposit
+     * schedule, and a recurring-deposit schedule -- preceded by a relationship summary that names
+     * all three at the top of the document.
+     *
+     * This exists because the real trace that motivated the capability cannot prove it. That
+     * capture predates {@code PdfTraceRedactor} having any deposit vocabulary in its allowlist, so
+     * "Maturity Date" was redacted to "Xxxxxxxx Date" and "Deposit(Mnth)" to "Deposit(Xxxx)" before
+     * it was committed -- the exact column headers product classification reads, removed from the
+     * fixture meant to regression-test reading them. The allowlist is fixed, but a committed trace
+     * cannot be un-redacted. A synthetic fixture contains no customer data at all, so it is allowed
+     * to keep the vocabulary, and it is what the Test Corpus Strategy prescribes for exactly this
+     * step (real document, root cause, generic capability, SYNTHETIC FIXTURE, regression test).
+     *
+     * The three shapes are modeled on the real combined statement's own structure:
+     * <ul>
+     *   <li>the relationship summary names "SAVINGS ACCOUNTS", "FIXED DEPOSITS" and "RECURRING
+     *       DEPOSITS" together -- the leak that used to decide the deposit sections' identity, and
+     *       which must now be recognised as document-level because it enumerates three products;</li>
+     *   <li>the savings section is a ledger: dated rows with a narration and a running balance;</li>
+     *   <li>the FD section is a schedule of figures with a maturity date, a rate and a principal,
+     *       and deliberately carries a "Deposit(Mnth)" column -- the monthly contribution, which is
+     *       the single word that used to make the whole section read as a transaction account;</li>
+     *   <li>the RD section adds the installment fields that separate it from the FD.</li>
+     * </ul>
+     */
+    public static byte[] buildCompositeMultiProductStatementSample() throws IOException {
+        float[] summaryCol = {LEFT_MARGIN, 200f, 320f};
+        float[] ledgerCol = {LEFT_MARGIN, 120f, 300f, 380f, 470f};
+        float[] fdCol = {LEFT_MARGIN, 110f, 210f, 320f, 440f};
+        float[] rdCol = {LEFT_MARGIN, 100f, 200f, 300f, 390f, 470f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Account Relationship Summary")
+                .row(summaryCol, "Ccy", "Account Type", "Balance")
+                .row(summaryCol, "INR", "SAVINGS ACCOUNTS", "83413.31")
+                .row(summaryCol, "INR", "FIXED DEPOSITS", "124053.00")
+                .row(summaryCol, "INR", "RECURRING DEPOSITS", "20000.00")
+                .blankLine()
+                .line("SAVINGS ACCOUNT  - 10000000000001")
+                .line("Opening Balance 24818.22")
+                .row(ledgerCol, "Txn Date", "Narration", "Withdrawals", "Deposits", "Closing Balance")
+                .row(ledgerCol, "05/06/2026", "Salary Credit", "", "55000.00", "79818.22")
+                .row(ledgerCol, "10/06/2026", "Grocery Store", "2000.00", "", "77818.22")
+                .row(ledgerCol, "18/06/2026", "Electricity Bill", "1404.91", "", "76413.31")
+                .blankLine()
+                .line("TERM DEPOSIT  - 20000000000002")
+                .row(fdCol, "Principal Amount", "Start Date", "Deposit(Mnth)", "Maturity Date", "Rate of Interest")
+                .row(fdCol, "100000.00", "12/03/2026", "0.00", "12/03/2027", "7.10")
+                .row(fdCol, "24053.00", "01/05/2026", "0.00", "01/05/2027", "6.90")
+                .blankLine()
+                .line("RECURRING DEPOSIT  - 30000000000003")
+                .row(rdCol, "Number", "Due Date", "Installment Paid", "Maturity Date", "Rate of Interest", "Status")
+                .row(rdCol, "1", "05/05/2026", "5000.00", "05/05/2027", "6.75", "Paid")
+                .row(rdCol, "2", "05/06/2026", "5000.00", "05/05/2027", "6.75", "Paid");
+
+        return render(List.of(page));
+    }
+
     // ==================== OFFSET_COLUMN_ANCHORS ====================
 
     /**
