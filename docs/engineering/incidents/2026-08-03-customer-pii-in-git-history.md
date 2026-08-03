@@ -1,7 +1,7 @@
 # Incident: customer PII committed to Git history
 
 **Date identified:** 2026-08-03
-**Status:** Contained in current code. **Remediation decision pending — owner: Siddharth.**
+**Status:** Contained in current code. **Open — remediation decision DEFERRED 2026-08-03 by Siddharth, to be revisited (see §6).**
 **Severity:** To be confirmed by the exposure assessment below (§3). Provisionally Medium; becomes
 High if the repository is public, has ever been public, has forks, or has been cloned outside the
 core team.
@@ -113,9 +113,12 @@ Only once all four are confirmed should the rewrite be executed.
 
 ## 6. Decision record
 
-> **Pending.** An explicit, reasoned "accept" is a valid outcome and is materially different from
-> never having decided. Six months from now, "we reviewed the risk and accepted it" and "nobody ever
-> evaluated it" are indistinguishable unless this section is filled in.
+> **DEFERRED — 2026-08-03, by Siddharth.** Consciously postponed, not overlooked. The exposure
+> assessment (§3) and the decision below are to be revisited; until then this incident stays open.
+>
+> Recorded because a deferral and an oversight leave identical blank fields, and the difference
+> matters when this is read later. Nothing here is blocking: the code is sanitised (`74a3d76`), the
+> preventive measures in §7 are live, and the residual exposure is historical only.
 
 **Decision:** *(Option A — Accept the risk / Option B — Rewrite history)*
 **Decided by:**
