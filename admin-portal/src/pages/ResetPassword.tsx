@@ -22,6 +22,11 @@ function passwordStrength(pw: string): { score: number; label: string; color: st
   return { score, label: labels[score], color: colors[score] };
 }
 
+// Kept word-for-word identical to frontend/'s ResetPassword.tsx -- this was "Could not reset
+// password. The code may be wrong or the link may have expired." here, different wording for the
+// exact same failure a user could hit in either app. "Could not verify" is also the more precise
+// of the two: this error is specifically the phone-verification step failing, not the reset as a
+// whole.
 function friendlyFirebaseError(err: any): string {
   switch (err?.code) {
     case 'auth/invalid-verification-code':
@@ -29,7 +34,7 @@ function friendlyFirebaseError(err: any): string {
     case 'auth/code-expired':
       return 'This code has expired. Request a new one.';
     default:
-      return 'Could not reset password. The code may be wrong or the link may have expired.';
+      return 'Could not verify. The code may be wrong, or the link may have expired.';
   }
 }
 
@@ -106,7 +111,14 @@ export default function ResetPassword() {
       const firebaseIdToken = await confirmPhoneVerificationCode(confirmation, otp);
       await authApi.resetPassword(token, firebaseIdToken, password);
       setDone(true);
-      setTimeout(() => navigate('/login'), 2000);
+      // Was a bare navigate('/login') with no message at all -- unlike the user app's identical
+      // flow (frontend/src/pages/ResetPassword.tsx), which already hands this exact text through
+      // router state. An admin who just reset their password landed on the login screen with zero
+      // acknowledgment it worked. Text kept identical across both apps for the same reason
+      // friendlyFirebaseError() above was just aligned.
+      setTimeout(() => navigate('/login', {
+        state: { message: 'Password reset successfully. Please sign in using your new password.' },
+      }), 2000);
     } catch (err: any) {
       setError(err.response?.data?.message ?? friendlyFirebaseError(err));
     } finally {
