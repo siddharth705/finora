@@ -3,7 +3,9 @@ package com.finora.imports;
 import com.finora.accounts.AccountService;
 import com.finora.dto.ImportDto.ConfirmRequest;
 import com.finora.dto.ImportDto.ConfirmedRow;
+import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.dto.ImportDto.StagedRow;
+import com.finora.dto.ImportDto.UnparseableRow;
 import com.finora.entity.Account;
 import com.finora.entity.ImportSession;
 import com.finora.exception.ApiException;
@@ -42,6 +44,7 @@ class ImportServiceSessionTest {
     private final UUID userId = UUID.randomUUID();
     private final UUID accountId = UUID.randomUUID();
     private AccountRepository accountRepository;
+    private com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator;
 
     @BeforeEach
     void setUp() {
@@ -71,10 +74,11 @@ class ImportServiceSessionTest {
         PreviewGenerator previewGenerator = new PreviewGenerator(csvParser, transactionNormalizer, statementValidator);
         ImportRuleLearningService ruleLearningService = new ImportRuleLearningService(categorizationService);
 
+        pdfPreviewGenerator = mock(com.finora.imports.pdf.PdfPreviewGenerator.class);
         importService = new ImportService(accountRepository, accountService, transactionRepository,
                 merchantRepository, statementImportRepository, categorizationService, reconciliationService,
                 recurringService, previewGenerator, duplicateDetector, ruleLearningService, importSessionService,
-                mock(com.finora.imports.pdf.PdfPreviewGenerator.class));
+                pdfPreviewGenerator);
 
         Account account = new Account();
         ReflectionTestUtils.setField(account, "id", accountId);
@@ -159,6 +163,34 @@ class ImportServiceSessionTest {
                 .hasMessageContaining("could not read any transactions from it");
 
         verifyNoInteractions(importSessionService);
+    }
+
+    @Test
+    void tablesInACombinedStatementThatHoldNoTransactions_areNotOfferedAsAccounts() throws Exception {
+        // A real HDFC combined statement: the savings account, plus a term-deposit summary and a
+        // recurring-deposit installment schedule. All three are genuine tables, and all three were
+        // presented as ACCOUNTS -- so the user was shown two empty accounts to confirm. Until the
+        // product-classification stage exists to say what those two actually ARE, they must not be
+        // asserted to be accounts on evidence that only shows they are tables.
+        var savings = new StagedAccountSection(null, List.of(stagedRow()), 1, 0, List.of());
+        var termDeposit = new StagedAccountSection(null, List.of(), 0, 0,
+                List.of(new UnparseableRow(
+                        java.util.Map.of("Maturity Date", "01/06/2027"), "no date column")));
+        var recurringDeposit = new StagedAccountSection(null, List.of(), 0, 0, List.of());
+        when(importSessionService.createSession(any(), any(), any(), any(), any(), any()))
+                .thenReturn(sessionWith(UUID.randomUUID(), new byte[]{1}, ImportSession.STATUS_STAGED));
+        when(pdfPreviewGenerator.generateSectionsWithContext(any(), any(), any())).thenReturn(
+                new com.finora.imports.pdf.PdfPreviewGenerator.PdfGenerationResult(
+                        List.<StagedAccountSection>of(savings, termDeposit, recurringDeposit),
+                        new DocumentContext("PDF", "test")));
+
+        var response = importService.parseAndStagePdfWithSession(userId,
+                new MockMultipartFile("file", "combined.pdf", "application/pdf", new byte[]{1}));
+
+        assertThat(response.multiAccount()).as("one account, not three").isFalse();
+        // "Never lose information": the deposit table's contents survive as unparseable rows on the
+        // surviving section rather than vanishing with the section that held them.
+        assertThat(response.staging().unparseableRows()).hasSize(1);
     }
 
     @Test

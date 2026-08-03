@@ -83,12 +83,61 @@ class TraceFixtureRegressionTest {
         assertThat(bank.id()).isEqualTo("HDFC");
     }
 
+    /**
+     * Captured from the Bank of Baroda statement that was split into THREE accounts, because its
+     * per-page "Savings Account ... &lt;number&gt;" banner opened a new section every time it was
+     * reprinted.
+     */
+    private static final String BOB_TRACE = "bob-repeated-account-banner";
+
+    @Test
+    void aBannerReprintedOnEveryPage_isOneAccountAndNotThree() {
+        DocumentContext ctx = new DocumentContext("PDF", "TraceFixtureRegressionTest");
+
+        PdfTableLocator.LocatedDocument doc =
+                new PdfTableLocator().locateAll(PdfTrace.load(BOB_TRACE), ctx);
+
+        assertThat(doc.sections()).hasSize(1);
+        assertThat(ctx.capabilities()).extracting("capability").contains("REPEATED_ACCOUNT_BANNER");
+    }
+
+    @Test
+    void thatSameStatementKeepsItsWholeMonthOfTransactions() {
+        // The account split did not merely mislabel things -- it broke the balance chain, because
+        // each fabricated account started from whatever row happened to follow its banner.
+        List<Map<String, String>> rows = new PdfTableLocator()
+                .locateAll(PdfTrace.load(BOB_TRACE), null).sections().get(0).rows();
+
+        assertThat(rows.size()).isGreaterThanOrEqualTo(50);
+    }
+
+    /**
+     * Captured from an HDFC COMBINED statement: a savings account plus a term-deposit summary plus
+     * a recurring-deposit installment schedule, three genuine tables in one document.
+     */
+    private static final String HDFC_COMBINED_TRACE = "hdfc-composite-deposit-schedules";
+
+    @Test
+    void aCombinedStatementsSavingsTransactionsAreExtractedAlongsideItsDepositTables() {
+        PdfTableLocator.LocatedDocument doc =
+                new PdfTableLocator().locateAll(PdfTrace.load(HDFC_COMBINED_TRACE), null);
+
+        // All three tables are correctly LOCATED -- that part was never the bug. What each one IS
+        // (savings / term deposit / recurring deposit) is the job of the product-classification
+        // stage; this test pins the extraction it will be built on top of.
+        assertThat(doc.sections()).hasSize(3);
+        assertThat(doc.sections().get(0).rows())
+                .as("the savings account's own transaction table")
+                .hasSizeGreaterThan(100);
+    }
+
     @Test
     void theCommittedTraceContainsNoUnredactedPersonalData() {
         // A privacy control with no test is a privacy control that quietly stops working. This
         // asserts the invariant on the committed artifact itself rather than on the redactor, so it
         // fails if anyone hand-edits a trace or commits one captured with redaction disabled.
-        String text = PdfTrace.load(HDFC_TRACE).stream()
+        String text = java.util.stream.Stream.of(HDFC_TRACE, BOB_TRACE, HDFC_COMBINED_TRACE)
+                .flatMap(name -> PdfTrace.load(name).stream())
                 .map(PositionedText::text).reduce("", (a, b) -> a + "\n" + b);
 
         // A masked email is entirely 'x'/'X'/'9', so the test for an UNREDACTED one is the presence

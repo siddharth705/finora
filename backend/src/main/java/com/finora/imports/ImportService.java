@@ -133,7 +133,7 @@ public class ImportService {
         byte[] fileContent = file.getBytes();
         String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "statement.pdf";
         var result = pdfPreviewGenerator.generateSectionsWithContext(userId, fileName, fileContent);
-        List<StagedAccountSection> sections = result.sections();
+        List<StagedAccountSection> sections = onlySectionsThatAreActuallyAccounts(result.sections());
 
         if (sections.size() <= 1) {
             // The common case (and the only case a CSV upload can ever produce): behaves exactly
@@ -147,13 +147,47 @@ public class ImportService {
             return new PdfStagingSessionResponse(session.getId(), false, staged, null);
         }
 
-        // A multi-account document is only a success if at least one of its accounts produced
-        // something; N empty sections is the same nothing as one empty section.
-        if (sections.stream().allMatch(s -> s.rows().isEmpty())) {
-            rejectIfNothingWasExtracted(toStagingResponse(sections.get(0)), result.documentContext());
-        }
         var session = importSessionService.createMultiSection(userId, fileName, fileContent, sections, result.documentContext());
         return new PdfStagingSessionResponse(session.getId(), true, null, sections);
+    }
+
+    /**
+     * Stops offering a located table as a transaction ACCOUNT when it plainly isn't one, without
+     * throwing its contents away.
+     *
+     * INTERIM. A real HDFC combined statement carries a term-deposit summary and a recurring-deposit
+     * installment schedule alongside the savings account. Those are genuine financial products the
+     * customer holds, and the correct end state is that they become Investments -- see the planned
+     * product-classification stage, which will identify what each section IS (savings, current, FD,
+     * RD, loan, overdraft, credit card, demat) and route it to the matching Finora domain before
+     * anything is imported. Until that exists this method must not pretend to do it.
+     *
+     * What it fixes today is narrower and purely a defect: all three sections were presented as
+     * ACCOUNTS, so the user was offered two empty ones to confirm. That is the same failure as the
+     * repeated-account-banner bug by a different route -- asserting something is an account on
+     * evidence that only shows it is a table.
+     *
+     * So a section with no transactions stops being offered as an account, and its rows move onto
+     * the first surviving section as unparseable so the deposit details still surface for review
+     * ("never lose information"). Nothing is discarded, and nothing here encodes a guess about what
+     * those sections are -- that judgement belongs to product classification, not to a filter.
+     * When every section is empty, the caller's zero-transaction guard reports the failure instead.
+     */
+    private List<StagedAccountSection> onlySectionsThatAreActuallyAccounts(List<StagedAccountSection> sections) {
+        if (sections.size() <= 1) return sections;
+
+        List<StagedAccountSection> accounts = sections.stream().filter(s -> !s.rows().isEmpty()).toList();
+        if (accounts.isEmpty() || accounts.size() == sections.size()) return accounts.isEmpty() ? sections : accounts;
+
+        List<UnparseableRow> carriedOver = new ArrayList<>(accounts.get(0).unparseableRows());
+        for (StagedAccountSection dropped : sections) {
+            if (dropped.rows().isEmpty()) carriedOver.addAll(dropped.unparseableRows());
+        }
+        StagedAccountSection first = accounts.get(0);
+        List<StagedAccountSection> merged = new ArrayList<>(accounts);
+        merged.set(0, new StagedAccountSection(first.detectedAccount(), first.rows(), first.totalParsed(),
+                first.flaggedDuplicates(), carriedOver));
+        return merged;
     }
 
     /**
