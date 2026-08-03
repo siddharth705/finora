@@ -9,6 +9,9 @@ import com.finora.service.CategorizationService;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
+import com.finora.imports.pdf.fixtures.PdfTrace;
+import com.finora.imports.pdf.fixtures.PdfTraceRedactor;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -78,6 +81,43 @@ class PdfPipelineDiagnostic {
         String pathArg = System.getProperty("pdfPath");
         Assumptions.assumeTrue(pathArg != null, "Set -DpdfPath=<file> to run this diagnostic");
         run(Path.of(pathArg));
+    }
+
+    /**
+     * Turns a real statement into a committable regression fixture:
+     *
+     * <pre>
+     *   mvn test -Dtest=PdfPipelineDiagnostic#captureRedactedTrace \
+     *            -DpdfPath=scratch-pdf/whatever.pdf -DtraceName=hdfc-txn-date-header
+     * </pre>
+     *
+     * Writes {@code src/test/resources/traces/&lt;traceName&gt;.trace} -- the document's text layer
+     * with coordinates intact and every non-structural token masked (see {@link PdfTraceRedactor}).
+     * This is the step that makes "every production bug becomes a permanent regression case"
+     * affordable: it takes one command rather than an afternoon of hand-authoring a synthetic PDF
+     * that approximates the layout and usually fails to reproduce the bug.
+     *
+     * Always re-read the written file before committing it. The redactor fails closed, but it is
+     * a heuristic over an allowlist, and the person capturing the trace is the last reviewer
+     * standing between a customer's statement and the repository.
+     */
+    @Test
+    void captureRedactedTrace() throws Exception {
+        String pathArg = System.getProperty("pdfPath");
+        String traceName = System.getProperty("traceName");
+        Assumptions.assumeTrue(pathArg != null && traceName != null,
+                "Set -DpdfPath=<file> -DtraceName=<name> to capture a trace fixture");
+
+        List<PositionedText> positioned = new PdfTextExtractor().extract(Files.readAllBytes(Path.of(pathArg)));
+        List<PositionedText> redacted = PdfTraceRedactor.redact(positioned);
+
+        Path out = Path.of("src/test/resources/traces", traceName + ".trace");
+        Files.createDirectories(out.getParent());
+        Files.writeString(out, PdfTrace.format(redacted));
+
+        System.out.println("Captured " + redacted.size() + " runs -> " + out.toAbsolutePath());
+        System.out.println("\nFirst 40 redacted lines -- READ THESE before committing:");
+        PdfTrace.format(redacted).lines().limit(42).forEach(l -> System.out.println("  " + l));
     }
 
     void run(Path pdfPath) throws Exception {
