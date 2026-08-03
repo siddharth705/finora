@@ -40,6 +40,14 @@ public final class PdfTrace {
 
     static final String MAGIC = "# finora-pdf-trace v1";
 
+    /** v1 traces carry no metadata; v2 adds a provenance block (see {@link TraceMetadata}) so a
+     *  trace states which redactor and allowlist produced it. Both parse identically -- every
+     *  metadata line is a comment, which the v1 parser already skipped. */
+    static final String MAGIC_V2 = "# finora-pdf-trace v2";
+
+    /** Backward-compatible: writes a v1 trace with no provenance. Retained only so existing
+     *  round-trip tests keep exercising the parser; {@link #format(List, TraceMetadata)} is what
+     *  the capture path uses. */
     public static String format(List<PositionedText> runs) {
         StringBuilder sb = new StringBuilder(MAGIC).append('\n')
                 .append("# page\tx\ty\ttext\n");
@@ -53,6 +61,33 @@ public final class PdfTrace {
                     .append(text).append('\n');
         }
         return sb.toString();
+    }
+
+    /** A v2 trace: the same run data, preceded by the provenance block that says which redactor and
+     *  allowlist produced it and which capability it exists to protect. */
+    public static String format(List<PositionedText> runs, TraceMetadata metadata) {
+        return MAGIC_V2 + '\n'
+                + metadata.toHeaderLines()
+                + "# page\tx\ty\ttext\n"
+                + formatRuns(runs);
+    }
+
+    private static String formatRuns(List<PositionedText> runs) {
+        StringBuilder sb = new StringBuilder();
+        for (PositionedText run : runs) {
+            String text = run.text().replace('\t', ' ');
+            sb.append(run.pageIndex()).append('\t')
+                    .append(String.format(Locale.ROOT, "%.2f", run.x())).append('\t')
+                    .append(String.format(Locale.ROOT, "%.2f", run.y())).append('\t')
+                    .append(text).append('\n');
+        }
+        return sb.toString();
+    }
+
+    /** The provenance of a committed trace, or {@link TraceMetadata#legacyV1()} when it predates
+     *  metadata. */
+    public static TraceMetadata metadata(String traceName) {
+        return TraceMetadata.parse(read(traceName));
     }
 
     public static List<PositionedText> parse(String content) {
@@ -73,13 +108,31 @@ public final class PdfTrace {
 
     /** Loads a committed trace from {@code src/test/resources/traces/}. */
     public static List<PositionedText> load(String traceName) {
+        return parse(read(traceName));
+    }
+
+    /** The raw file contents, metadata block included. */
+    public static String read(String traceName) {
         String path = "/traces/" + traceName + ".trace";
         try (InputStream in = PdfTrace.class.getResourceAsStream(path)) {
             if (in == null) throw new IllegalArgumentException("No such trace fixture: " + path);
-            return parse(new String(in.readAllBytes(), StandardCharsets.UTF_8));
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new UncheckedIOException("Could not read trace fixture " + path, e);
         }
+    }
+
+    /** Every committed trace, by name. The corpus is small enough to enumerate from disk, and
+     *  deriving it means a newly captured trace is covered by the corpus-health checks the moment
+     *  it lands rather than when someone adds it to a list. */
+    public static List<String> committedTraceNames() {
+        java.io.File dir = new java.io.File("src/test/resources/traces");
+        String[] files = dir.list((d, name) -> name.endsWith(".trace"));
+        if (files == null) return List.of();
+        return java.util.Arrays.stream(files)
+                .map(name -> name.substring(0, name.length() - ".trace".length()))
+                .sorted()
+                .toList();
     }
 
     /** Git on Windows checks these out with CRLF; the trailing \r would otherwise become part of

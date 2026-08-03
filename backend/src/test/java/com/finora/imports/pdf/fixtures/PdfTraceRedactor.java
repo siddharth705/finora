@@ -36,6 +36,49 @@ public final class PdfTraceRedactor {
 
     private PdfTraceRedactor() {}
 
+    /**
+     * Bumped by hand when the redaction ALGORITHM changes -- a new pattern, a changed masking rule,
+     * a different tokenisation. Not for allowlist edits, which {@link #allowlistFingerprint()}
+     * tracks automatically.
+     *
+     * Recorded into every captured trace so a trace states which redactor produced it. Without it,
+     * "was this trace captured before or after we fixed X" is answerable only by reading commit
+     * dates.
+     */
+    public static final int REDACTOR_VERSION = 2;
+
+    /**
+     * A short hash of the effective allowlist, recomputed from the live vocabulary every call.
+     *
+     * This is the mechanism that makes stale-trace detection automatic instead of a process someone
+     * has to remember. A trace records the fingerprint it was captured under; when the allowlist
+     * changes, every committed trace's recorded fingerprint stops matching the current one, and
+     * {@code TraceCorpusHealthTest} names exactly which traces are affected.
+     *
+     * The motivating incident: the allowlist had no deposit vocabulary, so three captured traces
+     * had "Maturity Date" masked to "Xxxxxxxx Date" -- the precise headers product classification
+     * reads, removed from the fixtures meant to regression-test reading them. The allowlist was
+     * then fixed, and nothing anywhere connected that fix to the traces it invalidated. A committed
+     * trace cannot be un-redacted, so the damage is permanent and was only found by dumping a
+     * fixture by hand and noticing the words were wrong.
+     *
+     * Derived from the vocabulary rather than hand-maintained precisely so it cannot be forgotten:
+     * editing STRUCTURAL_WORDS changes it whether or not anyone thought about the traces.
+     */
+    public static String allowlistFingerprint() {
+        StringBuilder canonical = new StringBuilder();
+        // Sorted so the fingerprint depends on the allowlist's CONTENT, not on the order words
+        // happen to be declared in -- reordering the list is not a reason to invalidate the corpus.
+        new java.util.TreeSet<>(vocabulary()).forEach(word -> canonical.append(word).append('\n'));
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest).substring(0, 8).toUpperCase(Locale.ROOT);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
+    }
+
     private static final Pattern DATE_LIKE = Pattern.compile(
             "\\d{1,4}[-/.]\\d{1,2}[-/.]\\d{1,4}");
     private static final Pattern AMOUNT_LIKE = Pattern.compile(

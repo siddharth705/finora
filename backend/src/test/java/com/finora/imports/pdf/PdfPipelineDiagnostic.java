@@ -11,6 +11,9 @@ import org.junit.jupiter.api.Test;
 
 import com.finora.imports.pdf.fixtures.PdfTrace;
 import com.finora.imports.pdf.fixtures.PdfTraceRedactor;
+import com.finora.imports.pdf.fixtures.TraceMetadata;
+import com.finora.imports.pdf.fixtures.TraceQualityReport;
+import com.finora.imports.pdf.fixtures.TraceValidator;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -97,9 +100,15 @@ class PdfPipelineDiagnostic {
      * affordable: it takes one command rather than an afternoon of hand-authoring a synthetic PDF
      * that approximates the layout and usually fails to reproduce the bug.
      *
-     * Always re-read the written file before committing it. The redactor fails closed, but it is
-     * a heuristic over an allowlist, and the person capturing the trace is the last reviewer
-     * standing between a customer's statement and the repository.
+     * The trace is VALIDATED before it is written (see {@link TraceValidator}): a capture that
+     * still contains unmasked customer data, or that lost the structural evidence it was captured
+     * to preserve, is refused rather than written for someone to notice later. "Read the file
+     * before committing" was the previous control, and a customer's name and account number
+     * reached the repository under it.
+     *
+     * Provenance is recorded into the file itself -- which redactor and which allowlist produced
+     * it, what it protects, and why it exists -- so a later change to either can identify the
+     * traces it invalidated. See {@code docs/engineering/trace-lifecycle.md}.
      */
     @Test
     void captureRedactedTrace() throws Exception {
@@ -111,13 +120,40 @@ class PdfPipelineDiagnostic {
         List<PositionedText> positioned = new PdfTextExtractor().extract(Files.readAllBytes(Path.of(pathArg)));
         List<PositionedText> redacted = PdfTraceRedactor.redact(positioned);
 
+        TraceMetadata metadata = new TraceMetadata(
+                TraceMetadata.CURRENT_TRACE_VERSION,
+                PdfTraceRedactor.REDACTOR_VERSION,
+                PdfTraceRedactor.allowlistFingerprint(),
+                java.time.LocalDate.now().toString(),
+                System.getProperty("source", "unspecified"),
+                csvProperty("capabilities"),
+                csvProperty("regressions"),
+                System.getProperty("motivation", ""),
+                csvProperty("requiredHeaders"));
+
+        String content = PdfTrace.format(redacted, metadata);
+        TraceValidator.Result result = TraceValidator.validate(traceName, content);
+
+        System.out.println();
+        System.out.println(TraceQualityReport.render(result));
+
+        if (!result.isCommittable()) {
+            // Deliberately not written. A refused capture that still lands on disk is one `git add`
+            // away from being committed by someone who did not read this output.
+            throw new AssertionError("Trace REFUSED -- not written. "
+                    + result.blockers().size() + " blocker(s) above must be resolved first.");
+        }
+
         Path out = Path.of("src/test/resources/traces", traceName + ".trace");
         Files.createDirectories(out.getParent());
-        Files.writeString(out, PdfTrace.format(redacted));
+        Files.writeString(out, content);
+        System.out.println("Written -> " + out.toAbsolutePath());
+    }
 
-        System.out.println("Captured " + redacted.size() + " runs -> " + out.toAbsolutePath());
-        System.out.println("\nFirst 40 redacted lines -- READ THESE before committing:");
-        PdfTrace.format(redacted).lines().limit(42).forEach(l -> System.out.println("  " + l));
+    private static java.util.List<String> csvProperty(String name) {
+        String raw = System.getProperty(name, "");
+        if (raw.isBlank()) return java.util.List.of();
+        return java.util.Arrays.stream(raw.split(",")).map(String::trim).filter(s -> !s.isBlank()).toList();
     }
 
     void run(Path pdfPath) throws Exception {
