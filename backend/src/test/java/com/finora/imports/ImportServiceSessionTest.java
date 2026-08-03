@@ -13,9 +13,11 @@ import com.finora.service.ReconciliationService;
 import com.finora.service.RecurringService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -119,6 +121,44 @@ class ImportServiceSessionTest {
     private StagedRow stagedRow() {
         return new StagedRow(LocalDate.of(2026, 7, 1), "Coffee Shop", new BigDecimal("150.00"),
                 "EXPENSE", "Food & Dining", "rule", null, false, null, null);
+    }
+
+    /**
+     * Reported against a real HDFC statement holding 100+ transactions: the pipeline read none of
+     * them, the upload returned 200 anyway, and the review screen showed an empty table with a live
+     * Confirm button -- a total extraction failure was indistinguishable from a quiet month. These
+     * two tests hold the line that an import producing no transactions is never staged, so every
+     * session that does exist is guaranteed to have something in it.
+     */
+    @Test
+    void aFileWithNoRecognizableTransactionTable_isRejectedRatherThanStagedAsAnEmptySession() {
+        MockMultipartFile file = new MockMultipartFile("file", "statement.csv", "text/csv",
+                ("Dear Customer\nYour e-statement is attached.\nThis is a computer generated document.\n")
+                        .getBytes(StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> importService.parseAndStageWithSession(userId, file))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("could not find a transaction table")
+                // "Never lose information": the text we DID recover is reported alongside the
+                // failure, so this is diagnosable without the original file.
+                .hasMessageContaining("3 line(s) of text were recovered");
+
+        verifyNoInteractions(importSessionService);
+    }
+
+    @Test
+    void aFileWhoseTableWasFoundButYieldedNoRows_isRejectedWithADifferentCodeThanAMissingTable() {
+        // The table IS located here -- the header is recognized -- there is simply nothing under
+        // it. That is a different failure from "this layout defeated table detection", needs
+        // different follow-up, and so must not collapse into the same error.
+        MockMultipartFile file = new MockMultipartFile("file", "statement.csv", "text/csv",
+                "Date,Description,Amount\n".getBytes(StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> importService.parseAndStageWithSession(userId, file))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("could not read any transactions from it");
+
+        verifyNoInteractions(importSessionService);
     }
 
     @Test

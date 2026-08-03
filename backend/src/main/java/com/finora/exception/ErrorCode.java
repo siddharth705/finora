@@ -33,6 +33,12 @@ public enum ErrorCode {
     IMPORT_ACCOUNT_NOT_FOUND("IMPORT_005", HttpStatus.NOT_FOUND, "Account not found"),
     IMPORT_SYSTEM_BUSY("IMPORT_006", HttpStatus.SERVICE_UNAVAILABLE,
             "Finora is processing a lot of statement imports right now. Please try again in a moment."),
+    // Deliberately separate from IMPORT_001 even though both mean "you got nothing". They fail at
+    // different stages and need different follow-up: 001 means the document's layout defeated
+    // table detection, 007 means the table WAS found and every row inside it was rejected. Folding
+    // them into one code is what let a real statement import as a silent, confirmable no-op.
+    IMPORT_NO_TRANSACTIONS_FOUND("IMPORT_007", HttpStatus.UNPROCESSABLE_ENTITY,
+            "Found a transaction table in this file but could not read any transactions from it"),
 
     // Accounts
     ACCOUNT_NOT_FOUND("ACC_001", HttpStatus.NOT_FOUND, "Account not found"),

@@ -7,6 +7,7 @@ import com.finora.entity.Category;
 import com.finora.entity.StatementImport;
 import com.finora.entity.Transaction;
 import com.finora.exception.ApiException;
+import com.finora.exception.ErrorCode;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.MerchantRepository;
 import com.finora.repository.StatementImportRepository;
@@ -112,6 +113,7 @@ public class ImportService {
         String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "statement.csv";
         var result = previewGenerator.generateWithContext(userId, fileName, new java.io.ByteArrayInputStream(fileContent));
         StagingResponse staged = result.response();
+        rejectIfNothingWasExtracted(staged, result.documentContext());
         var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount(),
                 result.documentContext());
         return new StagingSessionResponse(session.getId(), staged);
@@ -139,13 +141,52 @@ public class ImportService {
             StagingResponse staged = sections.isEmpty()
                     ? new StagingResponse(List.of(), 0, 0, null, List.of())
                     : toStagingResponse(sections.get(0));
+            rejectIfNothingWasExtracted(staged, result.documentContext());
             var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount(),
                     result.documentContext());
             return new PdfStagingSessionResponse(session.getId(), false, staged, null);
         }
 
+        // A multi-account document is only a success if at least one of its accounts produced
+        // something; N empty sections is the same nothing as one empty section.
+        if (sections.stream().allMatch(s -> s.rows().isEmpty())) {
+            rejectIfNothingWasExtracted(toStagingResponse(sections.get(0)), result.documentContext());
+        }
         var session = importSessionService.createMultiSection(userId, fileName, fileContent, sections, result.documentContext());
         return new PdfStagingSessionResponse(session.getId(), true, null, sections);
+    }
+
+    /**
+     * An extraction that produced no transactions is a failed extraction, not an empty statement,
+     * and must not be handed back as a staged session.
+     *
+     * This was reported against a real HDFC statement holding 100+ transactions: the upload
+     * returned 200, the review screen rendered an empty table, and Confirm was live -- so the
+     * pipeline's total failure to read the document was indistinguishable, to the person using it,
+     * from a quiet month. Confirming it would have created a real account with no transactions in
+     * it. Refusing here means every path into an import session is guaranteed to carry at least one
+     * row, so "staged successfully" keeps its meaning.
+     *
+     * The two outcomes are reported as different error codes because they need different responses:
+     * no table located at all is a layout the engine can't yet read, while a located table whose
+     * every row was rejected is a parsing problem inside a layout it did recognize. Both attach the
+     * text that WAS recovered ("never lose information" -- see the engineering principles doc), so
+     * whoever picks up the report can see what the document actually contained without needing the
+     * file itself.
+     */
+    private void rejectIfNothingWasExtracted(StagingResponse staged, DocumentContext ctx) {
+        if (!staged.rows().isEmpty()) return;
+
+        boolean locatedATable = ctx != null && ctx.buildMetadata().tables() > 0;
+        int recoveredLines = staged.unparseableRows() == null ? 0 : staged.unparseableRows().size();
+        throw new ApiException(
+                locatedATable ? ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND : ErrorCode.IMPORT_NO_HEADER_DETECTED,
+                (locatedATable
+                        ? "Finora found a transaction table in this statement but could not read any transactions from it."
+                        : "Finora could not find a transaction table anywhere in this statement.")
+                        + (recoveredLines > 0
+                        ? " " + recoveredLines + " line(s) of text were recovered and recorded for review."
+                        : ""));
     }
 
     private StagingResponse toStagingResponse(StagedAccountSection section) {
