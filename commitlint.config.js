@@ -8,7 +8,7 @@ module.exports = {
   extends: ['@commitlint/config-conventional'],
   rules: {
     'scope-enum': [2, 'always', [
-      'backend', 'frontend', 'admin-portal', 'mobile-api', 'shared',
+      'backend', 'frontend', 'admin-portal', 'mobile', 'mobile-api', 'shared',
       'transactions', 'accounts', 'budgets', 'goals', 'imports', 'analytics',
       'reports', 'rules', 'settings', 'users', 'auth', 'security',
       'db', 'infra', 'ci', 'docs', 'deps'

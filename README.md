@@ -190,6 +190,37 @@ An account needs `phoneVerified = true` to reach *any* protected endpoint, admin
 OTP UI of its own — if an admin account isn't verified yet, sign into the regular user app once
 to complete that, then come back.
 
+## Mobile app (`/mobile`) — in progress
+
+A third app: React Native + Expo, targeting iOS and Android, talking to the same backend as both
+web apps. **User-facing only** — there's no mobile admin portal, matching the same User/Admin
+split the web apps already have.
+
+Currently at **Phase 0 (scaffold)**: the API client (`src/api/client.ts` — the web app's axios
+interceptor stack ported to SecureStore-backed async storage), the endpoint layer, shared types,
+the native phone-auth wrapper, and TanStack Query are wired up; no screens exist yet. `App.tsx` is
+a placeholder. Auth and phone verification land in Phase 1.
+
+Two things differ structurally from `frontend/`, both forced by the platform:
+
+- **Firebase phone auth is native, not the Web SDK.** `@react-native-firebase/auth` does app
+  verification through silent APNs push (iOS) / Play Integrity (Android), so there's no invisible
+  reCAPTCHA and no DOM container — compare `mobile/src/lib/phoneAuth.ts` against
+  `frontend/src/lib/phoneAuth.ts`. It also means this app **can't run in Expo Go** (native module);
+  it needs a dev client / EAS build.
+- **Config comes from native files, not env vars.** There are no `EXPO_PUBLIC_FIREBASE_*`
+  variables — `GoogleService-Info.plist` and `google-services.json` (gitignored, downloaded per
+  developer from the same Firebase project the backend uses) carry it instead. Only
+  `EXPO_PUBLIC_API_BASE_URL` is env-driven; see `mobile/.env.example`.
+
+```bash
+cd mobile
+npm install
+cp .env.example .env.local   # then set EXPO_PUBLIC_API_BASE_URL
+npm run typecheck
+npm start
+```
+
 ## Next steps, in the order I'd tackle them
 
 1. Wire up the remaining Dashboard UI elements (net worth chart, calendar heatmap) against the data that's already in the schema
