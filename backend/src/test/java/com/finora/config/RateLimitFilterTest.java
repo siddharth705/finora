@@ -34,19 +34,22 @@ class RateLimitFilterTest {
     private HttpServletRequest requestFor(String path, String remoteAddr, String forwardedFor) {
         HttpServletRequest request = mock(HttpServletRequest.class);
         when(request.getRequestURI()).thenReturn(path);
+        when(request.getContextPath()).thenReturn("");
         when(request.getRemoteAddr()).thenReturn(remoteAddr);
         when(request.getHeader("X-Forwarded-For")).thenReturn(forwardedFor);
         return request;
     }
 
-    /** Drives the same request through the filter enough times to exceed the login limiter's
-     *  10/min bucket for whatever IP the filter actually resolves -- the resulting 429 (or lack
-     *  of one) is the observable proof of which IP was used, since resolveClientIp() itself is
-     *  private. */
+    /** Drives the same request through the filter enough times to exceed whichever limiter applies
+     *  for the IP the filter actually resolves -- the resulting 429 (or lack of one) is the
+     *  observable proof of which IP and which endpoint were used, since both resolveClientIp() and
+     *  limiterFor() are private. The count must clear the most generous bucket in the class
+     *  (passwordChangeLimiter, 15 per window), not just login's 10 -- at exactly 15 the 15th
+     *  request is still allowed, which previously made this helper unable to trip it at all. */
     private boolean tripsRateLimitAfterManyRequests(RateLimitFilter filter, HttpServletRequest request) throws Exception {
         FilterChain chain = mock(FilterChain.class);
         boolean any429 = false;
-        for (int i = 0; i < 15; i++) {
+        for (int i = 0; i < 20; i++) {
             MockHttpServletResponse response = new MockHttpServletResponse();
             filter.doFilterInternal(request, response, chain);
             if (response.getStatus() == 429) any429 = true;
@@ -142,6 +145,90 @@ class RateLimitFilterTest {
         filter.doFilterInternal(request, response, chain);
         assertThat(response.getStatus()).isNotEqualTo(429);
         verify(chain, times(1)).doFilter(any(), any());
+    }
+
+    /**
+     * Bug fix regression test: which limiter applies used to be decided by a {@code switch} over
+     * the RAW {@code request.getRequestURI()}. Spring routes on the DECODED path, so
+     * {@code /api/v1/auth/%6Cogin} ({@code %6C} is {@code l}) reached AuthController.login() and
+     * performed a real login attempt while this filter matched nothing and applied no limiter --
+     * making every limiter here bypassable, with no credential required, by percent-encoding one
+     * character. Every pre-existing test in this class kept passing because they all fed the
+     * filter already-canonical paths.
+     *
+     * <p>Each encoded spelling below must land in the SAME bucket as the canonical path, not a
+     * fresh unlimited one.
+     */
+    @Test
+    void bugFix_percentEncodedSpellingsOfALimitedPathAreStillLimited() throws Exception {
+        String[] encodedSpellings = {
+                "/api/v1/auth/%6Cogin",              // l
+                "/api/v1/auth/lo%67in",              // g
+                "/api/v1/%61uth/login",              // a in a leading segment
+                "/api/v1/users/me/password-change/%73tart",
+                "/api/v1/import/csv/%73tage",
+        };
+
+        for (String path : encodedSpellings) {
+            RateLimitFilter filter = newFilter();
+            ReflectionTestUtils.setField(filter, "trustProxyHeaders", false);
+            HttpServletRequest request = requestFor(path, "10.0.0.77", null);
+
+            assertThat(tripsRateLimitAfterManyRequests(filter, request))
+                    .as("%s must be rate-limited -- Spring routes it to the same handler as the "
+                            + "canonical path, so this filter must see it as the same endpoint", path)
+                    .isTrue();
+        }
+    }
+
+    /** The encoded spelling must share the canonical path's bucket, not merely have a bucket of its
+     *  own -- otherwise an attacker still gets a fresh full quota per distinct spelling, and there
+     *  are effectively unlimited spellings. */
+    @Test
+    void bugFix_anEncodedSpellingSharesTheCanonicalPathsBucket() throws Exception {
+        RateLimitFilter filter = newFilter();
+        ReflectionTestUtils.setField(filter, "trustProxyHeaders", false);
+        FilterChain chain = mock(FilterChain.class);
+
+        // Exhaust the login limiter via the canonical path.
+        assertThat(tripsRateLimitAfterManyRequests(filter, requestFor("/api/v1/auth/login", "10.0.0.88", null)))
+                .isTrue();
+
+        // The same IP, same endpoint, different spelling -- already spent, so still blocked.
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        filter.doFilterInternal(requestFor("/api/v1/auth/%6Cogin", "10.0.0.88", null), response, chain);
+        assertThat(response.getStatus())
+                .as("a percent-encoded spelling must not hand out a fresh quota")
+                .isEqualTo(429);
+    }
+
+    /** The flip side: matching must not become so loose that unrelated endpoints get swept into a
+     *  limiter. A path that merely starts with a limited one is a different endpoint. */
+    @Test
+    void doesNotLimitUnrelatedPathsThatSharePrefix() throws Exception {
+        RateLimitFilter filter = newFilter();
+        ReflectionTestUtils.setField(filter, "trustProxyHeaders", false);
+
+        assertThat(tripsRateLimitAfterManyRequests(filter, requestFor("/api/v1/auth/login/extra", "10.0.0.99", null)))
+                .isFalse();
+        assertThat(tripsRateLimitAfterManyRequests(filter, requestFor("/api/v1/accounts", "10.0.0.99", null)))
+                .isFalse();
+    }
+
+    /** The patterns are written relative to the application, so a non-empty servlet context path
+     *  must be stripped before matching rather than causing every limiter to silently miss. */
+    @Test
+    void matchesWhenDeployedUnderAContextPath() throws Exception {
+        RateLimitFilter filter = newFilter();
+        ReflectionTestUtils.setField(filter, "trustProxyHeaders", false);
+
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        when(request.getRequestURI()).thenReturn("/finora/api/v1/auth/login");
+        when(request.getContextPath()).thenReturn("/finora");
+        when(request.getRemoteAddr()).thenReturn("10.0.0.55");
+        when(request.getHeader("X-Forwarded-For")).thenReturn(null);
+
+        assertThat(tripsRateLimitAfterManyRequests(filter, request)).isTrue();
     }
 
     /** The three Change Password steps share one limiter/bucket per IP -- tripping the limit via

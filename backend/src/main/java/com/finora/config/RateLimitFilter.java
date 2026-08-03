@@ -13,7 +13,12 @@ import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import org.springframework.http.server.PathContainer;
+import org.springframework.web.util.pattern.PathPattern;
+import org.springframework.web.util.pattern.PathPatternParser;
+
 import java.io.IOException;
+import java.util.List;
 
 /**
  * Rate-limits the handful of endpoints with a real, specific abuse cost: login (credential
@@ -44,6 +49,10 @@ import java.io.IOException;
  * XSS or a compromised device is the realistic threat this defends against: without a limiter, an
  * attacker holding a stolen-but-still-valid token could hammer this flow long after the
  * legitimate user would ever call it 15 times in 10 minutes themselves.
+ *
+ * Which limiter applies is decided by matching Spring's own PathPattern against the request's
+ * DECODED path, deliberately not by string-comparing request.getRequestURI(). See
+ * {@link #limiterFor} for the bypass that distinction fixes.
  *
  * IP extraction uses request.getRemoteAddr() directly by default — correct when nothing sits
  * between the client and this app, wrong the moment a reverse proxy (Railway's own edge proxy,
@@ -89,26 +98,38 @@ public class RateLimitFilter extends OncePerRequestFilter {
     @org.springframework.beans.factory.annotation.Value("${app.security.trust-proxy-headers:false}")
     private boolean trustProxyHeaders;
 
+    /** One rate-limited endpoint. Kept as a pattern rather than a String so matching goes through
+     *  the same engine that decides which controller actually handles the request. */
+    private record LimitedEndpoint(PathPattern pattern, RateLimiter limiter) {}
+
+    /** A parser of this class's own, rather than PathPatternParser.defaultInstance, so nothing
+     *  else reconfiguring that shared instance can silently change what this filter matches.
+     *  Defaults are identical to the ones DispatcherServlet routes with under Spring Boot 3
+     *  (spring.mvc.pathmatch.matching-strategy defaults to PATH_PATTERN_PARSER). */
+    private static final PathPatternParser PARSER = new PathPatternParser();
+
+    private final List<LimitedEndpoint> limitedEndpoints;
+
     public RateLimitFilter(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
+        this.limitedEndpoints = List.of(
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/login"), loginLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/register"), registerLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/forgot-password"), forgotPasswordLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/import/csv/stage"), importStageLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/import/pdf/stage"), importStageLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/password-change/start"), passwordChangeLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/password-change/verify-otp"), passwordChangeLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/password-change/complete"), passwordChangeLimiter));
     }
 
     @Override
     protected void doFilterInternal(@NonNull HttpServletRequest request,
                                      @NonNull HttpServletResponse response,
                                      @NonNull FilterChain filterChain) throws ServletException, IOException {
-        String path = request.getRequestURI();
         String ip = resolveClientIp(request);
 
-        RateLimiter limiter = switch (path) {
-            case "/api/v1/auth/login" -> loginLimiter;
-            case "/api/v1/auth/register" -> registerLimiter;
-            case "/api/v1/auth/forgot-password" -> forgotPasswordLimiter;
-            case "/api/v1/import/csv/stage", "/api/v1/import/pdf/stage" -> importStageLimiter;
-            case "/api/v1/users/me/password-change/start", "/api/v1/users/me/password-change/verify-otp",
-                    "/api/v1/users/me/password-change/complete" -> passwordChangeLimiter;
-            default -> null;
-        };
+        RateLimiter limiter = limiterFor(request);
 
         if (limiter != null && !limiter.allow(ip)) {
             response.setStatus(429); // Too Many Requests
@@ -120,6 +141,50 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    /**
+     * Bug fix: this used to be a {@code switch} over {@code request.getRequestURI()}, comparing the
+     * RAW request line against exact literals. Spring routes on the DECODED path -- both
+     * DispatcherServlet's handler mapping and SecurityConfig's own {@code requestMatchers(...)} use
+     * PathPattern against the parsed request path, where {@code %6C} is just {@code l}. So
+     * {@code POST /api/v1/auth/%6Cogin} reached AuthController.login() and performed a completely
+     * ordinary login attempt, while this filter's exact-string switch saw a path it had never heard
+     * of and applied no limiter at all.
+     *
+     * <p>That made every limiter in this class bypassable by percent-encoding any single character
+     * of the path, with no credential and no authentication required: unlimited credential stuffing
+     * against login (defeating the per-IP half of the lockout design this class exists to provide),
+     * unlimited registration spam, unlimited forgot-password mail, unbounded growth of
+     * import_sessions including raw statement bytes, and unlimited bcrypt work against
+     * password-change. Every rate-limit test in RateLimitFilterTest passed throughout, because they
+     * all fed the filter already-canonical paths.
+     *
+     * <p>Matching through PathPattern against the decoded path is what makes this filter agree with
+     * the router by construction rather than by a duplicated string literal that only holds for the
+     * exact spelling someone thought to write down. Enforced by
+     * {@code FilterPathMatchingTest}, which fails the build if a filter goes back to
+     * comparing getRequestURI() as a string.
+     */
+    private RateLimiter limiterFor(HttpServletRequest request) {
+        PathContainer path = pathWithinApplication(request);
+        for (LimitedEndpoint endpoint : limitedEndpoints) {
+            if (endpoint.pattern().matches(path)) return endpoint.limiter();
+        }
+        return null;
+    }
+
+    /** getRequestURI() includes the context path; the patterns above are written relative to the
+     *  application, exactly like SecurityConfig's matchers. Parsed (not string-compared) so the
+     *  segments this matches against are the decoded ones. */
+    private static PathContainer pathWithinApplication(HttpServletRequest request) {
+        String uri = request.getRequestURI();
+        if (uri == null || uri.isEmpty()) return PathContainer.parsePath("/");
+        String contextPath = request.getContextPath();
+        if (contextPath != null && !contextPath.isEmpty() && uri.startsWith(contextPath)) {
+            uri = uri.substring(contextPath.length());
+        }
+        return PathContainer.parsePath(uri.isEmpty() ? "/" : uri);
     }
 
     /** Bug fix: this used to take the FIRST entry of X-Forwarded-For on the (backwards) theory
