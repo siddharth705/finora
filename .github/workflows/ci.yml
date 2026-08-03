@@ -109,10 +109,15 @@ jobs:
         working-directory: mobile
         run: npm run typecheck
 
-      # There are no mobile tests yet (see the roadmap's testing phase), so a Metro bundle is the
-      # real signal here: it catches broken imports, bad JSX, and anything that type-checks but
-      # can't actually be packaged. This is JS-only -- it does NOT compile native code or produce
-      # an installable app, which needs EAS Build and, for iOS, a macOS runner.
+      - name: Test
+        working-directory: mobile
+        run: npm test
+
+      # The bundle catches a different class of problem than the tests do: broken imports, bad
+      # JSX, and anything that type-checks but can't actually be packaged. This is JS-only -- it
+      # does NOT compile native code or produce an installable app, which needs EAS Build and, for
+      # iOS, a macOS runner. Nothing here substitutes for the on-device checklist in
+      # docs/engineering/mobile-setup.md.
       #
       # EXPO_PUBLIC_API_BASE_URL is required at import time by src/api/client.ts, which throws
       # when it's unset rather than silently falling back to a broken relative path. The value is

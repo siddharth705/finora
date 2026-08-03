@@ -12,6 +12,7 @@ import {
 } from '../lib/phoneAuth';
 import { maskPhone } from '../lib/maskPhone';
 import { toUserMessage } from '../lib/apiError';
+import { sanitizeOtp } from '../lib/validation';
 import { spacing, useTheme } from '../theme';
 
 /**
@@ -92,7 +93,7 @@ export function VerifyPhoneScreen() {
       <TextField
         label="Verification code"
         value={otp}
-        onChangeText={(v) => setOtp(v.replace(/\D/g, '').slice(0, 6))}
+        onChangeText={(v) => setOtp(sanitizeOtp(v))}
         placeholder="123456"
         keyboardType="number-pad"
         autoComplete="sms-otp"

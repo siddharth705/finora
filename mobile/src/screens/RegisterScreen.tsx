@@ -6,42 +6,16 @@ import { Button } from '../components/Button';
 import { TextField } from '../components/TextField';
 import { useAuth } from '../context/AuthContext';
 import { toUserMessage } from '../lib/apiError';
+import {
+  EMAIL_PATTERN, FULL_NAME_PATTERN, PHONE_PATTERN, passwordStrength, sanitizePhoneNumber,
+} from '../lib/validation';
 import { radius, spacing, useTheme } from '../theme';
 import type { AuthStackParamList } from '../navigation/types';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'Register'>;
 
-// Every validation rule below is ported verbatim from frontend/src/pages/Register.tsx -- the two
-// forms must agree on what's acceptable, and the backend enforces its own rules regardless.
-
-// Simple, honest heuristic -- four independent signals, no external library. Purely a nudge,
-// never a submission gate: the backend's 8-character minimum is the real requirement.
-function passwordStrength(pw: string): { score: number; label: string } {
-  let score = 0;
-  if (pw.length >= 8) score++;
-  if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) score++;
-  if (/[0-9]/.test(pw)) score++;
-  if (/[^A-Za-z0-9]/.test(pw)) score++;
-  const labels = ['Too short', 'Weak', 'Fair', 'Good', 'Strong'];
-  return { score, label: labels[score] };
-}
-
-// Digits only, capped at 10 -- the country code is a fixed "+91" prefix shown beside the field,
-// never typed into it. Also handles a pasted full number ("+919876543210", "919876543210"): strip
-// a leading "91" only when there'd otherwise be more than 10 digits, so a genuine 10-digit number
-// starting 910-919 doesn't lose its first two digits.
-function sanitizePhoneNumber(raw: string): string {
-  const digitsOnly = raw.replace(/[^0-9]/g, '');
-  const local = digitsOnly.length > 10 && digitsOnly.startsWith('91') ? digitsOnly.slice(2) : digitsOnly;
-  return local.slice(0, 10);
-}
-
-// Real Indian mobile numbers always start 6-9.
-const PHONE_PATTERN = /^[6-9][0-9]{9}$/;
-// Letters (including accented/Unicode), spaces, hyphens, apostrophes, periods -- covers
-// "Jean-Luc", "O'Brien", "Md. Rahman", "José" while rejecting digits and email-like input.
-const FULL_NAME_PATTERN = /^[\p{L}][\p{L}\s.'-]{0,98}[\p{L}]$/u;
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Validation rules live in lib/validation.ts so they're directly testable and shared with the
+// account forms Phases 4-5 add. They must agree with frontend/src/pages/Register.tsx.
 
 export function RegisterScreen({ navigation }: Props) {
   const c = useTheme();

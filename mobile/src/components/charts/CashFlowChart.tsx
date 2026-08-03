@@ -1,5 +1,9 @@
 import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Line, Polyline, Circle } from 'react-native-svg';
+import { fmtCurrency } from '../../lib/format';
+import {
+  CASHFLOW_HEIGHT, CASHFLOW_PAD_TOP, CASHFLOW_PLOT_HEIGHT, cashFlowScale,
+} from '../../lib/chartGeometry';
 import { spacing, useTheme } from '../../theme';
 
 export interface CashFlowPoint {
@@ -9,15 +13,10 @@ export interface CashFlowPoint {
 }
 
 /**
- * Replaces the web Dashboard's Chart.js <Line> for Cash Flow Overview. Two series (income,
- * expense) sharing one y-scale, drawn as polylines on react-native-svg -- see DonutChart's own
- * comment for why this isn't a charting library.
+ * Replaces the web Dashboard's Chart.js <Line> for Cash Flow Overview. Two series on one shared
+ * scale -- see DonutChart's comment for why this isn't a charting library, and
+ * lib/chartGeometry.ts for the scaling and its edge cases.
  */
-const HEIGHT = 150;
-const PAD_TOP = 8;
-const PAD_BOTTOM = 22;
-const PLOT_HEIGHT = HEIGHT - PAD_TOP - PAD_BOTTOM;
-
 export function CashFlowChart({ points, width }: { points: CashFlowPoint[]; width: number }) {
   const c = useTheme();
 
@@ -25,36 +24,41 @@ export function CashFlowChart({ points, width }: { points: CashFlowPoint[]; widt
     return <Text style={[styles.empty, { color: c.muted }]}>No monthly data yet.</Text>;
   }
 
-  // Both series share a scale so their heights are actually comparable -- the whole point of
-  // plotting them together. Guard against an all-zero month set producing a divide-by-zero.
-  const max = Math.max(1, ...points.flatMap((p) => [p.income, p.expense]));
-
-  // A single data point has no span to divide across; place it mid-width rather than at x=NaN.
-  const stepX = points.length > 1 ? width / (points.length - 1) : 0;
-  const xAt = (i: number) => (points.length > 1 ? i * stepX : width / 2);
-  const yAt = (v: number) => PAD_TOP + PLOT_HEIGHT - (v / max) * PLOT_HEIGHT;
-
+  const { xAt, yAt } = cashFlowScale(points, width);
   const toPolyline = (pick: (p: CashFlowPoint) => number) =>
     points.map((p, i) => `${xAt(i)},${yAt(pick(p))}`).join(' ');
 
   return (
     <View>
-      <Svg width={width} height={HEIGHT}>
-        {/* Baseline only -- a full gridline set would be noise at this size. */}
-        <Line x1={0} y1={PAD_TOP + PLOT_HEIGHT} x2={width} y2={PAD_TOP + PLOT_HEIGHT} stroke={c.border} strokeWidth={1} />
+      {/* The SVG can't be read by assistive tech; this label carries the same information. */}
+      <View
+        accessible
+        accessibilityLabel={`Cash flow over ${points.length} months. ${points
+          .map((p) => `${p.label}: income ${fmtCurrency(p.income)}, expense ${fmtCurrency(p.expense)}`)
+          .join('. ')}`}
+      >
+        <Svg width={width} height={CASHFLOW_HEIGHT}>
+          {/* Baseline only -- a full gridline set is noise at this size. */}
+          <Line
+            x1={0}
+            y1={CASHFLOW_PAD_TOP + CASHFLOW_PLOT_HEIGHT}
+            x2={width}
+            y2={CASHFLOW_PAD_TOP + CASHFLOW_PLOT_HEIGHT}
+            stroke={c.border}
+            strokeWidth={1}
+          />
+          <Polyline points={toPolyline((p) => p.income)} fill="none" stroke={c.success} strokeWidth={2} />
+          <Polyline points={toPolyline((p) => p.expense)} fill="none" stroke={c.danger} strokeWidth={2} />
+          {points.map((p, i) => (
+            <Circle key={`i-${p.label}`} cx={xAt(i)} cy={yAt(p.income)} r={3} fill={c.success} />
+          ))}
+          {points.map((p, i) => (
+            <Circle key={`e-${p.label}`} cx={xAt(i)} cy={yAt(p.expense)} r={3} fill={c.danger} />
+          ))}
+        </Svg>
+      </View>
 
-        <Polyline points={toPolyline((p) => p.income)} fill="none" stroke={c.success} strokeWidth={2} />
-        <Polyline points={toPolyline((p) => p.expense)} fill="none" stroke={c.danger} strokeWidth={2} />
-
-        {points.map((p, i) => (
-          <Circle key={`i-${p.label}`} cx={xAt(i)} cy={yAt(p.income)} r={3} fill={c.success} />
-        ))}
-        {points.map((p, i) => (
-          <Circle key={`e-${p.label}`} cx={xAt(i)} cy={yAt(p.expense)} r={3} fill={c.danger} />
-        ))}
-      </Svg>
-
-      <View style={[styles.axis, { width }]}>
+      <View style={[styles.axis, { width }]} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
         {points.map((p) => (
           <Text key={p.label} style={[styles.axisLabel, { color: c.muted }]} numberOfLines={1}>
             {p.label}

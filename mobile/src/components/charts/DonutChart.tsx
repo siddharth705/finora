@@ -1,6 +1,9 @@
 import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, G, Path } from 'react-native-svg';
 import { fmtCurrency } from '../../lib/format';
+import {
+  DONUT_CENTER, DONUT_RADIUS, DONUT_SIZE, DONUT_STROKE, arcPath, buildArcs,
+} from '../../lib/chartGeometry';
 import { spacing, useTheme } from '../../theme';
 
 export interface Slice {
@@ -12,68 +15,55 @@ export interface Slice {
 /**
  * Replaces the web Dashboard's Chart.js <Doughnut>. Hand-rolled on react-native-svg rather than
  * pulling in a charting library: the shape needed is one ring of arcs, and every RN charting
- * package would add a native dependency to maintain against each Expo SDK bump for it.
+ * package would add a native dependency to re-validate against each Expo SDK bump for it.
+ *
+ * The geometry lives in lib/chartGeometry.ts so its edge cases are covered by tests -- bad chart
+ * math still renders, just wrongly, which neither a type-check nor a bundle would catch.
  */
-const SIZE = 160;
-const STROKE = 26;
-const RADIUS = (SIZE - STROKE) / 2;
-const CENTER = SIZE / 2;
-
-// SVG arcs need explicit start/end points, so polar coordinates are converted to cartesian here.
-// -90° puts the first slice at 12 o'clock instead of 3 o'clock.
-function pointOnCircle(angleDeg: number) {
-  const rad = ((angleDeg - 90) * Math.PI) / 180;
-  return { x: CENTER + RADIUS * Math.cos(rad), y: CENTER + RADIUS * Math.sin(rad) };
-}
-
-function arcPath(startAngle: number, endAngle: number): string {
-  const start = pointOnCircle(startAngle);
-  const end = pointOnCircle(endAngle);
-  const largeArc = endAngle - startAngle > 180 ? 1 : 0;
-  return `M ${start.x} ${start.y} A ${RADIUS} ${RADIUS} 0 ${largeArc} 1 ${end.x} ${end.y}`;
-}
-
 export function DonutChart({ slices, centerLabel }: { slices: Slice[]; centerLabel?: string }) {
   const c = useTheme();
-  const total = slices.reduce((s, x) => s + x.value, 0);
+  const arcs = buildArcs(slices);
+  const colorFor = (label: string) => slices.find((s) => s.label === label)?.color ?? c.primary;
 
-  if (total <= 0) {
+  if (arcs.length === 0) {
     return (
       <View style={styles.wrap}>
-        <Svg width={SIZE} height={SIZE}>
-          <Circle cx={CENTER} cy={CENTER} r={RADIUS} stroke={c.border} strokeWidth={STROKE} fill="none" />
+        <Svg width={DONUT_SIZE} height={DONUT_SIZE}>
+          <Circle
+            cx={DONUT_CENTER}
+            cy={DONUT_CENTER}
+            r={DONUT_RADIUS}
+            stroke={c.border}
+            strokeWidth={DONUT_STROKE}
+            fill="none"
+          />
         </Svg>
       </View>
     );
   }
 
-  let cursor = 0;
-  const arcs = slices
-    .filter((s) => s.value > 0)
-    .map((s) => {
-      const sweep = (s.value / total) * 360;
-      const start = cursor;
-      cursor += sweep;
-      // A full-circle arc can't be expressed as a single A command (start and end points would be
-      // identical, which renders nothing) -- fall back to a plain circle when one slice is
-      // everything, which is a real case for an account with a single spend category.
-      return { ...s, start, end: cursor, full: sweep >= 359.99 };
-    });
-
   return (
     <View style={styles.wrap}>
       <View>
-        <Svg width={SIZE} height={SIZE}>
+        <Svg width={DONUT_SIZE} height={DONUT_SIZE}>
           <G>
             {arcs.map((a) =>
               a.full ? (
-                <Circle key={a.label} cx={CENTER} cy={CENTER} r={RADIUS} stroke={a.color} strokeWidth={STROKE} fill="none" />
+                <Circle
+                  key={a.label}
+                  cx={DONUT_CENTER}
+                  cy={DONUT_CENTER}
+                  r={DONUT_RADIUS}
+                  stroke={colorFor(a.label)}
+                  strokeWidth={DONUT_STROKE}
+                  fill="none"
+                />
               ) : (
                 <Path
                   key={a.label}
                   d={arcPath(a.start, a.end)}
-                  stroke={a.color}
-                  strokeWidth={STROKE}
+                  stroke={colorFor(a.label)}
+                  strokeWidth={DONUT_STROKE}
                   fill="none"
                   strokeLinecap="butt"
                 />
@@ -91,10 +81,12 @@ export function DonutChart({ slices, centerLabel }: { slices: Slice[]; centerLab
         ) : null}
       </View>
 
+      {/* The SVG itself is invisible to a screen reader, so this legend is the accessible
+          representation of the chart, not just a colour key. */}
       <View style={styles.legend}>
         {arcs.map((a) => (
-          <View key={a.label} style={styles.legendRow}>
-            <View style={[styles.swatch, { backgroundColor: a.color }]} />
+          <View key={a.label} style={styles.legendRow} accessible accessibilityLabel={`${a.label}: ${fmtCurrency(a.value)}`}>
+            <View style={[styles.swatch, { backgroundColor: colorFor(a.label) }]} />
             <Text style={[styles.legendLabel, { color: c.ink }]} numberOfLines={1}>
               {a.label}
             </Text>
