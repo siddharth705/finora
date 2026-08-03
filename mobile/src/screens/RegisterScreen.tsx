@@ -5,6 +5,7 @@ import { AuthScreenLayout } from '../components/AuthScreenLayout';
 import { Button } from '../components/Button';
 import { TextField } from '../components/TextField';
 import { useAuth } from '../context/AuthContext';
+import { toUserMessage } from '../lib/apiError';
 import { radius, spacing, useTheme } from '../theme';
 import type { AuthStackParamList } from '../navigation/types';
 
@@ -87,8 +88,8 @@ export function RegisterScreen({ navigation }: Props) {
       await register(email.trim(), password, trimmedName, `+91${phoneNumber}`);
       // No navigation: RootNavigator switches stacks off AuthContext state, landing on
       // VerifyPhone since a fresh registration is never phone-verified yet.
-    } catch (err: any) {
-      setError(err.response?.data?.message ?? 'Registration failed.');
+    } catch (err) {
+      setError(toUserMessage(err, 'Registration failed.'));
     } finally {
       setLoading(false);
     }

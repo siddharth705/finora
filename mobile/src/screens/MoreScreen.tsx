@@ -28,7 +28,13 @@ export function MoreScreen({ navigation }: Props) {
       <Text style={[styles.title, { color: c.ink }]}>More</Text>
 
       <Card style={styles.profileCard}>
-        <View style={[styles.avatar, { backgroundColor: c.primary }]}>
+        {/* Decorative initial -- the name and email are read out right beside it, so announcing
+            a lone "S" first is pure noise. */}
+        <View
+          style={[styles.avatar, { backgroundColor: c.primary }]}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        >
           <Text style={styles.avatarText}>{(fullName ?? email ?? '?').charAt(0).toUpperCase()}</Text>
         </View>
         <View style={styles.profileText}>
@@ -46,9 +52,13 @@ export function MoreScreen({ navigation }: Props) {
           onPress={() => navigation.navigate('Accounts')}
           style={[styles.menuRow, { borderBottomColor: c.border }]}
           android_ripple={{ color: c.border }}
+          accessibilityRole="button"
+          accessibilityLabel="Accounts"
         >
           <Text style={[styles.menuLabel, { color: c.ink }]}>Accounts</Text>
-          <Text style={[styles.chevron, { color: c.muted }]}>›</Text>
+          {/* Decorative -- the row already announces itself as a button, so a screen reader
+              reading "greater-than sign" here would be noise. */}
+          <Text style={[styles.chevron, { color: c.muted }]} accessibilityElementsHidden importantForAccessibility="no">›</Text>
         </Pressable>
 
         {/* Budgets, Goals, Statement History, and Settings land in later phases -- listed as
@@ -56,14 +66,23 @@ export function MoreScreen({ navigation }: Props) {
             users as each one arrives, but they're visibly not tappable yet rather than
             pretending to work. */}
         {['Budgets', 'Goals', 'Statement History', 'Settings'].map((label) => (
-          <View key={label} style={[styles.menuRow, { borderBottomColor: c.border }]}>
+          <View
+            key={label}
+            style={[styles.menuRow, { borderBottomColor: c.border }]}
+            // Grouped into one node so it announces as "Budgets, not available yet" rather than
+            // two unrelated fragments, and marked disabled so it isn't mistaken for a live control.
+            accessible
+            accessibilityRole="button"
+            accessibilityState={{ disabled: true }}
+            accessibilityLabel={`${label}, not available yet`}
+          >
             <Text style={[styles.menuLabel, { color: c.muted }]}>{label}</Text>
             <Text style={[styles.soon, { color: c.muted, backgroundColor: c.primaryLight }]}>Soon</Text>
           </View>
         ))}
       </Card>
 
-      <Pressable onPress={confirmSignOut} style={styles.signOutRow} hitSlop={8}>
+      <Pressable onPress={confirmSignOut} style={styles.signOutRow} hitSlop={12} accessibilityRole="button">
         <Text style={[styles.signOut, { color: c.danger }]}>Sign out</Text>
       </Pressable>
     </ScrollView>

@@ -26,6 +26,11 @@ const light = {
   dangerBg: '#fee2e2',
   warning: '#d97706',
   warningBg: '#fef3c7',
+  // The shared `warning` tone is tuned for icons and borders; as text on `warningBg` it only
+  // reaches 2.86:1, well under WCAG AA's 4.5:1. This darker amber hits 6.37:1 on the same ground.
+  // A separate token rather than a change to `warning` itself, since that value is shared with
+  // the web app and is fine in the roles it's actually used for there.
+  warningInk: '#92400e',
   inputBg: '#ffffff',
 };
 
@@ -44,6 +49,8 @@ const dark: typeof light = {
   dangerBg: '#3a1518',
   warning: '#fbbf24',
   warningBg: '#3a2a0a',
+  // Dark theme already clears AA comfortably (8.30:1), so this is the same value as `warning`.
+  warningInk: '#fbbf24',
   inputBg: '#0d0e1a',
 };
 

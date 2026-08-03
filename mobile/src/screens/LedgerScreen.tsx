@@ -6,6 +6,7 @@ import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { transactionsApi, type TransactionFilters } from '../api/endpoints';
 import { invalidateFinancialData } from '../lib/invalidateFinancialData';
+import { toUserMessage } from '../lib/apiError';
 import { useDebouncedValue } from '../lib/useDebouncedValue';
 import { fmtCurrency } from '../lib/format';
 import { radius, spacing, useTheme } from '../theme';
@@ -76,8 +77,8 @@ export function LedgerScreen() {
       // Editing/deleting shifts category totals, the account balance, budget progress, goals, and
       // any insight built from spend patterns -- see invalidateFinancialData's own comment.
       invalidateFinancialData(queryClient);
-    } catch (e: any) {
-      setError(e.response?.data?.message ?? 'Could not delete this transaction.');
+    } catch (e) {
+      setError(toUserMessage(e, 'Could not delete this transaction.'));
     } finally {
       setDeletingId(null);
     }
@@ -107,6 +108,9 @@ export function LedgerScreen() {
           <Pressable
             key={t}
             onPress={() => setTypeFilter(t)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: typeFilter === t }}
+            accessibilityLabel={`Filter: ${t === 'ALL' ? 'all' : t.toLowerCase()}`}
             style={[
               styles.chip,
               { borderColor: c.border },
@@ -152,6 +156,19 @@ export function LedgerScreen() {
               onLongPress={() => confirmDelete(t)}
               style={[styles.row, { backgroundColor: c.card, borderColor: c.border }]}
               android_ripple={{ color: c.border }}
+              // Long-press was the only route to delete, which made it unreachable for anyone
+              // using a screen reader -- there's no gesture equivalent in the rotor. Declaring it
+              // as an accessibility action exposes it properly, and the hint tells sighted users
+              // the gesture exists at all, since nothing on the row advertises it.
+              accessibilityRole="button"
+              accessibilityLabel={`${t.description || t.merchant || 'Transaction'}, ${
+                t.type === 'INCOME' ? 'income' : 'expense'
+              } ${fmtCurrency(Math.abs(t.amount))}, ${t.categoryName}, ${t.date}`}
+              accessibilityHint="Double tap and hold to delete"
+              accessibilityActions={[{ name: 'delete', label: 'Delete transaction' }]}
+              onAccessibilityAction={(e) => {
+                if (e.nativeEvent.actionName === 'delete') confirmDelete(t);
+              }}
             >
               <View style={styles.rowMain}>
                 <Text style={[styles.desc, { color: c.ink }]} numberOfLines={1}>
@@ -207,8 +224,12 @@ const styles = StyleSheet.create({
   chip: {
     borderWidth: 1,
     borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingHorizontal: 16,
+    // 44pt is the minimum comfortable touch target on both platforms (Apple HIG and Material
+    // both land there). These were ~30pt tall, which is a miss-prone target for a filter people
+    // toggle repeatedly while scanning a list.
+    minHeight: 44,
+    justifyContent: 'center',
   },
   chipText: { fontSize: 12, fontWeight: '600' },
   error: { fontSize: 13, paddingHorizontal: spacing.md, paddingBottom: spacing.sm },

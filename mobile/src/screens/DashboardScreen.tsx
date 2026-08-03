@@ -100,7 +100,7 @@ export function DashboardScreen() {
     return (
       <View style={[styles.centered, { backgroundColor: c.bg }]}>
         <Text style={[styles.errorText, { color: c.muted }]}>Couldn't load your dashboard.</Text>
-        <Pressable onPress={refresh} hitSlop={8}>
+        <Pressable onPress={refresh} hitSlop={12} accessibilityRole="button">
           <Text style={[styles.retry, { color: c.primary }]}>Try again</Text>
         </Pressable>
       </View>
@@ -132,22 +132,34 @@ export function DashboardScreen() {
       <View style={styles.kpiGrid}>
         {kpis.map((k) => (
           <Card key={k.label} style={styles.kpiCard}>
-            <Text style={[styles.kpiLabel, { color: c.muted }]}>{k.label}</Text>
-            <Text style={[styles.kpiValue, { color: c.ink }]} numberOfLines={1} adjustsFontSizeToFit>
-              {k.value}
-            </Text>
-            {k.delta !== null && k.delta !== undefined ? (
-              <Text
-                style={[
-                  styles.kpiDelta,
-                  { color: (k.invert ? k.delta < 0 : k.delta >= 0) ? c.success : c.danger },
-                ]}
-              >
-                {k.delta >= 0 ? '▲' : '▼'} {Math.abs(k.delta).toFixed(1)}% vs last month
+            {/* Grouped into one accessible node: swiping through "Income", "₹82,000", then
+                "▲ 4.1% vs last month" as three separate items loses the connection between them,
+                and the bare triangle is announced as "black up-pointing triangle". */}
+            <View
+              accessible
+              accessibilityLabel={
+                k.delta !== null && k.delta !== undefined
+                  ? `${k.label}: ${k.value}, ${k.delta >= 0 ? 'up' : 'down'} ${Math.abs(k.delta).toFixed(1)} percent versus last month`
+                  : `${k.label}: ${k.value}`
+              }
+            >
+              <Text style={[styles.kpiLabel, { color: c.muted }]}>{k.label}</Text>
+              <Text style={[styles.kpiValue, { color: c.ink }]} numberOfLines={1} adjustsFontSizeToFit>
+                {k.value}
               </Text>
-            ) : (
-              <Text style={styles.kpiDelta} />
-            )}
+              {k.delta !== null && k.delta !== undefined ? (
+                <Text
+                  style={[
+                    styles.kpiDelta,
+                    { color: (k.invert ? k.delta < 0 : k.delta >= 0) ? c.success : c.danger },
+                  ]}
+                >
+                  {k.delta >= 0 ? '▲' : '▼'} {Math.abs(k.delta).toFixed(1)}% vs last month
+                </Text>
+              ) : (
+                <Text style={styles.kpiDelta} />
+              )}
+            </View>
           </Card>
         ))}
       </View>
@@ -161,6 +173,9 @@ export function DashboardScreen() {
                 <Pressable
                   key={r}
                   onPress={() => setCashFlowRange(r)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: cashFlowRange === r }}
+                  accessibilityLabel={`Show ${RANGE_MONTHS[r]} months`}
                   style={[styles.rangeChip, cashFlowRange === r && { backgroundColor: c.primaryLight }]}
                 >
                   <Text style={[styles.rangeText, { color: cashFlowRange === r ? c.primary : c.muted }]}>{r}</Text>
@@ -259,7 +274,8 @@ const styles = StyleSheet.create({
   kpiDelta: { fontSize: 11, marginTop: 2, minHeight: 14 },
   section: { marginTop: spacing.md },
   rangeRow: { flexDirection: 'row', borderWidth: 1, borderRadius: radius.md, overflow: 'hidden' },
-  rangeChip: { paddingHorizontal: 10, paddingVertical: 4 },
+  // 44pt minimum touch target -- see the same note in LedgerScreen's filter chips.
+  rangeChip: { paddingHorizontal: 14, minHeight: 44, justifyContent: 'center' },
   rangeText: { fontSize: 11, fontWeight: '600' },
   txnRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
   txnMain: { flex: 1, marginRight: spacing.sm },

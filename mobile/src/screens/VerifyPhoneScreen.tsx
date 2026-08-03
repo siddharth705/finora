@@ -11,20 +11,8 @@ import {
   type PhoneConfirmation,
 } from '../lib/phoneAuth';
 import { maskPhone } from '../lib/maskPhone';
+import { toUserMessage } from '../lib/apiError';
 import { spacing, useTheme } from '../theme';
-
-// Firebase's own error codes for the two cases worth a specific message -- everything else falls
-// back to something generic rather than surfacing raw Firebase error text to the user.
-function friendlyFirebaseError(err: any): string {
-  switch (err?.code) {
-    case 'auth/invalid-verification-code':
-      return "That code doesn't match — check and try again.";
-    case 'auth/code-expired':
-      return 'This code has expired. Request a new one.';
-    default:
-      return 'Could not verify — try again.';
-  }
-}
 
 /**
  * Ported from frontend/src/pages/VerifyPhone.tsx. The flow is identical apart from what the web
@@ -55,8 +43,11 @@ export function VerifyPhoneScreen() {
       setPhoneNumber(settings.phoneNumber);
       const result = await sendPhoneVerificationCode(settings.phoneNumber);
       setConfirmation(result);
-    } catch {
-      setError('Could not send a verification code right now.');
+    } catch (err) {
+      // Was a bare `catch {}` discarding the error, which made "you're offline", "Firebase isn't
+      // configured in this build", and "rate limited" all render as the same sentence -- the three
+      // cases with the most different fixes.
+      setError(toUserMessage(err, 'Could not send a verification code right now.'));
     } finally {
       setSending(false);
     }
@@ -77,8 +68,10 @@ export function VerifyPhoneScreen() {
       await phoneApi.verify(idToken);
       // No navigation: flipping this flag is what moves RootNavigator to the app stack.
       setPhoneVerified(true);
-    } catch (err: any) {
-      setError(err.response?.data?.message ?? friendlyFirebaseError(err));
+    } catch (err) {
+      // This try covers both Firebase (confirm) and the backend (phone/verify) -- toUserMessage
+      // handles either family, which is why the local Firebase map is gone.
+      setError(toUserMessage(err, 'Could not verify — try again.'));
     } finally {
       setLoading(false);
     }

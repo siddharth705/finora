@@ -5,6 +5,7 @@ import { AuthScreenLayout } from '../components/AuthScreenLayout';
 import { Button } from '../components/Button';
 import { TextField } from '../components/TextField';
 import { authApi } from '../api/endpoints';
+import { toUserMessage } from '../lib/apiError';
 import { spacing, useTheme } from '../theme';
 import type { AuthStackParamList } from '../navigation/types';
 
@@ -45,8 +46,8 @@ export function ForgotPasswordScreen({ navigation }: Props) {
     try {
       await authApi.forgotPassword(email.trim());
       setSubmitted(true);
-    } catch (err: any) {
-      setError(err.response?.data?.message ?? 'Something went wrong. Try again.');
+    } catch (err) {
+      setError(toUserMessage(err, 'Something went wrong. Try again.'));
     } finally {
       setLoading(false);
     }

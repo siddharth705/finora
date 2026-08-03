@@ -5,6 +5,7 @@ import { AuthScreenLayout } from '../components/AuthScreenLayout';
 import { Button } from '../components/Button';
 import { TextField } from '../components/TextField';
 import { useAuth } from '../context/AuthContext';
+import { toUserMessage } from '../lib/apiError';
 import { spacing, useTheme } from '../theme';
 import type { AuthStackParamList } from '../navigation/types';
 
@@ -43,8 +44,8 @@ export function LoginScreen({ navigation, route }: Props) {
       // No navigation on success: RootNavigator swaps the whole Auth stack out once AuthContext
       // holds a token, and picks VerifyPhone vs. the app from phoneVerified. See its own comment.
       await login(identifier.trim(), password);
-    } catch (err: any) {
-      setError(err.response?.data?.message ?? 'Login failed. Check your credentials.');
+    } catch (err) {
+      setError(toUserMessage(err, 'Login failed. Check your credentials.'));
     } finally {
       setLoading(false);
     }

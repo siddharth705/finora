@@ -121,7 +121,19 @@ export function AccountsScreen() {
               ) : null}
 
               {a.accountNumberMasked ? (
-                <Pressable onPress={() => toggleRevealed(a.id)} style={styles.numberRow} hitSlop={6}>
+                <Pressable
+                  onPress={() => toggleRevealed(a.id)}
+                  style={styles.numberRow}
+                  hitSlop={12}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: isRevealed }}
+                  // Never announces the digits themselves -- the label describes the action, and
+                  // the value is only read from the visible Text when actually revealed.
+                  accessibilityLabel={
+                    isRevealed ? 'Hide account number' : 'Show account number'
+                  }
+                  accessibilityHint={isRevealed ? 'Hides again automatically after 8 seconds' : undefined}
+                >
                   <Text style={[styles.detail, { color: c.muted }]}>
                     {isRevealed ? a.accountNumberMasked : '•••• ••••'}
                   </Text>
