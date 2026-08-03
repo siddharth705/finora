@@ -277,6 +277,15 @@ export default function Import() {
                   : null,
               // Opaque; lets a re-import recognise a product already held instead of duplicating it.
               productIdentityHash: detectedAccount?.productIdentityHash ?? null,
+              // Server-detected and displayed read-only -- echoed back unchanged so a deposit is
+              // persisted with the values that make it a deposit, not just a name and a balance.
+              principalAmount: detectedAccount?.principalAmount ?? null,
+              interestRate: detectedAccount?.interestRate ?? null,
+              maturityDate: detectedAccount?.maturityDate ?? null,
+              maturityAmount: detectedAccount?.maturityAmount ?? null,
+              installmentAmount: detectedAccount?.installmentAmount ?? null,
+              installmentsPaid: detectedAccount?.installmentsPaid ?? null,
+              installmentsTotal: detectedAccount?.installmentsTotal ?? null,
             }
           : null;
 

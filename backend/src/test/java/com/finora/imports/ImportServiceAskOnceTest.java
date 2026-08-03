@@ -265,11 +265,13 @@ class ImportServiceAskOnceTest {
                 new AccountDto(newAccountId, "HDFC Savings", "SAVINGS", BigDecimal.valueOf(15000), null, null, null, null, null,
                         null, null,
                         AccountDto.BankDto.from(com.finora.util.BankRegistry.get("OTHER")), null, null, null,
-                        0, 0L, "ACTIVE"));
+                        0, 0L, "ACTIVE",
+                        null, null, null, null, null, null, null));
 
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
                 BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
-        var newAccount = new NewAccountRequest("HDFC Savings", "SAVINGS", BigDecimal.valueOf(15000), null, null, null, null, null, null, null, null, null);
+        var newAccount = new NewAccountRequest("HDFC Savings", "SAVINGS", BigDecimal.valueOf(15000), null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null);
         var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null);
 
         var response = importService.confirm(userId, dummyFile(), request);
@@ -294,13 +296,15 @@ class ImportServiceAskOnceTest {
                 new AccountDto(newAccountId, "HDFC Term Deposit", "INVESTMENT", BigDecimal.valueOf(100000),
                         null, null, null, null, null, null, null,
                         AccountDto.BankDto.from(com.finora.util.BankRegistry.get("OTHER")), null, null, null,
-                        0, 0L, "ACTIVE"));
+                        0, 0L, "ACTIVE",
+                        null, null, null, null, null, null, null));
 
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "Deposit",
                 BigDecimal.valueOf(100000), "INCOME", "Dining", true, "rule", null, false, null, null);
         // The review screen echoes the classification back; accountType stays what the form had.
         var newAccount = new NewAccountRequest("HDFC Term Deposit", "SAVINGS", BigDecimal.valueOf(100000),
-                null, null, null, null, null, null, null, "FIXED_DEPOSIT", null);
+                null, null, null, null, null, null, null, "FIXED_DEPOSIT", null,
+                null, null, null, null, null, null, null);
         var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null);
 
         var response = importService.confirm(userId, dummyFile(), request);
@@ -326,12 +330,14 @@ class ImportServiceAskOnceTest {
                 new AccountDto(newAccountId, "Mystery", "WALLET", BigDecimal.ZERO, null, null, null, null,
                         null, null, null,
                         AccountDto.BankDto.from(com.finora.util.BankRegistry.get("OTHER")), null, null, null,
-                        0, 0L, "ACTIVE"));
+                        0, 0L, "ACTIVE",
+                        null, null, null, null, null, null, null));
 
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "Something",
                 BigDecimal.valueOf(10), "EXPENSE", "Other", true, "rule", null, false, null, null);
         var newAccount = new NewAccountRequest("Mystery", "WALLET", BigDecimal.ZERO, null, null,
-                null, null, null, null, null, "UNKNOWN", null);
+                null, null, null, null, null, "UNKNOWN", null,
+                null, null, null, null, null, null, null);
         var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null);
 
         importService.confirm(userId, dummyFile(), request);
@@ -583,13 +589,15 @@ class ImportServiceAskOnceTest {
                 new AccountDto(newAccountId, "SBI Savings", "SAVINGS", BigDecimal.valueOf(25000), null, null, null,
                         "Siddharth Tiwari", "4587", null, null,
                         AccountDto.BankDto.from(com.finora.util.BankRegistry.get("SBI")), null, null, null,
-                        0, 0L, "ACTIVE"));
+                        0, 0L, "ACTIVE",
+                        null, null, null, null, null, null, null));
 
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
                 BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
         var newAccount = new com.finora.dto.ImportDto.NewAccountRequest(
                 "SBI Savings", "SAVINGS", BigDecimal.valueOf(25000), null, null,
-                "Siddharth Tiwari", "4587", "SBI", null, null, null, null);
+                "Siddharth Tiwari", "4587", "SBI", null, null, null, null,
+                null, null, null, null, null, null, null);
         var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null);
 
         importService.confirm(userId, dummyFile(), request);

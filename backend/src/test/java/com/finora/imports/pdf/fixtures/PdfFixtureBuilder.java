@@ -410,10 +410,15 @@ public final class PdfFixtureBuilder {
      * </ul>
      */
     public static byte[] buildCompositeMultiProductStatementSample() throws IOException {
+        // Anchors are spaced wider than each header LABEL's rendered width at FONT_SIZE, not just
+        // wider than its data. "Principal Amount" is ~72pt at 9pt Helvetica, so an anchor 60pt later
+        // put the next header inside it and PdfTableLocator correctly merged them into one cell
+        // ("Principal AmouSntart Date") -- a fixture defect that made this file misrepresent the
+        // real layout it stands in for, since a real statement spaces columns to fit their headings.
         float[] summaryCol = {LEFT_MARGIN, 200f, 320f};
-        float[] ledgerCol = {LEFT_MARGIN, 120f, 300f, 380f, 470f};
-        float[] fdCol = {LEFT_MARGIN, 110f, 210f, 320f, 440f};
-        float[] rdCol = {LEFT_MARGIN, 100f, 200f, 300f, 390f, 470f};
+        float[] ledgerCol = {LEFT_MARGIN, 130f, 260f, 350f, 440f};
+        float[] fdCol = {LEFT_MARGIN, 140f, 230f, 320f, 430f};
+        float[] rdCol = {LEFT_MARGIN, 110f, 190f, 300f, 390f, 490f};
 
         PageBuilder page = new PageBuilder();
         page.line("Account Relationship Summary")

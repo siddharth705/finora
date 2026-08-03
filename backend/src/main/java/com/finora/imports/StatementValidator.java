@@ -149,7 +149,13 @@ public class StatementValidator {
                 // AccountSignalAccumulator), so there is no unmasked number here to hash. The
                 // masked digits still make a PROBABLE match possible, which is the honest ceiling
                 // for a format that never gave us the full value.
-                null
+                null,
+                // Deposit-attribute extraction and one-row-per-product splitting are PDF-only for
+                // now (see PdfPreviewGenerator) -- no real CSV export in the current corpus
+                // represents a multi-deposit FD/RD schedule the way a combined-statement PDF does,
+                // and inventing that handling with no real document behind it is exactly what the
+                // Test Corpus Strategy's "evidence before capability" rule warns against.
+                null, null, null, null, null, null, null
         );
     }
 

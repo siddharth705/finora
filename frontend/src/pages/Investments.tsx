@@ -14,6 +14,30 @@ function fmt(n: number) {
 
 const COLORS = ['#a9803a', '#2f6e5c', '#9c3f3f', '#5b7fa6', '#7a6248', '#8a6d9e'];
 
+/**
+ * The terms of a deposit -- what distinguishes an FD or RD from any other holding sitting in this
+ * module. Renders nothing at all when there are no terms to show, which is every hand-created
+ * holding and every mutual fund/stock, so this only appears where it actually says something.
+ */
+function DepositTerms({ holding }: { holding: Account }) {
+  const terms: string[] = [];
+  if (holding.principalAmount != null) terms.push(`Principal ${fmt(holding.principalAmount)}`);
+  if (holding.installmentAmount != null) terms.push(`${fmt(holding.installmentAmount)}/month`);
+  if (holding.installmentsPaid != null && holding.installmentsTotal != null) {
+    terms.push(`${holding.installmentsPaid} of ${holding.installmentsTotal} paid`);
+  }
+  if (holding.interestRate != null) terms.push(`${holding.interestRate}% p.a.`);
+  if (holding.maturityDate) {
+    terms.push(`Matures ${new Date(holding.maturityDate).toLocaleDateString('en-IN', {
+      day: 'numeric', month: 'short', year: 'numeric',
+    })}`);
+  }
+  if (holding.maturityAmount != null) terms.push(`Worth ${fmt(holding.maturityAmount)} at maturity`);
+
+  if (terms.length === 0) return null;
+  return <p className="text-[11px] text-gray-500 mt-0.5">{terms.join(' · ')}</p>;
+}
+
 export default function Investments() {
   const [holdings, setHoldings] = useState<Account[]>([]);
   const [netWorth, setNetWorth] = useState<NetWorthData | null>(null);
@@ -188,12 +212,15 @@ export default function Investments() {
         ) : (
           <div className="space-y-2">
             {holdings.map((h) => (
-              <div key={h.id} className="flex justify-between items-center text-sm border-b border-dashed py-2">
-                <span>{h.name} <span className="text-[10px] uppercase text-gray-400 ml-2">{h.investmentKind}</span></span>
-                <span className="flex items-center gap-3">
-                  {fmt(h.balance)}
-                  <button onClick={() => removeHolding(h.id)} className="text-danger border border-danger rounded px-2 py-0.5 text-[10px] uppercase">Delete</button>
-                </span>
+              <div key={h.id} className="border-b border-dashed py-2">
+                <div className="flex justify-between items-center text-sm">
+                  <span>{h.name} <span className="text-[10px] uppercase text-gray-400 ml-2">{h.investmentKind}</span></span>
+                  <span className="flex items-center gap-3">
+                    {fmt(h.balance)}
+                    <button onClick={() => removeHolding(h.id)} className="text-danger border border-danger rounded px-2 py-0.5 text-[10px] uppercase">Delete</button>
+                  </span>
+                </div>
+                <DepositTerms holding={h} />
               </div>
             ))}
           </div>

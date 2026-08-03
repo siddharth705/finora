@@ -37,7 +37,7 @@ class CapabilityCompositionPdfPreviewGeneratorTest {
         TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector);
 
         return new PdfPreviewGenerator(new PdfTextExtractor(), new PdfTableLocator(),
-                new PdfMetadataExtractor(), transactionNormalizer, com.finora.imports.product.ProductDiscovery.standard());
+                new PdfMetadataExtractor(), transactionNormalizer, com.finora.imports.product.ProductDiscovery.standard(), new com.finora.imports.product.ProductAttributeExtractor());
     }
 
     private List<String> activatedCapabilities(byte[] pdfBytes, String filename) throws Exception {

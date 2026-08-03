@@ -46,6 +46,16 @@ export interface Account {
   // Always "ACTIVE" today -- there's no archive/close-account feature yet. See AccountDto's own
   // comment on the backend for why this is still a real field rather than assumed client-side.
   status: string;
+
+  // Deposit attributes -- see DetectedAccountInfo's own note. Populated only for FD/RD imported
+  // from a statement; null for every hand-created account and every ledger account.
+  principalAmount?: number | null;
+  interestRate?: number | null;
+  maturityDate?: string | null;
+  maturityAmount?: number | null;
+  installmentAmount?: number | null;
+  installmentsPaid?: number | null;
+  installmentsTotal?: number | null;
 }
 
 export interface Transaction {
@@ -174,6 +184,18 @@ export interface DetectedAccountInfo {
   // recognises a deposit already held instead of creating a second one and double-counting it in
   // net worth. Echo it back unchanged on confirm; never display it.
   productIdentityHash: string | null;
+
+  // What makes a deposit a DEPOSIT rather than a name and a balance. All null for a ledger
+  // account, and null on a deposit for fields its own type doesn't have (a fixed deposit has no
+  // installmentAmount; a recurring deposit's value builds up over the schedule so it has no
+  // principalAmount).
+  principalAmount: number | null;
+  interestRate: number | null;
+  maturityDate: string | null;
+  maturityAmount: number | null;
+  installmentAmount: number | null;
+  installmentsPaid: number | null;
+  installmentsTotal: number | null;
 }
 
 // Mirrors the backend FinancialProductType enum. FD/RD/PPF/EPF/NPS/mutual fund/demat route to the

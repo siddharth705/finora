@@ -41,7 +41,18 @@ public record AccountDto(
         // level) is by definition still active. Kept as a real field rather than hardcoded in
         // the frontend so a future archive feature only has to start setting this to
         // "INACTIVE" here, without any UI changes.
-        String status
+        String status,
+
+        // What makes a deposit a DEPOSIT rather than a name and a balance -- see
+        // com.finora.imports.product.ProductAttributes. All nullable; populated only for the
+        // product types they apply to.
+        BigDecimal principalAmount,
+        BigDecimal interestRate,
+        LocalDate maturityDate,
+        BigDecimal maturityAmount,
+        BigDecimal installmentAmount,
+        Integer installmentsPaid,
+        Integer installmentsTotal
 ) {
     /** Everything BankLogo and the bank picker need to render/search a bank, resolved
      *  server-side from BankRegistry so the frontend never hardcodes bank metadata.
@@ -119,7 +130,9 @@ public record AccountDto(
                 latestImport != null ? latestImport.getStatementPeriodStart() : null,
                 latestImport != null ? latestImport.getStatementPeriodEnd() : null,
                 statementsCount, transactionsCount,
-                "ACTIVE");
+                "ACTIVE",
+                a.getPrincipalAmount(), a.getInterestRate(), a.getMaturityDate(), a.getMaturityAmount(),
+                a.getInstallmentAmount(), a.getInstallmentsPaid(), a.getInstallmentsTotal());
     }
 
     // Bug fix: this record had zero Bean Validation, and neither AccountController.create() nor
@@ -136,5 +149,23 @@ public record AccountDto(
                                  @Size(max = 64) String accountNumberMasked,
                                  @Size(max = 32) String bankId,
                                  @Size(max = 120) String branchName,
-                                 @Size(max = 11) String ifscCode) {}
+                                 @Size(max = 11) String ifscCode,
+                                 // Only ImportService's confirm() ever populates these, from a
+                                 // classified deposit's own DetectedAccountInfo/NewAccountRequest.
+                                 // Every other caller (manual account creation from the Accounts
+                                 // page) uses the 10-arg overload below and gets null for all seven
+                                 // -- correct, since a hand-created account has none of these until
+                                 // a statement is imported into it.
+                                 BigDecimal principalAmount, BigDecimal interestRate, LocalDate maturityDate,
+                                 BigDecimal maturityAmount, BigDecimal installmentAmount,
+                                 Integer installmentsPaid, Integer installmentsTotal) {
+
+        public CreateRequest(String name, String accountType, BigDecimal balance, BigDecimal creditLimit,
+                             LocalDate dueDate, String investmentKind, String accountHolderName,
+                             String accountNumberMasked, String bankId, String branchName, String ifscCode) {
+            this(name, accountType, balance, creditLimit, dueDate, investmentKind, accountHolderName,
+                    accountNumberMasked, bankId, branchName, ifscCode,
+                    null, null, null, null, null, null, null);
+        }
+    }
 }

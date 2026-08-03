@@ -76,8 +76,27 @@ public class PdfTableLocator {
     // single PDF. Seeing this while a section is already active closes it immediately; this is a
     // stronger, more explicit signal than the header-signature-difference fallback below, so it's
     // checked first.
+    // Two banner shapes, because real statements use both.
+    //
+    // The first requires the literal word ACCOUNT ("SAVINGS ACCOUNT - <14 digits>") and is
+    // unchanged. The second covers a deposit banner that names the product WITHOUT it -- a real
+    // HDFC combined statement's deposit sections are headed "<kind> DEPOSIT - <number>", and the
+    // committed hdfc-composite-deposit-schedules trace shows exactly that shape. Unrecognised, the
+    // banner is not a marker at all, so it falls through to the dateless-row path and merges
+    // BACKWARD into the last row of the section above it -- corrupting that row's final cell
+    // ("24053.00 RECURRING DEPOSIT - 30000000000003", which then no longer parses as an amount).
+    // The sections still split, via the header-signature-change fallback, which is why this hid:
+    // the split looked right and only the last row of each preceding section was quietly wrong.
+    //
+    // The dash is mandatory in the second form, deliberately. "DEPOSIT" on its own is a ledger
+    // column heading ("Deposits") and appears in ordinary narration text, and SECTION_MARKER's
+    // digit requirement alone would not save it -- a transfer narration naming a destination
+    // account has both. Requiring "DEPOSIT" immediately followed by a dash separator is what makes
+    // this a banner shape rather than a word that happens to appear (see COMPOSITE_STATEMENT's own
+    // "Known limitations" for the same false-positive class this is avoiding).
     private static final Pattern SECTION_MARKER = Pattern.compile(
-            "(?i)\\b(SAVINGS|CURRENT|CREDIT\\s+CARD|DEPOSIT|LOAN)\\s+ACCOUNT\\b.*\\d{4,}");
+            "(?i)\\b(SAVINGS|CURRENT|CREDIT\\s+CARD|DEPOSIT|LOAN)\\s+ACCOUNT\\b.*\\d{4,}"
+                    + "|(?i)\\bDEPOSIT\\b\\s*-\\s*.*\\d{4,}");
 
     // The account-number-shaped run within a SECTION_MARKER banner -- 4+ digits, matching the same
     // "\\d{4,}" shape SECTION_MARKER itself requires, and tolerating the separators real account

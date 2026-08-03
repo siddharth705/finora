@@ -120,7 +120,19 @@ public class ImportDto {
             // discarded, so the number never reaches a session, a database column or a log. Lets
             // next month's statement recognise the same deposit instead of creating a second one
             // and double-counting it. Null when the document gave no usable number.
-            String productIdentityHash
+            String productIdentityHash,
+
+            // What makes a deposit a DEPOSIT rather than a name and a balance -- see
+            // com.finora.imports.product.ProductAttributes for the full reasoning. All seven
+            // nullable; a field not relevant to this product's type is simply never populated (a
+            // fixed deposit has no installmentAmount; a recurring deposit has no principalAmount).
+            BigDecimal principalAmount,
+            BigDecimal interestRate,
+            LocalDate maturityDate,
+            BigDecimal maturityAmount,
+            BigDecimal installmentAmount,
+            Integer installmentsPaid,
+            Integer installmentsTotal
     ) {}
 
     public record StagingResponse(List<StagedRow> rows, int totalParsed, int flaggedDuplicates,
@@ -207,7 +219,13 @@ public class ImportDto {
             String name, String accountType, BigDecimal openingBalance, BigDecimal creditLimit, LocalDate dueDate,
             String accountHolderName, String accountNumberMasked, String bankId,
             String branchName, String ifscCode,
-            String detectedProduct, String productIdentityHash
+            String detectedProduct, String productIdentityHash,
+            // Echoed back unchanged from DetectedAccountInfo, same round-trip as detectedProduct
+            // above -- these are server-detected values the review screen displays read-only, not
+            // something the user edits, so there is nothing here for a client to have gotten wrong.
+            BigDecimal principalAmount, BigDecimal interestRate, LocalDate maturityDate,
+            BigDecimal maturityAmount, BigDecimal installmentAmount,
+            Integer installmentsPaid, Integer installmentsTotal
     ) {}
 
     public record ConfirmedRow(

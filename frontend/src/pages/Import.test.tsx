@@ -49,6 +49,13 @@ const detectedAccount: DetectedAccountInfo = {
   productNeedsReview: false,
   productEvidence: [],
   productIdentityHash: null,
+  principalAmount: null,
+  interestRate: null,
+  maturityDate: null,
+  maturityAmount: null,
+  installmentAmount: null,
+  installmentsPaid: null,
+  installmentsTotal: null,
   bank: {
     id: 'OTHER',
     officialName: null,
