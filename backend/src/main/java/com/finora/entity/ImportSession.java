@@ -77,6 +77,9 @@ public class ImportSession {
     @Column(name = "layout_fingerprint", length = 20)
     private String layoutFingerprint;
 
+    @Column(name = "unparseable_summary_json", columnDefinition = "TEXT")
+    private String unparseableSummaryJson;
+
     @Column(name = "activated_capabilities_json", columnDefinition = "TEXT")
     private String activatedCapabilitiesJson;
 
@@ -110,6 +113,8 @@ public class ImportSession {
     public void setSectionsJson(String sectionsJson) { this.sectionsJson = sectionsJson; }
     public String getLayoutMetadataJson() { return layoutMetadataJson; }
     public void setLayoutMetadataJson(String layoutMetadataJson) { this.layoutMetadataJson = layoutMetadataJson; }
+    public String getUnparseableSummaryJson() { return unparseableSummaryJson; }
+    public void setUnparseableSummaryJson(String unparseableSummaryJson) { this.unparseableSummaryJson = unparseableSummaryJson; }
     public String getLayoutFingerprint() { return layoutFingerprint; }
     public void setLayoutFingerprint(String layoutFingerprint) { this.layoutFingerprint = layoutFingerprint; }
     public String getActivatedCapabilitiesJson() { return activatedCapabilitiesJson; }

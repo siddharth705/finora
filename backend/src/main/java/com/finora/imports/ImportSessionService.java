@@ -115,6 +115,9 @@ public class ImportSessionService {
         session.setLayoutMetadataJson(writeJson(documentContext.buildMetadata()));
         session.setLayoutFingerprint(documentContext.buildFingerprint());
         session.setActivatedCapabilitiesJson(writeJson(documentContext.capabilities()));
+        if (documentContext.unparseable() != null && !documentContext.unparseable().isEmpty()) {
+            session.setUnparseableSummaryJson(writeJson(documentContext.unparseable()));
+        }
     }
 
     /** Throws (not Optional) -- every real caller needs a valid, owned, still-staged session to

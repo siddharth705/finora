@@ -60,6 +60,12 @@ public class StatementImport extends BaseEntity {
     @Column(name = "activated_capabilities_json", columnDefinition = "TEXT")
     private String activatedCapabilitiesJson;
 
+    // Phase 4 step 12: what failed to parse in this import, counted by reason and column shape --
+    // never the rows themselves, which are lines of the customer's statement. See
+    // UnparseableRowSummary for why a histogram rather than the values.
+    @Column(name = "unparseable_summary_json", columnDefinition = "TEXT")
+    private String unparseableSummaryJson;
+
     // Raw CSV bytes — kept so "Re-import Statement" can replay the exact file and "Download
     // Original File" has something to serve. Lazy-fetched: every list/history view only needs
     // the metadata columns, not the file bytes, so this shouldn't ride along on those queries.
@@ -109,6 +115,8 @@ public class StatementImport extends BaseEntity {
     public void setLayoutMetadataJson(String layoutMetadataJson) { this.layoutMetadataJson = layoutMetadataJson; }
     public String getLayoutFingerprint() { return layoutFingerprint; }
     public void setLayoutFingerprint(String layoutFingerprint) { this.layoutFingerprint = layoutFingerprint; }
+    public String getUnparseableSummaryJson() { return unparseableSummaryJson; }
+    public void setUnparseableSummaryJson(String unparseableSummaryJson) { this.unparseableSummaryJson = unparseableSummaryJson; }
     public String getActivatedCapabilitiesJson() { return activatedCapabilitiesJson; }
     public void setActivatedCapabilitiesJson(String activatedCapabilitiesJson) { this.activatedCapabilitiesJson = activatedCapabilitiesJson; }
     public byte[] getFileContent() { return fileContent; }

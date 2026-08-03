@@ -325,7 +325,8 @@ public class ImportService {
                     sectionConfirm.rows(), sectionConfirm.existingAccountId(), sectionConfirm.newAccount(),
                     sectionConfirm.statementOpeningBalance(), sectionConfirm.statementClosingBalance());
             responses.add(confirm(userId, session.getFileName(), session.getFileContent(), perAccountRequest, i,
-                    session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson()));
+                    session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
+                session.getUnparseableSummaryJson()));
         }
         return new MultiAccountConfirmResponse(responses);
     }
@@ -363,7 +364,8 @@ public class ImportService {
         }
 
         return confirm(userId, session.getFileName(), session.getFileContent(), request, null,
-                session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson());
+                session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
+                session.getUnparseableSummaryJson());
     }
 
     /**
@@ -377,7 +379,7 @@ public class ImportService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request) {
-        return confirm(userId, fileName, fileContent, request, null, null, null, null);
+        return confirm(userId, fileName, fileContent, request, null, null, null, null, null);
     }
 
     /**
@@ -389,7 +391,7 @@ public class ImportService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request, Integer sourceSectionIndex) {
-        return confirm(userId, fileName, fileContent, request, sourceSectionIndex, null, null, null);
+        return confirm(userId, fileName, fileContent, request, sourceSectionIndex, null, null, null, null);
     }
 
     /**
@@ -403,7 +405,8 @@ public class ImportService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request, Integer sourceSectionIndex,
-                                    String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson) {
+                                    String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson,
+                                    String unparseableSummaryJson) {
         long startedAtMs = System.currentTimeMillis();
         List<String> accountsCreated = new ArrayList<>();
         // What was created, by PRODUCT rather than by account. The summary says "1 Savings, 1 Fixed
@@ -495,6 +498,7 @@ public class ImportService {
         statementImport.setLayoutMetadataJson(layoutMetadataJson);
         statementImport.setLayoutFingerprint(layoutFingerprint);
         statementImport.setActivatedCapabilitiesJson(activatedCapabilitiesJson);
+        statementImport.setUnparseableSummaryJson(unparseableSummaryJson);
         statementImport.setFileContent(fileContent);
         statementImport.setStatementPeriodStart(minDate);
         statementImport.setStatementPeriodEnd(maxDate);

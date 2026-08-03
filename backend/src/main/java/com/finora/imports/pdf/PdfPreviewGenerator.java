@@ -115,9 +115,15 @@ public class PdfPreviewGenerator {
         }
 
         List<StagedAccountSection> result = new ArrayList<>();
+        List<UnparseableRow> unparseableAcrossDocument = new ArrayList<>();
         for (PdfTableLocator.LocatedSection section : doc.sections()) {
-            result.add(buildSection(userId, filename, section, ctx));
+            StagedAccountSection staged = buildSection(userId, filename, section, ctx);
+            unparseableAcrossDocument.addAll(staged.unparseableRows());
+            result.add(staged);
         }
+        // One document's worth, across every section -- the DocumentContext is per-file, and a
+        // combined statement's sections all failed (or didn't) as part of the same parse run.
+        ctx.recordUnparseable(unparseableAcrossDocument);
         return new PdfGenerationResult(result, ctx);
     }
 
