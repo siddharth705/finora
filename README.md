@@ -196,10 +196,20 @@ A third app: React Native + Expo, targeting iOS and Android, talking to the same
 web apps. **User-facing only** — there's no mobile admin portal, matching the same User/Admin
 split the web apps already have.
 
-Currently at **Phase 0 (scaffold)**: the API client (`src/api/client.ts` — the web app's axios
-interceptor stack ported to SecureStore-backed async storage), the endpoint layer, shared types,
-the native phone-auth wrapper, and TanStack Query are wired up; no screens exist yet. `App.tsx` is
-a placeholder. Auth and phone verification land in Phase 1.
+Currently at **Phase 1 (auth)**: sign in, register, forgot password, and phone verification all
+work end-to-end against the real backend, on top of the Phase 0 foundation (API client, endpoint
+layer, shared types, TanStack Query). The signed-in-and-verified branch is still a placeholder —
+Dashboard and the rest of the app arrive in Phase 2.
+
+Route protection is expressed the way React Navigation intends, rather than as a port of the
+web's `ProtectedRoute`: `src/navigation/RootNavigator.tsx` derives *which stack exists at all*
+from auth state, so a signed-out user has no route to the app to navigate to. Login, register,
+and verify never call `navigate()` — they update auth state, and the navigator follows. As on
+web, this is UX only; `PhoneVerificationFilter` is the real enforcement.
+
+Change Password is **not** in this phase despite living in the auth family: it's reached from
+Settings, which doesn't exist until Phase 5, so it would be unreachable code. It lands with that
+screen.
 
 Two things differ structurally from `frontend/`, both forced by the platform:
 
@@ -212,6 +222,14 @@ Two things differ structurally from `frontend/`, both forced by the platform:
   variables — `GoogleService-Info.plist` and `google-services.json` (gitignored, downloaded per
   developer from the same Firebase project the backend uses) carry it instead. Only
   `EXPO_PUBLIC_API_BASE_URL` is env-driven; see `mobile/.env.example`.
+
+One non-obvious platform trap worth knowing before adding more forms: **don't put `maxLength` on
+a field whose `onChangeText` sanitizes input.** React Native applies `maxLength` to pasted text,
+so it truncates *before* the handler runs — pasting `+919876543210` into a `maxLength={10}` phone
+field yields the wrong number, and pasting a whole OTP SMS yields an empty one. The web app
+sidesteps this with a separate `onPaste` handler reading the clipboard directly, which RN has no
+equivalent for. Let the sanitizer do the capping instead; both fields in `RegisterScreen` and
+`VerifyPhoneScreen` are commented accordingly.
 
 ```bash
 cd mobile

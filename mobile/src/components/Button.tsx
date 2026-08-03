@@ -1,0 +1,66 @@
+import { ActivityIndicator, Pressable, StyleSheet, Text } from 'react-native';
+import { radius, useTheme } from '../theme';
+
+interface Props {
+  label: string;
+  onPress: () => void;
+  loading?: boolean;
+  disabled?: boolean;
+  variant?: 'primary' | 'link';
+}
+
+export function Button({ label, onPress, loading = false, disabled = false, variant = 'primary' }: Props) {
+  const c = useTheme();
+  const isDisabled = disabled || loading;
+
+  if (variant === 'link') {
+    return (
+      <Pressable onPress={onPress} disabled={isDisabled} hitSlop={8} accessibilityRole="button">
+        <Text style={[styles.linkLabel, { color: c.primary }, isDisabled && styles.disabled]}>{label}</Text>
+      </Pressable>
+    );
+  }
+
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={isDisabled}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: isDisabled, busy: loading }}
+      style={({ pressed }) => [
+        styles.button,
+        { backgroundColor: pressed ? c.primaryDark : c.primary },
+        isDisabled && styles.disabled,
+      ]}
+    >
+      {loading ? (
+        <ActivityIndicator color="#fff" size="small" />
+      ) : (
+        <Text style={styles.label}>{label}</Text>
+      )}
+    </Pressable>
+  );
+}
+
+const styles = StyleSheet.create({
+  button: {
+    borderRadius: radius.md,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
+  },
+  label: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  linkLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  disabled: {
+    opacity: 0.5,
+  },
+});
