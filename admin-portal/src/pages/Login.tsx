@@ -3,6 +3,8 @@ import { Navigate, useNavigate, Link } from 'react-router-dom';
 import { ShieldAlert } from 'lucide-react';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { setupApi } from '../api/endpoints';
+import { ADMIN_SESSION_ENDED_REASON_KEY } from '../api/client';
+import { safeStorage } from '../lib/safeStorage';
 
 /**
  * The only two post-login destinations that exist today. Deliberately a plain function over a
@@ -26,6 +28,12 @@ export default function Login() {
   const [submitting, setSubmitting] = useState(false);
   const [setupRequired, setSetupRequired] = useState(false);
   const [checkingSetup, setCheckingSetup] = useState(true);
+  // Why the admin is looking at this screen when they didn't ask to be -- stashed by
+  // endSessionAndRedirect() in api/client.ts, whose full-page navigation unmounts React and takes
+  // any in-memory state with it. Read once into state, deleted immediately (see the effect below)
+  // so it can't resurface on a later visit. Mirrors the user app's Login.tsx exactly.
+  const [sessionEndedReason] = useState<string | null>(
+    () => safeStorage.getItem(ADMIN_SESSION_ENDED_REASON_KEY));
 
   useEffect(() => {
     // Checked once, unauthenticated -- lets a fresh install land on /setup automatically instead
@@ -37,6 +45,11 @@ export default function Login() {
       .then((status) => setSetupRequired(status.setupRequired))
       .catch(() => {})
       .finally(() => setCheckingSetup(false));
+    // Consumed on read: it lives in storage, so without this it would outlive not just this render
+    // but the whole tab, and reappear on an unrelated future visit to the login screen.
+    if (safeStorage.getItem(ADMIN_SESSION_ENDED_REASON_KEY)) {
+      safeStorage.removeItem(ADMIN_SESSION_ENDED_REASON_KEY);
+    }
   }, []);
 
   if (setupRequired) return <Navigate to="/setup" replace />;
@@ -104,6 +117,12 @@ export default function Login() {
             />
           </div>
 
+          {/* Styled as a warning rather than an error: nothing the admin did was wrong, and it
+              clears the moment they sign in again. Hidden once a real submit error arrives, so a
+              stale "you were signed out" note doesn't sit above a fresh "wrong password" one. */}
+          {sessionEndedReason && !error && (
+            <p role="status" className="text-sm text-warning bg-warning-bg rounded-lg px-3.5 py-2.5">{sessionEndedReason}</p>
+          )}
           {error && (
             <p className="text-sm text-danger bg-danger-bg rounded-lg px-3.5 py-2.5">{error}</p>
           )}

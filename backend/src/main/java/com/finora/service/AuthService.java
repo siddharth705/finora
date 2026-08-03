@@ -6,6 +6,7 @@ import com.finora.entity.Category;
 import com.finora.entity.PasswordResetToken;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
+import com.finora.exception.ErrorCode;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.PasswordResetTokenRepository;
 import com.finora.repository.UserRepository;
@@ -312,7 +313,7 @@ public class AuthService {
             if (user != null) {
                 registerFailedLogin(user);
             }
-            throw new ApiException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
+            throw new ApiException(ErrorCode.AUTH_INVALID_CREDENTIALS, "Invalid credentials");
         }
 
         // user is guaranteed non-null here — authenticate() would have thrown otherwise.

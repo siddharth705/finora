@@ -85,4 +85,59 @@ describe('api response interceptor', () => {
     expect(refreshMock).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem('finora_token')).toBe('new-access-token');
   });
+
+  /**
+   * A 401 from /auth/login means "wrong password", not "your session expired". This branch used to
+   * exclude only /auth/refresh, so a failed sign-in ran the refresh-then-clear-session path and
+   * hard-navigated to /login -- destroying the React state holding Login.tsx's own inline error
+   * before it could render. The user saw a page flash and no explanation. admin-portal's client.ts
+   * already guarded every auth endpoint; this app had the AUTH_ENDPOINTS_NO_TOKEN list and used it
+   * in the REQUEST interceptor only.
+   */
+  it('leaves a failed sign-in alone instead of treating it as an expired session', async () => {
+    localStorage.setItem('finora_refresh_token', 'a-stale-token-from-a-previous-session');
+
+    await rejectedHandler()({
+      response: { status: 401, data: { message: 'Invalid credentials', errorCode: 'AUTH_001' } },
+      config: { url: '/auth/login', _retried: false, headers: {} },
+    }).catch(() => { /* the caller's own .catch is what renders the inline error */ });
+
+    expect(refreshMock).not.toHaveBeenCalled();
+    // Still signed out (nothing to keep), but crucially NOT cleared-and-redirected: the stale token
+    // survives untouched, which is the observable proof clearSessionAndRedirect() never ran.
+    expect(localStorage.getItem('finora_refresh_token')).toBe('a-stale-token-from-a-previous-session');
+    expect(localStorage.getItem('finora_session_ended_reason')).toBeNull();
+  });
+
+  /**
+   * The other half of the same problem: when a session genuinely DOES end, the backend's
+   * explanation used to be discarded by clearSessionAndRedirect()'s full-page navigation, so the
+   * user landed on the login screen with no idea why. The reason is now handed off through storage
+   * for Login.tsx to read once.
+   */
+  it('hands the backend reason for a real session expiry to the login page', async () => {
+    localStorage.setItem('finora_refresh_token', 'an-expired-token');
+    refreshMock.mockRejectedValue({
+      response: { status: 401, data: { message: 'Refresh token expired — please sign in again.', errorCode: 'AUTH_002' } },
+    });
+
+    await rejectedHandler()({
+      response: { status: 401, data: { message: 'Unauthorized', errorCode: null } },
+      config: { url: '/users/me', _retried: false, headers: {} },
+    }).catch(() => { /* expected -- the original 401 is still rejected to the caller */ });
+
+    expect(localStorage.getItem('finora_session_ended_reason'))
+      .toBe('Refresh token expired — please sign in again.');
+    expect(localStorage.getItem('finora_refresh_token')).toBeNull();
+  });
+
+  it('falls back to generic copy when there was no refresh token to explain the sign-out', async () => {
+    await rejectedHandler()({
+      response: { status: 401, data: { message: 'Unauthorized', errorCode: null } },
+      config: { url: '/users/me', _retried: false, headers: {} },
+    }).catch(() => { /* no-op */ });
+
+    expect(localStorage.getItem('finora_session_ended_reason'))
+      .toBe('Your session has ended. Please sign in again to continue.');
+  });
 });

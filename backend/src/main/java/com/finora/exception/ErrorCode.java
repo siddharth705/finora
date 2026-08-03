@@ -44,9 +44,22 @@ public enum ErrorCode {
     ACCOUNT_NOT_FOUND("ACC_001", HttpStatus.NOT_FOUND, "Account not found"),
 
     // Auth / security
+    //
+    // These carry codes rather than only messages because the frontend has to TELL THEM APART, not
+    // just print them. A 401 saying "wrong password" must leave the user on the login form with an
+    // inline error; a 401 saying "your session ended" must clear stored credentials and explain the
+    // sign-out. Branching on message text to decide that would break the moment anyone reworded a
+    // string -- which is exactly what is planned.
     AUTH_INVALID_CREDENTIALS("AUTH_001", HttpStatus.UNAUTHORIZED, "Invalid credentials"),
     AUTH_TOKEN_EXPIRED("AUTH_002", HttpStatus.UNAUTHORIZED, "Session expired, please sign in again"),
     AUTH_FORBIDDEN("AUTH_003", HttpStatus.FORBIDDEN, "You don't have permission to do that"),
+    // Deliberately distinct from AUTH_002 even though both end in "sign in again". A refresh token
+    // presented twice is treated as evidence of theft (RefreshTokenService.rotate()) and revokes
+    // EVERY session for that user, not just this one. Folding it into "session expired" would hide
+    // a security event behind routine copy -- the user should know their other devices were signed
+    // out, and support should be able to tell the two apart in logs.
+    AUTH_SESSION_REVOKED("AUTH_004", HttpStatus.UNAUTHORIZED,
+            "For your security, all sessions were signed out. Please sign in again."),
 
     // Generic fallbacks — used by GlobalExceptionHandler when no more specific code applies
     VALIDATION_ERROR("VAL_001", HttpStatus.BAD_REQUEST, "Validation failed"),

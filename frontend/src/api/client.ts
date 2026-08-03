@@ -73,7 +73,22 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-function clearSessionAndRedirect() {
+/**
+ * Where a forced-sign-out reason waits for the login page to pick it up.
+ *
+ * clearSessionAndRedirect() ends with `window.location.href`, a FULL page navigation — React
+ * unmounts, so router state (which Login.tsx already uses for the "password updated" banner) can't
+ * carry anything across it. Without this handoff the backend's explanation of why the session ended
+ * was simply discarded: the user got bounced to a login screen with no indication that anything had
+ * happened, let alone that their session expired or that every device was signed out as a
+ * precaution after a suspected stolen token. Every message this app has for that moment existed
+ * server-side and reached nobody.
+ *
+ * Read once and deleted by Login.tsx, so a reason can't resurface on an unrelated later visit.
+ */
+export const SESSION_ENDED_REASON_KEY = 'finora_session_ended_reason';
+
+function clearSessionAndRedirect(reason?: string) {
   // Mirrors every key AuthContext.logout() clears -- this used to miss finora_phone_verified,
   // leaving that one flag behind in localStorage after a forced session expiry. Currently
   // inert in practice (ProtectedRoute redirects on a missing token before it would ever read
@@ -85,6 +100,12 @@ function clearSessionAndRedirect() {
   safeStorage.removeItem('finora_email');
   safeStorage.removeItem('finora_name');
   safeStorage.removeItem('finora_phone_verified');
+  // Written AFTER the clears above, or it would be wiped by them the moment a future key is added
+  // to that list. Falls back to generic copy when the backend gave no reason (no refresh token was
+  // ever stored, so nothing was asked of the server) -- "something ended your session" is still
+  // more useful than a silent bounce to the login screen.
+  safeStorage.setItem(SESSION_ENDED_REASON_KEY,
+    reason || 'Your session has ended. Please sign in again to continue.');
   window.location.href = '/login';
 }
 
@@ -128,10 +149,21 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
-    // A 401 on anything other than the refresh call itself: try exactly once to refresh the
-    // access token and replay the original request. If that also fails, the session is truly
-    // gone — clear it and bounce to login rather than looping.
-    if (error.response?.status === 401 && !originalRequest._retried && !originalRequest.url?.includes('/auth/refresh')) {
+    // A 401 on anything other than an auth endpoint: try exactly once to refresh the access token
+    // and replay the original request. If that also fails, the session is truly gone — clear it
+    // and bounce to login rather than looping.
+    //
+    // Excluding EVERY auth endpoint, not just /auth/refresh, is the point. A 401 from /auth/login
+    // means "wrong password", not "your session expired" — but this branch treated the two
+    // identically, so a failed sign-in ran clearSessionAndRedirect() and hard-navigated to /login,
+    // destroying the React state holding Login.tsx's own "Login failed. Check your credentials."
+    // message before it could render. The user saw a page flash and no explanation of what went
+    // wrong. admin-portal/src/api/client.ts already guards this exact case (its own comment
+    // describes the same symptom); this app was never updated to match, though it already had the
+    // AUTH_ENDPOINTS_NO_TOKEN list above and used it in the request interceptor.
+    const isAuthEndpoint = AUTH_ENDPOINTS_NO_TOKEN.some((path) => originalRequest.url?.includes(path));
+
+    if (error.response?.status === 401 && !originalRequest._retried && !isAuthEndpoint) {
       originalRequest._retried = true;
       const refreshToken = safeStorage.getItem('finora_refresh_token');
 
@@ -142,8 +174,12 @@ api.interceptors.response.use(
           safeStorage.setItem('finora_refresh_token', refreshed.refreshToken);
           originalRequest.headers.Authorization = `Bearer ${refreshed.token}`;
           return api(originalRequest);
-        } catch {
-          clearSessionAndRedirect();
+        } catch (refreshError: any) {
+          // The REFRESH call's own failure is what explains the sign-out, not the original 401 --
+          // that one just says "your access token is stale", which is routine and expected here.
+          // The refresh response is where the backend distinguishes an ordinary expiry from a
+          // reused (suspected stolen) token that revoked every session.
+          clearSessionAndRedirect(refreshError?.response?.data?.message);
           return Promise.reject(error);
         }
       } else {
