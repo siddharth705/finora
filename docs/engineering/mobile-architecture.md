@@ -145,6 +145,26 @@ they need a product-level decision rather than a mobile-only fix:
 Dark theme passes everywhere. Amounts also carry a `+`/`−` prefix, so color isn't the sole carrier
 of meaning — but legibility is still below standard.
 
+## Crash reporting
+
+Sentry, in `lib/monitoring.ts`, initialized before the root component renders (an error thrown
+during first render is exactly the kind worth capturing, and an effect runs too late). Inert unless
+`EXPO_PUBLIC_SENTRY_DSN` is set, so development, tests, and any checkout without it are unaffected.
+
+The configuration is much more restrictive than Sentry's defaults, because the defaults assume an
+app whose URLs and request bodies are safe to transmit and this one's are not: API paths carry
+account and transaction identifiers, the ledger search sends free text the user typed, and the
+registration body carries an email, a phone number, and a plaintext password. Off: PII, request
+bodies, console breadcrumbs, session replay, performance tracing. Every URL loses its query string
+and has identifiers redacted before leaving the device.
+
+`scrubBreadcrumb` and `scrubEvent` are exported and tested rather than living inline in the
+`init` call — scrubbing that silently stops working is indistinguishable from scrubbing that
+works, and the cost of finding out in production is a customer's data on a third-party service.
+Widening what's captured means changing those tests deliberately.
+
+It costs about 1.4MB of bundle (2.7MB → 4.1MB on Android).
+
 ## Testing
 
 `npm test` runs Jest with `jest-expo`. Native modules are mocked in `src/test/setup.ts`;

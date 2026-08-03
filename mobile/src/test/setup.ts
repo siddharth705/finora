@@ -45,6 +45,15 @@ jest.mock('@react-native-community/netinfo', () => ({
   default: { addEventListener: jest.fn(() => jest.fn()) },
 }));
 
+// Sentry's native module isn't present under the runner. The scrubbers in lib/monitoring.ts are
+// pure functions tested directly, so nothing here needs the real SDK -- and EXPO_PUBLIC_SENTRY_DSN
+// is deliberately left unset so initMonitoring() no-ops and no test can emit a real event.
+jest.mock('@sentry/react-native', () => ({
+  init: jest.fn(),
+  wrap: jest.fn((component: unknown) => component),
+  captureException: jest.fn(),
+}));
+
 // Every test starts from a clean SecureStore so persistence assertions can't leak between them.
 beforeEach(() => {
   // eslint-disable-next-line @typescript-eslint/no-var-requires

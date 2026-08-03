@@ -1,5 +1,6 @@
 import { existsSync } from 'fs';
 import path from 'path';
+import { withSentry } from '@sentry/react-native/expo';
 import type { ExpoConfig } from 'expo/config';
 
 // Dynamic config (not app.json) so bundle identifiers and Firebase config-file paths are defined
@@ -67,4 +68,15 @@ const config: ExpoConfig = {
   ],
 };
 
-export default config;
+// Sentry's plugin exists to upload source maps during an EAS build, so a crash arrives as real
+// file and line numbers instead of minified bundle offsets. It needs the org and project slugs,
+// which are per-account values not committed here, plus a SENTRY_AUTH_TOKEN available to the
+// build. Applied only when both slugs are present so a checkout without them still builds
+// normally — crash capture itself is driven by EXPO_PUBLIC_SENTRY_DSN at runtime and does not
+// depend on this. See docs/engineering/mobile-setup.md.
+const sentryOrg = process.env.SENTRY_ORG;
+const sentryProject = process.env.SENTRY_PROJECT;
+
+export default sentryOrg && sentryProject
+  ? withSentry(config, { organization: sentryOrg, project: sentryProject })
+  : config;

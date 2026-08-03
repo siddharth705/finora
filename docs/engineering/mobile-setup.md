@@ -190,6 +190,55 @@ don't behave the same off-device.
 - [ ] Point `EXPO_PUBLIC_API_BASE_URL` at an unreachable host — the app degrades rather than hanging.
 - [ ] Backend returns 403 `PHONE_VERIFICATION_REQUIRED` — app routes to the verify screen.
 
+## Crash reporting (Sentry)
+
+Wired up but inert until you supply a DSN. `src/lib/monitoring.ts` no-ops when
+`EXPO_PUBLIC_SENTRY_DSN` is unset, so development and CI never emit events.
+
+1. Create a project in Sentry (platform: React Native).
+2. Project Settings → Client Keys (DSN) → copy the DSN into `mobile/.env.local` as
+   `EXPO_PUBLIC_SENTRY_DSN`, and into your EAS build profile or EAS environment variables for
+   preview/production builds. A DSN only permits *writing* events and ships inside every client
+   bundle, so it isn't a secret in the way an API key is — but it is a real per-project value.
+3. For readable stack traces, source maps must upload at build time. That needs three more values,
+   available to the EAS build only:
+   - `SENTRY_ORG` and `SENTRY_PROJECT` — the slugs from your Sentry URL. `app.config.ts` applies
+     Sentry's config plugin only when both are set, so a checkout without them still builds.
+   - `SENTRY_AUTH_TOKEN` — **this one is a real secret.** Never commit it; store it with
+     `eas secret:create`.
+
+   Without these, crashes are still captured; their stack traces just point at minified bundle
+   offsets instead of source files.
+
+**What is deliberately not sent.** Finora handles bank statements, so the default capture settings
+are wrong for it and have been tightened: no PII, no request bodies, no console breadcrumbs, no
+session replay, no performance tracing, and every URL stripped of its query string and identifiers
+before leaving the device. The reasoning is in `src/lib/monitoring.ts`'s own comment, and the
+scrubbers are covered by tests in `monitoring.test.ts` — scrubbing that silently stops working
+looks exactly like scrubbing that works, so it isn't left untested.
+
+If you ever need to widen what's captured, change it there and update those tests deliberately.
+The ledger's search parameter carries whatever the user typed, and the registration request body
+carries an email, a phone number, and a plaintext password.
+
+## An iOS build error that points at the wrong thing
+
+Running `expo prebuild`, `eas build --platform ios`, or `expo config --type introspect` without
+`GoogleService-Info.plist` in `mobile/` fails with:
+
+```
+[@react-native-firebase/auth] Your app.json file is missing ios.googleServicesFile.
+Please add this field.
+```
+
+**The config is fine; the file is missing.** `app.config.ts` emits that key only when the file is
+actually present (so that everyday commands like `expo start` and `expo export` work on a fresh
+clone), and the Firebase plugin then reports its absence as a config problem. Adding the key by
+hand will not help — download the file per [Track B](#track-b--ios-gated-on-apple-enrollment).
+
+An iOS build genuinely cannot succeed without it: the native Firebase SDK reads it at launch.
+Android behaves the same way with `google-services.json`.
+
 ## Known limitations
 
 - **CI does not build native code.** The mobile CI job type-checks and produces a Metro bundle,
