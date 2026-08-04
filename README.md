@@ -19,7 +19,9 @@ rather than an earlier internal prototype look.
 - JWT authentication (register/login), BCrypt password hashing, Spring Security wired end-to-end
 - Multi-account support: savings, credit cards, wallets, investments
 - Transaction CRUD with filtering/sorting/pagination (backs the Ledger page)
-- CSV statement import: auto-detects column name variants, stages rows for review, commits on confirm
+- CSV and PDF statement import: auto-detects column name variants, opens password-protected PDFs,
+  stages rows for review, commits on confirm — see
+  [docs/engineering/import-flow.md](docs/engineering/import-flow.md)
 - Self-learning categorization: keyword rules + a per-user learned-mapping table that improves as you correct categories
 - Reconciliation: duplicate detection + internal-transfer matching between your own accounts
 - Budgets (per-category monthly limits, spend tracking)
@@ -31,7 +33,7 @@ rather than an earlier internal prototype look.
 - Login / Register pages calling the real auth endpoints
 - Dashboard page: KPI cards, health score breakdown, category doughnut chart (Chart.js)
 - Ledger page: filterable transaction table
-- Import page: CSV drag-and-drop, staged review table, confirm-to-commit
+- Import page: CSV/PDF drag-and-drop, optional password for protected PDFs, staged review table, confirm-to-commit
 - Budgets and Goals pages
 - Setup page for managing accounts/cards
 - Axios client with JWT auto-attach and 401 → redirect-to-login handling

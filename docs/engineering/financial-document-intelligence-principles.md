@@ -17,7 +17,10 @@ Two companion documents track evidence over time rather than current rules: the
 per-cycle metrics snapshot) and the
 [Financial Document Intelligence Changelog](financial-document-intelligence-changelog.md) (the
 same history, compressed into a skimmable Learned/Improved/Protected/Observed/Deferred/Open
-summary per cycle).
+summary per cycle). Separately, [import-flow.md](import-flow.md) documents the *pipeline* rather
+than the engine — stage/review/confirm, the endpoints and error codes, password-protected PDFs,
+re-import, and what each client does. This document is about what the engine understands inside a
+document; that one is about how a document travels through the system.
 
 ---
 
