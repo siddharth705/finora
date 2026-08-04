@@ -73,6 +73,16 @@ jobs:
         working-directory: frontend
         run: npm run lint
 
+      # `npm audit` in this repo has never been empty -- 18 vulnerability entries across the three
+      # JS apps, every one already judged not to apply. That is exactly how a real advisory gets
+      # missed: a command whose output is always non-empty is one people learn to skip, and the
+      # open redirect fixed in 1ea5d13 sat in that noise. This check leaves no third state: an
+      # advisory in shipped code is either recorded in the script with a reason and a named trigger
+      # for re-checking, or it fails here. It also fails if an accepted entry stops being reported,
+      # so stale exceptions cannot pile up and hide the next real one.
+      - name: Dependency advisories
+        run: python scripts/check-dependency-advisories.py frontend
+
       - name: Test
         working-directory: frontend
         run: npm test
@@ -102,6 +112,10 @@ jobs:
       - name: Lint
         working-directory: admin-portal
         run: npm run lint
+
+      # See the user frontend's step for why this exists.
+      - name: Dependency advisories
+        run: python scripts/check-dependency-advisories.py admin-portal
 
       - name: Test
         working-directory: admin-portal
@@ -133,6 +147,10 @@ jobs:
       - name: Lint
         working-directory: mobile
         run: npm run lint
+
+      # See the user frontend's step for why this exists.
+      - name: Dependency advisories
+        run: python scripts/check-dependency-advisories.py mobile
 
       - name: Type-check
         working-directory: mobile
