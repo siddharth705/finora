@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { ErrorBoundary } from './ErrorBoundary';
 import { Sidebar } from './Sidebar';
 import { GlobalSearch } from './GlobalSearch';
 import { useAdminAuth } from '../context/AdminAuthContext';
@@ -29,7 +30,11 @@ export function AdminLayout({ title, subtitle, children }: { title: string; subt
             </span>
           </div>
         </div>
-        {children}
+        {/* Inside the layout, not around it: a page that throws is contained to the content area
+            while the sidebar and global search keep rendering, so an admin can navigate away
+            instead of being stranded on a blank screen. See App.tsx for the outer boundary that
+            covers the routes which don't use this layout (login, setup, reset-password). */}
+        <ErrorBoundary context="admin-page">{children}</ErrorBoundary>
       </main>
     </div>
   );

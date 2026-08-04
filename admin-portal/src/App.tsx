@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AdminAuthProvider } from './context/AdminAuthContext';
 import { NotificationProvider } from './context/NotificationContext';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import Login from './pages/Login';
 import ForgotPassword from './pages/ForgotPassword';
@@ -35,6 +36,12 @@ export default function App() {
       <NotificationProvider>
         <AdminAuthProvider>
           <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+            {/* The outer of two boundaries, and the lesser one. Pages that use AdminLayout are
+                caught by its inner boundary first (React unwinds to the nearest one), which is what
+                keeps the sidebar alive. This one covers the routes that render standalone with no
+                layout -- login, setup, reset-password, verify-phone -- where it is the difference
+                between a recovery panel and the blank white page they would otherwise show. */}
+            <ErrorBoundary context="root">
             <Routes>
               <Route path="/login" element={<Login />} />
               <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -62,6 +69,7 @@ export default function App() {
                   Login rather than being handed an admin screen. */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
+            </ErrorBoundary>
           </BrowserRouter>
         </AdminAuthProvider>
       </NotificationProvider>

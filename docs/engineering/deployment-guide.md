@@ -202,6 +202,35 @@ human-facing links (Swagger/Actuator) that can't go through the API client at al
 same Railway backend URL as `VITE_API_BASE_URL` above (bare origin, no `/api/v1` — this one really
 is just the origin, used to build a Swagger UI link directly).
 
+### `VITE_SENTRY_DSN` (both frontends) — crash reporting
+
+Optional, and unset is a valid, fully-working configuration: `src/lib/monitoring.ts` no-ops
+without it. But leaving it unset means a crash in either web app is invisible to you — which is
+the exact situation these apps were already in, while the mobile app had crash reporting. A blank
+white page from a render error is the failure this catches, and there is no other mechanism that
+would tell you it happened.
+
+```
+VITE_SENTRY_DSN=https://<key>@<org>.ingest.sentry.io/<project>
+```
+
+**It must be set as a *build* environment variable, not a runtime one.** Vite inlines
+`import.meta.env.*` at build time, so a value added to the Pages project after a deployment has
+already been built has no effect until the next build. This is the same class of mistake as the
+`VITE_API_BASE_URL` bug above: everything looks configured and nothing reports.
+
+The upside of that inlining is worth knowing, and was measured rather than assumed: with the DSN
+unset the entire Sentry SDK is tree-shaken out of the bundle (verified — zero occurrences of
+`sentry` in `dist/`, user app at 820 kB). With it set the same build is 911 kB, about **+30 kB
+gzipped**. So crash reporting costs nothing at all until you actually turn it on, and the cost when
+you do is a known number.
+
+What leaves the browser is deliberately much narrower than Sentry's defaults, because this app's
+URLs carry the ledger search term (`?q=`), password-reset tokens (`?token=`), and — in the admin
+portal — the ids of the customers an admin was viewing. See `src/lib/monitoring.ts` in either app
+for exactly what is stripped and why; the scrubbers are unit-tested, because scrubbing that
+silently stops working looks identical to scrubbing that works.
+
 **Also verify `CORS_ORIGINS` on the Railway backend matches your ACTUAL deployed frontend
 origin(s) exactly** — scheme, host, no trailing slash. Cloudflare Pages assigns its own
 `<project-name>.pages.dev` domain (and a different one per preview deployment) by default; once a

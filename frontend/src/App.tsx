@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
@@ -36,7 +37,11 @@ function AppShell({ children }: { children: ReactNode }) {
       <Sidebar />
       <main className="flex-1 p-8 max-w-[1600px]">
         <TopBar />
-        {children}
+        {/* Inside the shell, not around it: a page that throws is contained to the content area
+            while the sidebar and top bar keep rendering, so the user can navigate away instead of
+            being stranded. This is the boundary that does the real work -- see the outer one in
+            App() for why there are two. */}
+        <ErrorBoundary context="app-route">{children}</ErrorBoundary>
       </main>
     </div>
   );
@@ -64,6 +69,12 @@ export default function App() {
     <ThemeProvider>
     <AuthProvider>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        {/* The outer of two boundaries, and the lesser one. Authenticated pages are caught by
+            AppShell's inner boundary first (React unwinds to the nearest one), which is what keeps
+            the navigation chrome alive. This one exists for the marketing and auth pages, which
+            render standalone with no chrome to preserve -- there it is the difference between a
+            recovery panel and the blank white page those routes would otherwise show. */}
+        <ErrorBoundary context="root">
         <Routes>
           {/* Marketing site */}
           <Route path="/" element={<Landing />} />
@@ -105,6 +116,7 @@ export default function App() {
               again. */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </ErrorBoundary>
       </BrowserRouter>
     </AuthProvider>
     </ThemeProvider>

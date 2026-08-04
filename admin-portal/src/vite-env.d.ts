@@ -10,6 +10,9 @@ interface ImportMetaEnv {
    *  local dev (Vite's dev-server proxy handles it) and wrong for any real deployment where this
    *  app and the backend don't share an origin. */
   readonly VITE_API_BASE_URL?: string;
+  /** Crash reporting DSN. Optional: unset disables Sentry entirely rather than being an error,
+   *  which is what keeps local dev and the test suite free of network calls. See lib/monitoring.ts. */
+  readonly VITE_SENTRY_DSN?: string;
 }
 
 interface ImportMeta {
