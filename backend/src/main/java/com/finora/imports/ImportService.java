@@ -525,6 +525,10 @@ public class ImportService {
         statementImport.setClosingBalance(request.statementClosingBalance());
         statementImport.setTransactionsImported(toInsert.size());
         statementImport.setTransactionsSkipped(skipped);
+        // Measured here rather than after the save so it covers the same work the response reports
+        // (below), not the save itself. Slightly under-counts the true end-to-end time by exactly
+        // one insert -- consistent across every row, which is what matters for comparing layouts.
+        statementImport.setImportDurationMs(System.currentTimeMillis() - startedAtMs);
         StatementImport savedImport = statementImportRepository.save(statementImport);
         toInsert.forEach(t -> t.setStatementImportId(savedImport.getId()));
 

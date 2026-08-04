@@ -101,6 +101,12 @@ public class StatementImport extends BaseEntity {
     @Column(name = "imported_at", nullable = false)
     private Instant importedAt = Instant.now();
 
+    /** Wall-clock ms for the confirm that created this row; null for imports predating V53. The
+     *  number was already being computed and returned on ConfirmResponse -- V53 just stops throwing
+     *  it away, so LayoutIntelligenceService can answer whether recurring layouts import faster. */
+    @Column(name = "import_duration_ms")
+    private Long importDurationMs;
+
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
     public UUID getAccountId() { return accountId; }
@@ -119,6 +125,8 @@ public class StatementImport extends BaseEntity {
     public void setUnparseableSummaryJson(String unparseableSummaryJson) { this.unparseableSummaryJson = unparseableSummaryJson; }
     public String getActivatedCapabilitiesJson() { return activatedCapabilitiesJson; }
     public void setActivatedCapabilitiesJson(String activatedCapabilitiesJson) { this.activatedCapabilitiesJson = activatedCapabilitiesJson; }
+    public Long getImportDurationMs() { return importDurationMs; }
+    public void setImportDurationMs(Long importDurationMs) { this.importDurationMs = importDurationMs; }
     public byte[] getFileContent() { return fileContent; }
     public void setFileContent(byte[] fileContent) { this.fileContent = fileContent; }
     public LocalDate getStatementPeriodStart() { return statementPeriodStart; }
