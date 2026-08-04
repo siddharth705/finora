@@ -1,9 +1,20 @@
 # Finora — Repository-Wide Engineering Improvement Proposal
 
-**Status:** Proposal only. **Nothing here is implemented**, deliberately — this is the "evaluate
-first" half of the hardening phase, kept separate from the "fix immediately" half so that
-improvements get prioritised rather than smuggled in alongside bug fixes. Prioritise before any of
-it is built.
+**Status:** originally proposal-only. Four items have since been prioritised and built; the rest
+are still unimplemented and awaiting prioritisation.
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Crash reporting and error boundaries | **Done** — `c9357cd` |
+| 3 | Linters in CI | **Done** — `fbd7a5e` |
+| 4 | react-router advisory | **Done** — see the resolution note under item 4; the audit output is *expected* to still show 2 high |
+| 7 | Backend coverage measurement | **Done** — see item 7; it immediately surfaced a separate, larger defect |
+| 2, 5, 6, 8–12 | — | Not started |
+
+Everything below is the original text, with a **Resolution** note appended to each completed item.
+The point of this document was to keep "evaluate first" separate from "fix immediately"; the
+resolution notes record what the evaluation concluded once it was actually built, including where
+it disagreed with the proposal.
 
 **Scope of the review:** the whole repository — `backend/`, `frontend/`, `admin-portal/`,
 `mobile/`, `scripts/`, `.github/`, `.husky/`, `docs/`, and root configuration. This is the
@@ -199,6 +210,42 @@ to v7; if it does, that is a far cheaper path.
 
 **Dependencies.** None.
 
+**Resolution.** Upgraded both apps to `react-router-dom` 7.18.2.
+
+The cheaper 6.x path this item asked about does not exist. The advisory ranges are
+`>=6.0.0 <7.18.0` (backslash open redirect) and `>=6.30.2 <=6.30.4` (open redirect to XSS): the
+entire 6.x line is affected and no 6.x patch carries a fix.
+
+**`npm audit` still reports 2 high, and that is expected. Do not "fix" it by downgrading.** After
+the upgrade a different advisory applies — GHSA-qwww-vcr4-c8h2, *RSC Mode CSRF Bypass*, range
+`>=7.12.0 <8.3.0`, rated high. npm's suggested remediation is `react-router-dom@7.11.0`, which is
+below the vulnerable range start but also below 7.18.0, so taking it would reintroduce the open
+redirect. There is no version that clears everything: the advisory's fix boundary is 8.3.0 and **no
+8.x has been published** (`latest` is 7.18.2).
+
+7.18.2 is the right choice because it resolves the only advisory that actually applies here. The
+RSC CSRF issue requires React Server Components, and the SSR `deserializeErrors()` issue requires
+SSR; both apps are client-rendered SPAs using `BrowserRouter` with neither. Revisit when 8.3.0
+ships.
+
+On exposure: the open redirect was **latent rather than exploitable**. Every navigation target in
+both apps is a string literal or a server-built path; the one dynamic case,
+`navigate(result.link)` in the admin `GlobalSearch`, receives links `AdminSearchService` composes
+from UUIDs and fixed segments, with no user-controlled string interpolated. Fixed because the
+guard against someone later navigating to a user-supplied value should be the library, not the
+observation that nobody has done it yet.
+
+The migration itself was two mechanical changes, and the second is the more interesting one:
+
+  - `BrowserRouter`'s `future` prop is gone; `v7_startTransition` and `v7_relativeSplatPath` were
+    opt-in flags for this exact migration and are now the only behaviour. Having opted in early is
+    what made this small.
+  - `useNavigate()`'s returned function now returns a Promise, so all 14 fire-and-forget
+    `navigate(...)` calls across both apps became floating promises. **This was caught by
+    `@typescript-eslint/no-floating-promises`, i.e. by item 3, within minutes of the upgrade
+    landing** — the concrete payoff for having done item 3 first. They now read `void navigate(...)`,
+    satisfying the rule deliberately rather than suppressing it.
+
 ---
 
 ### 5. Merchant resolution loads every merchant on every imported row
@@ -288,6 +335,43 @@ it as a report to read, explicitly **not** as a CI gate, at least initially. If 
 ratchet-only (never decrease) is far healthier than a fixed percentage.
 
 **Dependencies.** None.
+
+**Resolution.** JaCoCo added as a report only — no `check` goal, no threshold, nothing that can
+fail the build — bound to `test` so `./mvnw test` produces it with no extra step. DTOs and entities
+are excluded so the number reflects logic that could be wrong rather than accessors.
+
+First run: **78.3% instructions, 74.4% branches.** Healthier than expected. But the headline is a
+single anomalous row, and it is not a coverage problem:
+
+```
+com.finora.controller     0.0% instructions   0.0% branches   1700 missed
+```
+
+Controllers are exercised only by the `*IT` classes, and **those have never run.** Surefire's
+default includes are `Test*.java`, `*Test.java`, `*Tests.java`, `*TestCase.java`; `*IT.java` is the
+maven-failsafe convention, and failsafe is not configured in this project. Confirmed by diffing
+`target/surefire-reports/` against the test sources: 149 test classes exist, 122 ran, **29 never
+did** — `AuthFlowIT`, `AdminRbacIT`, `PasswordChangeFlowIT`, `GlobalAuditLogIT`,
+`TransactionRepositoryIT`, `MerchantMergeIT`, and all 21 admin controller ITs. They compile, they
+look like coverage in review, and they assert nothing anywhere. It also means `ci.yml`'s own claim
+that the suite includes "the Testcontainers ones" has never been true.
+
+This is exactly the class of thing this item existed to surface, and it is a stronger result than
+"where is there no net" — it is "a third of the safety net was never attached".
+
+**Deliberately not fixed here.** Adding `**/*IT.java` to surefire's includes does make them run;
+that was verified (970 tests collected instead of 941). Whether they *pass* is unknown, because
+they have never executed once. Enabling 29 never-run test classes on `main` without that answer
+could red the pipeline for the whole team, so it needs its own change, verified against a working
+Docker daemon. See the follow-up note below.
+
+**Follow-up: the Docker blocker.** Verifying that locally is currently impossible on Docker Desktop
+29.x. Engine 29 raised its minimum API version to 1.40; the docker-java bundled with Testcontainers
+1.20.1 (this project's pin) negotiates 1.32, and every container creation fails with
+`client version 1.32 is too old`. Bumping to 1.21.3 did not help, and `DOCKER_API_VERSION` breaks
+the ping path instead. CI is unaffected today because `ubuntu-latest` still ships an older engine
+— which is precisely why this would otherwise go unnoticed until it blocks a developer. Worth its
+own investigation alongside enabling the ITs.
 
 ---
 
