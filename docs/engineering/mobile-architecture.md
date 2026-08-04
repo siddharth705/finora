@@ -181,9 +181,12 @@ match React's exact version, which Expo pins at 19.2.3.
 
 What's covered today: validation and paste-sanitization (regression tests for both paste bugs
 above), chart geometry including every degenerate case, `toUserMessage` across transport
-failures / server envelopes / 5xx / Firebase codes, and `AuthContext` bootstrap, login, logout,
-and verification.
+failures / server envelopes / 5xx / Firebase codes, `AuthContext` bootstrap, login, logout, and
+verification, and one screen rendered end-to-end with RNTL against a mocked API and a mocked
+`useNavigation` (`StatementHistoryScreen.test.tsx` — the password-protected re-import flow: tap,
+prompt, retry, inline error, and the accessibility/keychain properties of the password field).
 
-What isn't: screen rendering, navigation, and anything requiring hardware. CI type-checks, tests,
-and bundles — it does not compile native code. **Nothing in CI substitutes for the on-device
-checklist in `mobile-setup.md`.**
+What isn't: every other screen, real navigation between screens (the one rendering test mocks
+`useNavigation` rather than mounting a real navigator), and anything requiring hardware. CI
+type-checks, tests, and bundles — it does not compile native code. **Nothing in CI substitutes
+for the on-device checklist in `mobile-setup.md`.**
