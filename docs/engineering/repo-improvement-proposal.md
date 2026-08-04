@@ -9,7 +9,11 @@ are still unimplemented and awaiting prioritisation.
 | 3 | Linters in CI | **Done** — `fbd7a5e` |
 | 4 | react-router advisory | **Done** — see the resolution note under item 4; the audit output is *expected* to still show 2 high |
 | 7 | Backend coverage measurement | **Done** — surfaced 29 integration tests that had never run, plus a production 500. See item 7. |
-| 2, 5, 6, 8–12 | — | Not started |
+| 2 | Shared client layer | **Superseded** — the shared module was built and backed out; an enforcement check shipped instead (`6eb1017`). See item 2. |
+| 5 | Merchant resolution N+1 | **Measured, partly fixed** — the estimate was ~10x too high; only the pure waste was fixed. See item 5. |
+| 6 | Break up `UserDetail.tsx` | **Done** — `2cadf15`, `230f346` |
+| 8 | One client-IP implementation | **Done** — `98a385c` |
+| 9–12 | — | Not started |
 
 Everything below is the original text, with a **Resolution** note appended to each completed item.
 The point of this document was to keep "evaluate first" separate from "fix immediately"; the
@@ -282,6 +286,32 @@ imports a statement containing several rows that resolve to the *same new* merch
 **Dependencies.** None. Note this is deliberately not in the import-engine proposal — the class is
 shared with manual transaction entry (`TransactionService:175`), so a change here affects both paths.
 
+**Resolution — measured, and mostly *not* fixed.**
+
+The estimate in this item was wrong by about 10x. Measured (`MerchantNormalizationEngineTest`,
+new — the class had no test of its own): a **500-row statement over 50 merchants triggers 500 full
+merchant-table loads**, one per row, because bank descriptions carry a per-transaction reference so
+nearly every row is a new alias. Real, and it scales with rows × lifetime merchant count — but far
+smaller than the ~150,000 entity loads claimed above.
+
+**Fixed:** `ImportService` called `findByUserId(userId).size()` twice per import purely to report
+how many merchants were newly learned, hydrating the whole table for a number the database returns
+directly. Now `countByUserId`. That is waste, not a trade-off.
+
+**Not fixed:** the N+1. Four approaches, all rejected, reasoning now in the class javadoc:
+
+| Approach | Verdict |
+|---|---|
+| Snapshot the merchant list per import | **Wrong.** `resolve()` creates merchants mid-loop, so row 3 misses row 1's merchant — three "Swiggy" rows instead of one. Now guarded by a test. |
+| Transaction-scoped cache | Correct (~500 scans → ~50) but introduces caching machinery the codebase has nowhere else, to fix a sub-second cost. |
+| Persisted normalised-token column, matched in SQL | The principled fix, and the only one that removes the N+1. Deferred: migration plus an obligation to recompute the token on every rename/merge. **Revisit if import latency becomes a real complaint.** |
+| Two-column projection | Built, measured, reverted. Query count unchanged and **+450 `findById` calls on a 500-row import** (500 → 950). Trading round trips for hydration is not an improvement without evidence it wins. |
+
+The durable output is the tests: four pin the correctness any future attempt must preserve (merchant
+identity keys categorisation learning, so splitting one merchant across two rows teaches the engine
+against one and silently never applies it to the other), three characterise the cost so the next
+attempt starts from a number rather than an estimate.
+
 ---
 
 ### 6. Break up `UserDetail.tsx` (1770 lines)
@@ -420,6 +450,11 @@ collaborator changes how those tests construct the filter. Low risk, but it is t
 filter that was just modified, so it is worth letting `6ee925a` settle first.
 
 **Dependencies.** None.
+
+**Resolution.** Done in `98a385c`. The existing `ClientIpResolver` `@Component` is injected and the
+private copy deleted — one constructor parameter, one deleted method, no new infrastructure.
+`trust-proxy-headers` moved with it, so the tests configure the resolver instead of reaching into
+the filter with `ReflectionTestUtils`. The predicted test churn was real but small.
 
 ---
 
