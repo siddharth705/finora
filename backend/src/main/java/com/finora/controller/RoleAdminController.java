@@ -105,13 +105,13 @@ public class RoleAdminController {
     @PostMapping("/users/{userId}/roles/{roleName}")
     @PreAuthorize("hasAuthority('ROLE_MANAGE')")
     public ApiResponse<RoleDto> assignRole(@PathVariable UUID userId, @PathVariable String roleName) {
-        return ApiResponse.ok(roleService.assignRole(userId, roleName), "Role assigned");
+        return ApiResponse.ok(roleService.assignRole(currentUser.id(), userId, roleName), "Role assigned");
     }
 
     @DeleteMapping("/users/{userId}/roles/{roleName}")
     @PreAuthorize("hasAuthority('ROLE_MANAGE')")
     public ApiResponse<Void> revokeRole(@PathVariable UUID userId, @PathVariable String roleName) {
-        roleService.revokeRole(userId, roleName);
+        roleService.revokeRole(currentUser.id(), userId, roleName);
         return ApiResponse.ok(null, "Role revoked");
     }
 }
