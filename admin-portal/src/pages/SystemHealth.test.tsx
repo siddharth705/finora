@@ -106,4 +106,19 @@ describe('SystemHealth', () => {
     const cleanRow = screen.getByText('clean.csv').closest('div')!.parentElement!;
     expect(cleanRow.textContent).not.toContain('skipped');
   });
+
+  /**
+   * Bug fix: this page used to render `if (!data) return null` on a failed health check --
+   * completely blank content, with zero indication anything went wrong, on the one page whose
+   * entire purpose is telling an admin whether something is broken.
+   */
+  it('shows an error message instead of a blank page when the health check itself fails', async () => {
+    mockAuth(['PLATFORM_DIAGNOSTICS_VIEW']);
+    vi.mocked(adminSystemApi.health).mockRejectedValue(new Error('network error'));
+    vi.mocked(adminSystemApi.recentImports).mockResolvedValue([]);
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText(/Couldn't load system health/)).toBeInTheDocument());
+  });
 });

@@ -37,7 +37,12 @@ export function InlineRuleForm({
       className="bg-bg border border-border rounded-lg p-3.5 space-y-2.5"
     >
       <div className="grid gap-2 md:grid-cols-2">
+        {/* Bug fix: these three selects had no accessible name at all -- a real, critical axe
+            "select-name" violation (distinct from the "label" rule fixed elsewhere: a placeholder
+            attribute doesn't exist on <select>, so there was nothing to fall back on). aria-label
+            matches the pattern RelationshipsSection.tsx's selects already use. */}
         <select
+          aria-label="Field"
           value={form.field}
           onChange={(e) => setForm({ ...form, field: e.target.value })}
           className="bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs"
@@ -45,6 +50,7 @@ export function InlineRuleForm({
           {RULE_FIELDS.map((f) => <option key={f} value={f}>{f}</option>)}
         </select>
         <select
+          aria-label="Operator"
           value={form.operator}
           onChange={(e) => setForm({ ...form, operator: e.target.value })}
           className="bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs"
@@ -59,6 +65,7 @@ export function InlineRuleForm({
           className="md:col-span-2 bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs"
         />
         <select
+          aria-label="Action type"
           value={form.actionType}
           onChange={(e) => setForm({ ...form, actionType: e.target.value })}
           className="bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs"

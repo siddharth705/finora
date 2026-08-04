@@ -105,8 +105,9 @@ export default function Login() {
 
         <form onSubmit={handleSubmit} className="bg-card border border-border rounded-xl2 shadow-soft p-6 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-ink mb-1.5">Email or phone</label>
+            <label htmlFor="login-identifier" className="block text-sm font-medium text-ink mb-1.5">Email or phone</label>
             <input
+              id="login-identifier"
               type="text"
               required
               autoFocus
@@ -117,10 +118,11 @@ export default function Login() {
           </div>
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <label className="block text-sm font-medium text-ink">Password</label>
+              <label htmlFor="login-password" className="block text-sm font-medium text-ink">Password</label>
               <Link to="/forgot-password" className="text-xs text-primary font-medium">Forgot password?</Link>
             </div>
             <input
+              id="login-password"
               type="password"
               required
               value={password}

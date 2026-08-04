@@ -10,17 +10,25 @@ import { safeStorage } from '../lib/safeStorage';
 // later via the Roles page) should be able to sign into this portal and see exactly the sections
 // their permissions unlock -- see Sidebar.tsx, which hides nav items the caller can't reach
 // rather than assuming "logged into the admin app" implies "can see everything in it."
-// Kept in sync with every admin-only permission seeded across V16/V24/V25/V26's migrations --
+// Kept in sync with every admin-only permission seeded across V16/V24/V25/V26/V47's migrations --
 // this list exists purely to gate portal entry, not to control what's visible inside it (that's
 // Sidebar.tsx + RequirePermission, per-permission). A narrowly-scoped role that only holds
 // BANK_MANAGE or RULE_MANAGE (say) still needs to get past this check to reach the one section it
 // can actually use.
-const ADMIN_PORTAL_PERMISSIONS = [
+//
+// Bug fix: RELATIONSHIP_MANAGE (V47__relationship_manage_permission.sql, gates
+// AdminUserRelationshipController and UserDetail.tsx's RelationshipsSection) was never added here
+// when it was introduced, despite this list's own doc comment claiming it tracks exactly this --
+// a role holding RELATIONSHIP_MANAGE and nothing else in this list would be rejected at login with
+// "This account doesn't have any admin permissions," unable to reach the one section it can use.
+// Exported so AdminAuthContext.permissionCoverage.test.ts can scan every `hasPermission('X')` /
+// `permission="X"` site in pages/components and assert this list never drifts out of sync again.
+export const ADMIN_PORTAL_PERMISSIONS = [
   'AUDIT_VIEW', 'USER_VIEW', 'USER_CREATE', 'USER_UPDATE', 'USER_DELETE',
   'ACCOUNT_CREATE', 'ACCOUNT_UPDATE', 'ACCOUNT_DELETE', 'TRANSACTION_DELETE',
   'ROLE_MANAGE', 'PERMISSION_MANAGE', 'SYSTEM_SETTINGS', 'PLATFORM_STATS_VIEW',
   'BANK_MANAGE', 'RULE_MANAGE', 'MERCHANT_MANAGE', 'RECONCILIATION_VIEW', 'PLATFORM_ANALYTICS_VIEW',
-  'PLATFORM_DIAGNOSTICS_VIEW',
+  'PLATFORM_DIAGNOSTICS_VIEW', 'RELATIONSHIP_MANAGE',
 ];
 
 export interface AdminAuthState {

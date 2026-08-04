@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Phone } from 'lucide-react';
 import { adminUsersApi } from '../../api/endpoints';
@@ -16,6 +16,9 @@ export function EditProfileForm({
   const [fullName, setFullName] = useState(initial.fullName);
   const [phoneNumber, setPhoneNumber] = useState(initial.phoneNumber ?? '');
   const [error, setError] = useState<string | null>(null);
+  // Bug fix: both labels below were unassociated siblings of their inputs, not linked via
+  // htmlFor/id -- a real axe "label" violation, same class fixed on Login.tsx.
+  const id = useId();
 
   const updateMutation = useMutation({
     mutationFn: (req: AdminUpdateUserRequest) => adminUsersApi.update(userId, req),
@@ -38,8 +41,9 @@ export function EditProfileForm({
       {error && <p className="text-sm text-danger bg-danger-bg rounded-lg px-3 py-2">{error}</p>}
       <div className="grid gap-3 md:grid-cols-2">
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Full name</label>
+          <label htmlFor={`${id}-fullName`} className="text-xs font-medium text-muted mb-1 block">Full name</label>
           <input
+            id={`${id}-fullName`}
             required
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
@@ -47,8 +51,9 @@ export function EditProfileForm({
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Phone number</label>
+          <label htmlFor={`${id}-phoneNumber`} className="text-xs font-medium text-muted mb-1 block">Phone number</label>
           <input
+            id={`${id}-phoneNumber`}
             required
             value={phoneNumber}
             onChange={(e) => setPhoneNumber(e.target.value)}

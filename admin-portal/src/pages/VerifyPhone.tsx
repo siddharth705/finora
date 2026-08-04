@@ -115,8 +115,11 @@ export default function VerifyPhone() {
 
           <form onSubmit={handleVerify} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-ink mb-1.5">Verification code</label>
+              {/* Bug fix: this label was an unassociated sibling of the input, not linked via
+                  htmlFor/id -- a real axe "label" violation, same class fixed on Login.tsx. */}
+              <label htmlFor="verify-phone-otp" className="block text-sm font-medium text-ink mb-1.5">Verification code</label>
               <input
+                id="verify-phone-otp"
                 value={otp}
                 onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 required

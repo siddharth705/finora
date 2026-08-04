@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Search, User, Store, Landmark, ListFilter, X } from 'lucide-react';
 import { adminSearchApi } from '../api/endpoints';
+import { useAdminAuth } from '../context/AdminAuthContext';
 import type { SearchResultDto } from '../types';
 
 const TYPE_META: Record<string, { label: string; icon: typeof User }> = {
@@ -25,14 +26,22 @@ function useDebouncedValue(value: string, delayMs: number) {
 
 /**
  * Header search box for the admin portal (Admin Portal Phase 2) -- one query fanned out
- * server-side across Users/Merchants/Banks/Global Rules (AdminSearchController). Grouped
- * dropdown by entity type, click-outside/blur-away to dismiss, no permission gating beyond being
- * signed in (same as the backend endpoint -- see that controller's class comment for why).
- * TYPE_META's fallback (generic Search icon, raw type string as the label) means a future
- * backend-added result type renders correctly with zero changes here, same extensibility
- * discipline as the health provider registry.
+ * server-side across Users/Merchants/Banks/Global Rules (AdminSearchController).
+ *
+ * Bug fix: this used to have no permission gating beyond being signed in, on the theory that the
+ * backend endpoint didn't gate it either. That's no longer true -- AdminSearchController.search()
+ * now requires USER_VIEW (see that controller's own doc comment: it used to have no @PreAuthorize
+ * at all, a real PII leak, fixed by gating it on the same permission the Users page already
+ * requires). This component never picked up that change, so an admin without USER_VIEW (a
+ * narrowly-scoped support role with only, say, AUDIT_VIEW) still got a fully-rendered search box
+ * that 403'd on every query -- silently swallowed here, since neither `data` nor `isFetching`
+ * distinguish "no matches" from "not allowed to search," so it read as "the platform has no
+ * matching data" instead of "you can't search." Hidden entirely for such an account instead,
+ * matching Sidebar.tsx's own pattern of not showing a control that can't do anything.
  */
 export function GlobalSearch() {
+  const { hasPermission } = useAdminAuth();
+  const canSearch = hasPermission('USER_VIEW');
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const debouncedQuery = useDebouncedValue(query.trim(), 300);
@@ -42,7 +51,7 @@ export function GlobalSearch() {
   const { data, isFetching } = useQuery({
     queryKey: ['admin-search', debouncedQuery],
     queryFn: () => adminSearchApi.search(debouncedQuery),
-    enabled: debouncedQuery.length >= 2,
+    enabled: canSearch && debouncedQuery.length >= 2,
   });
 
   useEffect(() => {
@@ -65,6 +74,10 @@ export function GlobalSearch() {
     setQuery('');
     setOpen(false);
   }
+
+  // After every hook above (rules-of-hooks requires the same hooks to run every render) -- an
+  // account without USER_VIEW gets no search box at all, rather than one that renders and 403s.
+  if (!canSearch) return null;
 
   const results = data ?? [];
   const grouped = results.reduce<Record<string, SearchResultDto[]>>((acc, r) => {

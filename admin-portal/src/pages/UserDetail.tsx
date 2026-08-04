@@ -192,6 +192,7 @@ function UserDetailContent({ id }: { id: string }) {
           {assignableRoles.length > 0 && (
             <div className="flex items-center gap-2">
               <select
+                aria-label="Grant a role"
                 value={selectedRole}
                 onChange={(e) => setSelectedRole(e.target.value)}
                 className="bg-bg border border-border rounded-lg px-3 py-2 text-sm"

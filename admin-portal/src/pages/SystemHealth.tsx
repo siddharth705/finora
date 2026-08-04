@@ -60,14 +60,24 @@ function RecentImportsSection() {
 }
 
 function SystemHealthContent() {
-  const { data, isLoading, refetch, isFetching } = useQuery({
+  const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['admin-system-health'],
     queryFn: () => adminSystemApi.health(),
     refetchInterval: 30_000,
   });
 
   if (isLoading) return <p className="text-muted text-sm">Loading…</p>;
-  if (!data) return null;
+  // Bug fix: this used to be `if (!data) return null`, so a failed request (network error, 500)
+  // rendered a completely blank page with zero indication anything went wrong -- on a page whose
+  // entire purpose is telling an admin whether something is broken, the one state it couldn't
+  // represent was "the health check itself failed". Same fix, same reasoning as Diagnostics.tsx.
+  if (isError || !data) {
+    return (
+      <p className="text-sm text-danger bg-danger-bg rounded-lg px-3.5 py-2.5">
+        Couldn't load system health -- please try again later.
+      </p>
+    );
+  }
 
   return (
     <div className="space-y-6">

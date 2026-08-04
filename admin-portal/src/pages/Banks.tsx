@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Landmark, Plus, Trash2, Pencil, ExternalLink, Activity } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
@@ -7,6 +7,7 @@ import { FormPanel } from '../components/FormPanel';
 import { DataTable, type DataTableColumn } from '../components/DataTable';
 import { EntityDrawer, type EntityDrawerTab } from '../components/EntityDrawer';
 import { adminBanksApi } from '../api/endpoints';
+import { isSafeHttpUrl } from '../lib/safeUrl';
 import type { BankDto, CreateBankRequest, UpdateBankRequest } from '../types';
 
 const BLANK_FORM: CreateBankRequest = {
@@ -25,6 +26,9 @@ function BankCreateForm({
   error: string | null;
 }) {
   const [form, setForm] = useState<CreateBankRequest>(BLANK_FORM);
+  // Bug fix: every label below was an unassociated sibling of its input, not linked via
+  // htmlFor/id -- a real axe "label" violation, same class fixed on Login.tsx.
+  const id = useId();
 
   return (
     <FormPanel
@@ -40,8 +44,9 @@ function BankCreateForm({
     >
       <div className="grid gap-3 md:grid-cols-2">
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Bank ID</label>
+          <label htmlFor={`${id}-id`} className="text-xs font-medium text-muted mb-1 block">Bank ID</label>
           <input
+            id={`${id}-id`}
             required
             placeholder="e.g. IOB"
             value={form.id}
@@ -50,8 +55,9 @@ function BankCreateForm({
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Short name</label>
+          <label htmlFor={`${id}-shortName`} className="text-xs font-medium text-muted mb-1 block">Short name</label>
           <input
+            id={`${id}-shortName`}
             required
             placeholder="e.g. Indian Overseas Bank"
             value={form.shortName}
@@ -60,8 +66,9 @@ function BankCreateForm({
           />
         </div>
         <div className="md:col-span-2">
-          <label className="text-xs font-medium text-muted mb-1 block">Official name</label>
+          <label htmlFor={`${id}-officialName`} className="text-xs font-medium text-muted mb-1 block">Official name</label>
           <input
+            id={`${id}-officialName`}
             required
             placeholder="e.g. Indian Overseas Bank Ltd."
             value={form.officialName}
@@ -70,8 +77,9 @@ function BankCreateForm({
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Initials</label>
+          <label htmlFor={`${id}-initials`} className="text-xs font-medium text-muted mb-1 block">Initials</label>
           <input
+            id={`${id}-initials`}
             maxLength={4}
             placeholder="e.g. HDFC"
             value={form.initials}
@@ -80,8 +88,9 @@ function BankCreateForm({
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Color</label>
+          <label htmlFor={`${id}-colorHex`} className="text-xs font-medium text-muted mb-1 block">Color</label>
           <input
+            id={`${id}-colorHex`}
             type="color"
             value={form.colorHex || '#64748B'}
             onChange={(e) => setForm({ ...form, colorHex: e.target.value })}
@@ -89,8 +98,9 @@ function BankCreateForm({
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Category</label>
+          <label htmlFor={`${id}-category`} className="text-xs font-medium text-muted mb-1 block">Category</label>
           <input
+            id={`${id}-category`}
             placeholder="e.g. PUBLIC_SECTOR"
             value={form.category}
             onChange={(e) => setForm({ ...form, category: e.target.value })}
@@ -98,8 +108,9 @@ function BankCreateForm({
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">IFSC prefix</label>
+          <label htmlFor={`${id}-ifscPrefix`} className="text-xs font-medium text-muted mb-1 block">IFSC prefix</label>
           <input
+            id={`${id}-ifscPrefix`}
             placeholder="e.g. IOBA"
             value={form.ifscPrefix}
             onChange={(e) => setForm({ ...form, ifscPrefix: e.target.value })}
@@ -107,8 +118,9 @@ function BankCreateForm({
           />
         </div>
         <div className="md:col-span-2">
-          <label className="text-xs font-medium text-muted mb-1 block">Website</label>
+          <label htmlFor={`${id}-websiteUrl`} className="text-xs font-medium text-muted mb-1 block">Website</label>
           <input
+            id={`${id}-websiteUrl`}
             placeholder="https://…"
             value={form.websiteUrl}
             onChange={(e) => setForm({ ...form, websiteUrl: e.target.value })}
@@ -150,6 +162,9 @@ function BankSummaryTab({ bank, onSave, saving, error }: {
     ifscPrefix: bank.ifscPrefix ?? '',
     websiteUrl: bank.websiteUrl ?? '',
   });
+  // Bug fix: every label in the edit form below was an unassociated sibling of its input, not
+  // linked via htmlFor/id -- a real axe "label" violation, same class fixed on Login.tsx.
+  const id = useId();
 
   function startEditing() {
     setForm({
@@ -183,7 +198,13 @@ function BankSummaryTab({ bank, onSave, saving, error }: {
         </div>
         <div>
           <p className="text-xs font-medium text-muted mb-0.5">Website</p>
-          {bank.websiteUrl ? (
+          {/* Bug fix / security hardening: bank.websiteUrl has no scheme validation on the
+              backend -- any BANK_MANAGE admin could set it to a `javascript:` URL, and this used
+              to render it as a real, clickable <a href> to every OTHER admin who opens this
+              bank's drawer. isSafeHttpUrl restricts what actually becomes a link to http(s); an
+              unsafe value still displays (so nothing silently disappears) but as plain text,
+              never as something clickable. See lib/safeUrl.ts's own doc comment. */}
+          {bank.websiteUrl && isSafeHttpUrl(bank.websiteUrl) ? (
             <a
               href={bank.websiteUrl}
               target="_blank"
@@ -192,6 +213,8 @@ function BankSummaryTab({ bank, onSave, saving, error }: {
             >
               {bank.websiteUrl} <ExternalLink size={12} />
             </a>
+          ) : bank.websiteUrl ? (
+            <p className="text-sm text-ink break-all">{bank.websiteUrl}</p>
           ) : (
             <p className="text-sm text-ink">—</p>
           )}
@@ -217,8 +240,9 @@ function BankSummaryTab({ bank, onSave, saving, error }: {
     >
       {error && <p className="text-sm text-danger bg-danger-bg rounded-lg px-3 py-2">{error}</p>}
       <div>
-        <label className="text-xs font-medium text-muted mb-1 block">Short name</label>
+        <label htmlFor={`${id}-shortName`} className="text-xs font-medium text-muted mb-1 block">Short name</label>
         <input
+          id={`${id}-shortName`}
           required
           value={form.shortName}
           onChange={(e) => setForm({ ...form, shortName: e.target.value })}
@@ -226,8 +250,9 @@ function BankSummaryTab({ bank, onSave, saving, error }: {
         />
       </div>
       <div>
-        <label className="text-xs font-medium text-muted mb-1 block">Official name</label>
+        <label htmlFor={`${id}-officialName`} className="text-xs font-medium text-muted mb-1 block">Official name</label>
         <input
+          id={`${id}-officialName`}
           required
           value={form.officialName}
           onChange={(e) => setForm({ ...form, officialName: e.target.value })}
@@ -235,24 +260,27 @@ function BankSummaryTab({ bank, onSave, saving, error }: {
         />
       </div>
       <div>
-        <label className="text-xs font-medium text-muted mb-1 block">Category</label>
+        <label htmlFor={`${id}-category`} className="text-xs font-medium text-muted mb-1 block">Category</label>
         <input
+          id={`${id}-category`}
           value={form.category}
           onChange={(e) => setForm({ ...form, category: e.target.value })}
           className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm"
         />
       </div>
       <div>
-        <label className="text-xs font-medium text-muted mb-1 block">IFSC prefix</label>
+        <label htmlFor={`${id}-ifscPrefix`} className="text-xs font-medium text-muted mb-1 block">IFSC prefix</label>
         <input
+          id={`${id}-ifscPrefix`}
           value={form.ifscPrefix}
           onChange={(e) => setForm({ ...form, ifscPrefix: e.target.value })}
           className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm"
         />
       </div>
       <div>
-        <label className="text-xs font-medium text-muted mb-1 block">Website</label>
+        <label htmlFor={`${id}-websiteUrl`} className="text-xs font-medium text-muted mb-1 block">Website</label>
         <input
+          id={`${id}-websiteUrl`}
           value={form.websiteUrl}
           onChange={(e) => setForm({ ...form, websiteUrl: e.target.value })}
           className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm"

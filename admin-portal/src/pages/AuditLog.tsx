@@ -170,6 +170,7 @@ function AuditLogContent() {
           { type: 'date', key: 'dateTo', label: 'To', value: filters.dateTo, onChange: (v) => updateFilter('dateTo', v) },
           {
             type: 'select', key: 'sortDir', value: filters.sortDir, onChange: (v) => updateFilter('sortDir', v),
+            label: 'Sort by date',
             options: [{ label: 'Newest first', value: 'desc' }, { label: 'Oldest first', value: 'asc' }],
           },
         ]}

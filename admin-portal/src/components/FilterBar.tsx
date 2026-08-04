@@ -5,7 +5,11 @@ import type { SavedView } from '../hooks/useSavedViews';
 
 export type FilterField =
   | { type: 'search'; key: string; value: string; onChange: (v: string) => void; placeholder?: string }
-  | { type: 'select'; key: string; value: string; onChange: (v: string) => void; options: { label: string; value: string }[]; placeholder?: string }
+  // `label` gives the <select> an accessible name (via aria-label below) -- it used to have
+  // none at all, a real axe "select-name" violation, same class of bug fixed on RulesSection.tsx's
+  // three bare selects. Separate from `placeholder`, which only supplies the visible "all/any"
+  // option's text and isn't itself an accessible-name mechanism for <select>.
+  | { type: 'select'; key: string; value: string; onChange: (v: string) => void; options: { label: string; value: string }[]; placeholder?: string; label: string }
   | { type: 'date'; key: string; value: string; onChange: (v: string) => void; label: string };
 
 export interface FilterBarSavedViewsProps<T extends Record<string, string>> {
@@ -75,6 +79,7 @@ export function FilterBar<T extends Record<string, string>>({
           return (
             <select
               key={field.key}
+              aria-label={field.label}
               value={field.value}
               onChange={(e) => field.onChange(e.target.value)}
               className="bg-card border border-border rounded-lg px-3 py-2.5 text-sm shadow-card"

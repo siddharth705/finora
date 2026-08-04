@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ShieldCheck, Plus, Pencil, Trash2 } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
@@ -26,6 +26,9 @@ function CreateEntityForm({
 }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  // Bug fix: both labels below were unassociated siblings of their inputs, not linked via
+  // htmlFor/id -- a real axe "label" violation, same class fixed on Login.tsx.
+  const fieldId = useId();
 
   return (
     <FormPanel
@@ -41,8 +44,9 @@ function CreateEntityForm({
     >
       <div className="grid gap-3 md:grid-cols-2">
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Name</label>
+          <label htmlFor={`${fieldId}-name`} className="text-xs font-medium text-muted mb-1 block">Name</label>
           <input
+            id={`${fieldId}-name`}
             required
             placeholder={placeholder}
             value={name}
@@ -51,8 +55,9 @@ function CreateEntityForm({
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Description</label>
+          <label htmlFor={`${fieldId}-description`} className="text-xs font-medium text-muted mb-1 block">Description</label>
           <input
+            id={`${fieldId}-description`}
             required
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -195,6 +200,7 @@ function RoleCard({
       {canManageRoles && grantableePermissions.length > 0 && (
         <div className="flex items-center gap-1.5 pt-3 border-t border-border">
           <select
+            aria-label="Grant a permission"
             value={selectedPermission}
             onChange={(e) => setSelectedPermission(e.target.value)}
             className="flex-1 bg-bg border border-border rounded-lg px-2 py-1.5 text-xs"

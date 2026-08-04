@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useAdminAuth } from '../../context/AdminAuthContext';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Pencil, Plus, Trash2, X } from 'lucide-react';
@@ -24,6 +24,11 @@ export function AccountForm({
 }) {
   const [form, setForm] = useState<CreateAccountRequest>(initial);
   const { data: banks } = useQuery({ queryKey: ['banks-picker'], queryFn: () => banksApi.search() });
+  // Bug fix: every label below was an unassociated sibling of its input/select, not linked via
+  // htmlFor/id -- a real axe "label" violation, same class fixed on Login.tsx. useId() keeps ids
+  // unique per instance since this form can legitimately mount twice at once (the "Add account"
+  // create form and a specific row's edit form are independent state, not mutually exclusive).
+  const id = useId();
 
   return (
     <form
@@ -40,8 +45,9 @@ export function AccountForm({
       {error && <p className="text-sm text-danger bg-danger-bg rounded-lg px-3 py-2">{error}</p>}
       <div className="grid gap-3 md:grid-cols-2">
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Name</label>
+          <label htmlFor={`${id}-name`} className="text-xs font-medium text-muted mb-1 block">Name</label>
           <input
+            id={`${id}-name`}
             required
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -49,8 +55,9 @@ export function AccountForm({
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Type</label>
+          <label htmlFor={`${id}-accountType`} className="text-xs font-medium text-muted mb-1 block">Type</label>
           <select
+            id={`${id}-accountType`}
             value={form.accountType}
             onChange={(e) => setForm({ ...form, accountType: e.target.value })}
             className="w-full bg-card border border-border rounded-lg px-3 py-2 text-sm"
@@ -59,8 +66,9 @@ export function AccountForm({
           </select>
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Bank</label>
+          <label htmlFor={`${id}-bankId`} className="text-xs font-medium text-muted mb-1 block">Bank</label>
           <select
+            id={`${id}-bankId`}
             required
             value={form.bankId}
             onChange={(e) => setForm({ ...form, bankId: e.target.value })}
@@ -71,10 +79,11 @@ export function AccountForm({
           </select>
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">
+          <label htmlFor={`${id}-balance`} className="text-xs font-medium text-muted mb-1 block">
             {form.accountType === 'CREDIT_CARD' ? 'Outstanding balance' : 'Balance'}
           </label>
           <input
+            id={`${id}-balance`}
             required
             type="number"
             step="0.01"
@@ -84,16 +93,18 @@ export function AccountForm({
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Account holder name</label>
+          <label htmlFor={`${id}-accountHolderName`} className="text-xs font-medium text-muted mb-1 block">Account holder name</label>
           <input
+            id={`${id}-accountHolderName`}
             value={form.accountHolderName ?? ''}
             onChange={(e) => setForm({ ...form, accountHolderName: e.target.value })}
             className="w-full bg-card border border-border rounded-lg px-3 py-2 text-sm"
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Masked account number</label>
+          <label htmlFor={`${id}-accountNumberMasked`} className="text-xs font-medium text-muted mb-1 block">Masked account number</label>
           <input
+            id={`${id}-accountNumberMasked`}
             placeholder="XXXX1234"
             value={form.accountNumberMasked ?? ''}
             onChange={(e) => setForm({ ...form, accountNumberMasked: e.target.value })}
