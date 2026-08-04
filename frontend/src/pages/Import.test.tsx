@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Import from './Import';
 import { importApi, categoriesApi, accountsApi } from '../api/endpoints';
+import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID } from '../api/errorCodes';
 import type { DetectedAccountInfo } from '../types';
 
 // Only the upload step's file-routing logic is under test here (stagePdf vs stageCsv, and the
@@ -101,6 +102,18 @@ function pdfFile(name = 'statement.pdf') {
   return new File(['%PDF-1.4'], name, { type: 'application/pdf' });
 }
 
+/**
+ * Picking a PDF no longer uploads it -- it opens the password panel first, because most Indian
+ * bank e-statements arrive protected and asking up front beats a guaranteed failed upload. This
+ * helper does both halves so tests that only care about what happens AFTER staging stay readable.
+ * CSV is unaffected and still uploads on selection, which is why there's no equivalent for it.
+ */
+async function pickAndUploadPdf(user: ReturnType<typeof userEvent.setup>, file = pdfFile(), password?: string) {
+  await user.upload(screen.getByTestId('statement-file-input'), file);
+  if (password) await user.type(screen.getByLabelText(/statement password/i), password);
+  await user.click(screen.getByRole('button', { name: /upload statement/i }));
+}
+
 describe('Import — file-type routing', () => {
   beforeEach(() => {
     vi.mocked(importApi.stageCsv).mockReset().mockResolvedValue(stagingResultWith());
@@ -126,10 +139,16 @@ describe('Import — file-type routing', () => {
     const user = userEvent.setup();
     renderImport();
 
-    await user.upload(screen.getByTestId('statement-file-input'), pdfFile());
+    await pickAndUploadPdf(user);
 
     await waitFor(() => expect(importApi.stagePdf).toHaveBeenCalledTimes(1));
-    expect(importApi.stagePdf).toHaveBeenCalledWith(expect.objectContaining({ name: 'statement.pdf' }), expect.any(Function));
+    // Third argument is the optional statement password -- undefined here, since the field was
+    // left blank, so an unprotected PDF's request body is byte-for-byte what it always was.
+    expect(importApi.stagePdf).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'statement.pdf' }),
+      expect.any(Function),
+      undefined
+    );
     expect(importApi.stageCsv).not.toHaveBeenCalled();
   });
 
@@ -137,19 +156,39 @@ describe('Import — file-type routing', () => {
     const user = userEvent.setup();
     renderImport();
 
-    await user.upload(screen.getByTestId('statement-file-input'), pdfFile('STATEMENT.PDF'));
+    await pickAndUploadPdf(user, pdfFile('STATEMENT.PDF'));
 
     await waitFor(() => expect(importApi.stagePdf).toHaveBeenCalledTimes(1));
     expect(importApi.stageCsv).not.toHaveBeenCalled();
   });
 
-  it('stages a .pdf file dropped onto the dropzone', async () => {
+  it('routes a .pdf file dropped onto the dropzone to the password panel, not straight to staging', async () => {
+    const user = userEvent.setup();
     renderImport();
 
     fireEvent.drop(screen.getByTestId('statement-dropzone'), { dataTransfer: { files: [pdfFile()] } });
 
+    // Drag-and-drop and the file picker have to reach the same place -- a dropped PDF that
+    // skipped the panel would silently lose the ability to carry a password.
+    expect(await screen.findByTestId('pdf-password-panel')).toBeInTheDocument();
+    expect(importApi.stagePdf).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: /upload statement/i }));
+
     await waitFor(() => expect(importApi.stagePdf).toHaveBeenCalledTimes(1));
     expect(importApi.stageCsv).not.toHaveBeenCalled();
+  });
+
+  it('uploads a .csv immediately, with no password step in the way', async () => {
+    const user = userEvent.setup();
+    renderImport();
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+
+    // The panel is deliberately PDF-only: a CSV has nothing to unlock, so making every CSV
+    // upload a two-step action would be pure cost.
+    await waitFor(() => expect(importApi.stageCsv).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId('pdf-password-panel')).not.toBeInTheDocument();
   });
 
   it('rejects an unsupported file type dropped onto the dropzone, without calling either staging endpoint', async () => {
@@ -173,7 +212,7 @@ describe('Import — file-type routing', () => {
     const user = userEvent.setup();
     renderImport();
 
-    await user.upload(screen.getByTestId('statement-file-input'), pdfFile());
+    await pickAndUploadPdf(user);
 
     // Review step renders the "which account" card once staging resolves and rows/detected
     // account land in state -- a lightweight signal that handleFile() ran to completion rather
@@ -190,7 +229,7 @@ describe('Import — file-type routing', () => {
     const user = userEvent.setup();
     renderImport();
 
-    await user.upload(screen.getByTestId('statement-file-input'), pdfFile());
+    await pickAndUploadPdf(user);
 
     expect(await screen.findByText(/could not parse this pdf/i)).toBeInTheDocument();
   });
@@ -204,10 +243,97 @@ describe('Import — file-type routing', () => {
     const user = userEvent.setup();
     renderImport();
 
-    await user.upload(screen.getByTestId('statement-file-input'), pdfFile());
+    await pickAndUploadPdf(user);
 
     expect(await screen.findByText(/unable to reach the import service/i)).toBeInTheDocument();
     expect(screen.queryByText(/could not parse this pdf/i)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Password-protected PDFs. Most Indian banks e-mail statements protected, so this is the normal
+ * path for a large share of users rather than an edge case.
+ */
+describe('Import — password-protected PDFs', () => {
+  // The REAL codes, imported rather than retyped -- errorCodes.ts is deliberately outside the
+  // mocked endpoints module so these tests can't pass against a value the app no longer sends.
+  function rejectWith(errorCode: string) {
+    return { response: { data: { errorCode, message: 'server copy' } } };
+  }
+
+  beforeEach(() => {
+    vi.mocked(importApi.stageCsv).mockReset().mockResolvedValue(stagingResultWith());
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue(stagingResultWith());
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('sends a typed password along with the file', async () => {
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user, pdfFile(), 'AAAA1234');
+
+    await waitFor(() => expect(importApi.stagePdf).toHaveBeenCalledTimes(1));
+    expect(importApi.stagePdf).toHaveBeenCalledWith(expect.anything(), expect.any(Function), 'AAAA1234');
+  });
+
+  it('asks for a password when the server reports the file is protected', async () => {
+    vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue(rejectWith(PDF_PASSWORD_REQUIRED));
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+
+    expect(await screen.findByText(/this statement is password protected/i)).toBeInTheDocument();
+    // A locked file is not a broken file, and saying so would send the user off looking for a
+    // different export instead of the password they already have in their inbox.
+    expect(screen.queryByText(/could not parse this pdf/i)).not.toBeInTheDocument();
+  });
+
+  it('retries the same file, without re-picking it, once a password is supplied', async () => {
+    vi.mocked(importApi.stagePdf).mockReset()
+      .mockRejectedValueOnce(rejectWith(PDF_PASSWORD_REQUIRED))
+      .mockResolvedValueOnce(stagingResultWith());
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await screen.findByText(/this statement is password protected/i);
+
+    await user.type(screen.getByLabelText(/statement password/i), 'AAAA1234');
+    await user.click(screen.getByRole('button', { name: /upload statement/i }));
+
+    // The retry must carry the SAME File the user already chose -- the whole point of holding it
+    // in state is that a protected statement doesn't cost them a second trip to the file picker.
+    await waitFor(() => expect(importApi.stagePdf).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(importApi.stagePdf).mock.calls[1][0]).toBe(vi.mocked(importApi.stagePdf).mock.calls[0][0]);
+    expect(vi.mocked(importApi.stagePdf).mock.calls[1][2]).toBe('AAAA1234');
+    expect(await screen.findByText(/which account is this statement for/i)).toBeInTheDocument();
+  });
+
+  it('keeps a rejected password in the field so it can be corrected rather than retyped', async () => {
+    vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue(rejectWith(PDF_PASSWORD_INVALID));
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user, pdfFile(), 'WRONG999');
+
+    expect(await screen.findByText(/didn't open this statement/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/statement password/i)).toHaveValue('WRONG999');
+    // Wrong password and never-asked read differently on purpose -- see PDF_PASSWORD_INVALID.
+    expect(screen.queryByText(/this statement is password protected/i)).not.toBeInTheDocument();
+  });
+
+  it('does not offer the password to a browser password manager', async () => {
+    const user = userEvent.setup();
+    renderImport();
+
+    await user.upload(screen.getByTestId('statement-file-input'), pdfFile());
+
+    // It's the bank's password for one document, not a Finora credential -- saving it into the
+    // user's vault alongside real logins would be wrong, and it changes every statement anyway.
+    expect(screen.getByLabelText(/statement password/i)).toHaveAttribute('autocomplete', 'off');
   });
 });
 
@@ -232,7 +358,7 @@ describe('Import — Financial Product Discovery on the review screen', () => {
     const user = userEvent.setup();
     renderImport();
 
-    await user.upload(screen.getByTestId('statement-file-input'), pdfFile());
+    await pickAndUploadPdf(user);
 
     expect(await screen.findByText(/detected a/i)).toBeInTheDocument();
     expect(screen.getByText(/savings account/i)).toBeInTheDocument();
@@ -246,7 +372,7 @@ describe('Import — Financial Product Discovery on the review screen', () => {
     const user = userEvent.setup();
     renderImport();
 
-    await user.upload(screen.getByTestId('statement-file-input'), pdfFile());
+    await pickAndUploadPdf(user);
 
     expect(await screen.findByText(/couldn’t identify what kind it is/i)).toBeInTheDocument();
   });
@@ -263,7 +389,7 @@ describe('Import — Financial Product Discovery on the review screen', () => {
     const user = userEvent.setup();
     renderImport();
 
-    await user.upload(screen.getByTestId('statement-file-input'), pdfFile());
+    await pickAndUploadPdf(user);
 
     const why = await screen.findByRole('button', { name: /why\?/i });
     expect(screen.queryByText(/MATURITY_FIELD/)).not.toBeInTheDocument();

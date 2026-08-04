@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { CheckCircle2, UploadCloud, AlertTriangle, Clock, FileText, FileSpreadsheet } from 'lucide-react';
 import { importApi, statementImportsApi, categoriesApi, accountsApi } from '../api/endpoints';
+import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID } from '../api/errorCodes';
 import { BankLogo } from '../components/BankLogo';
 import type { Account, DetectedAccountInfo, ImportSummary, ReimportResult, StagedAccountSection, StagedRow, UnparseableRow } from '../types';
 import { formatDate } from '../utils/date';
@@ -124,6 +125,17 @@ export default function Import() {
   // ProgressCallback's own doc comment in endpoints.ts), so 100% means "processing," not "done."
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
+  // A chosen PDF, held here between selection and upload so the optional password can be typed
+  // first, and so a wrong password can be retried against the SAME file without re-picking it.
+  // CSV keeps its original one-action upload -- it has no password to ask about, and adding a
+  // step there would slow the common case down for nothing.
+  const [pendingPdf, setPendingPdf] = useState<File | null>(null);
+  const [pdfPassword, setPdfPassword] = useState('');
+  // Which of the two backend password outcomes we last saw, or null before we've tried. Drives
+  // the copy in the password panel; see PDF_PASSWORD_REQUIRED/INVALID in endpoints.ts.
+  const [passwordState, setPasswordState] = useState<'required' | 'invalid' | null>(null);
+  const passwordInput = useRef<HTMLInputElement>(null);
+
   // ADR-0002: the backend now persists the staged file/rows server-side (ImportSession), keyed
   // by this id -- confirmImport() sends it instead of re-uploading the original file a second
   // time, which is what used to require holding onto the File object in state after staging.
@@ -154,7 +166,13 @@ export default function Import() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function handleFile(file: File) {
+  /**
+   * File chosen (dropped, or picked from the file dialog). A CSV goes straight up, exactly as it
+   * always has. A PDF stops here instead and waits on the password panel: most Indian banks
+   * e-mail statements password-protected, so offering the field up front turns the common case
+   * into one upload rather than an upload, a rejection, and a second upload.
+   */
+  function handleFile(file: File) {
     setError(null);
     setMultiSections(null); // clear any previous multi-account run before staging a new file
     const lowerName = file.name.toLowerCase();
@@ -164,13 +182,29 @@ export default function Import() {
       setError('Please upload a .csv or .pdf bank/credit card statement.');
       return;
     }
+    if (isPdf) {
+      setPendingPdf(file);
+      setPdfPassword('');
+      setPasswordState(null);
+      return;
+    }
+    void upload(file, false, undefined);
+  }
+
+  async function upload(file: File, isPdf: boolean, password: string | undefined) {
+    setError(null);
     setUploadProgress(0);
     try {
       const res = isPdf
-        ? await importApi.stagePdf(file, setUploadProgress)
+        ? await importApi.stagePdf(file, setUploadProgress, password)
         : await importApi.stageCsv(file, setUploadProgress);
       setSessionId(res.sessionId);
       setFileFormat(isPdf ? 'PDF' : 'CSV');
+      // The document opened, so the password (if any) has done its whole job. Drop both it and
+      // the file: neither is needed again, and confirm/reimport work from the server-side session.
+      setPendingPdf(null);
+      setPdfPassword('');
+      setPasswordState(null);
 
       // Multi-account PDF (e.g. an HSBC-style composite statement bundling a savings account and
       // a credit-card account in one file) -- res.staging is null here, res.sections is what's
@@ -216,8 +250,18 @@ export default function Import() {
       // is still a meaningfully different failure than "the server looked at this file and
       // rejected it" -- conflating the two under "Could not parse this PDF" sent debugging
       // toward the parser every time this happened, when the parser was never actually involved.
+      const code = e.response?.data?.errorCode;
       if (!e.response) {
         setError('Unable to reach the import service. The upload request could not be completed — check your connection and try again.');
+      } else if (code === PDF_PASSWORD_REQUIRED || code === PDF_PASSWORD_INVALID) {
+        // Not a parse failure and not shown as one -- the file is fine, it just hasn't been
+        // opened yet. The panel stays put with this same file so the retry is one field and one
+        // click, and the message lives in the panel rather than in the page-level error banner.
+        setPasswordState(code === PDF_PASSWORD_INVALID ? 'invalid' : 'required');
+        setPendingPdf(file);
+        // Focus after the panel has re-rendered with the new state, so the user can type straight
+        // away instead of hunting for the field they were just asked to fill in.
+        setTimeout(() => passwordInput.current?.focus(), 0);
       } else {
         setError(e.response?.data?.message ?? (isPdf ? 'Could not parse this PDF.' : 'Could not parse this CSV.'));
       }
@@ -384,6 +428,9 @@ export default function Import() {
     setUploadProgress(null);
     setError(null);
     setFileFormat(null);
+    setPendingPdf(null);
+    setPdfPassword('');
+    setPasswordState(null);
     accountsApi.list().then(setExistingAccounts).catch((e) => console.error('Failed to load accounts', e));
   }
 
@@ -396,7 +443,87 @@ export default function Import() {
 
   return (
     <div className="space-y-4">
-      {step === 'upload' && (
+      {step === 'upload' && pendingPdf && (
+        <form
+          data-testid="pdf-password-panel"
+          className="bg-card rounded p-6 shadow border border-border space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (uploadProgress === null) void upload(pendingPdf, true, pdfPassword || undefined);
+          }}
+        >
+          <div className="flex items-center gap-2 text-sm text-ink">
+            <FileText size={16} className="text-primary shrink-0" />
+            <span className="font-medium break-all">{pendingPdf.name}</span>
+          </div>
+
+          <div>
+            <label htmlFor="pdf-password" className="block text-sm font-medium text-ink mb-1">
+              Statement password <span className="font-normal text-muted">(optional)</span>
+            </label>
+            <input
+              id="pdf-password"
+              ref={passwordInput}
+              type="password"
+              // This is the bank's password for this document, not a Finora credential -- offering
+              // to save it in a password manager would put it in the user's vault alongside real
+              // logins, and it changes with every statement anyway.
+              autoComplete="off"
+              className="w-full border border-border rounded px-3 py-2 text-sm"
+              placeholder="Leave blank if the file isn't protected"
+              value={pdfPassword}
+              onChange={(e) => setPdfPassword(e.target.value)}
+              disabled={uploadProgress !== null}
+              aria-describedby="pdf-password-help"
+            />
+            <p
+              id="pdf-password-help"
+              className={`text-xs mt-1 ${passwordState === 'invalid' ? 'text-danger' : 'text-muted'}`}
+              role={passwordState ? 'alert' : undefined}
+            >
+              {passwordState === 'invalid'
+                ? "That password didn't open this statement — check it and try again."
+                : passwordState === 'required'
+                  ? 'This statement is password protected. Enter the password your bank uses for it.'
+                  : 'Many banks protect statements with a password — often a mix of your name, PAN, date of birth or account number. Check the email the statement came in.'}
+            </p>
+          </div>
+
+          {uploadProgress !== null ? (
+            <div data-testid="upload-progress">
+              <p className="font-medium text-sm text-ink mb-2">
+                {uploadProgress < 100 ? `Uploading… ${uploadProgress}%` : 'Processing statement…'}
+              </p>
+              <div className="w-full bg-border rounded-full h-2 overflow-hidden">
+                <div
+                  className="bg-primary h-2 rounded-full transition-all duration-150"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              <button type="submit" className="bg-primary text-white rounded px-4 py-2 text-sm font-medium">
+                Upload statement
+              </button>
+              <button
+                type="button"
+                className="text-sm text-muted underline"
+                onClick={() => {
+                  setPendingPdf(null);
+                  setPdfPassword('');
+                  setPasswordState(null);
+                  setError(null);
+                }}
+              >
+                Choose a different file
+              </button>
+            </div>
+          )}
+        </form>
+      )}
+
+      {step === 'upload' && !pendingPdf && (
         <div
           data-testid="statement-dropzone"
           role="button"
@@ -419,7 +546,7 @@ export default function Import() {
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault();
-            if (uploadProgress === null && e.dataTransfer.files[0]) void handleFile(e.dataTransfer.files[0]);
+            if (uploadProgress === null && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
           }}
         >
           {uploadProgress !== null ? (
@@ -458,7 +585,14 @@ export default function Import() {
             data-testid="statement-file-input"
             className="hidden"
             disabled={uploadProgress !== null}
-            onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+            onChange={(e) => {
+              const picked = e.target.files?.[0];
+              // Clearing the input matters now that a PDF can bounce back here via "Choose a
+              // different file": without it, re-picking the SAME file fires no change event and
+              // the page appears to ignore the click.
+              e.target.value = '';
+              if (picked) handleFile(picked);
+            }}
           />
         </div>
       )}

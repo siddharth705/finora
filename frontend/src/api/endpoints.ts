@@ -259,9 +259,15 @@ export const importApi = {
   // statements only, no OCR/scanned PDFs. Response shape changed from the CSV-shared
   // {sessionId, staging} to PdfStagingSessionResult to carry a multi-account PDF's several
   // detected sections -- see that type's own doc comment.
-  stagePdf: (file: File, onProgress?: ProgressCallback) => {
+  //
+  // `password` opens a protected statement (most Indian banks e-mail them that way). It goes in
+  // the form body, never the query string, so it cannot end up in a server access log or in
+  // browser history. Omitted entirely when blank, and harmless when the file turns out not to
+  // need one -- so the caller never has to inspect the file to decide whether to send it.
+  stagePdf: (file: File, onProgress?: ProgressCallback, password?: string) => {
     const form = new FormData();
     form.append('file', file);
+    if (password) form.append('password', password);
     return api
       .post<PdfStagingSessionResult>('/import/pdf/stage', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
