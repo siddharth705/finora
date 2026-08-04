@@ -236,6 +236,68 @@
           <failOnUnableToExtractRepoInfo>false</failOnUnableToExtractRepoInfo>
         </configuration>
       </plugin>
+      <plugin>
+        <!-- Coverage measurement. The suite is large and passing, but until now what fraction of
+             the code it actually exercises was simply unknown, and test COUNT is not the signal it
+             looks like: the rate-limit bypass fixed in 6ee925a had five dedicated tests that all
+             passed while the filter was bypassable, because every one of them fed it an
+             already-canonical path. Those lines were covered; the inputs were wrong.
+
+             So this is deliberately a REPORT, not a gate. No `check` goal, no minimum threshold,
+             nothing that can fail the build. A coverage number invites a coverage target, and
+             targets produce tests written to move the number rather than to catch bugs, which is
+             the opposite of how every guard in this codebase (OwnershipGuardUsageTest,
+             MoneyComparisonUsageTest, FilterPathMatchingTest) was written. What this is for is
+             answering "where is there no net at all", which a count cannot answer.
+
+             Bound to `test` rather than `verify` so that `./mvnw test`, the command CI and
+             everyone here already runs, produces target/site/jacoco/index.html with no extra
+             step.
+
+             FIRST RUN, 2026-08-04: 78.3% instructions / 74.4% branches overall, and one result
+             that is not a coverage problem at all. com.finora.controller reported 0.0% across
+             1700 instructions. Controllers are exercised only by the *IT classes, and those never
+             run: surefire's default includes are Test*.java, *Test.java, *Tests.java and
+             *TestCase.java, while *IT.java is the maven-failsafe convention and failsafe is not
+             configured here. All 29 integration test classes in src/test (AuthFlowIT, AdminRbacIT,
+             PasswordChangeFlowIT, GlobalAuditLogIT, TransactionRepositoryIT, the 21 admin
+             controller ITs) have therefore never executed, which also makes ci.yml's claim that
+             the suite includes "the Testcontainers ones" untrue.
+
+             Deliberately NOT fixed in this commit. Adding **/*IT.java to surefire's includes makes
+             them run, and that was confirmed (970 tests collected instead of 941), but whether
+             they PASS is unknown, because they have never once run. Enabling 29 untested test
+             classes on main without that answer risks red-ing the pipeline for everyone. It needs
+             its own change, verified against a working Docker daemon. -->
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <version>0.8.12</version>
+        <executions>
+          <execution>
+            <id>prepare-agent</id>
+            <goals>
+              <goal>prepare-agent</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>report</id>
+            <phase>test</phase>
+            <goals>
+              <goal>report</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <excludes>
+            <!-- Generated or structural code with no behaviour to cover. Excluded so the number
+                 reflects logic that could actually be wrong, rather than being diluted by
+                 accessors and enum boilerplate. -->
+            <exclude>com/finora/dto/**</exclude>
+            <exclude>com/finora/entity/**</exclude>
+            <exclude>com/finora/FinoraApplication.class</exclude>
+          </excludes>
+        </configuration>
+      </plugin>
     </plugins>
   </build>
 </project>
