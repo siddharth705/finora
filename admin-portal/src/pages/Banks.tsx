@@ -7,6 +7,7 @@ import { FormPanel } from '../components/FormPanel';
 import { DataTable, type DataTableColumn } from '../components/DataTable';
 import { EntityDrawer, type EntityDrawerTab } from '../components/EntityDrawer';
 import { adminBanksApi } from '../api/endpoints';
+import { isSafeHttpUrl } from '../lib/safeUrl';
 import type { BankDto, CreateBankRequest, UpdateBankRequest } from '../types';
 
 const BLANK_FORM: CreateBankRequest = {
@@ -197,7 +198,13 @@ function BankSummaryTab({ bank, onSave, saving, error }: {
         </div>
         <div>
           <p className="text-xs font-medium text-muted mb-0.5">Website</p>
-          {bank.websiteUrl ? (
+          {/* Bug fix / security hardening: bank.websiteUrl has no scheme validation on the
+              backend -- any BANK_MANAGE admin could set it to a `javascript:` URL, and this used
+              to render it as a real, clickable <a href> to every OTHER admin who opens this
+              bank's drawer. isSafeHttpUrl restricts what actually becomes a link to http(s); an
+              unsafe value still displays (so nothing silently disappears) but as plain text,
+              never as something clickable. See lib/safeUrl.ts's own doc comment. */}
+          {bank.websiteUrl && isSafeHttpUrl(bank.websiteUrl) ? (
             <a
               href={bank.websiteUrl}
               target="_blank"
@@ -206,6 +213,8 @@ function BankSummaryTab({ bank, onSave, saving, error }: {
             >
               {bank.websiteUrl} <ExternalLink size={12} />
             </a>
+          ) : bank.websiteUrl ? (
+            <p className="text-sm text-ink break-all">{bank.websiteUrl}</p>
           ) : (
             <p className="text-sm text-ink">—</p>
           )}

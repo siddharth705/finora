@@ -88,6 +88,29 @@ describe('Banks', () => {
     expect(within(dialog).getByText('PRIVATE')).toBeInTheDocument();
   });
 
+  /**
+   * Bug fix / security hardening: Bank.websiteUrl has no scheme validation on the backend -- any
+   * BANK_MANAGE admin could set it to a `javascript:` URL, and this used to render it as a real,
+   * clickable <a href> to every OTHER admin who opens this bank's Summary tab. Clicking it would
+   * execute the value as a script in the admin portal's own origin. See lib/safeUrl.test.ts for
+   * unit coverage of the guard itself; this pins that Banks.tsx actually applies it.
+   */
+  it('shows an unsafe websiteUrl as plain text, never as a clickable link', async () => {
+    mockAuth(['BANK_MANAGE']);
+    vi.mocked(adminBanksApi.list).mockResolvedValue([
+      { ...HDFC, websiteUrl: 'javascript:alert(document.cookie)' },
+    ]);
+    const user = userEvent.setup();
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText('HDFC Custom')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: /HDFC Custom/ }));
+
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('javascript:alert(document.cookie)')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('link')).not.toBeInTheDocument();
+  });
+
   it('shows structural fields on the Metadata tab', async () => {
     mockAuth(['BANK_MANAGE']);
     vi.mocked(adminBanksApi.list).mockResolvedValue([HDFC]);
