@@ -31,10 +31,32 @@ class StatementContentServiceTest {
     @Test
     void withNoProviderConfigured_storeIsANoOpAndReadsComeFromTheColumn() {
         // The default. Adding this layer must not change behaviour for anyone who has not opted in.
-        StatementContentService service = new StatementContentService(Optional.empty());
+        StatementContentService service = new StatementContentService(Optional.empty(), "");
 
         assertThat(service.store(CONTENT)).isEmpty();
         assertThat(service.read(Row.legacy(CONTENT))).isEqualTo(CONTENT);
+    }
+
+    /**
+     * Bug fix: a provider name matching no implementation used to be indistinguishable from no
+     * provider at all -- {@code STATEMENT_STORAGE_PROVIDER=r2} produced no bean, an empty Optional,
+     * and an INFO line saying storage simply was not configured, while the deployment kept writing
+     * every statement to the database and the operator believed the migration was running.
+     */
+    @Test
+    void aProviderNameThatResolvedToNoBeanIsRejected_notTreatedAsDisabled() {
+        assertThatThrownBy(() -> new StatementContentService(Optional.empty(), "r2"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("matches no StatementStorage implementation");
+    }
+
+    @Test
+    void anUnsetProviderIsStillAFirstClassChoice_andDoesNotThrow() {
+        // Unset is the supported default and must keep behaving exactly as before -- the check
+        // above must fire only on a value someone actually typed.
+        assertThat(new StatementContentService(Optional.empty(), "").store(CONTENT)).isEmpty();
+        assertThat(new StatementContentService(Optional.empty(), null).store(CONTENT)).isEmpty();
+        assertThat(new StatementContentService(Optional.empty(), "   ").store(CONTENT)).isEmpty();
     }
 
     @Test
@@ -43,7 +65,7 @@ class StatementContentServiceTest {
         ContentAddress address = ContentAddress.forContent(CONTENT);
         when(storage.store(CONTENT)).thenReturn(address);
 
-        assertThat(new StatementContentService(Optional.of(storage)).store(CONTENT)).contains(address);
+        assertThat(new StatementContentService(Optional.of(storage), "filesystem").store(CONTENT)).contains(address);
     }
 
     @Test
@@ -55,7 +77,7 @@ class StatementContentServiceTest {
         // copy, this assertion would still pass on content equality alone.
         Row row = Row.addressed(address, "stale database copy".getBytes(StandardCharsets.UTF_8));
 
-        assertThat(new StatementContentService(Optional.of(storage)).read(row)).isEqualTo(CONTENT);
+        assertThat(new StatementContentService(Optional.of(storage), "filesystem").read(row)).isEqualTo(CONTENT);
         verify(storage).retrieve(address);
     }
 
@@ -65,7 +87,7 @@ class StatementContentServiceTest {
         // storage with a null address would fail every one of them.
         StatementStorage storage = mock(StatementStorage.class);
 
-        assertThat(new StatementContentService(Optional.of(storage)).read(Row.legacy(CONTENT))).isEqualTo(CONTENT);
+        assertThat(new StatementContentService(Optional.of(storage), "filesystem").read(Row.legacy(CONTENT))).isEqualTo(CONTENT);
         verify(storage, never()).retrieve(any());
     }
 
@@ -75,7 +97,7 @@ class StatementContentServiceTest {
         // the column during Phase 2, so this succeeds -- which is exactly what makes the rollback
         // safe, and why Phase 2 keeps writing the column.
         ContentAddress address = ContentAddress.forContent(CONTENT);
-        StatementContentService service = new StatementContentService(Optional.empty());
+        StatementContentService service = new StatementContentService(Optional.empty(), "");
 
         assertThat(service.read(Row.addressed(address, CONTENT))).isEqualTo(CONTENT);
     }
@@ -86,7 +108,7 @@ class StatementContentServiceTest {
         // surface downstream as a statement that parsed to zero rows, which reads as a bad file
         // rather than a broken deployment.
         ContentAddress address = ContentAddress.forContent(CONTENT);
-        StatementContentService service = new StatementContentService(Optional.empty());
+        StatementContentService service = new StatementContentService(Optional.empty(), "");
 
         assertThatThrownBy(() -> service.read(Row.addressed(address, null)))
                 .isInstanceOf(StatementStorageException.class)
@@ -95,7 +117,7 @@ class StatementContentServiceTest {
 
     @Test
     void aRowWithNeitherAddressNorBytesIsAnError() {
-        assertThatThrownBy(() -> new StatementContentService(Optional.empty()).read(Row.legacy(null)))
+        assertThatThrownBy(() -> new StatementContentService(Optional.empty(), "").read(Row.legacy(null)))
                 .isInstanceOf(StatementStorageException.class)
                 .hasMessageContaining("neither stored content nor a content address");
     }
@@ -108,7 +130,7 @@ class StatementContentServiceTest {
         StatementStorage storage = mock(StatementStorage.class);
         when(storage.store(CONTENT)).thenThrow(new StatementStorageException("bucket unreachable"));
 
-        assertThatThrownBy(() -> new StatementContentService(Optional.of(storage)).store(CONTENT))
+        assertThatThrownBy(() -> new StatementContentService(Optional.of(storage), "filesystem").store(CONTENT))
                 .isInstanceOf(StatementStorageException.class);
     }
 }
