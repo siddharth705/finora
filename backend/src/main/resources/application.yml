@@ -161,14 +161,25 @@ app:
     # and returning a clear "try again shortly" response, rather than hanging indefinitely.
     acquire-timeout-ms: ${IMPORT_ACQUIRE_TIMEOUT_MS:20000}
   statement-storage:
-    # Phase 1 of docs/engineering/statement-storage-migration.md. The storage layer exists and is
-    # tested; NOTHING in the import pipeline calls it yet -- statements are still stored as BYTEA
-    # on statement_imports/import_sessions exactly as before. Wiring the callers needs the
-    # content_hash/object_key columns that Phase 2 adds, so this stays inert until then.
+    # Phase 2 of docs/engineering/statement-storage-migration.md. The V54 content_hash/object_key
+    # columns exist and the import pipeline IS wired to this layer -- ImportService,
+    # ImportSessionService and StatementImportService all read and write statement bytes through
+    # StatementContentService now.
     #
-    # Deliberately has no default: no bean is created unless a provider is named. An unset value
-    # therefore preserves today's behaviour exactly rather than silently activating a store nobody
-    # asked for. "filesystem" is for local development and tests; "r2" arrives in Phase 2.
+    # It is still inert until a provider is named, but that is now the property below doing the
+    # work rather than the callers being unwired: with provider unset there is no StatementStorage
+    # bean, StatementContentService.store() returns empty, and statements stay as BYTEA on
+    # statement_imports/import_sessions exactly as before.
+    #
+    # Phase 2 is a DUAL WRITE: with a provider set, a new upload writes its bytes to object storage
+    # AND still fills file_content, so turning the provider back off is a config rollback rather
+    # than a deploy. Phase 3 backfills pre-V54 rows; Phase 4 drops the column.
+    #
+    # Deliberately has no default: no bean is created unless a provider is named, so an unset value
+    # preserves today's behaviour rather than silently activating a store nobody asked for. A value
+    # that IS set but matches no implementation is rejected at startup rather than silently
+    # behaving like "unset" -- see StatementContentService's constructor.
+    # "filesystem" is for local development and tests; "r2" is not implemented yet.
     provider: ${STATEMENT_STORAGE_PROVIDER:}
     filesystem:
       # Only read when provider=filesystem. Single-instance only -- two backends would each see

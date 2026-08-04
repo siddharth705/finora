@@ -2,6 +2,7 @@ package com.finora.imports.storage;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
@@ -39,8 +40,31 @@ public class StatementContentService {
 
     private final Optional<StatementStorage> storage;
 
-    public StatementContentService(Optional<StatementStorage> storage) {
+    /**
+     * Bug fix: a provider name that matches no implementation used to be indistinguishable from no
+     * provider at all. {@code FilesystemStatementStorage} is selected by
+     * {@code @ConditionalOnProperty(havingValue = "filesystem")}, so
+     * {@code STATEMENT_STORAGE_PROVIDER=r2} -- a typo, or an operator reasonably expecting the R2
+     * implementation that has not landed yet -- produced no bean, an empty Optional here, and an
+     * INFO line saying storage was simply not configured. The deployment then kept writing every
+     * statement to the database while the operator believed the migration was running, with nothing
+     * failing and nothing warning.
+     *
+     * <p>That is exactly the silent-degradation-on-missing-config class this codebase already
+     * decided must fail loudly rather than ship quietly -- see {@code SilentProductionFallback} and
+     * {@code ProductionConfigValidator}. Unset stays a first-class, supported choice and behaves
+     * precisely as before; only a value that was actually typed and matched nothing is rejected,
+     * because that is never what anyone intended in any profile.
+     */
+    public StatementContentService(Optional<StatementStorage> storage,
+                                    @Value("${app.statement-storage.provider:}") String configuredProvider) {
         this.storage = storage;
+        if (storage.isEmpty() && configuredProvider != null && !configuredProvider.isBlank()) {
+            throw new IllegalStateException(
+                    "app.statement-storage.provider is set to \"" + configuredProvider + "\", which matches no "
+                    + "StatementStorage implementation -- statements would silently keep going to the database. "
+                    + "Supported values: \"filesystem\", or leave it unset to keep statement bytes in the database.");
+        }
         if (storage.isEmpty()) {
             log.info("No statement storage provider configured -- statement bytes stay in the database "
                     + "(set app.statement-storage.provider to enable object storage)");

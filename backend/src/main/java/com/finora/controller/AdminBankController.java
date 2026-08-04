@@ -53,7 +53,7 @@ public class AdminBankController {
     }
 
     @PutMapping("/{id}")
-    public ApiResponse<BankDto> update(@PathVariable String id, @RequestBody BankDto.UpdateRequest request) {
+    public ApiResponse<BankDto> update(@PathVariable String id, @Valid @RequestBody BankDto.UpdateRequest request) {
         return ApiResponse.ok(BankDto.fromCustom(bankManagementService.updateCustom(currentUser.id(), id, request)), "Bank updated");
     }
 

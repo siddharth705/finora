@@ -20,8 +20,13 @@ public record MerchantDto(
     /** Every field optional -- only supplied ones change (same partial-update convention as
      *  TransactionDto.UpdateRequest / RuleDto.UpdateRequest). @Size bounds match
      *  merchants.canonical_name VARCHAR(255)/website VARCHAR(500) -- without these, an oversized
-     *  value threw a raw DB constraint-violation (unhandled 500) instead of a clean 400. */
-    public record UpdateRequest(@Size(max = 255) String canonicalName, @Size(max = 500) String website) {}
+     *  value threw a raw DB constraint-violation (unhandled 500) instead of a clean 400.
+     *
+     *  Security fix: website had @Size but no scheme validation, the same gap that made
+     *  Bank.websiteUrl a stored XSS -- a MERCHANT_MANAGE admin could persist "javascript:..." for
+     *  any client that renders it as a link. See {@link com.finora.util.SafeHttpUrl}. */
+    public record UpdateRequest(@Size(max = 255) String canonicalName,
+                                 @com.finora.util.SafeHttpUrl @Size(max = 500) String website) {}
 
     public record MergeRequest(@NotNull(message = "mergeFromMerchantId is required") UUID mergeFromMerchantId) {}
 
