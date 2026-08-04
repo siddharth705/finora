@@ -89,12 +89,25 @@ public record AccountDto(
                 String id,
                 @jakarta.validation.constraints.NotBlank String officialName,
                 @jakarta.validation.constraints.NotBlank String shortName,
-                String colorHex, String initials, String category, String websiteUrl, String ifscPrefix) {}
+                String colorHex, String initials, String category,
+                // Security fix: this was persisted with no scheme validation at all, so a
+                // BANK_MANAGE admin could store "javascript:..." and the admin portal rendered it
+                // as a real clickable <a href> for every other admin -- a stored XSS in the admin
+                // origin. @Size matches banks.website_url VARCHAR(255) (V26), so an oversized
+                // value is a clean 400 rather than a raw DB constraint violation.
+                @com.finora.util.SafeHttpUrl @jakarta.validation.constraints.Size(max = 255) String websiteUrl,
+                String ifscPrefix) {}
 
         /** Every field optional -- only supplied ones change (id is immutable once created, same
          *  reasoning as every other entity's primary key in this codebase). */
         public record UpdateRequest(String officialName, String shortName, String colorHex, String initials,
-                                     String category, String websiteUrl, String ifscPrefix) {}
+                                     String category,
+                                     // Same stored-XSS fix as CreateRequest.websiteUrl above --
+                                     // update() reaches the identical column and needed it just as
+                                     // much as create() did.
+                                     @com.finora.util.SafeHttpUrl @jakarta.validation.constraints.Size(max = 255)
+                                     String websiteUrl,
+                                     String ifscPrefix) {}
     }
 
     public static AccountDto from(Account a) {

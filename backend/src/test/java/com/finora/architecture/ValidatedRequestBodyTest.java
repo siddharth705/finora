@@ -1,11 +1,13 @@
 package com.finora.architecture;
 
+import com.tngtech.archunit.core.domain.JavaAnnotation;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.domain.JavaMethod;
 import com.tngtech.archunit.core.domain.JavaParameter;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
+import jakarta.validation.Constraint;
 import jakarta.validation.Valid;
 import org.junit.jupiter.api.Test;
 import org.springframework.validation.annotation.Validated;
@@ -75,14 +77,23 @@ class ValidatedRequestBodyTest {
         return offenders;
     }
 
-    /** True if any field on {@code type} carries a {@code jakarta.validation.constraints}
-     *  annotation -- covers record components too, since a validation constraint's
-     *  {@code @Target} includes {@code FIELD} and javac copies a record component's annotations
-     *  onto the backing field. */
+    /** True if any field on {@code type} carries a Bean Validation constraint -- covers record
+     *  components too, since a validation constraint's {@code @Target} includes {@code FIELD} and
+     *  javac copies a record component's annotations onto the backing field.
+     *
+     *  <p>Two ways to be a constraint, and both must count. The built-in ones live in
+     *  {@code jakarta.validation.constraints}; a project-defined composed constraint (e.g.
+     *  {@code com.finora.util.SafeHttpUrl}) lives in its own package and is identified instead by
+     *  being meta-annotated {@code @Constraint}. Checking only the package would have left this
+     *  rule blind to exactly the custom constraints written to enforce a security invariant --
+     *  a DTO carrying nothing but {@code @SafeHttpUrl} would have looked unconstrained, and its
+     *  missing {@code @Valid} would not have been reported. */
     private boolean declaresValidationConstraint(JavaClass type) {
         return type.getFields().stream()
                 .flatMap(field -> field.getAnnotations().stream())
-                .anyMatch(annotation -> VALIDATION_CONSTRAINT_PACKAGE.equals(annotation.getRawType().getPackageName()));
+                .map(JavaAnnotation::getRawType)
+                .anyMatch(annotationType -> VALIDATION_CONSTRAINT_PACKAGE.equals(annotationType.getPackageName())
+                        || annotationType.isAnnotatedWith(Constraint.class));
     }
 
     @Test
