@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ShieldBan, ShieldCheck, Plus } from 'lucide-react';
@@ -38,6 +38,12 @@ function CreateUserForm({
 }) {
   const [form, setForm] = useState<CreateUserRequest>(BLANK_USER);
   const [role, setRole] = useState('USER');
+  // Bug fix: every label below was an unassociated sibling of its input, not linked via
+  // htmlFor/id -- a screen reader announced each field as plain "edit text", indistinguishable
+  // from every other one on the form (confirmed as a real axe "label" violation, same class fixed
+  // on Login.tsx). useId() gives this form instance a stable, unique prefix so ids never collide
+  // even if this component somehow ever renders more than once on the same page.
+  const id = useId();
 
   const { data: roles } = useQuery({
     queryKey: ['admin-roles-for-create-user'],
@@ -62,8 +68,9 @@ function CreateUserForm({
     >
       <div className="grid gap-3 md:grid-cols-2">
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Full name</label>
+          <label htmlFor={`${id}-fullName`} className="text-xs font-medium text-muted mb-1 block">Full name</label>
           <input
+            id={`${id}-fullName`}
             required
             value={form.fullName}
             onChange={(e) => setForm({ ...form, fullName: e.target.value })}
@@ -71,8 +78,9 @@ function CreateUserForm({
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Email</label>
+          <label htmlFor={`${id}-email`} className="text-xs font-medium text-muted mb-1 block">Email</label>
           <input
+            id={`${id}-email`}
             required
             type="email"
             value={form.email}
@@ -81,8 +89,9 @@ function CreateUserForm({
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Phone number</label>
+          <label htmlFor={`${id}-phoneNumber`} className="text-xs font-medium text-muted mb-1 block">Phone number</label>
           <input
+            id={`${id}-phoneNumber`}
             required
             placeholder="+91XXXXXXXXXX"
             value={form.phoneNumber}
@@ -91,8 +100,9 @@ function CreateUserForm({
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Temporary password</label>
+          <label htmlFor={`${id}-password`} className="text-xs font-medium text-muted mb-1 block">Temporary password</label>
           <input
+            id={`${id}-password`}
             required
             type="text"
             minLength={8}
@@ -102,8 +112,9 @@ function CreateUserForm({
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Role</label>
+          <label htmlFor={`${id}-role`} className="text-xs font-medium text-muted mb-1 block">Role</label>
           <select
+            id={`${id}-role`}
             value={role}
             onChange={(e) => setRole(e.target.value)}
             className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm"

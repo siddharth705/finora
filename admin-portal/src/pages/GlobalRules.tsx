@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ListFilter, Plus, Pencil, Trash2, FlaskConical, Check, X as XIcon } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
@@ -114,6 +114,9 @@ function RuleForm({
   error: string | null;
 }) {
   const [form, setForm] = useState<CreateRuleRequest>(initial);
+  // Bug fix: every label below was an unassociated sibling of its input/select, not linked via
+  // htmlFor/id -- a real axe "label" violation, same class fixed on Login.tsx.
+  const id = useId();
 
   return (
     <FormPanel
@@ -129,8 +132,9 @@ function RuleForm({
     >
       <div className="grid gap-3 md:grid-cols-2">
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Field</label>
+          <label htmlFor={`${id}-field`} className="text-xs font-medium text-muted mb-1 block">Field</label>
           <select
+            id={`${id}-field`}
             value={form.field}
             onChange={(e) => setForm({ ...form, field: e.target.value })}
             className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm"
@@ -139,8 +143,9 @@ function RuleForm({
           </select>
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Operator</label>
+          <label htmlFor={`${id}-operator`} className="text-xs font-medium text-muted mb-1 block">Operator</label>
           <select
+            id={`${id}-operator`}
             value={form.operator}
             onChange={(e) => setForm({ ...form, operator: e.target.value })}
             className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm"
@@ -149,8 +154,9 @@ function RuleForm({
           </select>
         </div>
         <div className="md:col-span-2">
-          <label className="text-xs font-medium text-muted mb-1 block">Comparison value</label>
+          <label htmlFor={`${id}-comparisonValue`} className="text-xs font-medium text-muted mb-1 block">Comparison value</label>
           <input
+            id={`${id}-comparisonValue`}
             required
             placeholder="e.g. Swiggy"
             value={form.comparisonValue}
@@ -159,8 +165,9 @@ function RuleForm({
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Action type</label>
+          <label htmlFor={`${id}-actionType`} className="text-xs font-medium text-muted mb-1 block">Action type</label>
           <select
+            id={`${id}-actionType`}
             value={form.actionType}
             onChange={(e) => setForm({ ...form, actionType: e.target.value })}
             className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm"
@@ -169,10 +176,11 @@ function RuleForm({
           </select>
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">
+          <label htmlFor={`${id}-actionValue`} className="text-xs font-medium text-muted mb-1 block">
             Action value {form.actionType === 'ASSIGN_CATEGORY' && '(category name, required)'}
           </label>
           <input
+            id={`${id}-actionValue`}
             required={form.actionType === 'ASSIGN_CATEGORY'}
             placeholder={form.actionType === 'ASSIGN_CATEGORY' ? 'e.g. Dining' : 'optional'}
             value={form.actionValue ?? ''}
@@ -181,8 +189,9 @@ function RuleForm({
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted mb-1 block">Priority</label>
+          <label htmlFor={`${id}-priority`} className="text-xs font-medium text-muted mb-1 block">Priority</label>
           <input
+            id={`${id}-priority`}
             type="number"
             value={form.priority ?? 100}
             onChange={(e) => setForm({ ...form, priority: Number(e.target.value) })}

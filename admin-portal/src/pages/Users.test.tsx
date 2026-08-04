@@ -195,15 +195,15 @@ describe('Users', () => {
 
     await user.click(screen.getByRole('button', { name: /New user/ }));
     const form = screen.getByText('Create a user').closest('form')!;
-    // CreateUserForm's labels aren't id/htmlFor-associated with their inputs (a pre-existing gap
-    // in this form, unrelated to Phase 5) -- fullName/email/phoneNumber/password are the only
-    // four textbox-role inputs in this form, in that DOM order, so this is a reliable way to
-    // reach each one without relying on that association.
-    const [fullName, email, phoneNumber, password] = within(form).getAllByRole('textbox');
-    await user.type(fullName, 'New Admin');
-    await user.type(email, 'new-admin@example.com');
-    await user.type(phoneNumber, '+919999999999');
-    await user.type(password, 'TempPass123');
+    // Bug fix: CreateUserForm's labels used to be unassociated siblings of their inputs (a real
+    // axe "label" violation, same class fixed on Login.tsx), so this test used to reach each field
+    // positionally via getAllByRole('textbox') destructuring -- fragile, and it couldn't have
+    // caught the bug it was working around. Now that each label has a real htmlFor/id pairing,
+    // getByLabelText both reads more clearly and fails loudly if that association ever regresses.
+    await user.type(within(form).getByLabelText('Full name'), 'New Admin');
+    await user.type(within(form).getByLabelText('Email'), 'new-admin@example.com');
+    await user.type(within(form).getByLabelText('Phone number'), '+919999999999');
+    await user.type(within(form).getByLabelText('Temporary password'), 'TempPass123');
     await user.click(within(form).getByRole('button', { name: 'Create user' }));
 
     await waitFor(() => expect(adminUsersApi.create).toHaveBeenCalledWith({
