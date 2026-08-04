@@ -11,6 +11,7 @@ account isn't blocked behind the work that does.
 
 1. [Already done in the repo](#already-done-in-the-repo)
 2. [Track A — Android, startable today](#track-a--android-startable-today)
+   - [Building locally instead of on EAS](#building-locally-instead-of-on-eas)
 3. [Track B — iOS, gated on Apple enrollment](#track-b--ios-gated-on-apple-enrollment)
 4. [Firebase phone auth on device](#firebase-phone-auth-on-device)
 5. [Device validation checklist](#device-validation-checklist)
@@ -64,6 +65,124 @@ The dev client is a custom build of the app that includes the native modules Exp
 which is why Expo Go is not an option for this project at all (see `@react-native-firebase/auth`).
 You only rebuild the dev client when native dependencies change; ordinary JS edits reload over the
 bundler like normal.
+
+### Building locally instead of on EAS
+
+The EAS path above needs nothing installed beyond `eas-cli` — the toolchain lives in the cloud.
+Building on your own machine (`npx expo run:android`, or `expo prebuild` + `./gradlew
+assembleDebug`) needs four things a stock Android Studio install does **not** all give you.
+
+> **How far this was verified.** Each requirement below was hit, diagnosed and cleared on a real
+> Windows 11 machine, in this order — the build got past every one of them. It was then stopped
+> during native compilation for reasons of time, so **no APK was produced and nothing has been
+> installed on a device**. Treat the prerequisites as confirmed and the "it builds end to end" claim
+> as untested. Nothing after the native-compile stage is covered here.
+
+Each one costs a 13–22 minute build to discover, because the failure comes from whichever Gradle
+task happens to reach it first — not from anything that names the real cause.
+
+| Requirement | Why | Install |
+|---|---|---|
+| `cmdline-tools` | Provides `sdkmanager` and `avdmanager`. Android Studio can install the SDK without these, leaving no way to add packages or create an emulator from the shell. | SDK Manager ▸ SDK Tools ▸ "Android SDK Command-line Tools", or unzip Google's `commandlinetools-*` into `$ANDROID_HOME/cmdline-tools/latest` |
+| Accepted SDK licenses | AGP auto-installs missing SDK pieces mid-build, but only for packages whose licence has been accepted. Unaccepted ones fail the build instead. | `yes \| sdkmanager --licenses` |
+| **NDK 27.1.12297006** | React Native compiles native code. The version is pinned — a different NDK does not satisfy it. AGP's own attempt to fetch it is what fails. | `sdkmanager "ndk;27.1.12297006"` |
+| **A non-GraalVM JDK 17 or 21** | AGP's `JdkImageTransform` shells out to `jlink`, and GraalVM's `jlink` fails it. Temurin works. | Point Gradle at it explicitly (below) |
+
+Build platforms (`platforms;android-36` and friends) are *not* on this list: AGP downloads those
+itself once licences are accepted. The NDK is the one it could not.
+
+The NDK error names the wrong culprit — it surfaces as a React Native plugin failure:
+
+```
+> Failed to apply plugin 'com.facebook.react.rootproject'.
+   > com.android.builder.sdk.InstallFailedException: Failed to install the following
+     SDK components: ndk;27.1.12297006
+```
+
+**Nothing is wrong with React Native or the Gradle files.** The NDK is simply absent, and
+`assembleDebug` cannot install it for you.
+
+The JDK one is worse, because Gradle does not use whatever `java -version` reports — it uses the
+JDK it discovers, which may be one you forgot you had:
+
+```
+> Execution failed for JdkImageTransform: …/platforms/android-36/core-for-system-modules.jar
+   > Error while executing process …\.jdks\graalvm-jdk-17.0.11\bin\jlink.exe
+```
+
+Read the path in that message before changing anything else — it names the JDK actually in use, and
+it is frequently one you forgot was installed. Gradle **auto-detects** JDKs (`~/.jdks`, Android
+Studio's bundled one, package managers) and picks one for the toolchain, so this is not decided by
+`JAVA_HOME` or by whatever `java -version` prints.
+
+`-Dorg.gradle.java.home=…` alone does **not** fix it — verified: the transform still ran GraalVM's
+`jlink`, because that comes from toolchain resolution rather than the daemon's own JVM. Auto-detection
+has to be turned off as well:
+
+```bash
+./gradlew assembleDebug -Dorg.gradle.java.home="<jdk>" -Dorg.gradle.java.installations.auto-detect=false -Dorg.gradle.java.installations.paths="<jdk>"
+```
+
+To make it stick, put those three in `~/.gradle/gradle.properties` — user-level, not
+`mobile/android/gradle.properties`, which `expo prebuild` regenerates and `.gitignore` excludes, so
+anything written there is erased by the next prebuild. Be aware that
+`auto-detect=false` is global to your Gradle installs; scope it per-project if other builds on the
+machine rely on toolchain detection.
+
+#### Running on an emulator
+
+Any recent x86_64 system image works. The one this was verified against:
+
+```bash
+avdmanager create avd -n finora-test -k "system-images;android-37.1;google_apis_playstore_ps16k;x86_64" --device pixel_7
+```
+
+```bash
+emulator -avd finora-test -no-snapshot -no-boot-anim
+```
+
+Cold boot takes a few minutes. `adb devices` reports `offline` until it finishes — wait for
+`adb shell getprop sys.boot_completed` to return `1` rather than trusting the device list.
+
+Then set `EXPO_PUBLIC_API_BASE_URL=http://10.0.2.2:8080` in `mobile/.env.local`. **`10.0.2.2` is
+the emulator's alias for the host machine's loopback** — `localhost` inside the emulator is the
+emulator itself. This is the same trap as the physical-device section below, with a different
+answer. Bridge Metro in with `adb reverse tcp:8081 tcp:8081`.
+
+A local build also still needs `google-services.json` present — see
+[Firebase Android app](#firebase-android-app). `expo prebuild` fails without it regardless of
+whether the build would otherwise succeed.
+
+#### Expect the first build to be slow, and know which knob shortens it
+
+`mobile/android/gradle.properties` (generated by prebuild) carries:
+
+```
+reactNativeArchitectures=armeabi-v7a,arm64-v8a,x86,x86_64
+```
+
+**Native code is compiled once per architecture — four times.** In an observed run this dominated
+everything else: Java and Kotlin compilation finished inside the first ~20 minutes, and the
+remainder was `buildCMakeDebug` tasks working through the ABI list one at a time, several
+`clang++` processes at a go.
+
+An emulator needs exactly one of those (`x86_64` for a standard x86 AVD; `arm64-v8a` on Apple
+silicon). For local development you can cut the list down:
+
+```
+reactNativeArchitectures=x86_64
+```
+
+This has **not** been measured here — the reasoning is simply that three quarters of the native
+work is for hardware you are not testing on. Keep all four for anything you ship. Because prebuild
+regenerates this file, set it after prebuild or via `-PreactNativeArchitectures=x86_64` on the
+Gradle command line.
+
+Budget accordingly: this is a **multi-gigabyte, tens-of-minutes** first build. Roughly 3.5 GB of
+resident memory went to the Gradle daemon, the Kotlin daemon and parallel `clang++` workers, before
+counting an emulator (~2 GB), Metro, and a local backend. On a 16 GB machine, running all of those
+at once starved the emulator badly enough that Android's own System UI stopped responding. Run the
+build first, then start the emulator, then the backend and Metro — not concurrently.
 
 ### `EXPO_PUBLIC_API_BASE_URL` on a real device — read this before your first run
 
@@ -245,6 +364,12 @@ Android behaves the same way with `google-services.json`.
   which catches broken imports and unpackageable code. It does **not** compile native code or
   produce an installable app — that needs EAS Build, and a macOS runner for iOS. Nothing in CI can
   substitute for the checklist above.
+- **No local build has ever completed.** One attempt got through prebuild, the NDK, the JDK
+  toolchain problem and all Java/Kotlin compilation, then was stopped partway through native
+  compilation — see [Building locally instead of on EAS](#building-locally-instead-of-on-eas) for
+  the prerequisites it established. What remains untested is everything past that point: dexing,
+  packaging, install, and the app actually starting. Anyone picking this up starts from a warm
+  Gradle cache, not from zero.
 - **Push notifications are out of scope for v1.** There's no device-token registration endpoint on
   the backend. Note this is separate from the APNs key above, which exists solely so Firebase can
   verify the app during phone auth.
