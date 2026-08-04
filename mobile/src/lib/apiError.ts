@@ -38,6 +38,18 @@ export function isOffline(err: unknown): boolean {
   return !err.response && err.code !== 'ECONNABORTED';
 }
 
+/**
+ * The server's structured error code (see src/api/errorCodes.ts), or null for anything that isn't
+ * an answered API error. Separate from toUserMessage because these two do different jobs: that one
+ * decides what to SAY, this one decides what to DO -- a code like a password prompt changes the
+ * screen rather than printing a line of text.
+ */
+export function apiErrorCode(err: unknown): string | null {
+  if (!axios.isAxiosError(err) || !err.response) return null;
+  const code = (err.response.data as { errorCode?: unknown } | undefined)?.errorCode;
+  return typeof code === 'string' ? code : null;
+}
+
 export function toUserMessage(err: unknown, fallback: string): string {
   // Firebase errors aren't axios errors and carry their own `code`.
   const code = (err as { code?: unknown } | null)?.code;

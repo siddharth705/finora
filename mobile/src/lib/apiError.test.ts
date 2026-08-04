@@ -1,5 +1,6 @@
 import { AxiosError, AxiosHeaders } from 'axios';
-import { isOffline, toUserMessage } from './apiError';
+import { apiErrorCode, isOffline, toUserMessage } from './apiError';
+import { PDF_PASSWORD_REQUIRED } from '../api/errorCodes';
 
 function axiosErrorWithResponse(status: number, data: unknown): AxiosError {
   const err = new AxiosError('Request failed');
@@ -84,5 +85,22 @@ describe('isOffline', () => {
     expect(isOffline(networkError())).toBe(true);
     expect(isOffline(axiosErrorWithResponse(500, {}))).toBe(false);
     expect(isOffline(new Error('nope'))).toBe(false);
+  });
+});
+
+describe('apiErrorCode', () => {
+  it('returns the server error code so a screen can branch on it', () => {
+    // The password prompt is the reason this exists: a protected PDF has to change what the
+    // import screen SHOWS, which no amount of message text can drive.
+    expect(apiErrorCode(axiosErrorWithResponse(422, { errorCode: PDF_PASSWORD_REQUIRED }))).toBe(
+      PDF_PASSWORD_REQUIRED
+    );
+  });
+
+  it('is null for anything without a server code, so callers fall through to a message', () => {
+    expect(apiErrorCode(axiosErrorWithResponse(500, {}))).toBeNull();
+    expect(apiErrorCode(networkError())).toBeNull();
+    expect(apiErrorCode(new Error('kaboom'))).toBeNull();
+    expect(apiErrorCode({ code: 'auth/code-expired' })).toBeNull();
   });
 });

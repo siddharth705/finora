@@ -8,8 +8,9 @@ import { Button } from '../../components/Button';
 import { Card, SectionHeading } from '../../components/Card';
 import { CategoryPickerModal } from './CategoryPickerModal';
 import { StagedRowCard } from './StagedRowCard';
-import { accountsApi, categoriesApi, importApi } from '../../api/endpoints';
-import { toUserMessage } from '../../lib/apiError';
+import { accountsApi, categoriesApi, importApi, type RNFile } from '../../api/endpoints';
+import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../../api/errorCodes';
+import { apiErrorCode, toUserMessage } from '../../lib/apiError';
 import { fmtCurrency } from '../../lib/format';
 import { invalidateFinancialData } from '../../lib/invalidateFinancialData';
 import {
@@ -48,6 +49,14 @@ export function ImportScreen() {
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [categoryPickerFor, setCategoryPickerFor] = useState<number | null>(null);
 
+  // A chosen PDF, held between picking and uploading so the optional password can be typed first,
+  // and so a wrong password retries against the SAME file instead of sending the user back to the
+  // document picker. CSV keeps its original pick-and-go behaviour -- there's nothing to unlock.
+  const [pendingPdf, setPendingPdf] = useState<RNFile | null>(null);
+  const [pdfPassword, setPdfPassword] = useState('');
+  // Which of the two backend password outcomes we last saw, or null before we've tried.
+  const [passwordState, setPasswordState] = useState<'required' | 'invalid' | null>(null);
+
   // Non-critical: the screen still works with empty lists, just with fewer prefilled defaults.
   const { data: categories = [] } = useQuery({
     queryKey: ['categories'],
@@ -73,8 +82,16 @@ export function ImportScreen() {
     setDetected(null);
     setSummary(null);
     setAccountForm(initialAccountForm(null));
+    setPendingPdf(null);
+    setPdfPassword('');
+    setPasswordState(null);
   }
 
+  /**
+   * A CSV goes straight up, as it always has. A PDF stops at the password card first: most Indian
+   * banks e-mail statements password-protected, so asking up front turns the common case into one
+   * upload rather than an upload, a rejection, and a second upload.
+   */
   async function handlePick() {
     setError(null);
     let picked;
@@ -87,15 +104,29 @@ export function ImportScreen() {
     // A dismissed picker is not an error and must not show one.
     if (!picked) return;
 
-    setUploadProgress(0);
     setFileFormat(picked.format);
+    if (picked.format === 'PDF') {
+      setPendingPdf(picked.file);
+      setPdfPassword('');
+      setPasswordState(null);
+      return;
+    }
+    await upload(picked.file, false, undefined);
+  }
+
+  async function upload(file: RNFile, isPdf: boolean, password: string | undefined) {
+    setError(null);
+    setUploadProgress(0);
     try {
-      const res =
-        picked.format === 'PDF'
-          ? await importApi.stagePdf(picked.file, setUploadProgress)
-          : await importApi.stageCsv(picked.file, setUploadProgress);
+      const res = isPdf
+        ? await importApi.stagePdf(file, setUploadProgress, password)
+        : await importApi.stageCsv(file, setUploadProgress);
 
       setSessionId(res.sessionId);
+      // The document opened, so the password has done its whole job -- drop it and the file.
+      setPendingPdf(null);
+      setPdfPassword('');
+      setPasswordState(null);
 
       // A single PDF can describe more than one account (a composite statement bundling savings
       // and a credit card). Reviewing those means assigning each section to a different account,
@@ -129,7 +160,15 @@ export function ImportScreen() {
 
       setStep('review');
     } catch (e) {
-      setError(toUserMessage(e, 'Could not read that statement.'));
+      const code = apiErrorCode(e);
+      if (code === PDF_PASSWORD_REQUIRED || code === PDF_PASSWORD_INVALID) {
+        // Not a read failure and not shown as one -- the file is fine, it just hasn't been opened
+        // yet. The card stays put with this same file so the retry is one field and one tap.
+        setPasswordState(code === PDF_PASSWORD_INVALID ? 'invalid' : 'required');
+        setPendingPdf(file);
+      } else {
+        setError(toUserMessage(e, 'Could not read that statement.'));
+      }
     } finally {
       setUploadProgress(null);
     }
@@ -195,6 +234,51 @@ export function ImportScreen() {
                 <Text style={[styles.progressText, { color: c.muted }]}>
                   {uploadProgress === 100 ? 'Reading statement…' : `Uploading… ${uploadProgress}%`}
                 </Text>
+              </View>
+            ) : pendingPdf ? (
+              <View style={styles.passwordWrap} testID="pdf-password-panel">
+                <Text style={[styles.body, { color: c.ink, fontWeight: '600' }]} numberOfLines={2}>
+                  {pendingPdf.name}
+                </Text>
+                <Text style={[styles.fieldLabel, { color: c.ink }]}>Statement password (optional)</Text>
+                <TextInput
+                  value={pdfPassword}
+                  onChangeText={setPdfPassword}
+                  placeholder="Leave blank if the file isn't protected"
+                  placeholderTextColor={c.muted}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  // The bank's password for one document, not a Finora credential -- it doesn't
+                  // belong in the OS keychain alongside real logins, and it changes every month.
+                  autoComplete="off"
+                  textContentType="none"
+                  accessibilityLabel="Statement password"
+                  style={[styles.input, { color: c.ink, borderColor: c.border, backgroundColor: c.inputBg }]}
+                />
+                <Text
+                  style={[styles.helpText, { color: passwordState === 'invalid' ? c.danger : c.muted }]}
+                >
+                  {passwordState === 'invalid'
+                    ? "That password didn't open this statement — check it and try again."
+                    : passwordState === 'required'
+                      ? 'This statement is password protected. Enter the password your bank uses for it.'
+                      : 'Many banks protect statements with a password — often a mix of your name, PAN, date of birth or account number. Check the email it came in.'}
+                </Text>
+                <Button
+                  label="Upload statement"
+                  onPress={() => void upload(pendingPdf, true, pdfPassword || undefined)}
+                />
+                <Button
+                  label="Choose a different file"
+                  variant="link"
+                  onPress={() => {
+                    setPendingPdf(null);
+                    setPdfPassword('');
+                    setPasswordState(null);
+                    setError(null);
+                  }}
+                />
               </View>
             ) : (
               <Button label="Choose a file" onPress={handlePick} />
@@ -446,6 +530,10 @@ const styles = StyleSheet.create({
   body: { fontSize: 13, lineHeight: 19 },
   errorCard: { marginBottom: spacing.sm },
   errorText: { fontSize: 13, lineHeight: 19 },
+  // gap is smaller than the field label's own marginBottom, so the label stays visually attached
+  // to its input rather than floating midway between it and the filename above.
+  passwordWrap: { marginTop: spacing.sm, gap: spacing.sm },
+  helpText: { fontSize: 12, lineHeight: 17 },
   progressWrap: { marginTop: spacing.sm },
   progressTrack: { height: 6, borderRadius: 3, overflow: 'hidden' },
   progressFill: { height: 6, borderRadius: 3 },

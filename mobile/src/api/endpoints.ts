@@ -253,9 +253,14 @@ export const importApi = {
       })
       .then((r) => r.data);
   },
-  stagePdf: (file: RNFile, onProgress?: ProgressCallback) => {
+  // `password` opens a protected statement (most Indian banks e-mail them that way). It rides in
+  // the form body, never the query string, so it can't reach a server access log. Omitted when
+  // blank, and harmless when the file turns out not to need one -- so the caller never has to
+  // inspect the file to decide whether to send it.
+  stagePdf: (file: RNFile, onProgress?: ProgressCallback, password?: string) => {
     const form = new FormData();
     form.append('file', file as unknown as Blob);
+    if (password) form.append('password', password);
     return api
       .post<PdfStagingSessionResult>('/import/pdf/stage', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
