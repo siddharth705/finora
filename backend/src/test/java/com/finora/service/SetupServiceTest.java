@@ -70,20 +70,22 @@ class SetupServiceTest {
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
         User bootstrap = userWith(bootstrapUserId, "BOOTSTRAP_ADMIN");
         when(userRepository.findById(bootstrapUserId)).thenReturn(Optional.of(bootstrap));
-        when(roleService.assignRole(newAdminId, "SUPER_ADMIN"))
+        when(roleService.assignRole(bootstrapUserId, newAdminId, "SUPER_ADMIN"))
                 .thenReturn(new RoleDto(UUID.randomUUID(), "SUPER_ADMIN", "desc", java.util.List.of()));
 
         setupService.completeSetup(bootstrapUserId, request);
 
         assertThat(newAdmin.getRole()).isEqualTo("SUPER_ADMIN");
-        verify(roleService).assignRole(newAdminId, "SUPER_ADMIN");
+        // actingAdminId is bootstrapUserId on both calls: it's the account running the setup
+        // wizard that performs both the grant (to the new admin) and the self-revocation below.
+        verify(roleService).assignRole(bootstrapUserId, newAdminId, "SUPER_ADMIN");
         // Locked, not deleted (Gap 2) -- reuses the exact same status column/value
         // AdminUserService.suspend() already relies on, so login is blocked the same proven way.
         assertThat(bootstrap.getStatus()).isEqualTo("SUSPENDED");
         // Role revoked too, not just status changed -- closes the "still-valid JWT keeps
         // SYSTEM_INITIALIZE for up to 15 more minutes" gap, since AuthorizationService never
         // checks user.status, only roles/permissions.
-        verify(roleService).revokeRole(bootstrapUserId, "BOOTSTRAP_ADMIN");
+        verify(roleService).revokeRole(bootstrapUserId, bootstrapUserId, "BOOTSTRAP_ADMIN");
         verify(userRepository, never()).delete(any());
         verify(userRepository, never()).deleteById(any());
         verify(platformSettingsService).tryMarkSetupCompleted();
@@ -107,7 +109,7 @@ class SetupServiceTest {
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
         User bootstrap = userWith(bootstrapUserId, "BOOTSTRAP_ADMIN");
         when(userRepository.findById(bootstrapUserId)).thenReturn(Optional.of(bootstrap));
-        when(roleService.assignRole(newAdminId, "SUPER_ADMIN"))
+        when(roleService.assignRole(bootstrapUserId, newAdminId, "SUPER_ADMIN"))
                 .thenReturn(new RoleDto(UUID.randomUUID(), "SUPER_ADMIN", "desc", java.util.List.of()));
         doThrow(new java.io.IOException("permission denied")).when(setupKeyFileWriter).deleteIfPresent();
 

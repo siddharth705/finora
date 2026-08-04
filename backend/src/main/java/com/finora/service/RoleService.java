@@ -57,10 +57,20 @@ public class RoleService {
                 .toList();
     }
 
-    /** Grants a user an additional role via the new user_roles table -- additive only, never
-     *  touches the legacy User.role column, so it can't reduce anyone's access. */
+    /**
+     * Grants a user an additional role via the new user_roles table -- additive only, never
+     * touches the legacy User.role column, so it can't reduce anyone's access.
+     *
+     * Bug fix: this used to record the audit entry with no actingAdminId at all, attributing
+     * ROLE_ASSIGNED to the target user itself -- indistinguishable from the user granting the role
+     * to themselves. Every other mutation in this class (createRole/updateRole/deleteRole/
+     * createPermission/...) already threads actingAdminId through to the audit trail; this is the
+     * single most consequential action in the whole admin surface (it can grant ADMIN/SUPER_ADMIN)
+     * and was the one place that didn't. Same bug class, same fix, as the actorId threading already
+     * done for RelationshipService/MerchantService.
+     */
     @Transactional
-    public RoleDto assignRole(UUID userId, String roleName) {
+    public RoleDto assignRole(UUID actingAdminId, UUID userId, String roleName) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
         Role role = roleRepository.findByName(roleName)
@@ -68,7 +78,8 @@ public class RoleService {
 
         user.getRoles().add(role);
         userRepository.save(user);
-        auditService.record(userId, "ROLE_ASSIGNED", "User", userId, Map.of("role", roleName));
+        auditService.record(userId, "ROLE_ASSIGNED", "User", userId,
+                Map.of("role", roleName, "actorId", actingAdminId.toString()));
         return toDto(role);
     }
 
@@ -76,9 +87,11 @@ public class RoleService {
      *  names the same role, AuthorizationService will keep granting it through that path.
      *  Callers that mean to fully demote a user need to change User.role too (a separate, more
      *  consequential action than "revoke one of possibly several roles", deliberately not folded
-     *  into this method). */
+     *  into this method).
+     *
+     *  Bug fix: same missing-actingAdminId gap as {@link #assignRole} -- see its own doc comment. */
     @Transactional
-    public void revokeRole(UUID userId, String roleName) {
+    public void revokeRole(UUID actingAdminId, UUID userId, String roleName) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
         Role role = roleRepository.findByName(roleName)
@@ -86,7 +99,8 @@ public class RoleService {
 
         user.getRoles().remove(role);
         userRepository.save(user);
-        auditService.record(userId, "ROLE_REVOKED", "User", userId, Map.of("role", roleName));
+        auditService.record(userId, "ROLE_REVOKED", "User", userId,
+                Map.of("role", roleName, "actorId", actingAdminId.toString()));
     }
 
     // --- Role & Permission CRUD (ROLE_MANAGE / PERMISSION_MANAGE) -- see RoleAdminController ---

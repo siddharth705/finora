@@ -43,8 +43,14 @@ public class RuleService {
                 .stream().map(this::toDto).toList();
     }
 
+    /** Bug fix: this recorded RULE_CREATED against only the target user, with no actingAdminId
+     *  anywhere in the call chain -- every caller of this method is AdminUserRuleController (there
+     *  is no self-service Rule management UI/controller), so every single call to this method was
+     *  in fact an admin acting on a user's behalf, indistinguishable in the audit trail from the
+     *  user creating their own rule. Same bug class, same fix, as the actorId threading already
+     *  done for RelationshipService/MerchantService (887e7fc). */
     @Transactional
-    public RuleDto create(UUID userId, RuleDto.CreateRequest req) {
+    public RuleDto create(UUID userId, RuleDto.CreateRequest req, UUID actingAdminId) {
         CategoryRule rule = new CategoryRule();
         rule.setUserId(userId);
         rule.setScope(CategoryRule.Scope.USER);
@@ -58,12 +64,14 @@ public class RuleService {
         validateRule(rule);
         CategoryRule saved = categoryRuleRepository.save(rule);
         auditService.record(userId, "RULE_CREATED", "CategoryRule", saved.getId(),
-                Map.of("field", saved.getField().name(), "actionType", saved.getActionType().name()));
+                Map.of("field", saved.getField().name(), "actionType", saved.getActionType().name(),
+                        "actorId", actingAdminId.toString()));
         return toDto(saved);
     }
 
+    /** Bug fix: same missing-actingAdminId gap as {@link #create} -- see its own doc comment. */
     @Transactional
-    public RuleDto update(UUID userId, UUID ruleId, RuleDto.UpdateRequest req) {
+    public RuleDto update(UUID userId, UUID ruleId, RuleDto.UpdateRequest req, UUID actingAdminId) {
         CategoryRule rule = getOwnedUserRule(userId, ruleId);
         if (req.field() != null) rule.setField(parseField(req.field()));
         if (req.operator() != null) rule.setOperator(parseOperator(req.operator()));
@@ -76,7 +84,8 @@ public class RuleService {
 
         validateRule(rule);
         CategoryRule saved = categoryRuleRepository.save(rule);
-        auditService.record(userId, "RULE_UPDATED", "CategoryRule", ruleId);
+        auditService.record(userId, "RULE_UPDATED", "CategoryRule", ruleId,
+                Map.of("actorId", actingAdminId.toString()));
         return toDto(saved);
     }
 
@@ -108,11 +117,13 @@ public class RuleService {
         }
     }
 
+    /** Bug fix: same missing-actingAdminId gap as {@link #create} -- see its own doc comment. */
     @Transactional
-    public void delete(UUID userId, UUID ruleId) {
+    public void delete(UUID userId, UUID ruleId, UUID actingAdminId) {
         CategoryRule rule = getOwnedUserRule(userId, ruleId);
         categoryRuleRepository.delete(rule);
-        auditService.record(userId, "RULE_DELETED", "CategoryRule", ruleId);
+        auditService.record(userId, "RULE_DELETED", "CategoryRule", ruleId,
+                Map.of("actorId", actingAdminId.toString()));
     }
 
     /** 404 if the rule doesn't exist at all, 403 if it's GLOBAL scope or owned by a different

@@ -35,9 +35,11 @@ class AccountServiceTest {
     private AccountRepository accountRepository;
     private StatementImportRepository statementImportRepository;
     private TransactionRepository transactionRepository;
+    private AuditService auditService;
     private AccountService accountService;
     private final UUID userId = UUID.randomUUID();
     private final UUID accountId = UUID.randomUUID();
+    private final UUID actingAdminId = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
@@ -58,8 +60,9 @@ class AccountServiceTest {
         when(bankManagementService.resolve(any())).thenAnswer(invocation ->
                 AccountDto.BankDto.from(com.finora.util.BankRegistry.get(invocation.getArgument(0))));
 
+        auditService = mock(AuditService.class);
         accountService = new AccountService(accountRepository, statementImportRepository,
-                transactionRepository, mock(AuditService.class), bankManagementService);
+                transactionRepository, auditService, bankManagementService);
     }
 
     private Account existingAccount() {
@@ -84,7 +87,7 @@ class AccountServiceTest {
         AccountDto.CreateRequest renameOnly = new AccountDto.CreateRequest(
                 "Salary Account", "SAVINGS", null, null, null, null, null, null, null, null, null);
 
-        AccountDto result = accountService.update(userId, accountId, renameOnly);
+        AccountDto result = accountService.update(userId, accountId, renameOnly, actingAdminId);
 
         assertThat(result.name()).isEqualTo("Salary Account");
         assertThat(result.balance()).isEqualByComparingTo(BigDecimal.valueOf(15000));
@@ -103,7 +106,7 @@ class AccountServiceTest {
         AccountDto.CreateRequest balanceEdit = new AccountDto.CreateRequest(
                 "Punjab National Bank", "SAVINGS", BigDecimal.valueOf(20000), null, null, null, null, null, null, null, null);
 
-        AccountDto result = accountService.update(userId, accountId, balanceEdit);
+        AccountDto result = accountService.update(userId, accountId, balanceEdit, actingAdminId);
 
         assertThat(result.balance()).isEqualByComparingTo(BigDecimal.valueOf(20000));
     }
@@ -119,7 +122,7 @@ class AccountServiceTest {
         AccountDto.CreateRequest req = new AccountDto.CreateRequest(
                 "My Wallet", "WALLET", BigDecimal.ZERO, null, null, null, null, null, "NOT_A_REAL_BANK", null, null);
 
-        AccountDto result = accountService.create(userId, req);
+        AccountDto result = accountService.create(userId, req, actingAdminId);
 
         assertThat(result.bank().id()).isEqualTo("OTHER");
     }
@@ -136,7 +139,7 @@ class AccountServiceTest {
                 "Salary Account", "SAVINGS", BigDecimal.ZERO, null, null, null, null, null, "PNB",
                 "MG Road Branch", "PUNB0123456");
 
-        AccountDto result = accountService.create(userId, req);
+        AccountDto result = accountService.create(userId, req, actingAdminId);
 
         assertThat(result.branchName()).isEqualTo("MG Road Branch");
         assertThat(result.ifscCode()).isEqualTo("PUNB0123456");
@@ -154,7 +157,7 @@ class AccountServiceTest {
         AccountDto.CreateRequest req = new AccountDto.CreateRequest(
                 "My Wallet", "NOT_A_REAL_TYPE", BigDecimal.ZERO, null, null, null, null, null, null, null, null);
 
-        assertThatThrownBy(() -> accountService.create(userId, req))
+        assertThatThrownBy(() -> accountService.create(userId, req, actingAdminId))
                 .isInstanceOf(com.finora.exception.ApiException.class)
                 .hasMessageContaining("accountType")
                 .extracting(ex -> ((com.finora.exception.ApiException) ex).getStatus())
@@ -168,7 +171,7 @@ class AccountServiceTest {
         AccountDto.CreateRequest req = new AccountDto.CreateRequest(
                 "My Wallet", null, BigDecimal.ZERO, null, null, null, null, null, null, null, null);
 
-        assertThatThrownBy(() -> accountService.create(userId, req))
+        assertThatThrownBy(() -> accountService.create(userId, req, actingAdminId))
                 .isInstanceOf(com.finora.exception.ApiException.class)
                 .extracting(ex -> ((com.finora.exception.ApiException) ex).getStatus())
                 .isEqualTo(org.springframework.http.HttpStatus.BAD_REQUEST);
@@ -237,19 +240,62 @@ class AccountServiceTest {
     // annotation is actually present.
     @Test
     void create_isTransactional() throws NoSuchMethodException {
-        assertThat(AccountService.class.getMethod("create", UUID.class, AccountDto.CreateRequest.class)
+        assertThat(AccountService.class.getMethod("create", UUID.class, AccountDto.CreateRequest.class, UUID.class)
                 .isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class)).isTrue();
     }
 
     @Test
     void update_isTransactional() throws NoSuchMethodException {
-        assertThat(AccountService.class.getMethod("update", UUID.class, UUID.class, AccountDto.CreateRequest.class)
+        assertThat(AccountService.class.getMethod("update", UUID.class, UUID.class, AccountDto.CreateRequest.class, UUID.class)
                 .isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class)).isTrue();
     }
 
     @Test
     void delete_isTransactional() throws NoSuchMethodException {
-        assertThat(AccountService.class.getMethod("delete", UUID.class, UUID.class)
+        assertThat(AccountService.class.getMethod("delete", UUID.class, UUID.class, UUID.class)
                 .isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class)).isTrue();
+    }
+
+    // Bug fix: create()/update()/delete() used to record their audit entry with no actingAdminId
+    // at all, so an admin acting on a user's account via AdminAccountController (support-assisted
+    // account management) was indistinguishable in the audit trail from the user acting on their
+    // own account. Same "actorId" convention as RelationshipService/MerchantService/RuleService.
+    @Test
+    void create_recordsActingAdminIdInAuditMetadata() {
+        when(accountRepository.save(any(Account.class))).thenAnswer(inv -> {
+            Account a = inv.getArgument(0);
+            ReflectionTestUtils.setField(a, "id", accountId);
+            return a;
+        });
+        AccountDto.CreateRequest req = new AccountDto.CreateRequest(
+                "My Wallet", "WALLET", BigDecimal.ZERO, null, null, null, null, null, null, null, null);
+
+        accountService.create(userId, req, actingAdminId);
+
+        verify(auditService).record(eq(userId), eq("ACCOUNT_CREATED"), eq("Account"), eq(accountId),
+                argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
+    }
+
+    @Test
+    void update_recordsActingAdminIdInAuditMetadata() {
+        when(accountRepository.findById(accountId)).thenReturn(java.util.Optional.of(existingAccount()));
+        when(accountRepository.save(any(Account.class))).thenAnswer(inv -> inv.getArgument(0));
+        AccountDto.CreateRequest req = new AccountDto.CreateRequest(
+                "Salary Account", "SAVINGS", null, null, null, null, null, null, null, null, null);
+
+        accountService.update(userId, accountId, req, actingAdminId);
+
+        verify(auditService).record(eq(userId), eq("ACCOUNT_UPDATED"), eq("Account"), eq(accountId),
+                argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
+    }
+
+    @Test
+    void delete_recordsActingAdminIdInAuditMetadata() {
+        when(accountRepository.findById(accountId)).thenReturn(java.util.Optional.of(existingAccount()));
+
+        accountService.delete(userId, accountId, actingAdminId);
+
+        verify(auditService).record(eq(userId), eq("ACCOUNT_DELETED"), eq("Account"), eq(accountId),
+                argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
     }
 }

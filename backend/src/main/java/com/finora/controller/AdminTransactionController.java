@@ -1,6 +1,7 @@
 package com.finora.controller;
 
 import com.finora.dto.ApiResponse;
+import com.finora.security.CurrentUser;
 import com.finora.transactions.TransactionDto;
 import com.finora.transactions.TransactionService;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -27,9 +28,11 @@ import java.util.UUID;
 public class AdminTransactionController {
 
     private final TransactionService transactionService;
+    private final CurrentUser currentUser;
 
-    public AdminTransactionController(TransactionService transactionService) {
+    public AdminTransactionController(TransactionService transactionService, CurrentUser currentUser) {
         this.transactionService = transactionService;
+        this.currentUser = currentUser;
     }
 
     /** Most recent 50 transactions -- enough for an admin to find the one they're looking for
@@ -45,7 +48,7 @@ public class AdminTransactionController {
 
     @DeleteMapping("/{transactionId}")
     public ApiResponse<Void> delete(@PathVariable UUID userId, @PathVariable UUID transactionId) {
-        transactionService.delete(userId, transactionId);
+        transactionService.delete(userId, transactionId, currentUser.id());
         return ApiResponse.ok(null, "Transaction deleted");
     }
 }

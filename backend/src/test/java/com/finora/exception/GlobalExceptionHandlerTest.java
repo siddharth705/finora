@@ -132,6 +132,47 @@ class GlobalExceptionHandlerTest {
     }
 
     /**
+     * Bug fix: malformed JSON in a @RequestBody (e.g. a truncated body, or the wrong type for a
+     * field) throws HttpMessageNotReadableException during argument resolution -- before
+     * handleValidation() ever runs. This previously had no dedicated handler and fell through to
+     * handleGeneric(), turning an ordinary client mistake into an opaque 500 instead of a clean
+     * 400 -- the same bug shape already fixed for AccessDeniedException and
+     * OptimisticLockingFailureException in this class.
+     */
+    @Test
+    void handleMalformedRequestBody_returns400_notTheGeneric500() {
+        Environment environment = mock(Environment.class);
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(environment);
+
+        var response = handler.handleMalformedRequestBody(
+                new org.springframework.http.converter.HttpMessageNotReadableException(
+                        "JSON parse error", (org.springframework.http.HttpInputMessage) null));
+
+        assertThat(response.getStatusCode().value()).isEqualTo(400);
+        assertThat(response.getBody().errorCode()).isEqualTo("MALFORMED_REQUEST_BODY");
+    }
+
+    /**
+     * Deliberately does not echo Jackson's own parse-error text back to the client -- that message
+     * can quote raw request body content, which for this API may be customer financial data.
+     */
+    @Test
+    void handleMalformedRequestBody_neverLeaksTheParsersOwnMessage() {
+        Environment environment = mock(Environment.class);
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(environment);
+
+        // synthetic-ok: placeholder token standing in for "whatever sensitive text Jackson's own
+        // parse-error message might quote back" -- not a real account/card/phone number.
+        String sensitiveLookingToken = "ACCT-PLACEHOLDER-TOKEN";
+        var response = handler.handleMalformedRequestBody(
+                new org.springframework.http.converter.HttpMessageNotReadableException(
+                        "Cannot deserialize value: account number " + sensitiveLookingToken,
+                        (org.springframework.http.HttpInputMessage) null));
+
+        assertThat(response.getBody().message()).doesNotContain(sensitiveLookingToken);
+    }
+
+    /**
      * The other half, and the reason this isn't just "log everything": a 4xx is the server working
      * correctly. Logging every rejected password or malformed upload at ERROR would bury the real
      * failures this change exists to surface.

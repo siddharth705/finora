@@ -261,7 +261,7 @@ class ImportServiceAskOnceTest {
     @Test
     void confirm_createsTheAccount_whenNewAccountDetailsAreProvidedInsteadOfAnExistingId() throws Exception {
         UUID newAccountId = UUID.randomUUID();
-        when(accountService.create(eq(userId), any())).thenReturn(
+        when(accountService.create(eq(userId), any(), any())).thenReturn(
                 new AccountDto(newAccountId, "HDFC Savings", "SAVINGS", BigDecimal.valueOf(15000), null, null, null, null, null,
                         null, null,
                         AccountDto.BankDto.from(com.finora.util.BankRegistry.get("OTHER")), null, null, null,
@@ -276,7 +276,7 @@ class ImportServiceAskOnceTest {
 
         var response = importService.confirm(userId, dummyFile(), request);
 
-        verify(accountService).create(eq(userId), any());
+        verify(accountService).create(eq(userId), any(), any());
         assertThat(response.accountsCreated()).containsExactly("HDFC Savings");
 
         @SuppressWarnings("unchecked")
@@ -292,7 +292,7 @@ class ImportServiceAskOnceTest {
         // carries its own routing, so the product decides where it lands: INVESTMENT with an
         // investmentKind of "FD", alongside mutual funds and PPF in the Investments module.
         UUID newAccountId = UUID.randomUUID();
-        when(accountService.create(eq(userId), any())).thenReturn(
+        when(accountService.create(eq(userId), any(), any())).thenReturn(
                 new AccountDto(newAccountId, "HDFC Term Deposit", "INVESTMENT", BigDecimal.valueOf(100000),
                         null, null, null, null, null, null, null,
                         AccountDto.BankDto.from(com.finora.util.BankRegistry.get("OTHER")), null, null, null,
@@ -311,7 +311,7 @@ class ImportServiceAskOnceTest {
 
         ArgumentCaptor<AccountDto.CreateRequest> captor =
                 ArgumentCaptor.forClass(AccountDto.CreateRequest.class);
-        verify(accountService).create(eq(userId), captor.capture());
+        verify(accountService).create(eq(userId), captor.capture(), any());
         assertThat(captor.getValue().accountType())
                 .as("the product's own routing wins over the form's default")
                 .isEqualTo("INVESTMENT");
@@ -326,7 +326,7 @@ class ImportServiceAskOnceTest {
         // The correction loop's backstop: an unclassifiable product has nothing to route by, so the
         // user's one-time answer on the review screen is what decides -- never a guess.
         UUID newAccountId = UUID.randomUUID();
-        when(accountService.create(eq(userId), any())).thenReturn(
+        when(accountService.create(eq(userId), any(), any())).thenReturn(
                 new AccountDto(newAccountId, "Mystery", "WALLET", BigDecimal.ZERO, null, null, null, null,
                         null, null, null,
                         AccountDto.BankDto.from(com.finora.util.BankRegistry.get("OTHER")), null, null, null,
@@ -344,7 +344,7 @@ class ImportServiceAskOnceTest {
 
         ArgumentCaptor<AccountDto.CreateRequest> captor =
                 ArgumentCaptor.forClass(AccountDto.CreateRequest.class);
-        verify(accountService).create(eq(userId), captor.capture());
+        verify(accountService).create(eq(userId), captor.capture(), any());
         assertThat(captor.getValue().accountType()).isEqualTo("WALLET");
         assertThat(captor.getValue().investmentKind()).isNull();
     }
@@ -357,7 +357,7 @@ class ImportServiceAskOnceTest {
         // that doesn't echo detectedProduct back (an older build), which is exactly the case that
         // should degrade to "do what the user said", not "invent a product they didn't choose".
         UUID newAccountId = UUID.randomUUID();
-        when(accountService.create(eq(userId), any())).thenReturn(
+        when(accountService.create(eq(userId), any(), any())).thenReturn(
                 new AccountDto(newAccountId, "Gold Fund", "INVESTMENT", BigDecimal.ZERO, null, null, null, null,
                         null, null, null,
                         AccountDto.BankDto.from(com.finora.util.BankRegistry.get("OTHER")), null, null, null,
@@ -374,7 +374,7 @@ class ImportServiceAskOnceTest {
 
         ArgumentCaptor<AccountDto.CreateRequest> captor =
                 ArgumentCaptor.forClass(AccountDto.CreateRequest.class);
-        verify(accountService).create(eq(userId), captor.capture());
+        verify(accountService).create(eq(userId), captor.capture(), any());
         assertThat(captor.getValue().accountType())
                 .as("the user's own choice must survive when nothing was detected")
                 .isEqualTo("INVESTMENT");
@@ -620,7 +620,7 @@ class ImportServiceAskOnceTest {
     @Test
     void confirm_passesAccountHolderNameAndNumberMasked_toNewAccountCreation() throws Exception {
         UUID newAccountId = UUID.randomUUID();
-        when(accountService.create(eq(userId), any())).thenReturn(
+        when(accountService.create(eq(userId), any(), any())).thenReturn(
                 new AccountDto(newAccountId, "SBI Savings", "SAVINGS", BigDecimal.valueOf(25000), null, null, null,
                         "Siddharth Tiwari", "4587", null, null,
                         AccountDto.BankDto.from(com.finora.util.BankRegistry.get("SBI")), null, null, null,
@@ -638,7 +638,7 @@ class ImportServiceAskOnceTest {
         importService.confirm(userId, dummyFile(), request);
 
         ArgumentCaptor<AccountDto.CreateRequest> captor = ArgumentCaptor.forClass(AccountDto.CreateRequest.class);
-        verify(accountService).create(eq(userId), captor.capture());
+        verify(accountService).create(eq(userId), captor.capture(), any());
         assertThat(captor.getValue().accountHolderName()).isEqualTo("Siddharth Tiwari");
         assertThat(captor.getValue().accountNumberMasked()).isEqualTo("4587");
     }

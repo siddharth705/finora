@@ -82,7 +82,8 @@ public class AdminUserMerchantController {
     @PostMapping("/{merchantId}/confirm-category")
     public ApiResponse<MerchantDto> confirmCategory(@PathVariable UUID userId, @PathVariable UUID merchantId,
                                                       @Valid @RequestBody MerchantDto.ConfirmCategoryRequest request) {
-        transactionService.confirmMerchantCategory(userId, merchantId, request.applyToTransactionId(), request.categoryId());
+        transactionService.confirmMerchantCategory(userId, merchantId, request.applyToTransactionId(), request.categoryId(),
+                currentUser.id());
         return ApiResponse.ok(merchantService.get(userId, merchantId), "Category confirmed");
     }
 

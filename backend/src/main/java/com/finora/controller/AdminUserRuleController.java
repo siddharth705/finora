@@ -3,6 +3,7 @@ package com.finora.controller;
 import com.finora.dto.ApiResponse;
 import com.finora.rules.RuleDto;
 import com.finora.rules.RuleService;
+import com.finora.security.CurrentUser;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -27,9 +28,11 @@ import java.util.UUID;
 public class AdminUserRuleController {
 
     private final RuleService ruleService;
+    private final CurrentUser currentUser;
 
-    public AdminUserRuleController(RuleService ruleService) {
+    public AdminUserRuleController(RuleService ruleService, CurrentUser currentUser) {
         this.ruleService = ruleService;
+        this.currentUser = currentUser;
     }
 
     @GetMapping
@@ -39,18 +42,18 @@ public class AdminUserRuleController {
 
     @PostMapping
     public ApiResponse<RuleDto> create(@PathVariable UUID userId, @Valid @RequestBody RuleDto.CreateRequest request) {
-        return ApiResponse.ok(ruleService.create(userId, request), "Rule created");
+        return ApiResponse.ok(ruleService.create(userId, request, currentUser.id()), "Rule created");
     }
 
     @PutMapping("/{id}")
     public ApiResponse<RuleDto> update(@PathVariable UUID userId, @PathVariable UUID id,
                                         @RequestBody RuleDto.UpdateRequest request) {
-        return ApiResponse.ok(ruleService.update(userId, id, request), "Rule updated");
+        return ApiResponse.ok(ruleService.update(userId, id, request, currentUser.id()), "Rule updated");
     }
 
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable UUID userId, @PathVariable UUID id) {
-        ruleService.delete(userId, id);
+        ruleService.delete(userId, id, currentUser.id());
         return ApiResponse.ok(null, "Rule deleted");
     }
 }

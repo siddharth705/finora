@@ -28,17 +28,17 @@ public class AccountController {
 
     @PostMapping
     public ResponseEntity<ApiResponse<AccountDto>> create(@Valid @RequestBody AccountDto.CreateRequest request) {
-        return ResponseEntity.ok(ApiResponse.ok(accountService.create(currentUser.id(), request), "Account created"));
+        return ResponseEntity.ok(ApiResponse.ok(accountService.create(currentUser.id(), request, currentUser.id()), "Account created"));
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<ApiResponse<AccountDto>> update(@PathVariable UUID id, @Valid @RequestBody AccountDto.CreateRequest request) {
-        return ResponseEntity.ok(ApiResponse.ok(accountService.update(currentUser.id(), id, request), "Account updated"));
+        return ResponseEntity.ok(ApiResponse.ok(accountService.update(currentUser.id(), id, request, currentUser.id()), "Account updated"));
     }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<ApiResponse<Void>> delete(@PathVariable UUID id) {
-        accountService.delete(currentUser.id(), id);
+        accountService.delete(currentUser.id(), id, currentUser.id());
         return ResponseEntity.ok(ApiResponse.ok(null, "Account deleted"));
     }
 }

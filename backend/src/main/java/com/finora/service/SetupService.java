@@ -109,7 +109,7 @@ public class SetupService {
         User newAdmin = authService.adminCreateUser(request, bootstrapUserId, User.SCOPE_ADMIN);
         newAdmin.setRole("SUPER_ADMIN");
         userRepository.save(newAdmin);
-        roleService.assignRole(newAdmin.getId(), "SUPER_ADMIN");
+        roleService.assignRole(bootstrapUserId, newAdmin.getId(), "SUPER_ADMIN");
 
         User bootstrap = userRepository.findById(bootstrapUserId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Bootstrap account not found"));
@@ -123,7 +123,7 @@ public class SetupService {
         // AuthorizationService.effectiveAuthorities() never checks user.status, only
         // roles/permissions. Explicitly revoking BOOTSTRAP_ADMIN means SYSTEM_INITIALIZE is gone
         // immediately, not just "until this token's 15-minute expiry" (application.yml).
-        roleService.revokeRole(bootstrapUserId, "BOOTSTRAP_ADMIN");
+        roleService.revokeRole(bootstrapUserId, bootstrapUserId, "BOOTSTRAP_ADMIN");
 
         // setup_completed was already flipped atomically at the top of this method -- see
         // tryMarkSetupCompleted's own doc comment for why it moved there.
