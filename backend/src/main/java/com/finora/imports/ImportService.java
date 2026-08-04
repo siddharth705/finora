@@ -416,7 +416,7 @@ public class ImportService {
 
         UUID accountId = resolveTargetAccount(userId, request, accountsCreated, productsCreated);
 
-        long merchantsBefore = merchantRepository.findByUserId(userId).size();
+        long merchantsBefore = merchantRepository.countByUserId(userId);
 
         int skipped = 0;
         Map<String, Integer> categoryTally = new LinkedHashMap<>();
@@ -545,7 +545,7 @@ public class ImportService {
             transfersIdentified = tally.transfersIdentified();
         }
 
-        long merchantsAfter = merchantRepository.findByUserId(userId).size();
+        long merchantsAfter = merchantRepository.countByUserId(userId);
         int newMerchantsLearned = (int) Math.max(0, merchantsAfter - merchantsBefore);
 
         List<String> warnings = new ArrayList<>();

@@ -13,6 +13,12 @@ import java.util.UUID;
 public interface MerchantRepository extends JpaRepository<Merchant, UUID> {
     List<Merchant> findByUserId(UUID userId);
 
+    /** ImportService needs only the SIZE of the merchant table before and after an import, to
+     *  report how many were newly learned. It was calling findByUserId(userId).size(), which loads
+     *  and hydrates every merchant twice per import to produce a number the database can return
+     *  directly. */
+    long countByUserId(UUID userId);
+
     // Ownership-scoped lookup -- MerchantService uses this (never a bare findById) so a merchant
     // id belonging to another user can't be read, renamed, or merged just by guessing/enumerating
     // UUIDs. Same pattern as CurrentUser-scoped queries elsewhere in the codebase.

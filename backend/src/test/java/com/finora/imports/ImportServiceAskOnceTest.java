@@ -392,9 +392,13 @@ class ImportServiceAskOnceTest {
 
     @Test
     void confirm_reportsNewMerchantsLearned_asTheNetIncreaseInMerchantCountForThisUser() throws Exception {
-        when(merchantRepository.findByUserId(userId))
-                .thenReturn(List.of()) // "before" snapshot
-                .thenReturn(List.of(new Merchant(), new Merchant())); // "after" snapshot: 2 new merchants
+        // countByUserId, not findByUserId().size(): ImportService only ever needed the number, and
+        // was loading and hydrating the user's whole merchant table twice per import to get it.
+        // Equivalent by construction -- Merchant carries no soft-delete filter, so the count and
+        // the list size are the same value.
+        when(merchantRepository.countByUserId(userId))
+                .thenReturn(0L)  // "before" snapshot
+                .thenReturn(2L); // "after" snapshot: 2 new merchants
 
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
                 BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
