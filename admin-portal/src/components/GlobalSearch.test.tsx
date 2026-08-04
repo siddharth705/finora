@@ -5,6 +5,8 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GlobalSearch } from './GlobalSearch';
 import { adminSearchApi } from '../api/endpoints';
+import { useAdminAuth } from '../context/AdminAuthContext';
+import { mockAdminAuthState } from '../test/mockAdminAuth';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -13,6 +15,13 @@ vi.mock('react-router-dom', async () => {
 });
 vi.mock('../api/endpoints', () => ({
   adminSearchApi: { search: vi.fn() },
+}));
+// GlobalSearch reads hasPermission('USER_VIEW') off this hook to decide whether it renders at
+// all -- mocking it lets most tests below drive "an admin who can search" directly, and one test
+// drive "an admin who can't" (see AdminSearchController.search's own doc comment on why USER_VIEW
+// is the real backend gate this component now has to mirror).
+vi.mock('../context/AdminAuthContext', () => ({
+  useAdminAuth: vi.fn(),
 }));
 
 function renderSearch() {
@@ -30,6 +39,36 @@ describe('GlobalSearch', () => {
   beforeEach(() => {
     vi.mocked(adminSearchApi.search).mockReset();
     mockNavigate.mockReset();
+    // Default: an admin who holds USER_VIEW, same as every test below expected before this
+    // permission gate existed. The one test that needs the opposite overrides this explicitly.
+    vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({
+      permissions: ['USER_VIEW'],
+      hasPermission: (p) => p === 'USER_VIEW',
+    }));
+  });
+
+  /**
+   * Bug fix: AdminSearchController.search() requires USER_VIEW (it used to have no @PreAuthorize
+   * at all -- a real PII leak, see that controller's doc comment), but this component rendered
+   * and queried unconditionally for any signed-in admin. An admin without USER_VIEW (e.g. a
+   * support role scoped to just AUDIT_VIEW) got a search box that always 403'd, silently
+   * misrepresented here as "no matches" since neither `data` nor `isFetching` distinguish the two.
+   * Now hidden entirely for such an account, matching Sidebar.tsx's own pattern.
+   */
+  it('renders nothing for an admin without USER_VIEW', () => {
+    vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({ permissions: [], hasPermission: () => false }));
+    renderSearch();
+
+    expect(screen.queryByPlaceholderText(/search users, merchants, banks, rules/i)).not.toBeInTheDocument();
+  });
+
+  it('never calls the search API for an admin without USER_VIEW, even if a query is somehow set', async () => {
+    vi.mocked(adminSearchApi.search).mockResolvedValue([]);
+    vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({ permissions: [], hasPermission: () => false }));
+    renderSearch();
+
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(adminSearchApi.search).not.toHaveBeenCalled();
   });
 
   it('does not query the backend until at least 2 characters are typed', async () => {
