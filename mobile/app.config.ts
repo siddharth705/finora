@@ -17,8 +17,13 @@ import type { ExpoConfig } from 'expo/config';
 // Each googleServicesFile key is only emitted when the file is actually present. Pointing the key
 // at a missing path makes every Expo CLI command print a "Could not parse Expo config" error,
 // which would greet every fresh clone before they've had a chance to download credentials.
-// Omitting it instead degrades the same way the backend's FirebaseConfig does: the app still
-// builds and runs, and only phone-verification-gated screens fail until credentials are in place.
+//
+// What omitting it buys is narrower than it looks: the JS-only commands (`expo start`, `expo
+// export`, the CI bundle job) work on a fresh clone. A NATIVE build does not. `expo prebuild` and
+// `expo run:android`/`run:ios` fail in @react-native-firebase's own config plugin with "Path to
+// google-services.json is not defined", because that plugin requires the key regardless of what
+// this file does. Verified, not assumed. See mobile-setup.md's "An iOS build error that points at
+// the wrong thing", which documents the same failure and its fix: download the file.
 const iosGoogleServices = './GoogleService-Info.plist';
 const androidGoogleServices = './google-services.json';
 const here = (p: string) => path.join(__dirname, p);
