@@ -22,13 +22,21 @@ import static org.mockito.Mockito.*;
  */
 class RateLimitFilterTest {
 
-    /** Mirrors what Spring Boot's own JacksonAutoConfiguration actually gives the managed
-     *  ObjectMapper bean (JavaTimeModule registered, among other things) -- a bare `new
-     *  ObjectMapper()` here would reproduce the exact bug this filter used to have. */
-    private RateLimitFilter newFilter() {
+    /**
+     * The ObjectMapper mirrors what Spring Boot's own JacksonAutoConfiguration gives the managed
+     * bean (JavaTimeModule registered, among other things) -- a bare `new ObjectMapper()` here
+     * would reproduce the exact bug this filter used to have.
+     *
+     * trust-proxy-headers is set on the injected ClientIpResolver rather than on the filter: the
+     * filter no longer resolves IPs itself. That logic had been duplicated between the two, with a
+     * comment asking whoever changed it to keep both copies in sync.
+     */
+    private RateLimitFilter newFilter(boolean trustProxyHeaders) {
         ObjectMapper objectMapper = new ObjectMapper();
         objectMapper.registerModule(new JavaTimeModule());
-        return new RateLimitFilter(objectMapper);
+        ClientIpResolver clientIpResolver = new ClientIpResolver();
+        ReflectionTestUtils.setField(clientIpResolver, "trustProxyHeaders", trustProxyHeaders);
+        return new RateLimitFilter(objectMapper, clientIpResolver);
     }
 
     private HttpServletRequest requestFor(String path, String remoteAddr, String forwardedFor) {
@@ -42,8 +50,8 @@ class RateLimitFilterTest {
 
     /** Drives the same request through the filter enough times to exceed whichever limiter applies
      *  for the IP the filter actually resolves -- the resulting 429 (or lack of one) is the
-     *  observable proof of which IP and which endpoint were used, since both resolveClientIp() and
-     *  limiterFor() are private. The count must clear the most generous bucket in the class
+     *  observable proof of which IP and which endpoint were used, since limiterFor() is private
+     *  and the IP resolution now happens inside the injected ClientIpResolver. The count must clear the most generous bucket in the class
      *  (passwordChangeLimiter, 15 per window), not just login's 10 -- at exactly 15 the 15th
      *  request is still allowed, which previously made this helper unable to trip it at all. */
     private boolean tripsRateLimitAfterManyRequests(RateLimitFilter filter, HttpServletRequest request) throws Exception {
@@ -59,8 +67,7 @@ class RateLimitFilterTest {
 
     @Test
     void resolvesToRemoteAddr_whenProxyHeadersAreNotTrusted_evenIfForwardedForIsPresent() throws Exception {
-        RateLimitFilter filter = newFilter();
-        ReflectionTestUtils.setField(filter, "trustProxyHeaders", false);
+        RateLimitFilter filter = newFilter(false);
 
         // Two different callers, both claiming (via a spoofable header) to be the same
         // "trusted-looking" IP, but with genuinely different getRemoteAddr() values -- with
@@ -79,8 +86,7 @@ class RateLimitFilterTest {
 
     @Test
     void resolvesToForwardedForsLastEntry_whenProxyHeadersAreTrusted() throws Exception {
-        RateLimitFilter filter = newFilter();
-        ReflectionTestUtils.setField(filter, "trustProxyHeaders", true);
+        RateLimitFilter filter = newFilter(true);
 
         // Every request "arrives from" the same proxy IP (getRemoteAddr()), the way it actually
         // would behind Railway's edge proxy -- a reverse proxy APPENDS the IP it observed to
@@ -111,8 +117,7 @@ class RateLimitFilterTest {
      */
     @Test
     void bugFix_ignoresAClientSuppliedLeadingHop_andUsesOnlyTheProxyAppendedLastEntry() throws Exception {
-        RateLimitFilter filter = newFilter();
-        ReflectionTestUtils.setField(filter, "trustProxyHeaders", true);
+        RateLimitFilter filter = newFilter(true);
         FilterChain chain = mock(FilterChain.class);
 
         boolean tripped = false;
@@ -133,8 +138,7 @@ class RateLimitFilterTest {
 
     @Test
     void fallsBackToRemoteAddr_whenTrustedButForwardedForIsMissing() throws Exception {
-        RateLimitFilter filter = newFilter();
-        ReflectionTestUtils.setField(filter, "trustProxyHeaders", true);
+        RateLimitFilter filter = newFilter(true);
 
         HttpServletRequest request = requestFor("/api/v1/auth/login", "10.0.0.5", null);
         FilterChain chain = mock(FilterChain.class);
@@ -170,8 +174,7 @@ class RateLimitFilterTest {
         };
 
         for (String path : encodedSpellings) {
-            RateLimitFilter filter = newFilter();
-            ReflectionTestUtils.setField(filter, "trustProxyHeaders", false);
+            RateLimitFilter filter = newFilter(false);
             HttpServletRequest request = requestFor(path, "10.0.0.77", null);
 
             assertThat(tripsRateLimitAfterManyRequests(filter, request))
@@ -186,8 +189,7 @@ class RateLimitFilterTest {
      *  are effectively unlimited spellings. */
     @Test
     void bugFix_anEncodedSpellingSharesTheCanonicalPathsBucket() throws Exception {
-        RateLimitFilter filter = newFilter();
-        ReflectionTestUtils.setField(filter, "trustProxyHeaders", false);
+        RateLimitFilter filter = newFilter(false);
         FilterChain chain = mock(FilterChain.class);
 
         // Exhaust the login limiter via the canonical path.
@@ -206,8 +208,7 @@ class RateLimitFilterTest {
      *  limiter. A path that merely starts with a limited one is a different endpoint. */
     @Test
     void doesNotLimitUnrelatedPathsThatSharePrefix() throws Exception {
-        RateLimitFilter filter = newFilter();
-        ReflectionTestUtils.setField(filter, "trustProxyHeaders", false);
+        RateLimitFilter filter = newFilter(false);
 
         assertThat(tripsRateLimitAfterManyRequests(filter, requestFor("/api/v1/auth/login/extra", "10.0.0.99", null)))
                 .isFalse();
@@ -219,8 +220,7 @@ class RateLimitFilterTest {
      *  must be stripped before matching rather than causing every limiter to silently miss. */
     @Test
     void matchesWhenDeployedUnderAContextPath() throws Exception {
-        RateLimitFilter filter = newFilter();
-        ReflectionTestUtils.setField(filter, "trustProxyHeaders", false);
+        RateLimitFilter filter = newFilter(false);
 
         HttpServletRequest request = mock(HttpServletRequest.class);
         when(request.getRequestURI()).thenReturn("/finora/api/v1/auth/login");
@@ -237,8 +237,7 @@ class RateLimitFilterTest {
      *  budget by rotating across start/verify-otp/complete). */
     @Test
     void passwordChangeSteps_shareOneRateLimitBucket() throws Exception {
-        RateLimitFilter filter = newFilter();
-        ReflectionTestUtils.setField(filter, "trustProxyHeaders", false);
+        RateLimitFilter filter = newFilter(false);
         FilterChain chain = mock(FilterChain.class);
 
         boolean tripped = false;

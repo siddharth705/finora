@@ -95,8 +95,18 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // a redundant, differently-configured mapper instance.
     private final ObjectMapper objectMapper;
 
-    @org.springframework.beans.factory.annotation.Value("${app.security.trust-proxy-headers:false}")
-    private boolean trustProxyHeaders;
+    /**
+     * Injected rather than reimplemented. This filter used to carry a byte-identical private copy
+     * of ClientIpResolver.resolve(), and that class's own doc comment ended "keep the two in sync
+     * if this logic ever changes" -- an instruction where a mechanism belongs, on a security
+     * control where the two failure directions are collapsing every user onto one rate-limit
+     * bucket (the proxy's own IP) or letting anyone spoof any IP and bypass the limiter entirely.
+     *
+     * The original reason for duplicating was not wanting to touch this filter's already-tested
+     * internals. That no longer holds: the filter and its tests were both reworked in 6ee925a.
+     */
+    private final ClientIpResolver clientIpResolver;
+
 
     /** One rate-limited endpoint. Kept as a pattern rather than a String so matching goes through
      *  the same engine that decides which controller actually handles the request. */
@@ -110,8 +120,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private final List<LimitedEndpoint> limitedEndpoints;
 
-    public RateLimitFilter(ObjectMapper objectMapper) {
+    public RateLimitFilter(ObjectMapper objectMapper, ClientIpResolver clientIpResolver) {
         this.objectMapper = objectMapper;
+        this.clientIpResolver = clientIpResolver;
         this.limitedEndpoints = List.of(
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/login"), loginLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/register"), registerLimiter),
@@ -127,7 +138,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     protected void doFilterInternal(@NonNull HttpServletRequest request,
                                      @NonNull HttpServletResponse response,
                                      @NonNull FilterChain filterChain) throws ServletException, IOException {
-        String ip = resolveClientIp(request);
+        String ip = clientIpResolver.resolve(request);
 
         RateLimiter limiter = limiterFor(request);
 
@@ -187,27 +198,4 @@ public class RateLimitFilter extends OncePerRequestFilter {
         return PathContainer.parsePath(uri.isEmpty() ? "/" : uri);
     }
 
-    /** Bug fix: this used to take the FIRST entry of X-Forwarded-For on the (backwards) theory
-     *  that "the first entry is the original client." A reverse proxy APPENDS the IP it observed
-     *  to whatever X-Forwarded-For it received from upstream -- it does not replace the header --
-     *  so with this app deployed behind exactly one trusted proxy (Railway's edge, per this
-     *  filter's own class doc comment and application.yml's comment on this property), the LAST
-     *  entry is the one the trusted proxy itself appended, and every entry before it (including
-     *  the first) is whatever the original client chose to send, fully attacker-controlled. A
-     *  request with a client-supplied "X-Forwarded-For: 1.2.3.4" header arrives here as
-     *  "1.2.3.4, &lt;real address&gt;" -- taking the first entry let every rate limiter in this
-     *  class (login, register, forgot-password, import staging) be bypassed completely by
-     *  sending a fresh random value on every request, since each one landed in its own bucket.
-     *  Falls back to getRemoteAddr() if the header is missing/blank even when trust is enabled,
-     *  rather than resolving to null/empty. */
-    private String resolveClientIp(HttpServletRequest request) {
-        if (trustProxyHeaders) {
-            String forwardedFor = request.getHeader("X-Forwarded-For");
-            if (forwardedFor != null && !forwardedFor.isBlank()) {
-                String[] hops = forwardedFor.split(",");
-                return hops[hops.length - 1].trim();
-            }
-        }
-        return request.getRemoteAddr();
-    }
 }
