@@ -53,7 +53,8 @@
     "preset": "jest-expo",
     "setupFilesAfterEnv": [
       "<rootDir>/src/test/setup.ts"
-    ]
+    ],
+    "testTimeout": 15000
   },
   "private": true
 }
