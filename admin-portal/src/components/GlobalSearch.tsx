@@ -58,7 +58,7 @@ export function GlobalSearch() {
   function handleSelect(result: SearchResultDto) {
     setOpen(false);
     setQuery('');
-    navigate(result.link);
+    void navigate(result.link);
   }
 
   function clear() {

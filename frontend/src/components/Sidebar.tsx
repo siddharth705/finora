@@ -39,7 +39,7 @@ export function Sidebar() {
     logout();
     // logout() already clears the token in context, which makes ProtectedRoute redirect
     // on its own re-render — this just makes the jump immediate and explicit.
-    navigate('/login');
+    void navigate('/login');
   }
 
   return (

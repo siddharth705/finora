@@ -68,7 +68,17 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
     <ThemeProvider>
     <AuthProvider>
-      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      {/* No `future` prop since the v7 upgrade: v7_startTransition and v7_relativeSplatPath were
+          opt-in flags for exactly this migration and are now the only behaviour, so v7 removed the
+          prop entirely. Opting into them early is what made this upgrade small.
+
+          The other v7 change visible across this codebase: useNavigate()'s returned function now
+          returns a Promise (it awaits loaders on a data router). Every navigate() call here is
+          fire-and-forget, so they read `void navigate(...)` -- that is not decoration, it is
+          @typescript-eslint/no-floating-promises being satisfied deliberately rather than
+          suppressed. The rule flagged all 14 call sites across both web apps the moment the
+          upgrade landed, which is the entire reason lint was wired into CI first. */}
+      <BrowserRouter>
         {/* The outer of two boundaries, and the lesser one. Authenticated pages are caught by
             AppShell's inner boundary first (React unwinds to the nearest one), which is what keeps
             the navigation chrome alive. This one exists for the marketing and auth pages, which

@@ -82,7 +82,7 @@ export default function VerifyPhone() {
       const idToken = await confirmPhoneVerificationCode(confirmation, otp);
       await phoneApi.verify(idToken);
       await completePhoneVerification();
-      navigate('/');
+      void navigate('/');
     } catch (err: any) {
       setError(err?.message ?? err?.response?.data?.message ?? friendlyFirebaseError(err));
     } finally {

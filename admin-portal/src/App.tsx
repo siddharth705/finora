@@ -35,7 +35,10 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <NotificationProvider>
         <AdminAuthProvider>
-          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          {/* No `future` prop since the v7 upgrade: v7_startTransition and v7_relativeSplatPath
+              were opt-in flags for exactly this migration and are now the only behaviour, so v7
+              removed the prop entirely. */}
+          <BrowserRouter>
             {/* The outer of two boundaries, and the lesser one. Pages that use AdminLayout are
                 caught by its inner boundary first (React unwinds to the nearest one), which is what
                 keeps the sidebar alive. This one covers the routes that render standalone with no

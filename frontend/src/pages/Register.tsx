@@ -116,7 +116,7 @@ export default function Register() {
       const { phoneVerified } = await register(email.trim(), password, trimmedName, `+91${phoneNumber}`);
       // VerifyPhone.tsx fetches the account's own phone number itself (now that registration
       // leaves the user authenticated) rather than needing it passed through router state.
-      navigate(phoneVerified ? '/app' : '/verify-phone');
+      void navigate(phoneVerified ? '/app' : '/verify-phone');
     } catch (err: any) {
       setError(err.response?.data?.message ?? 'Registration failed.');
     } finally {

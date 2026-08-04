@@ -108,9 +108,11 @@ export default function ResetPassword() {
       const firebaseIdToken = await confirmPhoneVerificationCode(confirmation, otp);
       await authApi.resetPassword(token, firebaseIdToken, password);
       setDone(true);
-      setTimeout(() => navigate('/login', {
-        state: { message: 'Password reset successfully. Please sign in using your new password.' },
-      }), 2000);
+      setTimeout(() => {
+        void navigate('/login', {
+          state: { message: 'Password reset successfully. Please sign in using your new password.' },
+        });
+      }, 2000);
     } catch (err: any) {
       setError(err.response?.data?.message ?? friendlyFirebaseError(err));
     } finally {

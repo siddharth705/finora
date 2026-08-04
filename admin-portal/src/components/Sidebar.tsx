@@ -37,7 +37,7 @@ export function Sidebar() {
 
   function handleLogout() {
     logout();
-    navigate('/login');
+    void navigate('/login');
   }
 
   // Nav items whose permission (if any) the account actually holds -- a support-scoped admin

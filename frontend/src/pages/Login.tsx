@@ -54,7 +54,7 @@ export default function Login() {
   // sign-out reason needs the same treatment for the same reason, minus the history nuance: it
   // lives in storage, so it would otherwise outlive not just this render but the whole tab.
   useEffect(() => {
-    if (banner) navigate(location.pathname, { replace: true });
+    if (banner) void navigate(location.pathname, { replace: true });
     if (sessionEndedReason) safeStorage.removeItem(SESSION_ENDED_REASON_KEY);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -73,7 +73,7 @@ export default function Login() {
     setLoading(true);
     try {
       const phoneVerified = await login(identifier.trim(), password);
-      navigate(phoneVerified ? '/app' : '/verify-phone');
+      void navigate(phoneVerified ? '/app' : '/verify-phone');
     } catch (err: any) {
       setError(err.response?.data?.message ?? 'Login failed. Check your credentials.');
     } finally {

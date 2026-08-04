@@ -60,7 +60,7 @@ export default function Login() {
     // history.state otherwise survives a manual page refresh (unlike the in-memory banner state
     // above), which would re-show a stale "password reset" confirmation on an unrelated future
     // visit to this same history entry.
-    if (banner) navigate(location.pathname, { replace: true });
+    if (banner) void navigate(location.pathname, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -85,7 +85,7 @@ export default function Login() {
     setSubmitting(true);
     try {
       const verified = await login(identifier, password);
-      navigate(nextRouteFor(verified));
+      void navigate(nextRouteFor(verified));
     } catch (err: any) {
       setError(err?.message ?? 'Sign in failed. Check your credentials and try again.');
     } finally {

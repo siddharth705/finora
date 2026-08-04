@@ -67,7 +67,7 @@ export default function StatementHistory() {
     setError(null);
     try {
       const result = await statementImportsApi.reimport(statement.id);
-      navigate('/app/import', {
+      void navigate('/app/import', {
         state: { reimportId: statement.id, staging: result.staging, accountId: result.accountId, accountName: result.accountName },
       });
     } catch (e: any) {

@@ -116,9 +116,11 @@ export default function ResetPassword() {
       // router state. An admin who just reset their password landed on the login screen with zero
       // acknowledgment it worked. Text kept identical across both apps for the same reason
       // friendlyFirebaseError() above was just aligned.
-      setTimeout(() => navigate('/login', {
-        state: { message: 'Password reset successfully. Please sign in using your new password.' },
-      }), 2000);
+      setTimeout(() => {
+        void navigate('/login', {
+          state: { message: 'Password reset successfully. Please sign in using your new password.' },
+        });
+      }, 2000);
     } catch (err: any) {
       setError(err.response?.data?.message ?? friendlyFirebaseError(err));
     } finally {

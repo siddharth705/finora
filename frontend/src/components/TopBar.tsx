@@ -89,13 +89,13 @@ export function TopBar() {
     const q = searchValue.trim();
     if (!q) return;
     setOpenMenu(null);
-    navigate(`/app/transactions?q=${encodeURIComponent(q)}`);
+    void navigate(`/app/transactions?q=${encodeURIComponent(q)}`);
   }
 
   function handleLogout() {
     setOpenMenu(null);
     logout();
-    navigate('/login');
+    void navigate('/login');
   }
 
   // Ctrl/Cmd+K focuses search from anywhere in the app; Escape closes whatever's open — both
@@ -241,7 +241,7 @@ export function TopBar() {
                 type="button"
                 onClick={() => {
                   setOpenMenu(null);
-                  navigate('/app/settings');
+                  void navigate('/app/settings');
                 }}
                 className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-ink hover:bg-bg"
               >
