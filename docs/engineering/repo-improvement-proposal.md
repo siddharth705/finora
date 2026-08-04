@@ -13,7 +13,9 @@ are still unimplemented and awaiting prioritisation.
 | 5 | Merchant resolution N+1 | **Measured, partly fixed** — the estimate was ~10x too high; only the pure waste was fixed. See item 5. |
 | 6 | Break up `UserDetail.tsx` | **Done** — `2cadf15`, `230f346` |
 | 8 | One client-IP implementation | **Done** — `98a385c` |
-| 9–12 | — | Not started |
+| 9 | Code-split the web bundles | **Done** — `ee23ac4`. First-load gzip −57% (user app) and −45% (admin). |
+| 12 | Accessibility baseline | **Done** — `968e997`. Measured with axe, not jsx-a11y (see item 12); 4 critical violations found and fixed. |
+| 10, 11 | — | Not started |
 
 Everything below is the original text, with a **Resolution** note appended to each completed item.
 The point of this document was to keep "evaluate first" separate from "fix immediately"; the
@@ -485,6 +487,27 @@ indistinguishable from the blank-page failure just fixed. Do item 1 first.
 
 **Dependencies.** Cleaner after item 2. Should follow item 1.
 
+**Resolution.** Done in `ee23ac4`, and the measurement supported it, unlike item 5's.
+
+The sourcemap showed the user app's single 842 kB chunk was 20.9% chart.js and ~25% firebase —
+neither needed by a visitor reading the marketing page. chart.js is imported only by Dashboard and
+Investments; firebase arrives through `lib/firebase.ts`, a **static** import, so the existing lazy
+`getFirebaseAuth()` deferred initialisation but never the download.
+
+| | before | after | change |
+|---|---|---|---|
+| User app, eager JS | 842.3 kB / 250.0 gzip | 341.4 kB / 106.7 gzip | **−57% gzip** |
+| Admin portal, eager JS | 573.2 kB / 163.2 gzip | 271.5 kB / 90.0 gzip | **−45% gzip** |
+| Total across all chunks | 842.3 / 573.2 kB | 853.0 / 586.0 kB | +1.3% / +2.2% |
+
+The cost line matters: a user who eventually visits every route transfers slightly more. Halving
+first load is worth it, but it is a trade, not a free win.
+
+Landing and admin Login stay eager — they are the first paint, so lazying them would add a round
+trip to the most common entry. Suspense sits inside `AppShell` next to the error boundary so the
+chrome stays up during a chunk fetch; the fallback is a line of text, never a blank screen, which
+is why item 1 was a stated precondition.
+
 ---
 
 ### 10. Move rate-limit state out of process before a second instance exists
@@ -575,6 +598,30 @@ adding it in warning mode alongside item 3 rather than as a separate initiative,
 rather than all at once.
 
 **Dependencies.** Cheapest bundled with item 3, since it is the same CI job and the same config file.
+
+**Resolution.** Done in `968e997` — but not with `eslint-plugin-jsx-a11y`, which this item
+suggested. **No release of that plugin supports ESLint 10**, which both apps are on (its peer range
+stops at 9), so the "bundle it with item 3" plan was not actually available. Using axe instead
+turned out better: it inspects the rendered DOM rather than JSX patterns, which is what caught
+three of the four findings.
+
+Measured across every page reachable without a session:
+
+| App | Page | Violation |
+|---|---|---|
+| User | Landing | critical `button-name` (1) |
+| Admin | ForgotPassword | critical `label` (1) |
+| Admin | ResetPassword | critical `label` (2) |
+
+All four fixed. The admin ones are the interesting case: those forms **do** have visible `<label>`
+elements that read correctly on screen — they were simply never associated with their inputs (no
+`htmlFor`/`id`, no nesting). Visually labelled, programmatically anonymous, on the account-recovery
+path. An attribute count could never have seen that; a rendered-DOM check did immediately.
+
+**Known limits, so a green run is not over-read:** jsdom has no layout engine, so `color-contrast`
+and other geometry-dependent rules cannot run, and authenticated pages are not covered yet. Green
+means "nothing detectable without a browser", not "accessible". A real audit still needs a browser
+and a person.
 
 ---
 
