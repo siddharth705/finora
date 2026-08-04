@@ -200,6 +200,7 @@ function RoleCard({
       {canManageRoles && grantableePermissions.length > 0 && (
         <div className="flex items-center gap-1.5 pt-3 border-t border-border">
           <select
+            aria-label="Grant a permission"
             value={selectedPermission}
             onChange={(e) => setSelectedPermission(e.target.value)}
             className="flex-1 bg-bg border border-border rounded-lg px-2 py-1.5 text-xs"

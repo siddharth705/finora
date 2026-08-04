@@ -290,6 +290,7 @@ function UsersTable() {
             type: 'select', key: 'status', value: status,
             onChange: (v) => { setStatus(v); setPage(0); },
             placeholder: 'All statuses',
+            label: 'Filter by status',
             options: [{ label: 'Active', value: 'ACTIVE' }, { label: 'Suspended', value: 'SUSPENDED' }],
           },
         ]}

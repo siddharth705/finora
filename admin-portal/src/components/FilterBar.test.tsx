@@ -13,6 +13,7 @@ function baseFields(onSearchChange = vi.fn(), onStatusChange = vi.fn()): FilterF
     { type: 'search', key: 'q', value: '', onChange: onSearchChange, placeholder: 'Search…' },
     {
       type: 'select', key: 'status', value: '', onChange: onStatusChange, placeholder: 'All statuses',
+      label: 'Filter by status',
       options: [{ label: 'Active', value: 'ACTIVE' }, { label: 'Suspended', value: 'SUSPENDED' }],
     },
   ];
@@ -57,6 +58,19 @@ describe('FilterBar', () => {
     await user.selectOptions(screen.getByDisplayValue('All statuses'), 'ACTIVE');
 
     expect(onStatusChange).toHaveBeenCalledWith('ACTIVE');
+  });
+
+  /**
+   * Bug fix: this select had no accessible name at all -- a real, critical axe "select-name"
+   * violation. `placeholder` only supplies the visible "All statuses" option's text, which isn't
+   * an accessible-name mechanism for <select>, so a screen reader announced this control as
+   * nothing more than "combo box". `label` is now required on every select field specifically to
+   * close that gap; getByRole's `name` matcher only succeeds if aria-label is actually wired up.
+   */
+  it('gives the select field an accessible name from `label`', () => {
+    render(<FilterBar<Filters> fields={baseFields()} />);
+
+    expect(screen.getByRole('combobox', { name: 'Filter by status' })).toBeInTheDocument();
   });
 
   it('renders trailingActions', () => {
