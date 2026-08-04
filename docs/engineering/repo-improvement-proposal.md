@@ -8,7 +8,7 @@ are still unimplemented and awaiting prioritisation.
 | 1 | Crash reporting and error boundaries | **Done** — `c9357cd` |
 | 3 | Linters in CI | **Done** — `fbd7a5e` |
 | 4 | react-router advisory | **Done** — see the resolution note under item 4; the audit output is *expected* to still show 2 high |
-| 7 | Backend coverage measurement | **Done** — see item 7; it immediately surfaced a separate, larger defect |
+| 7 | Backend coverage measurement | **Done** — surfaced 29 integration tests that had never run, plus a production 500. See item 7. |
 | 2, 5, 6, 8–12 | — | Not started |
 
 Everything below is the original text, with a **Resolution** note appended to each completed item.
@@ -359,19 +359,40 @@ that the suite includes "the Testcontainers ones" has never been true.
 This is exactly the class of thing this item existed to surface, and it is a stronger result than
 "where is there no net" — it is "a third of the safety net was never attached".
 
-**Deliberately not fixed here.** Adding `**/*IT.java` to surefire's includes does make them run;
-that was verified (970 tests collected instead of 941). Whether they *pass* is unknown, because
-they have never executed once. Enabling 29 never-run test classes on `main` without that answer
-could red the pipeline for the whole team, so it needs its own change, verified against a working
-Docker daemon. See the follow-up note below.
+**The 29 ITs are now enabled and green.** Done in a follow-up once the Docker blocker below was
+resolved. `**/*IT.java` added to surefire's includes; the suite went from **941 tests to 1055**,
+and coverage from 78.3% to **88.0% instructions / 78.0% branches**, with `com.finora.controller`
+going **0.0% to 63.0%**.
 
-**Follow-up: the Docker blocker.** Verifying that locally is currently impossible on Docker Desktop
-29.x. Engine 29 raised its minimum API version to 1.40; the docker-java bundled with Testcontainers
-1.20.1 (this project's pin) negotiates 1.32, and every container creation fails with
-`client version 1.32 is too old`. Bumping to 1.21.3 did not help, and `DOCKER_API_VERSION` breaks
-the ping path instead. CI is unaffected today because `ubuntu-latest` still ships an older engine
-— which is precisely why this would otherwise go unnoticed until it blocks a developer. Worth its
-own investigation alongside enabling the ITs.
+Turning them on surfaced 78 failures, which came down to four root causes plus a set of fixture
+bugs:
+
+1. **A real production bug.** `GET /api/v1/admin/audit-logs` returned 500 on any request without
+   date filters, which is the default state of the admin Activity Feed, so the page 500'd on open.
+   `AuditLogRepository.search` wrote its bounds as a bare `:dateFrom IS NULL`; Hibernate emits a
+   twice-used named parameter as two placeholders, and the one appearing only in `? IS NULL` gives
+   PostgreSQL no type to infer, so it refused the statement (`42P18`). Fixed with an explicit
+   `CAST`, which the `:q` branch of that same query already had.
+2. **The shared container was never shared.** `AbstractIntegrationTest` claimed Testcontainers
+   reuse but used `@Testcontainers` + `@Container`, which stops the container after *each* test
+   class while Spring's context cache kept pointing at the dead port. Replaced with the singleton
+   pattern its comment always described.
+3. **`TestRestTemplate` on HttpURLConnection.** It silently drops restricted headers including
+   `Origin`, so the CORS test could never send the header it existed to verify, and it throws
+   `HttpRetryException` instead of surfacing a 401. Fixed by putting `httpclient5` on the test
+   classpath.
+4. **Fixture bugs in tests that had never run**: a `BaseEntity` `save()`/`merge()` trap that left
+   ids null, missing foreign-key rows, a permission name the schema already seeds, an unencoded
+   query string, a missing `Content-Type`, a missing per-test client IP that tripped the
+   registration rate limiter, and a concurrency test with no transaction.
+
+**The Docker blocker, resolved.** Docker Engine 29 raised its minimum API version to 1.40 while the
+docker-java bundled with Testcontainers falls back to 1.32, so every container failed with
+`client version 1.32 is too old`. The fix is one property, now set in `pom.xml`: docker-java reads
+`api.version`, **not** the `DOCKER_API_VERSION` environment variable, which is why setting that env
+var appears to do nothing and sent this investigation sideways for a while. Pinned to 1.40, the
+exact floor Engine 29 accepts and supported since Docker 19.03, so it works on old and new engines
+alike. Upgrading Testcontainers (1.20.1 to 1.21.3) does *not* fix it and was reverted.
 
 ---
 
