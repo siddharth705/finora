@@ -1,28 +1,36 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { lazy, Suspense } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AdminAuthProvider } from './context/AdminAuthContext';
 import { NotificationProvider } from './context/NotificationContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
+// Login stays eager: with no token it is the first paint for every visitor, so making it lazy
+// would add a round trip to the most common entry point.
 import Login from './pages/Login';
-import ForgotPassword from './pages/ForgotPassword';
-import ResetPassword from './pages/ResetPassword';
-import Setup from './pages/Setup';
-import VerifyPhone from './pages/VerifyPhone';
-import Dashboard from './pages/Dashboard';
-import Users from './pages/Users';
-import UserDetail from './pages/UserDetail';
-import Roles from './pages/Roles';
-import Banks from './pages/Banks';
-import MerchantIntelligence from './pages/MerchantIntelligence';
-import GlobalRules from './pages/GlobalRules';
-import LearningEngine from './pages/LearningEngine';
-import ReconciliationMonitor from './pages/ReconciliationMonitor';
-import PlatformAnalytics from './pages/PlatformAnalytics';
-import AuditLog from './pages/AuditLog';
-import SystemHealth from './pages/SystemHealth';
-import Diagnostics from './pages/Diagnostics';
-import Settings from './pages/Settings';
+
+// Everything else is route-split. Measured from the pre-split bundle's sourcemap, firebase is
+// ~33% of this app's source bytes (26.1% plus @firebase/*) and is reached only by the phone
+// verification and password reset screens -- lib/firebase.ts is a STATIC import, so the existing
+// lazy getFirebaseAuth() deferred initialisation but never the download.
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
+const Setup = lazy(() => import('./pages/Setup'));
+const VerifyPhone = lazy(() => import('./pages/VerifyPhone'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Users = lazy(() => import('./pages/Users'));
+const UserDetail = lazy(() => import('./pages/UserDetail'));
+const Roles = lazy(() => import('./pages/Roles'));
+const Banks = lazy(() => import('./pages/Banks'));
+const MerchantIntelligence = lazy(() => import('./pages/MerchantIntelligence'));
+const GlobalRules = lazy(() => import('./pages/GlobalRules'));
+const LearningEngine = lazy(() => import('./pages/LearningEngine'));
+const ReconciliationMonitor = lazy(() => import('./pages/ReconciliationMonitor'));
+const PlatformAnalytics = lazy(() => import('./pages/PlatformAnalytics'));
+const AuditLog = lazy(() => import('./pages/AuditLog'));
+const SystemHealth = lazy(() => import('./pages/SystemHealth'));
+const Diagnostics = lazy(() => import('./pages/Diagnostics'));
+const Settings = lazy(() => import('./pages/Settings'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -45,6 +53,11 @@ export default function App() {
                 layout -- login, setup, reset-password, verify-phone -- where it is the difference
                 between a recovery panel and the blank white page they would otherwise show. */}
             <ErrorBoundary context="root">
+            {/* Unlike the user app there is no shared shell to keep on screen -- AdminLayout lives
+                inside each page -- so this covers every route. The fallback is a line of text
+                rather than a blank screen, which is the failure lazy routes reintroduce most
+                easily. */}
+            <Suspense fallback={<p className="min-h-screen flex items-center justify-center bg-bg text-muted text-sm" role="status">Loading…</p>}>
             <Routes>
               <Route path="/login" element={<Login />} />
               <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -72,6 +85,7 @@ export default function App() {
                   Login rather than being handed an admin screen. */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
+            </Suspense>
             </ErrorBoundary>
           </BrowserRouter>
         </AdminAuthProvider>

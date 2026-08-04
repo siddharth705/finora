@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import type { ReactNode } from 'react';
+import { lazy, Suspense, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
@@ -7,29 +7,44 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
+// Landing stays eagerly imported: it is the first paint for an unauthenticated visitor, so making
+// it lazy would ADD a round trip to the most common entry point rather than removing one.
 import Landing from './pages/Landing';
-import Terms from './pages/Terms';
-import Privacy from './pages/Privacy';
-import About from './pages/About';
-import Careers from './pages/Careers';
-import Help from './pages/Help';
-import Login from './pages/Login';
-import Register from './pages/Register';
-import ForgotPassword from './pages/ForgotPassword';
-import ResetPassword from './pages/ResetPassword';
-import VerifyPhone from './pages/VerifyPhone';
-import Dashboard from './pages/Dashboard';
-import Ledger from './pages/Ledger';
-import Import from './pages/Import';
-import StatementHistory from './pages/StatementHistory';
-import Budgets from './pages/Budgets';
-import Goals from './pages/Goals';
-import Investments from './pages/Investments';
-import Reports from './pages/Reports';
-import Insights from './pages/Insights';
-import Profile from './pages/Profile';
-import Settings from './pages/Settings';
-import Setup from './pages/Setup';
+
+// Everything else is route-split. Measured from the pre-split bundle's sourcemap, the two heaviest
+// dependencies were chart.js (20.9% of source bytes) and firebase (~25%, counting @firebase/*) --
+// and a visitor reading the landing page needs neither. chart.js is imported only by Dashboard and
+// Investments, both authenticated; firebase is pulled in by lib/firebase.ts, which is a STATIC
+// import, so the existing lazy getFirebaseAuth() deferred initialisation but never the download.
+const Terms = lazy(() => import('./pages/Terms'));
+const Privacy = lazy(() => import('./pages/Privacy'));
+const About = lazy(() => import('./pages/About'));
+const Careers = lazy(() => import('./pages/Careers'));
+const Help = lazy(() => import('./pages/Help'));
+const Login = lazy(() => import('./pages/Login'));
+const Register = lazy(() => import('./pages/Register'));
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
+const VerifyPhone = lazy(() => import('./pages/VerifyPhone'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Ledger = lazy(() => import('./pages/Ledger'));
+const Import = lazy(() => import('./pages/Import'));
+const StatementHistory = lazy(() => import('./pages/StatementHistory'));
+const Budgets = lazy(() => import('./pages/Budgets'));
+const Goals = lazy(() => import('./pages/Goals'));
+const Investments = lazy(() => import('./pages/Investments'));
+const Reports = lazy(() => import('./pages/Reports'));
+const Insights = lazy(() => import('./pages/Insights'));
+const Profile = lazy(() => import('./pages/Profile'));
+const Settings = lazy(() => import('./pages/Settings'));
+const Setup = lazy(() => import('./pages/Setup'));
+
+/** Deliberately not a spinner. A route chunk is usually fetched in well under a frame's worth of
+ *  time on a warm connection, and a spinner that flashes for 30ms reads as jank; a quiet line of
+ *  text does not. It exists so the fallback is never an empty screen. */
+function PageLoading() {
+  return <p className="text-muted text-sm p-8" role="status">Loading…</p>;
+}
 
 function AppShell({ children }: { children: ReactNode }) {
   return (
@@ -41,7 +56,13 @@ function AppShell({ children }: { children: ReactNode }) {
             while the sidebar and top bar keep rendering, so the user can navigate away instead of
             being stranded. This is the boundary that does the real work -- see the outer one in
             App() for why there are two. */}
-        <ErrorBoundary context="app-route">{children}</ErrorBoundary>
+        <ErrorBoundary context="app-route">
+          {/* Inside the shell alongside the error boundary, and for the same reason: while a route
+              chunk downloads, the sidebar and top bar keep rendering, so a slow connection shows a
+              loading app rather than a blank page. A blank page is the exact failure c33a859
+              fixed, and lazy routes are the easiest way to reintroduce it. */}
+          <Suspense fallback={<PageLoading />}>{children}</Suspense>
+        </ErrorBoundary>
       </main>
     </div>
   );
@@ -85,6 +106,8 @@ export default function App() {
             render standalone with no chrome to preserve -- there it is the difference between a
             recovery panel and the blank white page those routes would otherwise show. */}
         <ErrorBoundary context="root">
+        {/* Covers the marketing and auth routes, which render standalone with no shell. */}
+        <Suspense fallback={<PageLoading />}>
         <Routes>
           {/* Marketing site */}
           <Route path="/" element={<Landing />} />
@@ -126,6 +149,7 @@ export default function App() {
               again. */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </Suspense>
         </ErrorBoundary>
       </BrowserRouter>
     </AuthProvider>
