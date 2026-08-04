@@ -51,9 +51,9 @@ Neither is a bug in the current design — a `StatementImport` is meant to be se
 means database growth tracks *confirmations*, not *uploads*, and the gap widens as sections and
 re-imports accumulate.
 
-**Consequence for the target design:** object keys should be **content-addressed** (hash the bytes,
-key on the digest). Then N sections and M re-imports of the same file reference one object instead
-of storing N+M copies, and the duplication problem disappears rather than moving to R2.
+**Consequence for the target design:** storage should be **content-addressed** — see §3. Then N
+sections and M re-imports of the same file reference one object instead of storing N+M copies, and
+the duplication is eliminated rather than relocated to cheaper storage.
 
 ### 2.2 Who actually reads the bytes
 
@@ -68,23 +68,145 @@ Five call sites, and it matters for retention:
 
 So originals serve exactly two user-facing purposes: **download** and **re-import**.
 
-## 3. Why R2 specifically
+### 2.3 Three paths delete stored bytes today
 
-- **Zero egress fees** — statement downloads cost nothing, which is the whole point versus S3.
-- **S3-compatible API.** The client talks S3, so moving later to AWS S3, MinIO, Wasabi or Spaces is
-  configuration, not business logic. Worth preserving deliberately: keep the S3 vocabulary at the
-  boundary and do not leak Cloudflare specifics past `StatementStorageService`.
-- **Lifecycle rules** make retention policy a configuration decision rather than application code —
-  particularly for the 48-hour `import_sessions` objects.
+Recorded because content-addressing changes what each one means (§3.2):
 
-## 4. Scope
+| Path | Trigger |
+|---|---|
+| `StatementImportService.delete()` | User deletes an imported statement |
+| `ImportSessionService` opportunistic cleanup | An expired (>48h) session swept on the next stage |
+| `ImportSessionService.deleteSession()` | User abandons a staged session |
 
-- Introduce a `StatementStorageService` abstraction.
-- Store all new uploads in R2; persist only the object key in PostgreSQL.
-- Content-address the keys so sections and re-imports share one object (§2.1).
-- Migrate existing `BYTEA` rows into R2.
-- Remove database file storage **only after** the migration is verified.
+All three are safe today for exactly one reason: **the bytes are a column, so deleting a row
+deletes that row's copy and nothing else's.**
+
+## 3. Target model — content-addressed, immutable objects
+
+A statement file becomes an immutable object identified by its content, referenced by any number of
+rows.
+
+```
+PDF ──SHA-256──► a8d34f9…  (identity)
+                     │
+                     └──► statements/a8/d3/a8d34f9….pdf   (storage key — internal)
+                                     │
+         ┌───────────────┬───────────┴───────┬───────────────┐
+    Import A        Import B            Import C        Import D
+   (section 1)     (section 2)        (re-import)     (re-import)
+```
+
+instead of four rows each owning their own 10 MB.
+
+### 3.1 Identity is the hash; the key is an implementation detail
+
+**The SHA-256 is the document's identity. The object key is a private layout decision.** They are
+stored separately and must not be conflated: the application looks documents up by hash, and
+`StatementStorageService` alone knows a hash maps to `statements/a8/d3/a8d34f9….pdf`.
+
+Why the separation earns its extra column: bucket layout is the thing most likely to change later —
+prefix sharding, a different extension convention, a move between buckets or providers. If the key
+*is* the identity, none of that is possible without rewriting how every row identifies its
+document. Keeping them apart makes a re-layout a background rewrite of keys while identity holds
+still.
+
+`statement_imports` and `import_sessions` therefore carry content hash, object key, and existing
+metadata — and no bytes.
+
+### 3.2 Deletion becomes reference-aware — the one thing that can lose data
+
+The consequence that does not survive a naive port, and why §2.3 exists.
+
+Once objects are shared, **deleting a row must not delete its object**, because another row may
+still reference the same content. Two cases are not hypothetical — they are the normal path:
+
+- **A session and the import it confirms hold identical bytes**, so they resolve to the same
+  object. Expiring the session must not remove the object the confirmed import depends on.
+- **Multi-section and re-imported statements share one object by design** (§2.1). Deleting one must
+  leave the others readable.
+
+Get this wrong and the failure is silent and delayed: the delete succeeds, and some *other*
+statement's download or re-import breaks days later.
+
+**Recommended resolution: deletion never touches R2.** All three paths in §2.3 drop the row and
+nothing else; a separate sweeper reclaims objects no row references.
+
+That follows directly from the failure semantics in §5.1 — an unreferenced object is a tolerable,
+reclaimable cost, while a row pointing at a missing object is unrecoverable. It also avoids
+reference counting, which would have to stay exactly correct across concurrent confirms,
+re-imports and session expiry to avoid causing the very data loss it was introduced to prevent.
+
+## 4. Provider must stay replaceable
+
+Business logic must never know whether a file came from R2, S3 or a local directory.
+`StatementStorageService` is the only boundary that knows, with at minimum:
+
+- **R2** — production
+- **Local filesystem** — development and tests
+
+The local implementation is not a nicety: it is what makes this testable without credentials, and
+what keeps the suite offline and deterministic.
+
+R2 speaks the S3 API, so the client is S3-shaped and a move to AWS S3, MinIO, Wasabi or Spaces is
+configuration rather than business logic. Worth protecting deliberately — keep S3 vocabulary at the
+boundary and let no Cloudflare specific leak past it.
+
+## 5. Phasing
+
+Additive first, destructive last; every step reversible until the final one.
+
+| Phase | Change | Reversible |
+|---|---|---|
+| **1** | Introduce `StatementStorageService`. Callers stop knowing where bytes live; implementation still reads/writes `BYTEA`. | Yes — no storage change at all |
+| **2** | New uploads go to R2. Persist object key + content hash + metadata. | Yes — old rows untouched |
+| **3** | Backfill existing `BYTEA` into R2, **deduplicating** — identical content writes one object. | Yes — column still present |
+| **4** | Drop `file_content`. | **No** |
+
+Phase 1 is deliberately behaviour-preserving. It is what makes every later phase small, and it can
+ship and prove itself in production while nothing yet depends on R2.
+
+Phase 4 is its own change, its own migration, its own deploy — and only once Phase 3 reports every
+row carrying a key.
+
+### 5.1 Dual-write semantics
+
+The only acceptable ordering:
+
+```
+upload ──► write object to R2 ──► persist row ──► commit
+```
+
+- **R2 write succeeds, transaction fails** → orphaned object. **Acceptable** — the sweeper (§3.2)
+  reclaims it.
+- **Row persisted, object missing** → **not acceptable**. Unrecoverable, and precisely what
+  writing R2-first prevents.
+
+Content-addressing makes retries naturally idempotent: re-uploading identical bytes after a partial
+failure resolves to the same object instead of creating a second.
+
+## 6. Retention — out of scope
+
+Retention behaviour is **preserved exactly as it is today**. Changing how long statements are kept
+is a product decision, revisited separately once this migration is complete.
+
+Engineering input for that later conversation, recorded now so it is not rediscovered:
+
+- **Deleting originals kills re-import.** `reimport()` re-parses the stored bytes and has no other
+  source. Any retention shorter than "forever" means re-import stops working for older statements,
+  and the UI would have to say so rather than fail.
+- **Protected PDFs are stored still encrypted**, password deliberately never persisted — so an old
+  statement whose password nobody remembers is *already* effectively un-re-importable. The
+  practical retention window for those is shorter than the storage window regardless.
+
+## 7. Scope
+
+- `StatementStorageService` abstraction, with R2 and local-filesystem implementations.
+- New uploads to R2; PostgreSQL keeps object key + content hash + metadata only.
+- Content-addressed identity so sections and re-imports share one object.
+- Deduplicating backfill of existing rows.
+- Reference-aware deletion (§3.2) — rows drop, objects are swept separately.
 - Lifecycle rules for temporary import-session objects.
+- Remove `BYTEA` only after the migration is verified.
 
 ### Explicitly out of scope
 
@@ -92,54 +214,11 @@ So originals serve exactly two user-facing purposes: **download** and **re-impor
 - Import workflow changes
 - User-visible behaviour changes
 - Layout intelligence
-- Retention policy changes (see §6 — a separate decision)
+- Retention policy changes (§6)
 
-## 5. Phasing
+## 8. Decisions recorded
 
-Deliberately additive first, destructive last, so every step has a rollback.
-
-**Phase 1 — dual write.** New uploads go to R2 *and* keep the `BYTEA` column. Reads still come from
-the database. Nothing depends on R2 yet, so an R2 outage or misconfiguration cannot break imports.
-
-**Phase 2 — backfill and switch reads.** A background migration uploads existing rows and records
-their keys. Once a row has a key, reads come from R2 with the column as fallback. Progress is
-measurable: rows with a key versus rows without.
-
-**Phase 3 — drop the column.** Only after Phase 2 reports complete. This is the irreversible step
-and it should be its own change, its own migration, its own deploy.
-
-### Failure semantics to settle before Phase 1
-
-The one genuinely hard part. Writing to two systems in one request has no free lunch:
-
-- R2 write succeeds, DB insert fails → orphaned object. Tolerable; a lifecycle rule or sweeper
-  reclaims unreferenced keys.
-- DB insert succeeds, R2 write failed → **row pointing at nothing**. Not tolerable. Write to R2
-  first and only persist the key after it is durable.
-
-Content-addressing helps here too: re-uploading identical bytes after a partial failure is
-idempotent rather than duplicating.
-
-## 6. Open question — how long do we keep originals?
-
-Raised and not answered. It is a product decision, not an engineering one, and it should be settled
-separately rather than smuggled into a storage migration.
-
-What engineering can contribute:
-
-- **Deleting originals kills re-import.** `reimport()` re-parses the stored bytes; there is no other
-  source. Any retention shorter than "forever" means re-import silently stops working for older
-  statements, and the UI would need to say so rather than fail.
-- **Password-protected PDFs are stored still encrypted** and the password is deliberately never
-  persisted, so re-importing one already requires the user to supply it again. Retention interacts
-  with that: an old statement nobody remembers the password for is already effectively
-  un-re-importable.
-- R2 lifecycle rules make any of "forever / 2 years / user chooses / delete after import" cheap to
-  implement once decided.
-
-## 7. Decisions recorded
-
-**PostgreSQL stays on Railway.** The backend runs there, and the import pipeline does many
+**PostgreSQL stays on Railway.** The backend runs there and the import pipeline makes many
 round-trips inside one transaction, so co-location is worth more than what a separate provider
 offers today.
 
@@ -149,12 +228,9 @@ Neon is reconsidered when — and only when — one of these becomes real:
 - Per-branch databases for development or testing
 - An operational reason to separate database hosting from application hosting
 
-A specific caution if that day comes: Neon's scale-to-zero suspends compute after inactivity, which
-conflicts with a long-lived HikariCP pool. Survivable (`maxLifetime` below the suspend window,
-keepalives, or disabling autosuspend) but it is real friction for a JVM app in a way it is not for
-serverless JS.
-
-**Resulting division of responsibility:**
+A caution for that day: Neon's scale-to-zero suspends compute after inactivity, which conflicts
+with a long-lived HikariCP pool. Survivable (`maxLifetime` below the suspend window, keepalives, or
+disabling autosuspend) but real friction for a JVM app in a way it is not for serverless JS.
 
 | Service | Owns |
 |---|---|
@@ -163,9 +239,10 @@ serverless JS.
 | Cloudflare Pages | Frontends |
 | Railway | Backend services |
 
-## 8. Success criteria
+## 9. Success criteria
 
-New uploads land in R2 with only the key in PostgreSQL; existing files migrate without loss;
-download and re-import behave exactly as before; `file_content` is dropped only after the migration
-is verified complete; and identical bytes across sections and re-imports occupy one object rather
-than many.
+New uploads land in R2 with only key, hash and metadata in PostgreSQL; existing files migrate with
+identical content stored once; download and re-import behave exactly as before; deleting one
+statement never breaks another's access to shared content; `file_content` is dropped only after the
+migration is verified complete; and the storage provider is swappable by configuration.
+
