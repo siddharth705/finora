@@ -3,12 +3,13 @@ import {
   FlatList, Pressable, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRoute, type RouteProp } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button } from '../../components/Button';
 import { Card, SectionHeading } from '../../components/Card';
 import { CategoryPickerModal } from './CategoryPickerModal';
 import { StagedRowCard } from './StagedRowCard';
-import { accountsApi, categoriesApi, importApi, type RNFile } from '../../api/endpoints';
+import { accountsApi, categoriesApi, importApi, statementImportsApi, type RNFile } from '../../api/endpoints';
 import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../../api/errorCodes';
 import { apiErrorCode, toUserMessage } from '../../lib/apiError';
 import { fmtCurrency } from '../../lib/format';
@@ -19,6 +20,7 @@ import {
 } from '../../lib/importPayload';
 import { pickStatement, type StatementFormat } from '../../lib/statementFile';
 import { radius, spacing, useTheme } from '../../theme';
+import type { AppTabParamList } from '../../navigation/types';
 import type { DetectedAccountInfo, ImportSummary, StagedRow, UnparseableRow } from '../../types';
 
 type Step = 'upload' | 'review' | 'summary';
@@ -28,6 +30,8 @@ export function ImportScreen() {
   const c = useTheme();
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
+  const route = useRoute<RouteProp<AppTabParamList, 'Import'>>();
+  const reimportParam = route.params?.reimport;
 
   const [step, setStep] = useState<Step>('upload');
   const [error, setError] = useState<string | null>(null);
@@ -48,6 +52,11 @@ export function ImportScreen() {
 
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [categoryPickerFor, setCategoryPickerFor] = useState<number | null>(null);
+  // Set only while reviewing a re-import (see the block below). Confirming one goes to a
+  // different endpoint and cannot change the account, so this drives both.
+  const [reimport, setReimport] = useState<{ statementImportId: string; accountId: string; accountName: string } | null>(null);
+  // The nonce of the re-import already loaded into the review step; see the block below.
+  const [consumedReimportNonce, setConsumedReimportNonce] = useState<number | null>(null);
 
   // A chosen PDF, held between picking and uploading so the optional password can be typed first,
   // and so a wrong password retries against the SAME file instead of sending the user back to the
@@ -69,6 +78,36 @@ export function ImportScreen() {
 
   const includedCount = useMemo(() => included.filter(Boolean).length, [included]);
 
+  /**
+   * Arriving from "Re-import" on the Statement History screen: the rows were already staged there,
+   * so this skips straight to review rather than asking for a file. The account is fixed to the one
+   * the statement already belongs to, which is why there is no account choice to make.
+   *
+   * Adjusted during render rather than in an effect -- React's documented pattern for "reset state
+   * when an input changes", and it avoids rendering the upload step for one frame before the
+   * review step replaces it.
+   *
+   * Keyed on the nonce, not the statement id, so re-importing the SAME statement twice is still
+   * seen as two separate arrivals. A tab's params outlive a visit, so without a key of some sort
+   * this would re-enter the same re-import on every later tap of the Import tab.
+   */
+  if (reimportParam && reimportParam.nonce !== consumedReimportNonce) {
+    setConsumedReimportNonce(reimportParam.nonce);
+    setReimport({
+      statementImportId: reimportParam.statementImportId,
+      accountId: reimportParam.accountId,
+      accountName: reimportParam.accountName,
+    });
+    setFileFormat(null);
+    setSessionId(null);
+    setRows(reimportParam.staging.rows);
+    setIncluded(initialInclusion(reimportParam.staging.rows));
+    setChosenCategory(initialCategories(reimportParam.staging.rows));
+    setUnparseableRows(reimportParam.staging.unparseableRows);
+    setDetected(reimportParam.staging.detectedAccount);
+    setStep('review');
+  }
+
   function resetToUpload() {
     setStep('upload');
     setError(null);
@@ -85,6 +124,7 @@ export function ImportScreen() {
     setPendingPdf(null);
     setPdfPassword('');
     setPasswordState(null);
+    setReimport(null);
   }
 
   /**
@@ -175,18 +215,28 @@ export function ImportScreen() {
   }
 
   async function confirmImport() {
-    if (!sessionId) return;
+    if (!reimport && !sessionId) return;
     setConfirming(true);
     setError(null);
     try {
-      const result = await importApi.confirm({
-        sessionId,
-        rows: buildRowPayload(rows, included, chosenCategory),
-        existingAccountId: accountChoice === 'existing' ? selectedAccountId : null,
-        newAccount: accountChoice === 'new' ? buildNewAccountPayload(accountForm, detected) : null,
-        statementOpeningBalance: detected?.openingBalance ?? null,
-        statementClosingBalance: detected?.closingBalance ?? null,
-      });
+      // A re-import goes to its own endpoint and is pinned to the account the statement already
+      // belongs to -- re-importing into a DIFFERENT account would defeat the point of replaying
+      // this statement rather than importing a fresh one.
+      const result = reimport
+        ? await statementImportsApi.confirmReimport(reimport.statementImportId, {
+            rows: buildRowPayload(rows, included, chosenCategory),
+            existingAccountId: reimport.accountId,
+            statementOpeningBalance: detected?.openingBalance ?? null,
+            statementClosingBalance: detected?.closingBalance ?? null,
+          })
+        : await importApi.confirm({
+            sessionId: sessionId!,
+            rows: buildRowPayload(rows, included, chosenCategory),
+            existingAccountId: accountChoice === 'existing' ? selectedAccountId : null,
+            newAccount: accountChoice === 'new' ? buildNewAccountPayload(accountForm, detected) : null,
+            statementOpeningBalance: detected?.openingBalance ?? null,
+            statementClosingBalance: detected?.closingBalance ?? null,
+          });
       setSummary(result);
       setStep('summary');
       invalidateFinancialData(queryClient);
@@ -363,6 +413,20 @@ export function ImportScreen() {
               ) : null}
             </Card>
 
+            {reimport ? (
+              <Card style={styles.section}>
+                <SectionHeading title="File into" />
+                {/* No choice to offer: a re-import replays this statement into the account it
+                    already belongs to. Stated rather than hidden, so it is obvious where these
+                    rows are going. */}
+                <Text style={[styles.body, { color: c.ink }]}>{reimport.accountName}</Text>
+                <Text style={[styles.body, { color: c.muted }]}>
+                  The account this statement was originally imported into. Duplicate detection below
+                  runs against everything already on the books, including this statement&apos;s own
+                  earlier transactions.
+                </Text>
+              </Card>
+            ) : (
             <Card style={styles.section}>
               <SectionHeading title="File into" />
               <View style={styles.choiceRow}>
@@ -442,6 +506,7 @@ export function ImportScreen() {
                 </View>
               )}
             </Card>
+            )}
 
             <View style={styles.rowsHeading}>
               <Text style={[styles.rowsTitle, { color: c.ink }]}>

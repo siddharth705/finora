@@ -61,11 +61,21 @@ export function MoreScreen({ navigation }: Props) {
           <Text style={[styles.chevron, { color: c.muted }]} accessibilityElementsHidden importantForAccessibility="no">›</Text>
         </Pressable>
 
-        {/* Budgets, Goals, Statement History, and Settings land in later phases -- listed as
-            disabled rows rather than omitted so the shape of this menu doesn't shift under
-            users as each one arrives, but they're visibly not tappable yet rather than
-            pretending to work. */}
-        {['Budgets', 'Goals', 'Statement History', 'Settings'].map((label) => (
+        <Pressable
+          onPress={() => navigation.navigate('Statements')}
+          style={[styles.menuRow, { borderBottomColor: c.border }]}
+          android_ripple={{ color: c.border }}
+          accessibilityRole="button"
+          accessibilityLabel="Statement History"
+        >
+          <Text style={[styles.menuLabel, { color: c.ink }]}>Statement History</Text>
+          <Text style={[styles.chevron, { color: c.muted }]} accessibilityElementsHidden importantForAccessibility="no">›</Text>
+        </Pressable>
+
+        {/* Budgets, Goals, and Settings land in later phases -- listed as disabled rows rather
+            than omitted so the shape of this menu doesn't shift under users as each one arrives,
+            but they're visibly not tappable yet rather than pretending to work. */}
+        {['Budgets', 'Goals', 'Settings'].map((label) => (
           <View
             key={label}
             style={[styles.menuRow, { borderBottomColor: c.border }]}

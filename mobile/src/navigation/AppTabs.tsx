@@ -4,6 +4,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { DashboardScreen } from '../screens/DashboardScreen';
 import { LedgerScreen } from '../screens/LedgerScreen';
 import { AccountsScreen } from '../screens/AccountsScreen';
+import { StatementHistoryScreen } from '../screens/StatementHistoryScreen';
 import { ImportScreen } from '../screens/import/ImportScreen';
 import { MoreScreen } from '../screens/MoreScreen';
 import { useTheme } from '../theme';
@@ -26,6 +27,7 @@ function MoreNavigator() {
           there's a native back affordance. */}
       <MoreStack.Screen name="MoreHome" component={MoreScreen} options={{ headerShown: false }} />
       <MoreStack.Screen name="Accounts" component={AccountsScreen} options={{ headerShown: false }} />
+      <MoreStack.Screen name="Statements" component={StatementHistoryScreen} options={{ headerShown: false }} />
     </MoreStack.Navigator>
   );
 }
