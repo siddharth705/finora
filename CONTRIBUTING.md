@@ -9,14 +9,15 @@ that doc for the *why*; this one is the *how*.
 ```bash
 git clone <repo-url>
 cd finora
-npm install          # installs husky, commitlint, lint-staged at the repo root
+npm install          # installs husky and commitlint at the repo root
 ```
 
 `npm install` runs the root `prepare` script, which wires `.husky/` up as the active git hooks
-directory. If you skip this step the hooks still run (they're committed to the repo and
-`core.hooksPath` is already set), but `commit-msg` and `pre-commit` fall back to lighter,
-dependency-free checks instead of the full `commitlint`/`lint-staged` rule sets — you'll see a
-warning printed on every commit reminding you to run `npm install`.
+directory and installs `commitlint` for the `commit-msg` hook (`npx --no -- commitlint`, which
+deliberately refuses to auto-install a missing package rather than silently fetching one at
+commit time). `pre-commit` itself (see below) is a dependency-free `sh` script that doesn't need
+`npm install` to have run at all — it shells out directly to `python`, per-app `npx`, and
+`./mvnw`.
 
 ## Branching strategy
 
@@ -75,15 +76,28 @@ change isn't self-evident from the type/scope alone.
 
 ## Pre-commit checks
 
-The `pre-commit` hook runs `lint-staged` against staged files once dependencies are installed.
-Currently wired up for the frontend (`frontend/**/*.{ts,tsx}` → `npm run lint`). Note: the
-frontend's `lint` script isn't fully wired yet — see the open item in
-`docs/engineering-directive-phase1.md` Priority 4 (no ESLint config/deps committed yet). Backend
-lint/format enforcement (Checkstyle or Spotless via Maven) isn't set up yet either — tracked as a
-Priority 4 follow-up, not part of this Priority 1 pass.
+`.husky/pre-commit` is a plain `sh` script (not `lint-staged`) that runs a fixed sequence against
+whatever's staged:
+
+1. `scripts/check-fixture-hygiene.sh` — always. Blocks a commit that adds an email address, IFSC
+   code, or Indian mobile number that doesn't look like a placeholder (see the Synthetic Fixture
+   Policy in `docs/engineering/financial-document-intelligence-principles.md`); warns on long
+   digit sequences it can't classify either way.
+2. `scripts/check-client-auth-policy.py` — only when `frontend/`, `admin-portal/`, or `mobile/`'s
+   `src/api/client.ts` is staged. Fails if the three clients' unauthenticated-endpoint lists drift
+   apart (see the script's own docstring for the incident this guards against).
+3. `npx eslint --fix` against staged files, re-adding what it changes — for whichever of
+   `frontend/`, `admin-portal/`, and `mobile/` have staged files. All three apps have a working
+   ESLint config today.
+4. `./mvnw -q -o compile` — only when `backend/` files are staged. Blocks the commit if the
+   backend doesn't compile.
+
+Full test suites intentionally stay in CI (`.github/workflows/ci.yml`) rather than here — a
+pre-commit hook slow enough to notice is a pre-commit hook people bypass with `--no-verify`.
 
 ## Database changes
 
 Never edit the schema by hand. Add a new versioned Flyway migration under
-`backend/src/main/resources/db/migration/` (`V{next}__description.sql`) — see the existing
-`V1`–`V15` migrations for the naming convention already in use.
+`backend/src/main/resources/db/migration/` (`V{next}__description.sql`) — check that directory
+for the current highest `V` number before picking the next one; this list grows with every
+schema change, so no fixed range is quoted here.
