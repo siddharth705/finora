@@ -59,7 +59,6 @@ export default function VerifyPhone() {
     startedRef.current = true;
     void startVerification();
     return () => resetPhoneVerification();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleVerify(e: FormEvent) {

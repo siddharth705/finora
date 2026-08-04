@@ -59,6 +59,15 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      # `npm run lint` existed in package.json from the day eslint.config.js was written, but this
+      # workflow never ran it -- a lint script nobody runs is indistinguishable from no lint script,
+      # except that it looks like coverage in review. It runs with --max-warnings 0: the config's
+      # own comments explain that its rules are chosen as bug diagnostics rather than style, so a
+      # warning here is a finding, and warnings that never fail anything just accumulate.
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+
       - name: Test
         working-directory: frontend
         run: npm test
@@ -84,6 +93,11 @@ jobs:
         working-directory: admin-portal
         run: npm ci
 
+      # See the user frontend's Lint step for why this is here and why it fails on warnings.
+      - name: Lint
+        working-directory: admin-portal
+        run: npm run lint
+
       - name: Test
         working-directory: admin-portal
         run: npm test
@@ -107,6 +121,13 @@ jobs:
       - name: Install
         working-directory: mobile
         run: npm ci
+
+      # Mobile had no lint script at all until now -- `npx expo lint` set up eslint-config-expo
+      # (see mobile/eslint.config.js for which of its rules are turned off and why). It caught a
+      # dead ActivityIndicator import in ImportScreen.tsx on its first run.
+      - name: Lint
+        working-directory: mobile
+        run: npm run lint
 
       - name: Type-check
         working-directory: mobile

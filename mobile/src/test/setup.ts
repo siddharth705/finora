@@ -56,7 +56,8 @@ jest.mock('@sentry/react-native', () => ({
 
 // Every test starts from a clean SecureStore so persistence assertions can't leak between them.
 beforeEach(() => {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // require(), not import: the mock has to be read AFTER jest.mock above has replaced the module,
+  // and a static import would be hoisted above it. Allowed for test files in eslint.config.js.
   const secureStore = require('expo-secure-store');
   secureStore.__store.clear();
   jest.clearAllMocks();
