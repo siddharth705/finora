@@ -1,7 +1,20 @@
 # Layout Intelligence & Observability
 
-**Status:** Approved for Phase 0 (observability only). Mapping reuse is explicitly **not** in scope.
+**Status:** **Built.** Observability only — mapping reuse is explicitly not in scope and not present.
 **Scope:** Import engine — reporting and intelligence, not parsing behaviour
+
+**Shipped:** `LayoutIntelligenceService`, exposed at `/api/v1/admin/imports/layouts` behind
+`PLATFORM_DIAGNOSTICS_VIEW`:
+
+| Endpoint | Deliverable |
+|---|---|
+| `GET /` | Layout overview + stability |
+| `GET /drifting` | Regression detection |
+| `GET /unknown-headers` | Unknown Header Explorer |
+| `GET /{fingerprint}/timeline` | Layout Timeline |
+| `GET /evidence` | Evidence Report |
+
+Plus migration **V53**, which persists import duration — see the correction in §4.
 **Relationship to other docs:** the capability model, the sequencing rules and the Capability
 Backlog live in
 [financial-document-intelligence-principles.md](financial-document-intelligence-principles.md);
@@ -106,7 +119,17 @@ multilingual statements would all make structural memory materially more valuabl
 here is not "layout memory is cheap therefore worthless" — it is **do not justify it on performance
 until performance is measured**, because today the measurement would show approximately nothing.
 
-`importDurationMs` is already recorded on every import, so this is measurable now.
+**Correction.** Earlier drafts of this document claimed `importDurationMs` was "already recorded on
+every import". It was not — it was *computed* at confirm time and returned on `ConfirmResponse`,
+then discarded. It existed on the DTO only, in no entity and no migration, so the comparison this
+whole phase turns on could not have been made.
+
+V53 adds `statement_imports.import_duration_ms` and stores the number that was already being
+calculated. Nothing about parsing or confirming changed. It is nullable with **no backfill**: rows
+imported before V53 have no duration, and inventing one would put fabricated figures into the report
+meant to decide whether reuse is worth building. The evidence report excludes unmeasured rows rather
+than treating them as zero, so it only becomes meaningful once enough imports have accumulated
+*since* V53.
 
 ## 5. Where structural memory genuinely improves correctness
 
@@ -164,9 +187,16 @@ table found but every row rejected) throws before any row is written. There is *
 a failed import**, and no record it was ever attempted. "Which layouts fail most often" cannot be
 answered from stored data at any point in the past.
 
-Closing it means persisting a failure record at the point of rejection — a genuine pipeline change,
-small but not free, and it only starts collecting from the day it ships. **Recommend treating this
-as a separate decision**, not folding it silently into a reporting task.
+Corroborated independently: `StatementImportRepository` already carries a comment noting that
+`status` never leaves `COMPLETED` because both import services "throw synchronously on a parse
+failure rather than persisting a FAILED row", and that `transactionsSkipped` is the honest
+substitute.
+
+> **Future enhancement, deliberately not this work.** If we ever want parser failure analytics, the
+> pipeline must persist failed import attempts — or at minimum lightweight failure telemetry at the
+> rejection point. That is a separate pipeline decision with its own correctness implications
+> (today's ordering is what keeps a failed parse from orphaning a session), it only starts
+> collecting from the day it ships, and it should not be folded into observability work.
 
 **2. There is no manual column mapping in the product.** Users correct *categories*, not columns —
 a repository-wide search finds no column- or header-mapping surface. "Which unknown headers
@@ -216,11 +246,21 @@ the phase is not accidentally re-scoped around a threshold that cannot be comput
 
 ## 9. Open questions
 
-- **Per-user or global?** Layout statistics aggregated across users are more useful and also a
-  cross-tenant inference surface. Cross-user sharing was deferred to a privacy review, which implies
-  per-user — but an admin-facing report is inherently cross-user. **Decide explicitly**: whether
-  admin-visible aggregates are acceptable, and whether anything layout-derived may ever reach
-  another user's import.
+- **Per-user or global? — resolved.** An earlier draft claimed admin reports are "inherently
+  cross-user". That conflated *querying rows belonging to many users* with *exposing cross-user
+  information*. The distinction that matters:
+
+  | | |
+  |---|---|
+  | **Operational telemetry** — what this is | `FP-1-A72B · seen 582 · median 412 ms · 3 unknown headers`. No user, account, transaction, bank or file name. |
+  | **Cross-user learning** — not built | One user's layout influencing another user's import. |
+
+  Aggregation is platform-wide; the *output* is anonymous by construction. `LayoutIntelligenceService`'s
+  result records carry counts, durations and header names only, and
+  `LayoutIntelligenceServiceTest.noResultTypeCanEverCarryUserIdentifyingData` fails the build if a
+  `userId`/`accountId`/`UUID` field is ever added to one — so the property is enforced rather than
+  reviewed for. Cross-user *learning* remains out of scope and still needs a privacy review if ever
+  revisited.
 - **Counter overlap.** `CapabilityCoverageService` already aggregates per-document activation
   events. Layout reporting should extend it rather than start a parallel counter.
 - **Signature granularity.** v1 excludes column order and position deliberately. Whether that is too

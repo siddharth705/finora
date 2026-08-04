@@ -29,4 +29,19 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
     // note: this codebase has no background job queue, so a real per-import status list is the
     // closest honest equivalent to a job monitor).
     List<StatementImport> findAllByOrderByImportedAtDesc(Pageable pageable);
+
+    /**
+     * Every import that carries a layout fingerprint, for LayoutIntelligenceService.
+     *
+     * Deliberately platform-wide and deliberately not user-scoped: the question "how many DISTINCT
+     * document layouts does Finora see, and which recur" is not answerable one user at a time. What
+     * makes that acceptable is what the caller does with the rows -- every record it returns is
+     * keyed by fingerprint and carries counts and header names only, never a user, account,
+     * transaction or bank. See that service's class doc.
+     *
+     * Rows predating V39 have a null fingerprint and are excluded rather than grouped under one
+     * phantom "unknown layout" bucket that would dominate every count.
+     */
+    @Query("SELECT s FROM StatementImport s WHERE s.layoutFingerprint IS NOT NULL")
+    List<StatementImport> findAllWithLayoutFingerprint();
 }
