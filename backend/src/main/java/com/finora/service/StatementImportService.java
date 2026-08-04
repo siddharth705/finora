@@ -40,12 +40,14 @@ public class StatementImportService {
     private final ImportService importService;
     private final AuditService auditService;
     private final BankManagementService bankManagementService;
+    private final com.finora.imports.storage.StatementContentService statementContentService;
 
     public StatementImportService(StatementImportRepository statementImportRepository, AccountRepository accountRepository,
                                    CategoryRepository categoryRepository, TransactionRepository transactionRepository,
                                    ReconciliationService reconciliationService, RecurringService recurringService,
                                    ImportService importService, AuditService auditService,
-                                   BankManagementService bankManagementService) {
+                                   BankManagementService bankManagementService,
+                                   com.finora.imports.storage.StatementContentService statementContentService) {
         this.statementImportRepository = statementImportRepository;
         this.accountRepository = accountRepository;
         this.categoryRepository = categoryRepository;
@@ -55,6 +57,7 @@ public class StatementImportService {
         this.importService = importService;
         this.auditService = auditService;
         this.bankManagementService = bankManagementService;
+        this.statementContentService = statementContentService;
     }
 
     // How long a deleted account's statement history stays visible in Statement History before
@@ -138,9 +141,11 @@ public class StatementImportService {
     @Transactional(readOnly = true)
     public FileDownload getFile(UUID userId, UUID statementImportId) {
         StatementImport si = getOwned(userId, statementImportId);
-        // fileContent is lazily fetched — accessing it here, inside the transaction, is what
-        // actually triggers the load rather than throwing LazyInitializationException later.
-        return new FileDownload(si.getFileName(), si.getFileContent());
+        // Resolved inside the transaction on purpose: for a row still holding its bytes in the
+        // database, fileContent is lazily fetched, and reading it outside would throw
+        // LazyInitializationException. An object-storage read does not care, but the call has to be
+        // safe for both states while the migration is in progress.
+        return new FileDownload(si.getFileName(), statementContentService.read(si));
     }
 
     /**
@@ -158,7 +163,7 @@ public class StatementImportService {
     @Transactional(readOnly = true)
     public com.finora.dto.StatementImportDto.ReimportResult reimport(UUID userId, UUID statementImportId, String password) throws Exception {
         StatementImport si = getOwned(userId, statementImportId);
-        byte[] content = si.getFileContent();
+        byte[] content = statementContentService.read(si);
         // Bug fix: this used to unconditionally call the CSV-only byte-stream overload, which
         // would try to CSV-parse raw PDF bytes for any statement originally uploaded as a PDF
         // (Milestone 1). Now routes by the explicit sourceFormat recorded on this row at
@@ -188,7 +193,7 @@ public class StatementImportService {
         var scoped = new com.finora.dto.ImportDto.ConfirmRequest(
                 null, request.rows(), original.getAccountId(), null,
                 request.statementOpeningBalance(), request.statementClosingBalance());
-        return importService.confirm(userId, original.getFileName(), original.getFileContent(), scoped);
+        return importService.confirm(userId, original.getFileName(), statementContentService.read(original), scoped);
     }
 
     /**

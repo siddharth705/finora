@@ -80,6 +80,7 @@ public class ImportService {
     private final ImportSessionService importSessionService;
     private final com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator;
     private final ProductIdentityResolver productIdentityResolver;
+    private final com.finora.imports.storage.StatementContentService statementContentService;
 
     public ImportService(AccountRepository accountRepository, AccountService accountService,
                           TransactionRepository transactionRepository, MerchantRepository merchantRepository,
@@ -92,8 +93,10 @@ public class ImportService {
                           ImportRuleLearningService ruleLearningService,
                           ImportSessionService importSessionService,
                           com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator,
-                          ProductIdentityResolver productIdentityResolver) {
+                          ProductIdentityResolver productIdentityResolver,
+                          com.finora.imports.storage.StatementContentService statementContentService) {
         this.productIdentityResolver = productIdentityResolver;
+        this.statementContentService = statementContentService;
         this.accountRepository = accountRepository;
         this.accountService = accountService;
         this.transactionRepository = transactionRepository;
@@ -343,7 +346,7 @@ public class ImportService {
                     null, // this section's ConfirmRequest doesn't carry its own sessionId -- the session is claimed once, above, for the whole multi-account request
                     sectionConfirm.rows(), sectionConfirm.existingAccountId(), sectionConfirm.newAccount(),
                     sectionConfirm.statementOpeningBalance(), sectionConfirm.statementClosingBalance());
-            responses.add(confirm(userId, session.getFileName(), session.getFileContent(), perAccountRequest, i,
+            responses.add(confirm(userId, session.getFileName(), statementContentService.read(session), perAccountRequest, i,
                     session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
                 session.getUnparseableSummaryJson()));
         }
@@ -382,7 +385,7 @@ public class ImportService {
                     "The reviewed rows don't match what was staged for this import session -- try staging again.");
         }
 
-        return confirm(userId, session.getFileName(), session.getFileContent(), request, null,
+        return confirm(userId, session.getFileName(), statementContentService.read(session), request, null,
                 session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
                 session.getUnparseableSummaryJson());
     }
@@ -518,6 +521,18 @@ public class ImportService {
         statementImport.setLayoutFingerprint(layoutFingerprint);
         statementImport.setActivatedCapabilitiesJson(activatedCapabilitiesJson);
         statementImport.setUnparseableSummaryJson(unparseableSummaryJson);
+        // Object storage first, then the row -- the ordering §5.1 of the migration doc requires. A
+        // failure throws before anything is persisted, so a row can never point at an object that
+        // was never written. fileContent is still set: Phase 2 is a dual write, not a move.
+        //
+        // Content-addressing is what makes this cheap for the two callers that duplicate bytes
+        // today -- confirmMultiSection() calls this once per account section with the same file,
+        // and confirmReimport() calls it again with an already-stored one. Both now resolve to the
+        // same object instead of writing another copy.
+        statementContentService.store(fileContent).ifPresent(address -> {
+            statementImport.setContentHash(address.hash());
+            statementImport.setObjectKey(address.key());
+        });
         statementImport.setFileContent(fileContent);
         statementImport.setStatementPeriodStart(minDate);
         statementImport.setStatementPeriodEnd(maxDate);

@@ -3,6 +3,7 @@ package com.finora.imports;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.finora.imports.storage.StatementContentService;
 import com.finora.dto.ImportDto.DetectedAccountInfo;
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.dto.ImportDto.StagedRow;
@@ -37,10 +38,13 @@ public class ImportSessionService {
 
     private final ImportSessionRepository importSessionRepository;
     private final ObjectMapper objectMapper;
+    private final StatementContentService statementContentService;
 
-    public ImportSessionService(ImportSessionRepository importSessionRepository, ObjectMapper objectMapper) {
+    public ImportSessionService(ImportSessionRepository importSessionRepository, ObjectMapper objectMapper,
+                                 StatementContentService statementContentService) {
         this.importSessionRepository = importSessionRepository;
         this.objectMapper = objectMapper;
+        this.statementContentService = statementContentService;
     }
 
     @Transactional
@@ -69,7 +73,7 @@ public class ImportSessionService {
         ImportSession session = new ImportSession();
         session.setUserId(userId);
         session.setFileName(fileName);
-        session.setFileContent(fileContent);
+        storeContent(session, fileContent);
         session.setStagedRowsJson(writeJson(rows));
         session.setDetectedAccountJson(writeJson(detectedAccount));
         session.setExpiresAt(Instant.now().plus(SESSION_TTL));
@@ -102,12 +106,31 @@ public class ImportSessionService {
         ImportSession session = new ImportSession();
         session.setUserId(userId);
         session.setFileName(fileName);
-        session.setFileContent(fileContent);
+        storeContent(session, fileContent);
         session.setSessionKind(ImportSession.KIND_MULTI_ACCOUNT);
         session.setSectionsJson(writeJson(sections));
         session.setExpiresAt(Instant.now().plus(SESSION_TTL));
         applyDocumentContext(session, documentContext);
         return importSessionRepository.save(session);
+    }
+
+    /**
+     * Writes the staged bytes wherever storage is configured to put them, and records the address.
+     *
+     * Object storage is written FIRST, before the row is persisted -- the ordering the migration
+     * doc's §5.1 requires. A failure here throws, so no session row is created; the reverse (a row
+     * pointing at an object that was never written) cannot happen.
+     *
+     * fileContent is still set regardless. Phase 2 is a dual write, not a move: until Phase 3 has
+     * backfilled and Phase 4 has dropped the column, the database copy is what makes an
+     * object-storage problem recoverable rather than terminal.
+     */
+    private void storeContent(ImportSession session, byte[] fileContent) {
+        statementContentService.store(fileContent).ifPresent(address -> {
+            session.setContentHash(address.hash());
+            session.setObjectKey(address.key());
+        });
+        session.setFileContent(fileContent);
     }
 
     private void applyDocumentContext(ImportSession session, DocumentContext documentContext) {

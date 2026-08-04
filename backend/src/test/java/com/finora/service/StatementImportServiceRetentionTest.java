@@ -39,7 +39,7 @@ class StatementImportServiceRetentionTest {
     private final StatementImportService service = new StatementImportService(
             statementImportRepository, accountRepository, mock(CategoryRepository.class),
             mock(TransactionRepository.class), mock(ReconciliationService.class), mock(RecurringService.class),
-            mock(ImportService.class), mock(AuditService.class), bankManagementService);
+            mock(ImportService.class), mock(AuditService.class), bankManagementService, new com.finora.imports.storage.StatementContentService(java.util.Optional.empty()));
 
     {
         when(bankManagementService.resolve(any())).thenAnswer(invocation ->

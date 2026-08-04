@@ -53,7 +53,7 @@ class StatementImportServiceReimportTest {
         service = new StatementImportService(statementImportRepository, accountRepository,
                 mock(CategoryRepository.class), mock(TransactionRepository.class),
                 mock(ReconciliationService.class), mock(RecurringService.class),
-                importService, mock(AuditService.class), mock(BankManagementService.class));
+                importService, mock(AuditService.class), mock(BankManagementService.class), new com.finora.imports.storage.StatementContentService(java.util.Optional.empty()));
 
         Account account = new Account();
         ReflectionTestUtils.setField(account, "id", accountId);

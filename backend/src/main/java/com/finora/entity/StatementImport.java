@@ -20,7 +20,7 @@ import java.util.UUID;
 // parameter 2" bug that was already found and fixed on the other four entities.
 @SQLDelete(sql = "UPDATE statement_imports SET deleted_at = now(), version = version + 1 WHERE id = ? AND version = ?")
 @SQLRestriction("deleted_at IS NULL")
-public class StatementImport extends BaseEntity {
+public class StatementImport extends BaseEntity implements com.finora.imports.storage.StoredStatement {
 
     @Column(name = "user_id", nullable = false)
     private UUID userId;
@@ -107,6 +107,16 @@ public class StatementImport extends BaseEntity {
     @Column(name = "import_duration_ms")
     private Long importDurationMs;
 
+    /** Hex SHA-256 of the original file -- the document's identity. Null for rows predating V54
+     *  (Phase 2), which still read from fileContent; see StoredStatement. */
+    @Column(name = "content_hash", length = 64)
+    private String contentHash;
+
+    /** Where the configured provider put {@link #contentHash}. A layout detail, deliberately
+     *  separate from identity -- see ContentAddress. */
+    @Column(name = "object_key", length = 512)
+    private String objectKey;
+
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
     public UUID getAccountId() { return accountId; }
@@ -127,7 +137,11 @@ public class StatementImport extends BaseEntity {
     public void setActivatedCapabilitiesJson(String activatedCapabilitiesJson) { this.activatedCapabilitiesJson = activatedCapabilitiesJson; }
     public Long getImportDurationMs() { return importDurationMs; }
     public void setImportDurationMs(Long importDurationMs) { this.importDurationMs = importDurationMs; }
-    public byte[] getFileContent() { return fileContent; }
+    @Override public String getContentHash() { return contentHash; }
+    public void setContentHash(String contentHash) { this.contentHash = contentHash; }
+    @Override public String getObjectKey() { return objectKey; }
+    public void setObjectKey(String objectKey) { this.objectKey = objectKey; }
+    @Override public byte[] getFileContent() { return fileContent; }
     public void setFileContent(byte[] fileContent) { this.fileContent = fileContent; }
     public LocalDate getStatementPeriodStart() { return statementPeriodStart; }
     public void setStatementPeriodStart(LocalDate statementPeriodStart) { this.statementPeriodStart = statementPeriodStart; }

@@ -28,7 +28,7 @@ import java.util.UUID;
  */
 @Entity
 @Table(name = "import_sessions")
-public class ImportSession {
+public class ImportSession implements com.finora.imports.storage.StoredStatement {
 
     public static final String STATUS_STAGED = "STAGED";
     public static final String STATUS_CONFIRMED = "CONFIRMED";
@@ -48,6 +48,18 @@ public class ImportSession {
 
     @Column(name = "file_content", nullable = false)
     private byte[] fileContent;
+
+    /** Hex SHA-256 of the staged file -- the document's identity. Null when no storage provider is
+     *  configured, in which case the bytes stay in fileContent; see StoredStatement.
+     *
+     *  A session and the StatementImport it confirms into hold IDENTICAL bytes, so they resolve to
+     *  the same address and share one stored object. That is why expiring a session must never
+     *  delete its object -- see StatementStorage's note on why there is no delete. */
+    @Column(name = "content_hash", length = 64)
+    private String contentHash;
+
+    @Column(name = "object_key", length = 512)
+    private String objectKey;
 
     // Nullable as of V37: populated for a SINGLE_ACCOUNT session, left null for a MULTI_ACCOUNT
     // one (which uses sectionsJson instead) -- see ImportSessionService's read-side guard, which
@@ -103,8 +115,12 @@ public class ImportSession {
     public void setUserId(UUID userId) { this.userId = userId; }
     public String getFileName() { return fileName; }
     public void setFileName(String fileName) { this.fileName = fileName; }
-    public byte[] getFileContent() { return fileContent; }
+    @Override public byte[] getFileContent() { return fileContent; }
     public void setFileContent(byte[] fileContent) { this.fileContent = fileContent; }
+    @Override public String getContentHash() { return contentHash; }
+    public void setContentHash(String contentHash) { this.contentHash = contentHash; }
+    @Override public String getObjectKey() { return objectKey; }
+    public void setObjectKey(String objectKey) { this.objectKey = objectKey; }
     public String getStagedRowsJson() { return stagedRowsJson; }
     public void setStagedRowsJson(String stagedRowsJson) { this.stagedRowsJson = stagedRowsJson; }
     public String getDetectedAccountJson() { return detectedAccountJson; }
