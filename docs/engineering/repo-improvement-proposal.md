@@ -1,7 +1,9 @@
 # Finora — Repository-Wide Engineering Improvement Proposal
 
-**Status:** originally proposal-only. Four items have since been prioritised and built; the rest
-are still unimplemented and awaiting prioritisation.
+**Status:** originally proposal-only. **All twelve items have now been worked through.** Two did
+not land as proposed — item 2 was built and backed out in favour of an enforcement check, and item
+5's optimisation was measured, found not to pay, and reverted. Both are recorded below with the
+reasoning, because the rejections turned out to be more useful than the acceptances.
 
 | # | Item | Status |
 |---|---|---|
@@ -15,7 +17,8 @@ are still unimplemented and awaiting prioritisation.
 | 8 | One client-IP implementation | **Done** — `98a385c` |
 | 9 | Code-split the web bundles | **Done** — `ee23ac4`. First-load gzip −57% (user app) and −45% (admin). |
 | 12 | Accessibility baseline | **Done** — `968e997`. Measured with axe, not jsx-a11y (see item 12); 4 critical violations found and fixed. |
-| 10, 11 | — | Not started |
+| 10 | Rate-limit state before scaling | **Done as a precondition, not code** — `947dfdd`. Redis deliberately not built. |
+| 11 | Expo advisory policy | **Done** — `6623088`. 18 entries collapse to 2 decisions, now enforced in CI. |
 
 Everything below is the original text, with a **Resolution** note appended to each completed item.
 The point of this document was to keep "evaluate first" separate from "fix immediately"; the
@@ -539,6 +542,18 @@ costs nothing.
 
 **Dependencies.** Triggered by a scaling decision, not by code.
 
+**Resolution.** Done in `947dfdd` **as a deployment-guide precondition, not as code** — which is
+what this item recommended. Redis for a single-instance app is infrastructure with no payoff, and
+the two classes' own comments already make that call correctly.
+
+What was missing was never the implementation. It was that raising the replica count is one click
+in Railway, and nothing anywhere would say so. The new *Before running more than one backend
+instance* section quantifies both controls that degrade (per-IP limits become N× more permissive;
+6N concurrent imports), and — equally important — states what does **not**: account lockout is
+persisted, refresh-token rotation is database-backed, and import-session cleanup piggybacks on user
+activity rather than a scheduled sweep. Verified by inventorying the backend for instance-local
+mutable state rather than assuming.
+
 ---
 
 ### 11. Set a policy for the Expo toolchain advisories
@@ -564,6 +579,18 @@ for the Metro bundle job. An accepted-risk note carries no such risk and is prob
 move; overrides should wait for Expo's own upstream fix.
 
 **Dependencies.** None.
+
+**Resolution.** Done in `6623088`. Measuring first changed the shape of it: the 18 vulnerability
+entries across the three apps collapse to **two distinct advisories** (react-router RSC CSRF;
+`uuid` via the Expo CLI chain). Both are now recorded in
+`scripts/check-dependency-advisories.py` with a reason that could be wrong and a named trigger for
+re-checking, and anything else in shipped code fails CI.
+
+Two details worth keeping: npm's suggested remediation for the router advisory is a **downgrade
+that would reintroduce the open redirect fixed in item 4**, so following it would make the apps
+less safe; and `--omit=dev` is not the same as "does not ship" for mobile, because the Expo CLI
+toolchain is a transitive dependency of the `expo` package itself. The check also fails when an
+accepted entry stops being reported, so stale exceptions cannot hide the next real one.
 
 ---
 
