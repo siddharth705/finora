@@ -571,7 +571,7 @@ class TransactionServiceTest {
         when(transactionRepository.findById(txnId)).thenReturn(Optional.of(existing));
         when(categoryRepository.findById(dummyCategory.getId())).thenReturn(Optional.of(dummyCategory));
 
-        transactionService.confirmMerchantCategory(userId, merchantId, txnId, dummyCategory.getId());
+        transactionService.confirmMerchantCategory(userId, merchantId, txnId, dummyCategory.getId(), userId);
 
         assertThat(existing.getCategoryId()).isEqualTo(dummyCategory.getId());
         assertThat(existing.isCategoryManuallySet()).isTrue();
@@ -594,7 +594,7 @@ class TransactionServiceTest {
         existing.setMerchantId(actualMerchantId);
         when(transactionRepository.findById(txnId)).thenReturn(Optional.of(existing));
 
-        assertThatThrownBy(() -> transactionService.confirmMerchantCategory(userId, wrongMerchantId, txnId, dummyCategory.getId()))
+        assertThatThrownBy(() -> transactionService.confirmMerchantCategory(userId, wrongMerchantId, txnId, dummyCategory.getId(), userId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("isn't resolved to the given merchant");
 
@@ -607,7 +607,7 @@ class TransactionServiceTest {
         Transaction existing = ownedTransaction(txnId, userId); // merchantId left null
         when(transactionRepository.findById(txnId)).thenReturn(Optional.of(existing));
 
-        assertThatThrownBy(() -> transactionService.confirmMerchantCategory(userId, UUID.randomUUID(), txnId, dummyCategory.getId()))
+        assertThatThrownBy(() -> transactionService.confirmMerchantCategory(userId, UUID.randomUUID(), txnId, dummyCategory.getId(), userId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("isn't resolved to the given merchant");
     }
@@ -622,7 +622,7 @@ class TransactionServiceTest {
         when(transactionRepository.findById(txnId)).thenReturn(Optional.of(existing));
         when(categoryRepository.findById(bogusCategoryId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> transactionService.confirmMerchantCategory(userId, merchantId, txnId, bogusCategoryId))
+        assertThatThrownBy(() -> transactionService.confirmMerchantCategory(userId, merchantId, txnId, bogusCategoryId, userId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Category not found");
     }
@@ -642,9 +642,31 @@ class TransactionServiceTest {
         when(transactionRepository.findById(txnId)).thenReturn(Optional.of(existing));
         when(categoryRepository.findById(othersCategory.getId())).thenReturn(Optional.of(othersCategory));
 
-        assertThatThrownBy(() -> transactionService.confirmMerchantCategory(userId, merchantId, txnId, othersCategory.getId()))
+        assertThatThrownBy(() -> transactionService.confirmMerchantCategory(userId, merchantId, txnId, othersCategory.getId(), userId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Category not found");
+    }
+
+    // Bug fix: confirmMerchantCategory() used to record TRANSACTION_CATEGORY_UPDATED with no
+    // actingAdminId at all. Its self-service caller (MerchantController) has since been retired
+    // entirely, so AdminUserMerchantController is now the ONLY way anyone -- including the
+    // account's own owner -- can reach this method, making every call an admin acting on a user's
+    // behalf. Same "actorId" convention as this class's own delete() and the other services
+    // audited in this pass.
+    @Test
+    void confirmMerchantCategory_recordsActingAdminIdInAuditMetadata() {
+        UUID txnId = UUID.randomUUID();
+        UUID merchantId = UUID.randomUUID();
+        UUID actingAdminId = UUID.randomUUID();
+        Transaction existing = ownedTransaction(txnId, userId);
+        existing.setMerchantId(merchantId);
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(existing));
+        when(categoryRepository.findById(dummyCategory.getId())).thenReturn(Optional.of(dummyCategory));
+
+        transactionService.confirmMerchantCategory(userId, merchantId, txnId, dummyCategory.getId(), actingAdminId);
+
+        verify(auditService).record(eq(userId), eq("TRANSACTION_CATEGORY_UPDATED"), eq("Transaction"), eq(txnId),
+                argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
     }
 
     @Test

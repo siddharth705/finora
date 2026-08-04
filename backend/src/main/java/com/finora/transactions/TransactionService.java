@@ -368,9 +368,18 @@ public class TransactionService {
      * merchant at all) is rejected rather than silently confirming against mismatched learning
      * data; the spec's own text says unresolved transactions "fall back to the existing simpler
      * endpoint" (updateCategory()), not this one.
+     *
+     * Bug fix: this recorded TRANSACTION_CATEGORY_UPDATED with no actingAdminId at all. Its
+     * self-service caller (MerchantController) has since been retired entirely -- per
+     * AdminUserMerchantController's own doc comment, this is now the ONLY way anyone, including
+     * the account's own owner, can apply a merchant-centric category choice -- so every single
+     * call to this method is in fact an admin acting on a user's behalf, indistinguishable in the
+     * audit trail from the user confirming their own category. Same bug class, same fix, as the
+     * actorId threading already done for RelationshipService/MerchantService/RoleService/
+     * RuleService/AccountService/this class's own delete().
      */
     @Transactional
-    public TransactionDto confirmMerchantCategory(UUID userId, UUID merchantId, UUID txnId, UUID categoryId) {
+    public TransactionDto confirmMerchantCategory(UUID userId, UUID merchantId, UUID txnId, UUID categoryId, UUID actingAdminId) {
         Transaction t = getOwned(userId, txnId);
         if (t.getMerchantId() == null || !t.getMerchantId().equals(merchantId)) {
             throw new ApiException(HttpStatus.BAD_REQUEST,
@@ -389,7 +398,8 @@ public class TransactionService {
         categorizationService.learn(userId, t.getDescription(), category.getId());
         Transaction saved = transactionRepository.save(t);
         auditService.record(userId, "TRANSACTION_CATEGORY_UPDATED", "Transaction", txnId,
-                Map.of("previousCategoryId", previousCategoryId, "newCategory", category.getName()));
+                Map.of("previousCategoryId", previousCategoryId, "newCategory", category.getName(),
+                        "actorId", actingAdminId.toString()));
         return TransactionDto.from(saved, category.getName());
     }
 
