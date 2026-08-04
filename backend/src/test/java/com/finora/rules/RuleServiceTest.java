@@ -34,14 +34,17 @@ import static org.mockito.Mockito.*;
 class RuleServiceTest {
 
     private CategoryRuleRepository categoryRuleRepository;
+    private AuditService auditService;
     private RuleService ruleService;
     private final UUID userId = UUID.randomUUID();
     private final UUID otherUserId = UUID.randomUUID();
+    private final UUID actingAdminId = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
         categoryRuleRepository = mock(CategoryRuleRepository.class);
-        ruleService = new RuleService(categoryRuleRepository, mock(AuditService.class));
+        auditService = mock(AuditService.class);
+        ruleService = new RuleService(categoryRuleRepository, auditService);
         when(categoryRuleRepository.save(any(CategoryRule.class))).thenAnswer(inv -> {
             CategoryRule r = inv.getArgument(0);
             if (r.getId() == null) ReflectionTestUtils.setField(r, "id", UUID.randomUUID());
@@ -82,7 +85,7 @@ class RuleServiceTest {
     void create_persistsAUserScopeRule() {
         var req = new RuleDto.CreateRequest("DESCRIPTION", "CONTAINS", "swiggy", "ASSIGN_CATEGORY", "Dining", 50);
 
-        RuleDto result = ruleService.create(userId, req);
+        RuleDto result = ruleService.create(userId, req, actingAdminId);
 
         assertThat(result.scope()).isEqualTo("USER");
         assertThat(result.field()).isEqualTo("DESCRIPTION");
@@ -96,7 +99,7 @@ class RuleServiceTest {
     void create_defaultsPriorityTo100_whenNotSupplied() {
         var req = new RuleDto.CreateRequest("DESCRIPTION", "CONTAINS", "swiggy", "ASSIGN_CATEGORY", "Dining", null);
 
-        RuleDto result = ruleService.create(userId, req);
+        RuleDto result = ruleService.create(userId, req, actingAdminId);
 
         assertThat(result.priority()).isEqualTo(100);
     }
@@ -105,7 +108,7 @@ class RuleServiceTest {
     void create_rejectsBlankComparisonValue() {
         var req = new RuleDto.CreateRequest("DESCRIPTION", "CONTAINS", "   ", "ASSIGN_CATEGORY", "Dining", null);
 
-        assertThatThrownBy(() -> ruleService.create(userId, req))
+        assertThatThrownBy(() -> ruleService.create(userId, req, actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Comparison value");
         verify(categoryRuleRepository, never()).save(any());
@@ -115,7 +118,7 @@ class RuleServiceTest {
     void create_rejectsAssignCategoryRule_withNullActionValue() {
         var req = new RuleDto.CreateRequest("DESCRIPTION", "CONTAINS", "swiggy", "ASSIGN_CATEGORY", null, null);
 
-        assertThatThrownBy(() -> ruleService.create(userId, req))
+        assertThatThrownBy(() -> ruleService.create(userId, req, actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("ASSIGN_CATEGORY");
         verify(categoryRuleRepository, never()).save(any());
@@ -125,7 +128,7 @@ class RuleServiceTest {
     void create_rejectsAssignCategoryRule_withBlankActionValue() {
         var req = new RuleDto.CreateRequest("DESCRIPTION", "CONTAINS", "swiggy", "ASSIGN_CATEGORY", "   ", null);
 
-        assertThatThrownBy(() -> ruleService.create(userId, req))
+        assertThatThrownBy(() -> ruleService.create(userId, req, actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("ASSIGN_CATEGORY");
     }
@@ -136,17 +139,32 @@ class RuleServiceTest {
         // actionValue -- only ASSIGN_CATEGORY requires one.
         var req = new RuleDto.CreateRequest("DESCRIPTION", "CONTAINS", "self transfer", "MARK_TRANSFER", null, null);
 
-        RuleDto result = ruleService.create(userId, req);
+        RuleDto result = ruleService.create(userId, req, actingAdminId);
 
         assertThat(result.actionType()).isEqualTo("MARK_TRANSFER");
         assertThat(result.actionValue()).isNull();
     }
 
     @Test
+    void create_recordsActingAdminIdInAuditMetadata() {
+        // Bug fix: this used to record RULE_CREATED with no actingAdminId at all -- every caller
+        // of create() is AdminUserRuleController (there is no self-service Rule management UI/
+        // controller), so every call here is in fact an admin acting on a user's behalf, which
+        // was previously indistinguishable in the audit trail from the user creating their own
+        // rule. Same "actorId" convention as RelationshipServiceTest/MerchantServiceTest.
+        var req = new RuleDto.CreateRequest("DESCRIPTION", "CONTAINS", "swiggy", "ASSIGN_CATEGORY", "Dining", null);
+
+        RuleDto result = ruleService.create(userId, req, actingAdminId);
+
+        verify(auditService).record(eq(userId), eq("RULE_CREATED"), eq("CategoryRule"), eq(result.id()),
+                argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
+    }
+
+    @Test
     void create_rejectsUnknownField() {
         var req = new RuleDto.CreateRequest("NOT_A_REAL_FIELD", "CONTAINS", "swiggy", "ASSIGN_CATEGORY", "Dining", null);
 
-        assertThatThrownBy(() -> ruleService.create(userId, req))
+        assertThatThrownBy(() -> ruleService.create(userId, req, actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Unknown field");
     }
@@ -160,7 +178,7 @@ class RuleServiceTest {
         when(categoryRuleRepository.findById(ruleId)).thenReturn(Optional.of(existing));
 
         var req = new RuleDto.UpdateRequest(null, null, null, null, null, 5, null);
-        RuleDto result = ruleService.update(userId, ruleId, req);
+        RuleDto result = ruleService.update(userId, ruleId, req, actingAdminId);
 
         assertThat(result.priority()).isEqualTo(5);
         assertThat(result.comparisonValue()).isEqualTo("swiggy"); // untouched
@@ -178,7 +196,7 @@ class RuleServiceTest {
 
         var req = new RuleDto.UpdateRequest(null, null, "", null, null, null, null);
 
-        assertThatThrownBy(() -> ruleService.update(userId, ruleId, req))
+        assertThatThrownBy(() -> ruleService.update(userId, ruleId, req, actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Comparison value");
     }
@@ -195,7 +213,7 @@ class RuleServiceTest {
 
         var req = new RuleDto.UpdateRequest(null, null, null, "ASSIGN_CATEGORY", null, null, null);
 
-        assertThatThrownBy(() -> ruleService.update(userId, ruleId, req))
+        assertThatThrownBy(() -> ruleService.update(userId, ruleId, req, actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("ASSIGN_CATEGORY");
     }
@@ -207,10 +225,22 @@ class RuleServiceTest {
         when(categoryRuleRepository.findById(ruleId)).thenReturn(Optional.of(existing));
 
         var req = new RuleDto.UpdateRequest(null, null, null, "ASSIGN_CATEGORY", "Transfer", null, null);
-        RuleDto result = ruleService.update(userId, ruleId, req);
+        RuleDto result = ruleService.update(userId, ruleId, req, actingAdminId);
 
         assertThat(result.actionType()).isEqualTo("ASSIGN_CATEGORY");
         assertThat(result.actionValue()).isEqualTo("Transfer");
+    }
+
+    @Test
+    void update_recordsActingAdminIdInAuditMetadata() {
+        UUID ruleId = UUID.randomUUID();
+        CategoryRule existing = existingUserRule(ruleId, userId, CategoryRule.ActionType.ASSIGN_CATEGORY, "Dining");
+        when(categoryRuleRepository.findById(ruleId)).thenReturn(Optional.of(existing));
+
+        ruleService.update(userId, ruleId, new RuleDto.UpdateRequest(null, null, null, null, null, 5, null), actingAdminId);
+
+        verify(auditService).record(eq(userId), eq("RULE_UPDATED"), eq("CategoryRule"), eq(ruleId),
+                argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
     }
 
     @Test
@@ -218,7 +248,7 @@ class RuleServiceTest {
         UUID ruleId = UUID.randomUUID();
         when(categoryRuleRepository.findById(ruleId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> ruleService.update(userId, ruleId, new RuleDto.UpdateRequest(null, null, null, null, null, null, null)))
+        assertThatThrownBy(() -> ruleService.update(userId, ruleId, new RuleDto.UpdateRequest(null, null, null, null, null, null, null), actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("not found");
     }
@@ -228,7 +258,7 @@ class RuleServiceTest {
         UUID ruleId = UUID.randomUUID();
         when(categoryRuleRepository.findById(ruleId)).thenReturn(Optional.of(globalRule(ruleId)));
 
-        assertThatThrownBy(() -> ruleService.update(userId, ruleId, new RuleDto.UpdateRequest(null, null, null, null, null, 1, null)))
+        assertThatThrownBy(() -> ruleService.update(userId, ruleId, new RuleDto.UpdateRequest(null, null, null, null, null, 1, null), actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Global rules");
     }
@@ -239,7 +269,7 @@ class RuleServiceTest {
         CategoryRule existing = existingUserRule(ruleId, otherUserId, CategoryRule.ActionType.ASSIGN_CATEGORY, "Dining");
         when(categoryRuleRepository.findById(ruleId)).thenReturn(Optional.of(existing));
 
-        assertThatThrownBy(() -> ruleService.update(userId, ruleId, new RuleDto.UpdateRequest(null, null, null, null, null, 1, null)))
+        assertThatThrownBy(() -> ruleService.update(userId, ruleId, new RuleDto.UpdateRequest(null, null, null, null, null, 1, null), actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("does not belong to you");
     }
@@ -252,9 +282,11 @@ class RuleServiceTest {
         CategoryRule existing = existingUserRule(ruleId, userId, CategoryRule.ActionType.ASSIGN_CATEGORY, "Dining");
         when(categoryRuleRepository.findById(ruleId)).thenReturn(Optional.of(existing));
 
-        ruleService.delete(userId, ruleId);
+        ruleService.delete(userId, ruleId, actingAdminId);
 
         verify(categoryRuleRepository).delete(existing);
+        verify(auditService).record(eq(userId), eq("RULE_DELETED"), eq("CategoryRule"), eq(ruleId),
+                argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
     }
 
     @Test
@@ -262,7 +294,7 @@ class RuleServiceTest {
         UUID ruleId = UUID.randomUUID();
         when(categoryRuleRepository.findById(ruleId)).thenReturn(Optional.of(globalRule(ruleId)));
 
-        assertThatThrownBy(() -> ruleService.delete(userId, ruleId))
+        assertThatThrownBy(() -> ruleService.delete(userId, ruleId, actingAdminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Global rules");
         verify(categoryRuleRepository, never()).delete(any(CategoryRule.class));
