@@ -92,7 +92,12 @@ public class PdfPreviewGenerator {
      *  single-section path has always followed), so a bank recognizable purely from letterhead
      *  text still gets suggested even when nothing parsed as a transaction. */
     public List<StagedAccountSection> generateSections(UUID userId, String filename, byte[] fileBytes) throws IOException {
-        return generateSectionsWithContext(userId, filename, fileBytes, null).sections();
+        return generateSections(userId, filename, fileBytes, null);
+    }
+
+    /** @param password see {@link PdfTextExtractor#extract(byte[], String)}; null when none was given. */
+    public List<StagedAccountSection> generateSections(UUID userId, String filename, byte[] fileBytes, String password) throws IOException {
+        return generateSectionsWithContext(userId, filename, fileBytes, password).sections();
     }
 
     /** One {@link DocumentContext}'s worth of recorded structural facts and capability

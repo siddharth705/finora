@@ -2,14 +2,24 @@ package com.finora.imports.pdf;
 
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
+import com.finora.imports.DuplicateDetector;
+import com.finora.imports.TransactionNormalizer;
 import com.finora.imports.pdf.fixtures.PdfFixtureBuilder;
+import com.finora.imports.product.ProductAttributeExtractor;
+import com.finora.imports.product.ProductDiscovery;
+import com.finora.repository.TransactionRepository;
+import com.finora.service.CategorizationService;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Password-protected statements, which most Indian banks e-mail by default.
@@ -87,6 +97,42 @@ class PasswordProtectedPdfTest {
                 .as("the message and the whole cause chain reach logs and error reports")
                 .hasNoCause()
                 .hasMessageNotContaining(secret);
+    }
+
+    /**
+     * Every one of PdfPreviewGenerator's three public entry points, driven with a password against
+     * a real encrypted document.
+     *
+     * These exist because the password is threaded through three separate overloads, and a caller
+     * reaching an overload that was never added is a compile error nothing else here would catch:
+     * the tests above stop at PdfTextExtractor, and every test of the callers above
+     * PdfPreviewGenerator mocks it. `generateSections(userId, name, bytes, password)` in particular
+     * was reached only from the re-import path and shipped missing.
+     */
+    @Test
+    void everyGeneratorEntryPointAcceptsAPassword() throws Exception {
+        byte[] encrypted = PdfFixtureBuilder.encrypt(PdfFixtureBuilder.buildReverseChronologicalRunningBalanceSample(), PASSWORD);
+        PdfPreviewGenerator generator = realGenerator();
+        UUID userId = UUID.randomUUID();
+
+        assertThat(generator.generate(userId, "s.pdf", encrypted, PASSWORD).rows()).isNotEmpty();
+        // The multi-section entry point, which ImportService.parseAndStageAnyFormat uses to replay
+        // one section of a composite statement on re-import.
+        assertThat(generator.generateSections(userId, "s.pdf", encrypted, PASSWORD)).isNotEmpty();
+        assertThat(generator.generateSectionsWithContext(userId, "s.pdf", encrypted, PASSWORD).sections()).isNotEmpty();
+    }
+
+    private PdfPreviewGenerator realGenerator() {
+        CategorizationService categorizationService = mock(CategorizationService.class);
+        when(categorizationService.suggest(any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
+        TransactionRepository transactionRepository = mock(TransactionRepository.class);
+        when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
+        TransactionNormalizer normalizer =
+                new TransactionNormalizer(categorizationService, new DuplicateDetector(transactionRepository));
+
+        return new PdfPreviewGenerator(new PdfTextExtractor(), new PdfTableLocator(), new PdfMetadataExtractor(),
+                normalizer, ProductDiscovery.standard(), new ProductAttributeExtractor());
     }
 
     @Test
