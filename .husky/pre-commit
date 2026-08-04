@@ -13,6 +13,14 @@ staged=$(git diff --cached --name-only)
 # review while letting exactly what it warns about through.
 sh scripts/check-fixture-hygiene.sh || exit 1
 
+# Only when an API client is actually being touched -- this is the exact moment drift happens: one
+# client gets fixed and the other two don't. That is how a 401-handling fix landed on web, missed
+# mobile, and shipped a bug where a mistyped password revoked every session on every device. See
+# the script's docstring, which also records why this is a check rather than a shared module.
+if echo "$staged" | grep -qE '^(frontend|admin-portal|mobile)/src/api/client\.ts$'; then
+  python scripts/check-client-auth-policy.py || exit 1
+fi
+
 if echo "$staged" | grep -qE '^(frontend|admin-portal)/'; then
   if echo "$staged" | grep -q '^frontend/'; then
     (cd frontend && npx eslint --fix $(echo "$staged" | grep '^frontend/' | sed 's#^frontend/##') 2>/dev/null || true)
