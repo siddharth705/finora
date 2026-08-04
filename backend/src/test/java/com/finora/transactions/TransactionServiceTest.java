@@ -340,7 +340,7 @@ class TransactionServiceTest {
         UUID txnId = UUID.randomUUID();
         when(transactionRepository.findById(txnId)).thenReturn(Optional.of(ownedTransaction(txnId, otherUserId)));
 
-        assertThatThrownBy(() -> transactionService.delete(userId, txnId))
+        assertThatThrownBy(() -> transactionService.delete(userId, txnId, userId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("does not belong to you");
     }
@@ -350,7 +350,7 @@ class TransactionServiceTest {
         UUID txnId = UUID.randomUUID();
         when(transactionRepository.findById(txnId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> transactionService.delete(userId, txnId))
+        assertThatThrownBy(() -> transactionService.delete(userId, txnId, userId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("not found");
     }
@@ -361,7 +361,7 @@ class TransactionServiceTest {
         Transaction t = ownedTransaction(txnId, userId);
         when(transactionRepository.findById(txnId)).thenReturn(Optional.of(t));
 
-        transactionService.delete(userId, txnId);
+        transactionService.delete(userId, txnId, userId);
 
         verify(transactionRepository).delete(t);
     }
@@ -373,9 +373,26 @@ class TransactionServiceTest {
         UUID txnId = UUID.randomUUID();
         when(transactionRepository.findById(txnId)).thenReturn(Optional.of(ownedTransaction(txnId, userId)));
 
-        transactionService.delete(userId, txnId);
+        transactionService.delete(userId, txnId, userId);
 
         verify(recurringService).detectForUser(userId);
+    }
+
+    // Bug fix: delete() used to record TRANSACTION_DELETED with no actingAdminId at all --
+    // AdminTransactionController (support-assisted transaction deletion) calls this exact same
+    // method, so an admin deleting a user's transaction was indistinguishable in the audit trail
+    // from the user deleting their own. Same "actorId" convention as RelationshipService/
+    // MerchantService/RoleService/RuleService/AccountService.
+    @Test
+    void delete_recordsActingAdminIdInAuditMetadata() {
+        UUID txnId = UUID.randomUUID();
+        UUID actingAdminId = UUID.randomUUID();
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(ownedTransaction(txnId, userId)));
+
+        transactionService.delete(userId, txnId, actingAdminId);
+
+        verify(auditService).record(eq(userId), eq("TRANSACTION_DELETED"), eq("Transaction"), eq(txnId),
+                argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
     }
 
     @Test
@@ -655,7 +672,7 @@ class TransactionServiceTest {
         Account acct = account(accountId, Account.Type.SAVINGS, BigDecimal.valueOf(1000));
         when(accountRepository.findById(accountId)).thenReturn(Optional.of(acct));
 
-        transactionService.delete(userId, txnId);
+        transactionService.delete(userId, txnId, userId);
 
         // The 200 of income this transaction contributed is reversed out on delete.
         assertThat(acct.getBalance()).isEqualByComparingTo("800");
@@ -684,7 +701,7 @@ class TransactionServiceTest {
         transferPartner.setReconciliationStatus(Transaction.ReconciliationStatus.TRANSFER);
         when(transactionRepository.findByTransferPairIdIn(List.of(txnId))).thenReturn(List.of(transferPartner));
 
-        transactionService.delete(userId, txnId);
+        transactionService.delete(userId, txnId, userId);
 
         assertThat(dupPartner.getIsDuplicateOf()).isNull();
         assertThat(dupPartner.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.OK);
@@ -713,7 +730,7 @@ class TransactionServiceTest {
         refundIncome.setReconciliationStatus(Transaction.ReconciliationStatus.REFUND);
         when(transactionRepository.findByRefundOfTransactionIdIn(List.of(expenseId))).thenReturn(List.of(refundIncome));
 
-        transactionService.delete(userId, expenseId);
+        transactionService.delete(userId, expenseId, userId);
 
         assertThat(refundIncome.getRefundOfTransactionId()).isNull();
         assertThat(refundIncome.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.OK);

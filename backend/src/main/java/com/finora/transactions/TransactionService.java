@@ -403,8 +403,16 @@ public class TransactionService {
                 .toList();
     }
 
+    /**
+     * Bug fix: this recorded TRANSACTION_DELETED against only the target user, with no
+     * actingAdminId anywhere -- AdminTransactionController (support-assisted transaction deletion)
+     * calls this exact same method with the target userId sourced from the path, so an admin
+     * deleting a user's transaction was indistinguishable in the audit trail from the user deleting
+     * their own. Same bug class, same fix, as the actorId threading already done for
+     * RelationshipService/MerchantService/RoleService/RuleService/AccountService.
+     */
     @Transactional
-    public void delete(UUID userId, UUID txnId) {
+    public void delete(UUID userId, UUID txnId, UUID actingAdminId) {
         Transaction t = getOwned(userId, txnId);
         clearReconciliationPointersTo(List.of(t.getId()));
         adjustAccountBalance(t.getAccountId(), balanceOf(t).negate());
@@ -414,7 +422,8 @@ public class TransactionService {
         reconciliationService.reconcileForUser(userId);
         recurringService.detectForUser(userId);
         auditService.record(userId, "TRANSACTION_DELETED", "Transaction", txnId,
-                Map.of("amount", t.getAmount(), "description", String.valueOf(t.getDescription())));
+                Map.of("amount", t.getAmount(), "description", String.valueOf(t.getDescription()),
+                        "actorId", actingAdminId.toString()));
     }
 
     @Transactional

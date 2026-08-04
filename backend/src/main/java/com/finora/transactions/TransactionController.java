@@ -72,7 +72,7 @@ public class TransactionController {
 
     @DeleteMapping("/{id}")
     public ResponseEntity<ApiResponse<Void>> delete(@PathVariable UUID id) {
-        transactionService.delete(currentUser.id(), id);
+        transactionService.delete(currentUser.id(), id, currentUser.id());
         return ResponseEntity.ok(ApiResponse.ok(null, "Transaction deleted"));
     }
 
