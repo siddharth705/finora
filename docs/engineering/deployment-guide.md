@@ -15,8 +15,9 @@ from an environment variable, never a hardcoded value in source.
 2. [Local development](#local-development)
 3. [Docker (docker-compose)](#docker-docker-compose)
 4. [Railway (backend + Postgres)](#railway-backend--postgres)
-5. [Cloudflare (both frontends)](#cloudflare-both-frontends)
-6. [Frontend environment variables](#frontend-environment-variables)
+5. [Before running more than one backend instance](#before-running-more-than-one-backend-instance)
+6. [Cloudflare (both frontends)](#cloudflare-both-frontends)
+7. [Frontend environment variables](#frontend-environment-variables)
 
 ---
 
@@ -169,6 +170,51 @@ build minutes before the cause was found. Two ways out if this happens to you:
    the exact holes it exists to catch (password-reset links leaking in API responses instead of
    being emailed; phone verification failing closed with a 503) — acceptable while you're the only
    person using the deployment to test, not once real users' accounts are on it.
+
+## Before running more than one backend instance
+
+**Today this app is deployed as a single Railway instance, and two rate-limiting controls depend on
+that being true.** Raising the replica count is a one-click change in Railway; nothing in the
+application will complain, no test will fail, and no log line will appear. The controls simply
+become weaker in proportion to the instance count. This section exists so that decision is made
+knowingly rather than discovered later.
+
+### What breaks silently, and by how much
+
+| Control | Where | Effect of running N instances |
+|---|---|---|
+| Per-IP rate limits (`RateLimiter`, used by `RateLimitFilter`) | in-memory `ConcurrentHashMap`, per JVM | Every limit becomes **N× more permissive**. Login goes from 10 attempts/min/IP to 10N — this is the per-IP half of the credential-stuffing defence. Registration, forgot-password, import staging and password-change scale the same way. |
+| Import concurrency (`ImportConcurrencyLimiter`) | in-process fair `Semaphore`, `app.import.max-concurrent` (default 6) | **6N** imports can run at once, each holding statement bytes in memory and competing for that instance's own DB connections. The cap exists to stop a burst of uploads exhausting heap; N instances raise the real ceiling without raising the memory available to any one of them. |
+
+Both classes say so in their own doc comments. Neither is a bug — an in-process limiter is the
+right amount of engineering for one instance, and reaching for Redis before there is a second
+instance would be infrastructure with no payoff.
+
+### What is NOT affected
+
+Worth stating so the list above is not over-read:
+
+- **Account lockout is safe.** It is persisted (`users.failed_login_attempts`, `users.locked_until`,
+  thresholds in `platform_settings`), so the per-account half of the login defence works unchanged
+  across any number of instances. Only the per-IP half degrades.
+- **Refresh-token rotation and theft detection are safe** — entirely database-backed.
+- **Import-session cleanup is safe.** It is piggybacked on a user's next `stage()` call rather than
+  a scheduled sweep, so it still runs whichever instance serves that request. There are no
+  `@Scheduled` or `@Async` jobs anywhere in the backend, so there is nothing that would double-run.
+
+### The precondition
+
+Before increasing the replica count:
+
+1. Move `RateLimiter`'s counters to a store shared by every instance (Redis is the obvious choice;
+   a fixed window keyed by IP is all that is needed, matching today's semantics).
+2. Decide what `app.import.max-concurrent` should mean with N instances — either divide it by the
+   replica count so the global ceiling is unchanged, or move the permit pool out of process too.
+3. Re-check `DB_POOL_MAX_SIZE` (default 10) against Postgres's `max_connections`: the pool is
+   **per instance**, so N instances open up to 10N connections.
+
+Do the first two before, not after. Both failure modes are silent, and the first one weakens a
+security control.
 
 ## Cloudflare (both frontends)
 
