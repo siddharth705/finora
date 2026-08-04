@@ -8,6 +8,7 @@ import org.springframework.core.env.Environment;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -115,6 +116,25 @@ public class GlobalExceptionHandler {
                 .reduce((a, b) -> a + "; " + b)
                 .orElse("Validation failed");
         return ResponseEntity.badRequest().body(ApiResponse.error(message, "VALIDATION_ERROR"));
+    }
+
+    /**
+     * Bug fix: malformed JSON in a @RequestBody (truncated body, wrong type for a field, invalid
+     * syntax) throws HttpMessageNotReadableException from Jackson during argument resolution --
+     * before any @Valid constraint even runs, so handleValidation() above never sees it. With no
+     * handler for it here, it fell through to the catch-all Exception handler below: the exact
+     * same "routine, expected client-input problem treated as an alarming server failure" gap
+     * already fixed for AccessDeniedException and OptimisticLockingFailureException in this same
+     * class -- a malformed request body is entirely the caller's mistake, not this server failing,
+     * but it came back as an opaque 500 "Unexpected error" and got logged as
+     * log.error("Unhandled exception", ...), polluting error logs/alerting with ordinary bad input.
+     * Deliberately not logging the exception's own message -- Jackson's parse-error text can quote
+     * back raw request body content, which for this API may be customer financial data.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMalformedRequestBody(HttpMessageNotReadableException ex) {
+        return ResponseEntity.badRequest()
+                .body(ApiResponse.error("The request body is missing or malformed.", "MALFORMED_REQUEST_BODY"));
     }
 
     /**
