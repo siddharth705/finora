@@ -179,22 +179,29 @@ class RoleAdminControllerIT extends AbstractIntegrationTest {
         HttpHeaders headers = bearerFor(superAdmin);
         headers.setContentType(MediaType.APPLICATION_JSON);
 
+        // Bug fix: this used the literal name REPORT_EXPORT, which V16__rbac_roles_permissions.sql
+        // already seeds, so creating it returned 409 CONFLICT and the test failed on its first
+        // assertion. Same for the REPORT_VIEWER role below. Unique names per run instead. Never
+        // caught because this class had never run: *IT did not match surefire's default includes.
+        String permissionName = "REPORT_EXPORT_IT_" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        String roleName = "REPORT_VIEWER_IT_" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+
         ResponseEntity<String> createPermission = restTemplate.exchange(
                 "/api/v1/admin/permissions", HttpMethod.POST,
-                new HttpEntity<>("{\"name\":\"REPORT_EXPORT\",\"description\":\"Export reports\"}", headers), String.class);
+                new HttpEntity<>("{\"name\":\"" + permissionName + "\",\"description\":\"Export reports\"}", headers), String.class);
         assertThat(createPermission.getStatusCode()).isEqualTo(HttpStatus.OK);
         String permissionId = mapper.readTree(createPermission.getBody()).get("data").get("id").asText();
 
         ResponseEntity<String> createRole = restTemplate.exchange(
                 "/api/v1/admin/roles", HttpMethod.POST,
-                new HttpEntity<>("{\"name\":\"REPORT_VIEWER\",\"description\":\"Reads reports\"}", headers), String.class);
+                new HttpEntity<>("{\"name\":\"" + roleName + "\",\"description\":\"Reads reports\"}", headers), String.class);
         String roleId = mapper.readTree(createRole.getBody()).get("data").get("id").asText();
 
         ResponseEntity<String> grantResponse = restTemplate.exchange(
                 "/api/v1/admin/roles/" + roleId + "/permissions/" + permissionId,
                 HttpMethod.POST, new HttpEntity<>(headers), String.class);
         assertThat(grantResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(grantResponse.getBody()).contains("REPORT_EXPORT");
+        assertThat(grantResponse.getBody()).contains(permissionName);
 
         // Deleting a granted permission must be rejected while it's still attached to the role.
         ResponseEntity<String> deleteWhileGranted = restTemplate.exchange(
@@ -205,7 +212,7 @@ class RoleAdminControllerIT extends AbstractIntegrationTest {
                 "/api/v1/admin/roles/" + roleId + "/permissions/" + permissionId,
                 HttpMethod.DELETE, new HttpEntity<>(headers), String.class);
         assertThat(revokeResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(revokeResponse.getBody()).doesNotContain("REPORT_EXPORT");
+        assertThat(revokeResponse.getBody()).doesNotContain(permissionName);
 
         // Now that no role grants it, deletion succeeds.
         ResponseEntity<String> deleteAfterRevoke = restTemplate.exchange(

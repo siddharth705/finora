@@ -183,7 +183,9 @@ class AdminUserMerchantControllerIT extends AbstractIntegrationTest {
         account.setName("Target Account");
         account.setAccountType(Account.Type.SAVINGS);
         account.setBalance(BigDecimal.ZERO);
-        accountRepository.save(account);
+        // See BaseEntity: save() merges rather than persists, so the id lands on the returned
+        // instance, not this one.
+        account = accountRepository.save(account);
 
         Transaction txn = new Transaction();
         txn.setUserId(target.getId());
@@ -193,7 +195,9 @@ class AdminUserMerchantControllerIT extends AbstractIntegrationTest {
         txn.setAmount(BigDecimal.TEN);
         txn.setTxnType(Transaction.Type.EXPENSE);
         txn.setMerchantId(merchant.getId());
-        transactionRepository.save(txn);
+        // Transaction extends BaseEntity too, so the id lands on the returned instance -- the
+        // request body below sends txn.getId() as applyToTransactionId.
+        txn = transactionRepository.save(txn);
 
         ResponseEntity<String> response = restTemplate.exchange(
                 "/api/v1/admin/users/" + target.getId() + "/merchants/" + merchant.getId() + "/confirm-category",

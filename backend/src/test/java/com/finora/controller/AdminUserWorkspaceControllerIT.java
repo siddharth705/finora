@@ -72,7 +72,9 @@ class AdminUserWorkspaceControllerIT extends AbstractIntegrationTest {
         targetAccount.setName("Target Account");
         targetAccount.setAccountType(Account.Type.SAVINGS);
         targetAccount.setBalance(BigDecimal.ZERO);
-        accountRepository.save(targetAccount);
+        // See BaseEntity: save() merges rather than persists, so the id lands on the returned
+        // instance, not this one.
+        targetAccount = accountRepository.save(targetAccount);
 
         Transaction t = new Transaction();
         t.setUserId(targetUser.getId());
@@ -93,7 +95,7 @@ class AdminUserWorkspaceControllerIT extends AbstractIntegrationTest {
         otherAccount.setName("Other Account");
         otherAccount.setAccountType(Account.Type.SAVINGS);
         otherAccount.setBalance(BigDecimal.ZERO);
-        accountRepository.save(otherAccount);
+        otherAccount = accountRepository.save(otherAccount);
 
         for (int i = 0; i < 2; i++) {
             Transaction otherTxn = new Transaction();

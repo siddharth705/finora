@@ -4,8 +4,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * Base class for tests that need a real Postgres, not H2 or a mock. Soft-delete behavior
@@ -13,23 +11,48 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * all depend on real Postgres semantics that an in-memory database won't faithfully reproduce —
  * this is exactly the class of bug Testcontainers exists to catch that a mocked repository can't.
  *
- * One container is shared across all test classes that extend this (via the static @Container
- * field + Testcontainers' reuse), so the full suite doesn't pay container-startup cost per class.
+ * <p>One container is shared across every test class that extends this, started once per JVM and
+ * deliberately never stopped. This is the "singleton container" pattern, and it is written out by
+ * hand below rather than delegated to {@code @Testcontainers}/{@code @Container} for a reason.
+ *
+ * <p><b>Bug fix.</b> This class previously carried {@code @Testcontainers} with a static
+ * {@code @Container} field, and a doc comment claiming "Testcontainers' reuse keeps this one
+ * container alive across every test class". It did not. Reuse requires {@code .withReuse(true)}
+ * plus {@code testcontainers.reuse.enable=true}, and neither was ever set. What
+ * {@code @Testcontainers} actually does with a static field is start the container before each
+ * test class and <em>stop it after that class finishes</em>.
+ *
+ * <p>That is fatal in combination with Spring's context cache. Class A starts the container on
+ * port X, {@code @DynamicPropertySource} bakes port X into the context, and the context is cached.
+ * Class A ends and the container is destroyed. Class B starts a fresh container on port Y — but
+ * reuses the cached context still pointing at port X. Every query then fails with
+ * {@code Connection to localhost:X refused}, surfacing as
+ * {@code HikariPool-1 - Connection is not available ... (total=0)} across whole test classes at
+ * once.
+ *
+ * <p>Nobody noticed because these tests had never run: {@code *IT} did not match surefire's
+ * default includes until that was fixed in pom.xml. The first run of the suite failed en masse on
+ * exactly this.
+ *
+ * <p>Starting the container in a static initializer and never closing it makes the behaviour match
+ * what the comment always claimed. The container outlives every test class in the JVM, and
+ * Testcontainers' Ryuk sidecar removes it when the JVM exits, so nothing leaks.
  */
-@Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 public abstract class AbstractIntegrationTest {
 
-    // @SuppressWarnings("resource"): never explicitly closed by design, not an oversight -- see the
-    // class doc comment above. Testcontainers' reuse keeps this one container alive across every
-    // test class that extends this base; closing it here would defeat that (forcing a fresh
-    // container per class again).
-    @Container
+    // @SuppressWarnings("resource"): never closed by design, not an oversight -- closing it is the
+    // exact bug described above. Ryuk reaps it on JVM exit.
     @SuppressWarnings("resource")
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine")
             .withDatabaseName("finora_test")
             .withUsername("finora")
             .withPassword("finora");
+
+    static {
+        // Started here, not by the JUnit extension, so that no per-class lifecycle can stop it.
+        POSTGRES.start();
+    }
 
     @DynamicPropertySource
     static void registerPgProperties(DynamicPropertyRegistry registry) {

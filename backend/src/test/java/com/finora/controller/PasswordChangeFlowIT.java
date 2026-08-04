@@ -67,6 +67,13 @@ class PasswordChangeFlowIT extends AbstractIntegrationTest {
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
+        // The per-test client IP has to be on the REGISTER call too, not just the authenticated
+        // ones below. Without it every registration in this class arrives from 127.0.0.1 and
+        // shares one bucket in RateLimitFilter's registerLimiter (5 per 5 minutes per IP), so the
+        // sixth test in the class got 429 out of setup and never reached its own assertion. This
+        // only began to bite once the *IT classes actually started running (see pom.xml) and the
+        // whole suite began sharing one application instance.
+        headers.set("X-Forwarded-For", clientIp);
         String registerBody = """
                 {"email": "%s", "password": "%s", "fullName": "Password Change Test", "phoneNumber": "%s"}
                 """.formatted(email, CURRENT_PASSWORD, phoneNumber);

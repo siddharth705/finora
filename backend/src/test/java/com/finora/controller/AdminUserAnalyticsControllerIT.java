@@ -69,7 +69,12 @@ class AdminUserAnalyticsControllerIT extends AbstractIntegrationTest {
         account.setName(user.getId() + " Account");
         account.setAccountType(Account.Type.SAVINGS);
         account.setBalance(BigDecimal.ZERO);
-        accountRepository.save(account);
+        // Must use the RETURN value: Account extends BaseEntity, whose @Version field is a
+        // non-null Long, so Spring Data treats it as not-new and calls merge() rather than
+        // persist(). merge() returns a managed copy and leaves this instance's id null, so the
+        // transaction below was inserted with account_id = NULL and rejected by the NOT NULL
+        // constraint. Merchant above has no @Version, which is why it works either way.
+        account = accountRepository.save(account);
 
         Transaction txn = new Transaction();
         txn.setUserId(user.getId());

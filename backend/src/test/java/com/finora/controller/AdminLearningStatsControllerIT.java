@@ -3,11 +3,15 @@ package com.finora.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finora.AbstractIntegrationTest;
+import com.finora.entity.Category;
+import com.finora.entity.Merchant;
 import com.finora.entity.MerchantCategoryLearning;
 import com.finora.entity.MerchantLearningAudit;
 import com.finora.entity.User;
 import com.finora.repository.MerchantCategoryLearningRepository;
 import com.finora.repository.MerchantLearningAuditRepository;
+import com.finora.repository.CategoryRepository;
+import com.finora.repository.MerchantRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
 import org.junit.jupiter.api.Test;
@@ -28,6 +32,8 @@ class AdminLearningStatsControllerIT extends AbstractIntegrationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private MerchantCategoryLearningRepository learningRepository;
     @Autowired private MerchantLearningAuditRepository auditRepository;
+    @Autowired private MerchantRepository merchantRepository;
+    @Autowired private CategoryRepository categoryRepository;
     @Autowired private JwtService jwtService;
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -62,10 +68,24 @@ class AdminLearningStatsControllerIT extends AbstractIntegrationTest {
         User admin = createUser("ADMIN");
         User contributor = createUser("USER");
 
+        // Both merchant_category_learning.merchant_id and merchant_learning_audit.merchant_id
+        // are real foreign keys, so the merchant has to exist. This used to be a bare
+        // UUID.randomUUID() and the constraint rejected the insert; never noticed because the
+        // class had never run (*IT did not match surefire's includes).
+        Merchant merchant = new Merchant();
+        merchant.setUserId(contributor.getId());
+        merchant.setCanonicalName("Learning Stats IT Merchant " + UUID.randomUUID());
+        UUID merchantId = merchantRepository.save(merchant).getId();
+
+        Category category = new Category();
+        category.setUserId(contributor.getId());
+        category.setName("Learning Stats IT Category " + UUID.randomUUID());
+        UUID categoryId = categoryRepository.save(category).getId();
+
         MerchantCategoryLearning pair = new MerchantCategoryLearning();
         pair.setUserId(contributor.getId());
-        pair.setMerchantId(UUID.randomUUID());
-        pair.setCategoryId(UUID.randomUUID());
+        pair.setMerchantId(merchantId);
+        pair.setCategoryId(categoryId);
         pair.setConfirmationCount(1);
         pair.setConfidence(100);
         learningRepository.save(pair);

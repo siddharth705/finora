@@ -47,6 +47,11 @@ class AuthFlowIT extends AbstractIntegrationTest {
 
         HttpHeaders authHeaders = new HttpHeaders();
         authHeaders.setBearerAuth(token);
+        // Bug fix: the Content-Type was missing, so RestTemplate defaulted a String body to
+        // text/plain and POST /phone/verify answered 415 -> the flow blew up with a 500 well before
+        // the assertion it was written for. Never caught because this class had never run: *IT did
+        // not match surefire's default includes (see pom.xml).
+        authHeaders.setContentType(MediaType.APPLICATION_JSON);
 
         // A freshly registered user is not phone-verified yet -- PhoneVerificationFilter must
         // reject a protected endpoint until verification completes, and must still allow the

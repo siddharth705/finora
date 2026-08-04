@@ -19,6 +19,23 @@
 
   <properties>
     <java.version>21</java.version>
+    <!-- Docker Engine API version Testcontainers negotiates with. Override with
+         -Ddocker.api.version=... if you ever need to.
+
+         Without this, every Testcontainers test fails on a current Docker Desktop:
+
+           client version 1.32 is too old. Minimum supported API version is 1.40
+
+         docker-java (bundled with Testcontainers 1.20.1) falls back to API 1.32 when nothing tells
+         it otherwise, and Docker Engine 29 raised its floor to 1.40. Note the setting is docker-java's
+         `api.version` property, NOT the DOCKER_API_VERSION environment variable, which docker-java
+         does not read and which therefore looks like it does nothing.
+
+         1.40 rather than something newer on purpose: it is the exact floor Engine 29 accepts and has
+         been supported since Docker 19.03 (2019), so this one value works on both a brand-new engine
+         and anything a developer or CI runner is realistically still running. Pinning something newer
+         would just move the incompatibility to the other end. -->
+    <docker.api.version>1.40</docker.api.version>
   </properties>
 
   <dependencies>
@@ -156,6 +173,20 @@
       <artifactId>spring-security-test</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- Makes TestRestTemplate use Apache HttpClient instead of the JDK's HttpURLConnection,
+         which Spring Boot picks up automatically once this is on the test classpath.
+
+         Not a preference. HttpURLConnection silently DROPS a set of "restricted" request headers,
+         Origin among them, so AuthFlowIT's CORS test could never actually send the header whose
+         handling it exists to verify; it asserted on a request the JDK had quietly stripped. The
+         same client also throws HttpRetryException ("cannot retry due to server authentication, in
+         streaming mode") instead of surfacing a plain 401, which broke the wrong-password test.
+         Both are limitations of the client, not of the application. -->
+    <dependency>
+      <groupId>org.apache.httpcomponents.client5</groupId>
+      <artifactId>httpclient5</artifactId>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>testcontainers</artifactId>
@@ -237,6 +268,42 @@
         </configuration>
       </plugin>
       <plugin>
+        <!-- Two things, both of which existed only by accident before.
+
+             1. INCLUDES. The 29 *IT classes in src/test had never run. Surefire's defaults are
+                Test*.java, *Test.java, *Tests.java and *TestCase.java; *IT.java is the
+                maven-failsafe convention and failsafe was never configured. So every integration
+                test here (AuthFlowIT, AdminRbacIT, PasswordChangeFlowIT, GlobalAuditLogIT,
+                TransactionRepositoryIT, all 21 admin controller ITs) compiled, looked like coverage
+                in review, and asserted nothing anywhere. It is what made com.finora.controller
+                report 0.0% the moment JaCoCo was added, and it made ci.yml's claim that the suite
+                includes "the Testcontainers ones" untrue.
+
+                Fixed by widening surefire's includes rather than adding failsafe and a separate
+                `verify` phase. AbstractIntegrationTest's doc comment describes one container shared
+                across "the full suite", CI runs `./mvnw test` and expects Docker for exactly that
+                reason, and the README says the same. Splitting them into a phase nobody runs would
+                keep the documentation wrong. The trade is that `./mvnw test` genuinely needs a
+                Docker daemon now, which was already the documented expectation.
+
+             2. api.version. See the docker.api.version property for why. It has to be passed to the
+                forked test JVM as a system property; setting it in the parent shell does nothing. -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <includes>
+            <include>**/Test*.java</include>
+            <include>**/*Test.java</include>
+            <include>**/*Tests.java</include>
+            <include>**/*TestCase.java</include>
+            <include>**/*IT.java</include>
+          </includes>
+          <systemPropertyVariables>
+            <api.version>${docker.api.version}</api.version>
+          </systemPropertyVariables>
+        </configuration>
+      </plugin>
+      <plugin>
         <!-- Coverage measurement. The suite is large and passing, but until now what fraction of
              the code it actually exercises was simply unknown, and test COUNT is not the signal it
              looks like: the rate-limit bypass fixed in 6ee925a had five dedicated tests that all
@@ -254,21 +321,15 @@
              everyone here already runs, produces target/site/jacoco/index.html with no extra
              step.
 
-             FIRST RUN, 2026-08-04: 78.3% instructions / 74.4% branches overall, and one result
-             that is not a coverage problem at all. com.finora.controller reported 0.0% across
-             1700 instructions. Controllers are exercised only by the *IT classes, and those never
-             run: surefire's default includes are Test*.java, *Test.java, *Tests.java and
-             *TestCase.java, while *IT.java is the maven-failsafe convention and failsafe is not
-             configured here. All 29 integration test classes in src/test (AuthFlowIT, AdminRbacIT,
-             PasswordChangeFlowIT, GlobalAuditLogIT, TransactionRepositoryIT, the 21 admin
-             controller ITs) have therefore never executed, which also makes ci.yml's claim that
-             the suite includes "the Testcontainers ones" untrue.
+             WHAT IT FOUND ON ITS FIRST RUN. 78.3% instructions overall, but com.finora.controller
+             at 0.0% across 1700 instructions. That was not a coverage gap: controllers are only
+             exercised by the *IT classes, and all 29 of those had never executed, because *IT did
+             not match surefire's default includes. Adding them (see the surefire plugin above)
+             took the suite from 941 tests to 1055 and lifted coverage to 88.0% instructions /
+             78.0% branches, with com.finora.controller going from 0.0% to 63.0%.
 
-             Deliberately NOT fixed in this commit. Adding **/*IT.java to surefire's includes makes
-             them run, and that was confirmed (970 tests collected instead of 941), but whether
-             they PASS is unknown, because they have never once run. Enabling 29 untested test
-             classes on main without that answer risks red-ing the pipeline for everyone. It needs
-             its own change, verified against a working Docker daemon. -->
+             Which is the argument for this plugin existing. A passing count of 941 looked like
+             health; it was hiding a third of the test suite never running at all. -->
         <groupId>org.jacoco</groupId>
         <artifactId>jacoco-maven-plugin</artifactId>
         <version>0.8.12</version>

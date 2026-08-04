@@ -34,8 +34,13 @@ jobs:
           cache: 'maven'
 
       # No explicit Docker setup step: the suite's Testcontainers integration tests need a Docker
-      # daemon, and ubuntu-latest runners already have one running. Verified locally against a
-      # real daemon -- the full suite passes, including the Testcontainers ones.
+      # daemon, and ubuntu-latest runners already have one running.
+      #
+      # This claim used to be false. The 29 *IT classes never ran: surefire's default includes
+      # don't match *IT.java (that's maven-failsafe's convention) and failsafe was never
+      # configured, so the "Testcontainers tests" this comment promised had never executed once.
+      # backend/pom.xml now widens surefire's includes, and the suite really does run them --
+      # 1055 tests instead of 941, verified locally against a real daemon.
       - name: Run tests
         working-directory: backend
         run: ./mvnw -B --no-transfer-progress test

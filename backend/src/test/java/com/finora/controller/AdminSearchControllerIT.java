@@ -12,7 +12,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.*;
-import org.springframework.web.util.UriComponentsBuilder;
 
 import java.util.UUID;
 
@@ -47,9 +46,16 @@ class AdminSearchControllerIT extends AbstractIntegrationTest {
         return headers;
     }
 
+    /** Bug fix: this built the URL with UriComponentsBuilder...toUriString(), which leaves the
+     *  query value UNENCODED. A search term containing spaces ("Zephyr Global Search Target
+     *  &lt;uuid&gt;") produced a malformed request line and the server saw a blank q, so the
+     *  endpoint correctly returned [] and the test failed claiming the user could not be found.
+     *  The single-word bank search in this same class passed throughout, which is what made it
+     *  look like a search bug rather than a URL-building one. Passing the value as a URI template
+     *  variable lets RestTemplate encode it, which is what it is for. */
     private ResponseEntity<String> search(String q, HttpHeaders headers) {
-        String url = UriComponentsBuilder.fromPath("/api/v1/admin/search").queryParam("q", q).toUriString();
-        return restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+        return restTemplate.exchange("/api/v1/admin/search?q={q}", HttpMethod.GET,
+                new HttpEntity<>(headers), String.class, q);
     }
 
     @Test
@@ -94,7 +100,12 @@ class AdminSearchControllerIT extends AbstractIntegrationTest {
         String uniqueShortName = "ZBANK" + UUID.randomUUID().toString().substring(0, 8);
 
         Bank bank = new Bank();
-        bank.setId("zbank-" + UUID.randomUUID());
+        // banks.id is VARCHAR(30) -- it is the bank's own short code ("IOB"), not a generated
+        // UUID; see V26__custom_banks.sql. "zbank-" + a full UUID is 42 characters and was
+        // rejected with "value too long for type character varying(30)", failing this test in
+        // setup before it reached its assertion. Never caught because this class had never run:
+        // *IT did not match surefire's default includes (see pom.xml).
+        bank.setId("zbank-" + UUID.randomUUID().toString().substring(0, 8));
         bank.setOfficialName("Zephyr Test Bank Ltd");
         bank.setShortName(uniqueShortName);
         bankRepository.save(bank);

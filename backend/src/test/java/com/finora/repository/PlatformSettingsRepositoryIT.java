@@ -4,7 +4,9 @@ import com.finora.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -27,6 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PlatformSettingsRepositoryIT extends AbstractIntegrationTest {
 
     @Autowired private PlatformSettingsRepository platformSettingsRepository;
+    @Autowired private PlatformTransactionManager transactionManager;
 
     // The concurrency test below deliberately doesn't run inside @Transactional (each thread
     // needs its own real transaction to race the others meaningfully) so its write genuinely
@@ -70,7 +73,16 @@ class PlatformSettingsRepositoryIT extends AbstractIntegrationTest {
                 futures.add(pool.submit(() -> {
                     ready.countDown();
                     go.await();
-                    return platformSettingsRepository.markSetupCompletedIfNotAlready();
+                    // Each thread needs its OWN transaction, which is exactly what the comment
+                    // above describes but what this test never actually supplied. The repository
+                    // method is @Modifying with no @Transactional of its own (its production
+                    // callers, PlatformSettingsService.tryMarkSetupCompleted and
+                    // SetupService.completeSetup, are both transactional), so calling it bare from
+                    // a pool thread threw "Executing an update/delete query" before the race was
+                    // ever run. A TransactionTemplate per call gives each thread a real,
+                    // independent transaction on its own connection.
+                    return new TransactionTemplate(transactionManager).execute(
+                            status -> platformSettingsRepository.markSetupCompletedIfNotAlready());
                 }));
             }
             ready.await(5, TimeUnit.SECONDS);
