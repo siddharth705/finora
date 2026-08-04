@@ -218,6 +218,15 @@ security control.
 
 ## Cloudflare (both frontends)
 
+> **Decision on record — where each thing lives.** PostgreSQL stays on **Railway**, co-located with
+> the backend, because the import pipeline makes many round-trips inside one transaction. Neon is
+> reconsidered only if point-in-time recovery, per-branch databases, or a reason to separate
+> database from application hosting becomes real — see
+> [statement-storage-migration.md](statement-storage-migration.md) §7, which also records the
+> HikariCP caution that would apply. Cloudflare's role today is **Pages for both frontends**;
+> **R2 for uploaded statement files** is proposed but not built — statements currently live in
+> PostgreSQL as `BYTEA`.
+
 Both `frontend/` and `admin-portal/` build as static Vite apps. As actually deployed, that's
 Cloudflare Pages (not Workers — update this section if that changes). Whatever your Cloudflare
 build pipeline uses for env injection (a Pages project's Settings → Environment variables, or
