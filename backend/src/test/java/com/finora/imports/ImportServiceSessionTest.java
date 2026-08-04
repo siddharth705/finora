@@ -180,13 +180,13 @@ class ImportServiceSessionTest {
         var recurringDeposit = new StagedAccountSection(null, List.of(), 0, 0, List.of());
         when(importSessionService.createSession(any(), any(), any(), any(), any(), any()))
                 .thenReturn(sessionWith(UUID.randomUUID(), new byte[]{1}, ImportSession.STATUS_STAGED));
-        when(pdfPreviewGenerator.generateSectionsWithContext(any(), any(), any())).thenReturn(
+        when(pdfPreviewGenerator.generateSectionsWithContext(any(), any(), any(), any())).thenReturn(
                 new com.finora.imports.pdf.PdfPreviewGenerator.PdfGenerationResult(
                         List.<StagedAccountSection>of(savings, termDeposit, recurringDeposit),
                         new DocumentContext("PDF", "test")));
 
         var response = importService.parseAndStagePdfWithSession(userId,
-                new MockMultipartFile("file", "combined.pdf", "application/pdf", new byte[]{1}));
+                new MockMultipartFile("file", "combined.pdf", "application/pdf", new byte[]{1}), null);
 
         assertThat(response.multiAccount()).as("one account, not three").isFalse();
         // "Never lose information": the deposit table's contents survive as unparseable rows on the

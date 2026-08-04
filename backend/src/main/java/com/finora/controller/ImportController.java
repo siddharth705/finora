@@ -56,10 +56,17 @@ public class ImportController {
     // bundles a savings-account section and a credit-card section in one file) -- the
     // single-account case (multiAccount: false) still carries the exact same `staging` payload
     // this endpoint always returned, just wrapped in the new envelope.
+    //
+    // `password` is optional and travels in the multipart BODY, never as a query parameter -- a
+    // document password in a URL would be captured by access logs, browser history and referrers.
+    // It is used to open the document and then discarded; it is not stored on the ImportSession
+    // and not logged. Clients that never send it behave exactly as they did before.
     @PostMapping(value = "/pdf/stage", consumes = "multipart/form-data")
-    public ResponseEntity<ApiResponse<PdfStagingSessionResponse>> stagePdf(@RequestParam("file") MultipartFile file) throws Exception {
+    public ResponseEntity<ApiResponse<PdfStagingSessionResponse>> stagePdf(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "password", required = false) String password) throws Exception {
         return ResponseEntity.ok(ApiResponse.ok(
-                concurrencyLimiter.runGated(() -> importService.parseAndStagePdfWithSession(currentUser.id(), file))));
+                concurrencyLimiter.runGated(() -> importService.parseAndStagePdfWithSession(currentUser.id(), file, password))));
     }
 
     // ADR-0002: plain JSON now, not multipart -- the file no longer needs to be re-uploaded here,

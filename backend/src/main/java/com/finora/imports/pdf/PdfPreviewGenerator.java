@@ -77,7 +77,12 @@ public class PdfPreviewGenerator {
      *  detect and stage multiple accounts from one upload (see
      *  {@code ImportService.parseAndStagePdfWithSession}) call {@link #generateSections} instead. */
     public StagingResponse generate(UUID userId, String filename, byte[] fileBytes) throws IOException {
-        StagedAccountSection first = generateSectionsWithContext(userId, filename, fileBytes).sections().get(0);
+        return generate(userId, filename, fileBytes, null);
+    }
+
+    /** @param password see {@link PdfTextExtractor#extract(byte[], String)}; null when none was given. */
+    public StagingResponse generate(UUID userId, String filename, byte[] fileBytes, String password) throws IOException {
+        StagedAccountSection first = generateSectionsWithContext(userId, filename, fileBytes, password).sections().get(0);
         return new StagingResponse(first.rows(), first.totalParsed(), first.flaggedDuplicates(), first.detectedAccount(), first.unparseableRows());
     }
 
@@ -87,7 +92,7 @@ public class PdfPreviewGenerator {
      *  single-section path has always followed), so a bank recognizable purely from letterhead
      *  text still gets suggested even when nothing parsed as a transaction. */
     public List<StagedAccountSection> generateSections(UUID userId, String filename, byte[] fileBytes) throws IOException {
-        return generateSectionsWithContext(userId, filename, fileBytes).sections();
+        return generateSectionsWithContext(userId, filename, fileBytes, null).sections();
     }
 
     /** One {@link DocumentContext}'s worth of recorded structural facts and capability
@@ -102,8 +107,19 @@ public class PdfPreviewGenerator {
      *  context-discarding wrappers every existing caller (including every capability's own
      *  regression test) already depends on. */
     public PdfGenerationResult generateSectionsWithContext(UUID userId, String filename, byte[] fileBytes) throws IOException {
+        return generateSectionsWithContext(userId, filename, fileBytes, null);
+    }
+
+    /**
+     * @param password the document open password, or null when the request carried none. Held only
+     *   for the duration of this call: it is handed straight to {@link PdfTextExtractor} and is
+     *   never written to the {@link DocumentContext}, the staged rows, or the import session, so
+     *   it does not outlive the request. See {@link PdfTextExtractor#extract(byte[], String)} for
+     *   why supplying one for an unencrypted document is safe.
+     */
+    public PdfGenerationResult generateSectionsWithContext(UUID userId, String filename, byte[] fileBytes, String password) throws IOException {
         DocumentContext ctx = new DocumentContext("PDF", "PdfPreviewGenerator");
-        List<PositionedText> positioned = textExtractor.extract(fileBytes);
+        List<PositionedText> positioned = textExtractor.extract(fileBytes, password);
         PdfTableLocator.LocatedDocument doc = tableLocator.locateAll(positioned, ctx);
 
         if (doc.sections().isEmpty()) {

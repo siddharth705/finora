@@ -39,6 +39,21 @@ public enum ErrorCode {
     // them into one code is what let a real statement import as a silent, confirmable no-op.
     IMPORT_NO_TRANSACTIONS_FOUND("IMPORT_007", HttpStatus.UNPROCESSABLE_ENTITY,
             "Found a transaction table in this file but could not read any transactions from it"),
+    // Two codes, not one, and for the same reason IMPORT_001 and IMPORT_007 are separate: the
+    // follow-up differs. 008 means "we have not asked you for the password yet" -- the UI opens a
+    // prompt. 009 means "you gave us one and the document rejected it" -- the UI keeps the prompt
+    // open with an inline error, because re-prompting from scratch reads as though the app lost
+    // the file.
+    //
+    // PDFBox cannot tell these apart on its own: an encrypted PDF opened with NO password and one
+    // opened with the WRONG password both throw InvalidPasswordException with the identical
+    // message ("Cannot decrypt PDF, the password is incorrect"). The only thing that distinguishes
+    // them is whether the request carried a password, which is why the distinction is drawn at the
+    // call site rather than from the exception.
+    IMPORT_PDF_PASSWORD_REQUIRED("IMPORT_008", HttpStatus.UNPROCESSABLE_ENTITY,
+            "This statement is password protected. Enter the password your bank uses for it."),
+    IMPORT_PDF_PASSWORD_INVALID("IMPORT_009", HttpStatus.UNPROCESSABLE_ENTITY,
+            "That password did not open this statement. Check it and try again."),
 
     // Accounts
     ACCOUNT_NOT_FOUND("ACC_001", HttpStatus.NOT_FOUND, "Account not found"),

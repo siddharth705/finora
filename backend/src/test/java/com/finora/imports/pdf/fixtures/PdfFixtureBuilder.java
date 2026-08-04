@@ -1,9 +1,12 @@
 package com.finora.imports.pdf.fixtures;
 
+import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.encryption.AccessPermission;
+import org.apache.pdfbox.pdmodel.encryption.StandardProtectionPolicy;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 
@@ -149,6 +152,30 @@ public final class PdfFixtureBuilder {
                     }
                 }
             }
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            doc.save(out);
+            return out.toByteArray();
+        }
+    }
+
+    /**
+     * Re-saves any fixture above as a password-protected document, so the SAME layout can be
+     * parsed both with and without encryption and the two results compared directly.
+     *
+     * Deliberately a transform rather than a fixture, and deliberately absent from the capability
+     * index: encryption is a property of the file container, not of the statement's layout, so it
+     * composes with every fixture instead of being one more of them. Indian bank e-statements are
+     * commonly delivered encrypted, which is why this exists at all.
+     *
+     * Sets only the USER password (the one needed to open the document); the owner password is
+     * left blank, matching how banks issue these -- open-protected, not permission-protected.
+     */
+    public static byte[] encrypt(byte[] pdfBytes, String userPassword) throws IOException {
+        try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
+            AccessPermission permissions = new AccessPermission();
+            StandardProtectionPolicy policy = new StandardProtectionPolicy("", userPassword, permissions);
+            policy.setEncryptionKeyLength(128);
+            doc.protect(policy);
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             doc.save(out);
             return out.toByteArray();

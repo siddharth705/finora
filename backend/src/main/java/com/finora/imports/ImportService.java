@@ -135,10 +135,13 @@ public class ImportService {
      * one PDF) -- that case branches to a multi-account session and response shape instead, since
      * a single ConfirmRequest/DetectedAccountInfo genuinely can't represent N accounts at once.
      */
-    public PdfStagingSessionResponse parseAndStagePdfWithSession(UUID userId, MultipartFile file) throws IOException {
+    public PdfStagingSessionResponse parseAndStagePdfWithSession(UUID userId, MultipartFile file, String password) throws IOException {
         byte[] fileContent = file.getBytes();
         String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "statement.pdf";
-        var result = pdfPreviewGenerator.generateSectionsWithContext(userId, fileName, fileContent);
+        // Parsing happens BEFORE createSession, which is what makes the password retry clean: a
+        // wrong or missing password throws here, so no ImportSession row exists to orphan and the
+        // client simply calls this endpoint again with the same file.
+        var result = pdfPreviewGenerator.generateSectionsWithContext(userId, fileName, fileContent, password);
         List<StagedAccountSection> sections = onlySectionsThatAreActuallyAccounts(result.sections());
 
         if (sections.size() <= 1) {
@@ -259,6 +262,13 @@ public class ImportService {
      * extension). Used by reimport() specifically; the two *upload* entry points
      * (parseAndStageWithSession / parseAndStagePdfWithSession) already know their own format
      * directly and don't need this routing at all.
+     *
+     * PASSWORD-PROTECTED PDFs: this path re-parses bytes stored at import time, and the password
+     * is deliberately never persisted (see PdfPreviewGenerator's password parameter), so there is
+     * none to replay. Re-importing such a statement therefore fails -- but it now fails as a 422
+     * IMPORT_PDF_PASSWORD_REQUIRED that names the actual cause, rather than the opaque 500 it
+     * produced before. Prompting for the password again at reimport time is a UI change in the
+     * statement-history screen, not here, and is left out of the upload-flow work on purpose.
      *
      * sourceSectionIndex (V37) is the section-aware half of this same routing: a StatementImport
      * that came from section N of a multi-account PDF (e.g. HSBC's composite statement) must be

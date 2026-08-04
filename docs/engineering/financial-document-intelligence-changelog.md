@@ -24,6 +24,37 @@ cycle's full detail) — this file is the compressed, skimmable summary of the s
 
 ---
 
+## Version 3 — 2026-08-04
+
+Not an Evidence Cycle: nothing here changes what the engine understands about a document's
+*layout*. It changes which documents the engine can open at all, which is a property of the file
+container rather than of the statement inside it — recorded here anyway, because "the import
+failed" looked identical to a parsing failure from the outside.
+
+### Protected
+- ✓ A password-protected PDF used to surface as a generic 500 — "Could not read that statement" —
+  with nothing to suggest a password was involved or that supplying one would fix it. Most Indian
+  banks e-mail statements protected by default, so this was the normal path for a large share of
+  uploads, not an edge case. `PdfTextExtractor` now takes an optional document password and
+  translates PDFBox's `InvalidPasswordException` into two distinct 422s:
+  `IMPORT_PDF_PASSWORD_REQUIRED` (none supplied) and `IMPORT_PDF_PASSWORD_INVALID` (one supplied
+  and rejected). PDFBox cannot tell those apart on its own — both throw the same exception with
+  the same message — so the distinction is drawn from whether the request carried a password.
+- ✓ `PdfFixtureBuilder.encrypt()` re-saves any existing layout fixture as a protected document, so
+  encryption composes with every fixture instead of becoming one more of them. The regression test
+  that matters asserts a decrypted document parses to *exactly* the same `PositionedText` list as
+  its unencrypted copy — there is no separate parsing path for protected files, and this is what
+  keeps it that way.
+
+### Open
+- Re-import (`ImportService.parseAndStageAnyFormat`, reached from `StatementImportService`)
+  re-parses the bytes stored at import time. The password is deliberately never persisted, so
+  there is none to replay and re-importing a protected statement cannot succeed. It now fails as a
+  422 naming the real cause rather than an opaque 500; prompting for the password again from the
+  statement-history screen is UI work that was left out of the upload-flow change on purpose.
+
+---
+
 ## Version 2 — 2026-08-02 (Evidence Cycle 2)
 
 Triggered by a live user-reported bug, not a proactive review — the fastest possible evidence
