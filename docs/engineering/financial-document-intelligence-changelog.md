@@ -46,12 +46,20 @@ failed" looked identical to a parsing failure from the outside.
   its unencrypted copy — there is no separate parsing path for protected files, and this is what
   keeps it that way.
 
-### Open
-- Re-import (`ImportService.parseAndStageAnyFormat`, reached from `StatementImportService`)
-  re-parses the bytes stored at import time. The password is deliberately never persisted, so
-  there is none to replay and re-importing a protected statement cannot succeed. It now fails as a
-  422 naming the real cause rather than an opaque 500; prompting for the password again from the
-  statement-history screen is UI work that was left out of the upload-flow change on purpose.
+- ✓ Re-import replays the bytes stored at import time, and for a protected statement those bytes
+  are still encrypted — with the upload-time password deliberately never persisted, there was
+  nothing to replay. `POST /statement-imports/{id}/reimport` now takes an optional body carrying
+  the password, and the statement-history screen prompts for it on `IMPORT_008`.
+
+  Unlike the upload flow, re-import *tries first* and only prompts on rejection. The two differ in
+  what a failed attempt costs: on upload it means pushing the whole file over the network for
+  nothing, so asking up front is cheaper; on re-import the bytes are already server-side, so
+  "just try it" is one small request. Every statement that never needed a password — the majority
+  — keeps its single-click re-import.
+
+  Only *staging* re-parses. `ImportService.confirm()` builds transactions from the rows in the
+  request and never touches the file bytes, so the password stops being needed the moment staging
+  returns and never has to survive to the confirm step.
 
 ---
 

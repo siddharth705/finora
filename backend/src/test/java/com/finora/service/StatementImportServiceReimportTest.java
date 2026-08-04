@@ -76,13 +76,13 @@ class StatementImportServiceReimportTest {
     void reimport_ofAPdfSourcedStatement_routesThroughThePdfPath_notTheCsvOne() throws Exception {
         when(statementImportRepository.findById(statementImportId))
                 .thenReturn(Optional.of(statementWithFile("sbi_statement.pdf", "PDF")));
-        when(importService.parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("sbi_statement.pdf"), any(), isNull()))
+        when(importService.parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("sbi_statement.pdf"), any(), isNull(), isNull()))
                 .thenReturn(new StagingResponse(List.of(), 0, 0,
                         new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null, null, null, null, null, 0.0, true, java.util.List.of(), null, null, null, null, null, null, null, null), List.of()));
 
-        service.reimport(userId, statementImportId);
+        service.reimport(userId, statementImportId, null);
 
-        verify(importService).parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("sbi_statement.pdf"), any(), isNull());
+        verify(importService).parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("sbi_statement.pdf"), any(), isNull(), isNull());
         // The old (buggy) call path must never fire for a PDF-sourced statement.
         verify(importService, never()).parseAndStage(any(), any(), any(java.io.InputStream.class));
     }
@@ -91,14 +91,14 @@ class StatementImportServiceReimportTest {
     void reimport_ofACsvSourcedStatement_stillWorksTheSameWayAsBefore() throws Exception {
         when(statementImportRepository.findById(statementImportId))
                 .thenReturn(Optional.of(statementWithFile("hdfc_statement.csv", "CSV")));
-        when(importService.parseAndStageAnyFormat(eq(userId), eq("CSV"), eq("hdfc_statement.csv"), any(), isNull()))
+        when(importService.parseAndStageAnyFormat(eq(userId), eq("CSV"), eq("hdfc_statement.csv"), any(), isNull(), isNull()))
                 .thenReturn(new StagingResponse(List.of(), 0, 0,
                         new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null, null, null, null, null, 0.0, true, java.util.List.of(), null, null, null, null, null, null, null, null), List.of()));
 
-        var result = service.reimport(userId, statementImportId);
+        var result = service.reimport(userId, statementImportId, null);
 
         assertThat(result.accountId()).isEqualTo(accountId);
-        verify(importService).parseAndStageAnyFormat(eq(userId), eq("CSV"), eq("hdfc_statement.csv"), any(), isNull());
+        verify(importService).parseAndStageAnyFormat(eq(userId), eq("CSV"), eq("hdfc_statement.csv"), any(), isNull(), isNull());
     }
 
     @Test
@@ -109,12 +109,29 @@ class StatementImportServiceReimportTest {
         // stored field, not a guess from the name.
         when(statementImportRepository.findById(statementImportId))
                 .thenReturn(Optional.of(statementWithFile("export.dat", "PDF")));
-        when(importService.parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("export.dat"), any(), isNull()))
+        when(importService.parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("export.dat"), any(), isNull(), isNull()))
                 .thenReturn(new StagingResponse(List.of(), 0, 0,
                         new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null, null, null, null, null, 0.0, true, java.util.List.of(), null, null, null, null, null, null, null, null), List.of()));
 
-        service.reimport(userId, statementImportId);
+        service.reimport(userId, statementImportId, null);
 
-        verify(importService).parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("export.dat"), any(), isNull());
+        verify(importService).parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("export.dat"), any(), isNull(), isNull());
+    }
+
+    @Test
+    void reimport_passesTheSuppliedPasswordThrough_soAProtectedPdfCanBeReplayed() throws Exception {
+        // The stored bytes are the ORIGINAL encrypted ones and the upload-time password is never
+        // persisted, so re-import can only succeed if the password reaches the parser again. If it
+        // were dropped anywhere along this call chain the retry would fail identically to the
+        // first attempt, and the prompt would look broken rather than unanswered.
+        when(statementImportRepository.findById(statementImportId))
+                .thenReturn(Optional.of(statementWithFile("protected.pdf", "PDF")));
+        when(importService.parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("protected.pdf"), any(), isNull(), eq("AAAA1234")))
+                .thenReturn(new StagingResponse(List.of(), 0, 0,
+                        new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null, null, null, null, null, 0.0, true, java.util.List.of(), null, null, null, null, null, null, null, null), List.of()));
+
+        service.reimport(userId, statementImportId, "AAAA1234");
+
+        verify(importService).parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("protected.pdf"), any(), isNull(), eq("AAAA1234"));
     }
 }

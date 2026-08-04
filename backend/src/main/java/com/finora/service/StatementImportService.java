@@ -149,9 +149,14 @@ public class StatementImportService {
      * choice needed — see StatementImportDto.ReimportResult). The review/confirm step after this
      * is identical to a first-time import, including duplicate detection against everything
      * already on the books — including this same statement's own prior transactions.
+     *
+     * @param password the document open password when the stored file is a protected PDF, or null.
+     *   The stored bytes are the ORIGINAL encrypted ones and the upload-time password is never
+     *   persisted, so a protected statement cannot be replayed without being given it again:
+     *   calling with null yields IMPORT_PDF_PASSWORD_REQUIRED, which is what prompts the user.
      */
     @Transactional(readOnly = true)
-    public com.finora.dto.StatementImportDto.ReimportResult reimport(UUID userId, UUID statementImportId) throws Exception {
+    public com.finora.dto.StatementImportDto.ReimportResult reimport(UUID userId, UUID statementImportId, String password) throws Exception {
         StatementImport si = getOwned(userId, statementImportId);
         byte[] content = si.getFileContent();
         // Bug fix: this used to unconditionally call the CSV-only byte-stream overload, which
@@ -159,7 +164,8 @@ public class StatementImportService {
         // (Milestone 1). Now routes by the explicit sourceFormat recorded on this row at
         // confirm() time, not the filename's extension -- see
         // ImportService.parseAndStageAnyFormat's own doc comment for why that's more robust.
-        var staging = importService.parseAndStageAnyFormat(userId, si.getSourceFormat(), si.getFileName(), content, si.getSourceSectionIndex());
+        var staging = importService.parseAndStageAnyFormat(userId, si.getSourceFormat(), si.getFileName(), content,
+                si.getSourceSectionIndex(), password);
 
         Account account = accountRepository.findById(si.getAccountId())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND,

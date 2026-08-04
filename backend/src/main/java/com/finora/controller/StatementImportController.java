@@ -4,6 +4,7 @@ import com.finora.dto.ApiResponse;
 import com.finora.dto.ImportDto.ConfirmRequest;
 import com.finora.dto.ImportDto.ConfirmResponse;
 import com.finora.dto.StatementImportDto.AccountGroup;
+import com.finora.dto.StatementImportDto.ReimportRequest;
 import com.finora.dto.StatementImportDto.ReimportResult;
 import com.finora.dto.StatementImportDto.Summary;
 import com.finora.transactions.TransactionDto;
@@ -55,9 +56,16 @@ public class StatementImportController {
                 .body(file.content());
     }
 
+    // The body is optional and so is the password inside it, so a client that posts nothing at all
+    // behaves exactly as this endpoint always has. It only ever carries a document password for a
+    // protected PDF, whose stored bytes are still encrypted -- see ReimportRequest. A body rather
+    // than a query parameter, for the same reason /import/pdf/stage takes one: a password in a URL
+    // is captured by access logs, proxy logs and browser history.
     @PostMapping("/{id}/reimport")
-    public ApiResponse<ReimportResult> reimport(@PathVariable UUID id) throws Exception {
-        return ApiResponse.ok(statementImportService.reimport(currentUser.id(), id));
+    public ApiResponse<ReimportResult> reimport(@PathVariable UUID id,
+                                                @RequestBody(required = false) ReimportRequest request) throws Exception {
+        return ApiResponse.ok(statementImportService.reimport(currentUser.id(), id,
+                request == null ? null : request.password()));
     }
 
     // Plain JSON, unlike /import/csv/confirm — the file is already stored server-side from the

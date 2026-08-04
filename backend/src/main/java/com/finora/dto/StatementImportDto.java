@@ -56,4 +56,16 @@ public class StatementImportDto {
      *  staging pipeline as a fresh upload, but already scoped to the account it was imported into
      *  (no "create new account" choice needed — the account already exists). */
     public record ReimportResult(ImportDto.StagingResponse staging, UUID accountId, String accountName) {}
+
+    /**
+     * Optional body for "Re-import Statement". Exists only to carry the document password for a
+     * password-protected PDF: re-import re-parses the ORIGINAL stored bytes, and those bytes are
+     * still encrypted -- the password used at upload time is deliberately never persisted (see
+     * PdfPreviewGenerator's password parameter), so it has to be supplied again here.
+     *
+     * The whole body is optional, and so is the field, so an existing client that posts nothing at
+     * all still works exactly as before. Deliberately a body rather than a query parameter: a
+     * document password in a URL would be captured by access logs, proxy logs and browser history.
+     */
+    public record ReimportRequest(String password) {}
 }

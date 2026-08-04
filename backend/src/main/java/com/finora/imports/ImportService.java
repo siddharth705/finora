@@ -263,12 +263,15 @@ public class ImportService {
      * (parseAndStageWithSession / parseAndStagePdfWithSession) already know their own format
      * directly and don't need this routing at all.
      *
-     * PASSWORD-PROTECTED PDFs: this path re-parses bytes stored at import time, and the password
-     * is deliberately never persisted (see PdfPreviewGenerator's password parameter), so there is
-     * none to replay. Re-importing such a statement therefore fails -- but it now fails as a 422
-     * IMPORT_PDF_PASSWORD_REQUIRED that names the actual cause, rather than the opaque 500 it
-     * produced before. Prompting for the password again at reimport time is a UI change in the
-     * statement-history screen, not here, and is left out of the upload-flow work on purpose.
+     * PASSWORD-PROTECTED PDFs: this path re-parses bytes stored at import time, and those bytes
+     * are still encrypted -- the password used at upload is deliberately never persisted (see
+     * PdfPreviewGenerator's password parameter), so it has to be supplied again by whoever asked
+     * for the re-import. Passing none yields IMPORT_PDF_PASSWORD_REQUIRED, which is the signal
+     * StatementHistory uses to prompt; the retry then arrives here with the password set.
+     *
+     * Only STAGING re-parses. ImportService.confirm() builds transactions from the rows in the
+     * request and never touches the file bytes, so the password does not have to survive from the
+     * re-import prompt to the confirm step -- it stops being needed the moment staging returns.
      *
      * sourceSectionIndex (V37) is the section-aware half of this same routing: a StatementImport
      * that came from section N of a multi-account PDF (e.g. HSBC's composite statement) must be
@@ -278,16 +281,22 @@ public class ImportService {
      */
     public StagingResponse parseAndStageAnyFormat(UUID userId, String sourceFormat, String filename, byte[] content,
                                                    Integer sourceSectionIndex) throws IOException {
+        return parseAndStageAnyFormat(userId, sourceFormat, filename, content, sourceSectionIndex, null);
+    }
+
+    /** @param password the document open password for a protected PDF, or null. Ignored for CSV. */
+    public StagingResponse parseAndStageAnyFormat(UUID userId, String sourceFormat, String filename, byte[] content,
+                                                   Integer sourceSectionIndex, String password) throws IOException {
         if ("PDF".equalsIgnoreCase(sourceFormat)) {
             if (sourceSectionIndex != null) {
-                List<StagedAccountSection> sections = pdfPreviewGenerator.generateSections(userId, filename, content);
+                List<StagedAccountSection> sections = pdfPreviewGenerator.generateSections(userId, filename, content, password);
                 if (sourceSectionIndex >= sections.size()) {
                     throw new ApiException(HttpStatus.CONFLICT,
                             "This statement's account sections no longer match what was originally imported -- re-upload the file to import it fresh.");
                 }
                 return toStagingResponse(sections.get(sourceSectionIndex));
             }
-            return pdfPreviewGenerator.generate(userId, filename, content);
+            return pdfPreviewGenerator.generate(userId, filename, content, password);
         }
         return parseAndStage(userId, filename, new java.io.ByteArrayInputStream(content));
     }
