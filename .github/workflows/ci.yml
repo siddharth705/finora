@@ -26,6 +26,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # scripts/check-xml-comments.py exists because exactly this broke backend/pom.xml once --
+      # an internal "--" inside an XML comment, which Maven's POM parser rejects outright with an
+      # error that doesn't obviously point at the comment. It used to be a script nobody ran
+      # automatically (no exit code on failure, not wired into CI or pre-commit, "python3
+      # scripts/check-xml-comments.py" only ever in its own usage docstring) -- exactly the shape
+      # that let the original incident happen, so catching it here rather than at `mvn` parse time
+      # is the actual fix, not the script's mere existence.
+      - name: XML comment check
+        run: python scripts/check-xml-comments.py
+
       - uses: actions/setup-java@v4
         with:
           java-version: '21'

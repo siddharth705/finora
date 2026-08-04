@@ -17,6 +17,7 @@ Usage:
 """
 import re
 import os
+import sys
 import glob
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -37,9 +38,17 @@ for path in glob.glob(os.path.join(REPO_ROOT, "**", "*.xml"), recursive=True):
 
 if not problems:
     print("Clean -- no XML comments contain an internal double-dash.")
+    sys.exit(0)
 else:
     print(f"Found {len(problems)} invalid XML comment(s):")
     for rel, line_no in problems:
         print(f"  {rel}:{line_no} -- comment contains '--' before its closing -->")
     print("\nFix: replace the internal '--' with ',' ';' or rephrase -- only the closing '-->' ")
     print("may contain those two characters together inside an XML comment.")
+    # This used to fall off the end of main with no exit() call at all, so the process always
+    # exited 0 -- the exact shape backend/pom.xml's real incident slipped through originally
+    # (Maven's own parse failure was the only thing that ever caught it; running this script by
+    # hand and reading its output was never enough to guarantee anyone noticed "Found N invalid
+    # ..." instead of "Clean"). A script whose failure mode is indistinguishable from its success
+    # mode in its own exit code cannot gate a commit or a CI job, only decorate one.
+    sys.exit(1)
