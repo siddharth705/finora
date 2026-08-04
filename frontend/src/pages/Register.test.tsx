@@ -123,3 +123,20 @@ describe('Register — logo', () => {
     logoLinks.forEach((link) => expect(link).toHaveAttribute('href', '/'));
   });
 });
+
+describe('Register — Terms/Privacy links', () => {
+  // Bug fix regression: these three links open in a new tab (target="_blank") but had no rel
+  // attribute at all, leaving the new tab holding a `window.opener` handle back to this
+  // in-progress registration form -- the classic reverse-tabnabbing shape. eslint.config.js's
+  // `no-restricted-syntax` rule now catches this pattern at lint time for any future
+  // target="_blank" link app-wide; this test guards the specific regression on this page too.
+  it('every target="_blank" link carries rel="noopener noreferrer"', () => {
+    renderRegister();
+    const blankLinks = screen.getAllByRole('link').filter((link) => link.getAttribute('target') === '_blank');
+
+    expect(blankLinks.length).toBeGreaterThan(0); // otherwise this test would pass vacuously
+    blankLinks.forEach((link) => {
+      expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
+    });
+  });
+});

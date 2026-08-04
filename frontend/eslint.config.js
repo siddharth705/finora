@@ -48,6 +48,24 @@ export default tseslint.config(
       // this config targets.
       '@typescript-eslint/no-misused-promises': ['error', { checksVoidReturn: { attributes: false } }],
 
+      // Reusable diagnostic for a second bug class found in the same audit: a JSX `target="_blank"`
+      // link with no (or an incomplete) `rel="noopener noreferrer"`. Register.tsx's two Terms/
+      // Privacy links opened same-app tabs while leaving `window.opener` pointed back at the
+      // in-progress registration form -- reverse-tabnabbing's classic shape, and pre-Chrome-88/
+      // Firefox-79 also kept the new tab on the same process as this one. No eslint-plugin-react
+      // rule (react/jsx-no-target-blank) is pulled in for this alone -- that plugin would add a
+      // whole peer-dependency surface for one rule this codebase already has the tools to express
+      // natively via no-restricted-syntax, consistent with "minimal, targeted config" above.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "JSXOpeningElement:has(JSXAttribute[name.name='target'][value.value='_blank']):not(:has(JSXAttribute[name.name='rel'][value.value=/noopener/]))",
+          message:
+            'target="_blank" must include rel="noopener noreferrer". Without it the opened tab keeps a window.opener handle back to this page (reverse tabnabbing), even for an internal route.',
+        },
+      ],
+
       // Registering the plugin (above) without turning its rules on would leave the codebase's
       // pre-existing `// eslint-disable-next-line react-hooks/exhaustive-deps` comments pointing
       // at an inert rule -- silencing nothing, and reporting as "unused directive" noise instead.

@@ -45,7 +45,7 @@ export default function About() {
           { icon: <Target size={18} />, title: 'Product Vision', body: 'A single financial command center — not another expense tracker, but a platform that grows into budgeting, goals, investments, and AI-driven insight together.' },
           { icon: <ShieldCheck size={18} />, title: 'Security-First Philosophy', body: 'Hashed passwords, rotating refresh tokens, and server-verified sessions on every request. Security decisions are made before feature decisions, not after.' },
           { icon: <Brain size={18} />, title: 'AI-Powered Finance', body: 'Categorization is always a suggestion, never a silent final decision — and every correction you make teaches the system for next time.' },
-          { icon: <TrendingUp size={18} />, title: 'Future Roadmap', body: 'PDF statement import, data export, richer investment tracking, and deeper AI-driven recommendations are all active areas of development.' },
+          { icon: <TrendingUp size={18} />, title: 'Future Roadmap', body: 'Data export, richer investment tracking, and deeper AI-driven recommendations are all active areas of development.' },
         ].map((item) => (
           <div key={item.title} className="bg-[#12142a] border border-white/10 rounded-xl p-5">
             <div className="w-9 h-9 rounded-lg bg-indigo-500/10 text-indigo-300 flex items-center justify-center mb-3">{item.icon}</div>
