@@ -23,8 +23,9 @@ re-import, and what each client does. This document is about what the engine und
 document; that one is about how a document travels through the system. A third,
 [layout-intelligence-proposal.md](layout-intelligence-proposal.md), is a *proposal* rather than a
 record of what is true: what the engine should do with the fact that it has seen a document's
-structure before. Its Phase 0 is measurement against the `layout_fingerprint` data this pipeline has
-already been storing — read it before adding anything that reasons about recurring layouts.
+structure before. Its approved scope is observability only — reading the `layout_fingerprint` data
+this pipeline has already been storing, with mapping reuse explicitly excluded. Read it before
+adding anything that reasons about recurring layouts.
 
 ---
 

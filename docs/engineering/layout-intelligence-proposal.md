@@ -1,7 +1,7 @@
-# Layout Intelligence & Structural Learning
+# Layout Intelligence & Observability
 
-**Status:** Proposal — Phase 0 ready to build, Phases 1–2 gated
-**Scope:** Import engine
+**Status:** Approved for Phase 0 (observability only). Mapping reuse is explicitly **not** in scope.
+**Scope:** Import engine — reporting and intelligence, not parsing behaviour
 **Relationship to other docs:** the capability model, the sequencing rules and the Capability
 Backlog live in
 [financial-document-intelligence-principles.md](financial-document-intelligence-principles.md);
@@ -38,14 +38,32 @@ of silently producing two incompatible keys for the same real layout.
 **The column is write-only.** `buildFingerprint()` has exactly one caller
 (`ImportSessionService`), and no repository queries it. Every import for months has computed and
 stored a layout key that nothing has ever looked up. That is simultaneously the cheapest possible
-starting point and a signal that nobody has yet *needed* it — which is why Phase 0 below is
-measurement, not capability.
+starting point and a signal that nobody has yet *needed* it — which is why this phase reads the data
+rather than adding another learning system on top of it.
 
 ## 2. Objective
 
-> Learn layouts to **improve confidence, detect regressions, and accumulate structural knowledge**,
-> and to generate evidence about recurring document formats. Any future performance improvement is
-> a bonus that must be demonstrated with measurements before the parsing pipeline changes.
+> **Understand our documents.** Build the read side of the layout fingerprint data we are already
+> collecting, so we can say which layouts are common, which are unreliable, which changed, and
+> where the parser actually struggles.
+
+The outcome of this phase is **knowledge, not optimisation**. If the data shows that layout reuse
+would provide little or no value, that is a **successful** outcome — the decision gets made on
+evidence instead of speculation, and this document closes with the measurement recorded.
+
+### Explicitly out of scope
+
+Not in this phase, and not to be added opportunistically:
+
+- layout reuse
+- mapping reuse
+- skipping discovery
+- cached mappings
+- parser shortcuts
+
+**No parsing behaviour changes in this phase.** The fingerprint is generated *after* structural
+discovery (§3), so it cannot eliminate that work anyway. If reuse is ever revisited, it must be
+backed by measurements rather than assumptions.
 
 Performance is deliberately **not** the justification. See §4.
 
@@ -109,7 +127,82 @@ fingerprint recurs and the same unknown header keeps appearing, what did the eng
 with that column, and was it right?* That is accumulated knowledge, and the raw material is already
 in the database.
 
-## 6. Dependency check — confidence does not exist yet
+## 6. The questions, and whether the data can answer them
+
+Every question below was checked against what is actually persisted. Three cannot be answered
+today, and knowing that up front is the difference between a report that ships and one that stalls
+halfway through.
+
+### Layout intelligence
+
+| Question | Answerable now? | From |
+|---|---|---|
+| How many unique layouts have we seen? | **Yes** | `statement_imports.layout_fingerprint` |
+| Which layouts recur most frequently? | **Yes** | count by fingerprint |
+| How stable are recurring layouts over time? | **Yes** | `activated_capabilities_json` + `layout_metadata_json` per import, ordered by date |
+| Which layouts consistently parse successfully? | **Partly** | see *failed imports* below |
+| Which layouts produce the most manual corrections? | **Yes** | `transactions.statement_import_id` → `statement_imports.layout_fingerprint`, filtered on the manual-categorisation flag |
+| Which layouts consistently produce unknown headers? | **Yes** | `unknownHeaders` inside `layout_metadata_json` |
+| Which layouts fail most often? | **No — data not captured** | see below |
+| Do recurring layouts import faster than first-time ones? | **Yes** | `import_duration_ms`, first-seen vs subsequent |
+| Which layouts changed after being stable? | **Yes** | capability/header set diff across imports sharing a fingerprint |
+
+### Unknown header intelligence
+
+| Question | Answerable now? | Note |
+|---|---|---|
+| Which unknown headers appear repeatedly? | **Yes** | aggregate `unknownHeaders` across imports |
+| Which layouts always contain the same unknown headers? | **Yes** | group by fingerprint |
+| Do unknown headers appear across multiple layouts? | **Yes** | the most useful one — an unknown header spanning several fingerprints is a hint-list gap, not a one-off |
+| Which unknown headers get mapped manually? | **No — the feature does not exist** | see below |
+
+### The three gaps
+
+**1. Failed imports leave no trace.** `rejectIfNothingWasExtracted()` runs *before*
+`createSession()`, so a document that fails to parse (`IMPORT_001` no table found, `IMPORT_007`
+table found but every row rejected) throws before any row is written. There is **no fingerprint for
+a failed import**, and no record it was ever attempted. "Which layouts fail most often" cannot be
+answered from stored data at any point in the past.
+
+Closing it means persisting a failure record at the point of rejection — a genuine pipeline change,
+small but not free, and it only starts collecting from the day it ships. **Recommend treating this
+as a separate decision**, not folding it silently into a reporting task.
+
+**2. There is no manual column mapping in the product.** Users correct *categories*, not columns —
+a repository-wide search finds no column- or header-mapping surface. "Which unknown headers
+eventually get mapped manually" describes a user action that cannot currently happen. The question
+is worth keeping as a design prompt, but it is not a report.
+
+**3. Abandoned staging sessions are a partial substitute.** `import_sessions` carries its own
+`layout_fingerprint` and a `status`, and a session that stages but is never confirmed keeps both. A
+layout that is repeatedly staged and repeatedly abandoned is a real signal of a problem layout — the
+closest available proxy for failure, and free to query.
+
+## 7. Scope of this phase
+
+Build the read side. Concretely:
+
+1. Repository queries against `layout_fingerprint` on `statement_imports` and `import_sessions`.
+2. An aggregation service answering the **Yes** rows above, alongside `CapabilityCoverageService`
+   (see §9 on the counter overlap).
+3. A way to see the output — admin-facing, following whatever the coverage metrics already do.
+4. **Layout regression detection:** for a fingerprint with a history of successful imports, flag
+   when a new import's capability set, unknown-header set, or manual-review rate diverges from the
+   established pattern.
+
+```
+Layout FP-1-A1B2C3D4 · 10 successful imports
+                    ↓
+month 11 · same fingerprint · RUNNING_BALANCE no longer activates
+                    ↓
+"This layout changed" — surfaced, not silently absorbed
+```
+
+The goal is **not** to fix it automatically. The goal is to say that something changed. Because the
+fingerprint deliberately excludes column order and x-positions, a same-fingerprint/different-
+capabilities case is a genuine signal rather than noise.
+
+## 8. Dependency check — confidence does not exist yet
 
 The original note listed "existing confidence scoring framework" as a dependency. It is not
 available. From the principles doc:
@@ -118,93 +211,45 @@ available. From the principles doc:
 > the coverage numbers produce **counts and nothing else** — no scoring, no thresholds, no
 > auto-review decisions."
 
-This matters for sequencing. Anything phrased as "raise confidence by 15%" or "reuse automatically
-above threshold" has an unmet dependency and cannot be built first. Regression detection and
-evidence reporting do **not** depend on confidence, and can.
-
-## 7. Phases
-
-### Phase 0 — Report on the data already collected *(no new pipeline behaviour)*
-
-Make the write-only column readable and answer, from existing rows:
-
-- How many distinct layouts exist, per user and overall?
-- How many are one-offs versus genuinely recurring?
-- For a recurring fingerprint, is the capability set stable across imports?
-- Does `unknownHeaders` stay the same for a given fingerprint?
-- Do recurring layouts differ from first-time layouts in `importDurationMs`?
-
-That last one is the measurement that decides whether Goal A is ever worth revisiting:
-
-```
-first-time avg   420 ms
-recurring avg    415 ms   → no optimization to win; stop here
-recurring avg    160 ms   → now there is evidence
-```
-
-**Nothing in the parsing path changes in Phase 0.** No `LearnedLayout` entity, no reuse, no
-thresholds. This phase exists to find out whether the later phases are worth building, and it is the
-only phase justified by evidence that exists today.
-
-### Phase 1 — Regression detection *(gated on Phase 0 showing recurrence)*
-
-For a fingerprint seen successfully before, compare this import's capability set and unknown-header
-set against the established pattern, and surface a *drift* signal when they diverge:
-
-```
-Layout FP-1-A1B2C3D4 · 10 successful imports
-                    ↓
-month 11 · same fingerprint · RUNNING_BALANCE no longer activates
-                    ↓
-"This statement's layout changed" — surfaced, not silently absorbed
-```
-
-The value here is explainability, not speed. It turns "the numbers look odd this month" into a
-specific, attributable structural change. Note the fingerprint deliberately excludes column order
-and positions, so a same-fingerprint/different-capabilities case is a genuine signal rather than
-noise.
-
-### Phase 2 — Structural evidence contributes to interpretation *(gated on Phase 1 and on confidence existing)*
-
-Only once confidence is a real metric: let a recurring layout's prior successful interpretation act
-as **one input among several** when the current document is ambiguous. Advisory, never
-authoritative; validation is unchanged and unconditional.
-
-## 8. Non-negotiables
-
-1. **Learn structures, never institutions.** No bank identity in the signature — two banks with the
-   same structure share a layout; one bank with a new structure gets a new one.
-2. **Advisory, never authoritative.** Structural memory contributes evidence. It never bypasses
-   validation or short-circuits a check.
-3. **Learn only from confirmed, validated imports.** Never from failed or partial ones.
-4. **Forget cleanly.** Divergence triggers rediscovery, not correction-in-place.
-5. **Never store customer data.** Structure only — no rows, no account numbers, no names.
+Nothing in §7 depends on it: counting, diffing and reporting need no scoring. This is recorded so
+the phase is not accidentally re-scoped around a threshold that cannot be computed.
 
 ## 9. Open questions
 
-- **Per-user or global?** §12 of the original note specifies no `userId`. If a layout learned from
-  one user's statement can influence another user's import, that is a cross-tenant inference
-  channel and needs an explicit decision, not an omission. Cross-user sharing was listed as future
-  work "subject to privacy review", which implies per-user for v1 — but the entity as drafted is
-  global. **Resolve before Phase 1.**
-- **Counter overlap.** The proposed `validationSuccessCount`/`validationFailureCount` may duplicate
-  what `CapabilityCoverageService` already aggregates from activation events. One counter or two.
-- **Signature granularity.** v1 excludes column order and position on purpose. Whether that is too
-  generous (false matches) or too strict (missed reuse) is a Phase 0 question, answerable from
-  stored rows.
+- **Per-user or global?** Layout statistics aggregated across users are more useful and also a
+  cross-tenant inference surface. Cross-user sharing was deferred to a privacy review, which implies
+  per-user — but an admin-facing report is inherently cross-user. **Decide explicitly**: whether
+  admin-visible aggregates are acceptable, and whether anything layout-derived may ever reach
+  another user's import.
+- **Counter overlap.** `CapabilityCoverageService` already aggregates per-document activation
+  events. Layout reporting should extend it rather than start a parallel counter.
+- **Signature granularity.** v1 excludes column order and position deliberately. Whether that is too
+  generous (false matches) or too strict (missed recurrence) is itself answerable from stored rows,
+  and is one of the more valuable outputs of this phase.
 
 ## 10. Success criteria
 
-Phase 0 succeeds if it produces a defensible **yes or no** on whether recurring layouts are common
-enough to justify Phase 1 — including the outcome where the answer is no and this document is
-closed with the measurement recorded.
+By the end of this phase we can answer: which layouts are most common, which are least reliable,
+which changed over time, where the parser actually struggles, and what evidence exists that would
+justify future layout learning.
 
-Phases 1–2 succeed if layout drift is surfaced with a specific structural cause, reused structural
-evidence never overrides validation, layout changes trigger rediscovery automatically, and no
-institution-specific logic enters the engine.
+**A negative result is a success.** If recurring layouts turn out to be rare, or recurring layouts
+import no faster than first-time ones, that closes the mapping-reuse question on evidence — which
+is the point.
+
+## 11. Future work, explicitly not this phase
+
+Revisit structural learning only once all three hold:
+
+1. Layout intelligence exists (this phase),
+2. A real confidence-scoring framework exists,
+3. Evidence shows recurring layouts would benefit from reuse.
+
+At that point layout history becomes one more source of evidence contributing to confidence — never
+replacing validation, never bypassing the parsing pipeline.
 
 ---
 
-**Final principle.** Finora should not learn banks. It should learn document structures. Category
-learning taught the engine what transactions *mean*; layout learning should teach it how documents
-are *organised* — as accumulated, explainable evidence, not as a cache.
+**Final principle.** Finora should not learn banks. It should learn document structures. This phase
+does not teach the engine anything new; it reads what the engine has already been recording, so the
+decision about whether to teach it is made on evidence.
