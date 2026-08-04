@@ -3,7 +3,7 @@ import type { ReactNode, FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Play, ShieldCheck, Lock, RefreshCcw, Gauge, ScrollText, PhoneCall,
-  Eye, PiggyBank, Target, TrendingUp, Sparkles as SparkleIcon, Check, Star, Users,
+  Eye, PiggyBank, Target, TrendingUp, Sparkles as SparkleIcon, Check, Users,
   Upload, Cpu, LineChart, ChevronDown, ArrowRight, Twitter, Linkedin, Youtube,
   Tags, Cloud, BarChart3, Brain, Plus, Minus, X, FileText, Building2, Sun, Moon,
 } from 'lucide-react';
@@ -356,23 +356,27 @@ const HOW_IT_WORKS_STEPS = [
   { icon: <Brain size={18} />, title: 'Receive AI-Powered Insights', body: 'See what changed, what’s trending, and where a budget might help.' },
 ];
 
+// Compared against spreadsheets, so every row must be something a spreadsheet genuinely cannot
+// do -- otherwise the table is decoration. The last two are the differentiators worth stating
+// explicitly, since they are choices rather than features and nobody infers them.
 const COMPARISON_ROWS = [
-  'AI-Powered Financial Analysis',
-  'Automatic Statement Processing',
-  'Smart Categorization That Learns',
-  'Secure & Private by Design',
-  'Modern, Real-Time Dashboard',
-  'Financial Health Tracking',
+  'Reads PDF and CSV statements automatically',
+  'Categorization that learns from your corrections',
+  'Recurring payments and transfers detected for you',
+  'Tells you how confident it is, and what it is unsure about',
+  'Never recommends a product it earns a commission on',
 ];
 
 const FAQ_ITEMS: [string, string][] = [
   ['Is my financial data secure?', 'Yes. Passwords are hashed, sessions use JWT access tokens with rotating refresh tokens, and every request to a protected endpoint is verified server-side. Your data is never sold or shared.'],
-  ['Which bank statements are supported?', 'Any bank or card that exports a CSV, which covers most major Indian banks. Column-name detection handles common naming variants (e.g. "Debit (INR)" vs "Withdrawal Amt") automatically. PDF import is on the roadmap.'],
+  ['Which bank statements are supported?', 'Both PDF and CSV statements from most major Indian banks. Finora reads the layout rather than matching a bank-specific template, so it handles column naming variants ("Debit (INR)" vs "Withdrawal Amt"), running-balance and separate debit/credit formats, wrapped descriptions, and statements containing several accounts at once. A statement it cannot read is reported as such -- it is never imported as a silently empty account.'],
   ['Can I import multiple accounts?', 'Yes — import statements for as many savings accounts, credit cards, and wallets as you have. Each statement is matched to its account automatically, or you can create a new one during import.'],
   ['Can I manually add transactions?', "Yes. While statement import is the fastest way to get data in, you can add, edit, or delete any transaction by hand — useful for cash spending or anything that won't show up on a statement."],
-  ['How does AI categorization work?', 'A rules-and-learning engine suggests a category for every transaction based on merchant patterns and your own past corrections. It’s always a suggestion, never final — you can change it any time, and Finora remembers your correction for next time.'],
+  ['How does AI categorization work?', 'A rules-and-learning engine suggests a category for every transaction based on merchant patterns and your own past corrections, and it shows you how confident it was. Anything it is unsure about is surfaced for review rather than filed quietly. It is always a suggestion, never final -- change it any time and Finora remembers the correction for next time.'],
+  ['Will Finora try to sell me a credit card or a loan?', 'No. Finora earns nothing from recommending financial products and does not carry affiliate links, referral commissions or sponsored placements. That is a deliberate positioning choice: an app that profits when you take a particular loan cannot also be a neutral view of your money.'],
+  ['Can I tell when Finora is guessing?', 'Yes, and that is the point. Imported transactions carry the reasoning behind each automatic decision -- which signals matched, and how strongly. Anything below the confidence bar is shown to you for a decision rather than assumed. A confident wrong answer is worse than an honest "not sure".'],
   ['Is my data encrypted?', 'Data is encrypted in transit (HTTPS) and passwords are hashed with bcrypt, never stored in plain text. Uploaded statement files are stored securely and tied to your account only.'],
-  ['Can I export my data?', 'Report and transaction export is on the near-term roadmap. Today you can view and filter everything in-app across Transactions, Reports, and Statement History.'],
+  ['Can I export my data?', "Not yet -- CSV export of transactions and reports is the next thing being built, and it is genuinely not available today. In the meantime everything is viewable and filterable in-app across Transactions, Reports and Statement History, and your original uploaded statement files remain downloadable from Statement History. Your data is yours; the gap is a missing feature, not a lock-in."],
 ];
 
 export default function Landing() {
@@ -465,8 +469,9 @@ export default function Landing() {
                 Financial Operating System
               </h1>
               <p className="text-gray-600 dark:text-gray-400 text-lg leading-relaxed mb-8 max-w-md">
-                Import statements, let Finora learn how you categorize spend, and see your whole
-                financial picture update in real time — no spreadsheets required.
+                Import a statement and Finora reads it, categorizes it, and shows its working —
+                including how sure it was and what it wasn't sure about. No spreadsheets, and
+                nothing sold to you along the way.
               </p>
               <div className="flex flex-wrap items-center gap-5 mb-9">
                 <Link to="/register" className="bg-primary hover:bg-primary-dark text-white font-semibold px-6 py-3 rounded-lg flex items-center gap-2 transition-all hover:shadow-lg hover:shadow-primary/30 hover:-translate-y-0.5">
@@ -478,7 +483,8 @@ export default function Landing() {
                 </a>
               </div>
               <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-gray-600 dark:text-gray-400">
-                <span className="flex items-center gap-1.5"><ShieldCheck size={14} /> Encrypted end to end</span>
+                <span className="flex items-center gap-1.5"><Eye size={14} /> Shows its confidence, not just its answer</span>
+                <span className="flex items-center gap-1.5"><ShieldCheck size={14} /> No upsells, no affiliate links</span>
                 <span className="flex items-center gap-1.5"><RefreshCcw size={14} /> Learns from every correction</span>
                 <span className="flex items-center gap-1.5">🇮🇳 Built for India</span>
               </div>
@@ -523,14 +529,22 @@ export default function Landing() {
       </section>
 
       {/* ---------------- STATS ---------------- */}
+      {/* These are facts about what the PRODUCT contains, not about how many people use it.
+          They replaced four invented usage figures ("486,000+ Transactions Processed" and
+          similar) that were animated to look like live platform metrics and were simply not
+          true. Each number here is checkable in the repository -- BankRegistry's entries, the
+          Capability Registry in docs/engineering/financial-document-intelligence-principles.md,
+          and AuthService.DEFAULT_CATEGORIES -- so if one drifts, it can be corrected against a
+          source rather than re-guessed. Usage numbers belong here only once they are queried
+          live from real usage. */}
       <section className="border-b border-border">
         <div className="max-w-6xl mx-auto px-6 py-16">
           <Reveal className="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
             {[
-              { icon: <FileText size={18} />, value: 12400, suffix: '+', label: 'Bank Statements Imported' },
-              { icon: <Tags size={18} />, value: 486000, suffix: '+', label: 'Transactions Processed' },
-              { icon: <PiggyBank size={18} />, value: 9200, suffix: '+', label: 'Budgets Managed' },
-              { icon: <Target size={18} />, value: 5700, suffix: '+', label: 'Financial Goals Created' },
+              { icon: <Building2 size={18} />, value: 41, suffix: '', label: 'Indian banks recognized' },
+              { icon: <FileText size={18} />, value: 16, suffix: '', label: 'Statement layout capabilities' },
+              { icon: <Tags size={18} />, value: 25, suffix: '', label: 'Categories ready on day one' },
+              { icon: <Lock size={18} />, value: 0, suffix: '', label: 'Data sold to anyone, ever' },
             ].map((s) => (
               <div key={s.label} className="flex flex-col items-center">
                 <span className="w-10 h-10 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 flex items-center justify-center mb-3">{s.icon}</span>
@@ -740,41 +754,44 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ---------------- TESTIMONIALS ---------------- */}
-      {/* Placeholder quotes for layout purposes — swap in real user feedback before launch. */}
+      {/* ---------------- TRUST SIGNALS ---------------- */}
+      {/* The testimonial section that used to sit here was removed, not reworded. It carried three
+          invented quotes with five-star ratings and fabricated personas ("Product manager,
+          Bengaluru"), under the heading "What early users are saying" -- a claim about real people
+          that was not true. On a financial product that is not placeholder copy to swap out later,
+          it is fabricated social proof, and it stays gone until there are real quotes with real
+          consent to publish them.
+
+          What remains are claims that are true today and verifiable from the product itself. */}
       <section className="bg-gray-50 dark:bg-[#0d0f1f] border-b border-border">
         <div className="max-w-6xl mx-auto px-6 py-20">
-          <Reveal className="text-center mb-12">
-            <p className="text-xs font-semibold text-indigo-600 dark:text-indigo-300 uppercase tracking-wide mb-2">Early feedback</p>
-            <h2 className="text-3xl font-bold text-ink">What early users are saying</h2>
+          <Reveal className="text-center mb-10">
+            <p className="text-xs font-semibold text-indigo-600 dark:text-indigo-300 uppercase tracking-wide mb-2">Why trust it</p>
+            <h2 className="text-3xl font-bold text-ink">Built to be checked, not just believed</h2>
+            <p className="text-muted mt-3 max-w-2xl mx-auto">
+              Every automatic decision Finora makes shows its reasoning and stays editable. Nothing
+              is categorized, matched or imported in a way you cannot inspect and override.
+            </p>
           </Reveal>
           <div className="grid md:grid-cols-3 gap-6">
             {[
-              ['A', 'Product manager, Bengaluru', 'Uploading a statement and getting clean, categorized spend in seconds saves me hours every month.'],
-              ['P', 'Designer, Pune', 'The auto-categorization keeps getting better the more I correct it — it actually learns.'],
-              ['R', 'Founder, Mumbai', 'Finally a finance app that understands Indian bank statement formats without a fight.'],
-            ].map(([initial, role, quote], i) => (
-              <Reveal key={role} delayMs={i * 80}>
-                <div className="bg-card rounded-xl p-6 border border-border h-full transition-all duration-300 hover:-translate-y-1 hover:border-gray-300 dark:hover:border-white/15 hover:shadow-xl hover:shadow-black/5 dark:hover:shadow-black/30">
-                  <div className="flex items-center gap-1 mb-4 text-amber-500 dark:text-amber-400">
-                    {Array.from({ length: 5 }).map((_, si) => <Star key={si} size={13} fill="currentColor" />)}
+              [<Eye size={18} key="e" />, 'Every guess is visible',
+                'Imported transactions show why a category was chosen, and how confident the engine was. Low-confidence rows are surfaced for review rather than quietly filed.'],
+              [<ShieldCheck size={18} key="s" />, 'Your data is never sold',
+                'No ad networks, no data brokers, no selling anything to anyone. Statements are processed for your account and nothing else.'],
+              [<SparkleIcon size={18} key="p" />, 'No upsells, no pushed products',
+                'Finora never recommends a credit card, loan or insurance policy for a commission. It has no incentive to influence what you buy.'],
+            ].map(([icon, title, body], i) => (
+              <Reveal key={title as string} delayMs={i * 80}>
+                <div className="bg-card rounded-xl p-6 border border-border h-full">
+                  <div className="w-10 h-10 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 flex items-center justify-center mb-4">
+                    {icon}
                   </div>
-                  <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed mb-5">&ldquo;{quote}&rdquo;</p>
-                  <div className="flex items-center gap-3">
-                    <span className="w-9 h-9 rounded-full bg-indigo-500/20 text-indigo-700 dark:text-indigo-200 flex items-center justify-center text-xs font-semibold">{initial}</span>
-                    <div>
-                      <p className="text-xs font-semibold text-ink">Early user</p>
-                      <p className="text-[11px] text-gray-500">{role}</p>
-                    </div>
-                  </div>
+                  <p className="text-sm font-semibold text-ink mb-2">{title}</p>
+                  <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">{body}</p>
                 </div>
               </Reveal>
             ))}
-          </div>
-          <div className="flex items-center justify-center gap-6 text-xs text-gray-600 dark:text-gray-400 mt-12">
-            <span className="flex items-center gap-1.5"><Users size={14} className="text-indigo-600 dark:text-indigo-300" /> Growing user base</span>
-            <span className="flex items-center gap-1.5"><Star size={14} className="text-indigo-600 dark:text-indigo-300" /> Built from real feedback</span>
-            <span className="flex items-center gap-1.5"><ShieldCheck size={14} className="text-indigo-600 dark:text-indigo-300" /> Your data, never sold</span>
           </div>
         </div>
       </section>

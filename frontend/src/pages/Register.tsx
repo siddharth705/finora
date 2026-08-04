@@ -345,7 +345,7 @@ export default function Register() {
       </div>
 
       <p className="text-xs text-muted flex items-center gap-2">
-        <ShieldCheck size={13} /> Trusted by 10,000+ users across India
+        <ShieldCheck size={13} /> Bank-grade encryption. Your data is never sold.
       </p>
     </div>
   );
