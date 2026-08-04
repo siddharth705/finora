@@ -36,14 +36,37 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, UUID> {
      * fields the Activity Feed timeline already displays per row, so "search" filtering on what's
      * visibly shown is what an admin scanning the timeline actually expects. Sort direction lives
      * in the Pageable's own Sort (set by the controller), not a separate parameter here.
+     *
+     * <p>Bug fix: the two date bounds were written as a bare {@code :dateFrom IS NULL}, and that
+     * made this entire endpoint return 500 rather than filtering anything:
+     *
+     * <pre>ERROR: could not determine data type of parameter $4  (SQLState 42P18)</pre>
+     *
+     * <p>Hibernate emits a named parameter used twice as two separate JDBC placeholders. The
+     * second gets its type from {@code a.createdAt >= ?}, but the first appears only as
+     * {@code ? IS NULL}, which tells PostgreSQL nothing about what type it is, so the driver
+     * refuses to prepare the statement. The {@code CAST} gives it one. Note the {@code :q} branch
+     * above was already written this way, for exactly this reason; the date bounds were simply
+     * missed.
+     *
+     * <p>This was not an edge case. Both bounds are null on an unfiltered request, which is the
+     * default state of the admin portal's Activity Feed, so the page 500'd on open. It went
+     * unnoticed because the four GlobalAuditLogIT tests covering it had never executed: {@code *IT}
+     * did not match surefire's default includes (see pom.xml).
+     *
+     * <p>{@code TransactionRepository.search} and {@code UserRepository.search} use the same
+     * {@code :param IS NULL} shape and are NOT affected: verified by TransactionRepositoryIT
+     * exercising that query with null filters and passing. Their nullable parameters resolve to
+     * types PostgreSQL can infer here; only the {@code Instant} bounds hit this. Worth knowing
+     * before "fixing" those queries too.
      */
     @Query("""
         SELECT a FROM AuditLog a
         WHERE (:q IS NULL
                OR LOWER(a.action) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
                OR LOWER(a.entityType) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
-          AND (:dateFrom IS NULL OR a.createdAt >= :dateFrom)
-          AND (:dateTo IS NULL OR a.createdAt < :dateTo)
+          AND (CAST(:dateFrom AS timestamp) IS NULL OR a.createdAt >= :dateFrom)
+          AND (CAST(:dateTo AS timestamp) IS NULL OR a.createdAt < :dateTo)
         """)
     Page<AuditLog> search(@Param("q") String q, @Param("dateFrom") Instant dateFrom,
                            @Param("dateTo") Instant dateTo, Pageable pageable);
