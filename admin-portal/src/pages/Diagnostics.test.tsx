@@ -107,3 +107,32 @@ describe('Diagnostics copy button', () => {
     expect(screen.queryByText('Copied')).not.toBeInTheDocument();
   });
 });
+
+describe('Diagnostics', () => {
+  beforeEach(() => {
+    vi.mocked(adminDiagnosticsApi.overview).mockReset();
+  });
+
+  it('shows an access-denied message when the account lacks PLATFORM_DIAGNOSTICS_VIEW', () => {
+    mockAuth([]);
+    vi.mocked(adminDiagnosticsApi.overview).mockResolvedValue(DIAGNOSTICS);
+
+    renderPage();
+
+    expect(screen.getByText("You don't have access to this section")).toBeInTheDocument();
+  });
+
+  /**
+   * Bug fix: this page used to render `if (!data) return null` on a failed diagnostics fetch --
+   * completely blank content, with zero indication anything went wrong, on a page whose entire
+   * purpose is telling an admin/developer the platform's own state.
+   */
+  it('shows an error message instead of a blank page when the diagnostics fetch fails', async () => {
+    mockAuth(['PLATFORM_DIAGNOSTICS_VIEW']);
+    vi.mocked(adminDiagnosticsApi.overview).mockRejectedValue(new Error('network error'));
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText(/Couldn't load platform diagnostics/)).toBeInTheDocument());
+  });
+});
