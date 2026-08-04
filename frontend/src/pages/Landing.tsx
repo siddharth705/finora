@@ -894,7 +894,11 @@ export default function Landing() {
                   placeholder="you@email.com"
                   className="w-full min-w-0 bg-gray-100 dark:bg-white/5 border border-border rounded-lg px-2.5 py-2 text-xs text-ink placeholder:text-gray-500 focus:outline-none focus:ring-1 focus:ring-primary"
                 />
-                <button type="submit" className="bg-primary hover:bg-primary-dark text-white rounded-lg px-2.5 py-2 flex-shrink-0 transition-transform hover:scale-105">
+                {/* aria-label because the button's only content is an icon: axe reported it as a
+                    critical button-name violation, and a screen reader announced nothing at all
+                    for it. The one machine-detectable violation on the whole public surface when
+                    the baseline in a11y.test.tsx was first measured. */}
+                <button type="submit" aria-label="Subscribe" className="bg-primary hover:bg-primary-dark text-white rounded-lg px-2.5 py-2 flex-shrink-0 transition-transform hover:scale-105">
                   <ArrowRight size={14} />
                 </button>
               </form>

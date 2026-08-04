@@ -76,8 +76,9 @@ export default function ForgotPassword() {
 
               {error && <p className="text-sm text-danger bg-danger-bg rounded-lg px-3.5 py-2.5 mb-4">{error}</p>}
 
-              <label className="block text-sm font-medium text-ink mb-1.5">Email</label>
+              <label htmlFor="forgot-email" className="block text-sm font-medium text-ink mb-1.5">Email</label>
               <input
+                id="forgot-email"
                 type="email"
                 required
                 autoFocus
