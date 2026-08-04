@@ -101,7 +101,7 @@ Both flows reach the same two error codes; they differ only in whether they ask 
 | | Behaviour | Why |
 |---|---|---|
 | **Upload** (`Import.tsx`, `ImportScreen.tsx`) | Selecting a PDF opens a panel with the filename and an **optional** password field before anything is sent | A failed attempt means pushing the whole file over the network for nothing. Asking first is cheaper than a guaranteed wasted upload. |
-| **Re-import** (`StatementHistory.tsx`) | Tries **without** a password; prompts only on `IMPORT_008` | The bytes are already server-side, so "just try it" is one small request. Every statement that never needed a password — most of them — keeps its single-click re-import. |
+| **Re-import** (`StatementHistory.tsx`, `StatementHistoryScreen.tsx`) | Tries **without** a password; prompts only on `IMPORT_008` | The bytes are already server-side, so "just try it" is one small request. Every statement that never needed a password — most of them — keeps its single-click re-import. |
 
 The panel is **PDF-only**. A CSV has nothing to unlock, so it still uploads on selection in one
 action; adding a step there would be pure cost.
@@ -126,7 +126,11 @@ Two things worth knowing:
   a composite statement: section N re-parses as section N, so re-import cannot silently replay a
   different account's transactions against this one.
 
-Re-import is **web only**. Mobile has no equivalent screen.
+Available on **both clients**. On mobile the review happens in the Import *tab* rather than a
+second copy of the review UI: `StatementHistoryScreen` stages the rows, then navigates to `Import`
+with a `ReimportParams` payload. That payload carries a **nonce**, because a tab's params outlive a
+visit — without one, a later tap on the Import tab would re-enter the same re-import, and the
+statement id alone cannot distinguish that from a genuine second re-import of the same statement.
 
 ---
 
@@ -174,8 +178,15 @@ no-op.
 | CSV upload | On selection | On pick |
 | PDF upload | Password panel, then upload | Password card, then upload |
 | Multi-account PDF | Full per-section review | Refused with an explanation |
-| Re-import | Yes, with password prompt | Not present |
+| Re-import | Yes, with password prompt | Yes, with password prompt |
+| Statement history | `/app/statements` | More ▸ Statement History |
+| Original file | Browser download | Written to the cache directory and handed to the native share sheet |
 | Resume a session | Yes | Yes |
+
+"Download" is the one place the two genuinely cannot match. The web app streams the file into a
+Blob and clicks a synthetic `<a download>`; native has neither, and a file written into an app's
+sandbox is invisible to the user anyway. Mobile therefore writes the bytes to `Paths.cache` and
+opens the share sheet, which is where "save to Files" and every other real destination lives.
 
 The admin portal has no import surface at all — importing is a user action, and admins do not act
 on a user's ledger.
@@ -189,4 +200,5 @@ on a user's ledger.
 - **Bank-specific password hints** ("HDFC uses the first 4 letters of your name plus your DOB"). The
   field carries a generic hint only.
 - **Remembering a statement password.** Deliberate: see the rules above.
-- **Re-import on mobile.**
+- **Multi-account statements on mobile.** Refused with an explanation rather than partially
+  imported — see above.

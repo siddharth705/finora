@@ -199,11 +199,12 @@ web apps. **User-facing only** — there's no mobile admin portal, matching the 
 split the web apps already have.
 
 Currently at **Phase 2 (core screens)**. Working end-to-end against the real backend: sign in,
-register, forgot password, phone verification, and a three-tab app shell — **Home** (dashboard
+register, forgot password, phone verification, and a four-tab app shell — **Home** (dashboard
 KPIs, cash-flow chart, spend-by-category donut, recent transactions, goals, insights),
 **Transactions** (infinite-scroll ledger with debounced search, type filter, long-press delete),
-and **More** (profile, read-only Accounts, sign out). Import lands in Phase 3; Budgets, Goals,
-Reports, Insights, and Settings follow in Phases 4–5.
+**Import** (CSV/PDF statement upload with an optional password for protected PDFs, staged review,
+confirm), and **More** (profile, read-only Accounts, Statement History with re-import/share/delete,
+sign out). Budgets, Goals, Reports, Insights, and Settings follow in Phases 4–5.
 
 Charts are hand-rolled on `react-native-svg` (`src/components/charts/`) rather than a charting
 library: the shapes needed are one ring of arcs and two polylines, and every RN chart package
