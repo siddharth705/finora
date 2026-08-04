@@ -61,6 +61,12 @@ for base in ["main/java", "test/java"]:
 def strip_comments_and_strings(text):
     text = re.sub(r'/\*.*?\*/', ' ', text, flags=re.S)
     text = re.sub(r'//[^\n]*', ' ', text)
+    # Text blocks (Java 15+, """...""") must be stripped before the regular-string regex below --
+    # they routinely hold prose that names real com.finora.* types (AssertJ .as("""...""")
+    # descriptions are the common case), and without this, the single-line string regex leaves
+    # that prose in the body for the reference scan to misread as real code. Matched first and
+    # non-greedily so a file with more than one text block doesn't collapse the gap between them.
+    text = re.sub(r'"""[\s\S]*?"""', ' ', text)
     text = re.sub(r'"(\\.|[^"\\])*"', '""', text)
     text = re.sub(r"'(\\.|[^'\\])'", "''", text)
     return text
