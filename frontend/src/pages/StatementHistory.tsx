@@ -5,6 +5,7 @@ import {
   ChevronDown, ChevronRight, FileText, Download, RefreshCw, Trash2, Eye, ListChecks, X,
 } from 'lucide-react';
 import { statementImportsApi } from '../api/endpoints';
+import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../api/errorCodes';
 import { BankLogo } from '../components/BankLogo';
 import type { AccountStatementGroup, StatementSummary, Transaction } from '../types';
 import { formatDate } from '../utils/date';
@@ -38,6 +39,9 @@ export default function StatementHistory() {
   const [openAccounts, setOpenAccounts] = useState<Set<string>>(new Set());
   const [viewing, setViewing] = useState<{ mode: 'summary' | 'transactions'; statement: StatementSummary } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Set only once the server has told us this statement needs a password. `wrong` distinguishes
+  // "we haven't asked yet" from "you answered and the document rejected it".
+  const [passwordPrompt, setPasswordPrompt] = useState<{ statement: StatementSummary; wrong: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const { data: groups, isLoading } = useQuery({
@@ -62,16 +66,35 @@ export default function StatementHistory() {
       .forEach((key) => { void queryClient.invalidateQueries({ queryKey: [key] }); });
   }
 
-  async function handleReimport(statement: StatementSummary) {
+  /**
+   * Re-import replays the ORIGINAL stored bytes, which for a protected PDF are still encrypted --
+   * and the password used at upload is deliberately never persisted, so it has to be given again.
+   *
+   * This tries without one first, unlike the upload flow, which offers the field up front. The
+   * difference is what a failed attempt costs: on upload it means sending the whole file over the
+   * network for nothing, so asking first is cheaper; here the bytes are already on the server, so
+   * "just try it" is one small request. Every statement that never needed a password — the
+   * majority — keeps its single-click re-import, and only a protected one sees the prompt.
+   */
+  async function handleReimport(statement: StatementSummary, password?: string) {
     setBusyId(statement.id);
     setError(null);
     try {
-      const result = await statementImportsApi.reimport(statement.id);
+      const result = await statementImportsApi.reimport(statement.id, password);
+      setPasswordPrompt(null);
       void navigate('/app/import', {
         state: { reimportId: statement.id, staging: result.staging, accountId: result.accountId, accountName: result.accountName },
       });
     } catch (e: any) {
-      setError(e.response?.data?.message ?? 'Could not re-import this statement.');
+      const code = e.response?.data?.errorCode;
+      if (code === PDF_PASSWORD_REQUIRED || code === PDF_PASSWORD_INVALID) {
+        // Not a re-import failure and not reported as one -- the statement is intact, it just
+        // hasn't been unlocked. Keeping the prompt open on INVALID preserves what was typed, so a
+        // one-character typo is a correction rather than a retype.
+        setPasswordPrompt({ statement, wrong: code === PDF_PASSWORD_INVALID });
+      } else {
+        setError(e.response?.data?.message ?? 'Could not re-import this statement.');
+      }
     } finally {
       setBusyId(null);
     }
@@ -210,7 +233,98 @@ export default function StatementHistory() {
       )}
 
       {viewing && <StatementDetailModal viewing={viewing} onClose={() => setViewing(null)} />}
+
+      {passwordPrompt && (
+        <ReimportPasswordModal
+          prompt={passwordPrompt}
+          busy={busyId === passwordPrompt.statement.id}
+          onSubmit={(password) => void handleReimport(passwordPrompt.statement, password)}
+          onClose={() => setPasswordPrompt(null)}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * Asks for the document password of a protected PDF being re-imported.
+ *
+ * Mounted only after the server has said one is needed, so unlike the upload flow's panel there is
+ * no "leave blank" case to explain -- reaching this modal already means blank was tried and
+ * rejected. Submitting is therefore gated on a non-empty value.
+ */
+function ReimportPasswordModal({
+  prompt, busy, onSubmit, onClose,
+}: {
+  prompt: { statement: StatementSummary; wrong: boolean };
+  busy: boolean;
+  onSubmit: (password: string) => void;
+  onClose: () => void;
+}) {
+  const [password, setPassword] = useState('');
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/40 z-30" onClick={onClose} />
+      <div className="fixed inset-0 z-40 flex items-center justify-center p-4 pointer-events-none">
+        <form
+          data-testid="reimport-password-modal"
+          className="bg-card border border-border rounded-xl2 shadow-soft w-full max-w-sm p-5 pointer-events-auto space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (password && !busy) onSubmit(password);
+          }}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <h3 className="font-semibold text-ink text-sm">Unlock this statement</h3>
+            <button type="button" onClick={onClose} className="text-muted hover:text-ink shrink-0">
+              <X size={18} />
+            </button>
+          </div>
+
+          <p className="text-xs text-muted">
+            <span className="text-ink font-medium break-all">{prompt.statement.fileName}</span> is
+            password protected. Finora doesn't store statement passwords, so re-importing needs it again.
+          </p>
+
+          <div>
+            <label htmlFor="reimport-password" className="block text-sm font-medium text-ink mb-1">
+              Statement password
+            </label>
+            <input
+              id="reimport-password"
+              type="password"
+              // The bank's password for one document, not a Finora credential -- it doesn't belong
+              // in the user's password manager next to real logins.
+              autoComplete="off"
+              autoFocus
+              className="w-full border border-border rounded px-3 py-2 text-sm"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={busy}
+              aria-describedby="reimport-password-help"
+            />
+            <p
+              id="reimport-password-help"
+              className={`text-xs mt-1 ${prompt.wrong ? 'text-danger' : 'text-muted'}`}
+              role={prompt.wrong ? 'alert' : undefined}
+            >
+              {prompt.wrong
+                ? "That password didn't open this statement — check it and try again."
+                : 'The password your bank uses for this statement.'}
+            </p>
+          </div>
+
+          <button
+            type="submit"
+            disabled={!password || busy}
+            className="w-full bg-primary text-white rounded px-4 py-2 text-sm font-medium disabled:opacity-40"
+          >
+            {busy ? 'Unlocking…' : 'Re-import statement'}
+          </button>
+        </form>
+      </div>
+    </>
   );
 }
 

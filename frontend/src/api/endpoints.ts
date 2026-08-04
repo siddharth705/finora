@@ -310,7 +310,12 @@ export const statementImportsApi = {
     link.click();
     window.URL.revokeObjectURL(url);
   },
-  reimport: (id: string) => api.post<ReimportResult>(`/statement-imports/${id}/reimport`).then((r) => r.data),
+  // `password` is only ever needed for a statement originally uploaded as a protected PDF: the
+  // stored bytes are still encrypted, and the password used at upload is deliberately never
+  // persisted, so it has to be supplied again here. In the body, never the URL -- a document
+  // password in a query string is captured by access logs, proxy logs and browser history.
+  reimport: (id: string, password?: string) =>
+    api.post<ReimportResult>(`/statement-imports/${id}/reimport`, password ? { password } : {}).then((r) => r.data),
   // Plain JSON, unlike the first-time confirm — the file is already stored server-side from the
   // original import, nothing to re-upload.
   confirmReimport: (id: string, payload: Omit<ConfirmPayload, 'newAccount' | 'sessionId'>) =>
