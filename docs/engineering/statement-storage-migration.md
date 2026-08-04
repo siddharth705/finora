@@ -159,7 +159,7 @@ Additive first, destructive last; every step reversible until the final one.
 |---|---|---|
 | **1 — BUILT** | `StatementStorage` + `ContentAddress` + `FilesystemStatementStorage`. Content-addressed, provider-selected, fully tested. **Not yet called by the import pipeline** — see below. | Yes — no storage change at all |
 | **2** | New uploads go to R2. Persist object key + content hash + metadata. | Yes — old rows untouched |
-| **3** | Backfill existing `BYTEA` into R2, **deduplicating** — identical content writes one object. | Yes — column still present |
+| **3 — BUILT** | Backfill existing `BYTEA` into storage, **deduplicating** — identical content writes one object. Batched, resumable, driven from an admin endpoint. | Yes — column still present |
 | **4** | Drop `file_content`. | **No** |
 
 Phase 1 is deliberately behaviour-preserving. It is what makes every later phase small, and it can
@@ -182,6 +182,25 @@ nothing" is checked rather than claimed.
 
 Phase 4 is its own change, its own migration, its own deploy — and only once Phase 3 reports every
 row carrying a key.
+
+### 5.2 Running the backfill (Phase 3)
+
+`GET /api/v1/admin/imports/storage/backfill` reports progress; `POST` the same path runs one batch
+(`?limit=`, default 25, capped at 200). Call it repeatedly until `remaining` is zero — `complete`
+turning true is the precondition for Phase 4, and dropping `file_content` before then would destroy
+the only copy of every unaddressed row.
+
+Deliberately batched and operator-driven rather than scheduled. This codebase has no background job
+infrastructure, and for a migration over potentially gigabytes of customer statements that is the
+better shape anyway: bounded memory (each row can carry 10 MB), interruptible, and a decision point
+between batches. It refuses to run at all with no provider configured, rather than reporting "0
+processed" — which on a status page reads as *already done* and could green-light Phase 4.
+
+Each row is addressed in its own `REQUIRES_NEW` transaction, so one unreadable file cannot roll back
+the good rows beside it; failures are reported and the row is simply retried next run.
+
+`stored` versus `deduplicated` in the response is the first real measurement of §2.1 — how much of
+the database was the same file stored repeatedly.
 
 ### 5.1 Dual-write semantics
 

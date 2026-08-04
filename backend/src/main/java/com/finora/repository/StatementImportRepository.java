@@ -8,6 +8,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface StatementImportRepository extends JpaRepository<StatementImport, UUID> {
@@ -44,4 +45,27 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
      */
     @Query("SELECT s FROM StatementImport s WHERE s.layoutFingerprint IS NOT NULL")
     List<StatementImport> findAllWithLayoutFingerprint();
+
+    // ---- Phase 3 backfill (docs/engineering/statement-storage-migration.md) ----
+    //
+    // IDs, not entities, and deliberately so: file_content is up to 10MB per row, and selecting a
+    // page of entities would pull a page of blobs into heap at once. The backfill loads exactly one
+    // row at a time from these ids.
+    //
+    // Note this query is NOT affected by the @SQLRestriction("deleted_at IS NULL") on the entity in
+    // the way you might want -- soft-deleted rows still hold their bytes, and Phase 4 will drop the
+    // column for them too, so they need addressing as well. Spring Data applies the restriction, so
+    // this is written as native SQL to reach them.
+    @Query(value = "SELECT id FROM statement_imports WHERE content_hash IS NULL", nativeQuery = true)
+    List<UUID> findIdsWithoutContentAddress(Pageable pageable);
+
+    @Query(value = "SELECT COUNT(*) FROM statement_imports WHERE content_hash IS NULL", nativeQuery = true)
+    long countWithoutContentAddress();
+
+    @Query(value = "SELECT COUNT(*) FROM statement_imports", nativeQuery = true)
+    long countAllIncludingDeleted();
+
+    /** Loads one row bypassing the soft-delete restriction -- see findIdsWithoutContentAddress. */
+    @Query(value = "SELECT * FROM statement_imports WHERE id = :id", nativeQuery = true)
+    Optional<StatementImport> findByIdIncludingDeleted(@Param("id") UUID id);
 }

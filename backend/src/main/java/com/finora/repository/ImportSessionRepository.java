@@ -1,6 +1,7 @@
 package com.finora.repository;
 
 import com.finora.entity.ImportSession;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -36,4 +37,12 @@ public interface ImportSessionRepository extends JpaRepository<ImportSession, UU
     @Query("UPDATE ImportSession s SET s.status = 'CONFIRMED', s.confirmedAt = CURRENT_TIMESTAMP " +
             "WHERE s.id = :id AND s.status = 'STAGED'")
     int claimForConfirmation(@Param("id") UUID id);
+
+    // ---- Phase 3 backfill ----
+    // Ids only; the backfill loads one row at a time. See StatementImportRepository's equivalent.
+    @Query(value = "SELECT id FROM import_sessions WHERE content_hash IS NULL", nativeQuery = true)
+    List<UUID> findIdsWithoutContentAddress(Pageable pageable);
+
+    @Query(value = "SELECT COUNT(*) FROM import_sessions WHERE content_hash IS NULL", nativeQuery = true)
+    long countWithoutContentAddress();
 }
