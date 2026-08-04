@@ -20,7 +20,11 @@ same history, compressed into a skimmable Learned/Improved/Protected/Observed/De
 summary per cycle). Separately, [import-flow.md](import-flow.md) documents the *pipeline* rather
 than the engine — stage/review/confirm, the endpoints and error codes, password-protected PDFs,
 re-import, and what each client does. This document is about what the engine understands inside a
-document; that one is about how a document travels through the system.
+document; that one is about how a document travels through the system. A third,
+[layout-intelligence-proposal.md](layout-intelligence-proposal.md), is a *proposal* rather than a
+record of what is true: what the engine should do with the fact that it has seen a document's
+structure before. Its Phase 0 is measurement against the `layout_fingerprint` data this pipeline has
+already been storing — read it before adding anything that reasons about recurring layouts.
 
 ---
 
