@@ -316,8 +316,14 @@ export default function Register() {
               className="mt-0.5 rounded border-border"
             />
             <span className="text-xs text-muted">
-              I agree to Finora's <Link to="/terms" target="_blank" className="text-primary font-medium">Terms of Service</Link> and{' '}
-              <Link to="/privacy" target="_blank" className="text-primary font-medium">Privacy Policy</Link>.
+              {/* Bug fix: target="_blank" with no rel opened these two same-app tabs with a live
+                  `window.opener` handle back to this registration form still in progress -- the
+                  classic reverse-tabnabbing shape, and also (pre-Chrome 88/Firefox 79) kept the
+                  new tab on the same process/thread as this one. `noopener` severs that handle;
+                  `noreferrer` additionally drops the Referer header, which is the right default
+                  even for an internal link since neither page needs to know the other opened it. */}
+              I agree to Finora's <Link to="/terms" target="_blank" rel="noopener noreferrer" className="text-primary font-medium">Terms of Service</Link> and{' '}
+              <Link to="/privacy" target="_blank" rel="noopener noreferrer" className="text-primary font-medium">Privacy Policy</Link>.
             </span>
           </label>
 
@@ -325,7 +331,7 @@ export default function Register() {
             <ShieldCheck size={16} className="text-primary flex-shrink-0 mt-0.5" />
             <p className="text-xs text-ink">
               Your financial data is encrypted and securely protected.{' '}
-              <Link to="/privacy" target="_blank" className="text-primary font-medium">Read our Privacy Policy</Link>
+              <Link to="/privacy" target="_blank" rel="noopener noreferrer" className="text-primary font-medium">Read our Privacy Policy</Link>
             </p>
           </div>
 
