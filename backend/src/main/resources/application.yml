@@ -160,6 +160,20 @@ app:
     # How long an import request waits in the FIFO queue for a processing slot before giving up
     # and returning a clear "try again shortly" response, rather than hanging indefinitely.
     acquire-timeout-ms: ${IMPORT_ACQUIRE_TIMEOUT_MS:20000}
+  statement-storage:
+    # Phase 1 of docs/engineering/statement-storage-migration.md. The storage layer exists and is
+    # tested; NOTHING in the import pipeline calls it yet -- statements are still stored as BYTEA
+    # on statement_imports/import_sessions exactly as before. Wiring the callers needs the
+    # content_hash/object_key columns that Phase 2 adds, so this stays inert until then.
+    #
+    # Deliberately has no default: no bean is created unless a provider is named. An unset value
+    # therefore preserves today's behaviour exactly rather than silently activating a store nobody
+    # asked for. "filesystem" is for local development and tests; "r2" arrives in Phase 2.
+    provider: ${STATEMENT_STORAGE_PROVIDER:}
+    filesystem:
+      # Only read when provider=filesystem. Single-instance only -- two backends would each see
+      # their own disk. See FilesystemStatementStorage's own doc comment.
+      root: ${STATEMENT_STORAGE_FS_ROOT:./data/statements}
 
 management:
   endpoints:

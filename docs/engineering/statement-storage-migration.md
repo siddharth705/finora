@@ -157,13 +157,28 @@ Additive first, destructive last; every step reversible until the final one.
 
 | Phase | Change | Reversible |
 |---|---|---|
-| **1** | Introduce `StatementStorageService`. Callers stop knowing where bytes live; implementation still reads/writes `BYTEA`. | Yes — no storage change at all |
+| **1 — BUILT** | `StatementStorage` + `ContentAddress` + `FilesystemStatementStorage`. Content-addressed, provider-selected, fully tested. **Not yet called by the import pipeline** — see below. | Yes — no storage change at all |
 | **2** | New uploads go to R2. Persist object key + content hash + metadata. | Yes — old rows untouched |
 | **3** | Backfill existing `BYTEA` into R2, **deduplicating** — identical content writes one object. | Yes — column still present |
 | **4** | Drop `file_content`. | **No** |
 
 Phase 1 is deliberately behaviour-preserving. It is what makes every later phase small, and it can
 ship and prove itself in production while nothing yet depends on R2.
+
+**What Phase 1 shipped, and one deviation worth knowing.** The original wording said callers would
+"stop knowing where bytes live" in Phase 1. They do not yet, and cannot: a caller can only hold a
+*reference* to stored content once the row has somewhere to put one, and `content_hash` /
+`object_key` are Phase 2 columns. Rewiring `ImportService` before those exist would mean either
+writing statements to a local disk in production, or inventing a temporary reference the schema
+cannot store. Both are worse than waiting.
+
+So Phase 1 delivers the storage layer complete and proven, and Phase 2 becomes: add the columns,
+call `store()` in `confirm()`, read through `retrieve()`. The interface is content-addressed from
+the outset precisely so that step does not reshape it.
+
+`app.statement-storage.provider` has **no default**. With nothing set, no bean is created and the
+pipeline behaves exactly as before — asserted by `StatementStorageWiringTest`, so "Phase 1 changed
+nothing" is checked rather than claimed.
 
 Phase 4 is its own change, its own migration, its own deploy — and only once Phase 3 reports every
 row carrying a key.
