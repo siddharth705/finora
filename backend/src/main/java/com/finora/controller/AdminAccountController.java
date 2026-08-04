@@ -3,6 +3,7 @@ package com.finora.controller;
 import com.finora.accounts.AccountDto;
 import com.finora.dto.ApiResponse;
 import com.finora.accounts.AccountService;
+import com.finora.security.CurrentUser;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -23,9 +24,11 @@ import java.util.UUID;
 public class AdminAccountController {
 
     private final AccountService accountService;
+    private final CurrentUser currentUser;
 
-    public AdminAccountController(AccountService accountService) {
+    public AdminAccountController(AccountService accountService, CurrentUser currentUser) {
         this.accountService = accountService;
+        this.currentUser = currentUser;
     }
 
     @GetMapping
@@ -37,20 +40,20 @@ public class AdminAccountController {
     @PostMapping
     @PreAuthorize("hasAuthority('ACCOUNT_CREATE')")
     public ApiResponse<AccountDto> create(@PathVariable UUID userId, @Valid @RequestBody AccountDto.CreateRequest request) {
-        return ApiResponse.ok(accountService.create(userId, request), "Account created");
+        return ApiResponse.ok(accountService.create(userId, request, currentUser.id()), "Account created");
     }
 
     @PutMapping("/{accountId}")
     @PreAuthorize("hasAuthority('ACCOUNT_UPDATE')")
     public ApiResponse<AccountDto> update(@PathVariable UUID userId, @PathVariable UUID accountId,
                                            @Valid @RequestBody AccountDto.CreateRequest request) {
-        return ApiResponse.ok(accountService.update(userId, accountId, request), "Account updated");
+        return ApiResponse.ok(accountService.update(userId, accountId, request, currentUser.id()), "Account updated");
     }
 
     @DeleteMapping("/{accountId}")
     @PreAuthorize("hasAuthority('ACCOUNT_DELETE')")
     public ApiResponse<Void> delete(@PathVariable UUID userId, @PathVariable UUID accountId) {
-        accountService.delete(userId, accountId);
+        accountService.delete(userId, accountId, currentUser.id());
         return ApiResponse.ok(null, "Account deleted");
     }
 }

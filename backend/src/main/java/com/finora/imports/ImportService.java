@@ -673,7 +673,7 @@ public class ImportService {
                     na.accountHolderName(), na.accountNumberMasked(), na.bankId(),
                     na.branchName(), na.ifscCode(),
                     na.principalAmount(), na.interestRate(), na.maturityDate(), na.maturityAmount(),
-                    na.installmentAmount(), na.installmentsPaid(), na.installmentsTotal()));
+                    na.installmentAmount(), na.installmentsPaid(), na.installmentsTotal()), userId);
             accountsCreated.add(created.name());
             productsCreated.merge(product.name(), 1, Integer::sum);
 

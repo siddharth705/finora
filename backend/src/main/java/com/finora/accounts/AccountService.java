@@ -75,9 +75,16 @@ public class AccountService {
      * account already committed while the caller still receives a 500 -- risking a duplicate
      * account being created on client retry, since nothing tells the client the mutation actually
      * succeeded. Same bug class, same fix, as BudgetService.upsert()'s own documented rationale.
+     *
+     * <p>Bug fix: also carried no actingAdminId, so an admin creating an account on a user's
+     * behalf via AdminAccountController (support-assisted account management) was indistinguishable
+     * in the audit trail from the user creating it themselves. AccountController (self-service)
+     * passes its own caller's id for both userId and actingAdminId -- same "actorId" convention as
+     * RelationshipService/MerchantService/RuleService, which records the id of whoever actually
+     * performed the action regardless of whose data it acted on.
      */
     @Transactional
-    public AccountDto create(UUID userId, AccountDto.CreateRequest req) {
+    public AccountDto create(UUID userId, AccountDto.CreateRequest req, UUID actingAdminId) {
         Account a = new Account();
         a.setUserId(userId);
         a.setName(req.name());
@@ -104,14 +111,15 @@ public class AccountService {
         a.setBankId(bankManagementService.resolve(req.bankId()).id());
         Account saved = accountRepository.save(a);
         auditService.record(userId, "ACCOUNT_CREATED", "Account", saved.getId(),
-                Map.of("name", saved.getName(), "type", saved.getAccountType().name()));
+                Map.of("name", saved.getName(), "type", saved.getAccountType().name(),
+                        "actorId", actingAdminId.toString()));
         return AccountDto.from(saved, bankManagementService.resolve(saved.getBankId()));
     }
 
     /** Bug fix: same atomicity gap as {@link #create} between the account save and the audit
-     *  write -- see that method's own doc comment. */
+     *  write, and same missing-actingAdminId gap -- see that method's own doc comment. */
     @Transactional
-    public AccountDto update(UUID userId, UUID accountId, AccountDto.CreateRequest req) {
+    public AccountDto update(UUID userId, UUID accountId, AccountDto.CreateRequest req, UUID actingAdminId) {
         Account a = getOwned(userId, accountId);
         var previousBalance = a.getBalance();
         a.setName(req.name());
@@ -133,18 +141,20 @@ public class AccountService {
         a.setUpdatedAt(java.time.Instant.now());
         Account saved = accountRepository.save(a);
         auditService.record(userId, "ACCOUNT_UPDATED", "Account", accountId,
-                Map.of("previousBalance", previousBalance, "newBalance", saved.getBalance()));
+                Map.of("previousBalance", previousBalance, "newBalance", saved.getBalance(),
+                        "actorId", actingAdminId.toString()));
         return AccountDto.from(saved, bankManagementService.resolve(saved.getBankId()));
     }
 
     /** Bug fix: same atomicity gap as {@link #create} between the account (soft-)delete and the
-     *  audit write -- see that method's own doc comment. */
+     *  audit write, and same missing-actingAdminId gap -- see that method's own doc comment. */
     @Transactional
-    public void delete(UUID userId, UUID accountId) {
+    public void delete(UUID userId, UUID accountId, UUID actingAdminId) {
         Account a = getOwned(userId, accountId);
         accountRepository.delete(a); // soft delete via @SQLDelete on the entity
         auditService.record(userId, "ACCOUNT_DELETED", "Account", accountId,
-                Map.of("name", a.getName(), "type", a.getAccountType().name()));
+                Map.of("name", a.getName(), "type", a.getAccountType().name(),
+                        "actorId", actingAdminId.toString()));
     }
 
     private Account getOwned(UUID userId, UUID accountId) {
