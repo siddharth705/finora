@@ -3,6 +3,7 @@ package com.finora.controller;
 import com.finora.accounts.AccountDto;
 import com.finora.dto.ApiResponse;
 import com.finora.accounts.AccountService;
+import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
@@ -35,14 +36,14 @@ public class AdminAccountController {
 
     @PostMapping
     @PreAuthorize("hasAuthority('ACCOUNT_CREATE')")
-    public ApiResponse<AccountDto> create(@PathVariable UUID userId, @RequestBody AccountDto.CreateRequest request) {
+    public ApiResponse<AccountDto> create(@PathVariable UUID userId, @Valid @RequestBody AccountDto.CreateRequest request) {
         return ApiResponse.ok(accountService.create(userId, request), "Account created");
     }
 
     @PutMapping("/{accountId}")
     @PreAuthorize("hasAuthority('ACCOUNT_UPDATE')")
     public ApiResponse<AccountDto> update(@PathVariable UUID userId, @PathVariable UUID accountId,
-                                           @RequestBody AccountDto.CreateRequest request) {
+                                           @Valid @RequestBody AccountDto.CreateRequest request) {
         return ApiResponse.ok(accountService.update(userId, accountId, request), "Account updated");
     }
 
