@@ -45,6 +45,21 @@ jest.mock('@react-native-community/netinfo', () => ({
   default: { addEventListener: jest.fn(() => jest.fn()) },
 }));
 
+// @expo/vector-icons reaches expo-font -> expo-asset, which isn't resolvable under the runner, so
+// importing any screen that shows an icon fails before a test can run. Rendered as a plain Text
+// node carrying the glyph name: icons are decorative here, and every control this project ships
+// carries its own accessibilityLabel, so nothing under test depends on the real glyph.
+jest.mock('@expo/vector-icons/Ionicons', () => {
+  const React = require('react');
+  const { Text } = require('react-native');
+  return {
+    __esModule: true,
+    // createElement, not Text({...}): calling a component as a plain function skips React's
+    // element creation and blows up the tree on render rather than producing a node.
+    default: ({ name }: { name: string }) => React.createElement(Text, null, name),
+  };
+});
+
 // Sentry's native module isn't present under the runner. The scrubbers in lib/monitoring.ts are
 // pure functions tested directly, so nothing here needs the real SDK -- and EXPO_PUBLIC_SENTRY_DSN
 // is deliberately left unset so initMonitoring() no-ops and no test can emit a real event.

@@ -1,4 +1,7 @@
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { api, rawApi, type ApiEnvelope } from './client';
+import { encodeBase64 } from '../lib/base64';
 import type {
   Account, AccountStatementGroup, BankInfo, Budget, DashboardSummary, DetectedAccountInfo, Goal,
   ImportSummary, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, Transaction,
@@ -282,13 +285,42 @@ export const statementImportsApi = {
   listGroupedByAccount: () => api.get<AccountStatementGroup[]>('/statement-imports').then((r) => r.data),
   detail: (id: string) => api.get<StatementSummary>(`/statement-imports/${id}`).then((r) => r.data),
   transactions: (id: string) => api.get<Transaction[]>(`/statement-imports/${id}/transactions`).then((r) => r.data),
-  // TODO(Phase 3): web downloads via Blob + a clicked <a> element, neither of which exists on
-  // native. Replace with expo-file-system (write the response bytes to a local file) +
-  // expo-sharing (present the native share sheet) once the Statement History screen is built.
-  downloadFile: async (_id: string, _fileName: string): Promise<never> => {
-    throw new Error('statementImportsApi.downloadFile is not implemented yet -- see mobile roadmap Phase 3.');
+  /**
+   * "Download" means something different here than on web. The web app streams the file into a
+   * Blob and clicks a synthetic <a download>, neither of which exists on native -- and a file
+   * dropped into an app's sandbox is invisible to the user anyway. So this writes the bytes into
+   * the app's cache directory and hands the URI to the native share sheet, which is where "save to
+   * Files", "mail it to myself" and every other real destination live.
+   *
+   * Cache rather than documents: the OS may reclaim it, which is correct for a scratch copy the
+   * user has already been given a chance to put somewhere permanent. Nothing here re-downloads on
+   * its own, so a reclaimed file costs one more tap, not data loss.
+   *
+   * arraybuffer -> base64 because expo-file-system's write() takes a string; axios on React Native
+   * has no Blob to hand over.
+   */
+  downloadFile: async (id: string, fileName: string) => {
+    if (!(await Sharing.isAvailableAsync())) {
+      throw new Error('Sharing is not available on this device.');
+    }
+    const res = await api.get<ArrayBuffer>(`/statement-imports/${id}/file`, { responseType: 'arraybuffer' });
+    const file = new File(Paths.cache, fileName);
+    // A previous share of the same statement leaves the file behind; write() will not overwrite.
+    if (file.exists) file.delete();
+    file.create();
+    file.write(encodeBase64(res.data), { encoding: 'base64' });
+    await Sharing.shareAsync(file.uri, {
+      mimeType: fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'text/csv',
+      UTI: fileName.toLowerCase().endsWith('.pdf') ? 'com.adobe.pdf' : 'public.comma-separated-values-text',
+      dialogTitle: fileName,
+    });
   },
-  reimport: (id: string) => api.post<ReimportResult>(`/statement-imports/${id}/reimport`).then((r) => r.data),
+  // `password` is only ever needed for a statement originally uploaded as a protected PDF: the
+  // stored bytes are still encrypted, and the password used at upload is deliberately never
+  // persisted, so it has to be supplied again here. In the body, never the URL -- a document
+  // password in a query string is captured by access logs and proxy logs.
+  reimport: (id: string, password?: string) =>
+    api.post<ReimportResult>(`/statement-imports/${id}/reimport`, password ? { password } : {}).then((r) => r.data),
   confirmReimport: (id: string, payload: Omit<ConfirmPayload, 'newAccount' | 'sessionId'>) =>
     api.post<ImportSummary>(`/statement-imports/${id}/reimport/confirm`, { ...payload, newAccount: null }).then((r) => r.data),
   remove: (id: string) => api.delete(`/statement-imports/${id}`),
