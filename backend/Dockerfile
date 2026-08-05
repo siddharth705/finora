@@ -21,10 +21,22 @@ WORKDIR /app
 # dependency and compile layers on every commit, turning a fast rebuild into a full one for a value
 # nothing compiles against.
 #
-# Optional. Unset, the app falls back to RAILWAY_GIT_COMMIT_SHA at runtime (Railway sets it per
-# deployment), and reports unavailable if that is absent too -- see application.yml's app.build.commit.
+# Optional. Unset, the app falls back to RAILWAY_GIT_COMMIT_SHA, and reports unavailable if that
+# is absent too -- see application.yml's app.build.commit.
 ARG GIT_COMMIT=""
 ENV GIT_COMMIT=${GIT_COMMIT}
+
+# Railway exposes its own variables to a Dockerfile build as BUILD ARGUMENTS, which a build only
+# receives if it declares them -- an undeclared ARG is simply not passed, silently. Declaring it
+# here covers the case where the platform provides this at build time but not in the running
+# container's environment, which is invisible from outside: the field just stays blank, exactly as
+# it did when git-commit-id-maven-plugin had no .git to read.
+#
+# Baking it as ENV is safe even when the platform ALSO injects it at runtime -- a runtime
+# environment variable takes precedence over an image ENV, so the live value wins and this is only
+# ever the fallback. Defaulted empty so a plain `docker build` with no args still works.
+ARG RAILWAY_GIT_COMMIT_SHA=""
+ENV RAILWAY_GIT_COMMIT_SHA=${RAILWAY_GIT_COMMIT_SHA}
 
 # Production-readiness pass: this image used to run as root (Alpine JRE images default to root
 # if nothing says otherwise) — a container compromise via any dependency vulnerability then has
