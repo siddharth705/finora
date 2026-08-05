@@ -132,15 +132,18 @@ across two passes, it is the highest-value item in this document.
 
 **Area:** backend (`imports/storage`) · **Category:** data integrity · **Closed by** `ContentAddress.requireMatches()`
 
-Verification happens in two places, both routed through one implementation:
+Verification happens at **`StatementContentService.read()`** — the single choke point every read
+already goes through, so a future R2/S3 provider inherits the guarantee rather than having to
+reimplement it.
 
-- **`StatementContentService.read()`** — the single choke point every read already goes through, so a
-  future R2/S3 provider inherits the guarantee rather than having to reimplement it.
-- **`StatementBackfillWorker.write()`** — reads each object back before recording its address. This is
-  the last moment the check is possible: Phase 4 drops `file_content` on the strength of these rows,
-  after which the copy that makes a comparison meaningful is gone. It matters most for *deduplicated*
-  rows, the majority, where `store()` writes nothing and the address points at bytes an earlier row
-  put there — which this row would otherwise attest to without ever having looked at them.
+> **Updated 2026-08-05, after `cdae4c8`.** This originally described a second site,
+> `StatementBackfillWorker.write()`, which read each object back before recording its address. That
+> class no longer exists: the backfill was deleted once it was established there is no historical
+> statement content to migrate (development database has no schema, R2 bucket reports 0 objects).
+> The read-back argument was sound *for a backfill* — it was the last moment `file_content` still
+> existed to compare against, and it mattered most for deduplicated rows attesting to bytes an
+> earlier row wrote. With no backfill, none of those rows exist. The read-path check is unaffected
+> and is now the whole of this finding's resolution.
 
 **Two things in the original deferral turned out not to hold**, which is the part worth carrying
 forward:
@@ -149,9 +152,11 @@ forward:
    (×2), download, re-import (×2). A hash over a few MB is invisible beside object-store latency and
    PDF parsing, and none of it is on a hot path. The cost objection was reasonable in the abstract
    and simply did not survive looking at the call sites.
-2. *"Verify during the backfill, since every object is read once anyway."* The backfill reads
-   `file_content` from the **database** and writes *to* storage; it never reads back. The read-back
-   had to be added deliberately rather than folded into a read that was already happening.
+2. *"Verify during the backfill, since every object is read once anyway."* The backfill read
+   `file_content` from the **database** and wrote *to* storage; it never read back. The read-back
+   had to be added deliberately rather than folded into a read that was already happening — and the
+   backfill has since been deleted entirely, so deferring verification to it would have deferred it
+   to nothing.
 
 `StatementIntegrityException` extends `StatementStorageException` rather than reusing it: *missing* is
 an availability problem that may resolve when a provider recovers, *corrupt* is a correctness problem
