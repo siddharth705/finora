@@ -80,9 +80,32 @@ hunt.
 
 ---
 
-## 3. `actingAdminId` omission is a recurring bug class with no automated guard
+## 3. ~~`actingAdminId` omission is a recurring bug class with no automated guard~~ — RESOLVED
 
-**Area:** backend · **Category:** security / architecture
+**Area:** backend · **Category:** security / architecture · **Closed by** `AuditActorAttributionTest`
+
+Approach (c) was implemented. The guard fails the build when a method that writes an audit entry
+becomes reachable from an admin controller without a parameter naming who acted.
+
+The concern that made this a deferred item — "that requires a maintained exceptions list" — turned
+out to be smaller than feared, but only because the rule is scoped by *reachability* rather than by
+"does this method take an actor". 27 of the 64 audit writers legitimately have a single actor
+(`USER_LOGIN`, `SETUP_COMPLETED`); judging them all would have needed a 27-entry allow-list, which
+is a list nobody maintains honestly. Walking transitively from admin controller handlers and judging
+only what is actually reachable brought the allow-list to **two** entries, both system passes
+(`RECONCILIATION_RUN`, `RECURRING_DETECTION_RUN`) that an admin reaches only as a downstream side
+effect of an action already audited with its own actor.
+
+Verified against a deliberately unattributed fixture, against a real regression (stripping the actor
+from `AccountService.delete` made the rule report exactly that method), and with a floor assertion so
+a silently-resolving-nothing walk fails red rather than passing forever.
+
+Known limitation, recorded in the test: it proves an actor is *available* to the method, not that it
+is written into the metadata as `actorId`. Inspecting `Map.of(...)` arguments is not something
+bytecode analysis gives cheaply, and the historical failure was always an absent parameter.
+
+<details>
+<summary>Original finding</summary>
 
 This audit fixed six services that recorded audit entries without recording *which admin* acted
 (`RoleService` assign/revoke, `RuleService` create/update/delete, `AccountService`
@@ -100,6 +123,8 @@ allow-list is new architecture, not a minimal fix.
 
 **Recommended:** (c), as its own reviewed change. Given this shape has now recurred eight times
 across two passes, it is the highest-value item in this document.
+
+</details>
 
 ---
 
