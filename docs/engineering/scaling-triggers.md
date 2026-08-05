@@ -68,6 +68,45 @@ justified once there's a measured case the limiter isn't solving: p95 request la
 endpoint climbing during real usage, or the concurrency ceiling itself becoming the complaint
 (legitimate imports timing out waiting for a slot, not just failing over-capacity gracefully).
 
+### Measurement: `reconcileForUser` — 2026-08-05
+
+That measurement now exists for one specific path, so this section records it rather than leaving
+the next reader to redo it.
+
+A repository audit raised `ReconciliationService.reconcileForUser()` as an O(n²) pass over the
+user's entire transaction history, run synchronously after every transaction create, update,
+delete, import confirm and statement delete. The audit was explicit that it had measured nothing.
+`backend/src/test/java/com/finora/service/ReconciliationScalingBenchmark.java` measures it — it is
+not part of the suite (the name matches none of surefire's includes), so run it deliberately:
+
+```bash
+cd backend && ./mvnw -o test -Dtest=ReconciliationScalingBenchmark -DfailIfNoTests=false
+```
+
+| transactions | `reconcileForUser` | `detectForUser` |
+|---:|---:|---:|
+| 1,000 | 109 ms | 1 ms |
+| 10,000 | 848 ms | 1 ms |
+| 50,000 | 8,357 ms | 1 ms |
+
+**Status per finding**, using the lifecycle *observed → measured → triggered → implemented*:
+
+- **`reconcileForUser` — TRIGGERED, not yet implemented.** 8.4 seconds of synchronous work on a
+  request-handling thread meets this section's bar without needing interpretation, and the growth
+  is superlinear (5× the data costs ~10× the time between the last two rows). It is worth being
+  precise about what that means: this is not a scale problem waiting on user growth. It is
+  reachable by **one** account with a long import history, and every transaction edit pays it.
+- **`detectForUser` — MEASURED, NOT triggered.** 1 ms at every size. The in-memory cost the audit
+  attributed to it is not there.
+- **`saveAll(active)` write-back (`RecurringService`) — STILL UNMEASURED.** The benchmark mocks the
+  repository, so a write costs nothing in it. That finding is about database work and needs a
+  DB-backed measurement before anything is said about it either way. Not refuted — unmeasured.
+
+**What the benchmark does not cover**, stated so the numbers are not read as more than they are:
+query counts, connection-pool contention, and Hibernate's hydration of 50k managed entities. That
+last one is plausibly larger than the comparison cost being measured here. Treat the table as a
+**lower bound**.
+
 Until that measurement exists, a worker queue adds a second thing that can fail (the queue itself),
 a second deploy target, and a class of bugs (jobs stuck, jobs processed twice, jobs silently
 dropped) that a synchronous request handler structurally cannot have.
