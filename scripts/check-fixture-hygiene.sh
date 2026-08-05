@@ -30,16 +30,69 @@
 # exactly the route it reaches fixtures: someone documenting what a real document looked like.
 # Scoping a PII check by directory assumes people only paste customer data in one kind of file.
 
-staged=$(git diff --cached --name-only --diff-filter=ACM)
+# Two modes, because this runs in two places that have different ideas of "what changed".
+#
+#   (no args)              the pre-commit hook: diff the INDEX, i.e. what is staged right now.
+#   --range BASE HEAD      CI: diff a commit range. A CI checkout has no staged content at all,
+#                          so the hook's `--cached` would find nothing and the job would pass
+#                          vacuously -- which is worse than not running it, because the green
+#                          check reads as coverage.
+#
+# BASE may be empty or unresolvable on a branch's first push (github.event.before is all-zeros for
+# a new branch). That falls back to diffing HEAD against its parent rather than silently scanning
+# nothing.
+MODE_RANGE=""
+if [ "$1" = "--range" ]; then
+  MODE_RANGE="yes"
+  BASE="$2"
+  HEAD="${3:-HEAD}"
+fi
+
+if [ -n "$MODE_RANGE" ]; then
+  if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] \
+      || ! git rev-parse --verify --quiet "$BASE^{commit}" >/dev/null; then
+    BASE="$HEAD^"
+    git rev-parse --verify --quiet "$BASE^{commit}" >/dev/null || BASE=""
+  fi
+  if [ -z "$BASE" ]; then
+    echo "check-fixture-hygiene: no usable base commit; nothing to compare." >&2
+    exit 0
+  fi
+  DIFF_ARGS="$BASE $HEAD"
+  staged=$(git diff --name-only --diff-filter=ACM $DIFF_ARGS)
+else
+  DIFF_ARGS="--cached"
+  staged=$(git diff --cached --name-only --diff-filter=ACM)
+fi
 # Lockfiles are excluded deliberately, and they are the one exception worth making: they are
 # generated dependency metadata that no human pastes into, they routinely contain maintainer
 # email addresses (npm records them), and being strict JSON they cannot carry a synthetic-ok
 # marker to annotate the false positive away. Left in scope, every lockfile change would trip the
 # block, and a check that fires on routine commits is a check people learn to bypass.
+#
+# The extension list is an ALLOWLIST, and it used to omit .csv and .pdf -- the two formats this
+# product exists to parse. Scoping by extension makes the same assumption the directory scoping
+# above already got wrong: that people only paste customer data into one kind of file. The
+# likeliest leak path in this repo is "reproduce a parsing bug from a customer's statement" ->
+# save it under src/test/resources/, and the two file types that arrives as were the two this
+# check could not see. .py/.sh/.properties were missing for no reason at all.
+#
+# A PDF also defeats the fallback that caught the original incident. That was PII in readable Java
+# and still went unnoticed for weeks; nobody reviews a binary diff at all.
 targets=$(printf '%s\n' "$staged" \
-  | grep -E '\.(java|ts|tsx|js|jsx|sql|yml|yaml|json|md|txt|trace)$' \
+  | grep -E '\.(java|ts|tsx|js|jsx|sql|yml|yaml|json|md|txt|trace|csv|py|sh|properties|env|xml|html|kt|swift)$' \
   | grep -vE '(^|/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml)$')
-[ -z "$targets" ] && exit 0
+
+# PDFs are handled separately from the text scan below, because grepping a PDF is close to
+# useless: the content is compressed, so a real account number rarely appears as matchable bytes
+# and a clean scan would be false reassurance rather than evidence. The honest control for a
+# format this check cannot read is to require a human to say so -- a committed PDF must carry a
+# synthetic-ok marker in the same commit (in its own path or anywhere in the commit message's
+# staged files), or it blocks. Statement fixtures belong in redacted extraction traces (.trace,
+# which IS scannable) rather than as original documents; see docs/engineering/trace-lifecycle.md.
+staged_pdfs=$(printf '%s\n' "$staged" | grep -iE '\.pdf$' || true)
+
+[ -z "$targets" ] && [ -z "$staged_pdfs" ] && exit 0
 
 warn=$(mktemp)
 block=$(mktemp)
@@ -52,6 +105,20 @@ trap 'rm -f "$warn" "$block"' EXIT
 is_placeholder() {
   printf '%s' "$1" | grep -qiE '(.)\1{3,}|example|sample|test|dummy|fake|placeholder|redacted|noreply|localhost'
 }
+
+# PDFs: a path-level decision, since the bytes cannot be meaningfully scanned (see the comment on
+# staged_pdfs above). A filename that says it is synthetic is accepted; anything else has to be
+# stated explicitly by a human in the same commit.
+if [ -n "$staged_pdfs" ]; then
+  printf '%s\n' "$staged_pdfs" | while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if is_placeholder "$(basename "$f")"; then
+      echo "$f: PDF with a synthetic-looking name (allowed)" >> "$warn"
+    else
+      echo "$f: PDF added -- contents cannot be scanned for customer data" >> "$block"
+    fi
+  done
+fi
 
 printf '%s\n' "$targets" | while IFS= read -r f; do
   [ -f "$f" ] || continue
@@ -75,7 +142,10 @@ printf '%s\n' "$targets" | while IFS= read -r f; do
   # "+real.customer@gmail.com". That half was a display bug, not a false negative -- the block/warn
   # decision already fired correctly -- but a developer fixing the flagged line off a corrupted
   # value is exactly the kind of friction that erodes trust in what this hook reports.
-  added=$(git diff --cached -- "$f" | grep -E '^\+' | grep -vE '^\+\+\+ (a/|b/|/dev/null)' | grep -v 'synthetic-ok' | cut -c2-)
+  # $DIFF_ARGS is "--cached" for the hook and "BASE HEAD" in CI -- see the mode selection at the
+  # top. Deliberately unquoted so the two-word range form expands to two arguments.
+  # shellcheck disable=SC2086
+  added=$(git diff $DIFF_ARGS -- "$f" | grep -E '^\+' | grep -vE '^\+\+\+ (a/|b/|/dev/null)' | grep -v 'synthetic-ok' | cut -c2-)
   [ -z "$added" ] && continue
 
   echo "$added" | grep -oE '[0-9]{10,}' | sort -u | while IFS= read -r hit; do
@@ -133,6 +203,11 @@ if [ -s "$block" ]; then
   echo "" >&2
   echo "  If a value genuinely is synthetic and this is a false positive, mark that line with a" >&2
   echo "  'synthetic-ok' comment so the exception stays visible in review." >&2
+  echo "" >&2
+  echo "  For a PDF: its bytes cannot be scanned, so there is no line to mark. Capture a redacted" >&2
+  echo "  extraction trace instead (scripts/trace-capture.sh -- see docs/engineering/" >&2
+  echo "  trace-lifecycle.md), which is reviewable and IS scanned. If the document is genuinely" >&2
+  echo "  synthetic, name the file so it says so (e.g. sample_statement.pdf)." >&2
   echo "" >&2
   exit 1
 fi

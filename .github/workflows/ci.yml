@@ -24,7 +24,12 @@ jobs:
     name: Backend (Java 21)
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 because the PII check diffs a commit RANGE here rather than the index (see
+      # its --range flag). A shallow checkout would not have the base commit, and the script would
+      # fall back to scanning nothing -- passing vacuously, which reads as coverage in review.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # scripts/check-xml-comments.py exists because exactly this broke backend/pom.xml once --
       # an internal "--" inside an XML comment, which Maven's POM parser rejects outright with an
@@ -33,6 +38,31 @@ jobs:
       # scripts/check-xml-comments.py" only ever in its own usage docstring) -- exactly the shape
       # that let the original incident happen, so catching it here rather than at `mvn` parse time
       # is the actual fix, not the script's mere existence.
+      # The customer-PII guard. It was pre-commit-only, and that is three kinds of absent: it can
+      # be skipped with --no-verify (a pressure its own header acknowledges), it is not installed
+      # on a fresh clone unless someone runs `npm install` at the ROOT (hooks come from the root
+      # package.json's "prepare": "husky", so anyone working only in backend/ has none), and
+      # nothing on the server side ever looked.
+      #
+      # It is the sole automated control against recurrence of a real, still-open incident:
+      # docs/engineering/incidents/2026-08-03-customer-pii-in-git-history.md, a customer's name and
+      # 14-digit account number committed in a source comment, status "Open -- remediation
+      # DEFERRED." This repository has already written down the principle, about a different
+      # script, in this same file: "a script nobody ran automatically... exactly the shape that let
+      # the original incident happen."
+      #
+      # fetch-depth 0 and an explicit range because the hook diffs the INDEX, which does not exist
+      # on a CI checkout -- see the script's --range flag.
+      - name: Customer PII check
+        run: sh scripts/check-fixture-hygiene.sh --range "${{ github.event.pull_request.base.sha || github.event.before }}" "${{ github.sha }}"
+
+      # Same absence, same fix. Its own comment records the shipped production bug it exists to
+      # prevent -- "a 401-handling fix landed on web, missed mobile, and shipped a bug where a
+      # mistyped password revoked every session on every device" -- and a guard against a bug that
+      # already shipped once should not be skippable.
+      - name: Client auth policy
+        run: python scripts/check-client-auth-policy.py
+
       - name: XML comment check
         run: python scripts/check-xml-comments.py
 
@@ -86,6 +116,20 @@ jobs:
       - name: Test summary
         if: always()
         run: python scripts/summarize-surefire.py
+
+      # guardian-report.py was the last checker referenced only in documentation -- never in CI,
+      # a hook, or a package script. That is precisely the anti-pattern the XML-comment step above
+      # already records this repository diagnosing once, and it was left standing next to it.
+      #
+      # It joins GuardianRegistryTest's generated rule manifest against the surefire results, so it
+      # needs the test step to have run and adds no work of its own. `if: always()` for the same
+      # reason the summary uses it: on a failing run, knowing WHICH guardian rules broke is worth
+      # most. It reports rather than re-judges -- a failed rule is already the test step's exit
+      # code -- but it exits non-zero on a report it could not produce, so a manifest that stops
+      # being generated is a failure rather than silence.
+      - name: Repository Guardian report
+        if: always()
+        run: python scripts/guardian-report.py
 
       # The XML behind the summary, for reading a stack trace without re-running the suite.
       # Failures only: on a green run nobody opens it, and it is ~2MB of XML per run.
