@@ -5,6 +5,7 @@ import { CheckCircle2, UploadCloud, AlertTriangle, Clock, FileText, FileSpreadsh
 import { importApi, statementImportsApi, categoriesApi, accountsApi } from '../api/endpoints';
 import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID } from '../api/errorCodes';
 import { BankLogo } from '../components/BankLogo';
+import { matchExistingAccount } from '../lib/accountMatch';
 import type { Account, DetectedAccountInfo, ImportSummary, ReimportResult, StagedAccountSection, StagedRow, UnparseableRow } from '../types';
 import { formatDate } from '../utils/date';
 
@@ -41,13 +42,18 @@ interface SectionState {
 
 function initialSectionState(section: StagedAccountSection, existingAccounts: Account[]): SectionState {
   const detected = section.detectedAccount;
+  // Per section, not per file. This defaulted every section of a composite statement to
+  // existingAccounts[0] -- so an HSBC file bundling a savings section and a credit-card section
+  // proposed merging both into the same account, which is the one shape of this bug that is
+  // wrong even when the user has exactly one account. See matchExistingAccount.
+  const match = matchExistingAccount(detected, existingAccounts);
   return {
     detectedAccount: detected,
     rows: section.rows,
     included: section.rows.map((r) => !r.likelyDuplicate),
     chosenCategory: section.rows.map((r) => r.suggestedCategory),
-    accountChoice: existingAccounts.length > 0 ? 'existing' : 'new',
-    selectedAccountId: existingAccounts.length > 0 ? existingAccounts[0].id : '',
+    accountChoice: match ? 'existing' : 'new',
+    selectedAccountId: match ? match.id : '',
     newName: detected.suggestedName,
     newType: detected.suggestedAccountType,
     newOpeningBalance: detected.openingBalance != null ? String(detected.openingBalance) : '',
@@ -230,12 +236,24 @@ export default function Import() {
       setNewCreditLimit(staging.detectedAccount.creditLimit != null ? String(staging.detectedAccount.creditLimit) : '');
       setNewDueDate(staging.detectedAccount.paymentDueDate ?? '');
 
-      // Default to "new account" only when there's genuinely nothing to reuse — otherwise
-      // default to the account the file's own signals most plausibly matches, falling back to
-      // the first existing account.
-      if (existingAccounts.length > 0) {
+      // Default to the account this statement actually matches, and to "new account" when it
+      // matches none.
+      //
+      // Bug fix: this used to preselect existingAccounts[0] whenever ANY account existed, while
+      // the comment above it claimed to pick "the account the file's own signals most plausibly
+      // matches". No signal was consulted. Whoever imported a Kotak statement first was then shown
+      // "use an existing account: Kotak" for every later statement from any bank, and had to
+      // notice and override it.
+      //
+      // Defaulting wrong in the two directions is not equally bad, which is why matchExistingAccount
+      // returns null unless it is confident: preselecting the wrong EXISTING account merges one
+      // institution's transactions into another's -- wrong balances, wrong net worth, reconciliation
+      // running across two unrelated ledgers -- whereas preselecting NEW at worst creates a
+      // duplicate account, which is visible and deletable.
+      const match = matchExistingAccount(staging.detectedAccount, existingAccounts);
+      if (match) {
         setAccountChoice('existing');
-        setSelectedAccountId(existingAccounts[0].id);
+        setSelectedAccountId(match.id);
       } else {
         setAccountChoice('new');
       }
