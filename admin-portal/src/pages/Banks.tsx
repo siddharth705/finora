@@ -198,12 +198,16 @@ function BankSummaryTab({ bank, onSave, saving, error }: {
         </div>
         <div>
           <p className="text-xs font-medium text-muted mb-0.5">Website</p>
-          {/* Bug fix / security hardening: bank.websiteUrl has no scheme validation on the
-              backend -- any BANK_MANAGE admin could set it to a `javascript:` URL, and this used
-              to render it as a real, clickable <a href> to every OTHER admin who opens this
-              bank's drawer. isSafeHttpUrl restricts what actually becomes a link to http(s); an
-              unsafe value still displays (so nothing silently disappears) but as plain text,
-              never as something clickable. See lib/safeUrl.ts's own doc comment. */}
+          {/* Bug fix / security hardening: bank.websiteUrl had no scheme validation on the
+              backend when this was written -- any BANK_MANAGE admin could set it to a
+              `javascript:` URL, and this used to render it as a real, clickable <a href> to every
+              OTHER admin who opens this bank's drawer. The backend validates now (@SafeHttpUrl on
+              AccountDto's create and update requests), so that clause describes history, not the
+              current state -- but this check is not therefore redundant. Server-side validation
+              bounds what new writes can store; it says nothing about rows written before it
+              existed. isSafeHttpUrl restricts what actually becomes a link to http(s); an unsafe
+              value still displays (so nothing silently disappears) but as plain text, never as
+              something clickable. See lib/safeUrl.ts's own doc comment. */}
           {bank.websiteUrl && isSafeHttpUrl(bank.websiteUrl) ? (
             <a
               href={bank.websiteUrl}

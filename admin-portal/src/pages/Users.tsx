@@ -262,7 +262,11 @@ function UsersTable() {
           <button
             type="button"
             disabled={suspendMutation.isPending}
-            onClick={() => suspendMutation.mutate(u.id)}
+            onClick={() => {
+              if (confirm(`Suspend ${u.fullName}? They will be signed out and unable to log in until reactivated.`)) {
+                suspendMutation.mutate(u.id);
+              }
+            }}
             className="inline-flex items-center gap-1.5 text-xs font-medium text-danger hover:bg-danger-bg rounded-lg px-2.5 py-1.5"
           >
             <ShieldBan size={14} /> Suspend

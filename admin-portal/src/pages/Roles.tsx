@@ -187,7 +187,16 @@ function RoleCard({
                 type="button"
                 title="Revoke"
                 disabled={revokeMutation.isPending}
-                onClick={() => revokeMutation.mutate(p.id)}
+                // This file held both patterns and had them backwards. Deleting a permission
+                // (below) confirmed, even though the backend refuses it outright while any role
+                // still grants it. Revoking one from a role did not -- and that succeeds
+                // immediately and changes what every user holding this role can do. The more
+                // consequential action was the unguarded one, behind a 3.5-unit "x".
+                onClick={() => {
+                  if (confirm(`Revoke "${p.name}" from ${role.name}? Every user with this role loses it immediately.`)) {
+                    revokeMutation.mutate(p.id);
+                  }
+                }}
                 className="w-3.5 h-3.5 rounded-full bg-border hover:bg-danger hover:text-white text-[9px] flex items-center justify-center"
               >
                 ×

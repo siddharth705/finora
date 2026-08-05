@@ -170,6 +170,25 @@ describe('Users', () => {
     await waitFor(() => expect(notifySuccess).toHaveBeenCalledWith('User suspended.'));
   });
 
+  it('does not suspend when the confirmation is declined', async () => {
+    // Suspending signs the user out and blocks their login, from a one-click button in a table
+    // row with no undo in the same place. The confirm is the only thing between a misclick and
+    // that, so it is worth a test of its own -- src/test/setup.ts stubs confirm to true by
+    // default, and a permissive default can hide a guard that has been removed.
+    mockAuth(['USER_VIEW', 'USER_DELETE']);
+    vi.mocked(adminUsersApi.list).mockResolvedValue(pagedResponse([AMY]));
+    vi.mocked(window.confirm).mockReturnValue(false);
+    const user = userEvent.setup();
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText('Amy Active')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: /Suspend/ }));
+
+    expect(window.confirm).toHaveBeenCalled();
+    expect(adminUsersApi.suspend).not.toHaveBeenCalled();
+  });
+
   it('shows an error notification when suspending fails', async () => {
     mockAuth(['USER_VIEW', 'USER_DELETE']);
     vi.mocked(adminUsersApi.list).mockResolvedValue(pagedResponse([AMY]));

@@ -110,7 +110,11 @@ function UserDetailContent({ id }: { id: string }) {
                 <button
                   type="button"
                   disabled={suspendMutation.isPending}
-                  onClick={() => suspendMutation.mutate()}
+                  onClick={() => {
+                    if (confirm(`Suspend ${user.fullName}? They will be signed out and unable to log in until reactivated.`)) {
+                      suspendMutation.mutate();
+                    }
+                  }}
                   className="inline-flex items-center gap-1.5 text-sm font-medium text-danger border border-danger/30 hover:bg-danger-bg rounded-lg px-3.5 py-2"
                 >
                   <ShieldBan size={15} /> Suspend account
@@ -181,7 +185,16 @@ function UserDetailContent({ id }: { id: string }) {
                 <button
                   type="button"
                   title="Revoke this role"
-                  onClick={() => revokeRoleMutation.mutate(name)}
+                  // Revocation is a genuine demotion now: RoleService.revokeRole also resets the
+                  // legacy User.role column when it names the role being revoked, because leaving
+                  // it meant AuthorizationService kept granting that role's whole permission set
+                  // through the legacy path and the revoke silently did nothing. It really takes
+                  // effect, so it is worth confirming.
+                  onClick={() => {
+                    if (confirm(`Revoke the ${name} role from this user? They lose its permissions immediately.`)) {
+                      revokeRoleMutation.mutate(name);
+                    }
+                  }}
                   className="w-4 h-4 rounded-full bg-border hover:bg-danger hover:text-white text-[10px] flex items-center justify-center"
                 >
                   ×

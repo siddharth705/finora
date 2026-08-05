@@ -91,6 +91,7 @@ function SettingsContent() {
   const [maxFailedLoginAttempts, setMaxFailedLoginAttempts] = useState(5);
   const [lockoutDurationMinutes, setLockoutDurationMinutes] = useState(15);
   const [saved, setSaved] = useState(false);
+  const [boundsMessage, setBoundsMessage] = useState<string | null>(null);
 
   // Sync local form state whenever a fresh settings row loads -- e.g. on first fetch, or after
   // another admin's change is picked up by a refetch.
@@ -101,6 +102,32 @@ function SettingsContent() {
       setLockoutDurationMinutes(data.lockoutDurationMinutes);
     }
   }, [data]);
+
+  // Bug fix: the min/max attributes on the two number inputs below never fired. Native constraint
+  // validation only runs on form submission, and the save control is a type="button" with an
+  // onClick handler, sitting outside any <form> -- so the bounds were decorative. Clearing a field
+  // gives Number('') === 0, which was submitted happily.
+  //
+  // The backend does catch it (@Min/@Max on the request DTO), so this was never a hole -- but the
+  // user saw a generic server error for something the page had already told them the rule for,
+  // two fields away. These limits mirror the backend's exactly; they are the same rule stated
+  // where the user is typing, not a second, independent one.
+  const MAX_FAILED_ATTEMPTS_RANGE = { min: 1, max: 20 };
+  const LOCKOUT_MINUTES_RANGE = { min: 1, max: 1440 };
+
+  function boundsError(): string | null {
+    if (!Number.isInteger(maxFailedLoginAttempts)
+        || maxFailedLoginAttempts < MAX_FAILED_ATTEMPTS_RANGE.min
+        || maxFailedLoginAttempts > MAX_FAILED_ATTEMPTS_RANGE.max) {
+      return `Max failed login attempts must be between ${MAX_FAILED_ATTEMPTS_RANGE.min} and ${MAX_FAILED_ATTEMPTS_RANGE.max}.`;
+    }
+    if (!Number.isInteger(lockoutDurationMinutes)
+        || lockoutDurationMinutes < LOCKOUT_MINUTES_RANGE.min
+        || lockoutDurationMinutes > LOCKOUT_MINUTES_RANGE.max) {
+      return `Lockout duration must be between ${LOCKOUT_MINUTES_RANGE.min} and ${LOCKOUT_MINUTES_RANGE.max} minutes.`;
+    }
+    return null;
+  }
 
   const updateMutation = useMutation({
     mutationFn: () => platformSettingsApi.update({ registrationsEnabled, maxFailedLoginAttempts, lockoutDurationMinutes }),
@@ -176,6 +203,10 @@ function SettingsContent() {
           </div>
         </div>
 
+        {boundsMessage && (
+          <p className="text-sm text-danger bg-danger-bg rounded-lg px-3 py-2">{boundsMessage}</p>
+        )}
+
         {updateMutation.isError && (
           <p className="text-sm text-danger bg-danger-bg rounded-lg px-3 py-2">
             {(updateMutation.error as any)?.response?.data?.message ?? 'Failed to save settings.'}
@@ -186,7 +217,15 @@ function SettingsContent() {
           <button
             type="button"
             disabled={updateMutation.isPending}
-            onClick={() => updateMutation.mutate()}
+            onClick={() => {
+              const problem = boundsError();
+              if (problem) {
+                setBoundsMessage(problem);
+                return;
+              }
+              setBoundsMessage(null);
+              updateMutation.mutate();
+            }}
             className="inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark text-white text-sm font-semibold rounded-lg px-4 py-2.5 disabled:opacity-50"
           >
             <Save size={14} /> {updateMutation.isPending ? 'Saving…' : 'Save changes'}
