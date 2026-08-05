@@ -32,6 +32,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Filesystem storage rather than R2 for the same reason the local provider exists at all: no
  * credentials, no network, deterministic, and it exercises the same StatementStorage contract R2
  * will have to satisfy.
+ *
+ * <h2>Assertions are scoped to THIS test's rows, never to the batch counters</h2>
+ * runBatch is platform-wide by design, and every IT class shares one Postgres container. So a batch
+ * run here also picks up statement_imports left by other IT classes -- including rows those tests
+ * created with zero-length file_content, which the backfill correctly refuses to address rather
+ * than inventing an address for empty bytes.
+ *
+ * An earlier version of this class asserted {@code failed() == 0} and passed in isolation, then
+ * failed in the full suite for exactly that reason. The counters describe the whole database; only
+ * the rows this test created say anything about whether the backfill works.
  */
 @TestPropertySource(properties = {
         "app.statement-storage.provider=filesystem",
@@ -91,10 +101,7 @@ class StatementBackfillIT extends AbstractIntegrationTest {
                 persistUnaddressedImport(STATEMENT),
                 persistUnaddressedImport(STATEMENT));
 
-        var result = backfillService.runBatch(50);
-
-        assertThat(result.processed()).isGreaterThanOrEqualTo(3);
-        assertThat(result.failed()).isZero();
+        backfillService.runBatch(50);
 
         // Every row now carries the SAME address, and the bytes come back intact through it.
         List<StatementImport> after = ids.stream()
@@ -108,8 +115,10 @@ class StatementBackfillIT extends AbstractIntegrationTest {
         });
         assertThat(after).extracting(StatementImport::getObjectKey).containsOnly(after.get(0).getObjectKey());
 
-        // The payoff, stated as a file count: three rows, one object on disk.
-        assertThat(objectsFor(after.get(0).getObjectKey())).isEqualTo(1);
+        // The payoff: three rows, ONE object. Asserted as "exactly one file carries this content's
+        // hash" rather than "one file in this directory" -- other tests' objects can legitimately
+        // land in the same shard.
+        assertThat(objectsForHash(ContentAddress.hashOf(STATEMENT))).isEqualTo(1);
     }
 
     @Test
@@ -120,9 +129,10 @@ class StatementBackfillIT extends AbstractIntegrationTest {
 
         // A second run must be a no-op for this row rather than rewriting it -- that is what makes
         // "run it again until remaining is zero" a safe instruction.
-        var second = backfillService.runBatch(50);
+        backfillService.runBatch(50);
 
-        assertThat(second.failures()).isEmpty();
+        // Unchanged address is the whole claim: the second run neither rewrote nor re-addressed a
+        // row it had already done, which is what makes "run it again until remaining is zero" safe.
         assertThat(statementImportRepository.findByIdIncludingDeleted(id).orElseThrow().getObjectKey())
                 .isEqualTo(addressAfterFirstRun);
     }
@@ -139,11 +149,14 @@ class StatementBackfillIT extends AbstractIntegrationTest {
                 .isNotEmpty();
     }
 
-    /** How many files exist at the directory this key lives in — the dedup measurement. */
-    private long objectsFor(String key) {
-        Path dir = Path.of(System.getProperty("java.io.tmpdir"), "finora-backfill-it").resolve(key).getParent();
-        try (var files = Files.list(dir)) {
-            return files.filter(Files::isRegularFile).count();
+    /** How many stored objects carry this exact content hash -- the dedup measurement, scoped to
+     *  this test's own content so a shared shard directory cannot skew it. */
+    private long objectsForHash(String hash) {
+        Path root = Path.of(System.getProperty("java.io.tmpdir"), "finora-backfill-it");
+        try (var files = Files.walk(root)) {
+            return files.filter(Files::isRegularFile)
+                    .filter(f -> f.getFileName().toString().contains(hash))
+                    .count();
         } catch (IOException e) {
             throw new AssertionError(e);
         }
