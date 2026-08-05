@@ -1,5 +1,7 @@
 package com.finora.architecture;
 
+import com.finora.architecture.registry.GuardianSelfTest;
+import com.finora.architecture.registry.GuardianRule;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.domain.JavaMethod;
@@ -63,6 +65,14 @@ class NoOptionalBeanReturnTypeTest {
         return offenders;
     }
 
+    @GuardianRule(
+            id = "FG-029",
+            category = GuardianRule.Category.CORRECTNESS,
+            intent = "No @Bean method returns Optional<...>; Spring resolves it to empty at every injection.",
+            source = "Incident: FirebaseConfig.firebaseApp() silently disabled phone verification",
+            introduced = "2026-08-02",
+            owner = "architecture",
+            verification = GuardianRule.Verification.SELF_TEST)
     @Test
     void noBeanMethodReturnsOptional() {
         assertThat(findOptionalReturningBeanMethods(productionClasses()))
@@ -83,6 +93,7 @@ class NoOptionalBeanReturnTypeTest {
      * original FirebaseConfig vulnerability. A rule that silently stopped detecting anything would
      * otherwise look exactly like a clean codebase.
      */
+    @GuardianSelfTest(rule = "FG-029")
     @Test
     void theRuleDetectsAnOptionalReturningBeanMethod() {
         JavaClasses fixtures = new ClassFileImporter().importPackages("com.finora.architecture.fixtures");
@@ -99,6 +110,7 @@ class NoOptionalBeanReturnTypeTest {
      * assertion would keep passing while checking nothing at all. Asserting a realistic floor
      * means that failure mode surfaces as a red test rather than false confidence.
      */
+    @GuardianSelfTest(rule = "FG-029")
     @Test
     void theRuleActuallyFindsConfigurationClassesItClaimsToCheck() {
         long configClasses = productionClasses().stream()

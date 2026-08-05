@@ -85,6 +85,20 @@ public class StatementBackfillWorker {
         boolean alreadyStored = active.exists(address);
         ContentAddress stored = active.store(content);
 
+        // Read back and verify before recording the address. Phase 4 deletes file_content on the
+        // strength of these rows, so this is the last moment the database copy still exists to
+        // compare against -- after that a mis-stored object is undetectable and unrecoverable.
+        //
+        // It matters most in the alreadyStored branch, which is the majority of rows: there
+        // store() wrote nothing and the address points at an object some EARLIER row put there.
+        // Without this, the backfill would be attesting to bytes it never actually looked at.
+        //
+        // Cost is one extra read plus a hash per row, on a one-off migration that already reads
+        // every row once. Doubling the I/O of a background job is a fair price for the irreversible
+        // step downstream being able to trust its own precondition.
+        ContentAddress.requireMatches(active.retrieve(stored), stored.hash(),
+                "back-filled object " + stored.hash());
+
         setHash.accept(stored.hash());
         setKey.accept(stored.key());
         return !alreadyStored;

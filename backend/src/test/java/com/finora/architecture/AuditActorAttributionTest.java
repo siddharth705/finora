@@ -1,5 +1,7 @@
 package com.finora.architecture;
 
+import com.finora.architecture.registry.GuardianSelfTest;
+import com.finora.architecture.registry.GuardianRule;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.domain.JavaCodeUnit;
@@ -164,6 +166,14 @@ class AuditActorAttributionTest {
         return paths.stream().anyMatch(path -> path.startsWith(ADMIN_PATH_PREFIX));
     }
 
+    @GuardianRule(
+            id = "FG-025",
+            category = GuardianRule.Category.SECURITY,
+            intent = "Every admin-reachable audit write records the acting actor.",
+            source = "Incident: unattributed admin audit write",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.SELF_TEST)
     @Test
     void everyAdminReachableAuditWriteRecordsWhoActed() {
         assertThat(findAdminReachableAuditWritesWithoutActor(productionClasses()))
@@ -185,6 +195,7 @@ class AuditActorAttributionTest {
      * security rule that silently stopped detecting anything would otherwise look exactly like a
      * clean codebase.
      */
+    @GuardianSelfTest(rule = "FG-025")
     @Test
     void theRuleDetectsAnUnattributedAdminAuditWrite() {
         JavaClasses fixtures = new ClassFileImporter().importPackages("com.finora.architecture.fixtures");
@@ -202,6 +213,7 @@ class AuditActorAttributionTest {
      * checking nothing at all. Asserting a realistic floor means that failure mode surfaces as a
      * red test rather than false confidence.
      */
+    @GuardianSelfTest(rule = "FG-025")
     @Test
     void theRuleActuallyReachesTheAuditWritersItClaimsToCheck() {
         JavaClasses classes = productionClasses();

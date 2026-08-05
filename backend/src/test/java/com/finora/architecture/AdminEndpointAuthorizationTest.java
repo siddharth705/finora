@@ -1,5 +1,7 @@
 package com.finora.architecture;
 
+import com.finora.architecture.registry.GuardianSelfTest;
+import com.finora.architecture.registry.GuardianRule;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.domain.JavaMethod;
@@ -78,6 +80,14 @@ class AdminEndpointAuthorizationTest {
         return unguarded;
     }
 
+    @GuardianRule(
+            id = "FG-024",
+            category = GuardianRule.Category.SECURITY,
+            intent = "Every admin endpoint carries an authorization annotation.",
+            source = "Incident: unguarded admin endpoint",
+            introduced = "2026-08-01",
+            owner = "architecture",
+            verification = GuardianRule.Verification.SELF_TEST)
     @Test
     void everyAdminEndpointIsGuardedByAnAuthorizationAnnotation() {
         assertThat(findUnguardedAdminHandlers(productionClasses()))
@@ -96,6 +106,7 @@ class AdminEndpointAuthorizationTest {
      * original AdminSearchController vulnerability. A security rule that silently stopped
      * detecting anything would otherwise look exactly like a clean codebase.
      */
+    @GuardianSelfTest(rule = "FG-024")
     @Test
     void theRuleDetectsAnUnguardedAdminEndpoint() {
         JavaClasses fixtures = new ClassFileImporter().importPackages("com.finora.architecture.fixtures");
@@ -112,6 +123,7 @@ class AdminEndpointAuthorizationTest {
      * the production assertion would keep passing while checking nothing at all. Asserting a
      * realistic floor means that failure mode surfaces as a red test rather than false confidence.
      */
+    @GuardianSelfTest(rule = "FG-024")
     @Test
     void theRuleActuallyFindsTheAdminControllersItClaimsToCheck() {
         long adminControllers = productionClasses().stream().filter(this::isAdminController).count();

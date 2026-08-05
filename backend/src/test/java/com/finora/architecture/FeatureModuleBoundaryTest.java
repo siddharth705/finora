@@ -1,5 +1,6 @@
 package com.finora.architecture;
 
+import com.finora.architecture.registry.GuardianRule;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
@@ -38,6 +39,14 @@ class FeatureModuleBoundaryTest {
                 .importPackages("com.finora");
     }
 
+    @GuardianRule(
+            id = "FG-011",
+            category = GuardianRule.Category.MIGRATION,
+            intent = "A migrated feature module must not depend on the legacy com.finora.controller package.",
+            source = "CODING_STANDARDS.md > Migrating existing modules",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void migratedFeaturesDoNotDependOnTheLegacyControllerPackage() {
         noClasses().that().resideInAnyPackage(FEATURE_MODULES)
@@ -51,6 +60,15 @@ class FeatureModuleBoundaryTest {
                 .check(productionClasses());
     }
 
+    @GuardianRule(
+            id = "FG-008",
+            category = GuardianRule.Category.BOUNDARY,
+            intent = "The sub-packages of com.finora.imports stay free of dependency cycles.",
+            source = "CODING_STANDARDS.md > Backend > Package structure",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION,
+            exceptions = "Scoped to com.finora.imports; top-level slices still cycle mid-migration")
     @Test
     void theReferenceFeatureModuleStaysAcyclic() {
         slices().matching("com.finora.imports.(*)..")
@@ -67,6 +85,14 @@ class FeatureModuleBoundaryTest {
                 .check(productionClasses());
     }
 
+    @GuardianRule(
+            id = "FG-009",
+            category = GuardianRule.Category.BOUNDARY,
+            intent = "Only com.finora.imports.storage may name a concrete StatementStorage implementation.",
+            source = "statement-storage-migration.md > Provider replaceability",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void onlyTheStorageModuleKnowsWhichStorageProviderIsInUse() {
         noClasses().that().resideOutsideOfPackage("com.finora.imports.storage..")
@@ -81,6 +107,14 @@ class FeatureModuleBoundaryTest {
                 .check(productionClasses());
     }
 
+    @GuardianRule(
+            id = "FG-010",
+            category = GuardianRule.Category.BOUNDARY,
+            intent = "No production class depends on a test fixture package.",
+            source = "repository-guardian.md 3.1",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void noProductionClassDependsOnATestFixture() {
         noClasses().should().dependOnClassesThat().resideInAPackage("..fixtures..")

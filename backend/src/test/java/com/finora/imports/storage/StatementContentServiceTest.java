@@ -82,6 +82,39 @@ class StatementContentServiceTest {
     }
 
     @Test
+    void bytesThatDoNotMatchTheAddressAreRejected_notReturned() {
+        // The failure content addressing exists to make impossible, and previously could not
+        // detect: storage is up, the object is present and readable, and it is the WRONG document.
+        // Bit-rot, a provider serving a stale or mismatched key, a collision after a layout change.
+        // Returning these bytes would parse someone else's bank statement into this user's ledger,
+        // which is strictly worse than failing the request.
+        StatementStorage storage = mock(StatementStorage.class);
+        ContentAddress address = ContentAddress.forContent(CONTENT);
+        when(storage.retrieve(address)).thenReturn("a different statement entirely".getBytes(StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> new StatementContentService(Optional.of(storage), "filesystem")
+                .read(Row.addressed(address, null)))
+                .isInstanceOf(StatementIntegrityException.class)
+                .hasMessageContaining("Integrity check failed")
+                .hasMessageContaining(address.hash());
+    }
+
+    @Test
+    void integrityFailureIsDistinguishableFromTheObjectSimplyBeingMissing() {
+        // Both are StatementStorageException so no caller has to change, but they demand opposite
+        // responses -- missing may resolve when a provider recovers, corrupt never will -- so the
+        // types must be separable by anything that routes or alerts on them.
+        StatementStorage storage = mock(StatementStorage.class);
+        ContentAddress address = ContentAddress.forContent(CONTENT);
+        when(storage.retrieve(address)).thenReturn("wrong".getBytes(StandardCharsets.UTF_8));
+        StatementContentService service = new StatementContentService(Optional.of(storage), "filesystem");
+
+        assertThatThrownBy(() -> service.read(Row.addressed(address, null)))
+                .isInstanceOf(StatementIntegrityException.class)
+                .isInstanceOf(StatementStorageException.class);
+    }
+
+    @Test
     void aLegacyRowIsReadFromTheColumnEvenWhenStorageIsConfigured() {
         // Every row predating Phase 2 is in this state until Phase 3 backfills it. Reaching for
         // storage with a null address would fail every one of them.

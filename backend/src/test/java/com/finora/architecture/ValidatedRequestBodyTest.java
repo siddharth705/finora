@@ -1,5 +1,7 @@
 package com.finora.architecture;
 
+import com.finora.architecture.registry.GuardianSelfTest;
+import com.finora.architecture.registry.GuardianRule;
 import com.tngtech.archunit.core.domain.JavaAnnotation;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
@@ -96,6 +98,14 @@ class ValidatedRequestBodyTest {
                         || annotationType.isAnnotatedWith(Constraint.class));
     }
 
+    @GuardianRule(
+            id = "FG-028",
+            category = GuardianRule.Category.SECURITY,
+            intent = "A @RequestBody whose type carries constraints is annotated @Valid.",
+            source = "CODING_STANDARDS.md > Backend > Validation",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.SELF_TEST)
     @Test
     void everyConstrainedRequestBodyIsAnnotatedValid() {
         assertThat(findUnvalidatedConstrainedRequestBodies(productionClasses()))
@@ -116,6 +126,7 @@ class ValidatedRequestBodyTest {
      * original AdminAccountController vulnerability. A rule that silently stopped detecting
      * anything would otherwise look exactly like a clean codebase.
      */
+    @GuardianSelfTest(rule = "FG-028")
     @Test
     void theRuleDetectsAnUnvalidatedConstrainedRequestBody() {
         JavaClasses fixtures = new ClassFileImporter().importPackages("com.finora.architecture.fixtures");
@@ -132,6 +143,7 @@ class ValidatedRequestBodyTest {
      * assertion would keep passing while checking nothing at all. Asserting a realistic floor
      * means that failure mode surfaces as a red test rather than false confidence.
      */
+    @GuardianSelfTest(rule = "FG-028")
     @Test
     void theRuleActuallyFindsRequestBodyParametersItClaimsToCheck() {
         long requestBodyParameters = productionClasses().stream()

@@ -93,7 +93,13 @@ public class StatementContentService {
      */
     public byte[] read(StoredStatement row) {
         if (row.getContentHash() != null && row.getObjectKey() != null && storage.isPresent()) {
-            return storage.get().retrieve(new ContentAddress(row.getContentHash(), row.getObjectKey()));
+            byte[] content = storage.get().retrieve(new ContentAddress(row.getContentHash(), row.getObjectKey()));
+            // Verified here rather than inside each StatementStorage implementation: this is the one
+            // path every read goes through, so a future R2/S3 provider inherits the guarantee instead
+            // of having to remember to re-implement it. A provider CAN also check internally; it
+            // cannot be relied on to.
+            ContentAddress.requireMatches(content, row.getContentHash(), "statement " + row.getContentHash());
+            return content;
         }
 
         byte[] legacy = row.getFileContent();

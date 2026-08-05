@@ -49,6 +49,40 @@ public record ContentAddress(String hash, String key) {
     }
 
     /**
+     * Fails unless {@code content} actually hashes to {@code expectedHash}.
+     *
+     * <p>The single implementation of the integrity check, used both when reading a statement back
+     * for a user and when the Phase 3 backfill reads an object back after writing it. Content
+     * addressing's whole premise is that the hash IS the identity; a store that never re-derives it
+     * is asserting that premise rather than checking it, and returns wrong bytes as confidently as
+     * right ones.
+     *
+     * <p>What this actually catches: bit-rot, a provider handing back the wrong object for a key,
+     * a key collision after a layout change, and a botched migration or restore. None of those are
+     * hypothetical enough to skip on a system whose payload is someone's bank statement -- the
+     * failure mode is not a corrupt download, it is a wrong statement parsed into a real ledger.
+     *
+     * <p>Cost is a SHA-256 over the retrieved bytes. Every read site is user-initiated (import
+     * confirm, download, re-import), where this is invisible beside object-store latency and PDF
+     * parsing -- it is not on any hot path.
+     *
+     * <p>The message carries hashes only, never content: the expected and actual digests are what
+     * an operator needs to tell "wrong object" from "damaged object", and both are safe to log.
+     *
+     * @throws StatementIntegrityException if the content does not match
+     */
+    public static void requireMatches(byte[] content, String expectedHash, String what) {
+        String actual = hashOf(content);
+        if (!actual.equalsIgnoreCase(expectedHash)) {
+            throw new StatementIntegrityException(
+                    "Integrity check failed for " + what + ": storage returned " + content.length
+                    + " bytes hashing to " + actual + ", but the row claims " + expectedHash
+                    + ". The object is present but is not the document this row addresses -- do not "
+                    + "parse it. Investigate the storage provider before retrying.");
+        }
+    }
+
+    /**
      * Default layout: {@code statements/a8/d3/a8d34f9….bin}.
      *
      * Two levels of prefix sharding because a single flat prefix is a known hot-spotting problem on

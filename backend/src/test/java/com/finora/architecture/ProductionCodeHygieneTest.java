@@ -1,5 +1,6 @@
 package com.finora.architecture;
 
+import com.finora.architecture.registry.GuardianRule;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
@@ -57,6 +58,15 @@ class ProductionCodeHygieneTest {
         return actual;
     }
 
+    @GuardianRule(
+            id = "FG-019",
+            category = GuardianRule.Category.HYGIENE,
+            intent = "Time uses java.time, not java.util.Date, Calendar, SimpleDateFormat or sql.Timestamp.",
+            source = "CODING_STANDARDS.md > Backend",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION,
+            exceptions = "DATE_API_BOUNDARY -- JwtService, forced by JJWT's issuedAt(Date)")
     @Test
     void timeIsRepresentedWithJavaTime() {
         List<String> unexpected = classesUsingALegacyDateType().stream()
@@ -79,6 +89,14 @@ class ProductionCodeHygieneTest {
      * Separate test method on purpose: as two assertions in one method, a new violation would fail
      * first and the stale-entry check would never run.
      */
+    @GuardianRule(
+            id = "FG-013",
+            category = GuardianRule.Category.MIGRATION,
+            intent = "Every entry in the FG-019 accept-list still describes a real violation.",
+            source = "repository-guardian.md 3.2 -- check-dependency-advisories.py template",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void theLegacyDateAllowanceHasNoStaleEntries() {
         Set<String> actual = classesUsingALegacyDateType();
@@ -94,6 +112,14 @@ class ProductionCodeHygieneTest {
                 .isEmpty();
     }
 
+    @GuardianRule(
+            id = "FG-020",
+            category = GuardianRule.Category.HYGIENE,
+            intent = "No field injection; dependencies arrive through the constructor.",
+            source = "CODING_STANDARDS.md > Backend",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void dependenciesArrriveThroughTheConstructor() {
         noFields().should().beAnnotatedWith(Autowired.class)
@@ -106,6 +132,14 @@ class ProductionCodeHygieneTest {
                 .check(productionClasses());
     }
 
+    @GuardianRule(
+            id = "FG-021",
+            category = GuardianRule.Category.HYGIENE,
+            intent = "A public static field must be final.",
+            source = "CODING_STANDARDS.md > Backend",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void thereIsNoMutableGlobalState() {
         fields().that().arePublic().and().areStatic()
@@ -119,6 +153,14 @@ class ProductionCodeHygieneTest {
                 .check(productionClasses());
     }
 
+    @GuardianRule(
+            id = "FG-022",
+            category = GuardianRule.Category.HYGIENE,
+            intent = "No System.out or System.err; use LoggerFactory.",
+            source = "CODING_STANDARDS.md > Backend > Logging",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void diagnosticsGoThroughTheLogger() {
         noClasses().should().accessField(System.class, "out")
@@ -140,6 +182,14 @@ class ProductionCodeHygieneTest {
      * {@code java.lang.RuntimeException} and never matches an exact-owner predicate. This rule was
      * written that way first, verified against a deliberate violation, and found to pass.
      */
+    @GuardianRule(
+            id = "FG-023",
+            category = GuardianRule.Category.HYGIENE,
+            intent = "No Throwable.printStackTrace().",
+            source = "CODING_STANDARDS.md > Backend > Logging",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void exceptionsAreLoggedRatherThanPrinted() {
         List<String> violations = new ArrayList<>();

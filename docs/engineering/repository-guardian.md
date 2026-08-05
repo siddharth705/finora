@@ -8,6 +8,38 @@ replacing it.
 Not another linter. An engineering safety net that protects Finora's architecture and long-term
 maintainability as the codebase and team grow.
 
+**The enforced rules are listed in
+[docs/architecture/repository-guardian-rules.md](../architecture/repository-guardian-rules.md).**
+That registry is generated from the code and verified against it on every build — this document is
+the initiative and its reasoning; that one is the current, guaranteed-accurate list.
+
+---
+
+## 0. Roadmap
+
+The end state is a single architectural governance layer covering the **whole** repository, not
+the backend. Backend went first because ArchUnit already existed there and the standards were
+already written down, not because it is the only place that needs this.
+
+| Phase | Scope | State |
+|---|---|---|
+| **1** | Backend architecture — ArchUnit structural rules (§3.1); `check-imports.py` earns its CI gate (§3.2) | §3.1 ✅ shipped · §3.2 next |
+| **2** | Repository-wide deterministic validation (§4.1) — frontend, admin portal, mobile, docs, infrastructure, cross-module | Scoped and triaged |
+| **3** | Frontend / admin / mobile structure — folder shape, feature boundaries, shared-component placement, API-layer organisation, screen and navigation organisation | Not started |
+| **4** | Documentation, infrastructure, scripts, CI/CD, repository hygiene | Not started |
+| **5** | Auto-fix for safe structural issues · drift over time · dependency visualisation · metrics and trends | Deferred until the foundation is trusted |
+
+Phases 3 and 4 are called out separately from Phase 2 because they need a **mechanism that does
+not exist yet**. ArchUnit is a JVM tool; it cannot see `frontend/`, `mobile/` or `docs/`. The three
+TypeScript apps have ESLint, which can express import-boundary and folder rules through
+`eslint-plugin-boundaries` or `no-restricted-imports`, and that is the natural place for their
+half — extending what exists, per §2. Documentation and infrastructure rules have no natural home
+and will need a script in `scripts/`, following the tiered BLOCK/WARN precedent in §2.1.
+
+Sequencing principle for every phase: **the rule set is only as valuable as its trustworthiness.**
+One reliable rule beats ten noisy ones, and the fastest way to kill the initiative is a phase that
+ships rules people learn to skip.
+
 ---
 
 ## 1. What already exists
@@ -111,6 +143,46 @@ Sequencing note: introduce rules against the tree as it is. A rule that fails on
 either gets the code fixed in the same change or is not ready — a permanently-failing rule teaches
 people to ignore the suite. **And a rule that has never been observed failing is not yet known to
 be a rule.**
+
+#### The registry, and why it cannot drift
+
+Every rule carries a permanent `FG-NNN` id and lifecycle metadata — intent, source, introduction
+date, owning area, verification level, accepted exceptions — as a `@GuardianRule` annotation on the
+rule itself. `GuardianRegistryTest` derives
+[the published registry](../architecture/repository-guardian-rules.md) from those annotations and
+fails the build when the document and the code disagree **in either direction**: a rule added
+without a row, a row left behind by a retired rule, a reworded intent, a wrong count.
+
+A hand-maintained list of architecture rules is worth exactly as much as the last person's
+discipline in updating it, which over a few years is nothing. The registry publishes "the rules
+advertised here are the rules enforced here" as a build-breaking guarantee rather than an
+intention. It also enforces the taxonomy — every `@Test` in the package is either a
+`@GuardianRule` or a `@GuardianSelfTest(rule = "FG-NNN")` — which is what makes the rule count a
+fact rather than a claim, and stops a new rule being added without an id.
+
+Read the report with:
+
+```bash
+python3 scripts/guardian-report.py
+```
+
+It joins the registry against the last run's surefire results and prints pass/fail per category. It
+reports a **rule pass rate**, not a repository-health percentage, for the reason in §4.3 — the
+denominator is the rules that exist, which is honest, and adding a rule that finds real problems
+then reads as new information rather than as the repository getting worse.
+
+#### Open: 23 rules are verified by hand, not by self-test
+
+The six older rules each ship two self-tests — one proving the rule fires against a broken fixture,
+one proving its subject set is non-empty. The 23 added on 2026-08-05 do not; they were falsified
+once, by hand, which says they worked the day they were written and nothing more. The
+`verification` field records this honestly rather than hiding it, and `GuardianRegistryTest` fails
+any rule that overstates its level.
+
+Worth closing, and cheap for most of them: the subject-set half needs no fixture at all, just an
+assertion that the rule matches something. Not folded into this change because 23 fixtures is a
+larger piece of work than the rules themselves, and shipping it as unmeasured scope creep is the
+opposite of the discipline the rest of this section argues for.
 
 #### Not enforced yet, and why
 

@@ -1,5 +1,7 @@
 package com.finora.architecture;
 
+import com.finora.architecture.registry.GuardianSelfTest;
+import com.finora.architecture.registry.GuardianRule;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 
@@ -47,6 +49,14 @@ class ScopedIdentityLookupTest {
             // permission-gated.
             "search");
 
+    @GuardianRule(
+            id = "FG-027",
+            category = GuardianRule.Category.SECURITY,
+            intent = "Every identity lookup on UserRepository is tenant-scoped.",
+            source = "Incident: unscoped identity lookup",
+            introduced = "2026-08-03",
+            owner = "architecture",
+            verification = GuardianRule.Verification.SELF_TEST)
     @Test
     void everyIdentityLookupOnUserRepositoryIsScoped() {
         List<String> unscoped = new ArrayList<>();
@@ -71,6 +81,7 @@ class ScopedIdentityLookupTest {
                 .isEmpty();
     }
 
+    @GuardianSelfTest(rule = "FG-027")
     @Test
     void theScopedLookupsThisRuleProtectsStillExist() {
         // Guards the guard: the check above passes trivially if the methods are renamed or removed,
@@ -85,6 +96,7 @@ class ScopedIdentityLookupTest {
                 "existsByPhoneNumberAndAccountScope");
     }
 
+    @GuardianSelfTest(rule = "FG-027")
     @Test
     void theRuleActuallyFiresOnAnUnscopedMethod() {
         // A check that cannot be shown to fail is not a control. This reproduces the exact shape of

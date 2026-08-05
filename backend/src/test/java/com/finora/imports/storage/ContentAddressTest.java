@@ -54,6 +54,39 @@ class ContentAddressTest {
     }
 
     @Test
+    void requireMatchesAcceptsContentThatHashesToTheExpectedValue() {
+        ContentAddress address = ContentAddress.forContent(bytes("statement bytes"));
+
+        ContentAddress.requireMatches(bytes("statement bytes"), address.hash(), "test");
+    }
+
+    @Test
+    void requireMatchesRejectsContentThatDoesNot_andNamesBothDigests() {
+        // Both hashes belong in the message: equal-length-but-different says damaged object,
+        // wholly-different says wrong object, and an operator cannot tell those apart without
+        // seeing what was expected against what arrived.
+        String expected = ContentAddress.forContent(bytes("the real statement")).hash();
+        String actualHash = ContentAddress.hashOf(bytes("something else"));
+
+        assertThatThrownBy(() -> ContentAddress.requireMatches(bytes("something else"), expected, "statement X"))
+                .isInstanceOf(StatementIntegrityException.class)
+                .hasMessageContaining("statement X")
+                .hasMessageContaining(expected)
+                .hasMessageContaining(actualHash);
+    }
+
+    @Test
+    void requireMatchesDetectsASingleFlippedByte() {
+        // The realistic corruption, and the one a length check or a null check would miss entirely.
+        byte[] original = bytes("%PDF-1.6 a statement of some length");
+        byte[] rotted = original.clone();
+        rotted[10] ^= 0x01;
+
+        assertThatThrownBy(() -> ContentAddress.requireMatches(rotted, ContentAddress.hashOf(original), "rotted"))
+                .isInstanceOf(StatementIntegrityException.class);
+    }
+
+    @Test
     void rejectsAnEmptyIdentityOrKey() {
         assertThatThrownBy(() -> new ContentAddress("", "statements/x")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new ContentAddress("abc", " ")).isInstanceOf(IllegalArgumentException.class);

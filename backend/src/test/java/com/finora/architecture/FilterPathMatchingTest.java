@@ -1,5 +1,6 @@
 package com.finora.architecture;
 
+import com.finora.architecture.registry.GuardianRule;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.domain.JavaMethodCall;
@@ -49,6 +50,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class FilterPathMatchingTest {
 
+    @GuardianRule(
+            id = "FG-026",
+            category = GuardianRule.Category.SECURITY,
+            intent = "A filter reading the raw request URI must parse it, never string-compare it.",
+            source = "Incident: rate-limit bypass via percent-encoding",
+            introduced = "2026-08-04",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void filtersThatReadTheRawRequestUriMustParseItRatherThanCompareIt() {
         JavaClasses classes = new ClassFileImporter()

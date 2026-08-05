@@ -1,5 +1,6 @@
 package com.finora.architecture;
 
+import com.finora.architecture.registry.GuardianRule;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
@@ -76,6 +77,15 @@ class LayerDependencyDirectionTest {
         return actual;
     }
 
+    @GuardianRule(
+            id = "FG-001",
+            category = GuardianRule.Category.DEPENDENCY,
+            intent = "A controller must not depend on a repository; the query belongs behind a service.",
+            source = "CODING_STANDARDS.md > Backend > Controllers",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION,
+            exceptions = "LEGACY_CONTROLLER_REPOSITORY_ACCESS -- 4 pre-existing controllers, frozen")
     @Test
     void controllersDoNotReachPastTheirServiceIntoARepository() {
         Map<String, Set<String>> actual = controllerToRepositoryDependencies();
@@ -103,6 +113,14 @@ class LayerDependencyDirectionTest {
      * Separate test method on purpose: as two assertions in one method, a new violation would fail
      * first and the stale-entry check would never run.
      */
+    @GuardianRule(
+            id = "FG-012",
+            category = GuardianRule.Category.MIGRATION,
+            intent = "Every entry in the FG-001 accept-list still describes a real violation.",
+            source = "repository-guardian.md 3.2 -- check-dependency-advisories.py template",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void theLegacyControllerRepositoryAllowanceHasNoStaleEntries() {
         Map<String, Set<String>> actual = controllerToRepositoryDependencies();
@@ -119,6 +137,14 @@ class LayerDependencyDirectionTest {
                 .isEmpty();
     }
 
+    @GuardianRule(
+            id = "FG-002",
+            category = GuardianRule.Category.DEPENDENCY,
+            intent = "No controller method returns a JPA entity, at any depth of the generic return type.",
+            source = "CODING_STANDARDS.md > Backend > DTO mapping",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void controllersNeverReturnAnEntity() {
         List<String> violations = new ArrayList<>();
@@ -147,6 +173,14 @@ class LayerDependencyDirectionTest {
         return type.getPackageName().equals("com.finora.entity");
     }
 
+    @GuardianRule(
+            id = "FG-003",
+            category = GuardianRule.Category.DEPENDENCY,
+            intent = "No @Transactional on a controller; the unit of work is owned by a service method.",
+            source = "CODING_STANDARDS.md > Backend > Controllers",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void theTransactionBoundaryIsNotDrawnInTheWebLayer() {
         noClasses().that().haveSimpleNameEndingWith("Controller")
@@ -161,6 +195,14 @@ class LayerDependencyDirectionTest {
                 .check(productionClasses());
     }
 
+    @GuardianRule(
+            id = "FG-004",
+            category = GuardianRule.Category.DEPENDENCY,
+            intent = "An entity must not depend on a service, repository, controller or DTO.",
+            source = "CODING_STANDARDS.md > Backend > Package structure",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void entitiesDependOnNothingAboveThem() {
         noClasses().that().resideInAPackage("com.finora.entity..")
@@ -176,6 +218,14 @@ class LayerDependencyDirectionTest {
                 .check(productionClasses());
     }
 
+    @GuardianRule(
+            id = "FG-005",
+            category = GuardianRule.Category.DEPENDENCY,
+            intent = "A DTO must not depend on a service or repository; its caller populates it.",
+            source = "CODING_STANDARDS.md > Backend > DTO mapping",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void dtosCarryDataAndDoNotFetchIt() {
         noClasses().that().resideInAPackage("com.finora.dto..")
@@ -189,6 +239,14 @@ class LayerDependencyDirectionTest {
                 .check(productionClasses());
     }
 
+    @GuardianRule(
+            id = "FG-006",
+            category = GuardianRule.Category.DEPENDENCY,
+            intent = "A repository must not depend on a service or controller.",
+            source = "CODING_STANDARDS.md > Backend > Package structure",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void repositoriesDoNotCallBackUpTheStack() {
         noClasses().that().haveSimpleNameEndingWith("Repository")
@@ -201,6 +259,14 @@ class LayerDependencyDirectionTest {
                 .check(productionClasses());
     }
 
+    @GuardianRule(
+            id = "FG-007",
+            category = GuardianRule.Category.DEPENDENCY,
+            intent = "A controller must not call another controller; shared behaviour belongs in a service.",
+            source = "CODING_STANDARDS.md > Backend > Controllers",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void controllersDoNotCallOtherControllers() {
         noClasses().that().haveSimpleNameEndingWith("Controller")

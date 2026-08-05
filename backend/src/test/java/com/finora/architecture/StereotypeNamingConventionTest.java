@@ -1,5 +1,6 @@
 package com.finora.architecture;
 
+import com.finora.architecture.registry.GuardianRule;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
@@ -32,6 +33,14 @@ class StereotypeNamingConventionTest {
                 .importPackages("com.finora");
     }
 
+    @GuardianRule(
+            id = "FG-014",
+            category = GuardianRule.Category.NAMING,
+            intent = "A class named *Controller is annotated @RestController.",
+            source = "CODING_STANDARDS.md > Backend > Naming",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void everyControllerSuffixIsAnActualRestController() {
         classes().that().haveSimpleNameEndingWith("Controller")
@@ -44,6 +53,14 @@ class StereotypeNamingConventionTest {
                 .check(productionClasses());
     }
 
+    @GuardianRule(
+            id = "FG-015",
+            category = GuardianRule.Category.NAMING,
+            intent = "A class annotated @RestController is named *Controller.",
+            source = "CODING_STANDARDS.md > Backend > Naming",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void everyRestControllerIsNamedController() {
         classes().that().areAnnotatedWith(RestController.class)
@@ -56,6 +73,15 @@ class StereotypeNamingConventionTest {
                 .check(productionClasses());
     }
 
+    @GuardianRule(
+            id = "FG-016",
+            category = GuardianRule.Category.NAMING,
+            intent = "A class named *Service is a Spring bean (@Service or @Component).",
+            source = "CODING_STANDARDS.md > Backend > Naming",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION,
+            exceptions = "@Component accepted: ImportSessionService, ImportRuleLearningService, BootstrapService")
     @Test
     void everyServiceSuffixIsASpringManagedBean() {
         classes().that().haveSimpleNameEndingWith("Service").and().areNotInterfaces()
@@ -72,6 +98,14 @@ class StereotypeNamingConventionTest {
                 .check(productionClasses());
     }
 
+    @GuardianRule(
+            id = "FG-017",
+            category = GuardianRule.Category.NAMING,
+            intent = "A type named *Repository is an interface extending Spring Data Repository.",
+            source = "CODING_STANDARDS.md > Backend > Naming",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void everyRepositorySuffixIsASpringDataInterface() {
         classes().that().haveSimpleNameEndingWith("Repository")
@@ -86,6 +120,14 @@ class StereotypeNamingConventionTest {
                 .check(productionClasses());
     }
 
+    @GuardianRule(
+            id = "FG-018",
+            category = GuardianRule.Category.NAMING,
+            intent = "A class named *Config is annotated @Configuration.",
+            source = "CODING_STANDARDS.md > Backend > Naming",
+            introduced = "2026-08-05",
+            owner = "architecture",
+            verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void everyConfigSuffixIsAConfigurationClass() {
         classes().that().haveSimpleNameEndingWith("Config")
