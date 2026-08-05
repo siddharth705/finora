@@ -69,7 +69,12 @@ export function VerifiedBadge() {
 /** Per-section save state: a section is either clean (nothing to show), dirty (unsaved edits),
  *  mid-save, freshly saved (a brief confirmation), or errored -- one indicator, used identically
  *  across both pages so "did my change stick" always looks and behaves the same way. */
-export function SaveStatus({ dirty, saving, justSaved, error }: { dirty: boolean; saving: boolean; justSaved: boolean; error: boolean }) {
+// `error` stays a boolean for the common "the request failed" case so existing callers are
+// unchanged; `errorMessage` overrides the generic copy when the caller knows something specific
+// (a field that failed validation before the request was ever sent, say) and the generic
+// "please try again" would be actively misleading -- retrying identical bad input won't help.
+export function SaveStatus({ dirty, saving, justSaved, error, errorMessage }: { dirty: boolean; saving: boolean; justSaved: boolean; error: boolean; errorMessage?: string | null }) {
+  if (errorMessage) return <span className="text-danger text-xs">{errorMessage}</span>;
   if (error) return <span className="text-danger text-xs">Couldn't save — please try again.</span>;
   if (saving) return <span className="text-muted text-xs">Saving…</span>;
   if (justSaved) return (

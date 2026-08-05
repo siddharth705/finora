@@ -4,6 +4,7 @@ import { userApi, workspaceApi, analyticsApi, deviceApi, type ImportStatistics, 
 import { useTheme } from '../context/ThemeContext';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
 import { maskPhone } from '../lib/maskPhone';
+import { parsePositiveAmount } from '../lib/validation';
 import { formatDayMonthYear, formatRelativeTime, SectionCard, VerifiedBadge, SaveStatus, MetricTile } from '../components/AccountUI';
 
 // v1 scope is deliberately capabilities-first, not roadmap-first: every section below reflects a
@@ -66,6 +67,7 @@ export default function Settings() {
   const [prefsSaving, setPrefsSaving] = useState(false);
   const [prefsJustSaved, setPrefsJustSaved] = useState(false);
   const [prefsError, setPrefsError] = useState(false);
+  const [prefsInvalid, setPrefsInvalid] = useState<string | null>(null);
 
   const [confidenceThreshold, setConfidenceThreshold] = useState(90);
   const [savedConfidenceThreshold, setSavedConfidenceThreshold] = useState(90);
@@ -119,12 +121,28 @@ export default function Settings() {
   }, []);
 
   async function savePreferences() {
+    // Validate before sending. A cleared `type="number"` field yields '', and parseFloat('') is
+    // NaN -- which JSON.stringify writes as `null`, which UserSettingsService reads as "leave this
+    // field unchanged". The request then succeeds with only `timezone` applied, and the old code
+    // set the saved threshold from the local text regardless, so the form went clean and flashed
+    // "Saved" over a value the server never stored.
+    const threshold = parsePositiveAmount(lowBalanceThreshold);
+    if (threshold === null) {
+      setPrefsInvalid('Low balance alert must be a number greater than zero.');
+      return;
+    }
+    setPrefsInvalid(null);
     setPrefsSaving(true);
     setPrefsError(false);
     try {
-      await userApi.update({ lowBalanceThreshold: parseFloat(lowBalanceThreshold), timezone });
-      setSavedLowBalanceThreshold(lowBalanceThreshold);
-      setSavedTimezone(timezone);
+      // Trust the server's response over local state -- the same pattern
+      // saveIntelligencePreferences() below already uses. If the backend ever normalizes or
+      // rejects part of this payload, the form reflects what was actually stored.
+      const saved = await userApi.update({ lowBalanceThreshold: threshold, timezone });
+      setLowBalanceThreshold(String(saved.lowBalanceThreshold));
+      setSavedLowBalanceThreshold(String(saved.lowBalanceThreshold));
+      setTimezone(saved.timezone);
+      setSavedTimezone(saved.timezone);
       setPrefsJustSaved(true);
       setTimeout(() => setPrefsJustSaved(false), 2000);
     } catch {
@@ -181,8 +199,10 @@ export default function Settings() {
             <input
               id="settings-low-balance-threshold"
               type="number"
+              min="1"
+              step="1"
               value={lowBalanceThreshold}
-              onChange={(e) => setLowBalanceThreshold(e.target.value)}
+              onChange={(e) => { setLowBalanceThreshold(e.target.value); setPrefsInvalid(null); }}
               className="bg-card text-ink w-full border border-border rounded-lg px-3 py-2 text-sm"
             />
           </div>
@@ -215,7 +235,7 @@ export default function Settings() {
         <div className="flex items-center justify-between mt-5 pt-4 border-t border-border">
           <p className="text-xs text-muted">Theme applies instantly. Low balance alert and timezone save when you click Save.</p>
           <div className="flex items-center gap-3">
-            <SaveStatus dirty={prefsDirty} saving={prefsSaving} justSaved={prefsJustSaved} error={prefsError} />
+            <SaveStatus dirty={prefsDirty} saving={prefsSaving} justSaved={prefsJustSaved} error={prefsError} errorMessage={prefsInvalid} />
             <button
               onClick={savePreferences}
               disabled={prefsSaving || !prefsDirty}
