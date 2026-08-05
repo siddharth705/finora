@@ -13,6 +13,12 @@ staged=$(git diff --cached --name-only)
 # review while letting exactly what it warns about through.
 sh scripts/check-fixture-hygiene.sh || exit 1
 
+# Always, and cheap (one `git ls-files -s`): a mode regression is not tied to which files are
+# staged, and this one cost the backend job every CI run it ever had. Catching it here matters
+# more than the CI copy, because core.fileMode is false on Windows -- the bit cannot be restored
+# by chmod, so a developer who "fixes" it locally and commits changes nothing at all.
+python scripts/check-executable-bits.py || exit 1
+
 # Only when an API client is actually being touched -- this is the exact moment drift happens: one
 # client gets fixed and the other two don't. That is how a 401-handling fix landed on web, missed
 # mobile, and shipped a bug where a mistyped password revoked every session on every device. See

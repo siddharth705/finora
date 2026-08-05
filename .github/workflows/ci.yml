@@ -36,6 +36,13 @@ jobs:
       - name: XML comment check
         run: python scripts/check-xml-comments.py
 
+      # Runs before setup-java so the diagnosis arrives before the step that would fail on it.
+      # ./mvnw was committed non-executable and every backend run died here with a bare
+      # "Permission denied" / exit 126 -- accurate, but it names a temp shell script rather than
+      # the committed mode, which is why it went unread for the workflow's whole life.
+      - name: Executable bits
+        run: python scripts/check-executable-bits.py
+
       - uses: actions/setup-java@v4
         with:
           java-version: '21'
