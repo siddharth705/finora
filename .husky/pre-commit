@@ -52,6 +52,16 @@ if echo "$staged" | grep -qE '^(frontend|admin-portal|mobile)/'; then
 fi
 
 if echo "$staged" | grep -q '^backend/'; then
+  # Before the compile, because it is ~0.4s against the compile's tens of seconds and it names
+  # the file and the missing type directly. It was CI-only at first on the assumption it was too
+  # slow for a hook -- it took 28s, until it was measured and found to be doing one regex search
+  # per (file, type) pair rather than tokenising each file once.
+  #
+  # Whole-repo rather than staged-files-only, and deliberately: this catches the case where
+  # MOVING type A breaks unrelated file B that relied on them sharing a package. B is not staged,
+  # which is exactly why the bug survives review.
+  python scripts/check-imports.py || exit 1
+
   (cd backend && ./mvnw -q -o compile) || {
     echo "Backend fails to compile — commit blocked. Run 'cd backend && ./mvnw compile' for details." >&2
     exit 1

@@ -43,6 +43,20 @@ jobs:
       - name: Executable bits
         run: python scripts/check-executable-bits.py
 
+      # Also before setup-java, and for the same reason: it names the file and the type, where
+      # javac names a symbol at a line in whatever compiled first. Cheap enough (~0.4s over 476
+      # files) that running it ahead of a 5-minute build is free.
+      #
+      # --self-test first, because this checker CAN be silently vacuous -- a tokeniser that
+      # matches nothing passes every run and looks identical to a clean tree. The self-test asserts
+      # it still detects a genuinely missing import, and still does NOT fire on the four patterns
+      # that produced its historical false positives.
+      - name: Import cross-reference (self-test)
+        run: python scripts/check-imports.py --self-test
+
+      - name: Import cross-reference
+        run: python scripts/check-imports.py
+
       - uses: actions/setup-java@v4
         with:
           java-version: '21'

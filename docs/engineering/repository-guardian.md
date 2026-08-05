@@ -1,6 +1,6 @@
 # Repository Guardian
 
-**Status:** Initiative — Phase 1 §3.1 shipped, §3.2 next; Phase 2 scoped and triaged
+**Status:** Initiative — **Phase 1 complete** (§3.1 + §3.2); Phase 2 scoped and triaged
 **Goal:** one authoritative, repository-wide validation layer for structure, architecture,
 engineering standards and hygiene — built by orchestrating and extending what exists, never by
 replacing it.
@@ -23,7 +23,7 @@ already written down, not because it is the only place that needs this.
 
 | Phase | Scope | State |
 |---|---|---|
-| **1** | Backend architecture — ArchUnit structural rules (§3.1); `check-imports.py` earns its CI gate (§3.2) | §3.1 ✅ shipped · §3.2 next |
+| **1** | Backend architecture — ArchUnit structural rules (§3.1); `check-imports.py` earns its CI gate (§3.2) | ✅ **complete** |
 | **2** | Repository-wide deterministic validation (§4.1) — frontend, admin portal, mobile, docs, infrastructure, cross-module | Scoped and triaged |
 | **3** | Frontend / admin / mobile structure — folder shape, feature boundaries, shared-component placement, API-layer organisation, screen and navigation organisation | Not started |
 | **4** | Documentation, infrastructure, scripts, CI/CD, repository hygiene | Not started |
@@ -50,7 +50,7 @@ Established by a repository-wide search before any of this was proposed. **Nothi
 | Piece | Where | Enforces | Wired in? |
 |---|---|---|---|
 | **ArchUnit** (10 classes, 39 rules) | `backend/src/test/java/com/finora/architecture/` | Behaviour and security — admin `@PreAuthorize`, audit actor attribution, filter path parsing, no `Optional` beans, scoped identity lookups, `@Valid` request bodies — **plus structure, as of §3.1 below** | Yes, `mvn test` |
-| `check-imports.py` | `scripts/` | Static cross-reference — a type used without a valid import. Written for the v56 module migration, for the "same-package-before-move, broken-after-move" bug | **No** — see §3.2 |
+| `check-imports.py` | `scripts/` | Static cross-reference — a type used without a valid import. Written for the v56 module migration, for the "same-package-before-move, broken-after-move" bug | Yes — CI **and** pre-commit, with `--self-test` (§3.2) |
 | `check-fixture-hygiene.sh` | `scripts/` | Real customer data entering the repo. **Tiered BLOCK/WARN** | Yes, pre-commit |
 | `check-client-auth-policy.py` | `scripts/` | The three API clients agree on unauthenticated endpoints | Yes, pre-commit |
 | `check-contact-addresses.py`, `check-executable-bits.py`, `check-xml-comments.py`, `check-dependency-advisories.py` | `scripts/` | Content and policy checks | Yes, hooks + CI |
@@ -194,7 +194,57 @@ opposite of the discipline the rest of this section argues for.
   not an automatic split" and "name a collaborator for what it does, not `-Service`" are review
   matters, not mechanical ones.
 
-### 3.2 `check-imports.py` — earn the CI gate
+### 3.2 `check-imports.py` — earn the CI gate ✅ **Done**
+
+Gating in CI **and** pre-commit, with a self-test, an accept-list that fails on stale entries, and
+a clean tree. Runtime **28.6s → 0.42s**.
+
+**All four documented false positives are gone, and none were accepted.** Two had already fixed
+themselves — the docstring's own FP list had rotted, which is precisely the failure this section
+exists to prevent, and is the strongest possible argument for the machine-checked accept-list.
+The other two were real defects in the checker, each affecting every file rather than the one that
+surfaced it:
+
+| | Root cause | Fix |
+|---|---|---|
+| FP-01 | `strip_comments_and_strings` removed `//` comments **before** string literals, so the `//` in `"https://sbi.co.in"` ate the closing quote and unbalanced every string after it on the line. 31 phantom hits in `BankRegistry` alone. | Strip strings first; forbid a literal spanning a newline so one stray quote cannot corrupt the rest of the file. |
+| FP-03 | Fully-qualified names were built as `package + "." + simpleName`, so a nested type's real name was never matched. The regex named `topdecl_re` happily matched indented nested declarations. | Track brace depth and record each type's true enclosing chain. |
+
+Fixing the nesting bug then exposed a second one it had been cancelling out: the wildcard check
+tested `declaringPackage in wildcards`, which only ever matches a *package* wildcard. This codebase
+imports most of its request/response records as `import com.finora.dto.AuthDtos.*;` — a wildcard on
+the **enclosing class**. With flat names the wrong check accidentally agreed; with correct ones it
+fired on **67** valid references. The right rule is that `X.*` covers types whose fully-qualified
+name's parent is `X`, which handles both kinds.
+
+A third class turned up in the process: a file that explicitly imports the same simple name from a
+third-party package (`org.springframework.boot.actuate.health.Status`) was flagged against
+`com.finora.entity`'s `Status`. A single-type import wins in Java whatever the package, so a bare
+`Status` there is already resolved and there is nothing to report.
+
+**One accepted entry, and it is honest.** `TwoFactorSmsProvider` declares
+`record TwoFactorResponse(String Status, String Details)` — `Status` is a record *component name*
+mirroring 2Factor's JSON, not a type reference. Separating a capitalised identifier in a declarator
+position from a type reference needs a real parser, not a tokeniser, and every cheaper heuristic
+tried also suppressed genuine references. The entry records that, and names its own trigger: if
+this pattern reaches three occurrences, the check belongs in ArchUnit, which has real type
+information.
+
+**It ships with `--self-test`**, run in CI immediately before the check itself. A tokeniser that
+matches nothing passes forever and is indistinguishable from a clean tree — the same vacuity trap
+as `FG-023` in §3.1. The self-test builds a synthetic tree and asserts the checker still catches a
+genuinely missing import while not firing on any of the five patterns above. Both gate directions
+were falsified by hand: a removed import fails the run, and a planted stale accept entry fails it
+too.
+
+It runs in **pre-commit as well as CI**, which the original plan did not expect. That was a
+measurement, not a change of mind: 28s is far past the point where a hook gets bypassed, 0.42s is
+not. It scans the whole repository rather than staged files only, because the bug it exists to
+catch is *moving* type A and breaking unrelated file B — and B is never in the staged set, which is
+exactly why that bug survives review.
+
+<details>
+<summary>Original plan</summary>
 
 Closest existing thing to structural validation, and deliberately **not** wired in. From
 `repository-audit-findings.md` §6:
@@ -209,6 +259,8 @@ Before promotion: resolve or accept the known false positives, add the accept-li
 deterministic and developer-friendly. **Only then** make it a gate. `check-dependency-advisories.py`
 is the working template, including the part that matters most — it also fails on a *stale* accept
 entry, so the list cannot quietly rot.
+
+</details>
 
 ### 3.3 Standards stay in one place
 
