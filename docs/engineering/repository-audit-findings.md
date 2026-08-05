@@ -184,11 +184,21 @@ GitFlow (`main`/`develop`/`release/*`/`feature/*`/`bugfix/*`/`hotfix/*`), but no
 This may be aspirational policy for when the team scales rather than a factual error, so correcting
 it is a process decision, not a doc fix.
 
-**The `support@` and `careers@` mailto links still point at the old `finora.app` domain.** They
-appear in six frontend files (`TopBar`, `Help`, `Careers`, `Landing`, `Privacy`, `Terms`) while the
-domain has migrated to `finoratech.info`. Whether the old mailbox still routes cannot be determined
-from the repository, and guessing wrong silently breaks a real support channel. Confirm on the
-domain dashboard, then it is a one-line replacement.
+**~~The `support@` and `careers@` mailto links still point at the old `finora.app` domain.~~**
+RESOLVED. They appeared in six frontend files (`TopBar`, `Help`, `Careers`, `Landing`, `Privacy`,
+`Terms`) while the domain had migrated to `finoratech.info`. The `support@` copies were routed
+through `frontend/src/lib/contact.ts`; `careers@` followed, via `CAREERS_EMAIL` in the same module.
+
+Worth recording that the fix took two passes. Centralising the support address left `Careers.tsx`
+still holding its own inline literal, because nothing failed when five copies were fixed and the
+sixth was not -- the same unenforced-duplication shape as the client auth policy drift. So the
+durable half of the fix is `scripts/check-contact-addresses.py`, which fails on any hardcoded
+Finora mailbox under a scanned app's `src/`, wired into CI and pre-commit. The next domain
+migration cannot silently miss a copy.
+
+One thing this cannot verify: that `careers@finoratech.info` and `support@finoratech.info` actually <!-- synthetic-ok: Finora's own mailboxes, not customer PII -->
+receive mail. The addresses are now correct and consistent, but mailbox routing lives in the domain
+and email-provider dashboards, not the repository.
 
 **Settings → Data has no export or delete-account control.** The portal boundary taxonomy lists
 these as User Portal scope, but the page currently shows only import statistics. This is a feature

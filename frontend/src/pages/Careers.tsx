@@ -1,5 +1,6 @@
 import { Heart, Compass, Rocket, Mail } from 'lucide-react';
 import { PublicLayout, PublicSection } from '../components/PublicLayout';
+import { CAREERS_EMAIL, CAREERS_MAILTO } from '../lib/contact';
 
 export default function Careers() {
   return (
@@ -50,7 +51,7 @@ export default function Careers() {
       <PublicSection title="Contact Information">
         <p className="flex items-center gap-2">
           <Mail size={15} className="text-primary" />
-          <a href="mailto:careers@finora.app" className="text-primary hover:underline">careers@finora.app</a>
+          <a href={CAREERS_MAILTO} className="text-primary hover:underline">{CAREERS_EMAIL}</a>
         </p>
       </PublicSection>
     </PublicLayout>

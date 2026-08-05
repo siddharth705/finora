@@ -73,6 +73,12 @@ jobs:
         working-directory: frontend
         run: npm run lint
 
+      # Runs from the repo root, not frontend/, because it scans all three apps: a dead support
+      # address is equally broken in admin-portal or mobile, and the whole point is that no copy of
+      # it escapes. Cheap and dependency-free, so it sits with lint rather than behind the tests.
+      - name: Contact addresses
+        run: python scripts/check-contact-addresses.py
+
       # `npm audit` in this repo has never been empty -- 18 vulnerability entries across the three
       # JS apps, every one already judged not to apply. That is exactly how a real advisory gets
       # missed: a command whose output is always non-empty is one people learn to skip, and the
