@@ -1,6 +1,6 @@
 # Repository Guardian
 
-**Status:** Initiative — Phase 1 approved, Phase 2 scoped and triaged
+**Status:** Initiative — Phase 1 §3.1 shipped, §3.2 next; Phase 2 scoped and triaged
 **Goal:** one authoritative, repository-wide validation layer for structure, architecture,
 engineering standards and hygiene — built by orchestrating and extending what exists, never by
 replacing it.
@@ -17,7 +17,7 @@ Established by a repository-wide search before any of this was proposed. **Nothi
 
 | Piece | Where | Enforces | Wired in? |
 |---|---|---|---|
-| **ArchUnit** (6 rules) | `backend/src/test/java/com/finora/architecture/` | Behaviour and security only — admin `@PreAuthorize`, audit actor attribution, filter path parsing, no `Optional` beans, scoped identity lookups, `@Valid` request bodies | Yes, `mvn test` |
+| **ArchUnit** (10 classes, 39 rules) | `backend/src/test/java/com/finora/architecture/` | Behaviour and security — admin `@PreAuthorize`, audit actor attribution, filter path parsing, no `Optional` beans, scoped identity lookups, `@Valid` request bodies — **plus structure, as of §3.1 below** | Yes, `mvn test` |
 | `check-imports.py` | `scripts/` | Static cross-reference — a type used without a valid import. Written for the v56 module migration, for the "same-package-before-move, broken-after-move" bug | **No** — see §3.2 |
 | `check-fixture-hygiene.sh` | `scripts/` | Real customer data entering the repo. **Tiered BLOCK/WARN** | Yes, pre-commit |
 | `check-client-auth-policy.py` | `scripts/` | The three API clients agree on unauthenticated endpoints | Yes, pre-commit |
@@ -63,26 +63,64 @@ Everything else WARNs, with a documented, in-diff escape hatch.
 
 ## 3. Phase 1 — extend what exists
 
-### 3.1 ArchUnit — structural rules
+### 3.1 ArchUnit — structural rules ✅ **Done**
 
-Add placement and boundary rules alongside the existing behavioural ones, each referencing the
-`CODING_STANDARDS.md` section it enforces. ArchUnit handles all of these natively and
-deterministically:
+23 rules across four new classes, all green against `main`, each citing the `CODING_STANDARDS.md`
+section it enforces:
 
-- Package placement (`*Controller` in its feature package, etc.)
-- Layer boundaries — controller → service → repository, and never the reverse
-- Module and feature boundaries; no cross-feature reach-in
-- Dependency direction
-- Forbidden imports
-- Package naming conventions
-- Circular dependencies (`SlicesRuleDefinition`)
+| Class | Rules | Enforces |
+|---|---|---|
+| `LayerDependencyDirectionTest` | 8 | Controllers never return an entity (at any generic depth) · no direct repository access · no `@Transactional` on the web layer · entities depend on nothing above them · DTOs carry data and do not fetch it · repositories do not call back up · controllers do not call controllers |
+| `FeatureModuleBoundaryTest` | 4 | Migrated features do not depend on the legacy `controller` package · `com.finora.imports` stays acyclic · only `imports.storage` names a concrete storage provider · no production dependency on a test fixture |
+| `StereotypeNamingConventionTest` | 5 | `*Controller` ↔ `@RestController` (both directions) · `*Service` is a Spring bean · `*Repository` is a Spring Data interface · `*Config` is `@Configuration` |
+| `ProductionCodeHygieneTest` | 6 | `java.time` over `java.util.Date` · constructor injection only · no mutable global state · no `System.out`/`System.err` · no `printStackTrace()` |
+
+**Direction, not placement — because the tree is mid-migration.** The obvious first rule, "a
+controller lives in its feature package", would have failed 43 times on day one: 43 of 48
+controllers are still in `com.finora.controller`, which is exactly what `CODING_STANDARDS.md`
+means by "existing code moves toward it incrementally rather than in one pass". Shipping that rule
+red would have made the whole suite skippable. Dependency *direction* is already true nearly
+everywhere, is what the migration is trying to preserve, and holds regardless of which package a
+class lands in. Package placement is deferred until the migration is far enough along to land
+green.
+
+Two rules were measured as red and handled rather than dropped:
+
+- **4 controllers reach into a repository** (`AdminController`, `AdminBankController`,
+  `CategoryController`, `UserController`). Frozen in an explicit accept-list.
+- **`JwtService` uses `java.util.Date`**, because JJWT's `issuedAt(Date)` / `Claims::getExpiration`
+  give it no choice. Frozen the same way.
+
+Both lists follow the `check-dependency-advisories.py` template named in §3.2, for the property
+that matters most: **they fail on a stale entry too**, so paying down the debt tightens the rule
+automatically instead of waiting for someone to remember. Each list gets its own test method —
+as two assertions in one method, a new violation fails first and the stale check never runs.
+
+**Every rule was verified to fail.** A temporary violating class was added to `main`'s sources,
+the suite run, and each rule confirmed red before the class was deleted. This was not ceremony:
+`noClasses().should().callMethod(Throwable.class, "printStackTrace")` — the obvious spelling — is
+**silently vacuous**, because javac emits the call against the receiver's static type, so
+`catch (RuntimeException e) { e.printStackTrace(); }` is owned by `RuntimeException` and never
+matches. It shipped green, caught nothing, and was only found by trying to break it. It now matches
+on method name instead.
 
 **Prefer ArchUnit whenever it can express a rule cleanly.** It runs in the existing suite, fails
 with a precise message, and needs no new mechanism.
 
 Sequencing note: introduce rules against the tree as it is. A rule that fails on existing code
 either gets the code fixed in the same change or is not ready — a permanently-failing rule teaches
-people to ignore the suite.
+people to ignore the suite. **And a rule that has never been observed failing is not yet known to
+be a rule.**
+
+#### Not enforced yet, and why
+
+- **Package placement.** 43 controllers away from green. Revisit when the migration lands.
+- **Top-level cycles.** `slices().matching("com.finora.(*)..")` reports 100 violations — `dto` ↔
+  `entity` and friends are inherent to the layer-based half. Scoped to `com.finora.imports` for
+  now, which is acyclic and is the module others copy.
+- **Service size / naming judgement.** `CODING_STANDARDS.md`'s "~400 lines is worth a second look,
+  not an automatic split" and "name a collaborator for what it does, not `-Service`" are review
+  matters, not mechanical ones.
 
 ### 3.2 `check-imports.py` — earn the CI gate
 
