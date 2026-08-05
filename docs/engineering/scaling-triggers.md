@@ -68,7 +68,37 @@ justified once there's a measured case the limiter isn't solving: p95 request la
 endpoint climbing during real usage, or the concurrency ceiling itself becoming the complaint
 (legitimate imports timing out waiting for a slot, not just failing over-capacity gracefully).
 
-### Measurement: `reconcileForUser` — 2026-08-05
+### Benchmark methodology
+
+Versioned, because the method changed after numbers had already been published and acted on. Every
+measurement below states which version produced it. Without this, a future reader comparing an old
+figure against a new one has no way to tell a performance regression from a methodology change —
+and would reasonably assume the former.
+
+**v1 — deprecated 2026-08-05. Do not compare its numbers against anything.**
+
+- Warmed up by calling `reconcileForUser` on the **same** transaction list it then timed.
+- `reconcileForUser` mutates what it classifies, and every pass skips what a prior run settled
+  (duplicates skip a non-null `isDuplicateOf`; the transfer candidate list filters out
+  `isTransfer()`; the refund pass skips any income whose status is no longer `OK`). So the timed
+  run was always a **second** run over already-reconciled data.
+- Consequently under-reported real runtime by roughly **5×**, on both sides of a before/after — so
+  the *ratio* it reported was approximately right while the *severity* was badly wrong.
+- Numbers published under v1 appear in commits `e533f8e` and `33cf944`. They are superseded, not
+  merely refined.
+
+**v2 — current, from 2026-08-05. All baselines start here.**
+
+- A **fresh dataset for every measured run**, with warmup on its own separate copy.
+- Measures a first reconciliation of unclassified rows — the case that actually happens on import,
+  rather than the cheap re-run that happens to follow it.
+- The v1→v2 "before" column was re-measured by checking the pre-fix service back out and running it
+  through v2, **not** by scaling v1's numbers to fit.
+
+When changing this method again, add a v3 here rather than editing v2 in place, and re-measure any
+baseline still being cited.
+
+### Measurement: `reconcileForUser` — 2026-08-05 (methodology v2)
 
 That measurement now exists for one specific path, so this section records it rather than leaving
 the next reader to redo it.
@@ -83,17 +113,9 @@ not part of the suite (the name matches none of surefire's includes), so run it 
 cd backend && ./mvnw -o test -Dtest=ReconciliationScalingBenchmark -DfailIfNoTests=false
 ```
 
-> **Correction, same day.** The numbers first published here were measured wrong and were roughly
-> five times too low on both sides. `reconcileForUser` **mutates** the transactions it classifies,
-> and every pass skips what a previous run already settled — duplicates skip a non-null
-> `isDuplicateOf`, the transfer candidate list filters out `isTransfer()`, the refund pass skips any
-> income whose status is no longer `OK`. The benchmark warmed up on the *same* list it then timed,
-> so every reported figure was a **second** run over already-reconciled data, doing a fraction of
-> the work of the case that actually happens: a real import, reconciling rows nothing has touched.
->
-> Fixed by giving each timed run its own fresh history. The table below is re-measured, and the
-> "before" column was produced by checking the pre-fix service back out and running it through the
-> corrected benchmark rather than by scaling the old numbers.
+> **Correction, same day.** The numbers first published here were produced under **methodology v1**
+> and were roughly five times too low on both sides — see the section above for what v1 got wrong
+> and why. The table below is re-measured under **v2**.
 >
 > The correction does not change the decision — it strengthens it. The ratio was about right
 > (4.8× reported, 5.2× actual); the **severity** was badly understated.
@@ -141,7 +163,7 @@ that saves 42.7 seconds per run, and still leaves a number nobody should be comf
   narrowing refund candidates by account (measured below) — not a background worker, which would
   still be doing the same quadratic work, just somewhere the user cannot see it.
 
-### Measurement: bucketing refund candidates by account
+### Measurement: bucketing refund candidates by account — 2026-08-05 (methodology v2)
 
 Run `measureRefundCandidateReductionFromAccountBucketing` in the same benchmark class. A refund
 lands back on the account its purchase was made on, so every candidate on a *different* account is
