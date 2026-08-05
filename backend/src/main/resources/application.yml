@@ -102,6 +102,24 @@ spring:
       max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:10MB}
 
 app:
+  build:
+    # Which commit this build came from, for Platform Diagnostics. A FALLBACK, not the primary
+    # source: git-commit-id-maven-plugin writes real git.properties whenever it can see a .git
+    # directory, and AdminDiagnosticsService prefers that -- it is derived from the tree that was
+    # actually compiled and cannot disagree with it.
+    #
+    # The fallback exists because the production image has no .git to read. backend/Dockerfile
+    # copies pom.xml and src, and its build context is backend/ while .git sits at the repository
+    # root, so the plugin silently produces nothing there (failOnNoGitDirectory=false, which is
+    # right for a local build before a first commit). The result was a "Git commit" field that
+    # worked on every developer machine and was blank on every deployed environment -- blank
+    # exactly when someone is asking "which build is actually live?".
+    #
+    # RAILWAY_GIT_COMMIT_SHA is set by Railway per deployment, so the deployment target needs no
+    # manual variable. GIT_COMMIT is the generic override for any other builder (a CI job can pass
+    # it, or a Docker build can bake it via --build-arg). Empty everywhere else, which reports as
+    # unavailable exactly as before.
+    commit: ${GIT_COMMIT:${RAILWAY_GIT_COMMIT_SHA:}}
   jwt:
     # 32+ char secret required for HS256. Override via env var in every real deployment —
     # never commit a real secret; this default is only safe because it's obviously a placeholder.

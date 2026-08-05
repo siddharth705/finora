@@ -9,6 +9,23 @@ RUN mvn package -DskipTests -B
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
+# Which commit this image was built from, surfaced by Platform Diagnostics.
+#
+# git-commit-id-maven-plugin cannot supply it here: it reads a .git directory at build time, and
+# there is none to read. The build context is backend/ while .git sits at the repository root, so
+# it is out of reach rather than merely uncopied -- and copying it in would mean moving the build
+# context to the root, shipping the whole history in a layer, and busting the Docker cache on every
+# commit. For one string, passing the string is proportionate.
+#
+# Declared in the RUNTIME stage on purpose. Put in the build stage it would invalidate the cached
+# dependency and compile layers on every commit, turning a fast rebuild into a full one for a value
+# nothing compiles against.
+#
+# Optional. Unset, the app falls back to RAILWAY_GIT_COMMIT_SHA at runtime (Railway sets it per
+# deployment), and reports unavailable if that is absent too -- see application.yml's app.build.commit.
+ARG GIT_COMMIT=""
+ENV GIT_COMMIT=${GIT_COMMIT}
+
 # Production-readiness pass: this image used to run as root (Alpine JRE images default to root
 # if nothing says otherwise) — a container compromise via any dependency vulnerability then has
 # root inside the container for free, no privilege escalation needed. A dedicated, unprivileged

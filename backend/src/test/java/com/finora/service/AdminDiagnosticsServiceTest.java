@@ -83,6 +83,61 @@ class AdminDiagnosticsServiceTest {
         assertThat(dto.runtime().cacheEnabled()).isFalse();
     }
 
+    // --- Git commit fallback -----------------------------------------------------------------
+    //
+    // git-commit-id-maven-plugin reads a .git directory at build time, and the production image
+    // has none: backend/Dockerfile's build context is backend/ while .git sits at the repository
+    // root. With failOnNoGitDirectory=false it produces nothing, silently -- so this field worked
+    // on every developer machine and was blank on every deployed environment, which is precisely
+    // where "which build is actually live?" gets asked. It cost a real investigation several
+    // rounds of inference before anyone noticed the field was empty rather than the build old.
+
+    @Test
+    void fallsBackToTheConfiguredCommit_whenGitMetadataIsAbsent() {
+        when(buildProperties.getIfAvailable()).thenReturn(null);
+        when(gitProperties.getIfAvailable()).thenReturn(null);
+        when(cacheManager.getIfAvailable()).thenReturn(null);
+        when(environment.getProperty("app.build.commit", "")).thenReturn("77bbfe4");
+
+        PlatformDiagnosticsDto dto = service.overview();
+
+        assertThat(dto.application().gitCommit()).isEqualTo("77bbfe4");
+    }
+
+    @Test
+    void truncatesAFullShaToTheSameLengthGitPropertiesWouldReport() {
+        // RAILWAY_GIT_COMMIT_SHA is the full 40-character sha, where GitProperties reports the
+        // 7-character abbreviation. The field must look the same whichever source supplied it.
+        when(buildProperties.getIfAvailable()).thenReturn(null);
+        when(gitProperties.getIfAvailable()).thenReturn(null);
+        when(cacheManager.getIfAvailable()).thenReturn(null);
+        when(environment.getProperty("app.build.commit", ""))
+                .thenReturn("77bbfe493cf230ce3e4624dfaa41fe617c8ae127");
+
+        PlatformDiagnosticsDto dto = service.overview();
+
+        assertThat(dto.application().gitCommit()).isEqualTo("77bbfe4");
+    }
+
+    @Test
+    void prefersRealGitMetadataOverTheConfiguredFallback() {
+        // Precedence matters and is not arbitrary: git.properties is derived from the tree that
+        // was actually compiled and cannot disagree with it, whereas an environment variable can
+        // be stale or simply wrong. A diagnostic that confidently reports the wrong commit is
+        // worse than one that reports nothing.
+        when(buildProperties.getIfAvailable()).thenReturn(null);
+        when(cacheManager.getIfAvailable()).thenReturn(null);
+
+        Properties gitProps = new Properties();
+        gitProps.setProperty("commit.id.abbrev", "a1b2c3d");
+        when(gitProperties.getIfAvailable()).thenReturn(new GitProperties(gitProps));
+        when(environment.getProperty("app.build.commit", "")).thenReturn("9999999");
+
+        PlatformDiagnosticsDto dto = service.overview();
+
+        assertThat(dto.application().gitCommit()).isEqualTo("a1b2c3d");
+    }
+
     @Test
     void reportsRealBuildAndGitInfo_whenThoseBeansExist() {
         Properties props = new Properties();
