@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Search, Mail } from 'lucide-react';
 import { PublicLayout } from '../components/PublicLayout';
+import { SUPPORT_EMAIL, SUPPORT_MAILTO } from '../lib/contact';
 
 interface HelpArticle {
   category: string;
@@ -47,7 +48,7 @@ const ARTICLES: HelpArticle[] = [
   { category: 'Troubleshooting', question: 'My statement showed "0 transactions found" — what happened?', answer: 'This usually means the file\'s header row uses column names Finora didn\'t recognize. Try re-exporting from your bank with default column names, or contact support with the file.' },
   { category: 'Troubleshooting', question: 'I can\'t re-import a statement into a deleted account.', answer: 'That\'s expected — a deleted account can\'t receive new statements. Restore isn\'t currently self-serve; contact support if you need this reversed within the 7-day window.' },
 
-  { category: 'Contact Support', question: 'How do I reach support?', answer: 'Email support@finora.app with a description of the issue — for import problems, attaching the file (with sensitive numbers redacted if you prefer) speeds up a diagnosis.' },
+  { category: 'Contact Support', question: 'How do I reach support?', answer: `Email ${SUPPORT_EMAIL} with a description of the issue — for import problems, attaching the file (with sensitive numbers redacted if you prefer) speeds up a diagnosis.` },
 ];
 
 const CATEGORIES = Array.from(new Set(ARTICLES.map((a) => a.category)));
@@ -119,7 +120,7 @@ export default function Help() {
           <p className="text-sm font-semibold text-white mb-1">Still need help?</p>
           <p className="text-xs text-gray-400">Our support team is happy to help with anything not covered above.</p>
         </div>
-        <a href="mailto:support@finora.app" className="bg-primary hover:bg-primary-dark text-white text-xs font-semibold rounded-lg px-4 py-2.5 flex items-center gap-1.5 flex-shrink-0">
+        <a href={SUPPORT_MAILTO} className="bg-primary hover:bg-primary-dark text-white text-xs font-semibold rounded-lg px-4 py-2.5 flex items-center gap-1.5 flex-shrink-0">
           <Mail size={14} /> Contact Support
         </a>
       </div>

@@ -9,6 +9,7 @@ import { useTheme, type ThemeSetting } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { dashboardApi } from '../api/endpoints';
 import { safeStorage } from '../lib/safeStorage';
+import { SUPPORT_MAILTO } from '../lib/contact';
 
 // Notifications are recomputed fresh from the DB on every /dashboard/summary call (see
 // DashboardService.buildNotifications) rather than being persisted rows with stable IDs, so
@@ -258,7 +259,7 @@ export function TopBar() {
                 <Keyboard size={15} className="text-muted" /> Keyboard shortcuts
               </button>
               <a
-                href="mailto:support@finora.app?subject=Finora%20feedback"
+                href={`${SUPPORT_MAILTO}?subject=Finora%20feedback`}
                 onClick={() => setOpenMenu(null)}
                 className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-ink hover:bg-bg"
               >

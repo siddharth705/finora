@@ -885,7 +885,7 @@ export default function Landing() {
             <ul className="space-y-2 text-xs text-gray-500">
               <li><Link to="/about" className="hover:text-gray-700 dark:hover:text-gray-300">About Us</Link></li>
               <li><Link to="/careers" className="hover:text-gray-700 dark:hover:text-gray-300">Careers</Link></li>
-              <li><a href="mailto:support@finora.app" className="hover:text-gray-700 dark:hover:text-gray-300">Contact Us</a></li>
+              <li><Link to="/contact" className="hover:text-gray-700 dark:hover:text-gray-300">Contact Us</Link></li>
             </ul>
           </div>
 
@@ -894,6 +894,8 @@ export default function Landing() {
             <ul className="space-y-2 text-xs text-gray-500">
               <li><a href="#faq" className="hover:text-gray-700 dark:hover:text-gray-300">FAQ</a></li>
               <li><Link to="/help" className="hover:text-gray-700 dark:hover:text-gray-300">Help Center</Link></li>
+              <li><Link to="/refund-policy" className="hover:text-gray-700 dark:hover:text-gray-300">Refund Policy</Link></li>
+              <li><Link to="/shipping-policy" className="hover:text-gray-700 dark:hover:text-gray-300">Shipping Policy</Link></li>
             </ul>
           </div>
 

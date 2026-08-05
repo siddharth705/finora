@@ -1,4 +1,6 @@
+import { Link } from 'react-router-dom';
 import { PublicLayout, PublicSection } from '../components/PublicLayout';
+import { SUPPORT_EMAIL, SUPPORT_MAILTO } from '../lib/contact';
 
 export default function Privacy() {
   return (
@@ -88,7 +90,7 @@ export default function Privacy() {
         <p>
           You may delete individual transactions, accounts, or statements from within Finora, or request full
           account deletion by contacting{' '}
-          <a href="mailto:support@finora.app" className="text-primary hover:underline">support@finora.app</a>.
+          <a href={SUPPORT_MAILTO} className="text-primary hover:underline">{SUPPORT_EMAIL}</a>.
           Full account deletion removes your personal information and financial data from active systems.
         </p>
       </PublicSection>

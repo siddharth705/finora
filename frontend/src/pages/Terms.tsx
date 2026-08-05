@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { PublicLayout, PublicSection } from '../components/PublicLayout';
+import { SUPPORT_EMAIL, SUPPORT_MAILTO } from '../lib/contact';
 
 export default function Terms() {
   return (
@@ -102,7 +103,8 @@ export default function Terms() {
       <PublicSection title="12. Contact Information">
         <p>
           Questions about these terms can be sent to{' '}
-          <a href="mailto:support@finora.app" className="text-primary hover:underline">support@finora.app</a>.
+          <a href={SUPPORT_MAILTO} className="text-primary hover:underline">{SUPPORT_EMAIL}</a>,
+          or see <Link to="/contact" className="text-primary hover:underline">Contact Us</Link>.
         </p>
       </PublicSection>
     </PublicLayout>
