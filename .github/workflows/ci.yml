@@ -58,9 +58,30 @@ jobs:
       # configured, so the "Testcontainers tests" this comment promised had never executed once.
       # backend/pom.xml now widens surefire's includes, and the suite really does run them --
       # 1055 tests instead of 941, verified locally against a real daemon.
+      #
+      # That claim is no longer trust-me: the Test summary step below publishes the unit/IT split
+      # to the run page and fails if the IT count is ever zero again.
       - name: Run tests
         working-directory: backend
         run: ./mvnw -B --no-transfer-progress test
+
+      # `if: always()` so the breakdown renders for a FAILING run too -- that is when knowing
+      # which classes failed, and whether the ITs ran at all, is worth most. It reports rather
+      # than re-judges: a genuine test failure is already the previous step's exit code, and this
+      # only adds a failure of its own for a hollow result (no reports, 0 tests, or 0 *IT).
+      - name: Test summary
+        if: always()
+        run: python scripts/summarize-surefire.py
+
+      # The XML behind the summary, for reading a stack trace without re-running the suite.
+      # Failures only: on a green run nobody opens it, and it is ~2MB of XML per run.
+      - name: Upload surefire reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: backend/target/surefire-reports/
+          retention-days: 14
 
   frontend:
     name: User frontend
