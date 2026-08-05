@@ -59,6 +59,20 @@ spring:
     hibernate:
       # Flyway owns the schema; Hibernate only validates it matches at startup.
       ddl-auto: validate
+    # Declared explicitly because Spring Boot's default is `true` and every other JPA property
+    # here carries a justifying comment -- an undeclared but behaviour-significant default was the
+    # one thing in this block nobody had decided. `true` holds the EntityManager, and with it a
+    # pooled connection, open for the whole request including view rendering and serialization;
+    # against a 10-connection pool (see ImportConcurrencyLimiter's own reasoning about that pool)
+    # that is a real ceiling on concurrency.
+    #
+    # `false` is the choice here: every service method that touches lazy state is already
+    # @Transactional, and the one place that genuinely depends on an open session inside the
+    # request -- StatementImportService.getFile reading lazily-fetched bytes -- says so in its own
+    # comment and does the read inside its transaction, not outside it. Anything that regresses
+    # this surfaces loudly as LazyInitializationException in the test suite rather than quietly as
+    # connection-pool pressure in production.
+    open-in-view: false
     properties:
       hibernate:
         format_sql: true
@@ -67,6 +81,10 @@ spring:
           batch_size: 50
         order_inserts: true
         order_updates: true
+        # Backstop for any association without an explicit @BatchSize (User.roles and
+        # Role.permissions carry their own). Without this, Hibernate loads collections one query
+        # per owner -- the N+1 that made admin user listings scale with page size.
+        default_batch_fetch_size: 25
 
   flyway:
     enabled: true

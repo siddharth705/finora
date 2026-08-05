@@ -3,6 +3,7 @@ package com.finora.imports;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -56,5 +57,48 @@ class CsvParserTest {
         // of the numeric-only patterns matched, so every row on that file was silently dropped.
         assertThat(CsvParser.parseDate("01 Jul 2026")).isEqualTo(java.time.LocalDate.of(2026, 7, 1));
         assertThat(CsvParser.parseDate("25 Dec 2026")).isEqualTo(java.time.LocalDate.of(2026, 12, 25));
+    }
+
+    // --- header detection: abbreviated column names -------------------------------------------
+    //
+    // AMOUNT_HEADER_HINTS deliberately lists the abbreviated forms "withdrawal amt" and "deposit
+    // amt" -- someone knew real statements use them. But normalizeHeaderCell strips only a trailing
+    // parenthetical, never a trailing period, so the real cell "Withdrawal Amt." normalized to
+    // "withdrawal amt." and could never equal the hint. The abbreviation was listed in a form the
+    // normalizer cannot produce from the real string.
+    //
+    // The PDF engine had already solved this -- PdfTableLocator.matchesAnyHint tokenizes and strips
+    // edge punctuation per word, and its comment names this exact string. The CSV engine never got
+    // the fix.
+
+    @Test
+    void findHeaderRowIndex_findsAnHdfcStyleHeaderWhoseAmountColumnsAreAbbreviatedWithAPeriod() {
+        // The failure this guards is total, not partial: with no amount column recognized,
+        // findHeaderRowIndex returns -1 and PreviewGenerator surfaces every line of the file as
+        // unparseable. The user uploads a valid bank export and stages zero transactions.
+        List<String[]> rows = List.of(
+                new String[]{"Date", "Narration", "Chq./Ref.No.", "Value Dt",
+                        "Withdrawal Amt.", "Deposit Amt.", "Closing Balance"},
+                new String[]{"01/07/2026", "UPI-SOME MERCHANT", "000000000001", "01/07/2026",
+                        "500.00", "", "24500.00"}
+        );
+
+        assertThat(new CsvParser().findHeaderRowIndex(rows))
+                .as("a header row whose only amount columns are abbreviated with a trailing period")
+                .isZero();
+    }
+
+    @Test
+    void normalizeHeaderCell_stripsTrailingPunctuationSoAbbreviationsMatchTheirHints() {
+        assertThat(CsvParser.normalizeHeaderCell("Withdrawal Amt.")).isEqualTo("withdrawal amt");
+        assertThat(CsvParser.normalizeHeaderCell("Deposit Amt.")).isEqualTo("deposit amt");
+        assertThat(CsvParser.normalizeHeaderCell("Amount.")).isEqualTo("amount");
+        assertThat(CsvParser.normalizeHeaderCell("Date.")).isEqualTo("date");
+        // Still does everything it did before.
+        assertThat(CsvParser.normalizeHeaderCell("Amount (INR)")).isEqualTo("amount");
+        assertThat(CsvParser.normalizeHeaderCell("Withdrawal Amt.(INR)")).isEqualTo("withdrawal amt");
+        assertThat(CsvParser.normalizeHeaderCell("  Closing Balance  ")).isEqualTo("closing balance");
+        // Interior punctuation is untouched -- only the edges are noise.
+        assertThat(CsvParser.normalizeHeaderCell("Chq./Ref.No.")).isEqualTo("chq./ref.no");
     }
 }

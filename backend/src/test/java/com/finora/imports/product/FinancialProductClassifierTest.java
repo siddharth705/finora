@@ -245,4 +245,55 @@ class FinancialProductClassifierTest {
                 .as("a deposit schedule is not an account")
                 .isNotEqualTo(FinancialProductType.Domain.ACCOUNT);
     }
+
+    // --- naming must never lower a score it is recorded as supporting -------------------------
+    //
+    // scoreOf normalizes as earned/available. The expected-signal loop collapses repeats to the
+    // strongest source ("only the strongest occurrence matters"). The naming loop used to count
+    // EVERY naming fact, adding a full 1.0 to `available` and only weightOf(source) to `earned`.
+    //
+    // Since DOCUMENT_TEXT weighs 0.15 and the confidence threshold is 0.6, a document-level naming
+    // dragged down any hypothesis that would otherwise clear the bar -- while being recorded in the
+    // evidence list as Evidence.positive. The same fact read as supporting the answer and
+    // arithmetically argued against it.
+
+    @Test
+    void aDocumentLevelNamingNeverLowersTheConfidenceOfTheProductItNames() {
+        Section withoutNaming = new Section(
+                List.of("Txn Date", "Narration", "Withdrawals", "Deposits", "Closing Balance"),
+                List.of("Statement of account"), List.of(), 42, 0, 1);
+        // Identical section, except the document-level text also says what it is -- strictly more
+        // evidence for SAVINGS, so confidence must not fall.
+        Section withNaming = new Section(
+                List.of("Txn Date", "Narration", "Withdrawals", "Deposits", "Closing Balance"),
+                List.of("Statement of account"), List.of("savings account"), 42, 0, 1);
+
+        var baseline = classifier.classify(withoutNaming);
+        var named = classifier.classify(withNaming);
+
+        assertThat(named.type()).isEqualTo(FinancialProductType.SAVINGS);
+        assertThat(named.confidence())
+                .as("a naming of the product is evidence FOR it -- it must never reduce the score")
+                .isGreaterThanOrEqualTo(baseline.confidence());
+    }
+
+    @Test
+    void namingsOfOneProductAreCountedOnce_atTheirStrongestSource() {
+        // A combined statement: section text names two products, so demoteEnumeratedNames rewrites
+        // both to DOCUMENT_TEXT ("a document-level summary, not this section"). Combined with a
+        // genuine document-level naming, the old code accumulated multiple DOCUMENT_TEXT facts for
+        // one type -- each adding 1.0 to the denominator and 0.15 to the numerator. Demotion, meant
+        // to neutralise a leaked naming, instead turned it into a penalty, on exactly the document
+        // class it was written for.
+        Section combined = new Section(
+                List.of("Txn Date", "Narration", "Withdrawals", "Deposits", "Closing Balance"),
+                List.of("savings account", "fixed deposit"), List.of("savings account"), 42, 0, 1);
+
+        var result = classifier.classify(combined);
+
+        assertThat(result.type()).isEqualTo(FinancialProductType.SAVINGS);
+        assertThat(result.isConfident())
+                .as("structure identifies this section; repeated leaked namings must not demote it to UNKNOWN")
+                .isTrue();
+    }
 }

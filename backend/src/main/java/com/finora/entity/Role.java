@@ -1,6 +1,7 @@
 package com.finora.entity;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.BatchSize;
 
 import java.time.Instant;
 import java.util.HashSet;
@@ -35,7 +36,11 @@ public class Role {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
+    // Batched for the same reason User.roles is -- see its comment. This is the second level of
+    // the nested EAGER graph, and the multiplicative one: without batching, every role loaded for
+    // every user in a page issued its own permissions query.
     @ManyToMany(fetch = FetchType.EAGER)
+    @BatchSize(size = 25)
     @JoinTable(
             name = "role_permissions",
             joinColumns = @JoinColumn(name = "role_id"),

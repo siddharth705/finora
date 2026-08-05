@@ -85,6 +85,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // step. 15/10min is generous for a legitimate user (including a few genuine retries after a
     // wrong current password or a mistyped code) while still bounding repeated abuse.
     private final RateLimiter passwordChangeLimiter = new RateLimiter(15, 600);
+    // Bug fix: /auth/reset-password performs bcrypt work per call (hashing the new password, plus
+    // the password-history comparison) and sat outside every limiter -- while this class's own
+    // comment on passwordChangeLimiter names "a real bcrypt comparison" as "exactly the kind of
+    // per-call cost this class already protects elsewhere." The same reasoning applied here and
+    // simply had not been applied. Deliberately narrow rather than urgent: both a valid reset
+    // token AND a Firebase-verified phone gate the expensive work, so this was never an anonymous
+    // DoS -- which is why the ceiling is generous. It bounds a token holder retrying in a loop.
+    private final RateLimiter resetPasswordLimiter = new RateLimiter(10, 600);
     // Bug fix: this used to be `new ObjectMapper()` -- a second, freshly-constructed mapper with
     // none of the auto-configuration Spring Boot's own JacksonAutoConfiguration applies to its
     // managed ObjectMapper bean (in particular, no JavaTimeModule). ApiResponse.timestamp is a
@@ -127,6 +135,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/login"), loginLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/register"), registerLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/forgot-password"), forgotPasswordLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/reset-password"), resetPasswordLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/import/csv/stage"), importStageLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/import/pdf/stage"), importStageLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/password-change/start"), passwordChangeLimiter),

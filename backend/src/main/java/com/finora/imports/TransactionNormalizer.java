@@ -78,12 +78,18 @@ public class TransactionNormalizer {
     //
     // Bug fix: verified against a real Kotak Mahindra Bank statement, whose column is literally
     // "Chq/Ref. No." -- periods after BOTH "Ref" and "No", unlike the "chq/ref no" (no periods)
-    // variant already covered. normalizeHeaderCell only strips a TRAILING parenthetical, never
-    // internal punctuation, so this real header normalized to "chq/ref. no." -- a literal string
-    // that matched nothing already in this list.
+    // variant already covered.
+    //
+    // The entry below reads "chq/ref. no" -- interior period kept, trailing period gone -- because
+    // normalizeHeaderCell now strips trailing punctuation but deliberately still leaves interior
+    // punctuation alone. It previously stripped neither, so this entry had to be written as
+    // "chq/ref. no." to match. That was a workaround at the call site for a gap in the normalizer,
+    // and it stopped matching the moment the normalizer was fixed (which is how it was caught:
+    // this list's own regression test went red). Worth noting as a pattern -- a hint spelled to
+    // match a normalizer's quirks rather than the real-world string is coupled to those quirks.
     private static final String[] REFERENCE_HINTS =
             {"reference number", "ref no", "reference no", "cheque no", "chq no", "chq/ref no",
-                    "chq/ref. no.", "instrument id", "reference", "reference / cheque no.", "reference / cheque no"};
+                    "chq/ref. no", "instrument id", "reference", "reference / cheque no"};
     // Deliberately separate from AMOUNT_HINTS, even though the literal column names overlap:
     // AMOUNT_HINTS' "balance"/"running balance"/"closing balance" entries exist as a last-resort
     // fallback AMOUNT for a summary row with no debit/credit column at all (see AMOUNT_HINTS' own

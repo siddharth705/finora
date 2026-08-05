@@ -139,16 +139,10 @@ public class DashboardService {
         Category c = new Category(); c.setName("Uncategorized"); return c;
     }
 
-    /** timezone has no format validation on the settings-update path (UserSettingsDto.UpdateRequest
-     *  accepts any string) -- falls back to the column's own default (V11 migration) rather than
-     *  letting a malformed value 500 the whole dashboard via an uncaught DateTimeException. */
+    /** Delegates to {@link com.finora.util.UserZone} -- one of four hand-copied implementations,
+     *  see that class for why they were consolidated. */
     private ZoneId safeZoneId(String timezone) {
-        if (timezone == null) return ZoneId.of("Asia/Kolkata");
-        try {
-            return ZoneId.of(timezone);
-        } catch (Exception e) {
-            return ZoneId.of("Asia/Kolkata");
-        }
+        return com.finora.util.UserZone.of(timezone);
     }
 
     /** Same single definition {@link com.finora.accounts.AccountBalanceConvention} gives

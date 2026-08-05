@@ -5,6 +5,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.env.Environment;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -107,6 +108,34 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleOptimisticLock(OptimisticLockingFailureException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponse.error("This record was just updated by another request — refresh and try again.", "CONFLICT"));
+    }
+
+    /**
+     * Bug fix: a unique-constraint violation is the database enforcing a rule the application also
+     * knows about, and it is entirely a client-input condition -- but with no handler it fell
+     * through to the catch-all below and came back as a 500 "Unexpected error", logged as
+     * "Unhandled exception". Same gap already closed for AccessDeniedException,
+     * OptimisticLockingFailureException and HttpMessageNotReadableException in this class; this is
+     * the fourth instance of one pattern.
+     *
+     * <p>Reachable wherever a check-then-act race can lose: duplicate categories, budgets,
+     * net-worth snapshots, merchant aliases, and the V52 scoped email/phone indexes. It matters
+     * most on the import path -- {@code MerchantNormalizationEngine.addAlias} is check-then-act
+     * against {@code UNIQUE(user_id, normalized_alias)}, and because that runs inside the confirm
+     * transaction, a 500 there rolled back the user's ENTIRE import rather than the one row.
+     *
+     * <p>409 CONFLICT, matching the optimistic-lock handler above: both mean "someone else got
+     * there first, retry." Deliberately does not echo the exception's message -- the constraint
+     * text can name schema internals, and for this API the offending value may be customer data.
+     * The full exception is logged at warn (not error): it is expected under concurrency, but a
+     * sustained rise in these is a real signal worth being able to see.
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ApiResponse<Void>> handleDataIntegrityViolation(DataIntegrityViolationException ex,
+                                                                          HttpServletRequest request) {
+        log.warn("Data integrity violation on {} {}", request.getMethod(), request.getRequestURI(), ex);
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error("That conflicts with a record that already exists — refresh and try again.", "CONFLICT"));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

@@ -9,7 +9,7 @@ sections: 3
   accountHolderName: Xxxxxxx Xxxxxx Xxxxxx
   ifscCode: HDFC0XXXXXX
   statementPeriod: null .. null
-  product: SAVINGS (87%, VALIDATED)
+  product: SAVINGS (92%, VALIDATED)
   mayCreateAutomatically: true
 
 [section 1]

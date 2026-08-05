@@ -54,6 +54,26 @@ public record ProductHypothesis(FinancialProductType type, Set<ProductSignal> ex
     private static void define(FinancialProductType type, List<ProductSignal> expected,
                                List<ProductSignal> forbidden, List<ProductSignal> proof,
                                boolean requiresExplicitNaming) {
+        // Two properties that must co-occur were expressed as two independent fields with nothing
+        // tying them together: "has no structural vocabulary" (expected().isEmpty()) and "can only
+        // be claimed when named" (requiresExplicitNaming). FinancialProductClassifier.scoreOf
+        // null-guards `namedHere` on the SECOND condition and then dereferences it under the
+        // FIRST -- safe only because all five named-only types (PPF, EPF, NPS, DEMAT, MUTUAL_FUND)
+        // happen to be defined in one loop that passes true.
+        //
+        // That is an invariant held by the shape of today's definitions, not by anything enforcing
+        // it. A future define(SOMETHING, List.of(), ...) through the four-argument overload -- which
+        // defaults requiresExplicitNaming to false -- would NPE inside the import pipeline on any
+        // document that does not name that product, which is most documents. Rejecting the
+        // combination here makes it unwritable, which is better than guarding the dereference:
+        // a hypothesis with no structural vocabulary AND no naming requirement has nothing
+        // whatsoever to identify it, so it is meaningless as well as unsafe.
+        if (expected.isEmpty() && !requiresExplicitNaming) {
+            throw new IllegalArgumentException(
+                    type + " declares no expected signals, so nothing structural can identify it -- "
+                            + "it must set requiresExplicitNaming=true so it is only ever claimed when "
+                            + "the document names it.");
+        }
         BY_TYPE.put(type, new ProductHypothesis(type, ordered(expected), ordered(forbidden),
                 ordered(proof), requiresExplicitNaming));
     }

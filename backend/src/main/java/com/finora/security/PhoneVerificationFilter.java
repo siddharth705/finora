@@ -91,8 +91,16 @@ public class PhoneVerificationFilter extends OncePerRequestFilter {
             // The principal's username is the user id (see CurrentUserDetailsService) -- an email
             // would be ambiguous since V52, and could check phone verification against the wrong
             // one of the two accounts a person may hold under one address.
-            Optional<User> user = parseId(userDetails.getUsername()).flatMap(userRepository::findById);
-            if (user.isPresent() && !user.get().isPhoneVerified()) {
+            //
+            // Reads only the flag, not the whole User. This ran a second full findById on every
+            // authenticated request -- JwtAuthFilter has already loaded the same user moments
+            // earlier, and the two do not share a persistence context (the
+            // OpenEntityManagerInViewInterceptor starts inside DispatcherServlet, after this
+            // chain), so nothing was cached and each load dragged the eager roles -> permissions
+            // graph. One boolean does not need any of that.
+            Optional<Boolean> phoneVerified = parseId(userDetails.getUsername())
+                    .flatMap(userRepository::findPhoneVerifiedById);
+            if (phoneVerified.isPresent() && !phoneVerified.get()) {
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                 response.setContentType(MediaType.APPLICATION_JSON_VALUE);
                 response.getWriter().write(objectMapper.writeValueAsString(

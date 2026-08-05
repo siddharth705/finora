@@ -109,16 +109,9 @@ public class GoalService {
         return OwnershipGuard.requireOwned(goalRepository.findById(goalId), Goal::getUserId, userId, "Goal");
     }
 
-    /** Same defensive-fallback contract as DashboardService.safeZoneId() / NetWorthService's own
-     *  copy -- timezone has no format validation on the settings-update path, so this falls back
-     *  to the column's own default (V11 migration) rather than an uncaught DateTimeException. */
+    /** Delegates to {@link com.finora.util.UserZone} -- one of four hand-copied implementations,
+     *  see that class for why they were consolidated. */
     private ZoneId safeZoneId(UUID userId) {
-        String timezone = userRepository.findById(userId).map(User::getTimezone).orElse(null);
-        if (timezone == null) return ZoneId.of("Asia/Kolkata");
-        try {
-            return ZoneId.of(timezone);
-        } catch (Exception e) {
-            return ZoneId.of("Asia/Kolkata");
-        }
+        return com.finora.util.UserZone.forUser(userRepository, userId);
     }
 }

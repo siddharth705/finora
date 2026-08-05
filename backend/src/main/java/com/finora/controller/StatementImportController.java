@@ -49,8 +49,14 @@ public class StatementImportController {
     @GetMapping("/{id}/file")
     public ResponseEntity<byte[]> downloadFile(@PathVariable UUID id) {
         var file = statementImportService.getFile(currentUser.id(), id);
+        // Bug fix: this hardcoded "text/csv" for every download, including PDFs -- while
+        // StatementImport.sourceFormat held the real answer and its own comment says the format is
+        // "explicit, not inferred from fileName's extension." Mobile had already worked around it
+        // by inferring from fileName.endsWith('.pdf') -- the exact heuristic the backend rejected
+        // -- and web only survived because link.download ignores the type. Serving the right type
+        // means neither client has to compensate.
         return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType("text/csv"))
+                .contentType(MediaType.parseMediaType(file.contentType()))
                 .header(HttpHeaders.CONTENT_DISPOSITION,
                         ContentDisposition.attachment().filename(file.fileName()).build().toString())
                 .body(file.content());

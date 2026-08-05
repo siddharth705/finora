@@ -10,6 +10,7 @@ import com.finora.exception.ApiException;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
+import com.finora.util.PhoneNumbers;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
@@ -72,17 +74,42 @@ public class AdminUserService {
     public UserSummaryDto updateProfile(UUID actingAdminId, UUID userId, AdminUpdateUserRequest req) {
         User user = requireUser(userId);
         if (req.fullName() != null && !req.fullName().isBlank()) user.setFullName(req.fullName());
-        if (req.phoneNumber() != null && !req.phoneNumber().isBlank() && !req.phoneNumber().equals(user.getPhoneNumber())) {
-            // Scoped to the account's own portal: the same person may legitimately use one mobile
-            // number for their USER account and their ADMIN account, so a clash only matters
-            // within a scope.
-            if (userRepository.existsByPhoneNumberAndAccountScope(req.phoneNumber(), user.getAccountScope())) {
-                throw new ApiException(HttpStatus.CONFLICT, "Another account already uses this phone number.");
+        if (req.phoneNumber() != null && !req.phoneNumber().isBlank()) {
+            // Bug fix: this used to store req.phoneNumber() verbatim, while registration stored
+            // PhoneNumbers.normalize()'s E.164 form -- two writers to one field, one normalized
+            // and one not. An admin typing "9999999999" locked the account out permanently
+            // (Firebase's claim is always E.164, so verification could never match again and
+            // PhoneVerificationFilter 403s everything with no self-service recovery), and the
+            // uniqueness check below compared raw strings against a DB index on the literal
+            // column, so "9999999999" and "+919999999999" could both exist. Normalizing FIRST
+            // fixes both: the comparison, the conflict check and the stored value are now the
+            // same canonical form registration uses. See PhoneNumbers' own doc comment.
+            String normalized = PhoneNumbers.normalize(req.phoneNumber());
+            if (!normalized.equals(user.getPhoneNumber())) {
+                // Scoped to the account's own portal: the same person may legitimately use one
+                // mobile number for their USER account and their ADMIN account, so a clash only
+                // matters within a scope.
+                if (userRepository.existsByPhoneNumberAndAccountScope(normalized, user.getAccountScope())) {
+                    throw new ApiException(HttpStatus.CONFLICT, "Another account already uses this phone number.");
+                }
+                user.setPhoneNumber(normalized);
             }
-            user.setPhoneNumber(req.phoneNumber());
         }
         if (req.lowBalanceThreshold() != null) user.setLowBalanceThreshold(req.lowBalanceThreshold());
-        if (req.timezone() != null) user.setTimezone(req.timezone());
+        if (req.timezone() != null) {
+            // Same check UserSettingsService.update() already applies on the user-facing path.
+            // A zone id's validity is a runtime question no annotation can answer, so the DTO's
+            // @Size only bounds the string and this decides whether it names a real zone. Without
+            // it the admin path could write a value every downstream safeZoneId() then has to
+            // silently fall back from -- a user's dashboard quietly running in the wrong timezone
+            // because an admin typed "IST" instead of "Asia/Kolkata".
+            try {
+                ZoneId.of(req.timezone());
+            } catch (Exception e) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "'" + req.timezone() + "' is not a recognized timezone.");
+            }
+            user.setTimezone(req.timezone());
+        }
         user.setUpdatedAt(Instant.now());
         userRepository.save(user);
         auditService.record(userId, "USER_PROFILE_UPDATED_BY_ADMIN", "User", userId,

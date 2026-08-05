@@ -277,16 +277,57 @@ public class FinancialProductClassifier {
         // A naming of THIS product corroborates it, weighted by where it was found. A naming found
         // only in document-level text contributes almost nothing on purpose: it is what a
         // relationship summary leaks into every section of a combined statement.
-        for (ObservedFact naming : collected.factsFor(ProductSignal.PRODUCT_NAME)) {
-            if (naming.named() != hypothesis.type()) continue;
-            available += 1.0;
-            earned += weightOf(naming.source());
-            if (naming.source() != EvidenceSource.DOCUMENT_TEXT && counted.add(ProductSignal.PRODUCT_NAME)) {
+        //
+        // Bug fix: this loop used to add 1.0 to `available` and weightOf(source) to `earned` for
+        // EVERY naming fact, while the expected-signal loop above collapses repeats to the
+        // strongest source ("only the strongest occurrence matters"). Two loops feeding one
+        // normalized ratio, applying opposite policies to the same question.
+        //
+        // Contributing little to the numerator while contributing fully to the denominator is not
+        // a discount, it is a penalty: any evidence weighing less than the running score pulls the
+        // score down. DOCUMENT_TEXT weighs 0.15 against a 0.6 threshold, so a document-level
+        // naming reduced the confidence of any hypothesis it was recorded as supporting -- while
+        // appearing in the evidence list as Evidence.positive. Measured: a SAVINGS section scoring
+        // 0.829 on structure alone fell to 0.744 purely because the document also said "savings
+        // account."
+        //
+        // demoteEnumeratedNames made it worse rather than safer. It rewrites a SECTION_TEXT naming
+        // to DOCUMENT_TEXT when section text names two or more products -- the signature of a
+        // combined statement, i.e. exactly the document class this classifier exists for -- but it
+        // KEEPS the fact and only lowers its weight. So demotion moved a naming from 0.6 to 0.15
+        // while it still added a full 1.0 to `available`: a mechanism written to neutralise a
+        // leaked naming instead converted it into a penalty against the correct answer.
+        //
+        // Counting one naming per product, at its strongest source, is the same collapse policy
+        // the expected-signal loop already uses and documents. It also makes demotion behave as
+        // intended -- lowering a naming's weight without adding another unit of denominator.
+        List<ObservedFact> namingsOfThisType = collected.factsFor(ProductSignal.PRODUCT_NAME).stream()
+                .filter(naming -> naming.named() == hypothesis.type())
+                .toList();
+        if (!namingsOfThisType.isEmpty()) {
+            ObservedFact strongest = namingsOfThisType.stream()
+                    .max(java.util.Comparator.comparing(ObservedFact::source))
+                    .orElseThrow();
+            // Contributes at its OWN weight on both sides of the ratio, not 1.0 on the denominator
+            // and its weight on the numerator. That asymmetry is what made weak evidence subtract:
+            // since the score is below 1, adding equal amounts to earned and available always
+            // moves it toward 1, so a naming is now a small positive rather than a net negative --
+            // which is what "contributes almost nothing on purpose" was always meant to describe.
+            //
+            // Deliberately NOT applied to the expected-signal loop above, where `available += 1.0`
+            // is the correct semantics: that denominator counts what the hypothesis EXPECTED, and
+            // an expected-but-absent signal must still count as a full unit it failed to earn. A
+            // naming is not an expectation, it is bonus corroboration, so it does not belong in
+            // that denominator as a full unit.
+            double namingWeight = weightOf(strongest.source());
+            available += namingWeight;
+            earned += namingWeight;
+            if (strongest.source() != EvidenceSource.DOCUMENT_TEXT && counted.add(ProductSignal.PRODUCT_NAME)) {
                 corroborating++;
             }
-            evidence.add(Evidence.positive(ProductSignal.PRODUCT_NAME, naming.source(),
-                    "named \"" + naming.observed() + "\" in "
-                            + naming.source().name().toLowerCase().replace('_', ' ')));
+            evidence.add(Evidence.positive(ProductSignal.PRODUCT_NAME, strongest.source(),
+                    "named \"" + strongest.observed() + "\" in "
+                            + strongest.source().name().toLowerCase().replace('_', ' ')));
         }
 
         if (available == 0) return 0;

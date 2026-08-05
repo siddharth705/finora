@@ -456,11 +456,27 @@ public class PdfTableLocator {
                     && CsvParser.parseNumeric((existing + " " + e.getValue()).trim()) == null;
             if (wouldBreakValidDate || wouldBreakValidAmount) {
                 String descriptionColumn = descriptionColumnIn(target);
-                if (descriptionColumn != null) {
-                    String currentDescription = target.get(descriptionColumn);
-                    target.put(descriptionColumn, (currentDescription == null || currentDescription.isBlank())
-                            ? e.getValue() : currentDescription + " " + e.getValue());
+                if (descriptionColumn == null) {
+                    // Bug fix: this used to `continue` here, silently dropping the fragment -- in
+                    // the same block whose comment promises "never lose information" and that text
+                    // "is never simply discarded." A layout with no description-hinted column at
+                    // all (a bare Date/Amount/Balance grid) hit exactly that path.
+                    //
+                    // Falling back to the first non-structured column keeps the text in the row
+                    // where a human reviewing the import can still see it. If every column is
+                    // structured, the fragment goes nowhere -- but that is now a deliberate,
+                    // narrow last resort rather than the ordinary case.
+                    String fallback = firstUnstructuredColumn(target);
+                    if (fallback != null) {
+                        String current = target.get(fallback);
+                        target.put(fallback, (current == null || current.isBlank())
+                                ? e.getValue() : current + " " + e.getValue());
+                    }
+                    continue;
                 }
+                String currentDescription = target.get(descriptionColumn);
+                target.put(descriptionColumn, (currentDescription == null || currentDescription.isBlank())
+                        ? e.getValue() : currentDescription + " " + e.getValue());
                 continue;
             }
 
@@ -473,6 +489,20 @@ public class PdfTableLocator {
     private String descriptionColumnIn(Map<String, String> row) {
         for (String column : row.keySet()) {
             if (matchesAnyHint(column, DESCRIPTION_COLUMN_HINTS)) return column;
+        }
+        return null;
+    }
+
+    /** The first column in this row that isn't date-shaped or amount-shaped -- mergeInto's last
+     *  resort for narration text on a layout with no description column at all, so the text stays
+     *  visible to the person reviewing the import instead of being dropped on the floor.
+     *
+     *  <p>Deliberately excludes the structured columns rather than picking the first key outright:
+     *  the whole reason the caller is here is that appending to a date or amount cell would
+     *  invalidate it, so falling back onto one of those would recreate the bug being avoided. */
+    private String firstUnstructuredColumn(Map<String, String> row) {
+        for (String column : row.keySet()) {
+            if (!isDateColumn(column) && !isAmountColumn(column)) return column;
         }
         return null;
     }
@@ -742,10 +772,14 @@ public class PdfTableLocator {
         Matcher m = LEADING_AMOUNT_IN_BALANCE.matcher(result.get(balanceColumn));
         if (!m.matches()) return;
 
+        // matchesAnyHint, not an exact contains(), for the same reason isAmountColumn now uses it:
+        // a real "Deposit Amt." / "Withdrawal Amt." column never matched the exact list, so this
+        // recovery silently found no target column and returned, dropping the row's amount on
+        // exactly the layouts it was written to rescue.
         String targetColumn = headerNames.stream()
-                .filter(h -> CREDIT_HINTS.contains(CsvParser.normalizeHeaderCell(h)))
+                .filter(h -> matchesAnyHint(h, CREDIT_HINTS))
                 .findFirst()
-                .or(() -> headerNames.stream().filter(h -> DEBIT_HINTS.contains(CsvParser.normalizeHeaderCell(h))).findFirst())
+                .or(() -> headerNames.stream().filter(h -> matchesAnyHint(h, DEBIT_HINTS)).findFirst())
                 .orElse(null);
         if (targetColumn == null) return;
 
@@ -789,8 +823,29 @@ public class PdfTableLocator {
     private static final List<String> AMOUNT_COLUMN_HINTS =
             List.of("amount", "debit", "credit", "deposit", "withdrawal", "deposits", "withdrawals", "balance");
 
+    /** Bug fix: this exact-matched where its sibling {@link #isDateColumn} matches per word, so
+     *  the two disagreed about the same header on the same document. "Withdrawal Amt." -- a column
+     *  name this class's own HEADER_HINTS comment cites from two real HDFC statements -- normalizes
+     *  to "withdrawal amt.", which is not in the list above, so isAmountColumn returned false for a
+     *  column that is unambiguously an amount column.
+     *
+     *  <p>The visible consequence is in mergeInto: with isAmountColumn false, the
+     *  {@code wouldBreakValidAmount} conjunction is false and a wrapped narration fragment gets
+     *  appended to the amount cell -- producing precisely what that guard's comment says it
+     *  prevents, "'10.00 Dr' into '10.00 Dr levied', dropping a transaction that had parsed
+     *  perfectly well."
+     *
+     *  <p>Note the parenthesized forms already worked: normalizeHeaderCell strips a trailing
+     *  parenthetical, so "Withdrawal (Dr.)" became exactly "withdrawal" and matched. That is why
+     *  {@code SingularDepositWithdrawalColumnsPdfPreviewGeneratorTest} passes and this went
+     *  unnoticed -- the fixture used the one spelling the exact match happens to handle.
+     *
+     *  <p>Sharing matchesAnyHint does widen this: "Closing Balance" now counts as an amount column
+     *  where before only a bare "Balance" did. That is correct at every call site -- narration
+     *  must not be appended onto a valid closing balance either, and a bare "balance" was already
+     *  a hint, so this only adds the qualified spellings of a column that already qualified. */
     private boolean isAmountColumn(String columnName) {
-        return AMOUNT_COLUMN_HINTS.contains(CsvParser.normalizeHeaderCell(columnName));
+        return matchesAnyHint(columnName, AMOUNT_COLUMN_HINTS);
     }
 
     private int nextAmountColumn(List<String> headerNames, int afterIndex) {

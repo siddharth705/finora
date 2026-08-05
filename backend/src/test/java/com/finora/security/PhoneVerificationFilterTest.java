@@ -84,19 +84,16 @@ class PhoneVerificationFilterTest {
                 new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities()));
     }
 
-    private User userWithVerification(String email, boolean verified) {
-        User user = new User();
-        ReflectionTestUtils.setField(user, "id", idFor(email));
-        user.setEmail(email);
-        user.setPhoneVerified(verified);
-        return user;
-    }
+    // userWithVerification(...) was removed along with the filter's full-entity load: the filter
+    // now reads the phone-verified flag through a projection query rather than hydrating a User to
+    // get at one boolean, so building a whole entity here would be constructing state the code
+    // under test never looks at.
 
     @Test
     void blocksAnUnverifiedUser_fromAProtectedEndpoint() throws Exception {
         authenticateAs("unverified@example.com");
-        when(userRepository.findById(idFor("unverified@example.com")))
-                .thenReturn(Optional.of(userWithVerification("unverified@example.com", false)));
+        when(userRepository.findPhoneVerifiedById(idFor("unverified@example.com")))
+                .thenReturn(Optional.of(false));
 
         filter.doFilter(requestFor("/api/v1/accounts"), response, filterChain);
 
@@ -108,8 +105,8 @@ class PhoneVerificationFilterTest {
     @Test
     void allowsAVerifiedUser_throughToTheProtectedEndpoint() throws Exception {
         authenticateAs("verified@example.com");
-        when(userRepository.findById(idFor("verified@example.com")))
-                .thenReturn(Optional.of(userWithVerification("verified@example.com", true)));
+        when(userRepository.findPhoneVerifiedById(idFor("verified@example.com")))
+                .thenReturn(Optional.of(true));
 
         HttpServletRequest request = requestFor("/api/v1/accounts");
         filter.doFilter(request, response, filterChain);
@@ -122,8 +119,8 @@ class PhoneVerificationFilterTest {
     void allowsAnUnverifiedUser_toReachThePhoneVerificationEndpointsThemselves() throws Exception {
         // Otherwise nobody could ever complete verification in the first place.
         authenticateAs("unverified@example.com");
-        when(userRepository.findById(idFor("unverified@example.com")))
-                .thenReturn(Optional.of(userWithVerification("unverified@example.com", false)));
+        when(userRepository.findPhoneVerifiedById(idFor("unverified@example.com")))
+                .thenReturn(Optional.of(false));
 
         HttpServletRequest request = requestFor("/api/v1/phone/verify-otp");
         filter.doFilter(request, response, filterChain);
@@ -141,7 +138,7 @@ class PhoneVerificationFilterTest {
         filter.doFilter(request, response, filterChain);
 
         verify(filterChain).doFilter(request, response);
-        verify(userRepository, never()).findById(any());
+        verify(userRepository, never()).findPhoneVerifiedById(any());
     }
 
     /**
@@ -153,8 +150,8 @@ class PhoneVerificationFilterTest {
     @Test
     void allowsAnUnverifiedUser_toLogOut() throws Exception {
         authenticateAs("unverified@example.com");
-        when(userRepository.findById(idFor("unverified@example.com")))
-                .thenReturn(Optional.of(userWithVerification("unverified@example.com", false)));
+        when(userRepository.findPhoneVerifiedById(idFor("unverified@example.com")))
+                .thenReturn(Optional.of(false));
 
         HttpServletRequest request = requestFor("/api/v1/auth/logout");
         filter.doFilter(request, response, filterChain);
@@ -166,8 +163,8 @@ class PhoneVerificationFilterTest {
     @Test
     void allowsAnUnverifiedUser_toRefreshTheirToken() throws Exception {
         authenticateAs("unverified@example.com");
-        when(userRepository.findById(idFor("unverified@example.com")))
-                .thenReturn(Optional.of(userWithVerification("unverified@example.com", false)));
+        when(userRepository.findPhoneVerifiedById(idFor("unverified@example.com")))
+                .thenReturn(Optional.of(false));
 
         HttpServletRequest request = requestFor("/api/v1/auth/refresh");
         filter.doFilter(request, response, filterChain);
@@ -187,8 +184,8 @@ class PhoneVerificationFilterTest {
     @Test
     void allowsAnUnverifiedUser_toCheckSetupStatus() throws Exception {
         authenticateAs("unverified@example.com");
-        when(userRepository.findById(idFor("unverified@example.com")))
-                .thenReturn(Optional.of(userWithVerification("unverified@example.com", false)));
+        when(userRepository.findPhoneVerifiedById(idFor("unverified@example.com")))
+                .thenReturn(Optional.of(false));
 
         HttpServletRequest request = requestFor("/api/v1/setup/status");
         when(request.getMethod()).thenReturn("GET");
@@ -208,8 +205,8 @@ class PhoneVerificationFilterTest {
     @Test
     void allowsAnUnverifiedUser_toFetchTheirOwnProfile() throws Exception {
         authenticateAs("unverified@example.com");
-        when(userRepository.findById(idFor("unverified@example.com")))
-                .thenReturn(Optional.of(userWithVerification("unverified@example.com", false)));
+        when(userRepository.findPhoneVerifiedById(idFor("unverified@example.com")))
+                .thenReturn(Optional.of(false));
 
         HttpServletRequest request = requestFor("/api/v1/users/me");
         when(request.getMethod()).thenReturn("GET");
@@ -227,8 +224,8 @@ class PhoneVerificationFilterTest {
     @Test
     void stillBlocksAnUnverifiedUser_fromUpdatingTheirOwnProfile() throws Exception {
         authenticateAs("unverified@example.com");
-        when(userRepository.findById(idFor("unverified@example.com")))
-                .thenReturn(Optional.of(userWithVerification("unverified@example.com", false)));
+        when(userRepository.findPhoneVerifiedById(idFor("unverified@example.com")))
+                .thenReturn(Optional.of(false));
 
         HttpServletRequest request = requestFor("/api/v1/users/me");
         when(request.getMethod()).thenReturn("PUT");

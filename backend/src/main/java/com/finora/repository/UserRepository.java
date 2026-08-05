@@ -71,4 +71,20 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     // first query counting currently-locked accounts platform-wide rather than checking one at a
     // time during a login attempt.
     long countByLockedUntilAfter(Instant threshold);
+
+    /**
+     * Reads just the phone-verified flag for one user, for {@code PhoneVerificationFilter}.
+     *
+     * <p>That filter ran a full {@code findById} on every authenticated request purely to read one
+     * boolean, immediately after {@code JwtAuthFilter} had already loaded the same user — and the
+     * two do NOT share a persistence context, because {@code OpenEntityManagerInViewInterceptor}
+     * runs inside {@code DispatcherServlet}, after the whole filter chain. So it was a second full
+     * load, dragging the eager {@code roles → permissions} graph along with it, to answer a
+     * question one column could answer.
+     *
+     * <p>Returns empty when no such user exists, which the filter treats the same way it always
+     * has (no user, no verification requirement to enforce — Spring Security's own rules decide).
+     */
+    @Query("SELECT u.phoneVerified FROM User u WHERE u.id = :id")
+    Optional<Boolean> findPhoneVerifiedById(@Param("id") UUID id);
 }

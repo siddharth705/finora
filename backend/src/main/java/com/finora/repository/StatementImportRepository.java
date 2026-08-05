@@ -46,13 +46,13 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
     @Query("SELECT s FROM StatementImport s WHERE s.layoutFingerprint IS NOT NULL")
     List<StatementImport> findAllWithLayoutFingerprint();
 
-    /**
-     * Loads one row bypassing the {@code @SQLRestriction("deleted_at IS NULL")} on the entity.
-     *
-     * <p>Native SQL because Spring Data applies the soft-delete restriction to JPQL, and a
-     * soft-deleted statement still holds its bytes and its content address -- so anything
-     * reasoning about stored content has to be able to see it.
-     */
-    @Query(value = "SELECT * FROM statement_imports WHERE id = :id", nativeQuery = true)
-    Optional<StatementImport> findByIdIncludingDeleted(@Param("id") UUID id);
+    // Removed: findByIdIncludingDeleted(UUID). It bypassed the entity's
+    // @SQLRestriction("deleted_at IS NULL") AND took no user id, so it read any user's statement
+    // by primary key alone -- with zero callers anywhere in the codebase. An unscoped cross-user
+    // read with no caller is not dormant, it is a ready-made one waiting for whoever needs "just
+    // load it by id" next; and being unused, nothing would have failed when they used it wrongly.
+    // ScopedIdentityLookupTest enforces user-scoping on the lookups that exist, which is exactly
+    // why an unused unscoped one is worth deleting rather than leaving for that test to grow a
+    // case for. Restore it from git history if a genuine caller ever appears -- with a user id
+    // parameter.
 }

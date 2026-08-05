@@ -1,6 +1,8 @@
 package com.finora.entity;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.BatchSize;
+
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.HashSet;
@@ -49,21 +51,40 @@ public class User {
     @Column(name = "full_name", nullable = false)
     private String fullName;
 
+    /** The floor every account sits at, and what {@code RoleService.revokeRole} resets the legacy
+     *  column to when it revokes the role that column names. Named rather than repeated as a
+     *  literal so the default and the demotion target cannot drift into disagreeing. */
+    public static final String DEFAULT_ROLE = "USER";
+
     // Legacy single-role string, kept for backward compatibility -- see
     // V16__rbac_roles_permissions.sql and AuthorizationService. New code assigning a user
     // access beyond this should prefer `roles` below (supports more than one, and drives
     // fine-grained permissions rather than just USER/ADMIN); this column is not being actively
     // deprecated yet since a good deal of existing code (registration, tests) still reads/writes
     // it directly, but it should not gain new callers going forward.
+    //
+    // Because AuthorizationService resolves a Role BY this string and grants its whole permission
+    // set, this column is not merely informational -- it is a live grant. Anything that revokes
+    // access has to consider it, which is exactly what RoleService.revokeRole failed to do.
     @Column(nullable = false)
-    private String role = "USER";
+    private String role = DEFAULT_ROLE;
 
     // Database-driven RBAC (docs/engineering-directive-phase1.md, Priority 2). A user can hold
     // zero or more explicit roles here in addition to whatever `role` above implies --
     // AuthorizationService computes the union of both when building the authenticated
     // principal's granted authorities, so adding a row here can only ever grant additional
     // access relative to today's behavior, never take any away.
+    //
+    // EAGER stays: every authenticated request resolves authorities from this set
+    // (AuthorizationService), so it is genuinely needed on essentially every load, and making it
+    // LAZY would trade an N+1 for a LazyInitializationException outside the persistence context.
+    // @BatchSize is what actually fixes the cost: nested EAGER @ManyToMany with no batching made
+    // AdminUserService.list() issue 1 + N + (N x roles-per-user) queries -- it paginates with plain
+    // JPQL, no fetch join, then touches getRoles(). With batching, the N per-user role loads
+    // collapse into ceil(N / 25) IN-clause queries. 25 matches the admin list's own page size, so
+    // one page is one batch.
     @ManyToMany(fetch = FetchType.EAGER)
+    @BatchSize(size = 25)
     @JoinTable(
             name = "user_roles",
             joinColumns = @JoinColumn(name = "user_id"),

@@ -5,6 +5,9 @@ import com.finora.entity.MerchantAlias;
 import com.finora.repository.MerchantAliasRepository;
 import com.finora.repository.MerchantRepository;
 import com.finora.util.CategoryRules;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -75,6 +78,8 @@ import java.util.UUID;
 @Service
 public class MerchantNormalizationEngine {
 
+    private static final Logger log = LoggerFactory.getLogger(MerchantNormalizationEngine.class);
+
     private final MerchantRepository merchantRepository;
     private final MerchantAliasRepository merchantAliasRepository;
 
@@ -89,7 +94,11 @@ public class MerchantNormalizationEngine {
 
         var existingAlias = merchantAliasRepository.findByUserIdAndNormalizedAlias(userId, normalizedAlias);
         if (existingAlias.isPresent()) {
-            return merchantRepository.findById(existingAlias.get().getMerchantId())
+            // findByIdAndUserId, not a bare findById. This is safe either way -- the id comes from
+            // an alias row already scoped to this user -- but MerchantRepository's own comment
+            // states the rule as "never a bare findById", and a rule with one silent exception is
+            // a rule the next reader cannot trust. Same query cost, no exception to explain.
+            return merchantRepository.findByIdAndUserId(existingAlias.get().getMerchantId(), userId)
                     .orElseGet(() -> createMerchantAndAlias(userId, description, normalizedAlias));
         }
 
@@ -116,13 +125,39 @@ public class MerchantNormalizationEngine {
         return merchant;
     }
 
+    /**
+     * Bug fix: this was check-then-act against {@code UNIQUE(user_id, normalized_alias)}, with
+     * nothing between the check and the insert. Two concurrent imports for the same user hitting
+     * the same new description both saw "no alias yet" and both inserted — and
+     * {@code ImportConcurrencyLimiter}'s semaphore does not prevent it, being a global permit
+     * count with no per-user scoping, so two imports for one user is an ordinary occurrence rather
+     * than an exotic race (one person confirming two statements from two tabs).
+     *
+     * <p>The consequence was disproportionate: the losing insert threw
+     * {@code DataIntegrityViolationException} from inside the confirm transaction, so the user's
+     * ENTIRE import rolled back over a duplicate alias row — a row whose only purpose is caching a
+     * name match, and which by definition already existed with the right value.
+     *
+     * <p>{@code saveAndFlush} forces the constraint check to happen HERE, where it can be caught,
+     * rather than at commit — the same reasoning {@code BootstrapService} records for its own
+     * race. Losing is not a failure: the other writer stored exactly what this one wanted to, so
+     * the correct response is to carry on.
+     */
     private void addAlias(UUID merchantId, UUID userId, String normalizedAlias) {
         if (merchantAliasRepository.findByUserIdAndNormalizedAlias(userId, normalizedAlias).isPresent()) return;
         MerchantAlias alias = new MerchantAlias();
         alias.setMerchantId(merchantId);
         alias.setUserId(userId);
         alias.setNormalizedAlias(normalizedAlias);
-        merchantAliasRepository.save(alias);
+        try {
+            merchantAliasRepository.saveAndFlush(alias);
+        } catch (DataIntegrityViolationException e) {
+            // A concurrent import inserted the same alias between the check above and this write.
+            // Nothing to repair and nothing to report: the alias exists with the value this call
+            // intended to give it.
+            log.debug("Alias '{}' for user {} was created concurrently; keeping the existing row.",
+                    normalizedAlias, userId);
+        }
     }
 
     private String firstSignificantToken(String normalized) {

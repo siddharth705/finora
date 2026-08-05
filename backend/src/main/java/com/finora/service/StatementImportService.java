@@ -136,7 +136,24 @@ public class StatementImportService {
                 .toList();
     }
 
-    public record FileDownload(String fileName, byte[] content) {}
+    /** Carries the content type alongside the bytes so the controller does not have to guess it.
+     *  {@code contentType} is derived from {@link StatementImport#getSourceFormat()} — the format
+     *  recorded at upload, which that field's own comment describes as "explicit, not inferred
+     *  from fileName's extension." The controller previously hardcoded {@code text/csv} for every
+     *  download, PDFs included. */
+    public record FileDownload(String fileName, byte[] content, String contentType) {}
+
+    /** Maps the recorded source format to a media type. Deliberately a switch over the formats
+     *  this system actually stores rather than a filename-extension lookup: the extension is
+     *  attacker-influenced and, more to the point, the authoritative answer is already on the row. */
+    private static String contentTypeFor(String sourceFormat) {
+        if (sourceFormat == null) return "application/octet-stream";
+        return switch (sourceFormat.toUpperCase()) {
+            case "CSV" -> "text/csv";
+            case "PDF" -> "application/pdf";
+            default -> "application/octet-stream";
+        };
+    }
 
     @Transactional(readOnly = true)
     public FileDownload getFile(UUID userId, UUID statementImportId) {
@@ -145,7 +162,8 @@ public class StatementImportService {
         // database, fileContent is lazily fetched, and reading it outside would throw
         // LazyInitializationException. An object-storage read does not care, but the call has to be
         // safe for both states while the migration is in progress.
-        return new FileDownload(si.getFileName(), statementContentService.read(si));
+        return new FileDownload(si.getFileName(), statementContentService.read(si),
+                contentTypeFor(si.getSourceFormat()));
     }
 
     /**

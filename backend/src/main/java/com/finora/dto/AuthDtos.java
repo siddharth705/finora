@@ -17,14 +17,20 @@ public class AuthDtos {
     // apostrophes, and periods -- covers "Jean-Luc", "O'Brien", "Md. Rahman". Tolerates
     // leading/trailing whitespace here (AuthService.register() trims before saving) so a name
     // typed with stray surrounding spaces isn't rejected for something the UI already fixes up.
-    private static final String FULL_NAME_REGEXP = "^\\s*\\p{L}[\\p{L}\\s.'-]{0,98}\\p{L}\\s*$";
-    private static final String FULL_NAME_MESSAGE = "Enter a valid full name using letters, spaces, hyphens, or apostrophes only";
+    // Package-private rather than private so AdminDtos (same package) constrains the admin
+    // support-edit path with the SAME rules the user-facing path uses, instead of restating them
+    // and drifting. AdminUpdateUserRequest previously declared no constraints at all -- see its
+    // own doc comment for what that let through.
+    static final String FULL_NAME_REGEXP = "^\\s*\\p{L}[\\p{L}\\s.'-]{0,98}\\p{L}\\s*$";
+    static final String FULL_NAME_MESSAGE = "Enter a valid full name using letters, spaces, hyphens, or apostrophes only";
+    static final String PHONE_REGEXP = "^\\+?[0-9]{10,15}$";
+    static final String PHONE_MESSAGE = "Enter a valid phone number (10-15 digits, optional + country code)";
 
     public record RegisterRequest(
             @Email @NotBlank String email,
             @NotBlank @Size(min = 8, max = 72, message = PASSWORD_SIZE_MESSAGE) String password,
             @NotBlank @Pattern(regexp = FULL_NAME_REGEXP, message = FULL_NAME_MESSAGE) String fullName,
-            @NotBlank @Pattern(regexp = "^\\+?[0-9]{10,15}$", message = "Enter a valid phone number (10-15 digits, optional + country code)")
+            @NotBlank @Pattern(regexp = PHONE_REGEXP, message = PHONE_MESSAGE)
             String phoneNumber
     ) {}
 

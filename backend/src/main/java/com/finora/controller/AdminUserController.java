@@ -61,7 +61,7 @@ public class AdminUserController {
     /** Support-assisted profile edit -- see AdminUserService.updateProfile. */
     @PutMapping("/{id}")
     @PreAuthorize("hasAuthority('USER_UPDATE')")
-    public ApiResponse<UserSummaryDto> update(@PathVariable UUID id, @RequestBody AdminUpdateUserRequest request) {
+    public ApiResponse<UserSummaryDto> update(@PathVariable UUID id, @Valid @RequestBody AdminUpdateUserRequest request) {
         return ApiResponse.ok(adminUserService.updateProfile(currentUser.id(), id, request), "Profile updated");
     }
 

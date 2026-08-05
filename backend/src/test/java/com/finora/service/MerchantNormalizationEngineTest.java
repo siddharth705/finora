@@ -66,10 +66,18 @@ class MerchantNormalizationEngineTest {
             merchantScanCalls++;
             return List.copyOf(merchants);
         });
-        when(merchantRepository.findById(any())).thenAnswer(inv -> {
+        // findByIdAndUserId, not findById: the engine no longer issues a bare findById, because
+        // MerchantRepository's own comment states the rule as "never a bare findById" and the
+        // alias-hit path was the one undocumented exception to it. Same lookup, same counter --
+        // the id still comes from a user-scoped alias row, so this was never a scoping hole, only
+        // a rule with a hole in it.
+        when(merchantRepository.findByIdAndUserId(any(), any())).thenAnswer(inv -> {
             findByIdCalls++;
             UUID id = inv.getArgument(0);
-            return merchants.stream().filter(m -> id.equals(m.getId())).findFirst();
+            UUID scopedUserId = inv.getArgument(1);
+            return merchants.stream()
+                    .filter(m -> id.equals(m.getId()) && scopedUserId.equals(m.getUserId()))
+                    .findFirst();
         });
         when(merchantRepository.save(any(Merchant.class))).thenAnswer(inv -> {
             Merchant m = inv.getArgument(0);
@@ -83,7 +91,10 @@ class MerchantNormalizationEngineTest {
                     String alias = inv.getArgument(1);
                     return aliases.stream().filter(a -> alias.equals(a.getNormalizedAlias())).findFirst();
                 });
-        when(merchantAliasRepository.save(any(MerchantAlias.class))).thenAnswer(inv -> {
+        // saveAndFlush, not save: addAlias forces the unique-constraint check to happen where it
+        // can be caught, rather than at commit -- see its own doc comment for the concurrent-import
+        // race that made a duplicate alias roll back an entire import.
+        when(merchantAliasRepository.saveAndFlush(any(MerchantAlias.class))).thenAnswer(inv -> {
             MerchantAlias a = inv.getArgument(0);
             aliases.add(a);
             return a;

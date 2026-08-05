@@ -12,6 +12,7 @@ import com.finora.repository.MerchantLearningAuditRepository;
 import com.finora.repository.MerchantRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
+import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -21,15 +22,18 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class AnalyticsServiceTest {
 
     private TransactionRepository transactionRepository;
+    private UserRepository userRepository;
     private MerchantRepository merchantRepository;
     private MerchantCategoryLearningRepository learningRepository;
     private MerchantLearningAuditRepository learningAuditRepository;
@@ -46,9 +50,16 @@ class AnalyticsServiceTest {
         learningAuditRepository = mock(MerchantLearningAuditRepository.class);
         categoryRepository = mock(CategoryRepository.class);
         statementImportRepository = mock(StatementImportRepository.class);
+        // AnalyticsService now takes a UserRepository so it can resolve the USER's timezone rather
+        // than computing months in the server's zone (merchantTrend) and hardcoded UTC
+        // (learningGrowth). An empty findById is exactly the "no such user" case, which UserZone
+        // resolves to its documented default -- so these tests keep the deterministic zone they
+        // already assumed, without having to seed a user row.
+        userRepository = mock(UserRepository.class);
+        when(userRepository.findById(any())).thenReturn(Optional.empty());
         analyticsService = new AnalyticsService(transactionRepository, merchantRepository,
                 learningRepository, learningAuditRepository, categoryRepository, statementImportRepository,
-                new ConfidenceEngine());
+                new ConfidenceEngine(), userRepository);
     }
 
     private Transaction expense(UUID merchantId, LocalDate date, BigDecimal amount) {

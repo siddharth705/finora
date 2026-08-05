@@ -125,6 +125,20 @@ public class CsvParser {
         String s = cell.trim().toLowerCase();
         s = s.replaceAll("\\s*\\([^)]*\\)\\s*$", "").trim();
         s = s.replaceAll("\\s*\\(\\s*$", "").trim();
+        // Bug fix: trailing punctuation was never stripped, so an abbreviated column name could
+        // not match the abbreviated hint written for it. AMOUNT_HEADER_HINTS lists "withdrawal
+        // amt" and "deposit amt" -- someone knew real statements abbreviate -- but the real cell
+        // is "Withdrawal Amt." WITH a period, which normalized to "withdrawal amt." and never
+        // equalled the hint. On an HDFC-style export whose only amount columns are those two,
+        // findHeaderRowIndex found no amount column at all and returned -1, and the user staged
+        // zero transactions from a perfectly valid file.
+        //
+        // Only the trailing edge, and only after the parenthetical passes above, so
+        // "Withdrawal Amt.(INR)" is handled too. Interior punctuation is left alone -- "Chq./Ref.No."
+        // is one token to anything reading it, and rewriting its middle would change meaning rather
+        // than remove noise. PdfTableLocator.matchesAnyHint already strips edge punctuation per
+        // word and its comment names this exact string; this is the CSV side of the same rule.
+        s = s.replaceAll("[.,;:]+$", "").trim();
         return s;
     }
 

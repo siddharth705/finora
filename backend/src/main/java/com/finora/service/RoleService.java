@@ -83,13 +83,33 @@ public class RoleService {
         return toDto(role);
     }
 
-    /** Only removes the explicit user_roles grant -- if this user's legacy `role` string still
-     *  names the same role, AuthorizationService will keep granting it through that path.
-     *  Callers that mean to fully demote a user need to change User.role too (a separate, more
-     *  consequential action than "revoke one of possibly several roles", deliberately not folded
-     *  into this method).
+    /** Revokes a role completely: removes the explicit user_roles grant AND, when the legacy
+     *  {@code User.role} string names the same role, resets that column to the default so the
+     *  revocation actually takes effect.
      *
-     *  Bug fix: same missing-actingAdminId gap as {@link #assignRole} -- see its own doc comment. */
+     *  <p><b>Bug fix.</b> This used to remove only the join row, and said so -- "callers that mean
+     *  to fully demote a user need to change User.role too." The problem is that
+     *  {@link com.finora.service.AuthorizationService#effectiveAuthorities} resolves a Role BY the
+     *  legacy string and grants its entire permission set, so for any role that is also somebody's
+     *  legacy value, revoking returned 200, wrote a ROLE_REVOKED audit entry, deleted the join row
+     *  -- and changed nothing about what that user could do. The legacy column is written in
+     *  exactly two places, and both are the highest-privilege accounts in the system:
+     *  {@code BootstrapService} (BOOTSTRAP_ADMIN) and {@code SetupService} (SUPER_ADMIN). So the
+     *  two roles this silently failed for were the only two that really matter.
+     *
+     *  <p>Concretely, it broke {@code SetupService}'s own security-critical revocation, whose
+     *  comment states that revoking BOOTSTRAP_ADMIN means "SYSTEM_INITIALIZE is gone immediately,
+     *  not just until this token's 15-minute expiry." It was not gone at all. That was
+     *  unexploitable only by luck -- a different control ({@code tryMarkSetupCompleted()}) blocks
+     *  the single endpoint SYSTEM_INITIALIZE gates -- which is defense in depth working as
+     *  designed, not a reason to leave the first layer broken.
+     *
+     *  <p>Resetting to {@code DEFAULT_ROLE} rather than null because {@code User.role} is
+     *  non-nullable with exactly that default, and because AuthorizationService always grants
+     *  {@code "ROLE_" + user.getRole()} -- leaving it blank would produce a meaningless
+     *  {@code "ROLE_"} authority. "USER" is the floor every account starts at.
+     *
+     *  <p>Bug fix: same missing-actingAdminId gap as {@link #assignRole} -- see its own doc comment. */
     @Transactional
     public void revokeRole(UUID actingAdminId, UUID userId, String roleName) {
         User user = userRepository.findById(userId)
@@ -98,9 +118,14 @@ public class RoleService {
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "No such role: " + roleName));
 
         user.getRoles().remove(role);
+        boolean clearedLegacyRole = roleName.equals(user.getRole());
+        if (clearedLegacyRole) user.setRole(User.DEFAULT_ROLE);
         userRepository.save(user);
+        // The audit entry records whether the legacy column was also reset, so a reader of the
+        // trail can tell a full demotion from the join-row-only revocation this used to be.
         auditService.record(userId, "ROLE_REVOKED", "User", userId,
-                Map.of("role", roleName, "actorId", actingAdminId.toString()));
+                Map.of("role", roleName, "actorId", actingAdminId.toString(),
+                        "legacyRoleCleared", Boolean.toString(clearedLegacyRole)));
     }
 
     // --- Role & Permission CRUD (ROLE_MANAGE / PERMISSION_MANAGE) -- see RoleAdminController ---

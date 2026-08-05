@@ -93,17 +93,11 @@ public class NetWorthService {
         return current(userId);
     }
 
-    /** Same defensive fallback DashboardService.safeZoneId() uses -- timezone has no format
-     *  validation on the settings-update path (UserSettingsDto.UpdateRequest accepts any
-     *  string), so this falls back to the column's own default (V11 migration) rather than
-     *  letting a malformed value throw an uncaught DateTimeException here. */
+    /** Delegates to {@link com.finora.util.UserZone} -- this was one of four hand-copied
+     *  {@code safeZoneId} implementations. See that class's doc comment for why copying it per
+     *  service is what let AnalyticsService end up as the one that never got a copy. */
     private ZoneId safeZoneId(String timezone) {
-        if (timezone == null) return ZoneId.of("Asia/Kolkata");
-        try {
-            return ZoneId.of(timezone);
-        } catch (Exception e) {
-            return ZoneId.of("Asia/Kolkata");
-        }
+        return com.finora.util.UserZone.of(timezone);
     }
 
     /**

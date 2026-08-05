@@ -107,8 +107,21 @@ public class StatementValidator {
             String filename, List<String[]> allRows, int headerIdx,
             List<StagedRow> staged, AccountSignalAccumulator acc) {
 
-        LocalDate statementStart = staged.stream().map(StagedRow::date).min(LocalDate::compareTo).orElse(null);
-        LocalDate statementEnd = staged.stream().map(StagedRow::date).max(LocalDate::compareTo).orElse(null);
+        // Bug fix: this used to derive the period from transaction dates alone, while the PDF path
+        // (PdfPreviewGenerator.buildDetectedAccountInfo) prefers the printed period and only falls
+        // back to transaction dates. A CSV carrying an explicit "Statement Period" column was
+        // ignored -- and one of this suite's own fixtures shows the cost: a statement covering
+        // 01-Jul-2026 to 31-Jul-2026 with transactions only on the 1st and 2nd was recorded as a
+        // 2-day statement, persisted on StatementImport and shown to the user via AccountDto.
+        //
+        // The printed period is what the bank asserts the statement covers; transaction dates are
+        // only ever a lower bound on it. Same precedence as the PDF path now, so the two formats
+        // cannot disagree about the same statement.
+        LocalDate[] printedPeriod = printedStatementPeriod(allRows, headerIdx);
+        LocalDate statementStart = printedPeriod[0] != null ? printedPeriod[0]
+                : staged.stream().map(StagedRow::date).min(LocalDate::compareTo).orElse(null);
+        LocalDate statementEnd = printedPeriod[1] != null ? printedPeriod[1]
+                : staged.stream().map(StagedRow::date).max(LocalDate::compareTo).orElse(null);
 
         BigDecimal openingBalance = null;
         BigDecimal closingBalance = null;
@@ -174,6 +187,57 @@ public class StatementValidator {
             }
         }
         return hints;
+    }
+
+    /** Header spellings for a column carrying the statement's own printed period. Matched through
+     *  CsvParser.normalizeHeaderCell, so casing and a trailing parenthetical are already handled. */
+    private static final List<String> STATEMENT_PERIOD_HINTS =
+            List.of("statement period", "statement date range", "period", "statement duration");
+
+    /**
+     * The period the statement itself declares, as {@code [start, end]} with either element null
+     * when it can't be read. Mirrors the PDF path's precedence -- see the caller's comment.
+     *
+     * <p>Reads the first non-blank value below the header, not every row: the period is a property
+     * of the statement, so it is identical on every row that carries it, and a later row
+     * disagreeing would mean something is wrong that guessing cannot fix.
+     *
+     * <p>Splits on "to" or a dash surrounded by whitespace -- the two spellings seen in real
+     * statements ("01-Jul-2026 to 31-Jul-2026", "24/06/2026 - 22/07/2026"). Parsing goes through
+     * {@link CsvParser#parseDate} so this understands exactly the formats the rest of the CSV
+     * pipeline does, rather than growing a second, quietly different date vocabulary.
+     */
+    private LocalDate[] printedStatementPeriod(List<String[]> allRows, int headerIdx) {
+        LocalDate[] none = new LocalDate[]{null, null};
+        if (allRows == null || headerIdx < 0 || headerIdx >= allRows.size()) return none;
+
+        String[] header = allRows.get(headerIdx);
+        int periodColumn = -1;
+        for (int c = 0; c < header.length; c++) {
+            if (header[c] != null && STATEMENT_PERIOD_HINTS.contains(CsvParser.normalizeHeaderCell(header[c]))) {
+                periodColumn = c;
+                break;
+            }
+        }
+        if (periodColumn < 0) return none;
+
+        for (int r = headerIdx + 1; r < allRows.size(); r++) {
+            String[] row = allRows.get(r);
+            if (row == null || periodColumn >= row.length) continue;
+            String value = row[periodColumn];
+            if (value == null || value.isBlank()) continue;
+
+            String[] parts = value.trim().split("(?i)\\s+to\\s+|\\s+-\\s+|\\s+–\\s+");
+            if (parts.length < 2) return none;
+            LocalDate start = CsvParser.parseDate(parts[0].trim());
+            LocalDate end = CsvParser.parseDate(parts[1].trim());
+            // Both or neither: half a period is worse than none, because the missing half would
+            // silently fall back to a transaction date and produce a range that never appeared on
+            // the statement at all.
+            if (start == null || end == null) return none;
+            return new LocalDate[]{start, end};
+        }
+        return none;
     }
 
     private String suggestedAccountName(BankRegistry.BankInfo bank) {

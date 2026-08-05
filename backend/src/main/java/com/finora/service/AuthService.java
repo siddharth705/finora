@@ -12,6 +12,7 @@ import com.finora.repository.PasswordResetTokenRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
 import com.finora.util.PhoneMasking;
+import com.finora.util.PhoneNumbers;
 import com.finora.util.TokenHasher;
 import org.springframework.dao.IncorrectResultSizeDataAccessException;
 import org.springframework.http.HttpStatus;
@@ -187,21 +188,20 @@ public class AuthService {
         return user;
     }
 
-    /** Canonicalizes a registration-time phone number to E.164 ("+919876543210") so every stored
+    /** Canonicalizes a registration-time phone number to E.164 ("+919999999999") so every stored
      *  number has the same shape going forward, rather than relying on phoneNumbersMatch()'s
      *  digit-only comparison to paper over inconsistent storage everywhere a phone number is
-     *  compared. RegisterRequest's own @Pattern already accepts either a leading "+" or a bare
-     *  10-15 digit string, so this has to handle both. A bare 10-digit number is assumed Indian --
-     *  the only market this app currently supports. */
+     *  compared.
+     *
+     *  Bug fix: this used to be the private static method that owned the rule, which meant the
+     *  OTHER writer of User.phoneNumber -- AdminUserService.updateProfile -- structurally could
+     *  not reuse it and stored whatever an admin typed, verbatim. That produced permanent account
+     *  lockout (Firebase always sends E.164, so a raw "9999999999" never matches again) and
+     *  defeated phone uniqueness (two spellings of one number are two distinct strings to the DB
+     *  index). The rule now lives in {@link PhoneNumbers}, where both writers reach it; this stays
+     *  as the local name the rest of this class already reads well with. */
     private static String normalizePhoneNumber(String raw) {
-        String digits = raw.replaceAll("[^0-9]", "");
-        if (raw.startsWith("+")) {
-            return "+" + digits;
-        }
-        if (digits.length() == 10) {
-            return "+91" + digits;
-        }
-        return "+" + digits;
+        return PhoneNumbers.normalize(raw);
     }
 
     /**
@@ -385,10 +385,15 @@ public class AuthService {
     /** Firebase's phone_number claim is always E.164 ("+919876543210"); User.phoneNumber may or
      *  may not carry the leading "+" depending on how it was typed at registration (see
      *  RegisterRequest's own pattern, which accepts either) -- compares digits only so that
-     *  difference alone never causes a false mismatch. */
+     *  difference alone never causes a false mismatch.
+     *
+     *  Delegates to {@link PhoneNumbers#sameNumber} so the comparison rule and the normalization
+     *  rule sit together. That also fixes the rows an un-normalized admin edit already wrote: a
+     *  bare 10-digit stored number now matches Firebase's country-coded claim for the same number,
+     *  where strict digit equality left those accounts unable to ever verify again. Normalizing
+     *  the write path stops NEW lockouts; only this stops the existing ones being permanent. */
     private boolean phoneNumbersMatch(String a, String b) {
-        if (a == null || b == null) return false;
-        return a.replaceAll("[^0-9]", "").equals(b.replaceAll("[^0-9]", ""));
+        return PhoneNumbers.sameNumber(a, b);
     }
 
     private void registerFailedLogin(User user) {

@@ -10,6 +10,7 @@ import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * Production-readiness pass: every secret in application.yml has a local-dev-convenience default
@@ -31,6 +32,48 @@ public class ProductionConfigValidator implements ApplicationRunner {
     private static final String DEFAULT_JWT_SECRET =
             "change-this-to-a-long-random-secret-in-your-env-file-min-32-chars";
     private static final String DEFAULT_DB_PASSWORD = "finora";
+
+    /**
+     * Bug fix: this validator used to compare the secret against {@link #DEFAULT_JWT_SECRET} and
+     * nothing else -- but the repository ships TWO placeholder secrets, not one.
+     * {@code docker-compose.yml} sets {@code local-dev-secret-change-me-before-any-real-deployment},
+     * which is 53 characters and is not that constant, so it passed the equality check and the
+     * length check both, silently. The likely path is mundane: copy the compose file to a server,
+     * set {@code SPRING_PROFILES_ACTIVE=prod} and real database credentials, and leave
+     * {@code JWT_SECRET} alone because it already looks configured. The HS256 signing key is then
+     * a constant committed to the repository, and anyone who can read it can mint a token for any
+     * user id.
+     *
+     * <p>The deeper fault is that the guard checked a proxy for the property it cared about: it
+     * asked "is the secret THIS string" when it meant "is the secret one nobody outside this
+     * deployment could know." Enumerating placeholders is still an enumeration, so the marker
+     * check below backs it up -- any secret announcing itself as a placeholder is rejected on that
+     * basis alone, whether or not it is one of the two known ones. A real generated secret does
+     * not contain "change-me" or "local-dev".
+     */
+    private static final List<String> KNOWN_PLACEHOLDER_SECRETS = List.of(
+            DEFAULT_JWT_SECRET,
+            "local-dev-secret-change-me-before-any-real-deployment"
+    );
+
+    /** Substrings that only ever appear in a value somebody meant to replace. Matched
+     *  case-insensitively against the whole secret. */
+    private static final List<String> PLACEHOLDER_MARKERS = List.of(
+            "change-me", "changeme", "change-this", "changethis", "local-dev", "localdev",
+            "placeholder", "example", "your-secret", "yoursecret", "replace-me", "replaceme",
+            "dev-secret", "test-secret", "sample", "dummy", "insecure", "notasecret"
+    );
+
+    /** True when the secret is one of the placeholders this repository ships, or announces itself
+     *  as a placeholder by its own text. Package-private so {@code ProductionConfigValidatorTest}
+     *  can assert both halves directly -- a guard whose failure mode is "silently permits" needs a
+     *  test that names the exact values it must reject. */
+    static boolean looksLikePlaceholderSecret(String secret) {
+        if (secret == null) return true;
+        String normalized = secret.trim().toLowerCase();
+        if (KNOWN_PLACEHOLDER_SECRETS.stream().anyMatch(p -> p.equalsIgnoreCase(secret.trim()))) return true;
+        return PLACEHOLDER_MARKERS.stream().anyMatch(normalized::contains);
+    }
 
     private final Environment environment;
     private final JwtProperties jwtProperties;
@@ -57,8 +100,9 @@ public class ProductionConfigValidator implements ApplicationRunner {
         StringBuilder problems = new StringBuilder();
 
         String secret = jwtProperties.getSecret();
-        if (secret == null || secret.equals(DEFAULT_JWT_SECRET)) {
-            problems.append("- JWT_SECRET is unset or still the placeholder default. ")
+        if (looksLikePlaceholderSecret(secret)) {
+            problems.append("- JWT_SECRET is unset or still a placeholder value (this repository ships ")
+                    .append("more than one, including the docker-compose.yml default). ")
                     .append("Set a real random 32+ character value.\n");
         } else if (secret.length() < 32) {
             problems.append("- JWT_SECRET is set but shorter than the 32 characters HS256 requires.\n");

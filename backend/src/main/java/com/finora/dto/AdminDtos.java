@@ -145,11 +145,27 @@ public class AdminDtos {
      *  login identifier and JWT subject; changing it here risks silently breaking that user's
      *  next login) and password (there's no legitimate "admin sets a user's password" flow
      *  without a real password-reset/notification story behind it, which forgotPassword/
-     *  resetPassword already provide). Every field optional -- only supplied ones change. */
+     *  resetPassword already provide). Every field optional -- only supplied ones change.
+     *
+     *  <p>Bug fix: this record declared NO constraints, and AdminUserController.update() carried
+     *  no {@code @Valid}, so the admin path validated nothing at any layer while the user-facing
+     *  path validated everything. That is also why {@code ValidatedRequestBodyTest} never caught
+     *  it -- that test's rule is "a DTO that declares a constraint must be reached through
+     *  {@code @Valid}", so a DTO declaring none is invisible to it by construction. The
+     *  constraints below are deliberately the SAME shared constants RegisterRequest uses, not
+     *  restatements, so the two paths cannot drift.
+     *
+     *  <p>Bean Validation skips null values, which is exactly the "only supplied fields change"
+     *  semantics this record wants -- a null field is absent, a present field must be valid. */
     public record AdminUpdateUserRequest(
+            @jakarta.validation.constraints.Pattern(regexp = AuthDtos.FULL_NAME_REGEXP, message = AuthDtos.FULL_NAME_MESSAGE)
             String fullName,
+            @jakarta.validation.constraints.Pattern(regexp = AuthDtos.PHONE_REGEXP, message = AuthDtos.PHONE_MESSAGE)
             String phoneNumber,
+            @jakarta.validation.constraints.DecimalMin(value = "0.0", message = "Low balance threshold can't be negative")
+            @jakarta.validation.constraints.Digits(integer = 12, fraction = 2, message = "Low balance threshold must be a money amount")
             java.math.BigDecimal lowBalanceThreshold,
+            @jakarta.validation.constraints.Size(max = 64, message = "Timezone is too long to be a valid zone id")
             String timezone
     ) {}
 

@@ -11,10 +11,13 @@ import com.finora.repository.MerchantLearningAuditRepository;
 import com.finora.repository.MerchantRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
+import com.finora.repository.UserRepository;
+import com.finora.util.UserZone;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.YearMonth;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -54,12 +57,16 @@ public class AnalyticsService {
     private final CategoryRepository categoryRepository;
     private final StatementImportRepository statementImportRepository;
     private final ConfidenceEngine confidenceEngine;
+    // Added so this service can answer "what month is it for THIS user" -- it previously had no
+    // ZoneId access at all, which is why merchantTrend() and learningGrowth() were computing
+    // months in the server's zone and in hardcoded UTC respectively. See UserZone.
+    private final UserRepository userRepository;
 
     public AnalyticsService(TransactionRepository transactionRepository, MerchantRepository merchantRepository,
                              MerchantCategoryLearningRepository learningRepository,
                              MerchantLearningAuditRepository learningAuditRepository,
                              CategoryRepository categoryRepository, StatementImportRepository statementImportRepository,
-                             ConfidenceEngine confidenceEngine) {
+                             ConfidenceEngine confidenceEngine, UserRepository userRepository) {
         this.transactionRepository = transactionRepository;
         this.merchantRepository = merchantRepository;
         this.learningRepository = learningRepository;
@@ -67,6 +74,7 @@ public class AnalyticsService {
         this.categoryRepository = categoryRepository;
         this.statementImportRepository = statementImportRepository;
         this.confidenceEngine = confidenceEngine;
+        this.userRepository = userRepository;
     }
 
     /** Top merchants by total EXPENSE spend for the given month (all-time if month is null). */
@@ -92,7 +100,14 @@ public class AnalyticsService {
      *  anchor month (current month if null). One point per month including zero-spend months, so
      *  the line chart's x-axis doesn't silently skip a month with no purchases. */
     public List<AnalyticsDto.TrendPoint> merchantTrend(UUID userId, YearMonth anchorMonth) {
-        YearMonth end = anchorMonth != null ? anchorMonth : YearMonth.now();
+        // Bug fix: this was a bare YearMonth.now(), i.e. the SERVER's zone, not the user's. The
+        // anchor is optional on the live path (AdminUserAnalyticsController passes
+        // parseMonth(month) for an optional query parameter), so the null branch is reached in
+        // normal use -- and for the first 5.5 hours of an IST month it names the previous month,
+        // silently shifting the whole 6-month window. The same class of bug was already fixed in
+        // NetWorthService, GoalService and BudgetService; this service was missed because it had
+        // no ZoneId access to fix it with. See UserZone.
+        YearMonth end = anchorMonth != null ? anchorMonth : YearMonth.now(UserZone.forUser(userRepository, userId));
         YearMonth start = end.minusMonths(TREND_MONTHS - 1L);
 
         Map<YearMonth, BigDecimal> byMonth = new HashMap<>();
@@ -178,11 +193,18 @@ public class AnalyticsService {
         List<MerchantLearningAudit> entries = learningAuditRepository.findByUserId(userId);
         if (entries.isEmpty()) return List.of();
 
+        // Bug fix: months were bucketed in hardcoded UTC, so activity in the first 5.5 hours of an
+        // IST month landed in the previous month's bucket -- the user sees their own actions
+        // attributed to a month they didn't happen in. Same root cause as the merchantTrend fix
+        // above: this service had no access to the user's zone. Resolved once here rather than
+        // per entry, since every row belongs to the same user.
+        ZoneId zone = UserZone.forUser(userRepository, userId);
+
         Map<YearMonth, long[]> byMonth = new HashMap<>(); // [0]=learned, [1]=corrected
         for (MerchantLearningAudit entry : entries) {
             if (entry.getAction() != MerchantLearningAudit.Action.LEARNED
                     && entry.getAction() != MerchantLearningAudit.Action.CORRECTED) continue;
-            YearMonth m = YearMonth.from(entry.getCreatedAt().atZone(java.time.ZoneOffset.UTC));
+            YearMonth m = YearMonth.from(entry.getCreatedAt().atZone(zone));
             long[] counts = byMonth.computeIfAbsent(m, k -> new long[2]);
             if (entry.getAction() == MerchantLearningAudit.Action.LEARNED) counts[0]++;
             else counts[1]++;
