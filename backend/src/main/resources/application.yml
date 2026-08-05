@@ -225,6 +225,18 @@ app:
       bucket: ${R2_BUCKET:}
       access-key-id: ${R2_ACCESS_KEY_ID:}
       secret-access-key: ${R2_SECRET_ACCESS_KEY:}
+      # OPTIONAL, and normally left unset -- the endpoint is derived from account-id as
+      # https://<account-id>.r2.cloudflarestorage.com, which is correct for an ordinary bucket.
+      #
+      # Set it only when derivation is wrong: a bucket created with a JURISDICTION restriction
+      # lives at <account-id>.eu.r2.cloudflarestorage.com (or .fedramp.), and the derived URL would
+      # point at a bucket that does not exist -- which R2 reports as an auth failure, not as a
+      # missing bucket, so it reads like the credentials are wrong.
+      #
+      # This is the "S3 API" URL shown on the R2 dashboard. It is validated at startup (absolute,
+      # https, has a host) rather than passed through, because a typo here would otherwise surface
+      # as a connection error at the first upload with nothing naming the variable.
+      endpoint: ${R2_ENDPOINT:}
 
 management:
   endpoints:

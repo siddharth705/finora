@@ -60,6 +60,42 @@ class R2StatementStorageTest {
     }
 
     @Test
+    void theEndpointIsDerivedFromTheAccountIdWhenNotConfigured() {
+        assertThat(R2StatementStorage.resolveEndpoint(null, "abc123"))
+                .hasToString("https://abc123.r2.cloudflarestorage.com");
+        assertThat(R2StatementStorage.resolveEndpoint("   ", "abc123"))
+                .hasToString("https://abc123.r2.cloudflarestorage.com");
+    }
+
+    @Test
+    void aConfiguredEndpointOverridesTheDerivedOne() {
+        // The case derivation cannot cover: a jurisdiction-restricted bucket. The derived URL
+        // would address an account that has no such bucket, which R2 answers as an auth failure
+        // rather than a missing bucket -- so it presents as "wrong credentials" and sends whoever
+        // is debugging it to re-issue a token that was never the problem.
+        assertThat(R2StatementStorage.resolveEndpoint(
+                        "https://abc123.eu.r2.cloudflarestorage.com", "abc123"))
+                .hasToString("https://abc123.eu.r2.cloudflarestorage.com");
+    }
+
+    @Test
+    void aPlaintextEndpointIsRejected() {
+        assertThatThrownBy(() -> R2StatementStorage.resolveEndpoint(
+                        "http://abc123.r2.cloudflarestorage.com", "abc123"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("must not travel over plaintext");
+    }
+
+    @Test
+    void aMalformedEndpointIsRejectedAtStartupNotAtTheFirstUpload() {
+        // "the-bucket-url" has no scheme and no host. Passed through, the SDK would accept it and
+        // fail on the first PutObject -- long after the deploy, with nothing naming R2_ENDPOINT.
+        assertThatThrownBy(() -> R2StatementStorage.resolveEndpoint("the-bucket-url", "abc123"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("R2_ENDPOINT");
+    }
+
+    @Test
     void storeUploadsWhenTheObjectIsNotThereYet() {
         objectIsAbsent();
 

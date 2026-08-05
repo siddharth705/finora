@@ -23,6 +23,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.time.Duration;
 
 /**
@@ -78,7 +79,8 @@ public class R2StatementStorage implements StatementStorage {
             @Value("${app.statement-storage.r2.account-id:}") String accountId,
             @Value("${app.statement-storage.r2.bucket:}") String bucket,
             @Value("${app.statement-storage.r2.access-key-id:}") String accessKeyId,
-            @Value("${app.statement-storage.r2.secret-access-key:}") String secretAccessKey) {
+            @Value("${app.statement-storage.r2.secret-access-key:}") String secretAccessKey,
+            @Value("${app.statement-storage.r2.endpoint:}") String endpoint) {
 
         // Fail at startup, not at the first upload. Same reasoning as StatementContentService's
         // unknown-provider check: a storage misconfiguration that only surfaces when a user
@@ -89,7 +91,8 @@ public class R2StatementStorage implements StatementStorage {
         requirePresent(secretAccessKey, "secret-access-key", "R2_SECRET_ACCESS_KEY");
 
         this.bucket = bucket;
-        this.client = buildClient(accountId, accessKeyId, secretAccessKey);
+        this.client = buildClient(resolveEndpoint(endpoint, accountId), accessKeyId,
+                secretAccessKey);
 
         // Bucket only. Never the keys, and never the account id -- it is the storage hostname, and
         // there is no reason for it to reach a log aggregator.
@@ -107,10 +110,48 @@ public class R2StatementStorage implements StatementStorage {
         this.bucket = bucket;
     }
 
-    private static S3Client buildClient(String accountId, String accessKeyId,
+    /**
+     * The configured endpoint, or the standard one derived from the account id.
+     *
+     * <p>Derivation covers the normal case, so the usual deployment sets four variables and not
+     * five. The override exists for the case derivation gets wrong: a bucket created with a
+     * jurisdiction restriction lives at {@code https://<account>.eu.r2.cloudflarestorage.com} (or
+     * {@code .fedramp.}), and the derived URL would then point at a bucket that does not exist,
+     * failing as an auth error rather than as a missing bucket.
+     *
+     * <p>Validated rather than passed through, because the failure it prevents is silent. A
+     * malformed or {@code http://} endpoint would otherwise surface as a connection or signature
+     * error at the first upload, long after the deploy that introduced it, naming nothing that
+     * points back at the variable.
+     */
+    static URI resolveEndpoint(String configured, String accountId) {
+        if (configured == null || configured.isBlank()) {
+            return URI.create("https://" + accountId + ".r2.cloudflarestorage.com");
+        }
+        URI uri;
+        try {
+            uri = new URI(configured.trim());
+        } catch (URISyntaxException e) {
+            throw new IllegalStateException(
+                    "app.statement-storage.r2.endpoint (environment variable R2_ENDPOINT) is not a "
+                    + "valid URL: \"" + configured + "\". Copy the S3 API URL from the Cloudflare "
+                    + "R2 dashboard, or leave it unset to derive it from the account id.", e);
+        }
+        if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null) {
+            throw new IllegalStateException(
+                    "app.statement-storage.r2.endpoint (environment variable R2_ENDPOINT) must be "
+                    + "an absolute https URL with a host, e.g. "
+                    + "https://<account-id>.r2.cloudflarestorage.com -- got \"" + configured
+                    + "\". Statements are financial documents and must not travel over plaintext "
+                    + "http.");
+        }
+        return uri;
+    }
+
+    private static S3Client buildClient(URI endpoint, String accessKeyId,
                                         String secretAccessKey) {
         return S3Client.builder()
-                .endpointOverride(URI.create("https://" + accountId + ".r2.cloudflarestorage.com"))
+                .endpointOverride(endpoint)
                 .region(Region.of("auto"))
                 .credentialsProvider(StaticCredentialsProvider.create(
                         AwsBasicCredentials.create(accessKeyId, secretAccessKey)))

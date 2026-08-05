@@ -202,8 +202,18 @@ R2 → **Manage API Tokens**) and must never be committed:
 | `R2_BUCKET` | `finora-statements` |
 | `R2_ACCESS_KEY_ID` | from the R2 API token |
 | `R2_SECRET_ACCESS_KEY` | from the R2 API token |
+| `R2_ENDPOINT` | **optional.** Leave unset for an ordinary bucket — see below |
 
-Set the provider **and** all four, or none. With `provider=r2` and any one missing the application
+`R2_ENDPOINT` is normally left unset: the endpoint is derived as
+`https://<account-id>.r2.cloudflarestorage.com`, which is correct for an ordinary bucket. Set
+it only when derivation is wrong — a bucket created with a **jurisdiction restriction** lives
+at `<account-id>.eu.r2.cloudflarestorage.com` (or `.fedramp.`), and the derived URL then
+addresses a bucket that does not exist. R2 reports that as an auth failure rather than a
+missing bucket, so it presents as "wrong credentials" and sends whoever is debugging it to
+re-issue a token that was never the problem. It is the **S3 API** URL on the R2 dashboard, and
+is validated at startup (absolute, `https`, has a host).
+
+Set the provider **and** the four required variables, or none. With `provider=r2` and any one missing the application
 refuses to start and names the missing environment variable — deliberately, because the alternative
 is a deploy that looks healthy and fails the first time a real user imports a statement, at which
 point the only copy of their file is in a request that already returned 500.
