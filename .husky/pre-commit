@@ -29,14 +29,20 @@ if echo "$staged" | grep -qE '^(frontend|admin-portal|mobile)/src/'; then
   python scripts/check-contact-addresses.py || exit 1
 fi
 
-if echo "$staged" | grep -qE '^(frontend|admin-portal)/'; then
+if echo "$staged" | grep -qE '^(frontend|admin-portal|mobile)/'; then
   if echo "$staged" | grep -q '^frontend/'; then
     (cd frontend && npx eslint --fix $(echo "$staged" | grep '^frontend/' | sed 's#^frontend/##') 2>/dev/null || true)
   fi
   if echo "$staged" | grep -q '^admin-portal/'; then
     (cd admin-portal && npx eslint --fix $(echo "$staged" | grep '^admin-portal/' | sed 's#^admin-portal/##') 2>/dev/null || true)
   fi
-  git add $(echo "$staged" | grep -E '^(frontend|admin-portal)/')
+  # mobile/eslint.config.js was added alongside the CI lint step (see ci.yml's mobile Lint step) --
+  # this block was never updated to match, so a staged mobile/ file got none of the auto-fix
+  # frontend and admin-portal already get, and reached CI as the first lint pass it ever saw.
+  if echo "$staged" | grep -q '^mobile/'; then
+    (cd mobile && npx eslint --fix $(echo "$staged" | grep '^mobile/' | sed 's#^mobile/##') 2>/dev/null || true)
+  fi
+  git add $(echo "$staged" | grep -E '^(frontend|admin-portal|mobile)/')
 fi
 
 if echo "$staged" | grep -q '^backend/'; then

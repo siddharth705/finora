@@ -55,7 +55,27 @@ is_placeholder() {
 
 printf '%s\n' "$targets" | while IFS= read -r f; do
   [ -f "$f" ] || continue
-  added=$(git diff --cached -- "$f" | grep -E '^\+[^+]' | grep -v 'synthetic-ok')
+  # `grep -E '^\+\+\+ (a/|b/|/dev/null)'` excludes only the file-header line unified diff always
+  # emits verbatim as "+++ b/<path>" (or "+++ /dev/null" for a delete) -- never a content line.
+  #
+  # This used to be `grep -E '^\+[^+]'`, which excluded a line by asking "is the character right
+  # after diff's own '+' marker ALSO a '+'?" -- a heuristic that assumed only the header could ever
+  # produce two leading '+'s. It cannot tell that guess apart from a genuinely added line whose own
+  # first character happens to be '+': a phone number staged as "+919876543210" becomes
+  # "++919876543210" once diff's marker is prepended, matches the same "two leading pluses" shape
+  # as "+++ b/path", and was silently dropped before ever reaching the phone regex below -- a real
+  # false negative in exactly the PII class this script exists to catch, not merely a cosmetic one.
+  # Matching the header's actual fixed text instead of a shape it happens to share fixes both at
+  # once.
+  #
+  # cut -c2- then drops the real per-line '+' marker so the extraction regexes below see the
+  # line's own content, not the marker. Left in place, it corrupted every match starting at column
+  # 0 of an added line: '+' is a legal character in an email's local part (RFC 5322), so a line
+  # added as exactly "real.customer@gmail.com is their email" was reported as
+  # "+real.customer@gmail.com". That half was a display bug, not a false negative -- the block/warn
+  # decision already fired correctly -- but a developer fixing the flagged line off a corrupted
+  # value is exactly the kind of friction that erodes trust in what this hook reports.
+  added=$(git diff --cached -- "$f" | grep -E '^\+' | grep -vE '^\+\+\+ (a/|b/|/dev/null)' | grep -v 'synthetic-ok' | cut -c2-)
   [ -z "$added" ] && continue
 
   echo "$added" | grep -oE '[0-9]{10,}' | sort -u | while IFS= read -r hit; do

@@ -1,7 +1,7 @@
 {
   "name": "finora",
   "private": true,
-  "description": "Repo-wide dev tooling only (commit hygiene, git hooks). Application code lives in backend/, frontend/, and admin-portal/, each with its own package.json / pom.xml.",
+  "description": "Repo-wide dev tooling only (commit hygiene, git hooks). Application code lives in backend/, frontend/, admin-portal/, and mobile/, each with its own package.json / pom.xml.",
   "scripts": {
     "prepare": "husky"
   },

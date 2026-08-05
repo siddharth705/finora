@@ -181,7 +181,7 @@ no-op.
 | Re-import | Yes, with password prompt | Yes, with password prompt |
 | Statement history | `/app/statements` | More ▸ Statement History |
 | Original file | Browser download | Written to the cache directory and handed to the native share sheet |
-| Resume a session | Yes | Yes |
+| Resume a session | Yes | No — `importApi.listSessions()`/`getSession()` exist in `mobile/src/api/endpoints.ts` for API parity, but no mobile screen calls them; closing the app mid-review loses the in-progress staging state |
 
 "Download" is the one place the two genuinely cannot match. The web app streams the file into a
 Blob and clicks a synthetic `<a download>`; native has neither, and a file written into an app's
