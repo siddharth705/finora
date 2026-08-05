@@ -2,7 +2,9 @@
 
 This is a working slice of the Finora PRD (v1.0), built on the exact stack specified:
 **React + TypeScript + Vite + Tailwind** (frontend) and **Spring Boot 3 / Java 21 +
-Spring Security + PostgreSQL + Flyway** (backend).
+Spring Security + PostgreSQL + Flyway** (backend). Two more apps have since joined
+the same backend: an **admin portal** (the User/Admin split) and a **React Native +
+Expo** mobile app — see "Mobile app" below for where that one actually stands.
 
 It is a *scaffold*, not the finished 20-module product described in the PRD — see
 "Known Gaps" below for exactly what's stubbed and why, and "Next Steps" for how to
@@ -198,17 +200,39 @@ A third app: React Native + Expo, targeting iOS and Android, talking to the same
 web apps. **User-facing only** — there's no mobile admin portal, matching the same User/Admin
 split the web apps already have.
 
-Currently at **Phase 2 (core screens)**. Working end-to-end against the real backend: sign in,
-register, forgot password, phone verification, and a four-tab app shell — **Home** (dashboard
-KPIs, cash-flow chart, spend-by-category donut, recent transactions, goals, insights),
+**Phases 0–5 are complete.** Working end-to-end against the real backend: sign in, register,
+forgot password, phone verification, and a four-tab app shell — **Home** (dashboard KPIs,
+cash-flow chart, spend-by-category donut, recent transactions, goals, insights),
 **Transactions** (infinite-scroll ledger with debounced search, type filter, long-press delete),
 **Import** (CSV/PDF statement upload with an optional password for protected PDFs, staged review,
-confirm), and **More** (profile, read-only Accounts, Statement History with re-import/share/delete,
-sign out). Budgets, Goals, Reports, Insights, and Settings follow in Phases 4–5.
+confirm), and **More** — the catch-all stack holding Accounts (read-only), Investments, Budgets,
+Goals, Reports, Insights, Statement History (re-import/share/delete), Profile, Settings and sign
+out.
+
+Four tabs, not five, deliberately. The roadmap sketched a fifth "Insights" tab grouping
+Reports/Insights/Investments; those are surfaces people open occasionally rather than switch
+between mid-task, and a fifth tab pushes every label toward the width both platforms start
+truncating at. They live in the More stack instead.
+
+**What remains is Phases 6–7**: the EAS Build/Submit pipeline, store listings, E2E coverage, and
+QA. **None of the app has been exercised on a physical device yet** — and that gap is not evenly
+distributed. The phone-auth and change-password OTP flows cannot run in the iOS Simulator at all
+(it receives no SMS), and the share sheet, system date picker and `expo-print` PDF output have
+only ever run against test mocks. Everything verified so far is logic and wiring, not device
+behavior; treat real-device testing as a prerequisite for release rather than a final polish pass.
 
 Charts are hand-rolled on `react-native-svg` (`src/components/charts/`) rather than a charting
-library: the shapes needed are one ring of arcs and two polylines, and every RN chart package
-would add a native dependency to re-validate against each Expo SDK bump for that.
+library: the shapes needed are one ring of arcs and two line charts, and every RN chart package
+would add a native dependency to re-validate against each Expo SDK bump for that. The geometry
+lives in `src/lib/chartGeometry.ts` so its degenerate cases are directly testable — bad chart math
+still renders, just wrongly, which neither a type-check nor a bundle would catch.
+
+Settings mirrors the web page's capabilities-first scope rather than its layout: General
+(low-balance alert, timezone, theme), Security (change password, phone verification, active
+sessions), Categorization (the auto-apply confidence threshold) and Data (import statistics). No
+placeholder rows for 2FA, API keys, integrations or a plan — none of those exist on the backend,
+so none of them get a control. Theme adds a manual light/dark override on top of the system
+setting, persisted to the account so the choice follows the user across devices.
 
 Route protection is expressed the way React Navigation intends, rather than as a port of the
 web's `ProtectedRoute`: `src/navigation/RootNavigator.tsx` derives *which stack exists at all*
@@ -216,9 +240,11 @@ from auth state, so a signed-out user has no route to the app to navigate to. Lo
 and verify never call `navigate()` — they update auth state, and the navigator follows. As on
 web, this is UX only; `PhoneVerificationFilter` is the real enforcement.
 
-Change Password is **not** in this phase despite living in the auth family: it's reached from
-Settings, which doesn't exist until Phase 5, so it would be unreachable code. It lands with that
-screen.
+Change Password landed with Settings in Phase 5, as planned — it's reached from Settings, so
+building it alongside the rest of the auth family would have shipped unreachable code. Same
+three-step journey as web (current password → OTP to the phone on file → new password, each step
+validated server-side against a persisted `PasswordChangeSession`), minus the reCAPTCHA verifier
+lifecycle that native app verification makes unnecessary.
 
 Two things differ structurally from `frontend/`, both forced by the platform:
 
@@ -237,16 +263,23 @@ a field whose `onChangeText` sanitizes input.** React Native applies `maxLength`
 so it truncates *before* the handler runs — pasting `+919876543210` into a `maxLength={10}` phone
 field yields the wrong number, and pasting a whole OTP SMS yields an empty one. The web app
 sidesteps this with a separate `onPaste` handler reading the clipboard directly, which RN has no
-equivalent for. Let the sanitizer do the capping instead; both fields in `RegisterScreen` and
-`VerifyPhoneScreen` are commented accordingly.
+equivalent for. Let the sanitizer do the capping instead; the fields in `RegisterScreen`,
+`VerifyPhoneScreen` and `ChangePasswordSheet` are commented accordingly.
 
 ```bash
 cd mobile
 npm install
 cp .env.example .env.local   # then set EXPO_PUBLIC_API_BASE_URL
 npm run typecheck
+npm test
 npm start
 ```
+
+Phase 5 added two native modules (`expo-print` for report PDFs, and
+`@react-native-community/datetimepicker` for the goal target-date field), so **an existing dev
+client built before that is stale** — rebuild it after pulling, or the app will fail to resolve
+them at runtime. `npm start`, `npm run typecheck` and `npm test` are unaffected; only the native
+build is.
 
 ## Next steps, in the order I'd tackle them
 
