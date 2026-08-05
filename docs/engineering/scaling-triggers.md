@@ -83,19 +83,47 @@ not part of the suite (the name matches none of surefire's includes), so run it 
 cd backend && ./mvnw -o test -Dtest=ReconciliationScalingBenchmark -DfailIfNoTests=false
 ```
 
-| transactions | `reconcileForUser` | `detectForUser` |
-|---:|---:|---:|
-| 1,000 | 109 ms | 1 ms |
-| 10,000 | 848 ms | 1 ms |
-| 50,000 | 8,357 ms | 1 ms |
+| transactions | `reconcileForUser` (before) | `reconcileForUser` (after) | `detectForUser` |
+|---:|---:|---:|---:|
+| 1,000 | 109 ms | 105–127 ms | 1 ms |
+| 10,000 | 848 ms | 414–455 ms | 1 ms |
+| 50,000 | 8,357 ms | **1,510–1,757 ms** | 1 ms |
+
+The "after" column is the date-windowed fix described below, measured over two runs to show
+variance rather than quoting a single flattering number.
 
 **Status per finding**, using the lifecycle *observed → measured → triggered → implemented*:
 
-- **`reconcileForUser` — TRIGGERED, not yet implemented.** 8.4 seconds of synchronous work on a
-  request-handling thread meets this section's bar without needing interpretation, and the growth
-  is superlinear (5× the data costs ~10× the time between the last two rows). It is worth being
-  precise about what that means: this is not a scale problem waiting on user growth. It is
-  reachable by **one** account with a long import history, and every transaction edit pays it.
+- **`reconcileForUser` — TRIGGERED, and now implemented.** 8.4 seconds of synchronous work on a
+  request-handling thread met this section's bar without needing interpretation, and the growth was
+  superlinear (5× the data cost ~10× the time between the last two rows). It is worth being precise
+  about what that meant: it was never a scale problem waiting on user growth. It is reachable by
+  **one** account with a long import history, and every transaction edit pays it.
+
+  **The fix, and why it is not a rewrite.** Both remaining passes are pair-matching loops whose
+  match condition already includes a hard date bound — 4 or 10 days for a transfer, 180 for a
+  refund. The flat inner scan compared every pair and then rejected almost all of them on that
+  bound: work whose outcome was knowable before it started. Sorting the candidates by
+  `(txnDate, id)` once turns each inner loop into a binary search plus a contiguous slice. **Every
+  predicate the loops applied before is still applied, in the same order, inside the loop.** The
+  transfer slice deliberately uses the *wider* of the two windows, because which one applies
+  depends on both sides of the pair and is not known until the pair is in hand. This narrows what
+  is considered, never what qualifies — all 21 reconciliation tests pass unchanged.
+
+  The `id` tiebreak matters more than it looks. Both passes stop at the first acceptable match, and
+  `findByUserId()` has no `ORDER BY` — so the order that used to decide *which* of several
+  equally-valid pairs got matched was whatever Postgres happened to return, unstable across plan
+  changes and vacuum. Ordering by date alone would have left same-day ties resolved by that same
+  accident, which is exactly the case most likely to have more than one candidate. This is
+  therefore not a determinism regression traded for speed; it is a determinism **improvement** that
+  happened to be a prerequisite.
+
+  **What it does not fix, stated plainly.** 1.5–1.8 s at 50k is a 4.8× improvement, not a solved
+  problem. The residue is the refund pass: a 180-day window covers roughly a quarter of a two-year
+  corpus, so that loop is still quadratic with a smaller constant, and it now dominates. If this
+  becomes a complaint again, the next move is narrowing refund candidates by account or merchant
+  before the date window — not a background worker, which would still be doing the same quadratic
+  work, just somewhere the user cannot see it.
 - **`detectForUser` — MEASURED, NOT triggered.** 1 ms at every size. The in-memory cost the audit
   attributed to it is not there.
 - **`saveAll(active)` write-back (`RecurringService`) — STILL UNMEASURED.** The benchmark mocks the

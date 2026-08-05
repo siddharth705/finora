@@ -6,6 +6,7 @@ import com.finora.util.CategoryRules;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -105,7 +106,24 @@ public class ReconciliationService {
         }
 
         // 2) Transfers
-        List<Transaction> candidates = all.stream().filter(t -> t.getIsDuplicateOf() == null && !t.isTransfer()).toList();
+        //
+        // Ordered by (txnDate, id), which does two things at once.
+        //
+        // Determinism first: findByUserId() carries no ORDER BY, so the order this pass used to
+        // see was whatever Postgres happened to return -- unstable across plan changes and vacuum.
+        // Both passes below stop at the first acceptable match, so that unspecified order was
+        // silently deciding WHICH of several equally-valid pairs got matched. Sorting by date
+        // makes that repeatable; the id tiebreak is what makes it repeatable on the same date too,
+        // which is exactly when a same-day pair is most likely to have more than one candidate.
+        //
+        // And it is what lets the windowed lookups below work at all: both remaining passes only
+        // ever match inside a bounded date range, so a sorted list turns "scan everything and
+        // reject almost all of it" into a binary search plus a short contiguous slice. Measured:
+        // see docs/engineering/scaling-triggers.md.
+        List<Transaction> candidates = all.stream()
+                .filter(t -> t.getIsDuplicateOf() == null && !t.isTransfer())
+                .sorted(Comparator.comparing(Transaction::getTxnDate).thenComparing(Transaction::getId))
+                .toList();
 
         // Fetched ONCE per reconcileForUser() call (not once per candidate, and not once per
         // pair inside the O(n^2) loop below) -- within a single run this is always the same
@@ -138,7 +156,13 @@ public class ReconciliationService {
             boolean looksLikeTransfer = aOwnAccountMatch || CategoryRules.normalize(a.getDescription()).contains("payment");
             if (!looksLikeTransfer) continue;
 
-            for (Transaction b : candidates) {
+            // Only the transactions that could possibly satisfy the daysApart check below, found
+            // by binary search instead of by scanning and rejecting the rest. The slice uses the
+            // WIDER of the two windows, because which one applies depends on b as well as a
+            // (relationshipMatch reads ownAccountMatch for both sides) and is therefore not known
+            // until the pair is in hand. The exact per-pair window check is unchanged and still
+            // inside the loop -- this narrows what is considered, never what qualifies.
+            for (Transaction b : withinDays(candidates, a.getTxnDate(), OWN_ACCOUNT_MATCH_DAY_WINDOW)) {
                 if (a.getId().equals(b.getId()) || b.isTransfer()) continue;
                 if (looksLikeSalary.getOrDefault(b.getId(), false)) continue; // same guard, other side of the pair
                 if (a.getAccountId().equals(b.getAccountId()) || a.getTxnType() == b.getTxnType()) continue;
@@ -172,7 +196,12 @@ public class ReconciliationService {
 
             boolean refundKeyword = looksLikeRefund(income.getDescription());
             Transaction bestMatch = null;
-            for (Transaction expense : refundCandidates) {
+            // A refund lands at or after its purchase and within REFUND_WINDOW_DAYS of it, so the
+            // only expenses worth looking at sit in [income.date - 180, income.date]. Both of
+            // those bounds are still re-checked inside the loop; this only avoids walking the
+            // years of history that provably cannot contain a match.
+            for (Transaction expense : between(refundCandidates,
+                    income.getTxnDate().minusDays(REFUND_WINDOW_DAYS), income.getTxnDate())) {
                 if (expense.getTxnType() != Transaction.Type.EXPENSE) continue;
                 // Same account only -- a refund lands back where the original purchase was made.
                 // (This is exactly what distinguishes a refund from a transfer, which above
@@ -221,6 +250,54 @@ public class ReconciliationService {
         if (t.getDescription() == null) return "no-desc-" + t.getId();
         return t.getAccountId() + "|" + t.getTxnDate() + "|"
                 + t.getAmount().stripTrailingZeros().toPlainString() + "|" + t.getDescription();
+    }
+
+    // --- Date-windowed candidate lookup -------------------------------------------------------
+    //
+    // Both the transfer and refund passes are pair-matching loops whose match condition includes a
+    // hard date bound -- 4 or 10 days for a transfer, 180 for a refund. A flat inner scan compares
+    // every pair and then rejects almost all of them on that bound, which is work whose outcome
+    // was knowable before it started. Measured at 50k transactions, that flat scan was 8.4 seconds
+    // of synchronous work on a request-handling thread, run after every transaction create,
+    // update, delete, import confirm and statement delete.
+    //
+    // These take a list already sorted by (txnDate, id) -- see where `candidates` is built -- and
+    // return the contiguous slice that could possibly match. Every predicate the loops applied
+    // before is still applied; this changes only how many candidates are offered to them, never
+    // which ones qualify.
+
+    /** The slice within {@code days} either side of {@code anchor}, inclusive. */
+    private static List<Transaction> withinDays(List<Transaction> sortedByDate, LocalDate anchor, long days) {
+        return between(sortedByDate, anchor.minusDays(days), anchor.plusDays(days));
+    }
+
+    /** The slice with {@code from <= txnDate <= to}. Empty when nothing falls in range. */
+    private static List<Transaction> between(List<Transaction> sortedByDate, LocalDate from, LocalDate to) {
+        int start = firstIndexOnOrAfter(sortedByDate, from);
+        int end = firstIndexAfter(sortedByDate, to);
+        // A view, not a copy -- the loops read it and mutate the Transaction objects themselves,
+        // never the list's structure, so there is nothing to defend against by copying.
+        return start >= end ? List.of() : sortedByDate.subList(start, end);
+    }
+
+    private static int firstIndexOnOrAfter(List<Transaction> sortedByDate, LocalDate date) {
+        int low = 0, high = sortedByDate.size();
+        while (low < high) {
+            int mid = (low + high) >>> 1;
+            if (sortedByDate.get(mid).getTxnDate().isBefore(date)) low = mid + 1;
+            else high = mid;
+        }
+        return low;
+    }
+
+    private static int firstIndexAfter(List<Transaction> sortedByDate, LocalDate date) {
+        int low = 0, high = sortedByDate.size();
+        while (low < high) {
+            int mid = (low + high) >>> 1;
+            if (sortedByDate.get(mid).getTxnDate().isAfter(date)) high = mid;
+            else low = mid + 1;
+        }
+        return low;
     }
 
     private boolean looksLikeRefund(String description) {
