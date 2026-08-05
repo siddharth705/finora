@@ -428,4 +428,64 @@ class TransactionNormalizerTest {
 
         assertThat(normalizer.explainFailure(row)).contains("not-a-number").contains("didn't match any known numeric format");
     }
+
+    // --- A zero in the unused column must not shadow the real amount ---------------------------
+    //
+    // Verified against a real HDFC savings statement. A separate Withdrawals/Deposits layout does
+    // not leave the side that did not move blank -- it prints 0.00 there. AMOUNT_HINTS checks
+    // "deposits" before "withdrawals", and 0.00 is neither blank nor unparseable, so every
+    // withdrawal on that statement imported with amount 0 while the one genuine deposit imported
+    // correctly. Silently wrong data rather than a dropped row, and the file looked like it worked.
+
+    @Test
+    void normalize_readsTheWithdrawal_whenTheDepositColumnHoldsAZero() {
+        Map<String, String> row = rowOf(
+                "Txn Date", "16/07/2026", "Narration", "JNS-PMJJBY PREMIUM",
+                "Withdrawals", "436.00", "Deposits", "0.00", "Closing Balance", "24,544.00");
+
+        StagedRow staged = normalizer.normalize(userId, row);
+
+        assertThat(staged.amount()).isEqualByComparingTo("436.00");
+    }
+
+    @Test
+    void normalize_classifiesAWithdrawalAsExpense_whenTheDepositColumnHoldsAZero() {
+        // The same zero was wrong twice: CREDIT_HINTS matched it too, and the direction check only
+        // asks whether a credit column had a value at all -- so these rows were EXPENSE only by
+        // accident of their amount being zero, and would have flipped to INCOME once the amount
+        // was fixed. A zero in the credit column means "not this side".
+        Map<String, String> row = rowOf(
+                "Txn Date", "16/07/2026", "Narration", "JNS-PMSBY PREMIUM",
+                "Withdrawals", "20.00", "Deposits", "0.00", "Closing Balance", "24,980.00");
+
+        StagedRow staged = normalizer.normalize(userId, row);
+
+        assertThat(staged.type()).isEqualTo("EXPENSE");
+        assertThat(staged.amount()).isEqualByComparingTo("20.00");
+    }
+
+    @Test
+    void normalize_stillReadsTheDeposit_whenTheWithdrawalColumnHoldsAZero() {
+        // The mirror case, so the fix cannot be "always prefer withdrawals".
+        Map<String, String> row = rowOf(
+                "Txn Date", "10/07/2026", "Narration", "UPI CREDIT",
+                "Withdrawals", "0.00", "Deposits", "25,000.00", "Closing Balance", "25,000.00");
+
+        StagedRow staged = normalizer.normalize(userId, row);
+
+        assertThat(staged.amount()).isEqualByComparingTo("25000.00");
+        assertThat(staged.type()).isEqualTo("INCOME");
+    }
+
+    @Test
+    void normalize_stillAcceptsAGenuinelyZeroAmount_whenNothingElseParses() {
+        // Zero is not rejected outright -- only deprioritised. A row whose only parseable value is
+        // zero must still normalize to zero rather than failing.
+        Map<String, String> row = rowOf(
+                "Date", "05/07/2026", "Description", "NIL CHARGE", "Amount", "0.00");
+
+        StagedRow staged = normalizer.normalize(userId, row);
+
+        assertThat(staged.amount()).isEqualByComparingTo("0.00");
+    }
 }

@@ -128,6 +128,42 @@ public class TransactionNormalizer {
     // this, that label matched the "deposits" hint first and the row's real amount (a genuine
     // last transaction's Withdrawals value, sharing this row with the closing-balance label) was
     // never reached; the row failed to parse a nonsense "amount" instead.
+    /**
+     * The first hint whose value parses to a NON-ZERO number.
+     *
+     * <p>Bug fix, verified against a real HDFC savings statement. A separate-columns layout does
+     * not leave the unused side blank -- it prints {@code 0.00} there. On a withdrawal row that
+     * gives {@code Withdrawals=436.00, Deposits=0.00}, and {@code 0.00} is neither blank nor
+     * unparseable, so {@link #firstParseableAmount} committed to it the moment "deposits" was
+     * checked (which AMOUNT_HINTS does before "withdrawals") and never reached the real figure.
+     * Three withdrawals imported as amount 0 while the one genuine deposit on the same statement
+     * imported correctly -- the shape that makes this hard to notice, since the file plainly
+     * "worked".
+     *
+     * <p>It was wrong twice over: CREDIT_HINTS matched that same {@code 0.00} deposit cell, and
+     * the direction check below only asks whether a credit column had a value at all -- so every
+     * one of those withdrawals would have been classified INCOME once the amount was right. A zero
+     * in the credit column is the layout's way of saying "not this side", which is the opposite of
+     * what a non-null credit value is taken to mean.
+     *
+     * <p>Zero is still a legitimate amount in principle, so this does not reject it outright --
+     * callers fall back to {@link #firstParseableAmount}, and a row whose only parseable value is
+     * zero still normalizes to zero exactly as before.
+     */
+    private static String firstNonZeroAmount(Map<String, String> row, String[] hints) {
+        for (String hint : hints) {
+            for (Map.Entry<String, String> e : row.entrySet()) {
+                if (e.getKey() != null && CsvParser.normalizeHeaderCell(e.getKey()).equalsIgnoreCase(hint)) {
+                    String v = e.getValue();
+                    if (v == null || v.isBlank()) continue;
+                    var parsed = CsvParser.parseNumeric(v);
+                    if (parsed != null && parsed.signum() != 0) return v;
+                }
+            }
+        }
+        return null;
+    }
+
     private static String firstParseableAmount(Map<String, String> row, String[] hints) {
         for (String hint : hints) {
             for (Map.Entry<String, String> e : row.entrySet()) {
@@ -154,7 +190,10 @@ public class TransactionNormalizer {
         if (dateRaw == null) return "No column recognized as a date";
         if (CsvParser.parseDate(dateRaw.trim()) == null) return "Date value \"" + dateRaw + "\" didn't match any known date format";
 
-        String amountRaw = firstParseableAmount(row, AMOUNT_HINTS);
+        String amountRaw = firstNonZeroAmount(row, AMOUNT_HINTS);
+        // Falls back so a genuinely zero-amount row still normalizes exactly as before -- the
+        // preference above only stops a 0.00 in the unused column from shadowing the real one.
+        if (amountRaw == null) amountRaw = firstParseableAmount(row, AMOUNT_HINTS);
         if (amountRaw == null) {
             String anyAmountRaw = CsvParser.firstNonBlank(row, AMOUNT_HINTS);
             if (anyAmountRaw == null) return "No column recognized as an amount or balance";
@@ -176,7 +215,10 @@ public class TransactionNormalizer {
      *  DocumentContext in scope (or don't care) get exactly the old behavior. */
     public StagedRow normalize(UUID userId, Map<String, String> row, DocumentContext ctx) {
         String dateRaw = CsvParser.firstNonBlank(row, DATE_HINTS);
-        String amountRaw = firstParseableAmount(row, AMOUNT_HINTS);
+        String amountRaw = firstNonZeroAmount(row, AMOUNT_HINTS);
+        // Falls back so a genuinely zero-amount row still normalizes exactly as before -- the
+        // preference above only stops a 0.00 in the unused column from shadowing the real one.
+        if (amountRaw == null) amountRaw = firstParseableAmount(row, AMOUNT_HINTS);
         if (dateRaw == null || amountRaw == null) return null;
 
         if (ctx != null && CsvParser.hasDateTimeComponent(dateRaw)) ctx.record("DATE_TIME_COLUMN");
@@ -196,7 +238,9 @@ public class TransactionNormalizer {
         // summary row's "Closing Balance"/"Opening Balance" label sitting in the Deposits column
         // must not be read as "this row has a credit," any more than it should be read as this
         // row's actual amount.
-        String creditRaw = firstParseableAmount(row, CREDIT_HINTS);
+        // Non-zero deliberately: the direction check below treats any credit value as proof of
+        // income, and a separate-columns layout prints 0.00 in the side that did NOT move.
+        String creditRaw = firstNonZeroAmount(row, CREDIT_HINTS);
         // Bug fix: a unified Amount + Type column layout (one amount column, a separate Type
         // column holding literally "DR"/"CR" -- e.g. PNB ONE's PDF/CSV exports) has neither a
         // "credit" column nor a Type value containing the literal word "income", so every row
