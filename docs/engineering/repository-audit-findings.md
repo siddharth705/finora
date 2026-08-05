@@ -218,23 +218,18 @@ proven at the unit level.
 
 | Suite | Result |
 |---|---|
-| Backend unit tests | 1052 run, 0 failures |
-| Backend integration tests (`*IT`) | **117 could not run** — see below |
+| Backend, full `./mvnw test` | **1167 run, 0 failures, 0 errors, 0 skipped** |
+| — of which Testcontainers integration tests (`*IT`) | 117 across 30 classes, 0 failures |
 | User frontend | 160/160 passing, build and lint clean |
 | Admin portal | 221/221 passing, build and lint clean |
 | Mobile | 135/135 passing, typecheck and lint clean |
 
-The 117 Testcontainers-backed integration tests could not be executed: the Docker daemon on the
-development machine wedged mid-audit (`docker info` hangs; both named pipes absent) and did not
-recover. Every failure is `Could not initialize class AbstractIntegrationTest` — a missing Docker
-environment, with **zero assertion failures**. The usual remedy (`wsl --shutdown`) was not run
-because it would kill unrelated work in progress.
+The integration suite was blocked for part of the audit — Docker Desktop stopped running on the
+development machine, so all 117 Testcontainers tests failed with `Could not initialize class
+AbstractIntegrationTest` (a missing Docker environment, zero assertion failures). Docker was
+restarted and the full suite re-run against the merged tree; the numbers above are from that clean
+run, so there is no outstanding local certification gap.
 
-This is a genuine gap in local certification, mitigated three ways: the same suite ran fully green
-(1105/1105) earlier in the audit before Docker wedged, covering the first backend pass; the newly
-constrained fields were checked by reading the integration tests' actual payloads, none of which
-send a `websiteUrl` or `website` value that could newly fail validation; and CI runs the full
-`./mvnw test` on a runner with a working Docker, so the push is verified there.
-
-**Re-run the integration suite locally once Docker is healthy** rather than treating CI as the only
-gate.
+Worth knowing for the next person who hits this: `backend/target/surefire-reports/` is not cleared
+between runs, so aggregating it after a partial run silently mixes in stale results from previous
+ones. Check report mtimes against the run you actually care about, or `mvn clean test`.
