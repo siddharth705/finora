@@ -60,15 +60,19 @@ public class PdfPreviewGenerator {
     private final ProductDiscovery productDiscovery;
     private final ProductAttributeExtractor attributeExtractor;
 
+    private final com.finora.imports.BalanceChainValidator balanceChainValidator;
+
     public PdfPreviewGenerator(PdfTextExtractor textExtractor, PdfTableLocator tableLocator,
                                 PdfMetadataExtractor metadataExtractor, TransactionNormalizer transactionNormalizer,
-                                ProductDiscovery productDiscovery, ProductAttributeExtractor attributeExtractor) {
+                                ProductDiscovery productDiscovery, ProductAttributeExtractor attributeExtractor,
+                                com.finora.imports.BalanceChainValidator balanceChainValidator) {
         this.textExtractor = textExtractor;
         this.tableLocator = tableLocator;
         this.metadataExtractor = metadataExtractor;
         this.transactionNormalizer = transactionNormalizer;
         this.productDiscovery = productDiscovery;
         this.attributeExtractor = attributeExtractor;
+        this.balanceChainValidator = balanceChainValidator;
     }
 
     /** Single-account convenience wrapper over {@link #generateSections} -- returns the FIRST
@@ -268,7 +272,10 @@ public class PdfPreviewGenerator {
 
         int dupCount = (int) staged.stream().filter(StagedRow::likelyDuplicate).count();
         DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, staged, balancePoints, product, ctx);
-        return new StagedAccountSection(detected, staged, staged.size(), dupCount, unparseable);
+        // Per section rather than per file: a composite statement's sections have separate balance
+        // chains, and one can verify while another does not.
+        var verification = balanceChainValidator.report(staged, detected == null ? null : detected.openingBalance());
+        return new StagedAccountSection(detected, staged, staged.size(), dupCount, unparseable, verification);
     }
 
     private StagedAccountSection surfaceUnrecognizedText(StagedAccountSection section, List<String> extractedLines) {

@@ -73,7 +73,7 @@ class ImportServiceAskOnceTest {
         CsvParser csvParser = new CsvParser();
         TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector);
         StatementValidator statementValidator = new StatementValidator(com.finora.imports.product.ProductDiscovery.standard());
-        PreviewGenerator previewGenerator = new PreviewGenerator(csvParser, transactionNormalizer, statementValidator);
+        PreviewGenerator previewGenerator = new PreviewGenerator(csvParser, transactionNormalizer, statementValidator, new com.finora.imports.BalanceChainValidator());
         ImportRuleLearningService ruleLearningService = new ImportRuleLearningService(categorizationService);
 
         // Wired the same way Spring would assemble it — see the v56 modularization pass, which

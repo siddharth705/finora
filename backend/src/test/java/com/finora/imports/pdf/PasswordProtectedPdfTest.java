@@ -132,7 +132,7 @@ class PasswordProtectedPdfTest {
                 new TransactionNormalizer(categorizationService, new DuplicateDetector(transactionRepository));
 
         return new PdfPreviewGenerator(new PdfTextExtractor(), new PdfTableLocator(), new PdfMetadataExtractor(),
-                normalizer, ProductDiscovery.standard(), new ProductAttributeExtractor());
+                normalizer, ProductDiscovery.standard(), new ProductAttributeExtractor(), new com.finora.imports.BalanceChainValidator());
     }
 
     @Test

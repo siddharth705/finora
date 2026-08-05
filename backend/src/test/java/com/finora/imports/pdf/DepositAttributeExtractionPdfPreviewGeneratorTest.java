@@ -40,7 +40,7 @@ class DepositAttributeExtractionPdfPreviewGeneratorTest {
         PdfPreviewGenerator generator = new PdfPreviewGenerator(new PdfTextExtractor(), new PdfTableLocator(),
                 new PdfMetadataExtractor(), normalizer,
                 com.finora.imports.product.ProductDiscovery.standard(),
-                new com.finora.imports.product.ProductAttributeExtractor());
+                new com.finora.imports.product.ProductAttributeExtractor(), new com.finora.imports.BalanceChainValidator());
 
         return generator.generateSections(UUID.randomUUID(), "combined.pdf",
                 PdfFixtureBuilder.buildCompositeMultiProductStatementSample());

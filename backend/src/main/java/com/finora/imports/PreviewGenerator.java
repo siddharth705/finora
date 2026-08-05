@@ -27,11 +27,15 @@ public class PreviewGenerator {
     private final TransactionNormalizer transactionNormalizer;
     private final StatementValidator statementValidator;
 
+    private final BalanceChainValidator balanceChainValidator;
+
     public PreviewGenerator(CsvParser csvParser, TransactionNormalizer transactionNormalizer,
-                             StatementValidator statementValidator) {
+                             StatementValidator statementValidator,
+                             BalanceChainValidator balanceChainValidator) {
         this.csvParser = csvParser;
         this.transactionNormalizer = transactionNormalizer;
         this.statementValidator = statementValidator;
+        this.balanceChainValidator = balanceChainValidator;
     }
 
     public StagingResponse generate(UUID userId, String filename, InputStream contentStream) throws IOException {
@@ -103,6 +107,10 @@ public class PreviewGenerator {
         int dupCount = (int) staged.stream().filter(StagedRow::likelyDuplicate).count();
         DetectedAccountInfo detected = statementValidator.buildDetectedAccountInfo(filename, allRows, headerIdx, staged, signals);
         ctx.recordUnparseable(unparseable);
-        return new CsvGenerationResult(new StagingResponse(staged, staged.size(), dupCount, detected, unparseable), ctx);
+        // Cross-checks the parsed rows against the statement's own running balance. Reported, never
+        // enforced -- see BalanceChainValidator for why refusing an import would be the wrong trade.
+        var verification = balanceChainValidator.report(staged, detected == null ? null : detected.openingBalance());
+        return new CsvGenerationResult(
+                new StagingResponse(staged, staged.size(), dupCount, detected, unparseable, verification), ctx);
     }
 }

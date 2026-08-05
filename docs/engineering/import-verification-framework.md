@@ -51,8 +51,7 @@ AmountColumnAmbiguity      FAIL   row=17
 AccountNumberMatched       PASS
 ```
 
-`ConfidenceEngine` (which already exists) aggregates them into VERIFIED / WARNING / FAILED. Two
-consequences worth stating:
+An aggregator combines them into VERIFIED / WARNING / FAILED. Two consequences worth stating:
 
 - A validator becomes independently testable and independently addable. Nothing needs to agree in
   advance about what "warning" means.
@@ -61,6 +60,20 @@ consequences worth stating:
 `BalanceChainValidator.Outcome` should therefore shrink to a fact, and the aggregation move out.
 Doing this **before** a second validator exists is the point — this repository's own audit history
 is largely a catalogue of what happens when a rule gets copied instead of extracted.
+
+### Correction: `ConfidenceEngine` is not the aggregator
+
+An earlier draft of this document said the existing `ConfidenceEngine` should aggregate these
+facts. That is wrong, and checking it is what settled the sequencing question. `ConfidenceEngine`
+answers *"how confident are we that merchant X belongs to category Y"* -- a category's share of a
+merchant's confirmation history. Import verification answers *"how confident are we that this
+import faithfully represents the source document"*. Different domains; reusing it would leave
+"confidence" meaning two unrelated things in one codebase.
+
+So the aggregator does not exist, and building one now would mean inventing weights, precedence and
+policy for a single validator with nothing to weigh it against. It waits until a second validator
+exists. What does NOT wait is the wire format: `VerificationReport` already carries a list of
+findings, so adding validators later appends to it and changes nothing else.
 
 ## Evidence quality, not one-off checks
 
@@ -87,7 +100,7 @@ evidence, and it composes with everything else automatically.
 | 5. Summary — the bank's own printed totals and counts | not built | HDFC prints `Debit 538.00, Count 3` |
 | 6. Semantic — direction agrees with balance movement | free | falls out of layer 3 |
 | 7. Cross-field — mutually-exclusive columns both populated | not built | becomes evidence grading, above |
-| 8. Confidence engine | partial | `ConfidenceEngine` exists, not fed by this |
+| 8. Confidence engine | not built | see the correction below -- `ConfidenceEngine` is unrelated |
 | 9. Golden traces | built | `GoldenOutputSnapshotTest`, `trace-capture.sh` |
 | 10. Production telemetry | not built | V55 explanations are the precedent |
 

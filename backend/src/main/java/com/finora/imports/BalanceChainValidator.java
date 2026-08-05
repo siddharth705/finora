@@ -1,12 +1,15 @@
 package com.finora.imports;
 
+import com.finora.dto.ImportDto;
 import com.finora.dto.ImportDto.StagedRow;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Checks parsed rows against the arithmetic the statement asserts about itself.
@@ -112,6 +115,45 @@ public class BalanceChainValidator {
      * ratio say something it could not support.
      */
     private static final int MIN_DISCREPANCIES_FOR_FAILED = 2;
+
+    /** The machine identifier this validator reports findings under. Stable by contract: clients
+     *  group, count and explain by it, so it must not change when the wording does. */
+    public static final String RULE = "BALANCE_CHAIN";
+
+    /**
+     * Runs the check and returns it in the shape the API exposes.
+     *
+     * <p>Kept here rather than in each producer so the two staging paths (CSV and PDF) cannot
+     * describe the same finding differently -- the sort of drift this repository has repeatedly
+     * had to go back and fix.
+     *
+     * <p>Returns a report holding exactly one finding, deliberately rather than the finding itself:
+     * a second validator appends to the list and nothing about the shape changes, whereas returning
+     * a bare finding would have to be reshaped the first time there were two.
+     */
+    public ImportDto.VerificationReport report(List<StagedRow> rows, BigDecimal openingBalance) {
+        Result result = validate(rows, openingBalance);
+
+        // Typed while it is being built, then handed over as the finding's per-rule payload. The
+        // wire format does not name this shape, because the next checks planned (statement totals,
+        // structural) have no row to point at -- see VerificationFinding.details.
+        List<ImportDto.RowDiscrepancy> discrepancies = result.discrepancies().stream()
+                .map(d -> new ImportDto.RowDiscrepancy(
+                        d.rowIndex(), d.expectedBalance(), d.actualBalance(), d.difference()))
+                .toList();
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("rowsChecked", result.rowsChecked());
+        details.put("rowsWithBalance", result.rowsWithBalance());
+        details.put("anchoredOnOpeningBalance", openingBalance != null);
+        details.put("discrepancies", discrepancies);
+
+        // The rule's verdict about its own domain, keeping the WARNING/FAILED distinction rather
+        // than flattening to a boolean -- "a few rows disagree" and "this column is being misread"
+        // call for different responses, and only this class knows which it saw.
+        var finding = new ImportDto.VerificationFinding(RULE, result.status().name(), details);
+        return new ImportDto.VerificationReport(List.of(finding));
+    }
 
     /**
      * Validates rows in the order the statement presents them.

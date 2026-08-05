@@ -135,8 +135,73 @@ public class ImportDto {
             Integer installmentsTotal
     ) {}
 
+    /**
+     * Whether this import can be proven faithful to the statement it came from, and on what basis.
+     *
+     * <p>Deliberately a REPORT containing findings, not a single verdict, even though exactly one
+     * check produces findings today. Adding a validator later appends to {@code findings} and
+     * changes nothing about this shape -- which is the whole reason to pay for the extra nesting
+     * now rather than exposing one check's result directly and reshaping the wire format later.
+     *
+     * <p><b>Deliberately has no overall status.</b> With one finding it would be pure duplication;
+     * with several it would be a second source of truth that could disagree with the findings it
+     * claims to summarise, and nothing would guarantee which was right. Deriving a document-level
+     * verdict from several rules is the aggregator's job, and the aggregator does not exist yet
+     * (see docs/engineering/import-verification-framework.md for why building it for a single
+     * validator would mean inventing weights with nothing to weigh). When it does, it adds a
+     * derived field here -- an additive change -- rather than this shipping an authoritative-looking
+     * field that nothing authoritative computes.
+     *
+     * <p>Deliberately carries no human-readable prose. A sentence baked in here would be composed
+     * for whichever screen existed when it was written, and web, mobile and admin all want to say
+     * this differently -- structured facts are what let each decide. The server still composes a
+     * sentence for its own logs; that one is not part of the contract.
+     *
+     * <p>See docs/engineering/import-verification-framework.md for why the aggregation that will
+     * eventually compute {@code status} from several findings is NOT being built yet.
+     */
+    public record VerificationReport(List<VerificationFinding> findings) {}
+
+    /**
+     * One check's result. {@code rule} is a stable machine identifier ("BALANCE_CHAIN"), never a
+     * label -- a client that wants to explain, group or count a rule needs something that does not
+     * change when the wording does.
+     *
+     * <p>{@code outcome} is this rule's verdict about its OWN domain (PASS / WARNING / FAILED /
+     * NOT_APPLICABLE). A rule judging what it measured is legitimate; what does not compose is a
+     * document-level verdict derived from several rules, which is why this report has no top-level
+     * status field -- see {@link VerificationReport}.
+     *
+     * <p>{@code details} is a per-rule payload rather than a fixed shape, because the checks this
+     * will hold are not all row-centric. The balance chain reports per-row discrepancies; a
+     * statement-totals check reports one expected-versus-actual closing balance and has no row to
+     * point at; a structural check reports missing column names. Forcing all of them through a
+     * row-shaped field would mean either empty {@code rowIndex} values carrying no meaning, or
+     * reshaping this record the first time a non-row check lands -- and the next one planned
+     * (statement totals) is exactly that. Same {@code Map<String, Object>} convention as
+     * {@code AuditLog.metadata} and V55's reconciliation explanations, so readers meet it once.
+     */
+    public record VerificationFinding(String rule, String outcome, Map<String, Object> details) {}
+
+    /**
+     * A row whose recorded amount does not move the balance the way the statement says it did.
+     * {@code rowIndex} points into the staged rows the client is already displaying, so a UI can
+     * highlight the exact line rather than asking someone to re-read the statement.
+     */
+    public record RowDiscrepancy(int rowIndex, BigDecimal expectedBalance,
+                                  BigDecimal actualBalance, BigDecimal difference) {}
+
     public record StagingResponse(List<StagedRow> rows, int totalParsed, int flaggedDuplicates,
-                                   DetectedAccountInfo detectedAccount, List<UnparseableRow> unparseableRows) {}
+                                   DetectedAccountInfo detectedAccount, List<UnparseableRow> unparseableRows,
+                                   VerificationReport verification) {
+        /** Keeps the seventeen existing construction sites compiling untouched -- only the two that
+         *  actually produce a verification need to know this field exists. Null means "not checked",
+         *  which is distinct from a report saying NOT_APPLICABLE ("checked, nothing to check with"). */
+        public StagingResponse(List<StagedRow> rows, int totalParsed, int flaggedDuplicates,
+                               DetectedAccountInfo detectedAccount, List<UnparseableRow> unparseableRows) {
+            this(rows, totalParsed, flaggedDuplicates, detectedAccount, unparseableRows, null);
+        }
+    }
 
     /** One detected account section within a single PDF upload -- e.g. HSBC's "Composite
      *  Statement" bundles a savings-account section and a credit-card section in one file, each
@@ -145,7 +210,16 @@ public class ImportDto {
      *  ({@link PdfStagingSessionResponse}) reads unambiguously as "a list of these," not "a list
      *  of the same type used for the single-account case," which would invite confusing the two. */
     public record StagedAccountSection(DetectedAccountInfo detectedAccount, List<StagedRow> rows,
-                                        int totalParsed, int flaggedDuplicates, List<UnparseableRow> unparseableRows) {}
+                                        int totalParsed, int flaggedDuplicates, List<UnparseableRow> unparseableRows,
+                                        VerificationReport verification) {
+        /** Same reasoning as StagingResponse's -- see its overload. Per SECTION rather than per
+         *  file, because a composite statement's sections have separate balance chains and one can
+         *  verify while another does not. */
+        public StagedAccountSection(DetectedAccountInfo detectedAccount, List<StagedRow> rows,
+                                    int totalParsed, int flaggedDuplicates, List<UnparseableRow> unparseableRows) {
+            this(detectedAccount, rows, totalParsed, flaggedDuplicates, unparseableRows, null);
+        }
+    }
 
     /** Response shape for POST /import/pdf/stage. Exactly one of {@code staging}/{@code sections}
      *  is populated, selected by {@code multiAccount}: a PDF with one detected account section

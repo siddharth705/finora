@@ -39,7 +39,7 @@ class MultiColumnPaymentSummaryGridPdfPreviewGeneratorTest {
         TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector);
 
         return new PdfPreviewGenerator(new PdfTextExtractor(), new PdfTableLocator(),
-                new PdfMetadataExtractor(), transactionNormalizer, com.finora.imports.product.ProductDiscovery.standard(), new com.finora.imports.product.ProductAttributeExtractor());
+                new PdfMetadataExtractor(), transactionNormalizer, com.finora.imports.product.ProductDiscovery.standard(), new com.finora.imports.product.ProductAttributeExtractor(), new com.finora.imports.BalanceChainValidator());
     }
 
     private DetectedAccountInfo detect() throws Exception {
