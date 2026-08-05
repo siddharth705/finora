@@ -77,6 +77,7 @@ export default function Settings() {
   const [intelError, setIntelError] = useState(false);
 
   const [importStats, setImportStats] = useState<ImportStatistics | null>(null);
+  const [importStatsFailed, setImportStatsFailed] = useState(false);
 
   const [sessions, setSessions] = useState<DeviceSession[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
@@ -115,8 +116,13 @@ export default function Settings() {
       setIntelLoading(false);
     }).catch(() => setIntelLoading(false));
     // Best-effort — the Data section shows "—" for any stat that doesn't load rather than
-    // blocking the rest of the page on it.
-    analyticsApi.importStatistics().then(setImportStats).catch(() => {});
+    // blocking the rest of the page on it. That part is still deliberate.
+    //
+    // What it did not account for: "—" for a failed request is indistinguishable from "—" for a
+    // user who has genuinely never imported anything, so a broken endpoint reads as an empty
+    // account. The failure is now recorded and labelled; the page still renders regardless, which
+    // was the actual intent.
+    analyticsApi.importStatistics().then(setImportStats).catch(() => setImportStatsFailed(true));
     loadSessions();
   }, []);
 
@@ -354,6 +360,11 @@ export default function Settings() {
           <MetricTile label="Rows Skipped" value={importStats ? importStats.totalTransactionsSkipped.toLocaleString('en-IN') : '—'} />
           <MetricTile label="Last Import" value={formatDayMonthYear(importStats?.lastImportedAt)} />
         </div>
+        {importStatsFailed && (
+          <p className="text-xs text-warning mt-3">
+            Couldn't load these statistics just now — they're unavailable, not zero.
+          </p>
+        )}
       </SectionCard>
 
       {changePasswordOpen && (

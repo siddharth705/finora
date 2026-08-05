@@ -263,11 +263,19 @@ function EditTransactionModal({
   const [notes, setNotes] = useState(transaction.notes ?? '');
   const [tagsInput, setTagsInput] = useState((transaction.tags ?? []).join(', '));
   const [categories, setCategories] = useState<string[]>([]);
+  const [categoriesFailed, setCategoriesFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    categoriesApi.list().then((cats) => setCategories(cats.map((c) => c.name))).catch(() => {});
+    // Bug fix: this was `.catch(() => {})`, which left the dropdown empty and made "the request
+    // failed" look exactly like "you have no categories" -- and the user's only recourse for an
+    // apparently-empty list is to go create categories that already exist. The edit modal still
+    // opens and still saves (the current category is preserved by the option below), so this is a
+    // notice rather than a blocker.
+    categoriesApi.list()
+      .then((cats) => setCategories(cats.map((c) => c.name)))
+      .catch(() => setCategoriesFailed(true));
   }, []);
 
   async function save() {
@@ -341,6 +349,11 @@ function EditTransactionModal({
                 {!categories.includes(category) && <option value={category}>{category}</option>}
                 {categories.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
+              {categoriesFailed && (
+                <p className="text-[11px] text-warning mt-1">
+                  Couldn't load your categories — only the current one is shown.
+                </p>
+              )}
             </div>
             <div className="col-span-2">
               <label htmlFor="edit-txn-notes" className="block text-[11px] uppercase text-muted mb-1">Notes</label>
