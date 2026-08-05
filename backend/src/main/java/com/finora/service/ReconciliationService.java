@@ -3,6 +3,8 @@ package com.finora.service;
 import com.finora.entity.Transaction;
 import com.finora.repository.TransactionRepository;
 import com.finora.util.CategoryRules;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -10,6 +12,7 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -18,18 +21,13 @@ import java.util.UUID;
 @Service
 public class ReconciliationService {
 
-    // Plain amount+date transfer matches need to fall within this many days of each other.
-    // Widened (not replaced) when a known OWN_ACCOUNT relationship identifier is found on either
-    // side of the pair -- see the relationshipMatch check below and
-    // docs/rule-engine-relationship-engine-eds.md §4 ("raise transfer-match confidence... not
-    // replace the heuristic").
-    private static final long DEFAULT_TRANSFER_DAY_WINDOW = 4;
-    private static final long OWN_ACCOUNT_MATCH_DAY_WINDOW = 10;
-
-    // How far apart a refund can land from the purchase it reverses. Wider than the transfer
-    // windows above on purpose -- transfers between the user's own accounts happen within days;
-    // merchant refunds (a return, a cancelled order, a billing dispute) routinely take weeks.
-    private static final long REFUND_WINDOW_DAYS = 180;
+    // The thresholds these passes decide by now live in ReconciliationPolicy -- they are business
+    // rules rather than implementation detail, and there was nowhere to read them together. Values
+    // are unchanged; see that class for each one's reasoning and for why none of them is
+    // configurable. Imported statically so the matching code below still reads as prose.
+    private static final long DEFAULT_TRANSFER_DAY_WINDOW = ReconciliationPolicy.DEFAULT_TRANSFER_DAY_WINDOW;
+    private static final long OWN_ACCOUNT_MATCH_DAY_WINDOW = ReconciliationPolicy.OWN_ACCOUNT_MATCH_DAY_WINDOW;
+    private static final long REFUND_WINDOW_DAYS = ReconciliationPolicy.REFUND_WINDOW_DAYS;
 
     // Keyword signal for "this INCOME row is a refund," independent of merchant matching -- see
     // the refund pass below. Deliberately not folded into CategoryRules (util package): that
@@ -37,6 +35,14 @@ public class ReconciliationService {
     // RECONCILIATION status, a different concern evaluated at a different point in the pipeline.
     private static final Set<String> REFUND_KEYWORDS = Set.of(
             "refund", "reversal", "returned", "chargeback", "credit adjustment", "cancelled", "canceled");
+
+    // A run past this is worth a log line on its own. Chosen against the measurement in
+    // scaling-triggers.md rather than picked as a round number: the windowed passes take ~105 ms
+    // at 1k transactions and ~450 ms at 10k, so a second means either an unusually large history
+    // or something that has regressed, and both are worth knowing about.
+    private static final long SLOW_RUN_WARN_MS = 1_000;
+
+    private static final Logger log = LoggerFactory.getLogger(ReconciliationService.class);
 
     private final TransactionRepository transactionRepository;
     private final RelationshipService relationshipService;
@@ -64,6 +70,7 @@ public class ReconciliationService {
      *    routinely differs entirely from the original purchase's.
      */
     public void reconcileForUser(UUID userId) {
+        long startedAtNanos = System.nanoTime();
         List<Transaction> all = transactionRepository.findByUserId(userId);
 
         // 1) Duplicates -- grouped in-memory over the already-fetched `all` list rather than one
@@ -88,6 +95,19 @@ public class ReconciliationService {
         // most recent run actually do).
         int newDuplicates = 0, newTransfers = 0, newRefunds = 0;
 
+        // Every row the passes below touch, written once at the end instead of one save() per
+        // match. A large first import can flag hundreds of duplicates, and each save() was its own
+        // round trip -- the batch_size: 50 and order_updates: true already configured in
+        // application.yml could not do anything for writes issued one statement at a time.
+        //
+        // A LinkedHashSet, not a list: the transfer pass touches BOTH sides of a pair and the same
+        // transaction can be reached twice across passes, so this de-duplicates by identity while
+        // keeping write order deterministic. Transaction has no equals()/hashCode() override, so
+        // identity is exactly what this compares -- which is what is wanted here, since two
+        // distinct rows are never interchangeable even when their fields match (that is the whole
+        // subject of the duplicate pass).
+        Set<Transaction> dirty = new LinkedHashSet<>();
+
         Map<String, List<Transaction>> byDuplicateKey = new HashMap<>();
         for (Transaction t : all) {
             if (t.getIsDuplicateOf() != null) continue; // already resolved by a prior run
@@ -100,7 +120,8 @@ public class ReconciliationService {
                 if (t == earliest || t.getIsDuplicateOf() != null) continue;
                 t.setIsDuplicateOf(earliest.getId());
                 t.setReconciliationStatus(Transaction.ReconciliationStatus.DUPLICATE);
-                transactionRepository.save(t);
+                t.setReconciliationExplanation(ReconciliationExplanation.duplicate(earliest.getId()));
+                dirty.add(t);
                 newDuplicates++;
             }
         }
@@ -167,7 +188,8 @@ public class ReconciliationService {
                 if (looksLikeSalary.getOrDefault(b.getId(), false)) continue; // same guard, other side of the pair
                 if (a.getAccountId().equals(b.getAccountId()) || a.getTxnType() == b.getTxnType()) continue;
 
-                boolean sameAmount = a.getAmount().subtract(b.getAmount()).abs().compareTo(BigDecimal.ONE) < 0;
+                boolean sameAmount = a.getAmount().subtract(b.getAmount()).abs()
+                        .compareTo(ReconciliationPolicy.TRANSFER_AMOUNT_TOLERANCE) < 0;
                 long daysApart = Math.abs(ChronoUnit.DAYS.between(a.getTxnDate(), b.getTxnDate()));
 
                 boolean relationshipMatch = aOwnAccountMatch || ownAccountMatch.getOrDefault(b.getId(), false);
@@ -178,8 +200,15 @@ public class ReconciliationService {
                     a.setTransferPairId(b.getId()); b.setTransferPairId(a.getId());
                     a.setReconciliationStatus(Transaction.ReconciliationStatus.TRANSFER);
                     b.setReconciliationStatus(Transaction.ReconciliationStatus.TRANSFER);
-                    transactionRepository.save(a);
-                    transactionRepository.save(b);
+                    // Both sides get their own explanation, each naming the other. A transfer is
+                    // one decision but two rows, and someone looking at either row should not have
+                    // to fetch the partner to find out why this one was excluded from totals.
+                    a.setReconciliationExplanation(
+                            ReconciliationExplanation.transfer(a, b, dayWindow, relationshipMatch));
+                    b.setReconciliationExplanation(
+                            ReconciliationExplanation.transfer(b, a, dayWindow, relationshipMatch));
+                    dirty.add(a);
+                    dirty.add(b);
                     newTransfers++; // one pair = one match, not two (see WorkspaceSummaryDto's own note on this asymmetry)
                     break;
                 }
@@ -196,6 +225,7 @@ public class ReconciliationService {
 
             boolean refundKeyword = looksLikeRefund(income.getDescription());
             Transaction bestMatch = null;
+            boolean bestMatchSameMerchant = false;
             // A refund lands at or after its purchase and within REFUND_WINDOW_DAYS of it, so the
             // only expenses worth looking at sit in [income.date - 180, income.date]. Both of
             // those bounds are still re-checked inside the loop; this only avoids walking the
@@ -223,27 +253,66 @@ public class ReconciliationService {
 
                 if (bestMatch == null || isCloserRefundMatch(expense, bestMatch, income)) {
                     bestMatch = expense;
+                    // Carried out of the loop with the match it belongs to. sameMerchant is
+                    // computed per candidate, so recomputing it after the loop would mean
+                    // re-deriving a signal the pass had already established -- exactly the
+                    // after-the-fact reconstruction this explanation exists to avoid.
+                    bestMatchSameMerchant = sameMerchant;
                 }
             }
 
             if (bestMatch != null) {
                 income.setReconciliationStatus(Transaction.ReconciliationStatus.REFUND);
                 income.setRefundOfTransactionId(bestMatch.getId());
-                transactionRepository.save(income);
+                income.setReconciliationExplanation(
+                        ReconciliationExplanation.refund(income, bestMatch, refundKeyword, bestMatchSameMerchant));
+                dirty.add(income);
                 newRefunds++;
             }
         }
+
+        // One write for the whole run. Ordered and de-duplicated by the LinkedHashSet above, so
+        // Hibernate's configured batch_size/order_updates can actually apply -- they could do
+        // nothing when this was a save() per match.
+        if (!dirty.isEmpty()) transactionRepository.saveAll(dirty);
+
+        long elapsedMs = (System.nanoTime() - startedAtNanos) / 1_000_000;
 
         // Financial Intelligence Workspace, Reconciliation Monitor -- one summary entry per run,
         // not one per match (that would flood the activity feed with as many rows as duplicates
         // found in a single large import). Recorded even when every counter is 0: "ran and found
         // nothing new" is itself the answer to "when did this last run" and belongs in the
         // history, not just a silent no-op.
+        //
+        // durationMs and rowsWritten are new, and they are the two numbers that make a scaling
+        // problem visible BEFORE a user reports one. This pass is synchronous on the request
+        // thread and runs after every transaction create, update, delete, import confirm and
+        // statement delete, so its cost is felt directly -- and until now the only way to know
+        // what it cost was to reproduce it locally with a benchmark. A duration trend across real
+        // accounts is the evidence scaling-triggers.md asks for, collected as a by-product of
+        // ordinary use rather than as a special exercise.
         auditService.record(userId, "RECONCILIATION_RUN", "Transaction", null, Map.of(
                 "transactionsProcessed", all.size(),
                 "duplicatesFound", newDuplicates,
                 "transfersMatched", newTransfers,
-                "refundsMatched", newRefunds));
+                "refundsMatched", newRefunds,
+                "rowsWritten", dirty.size(),
+                "durationMs", elapsedMs));
+
+        // Logged as well as audited, at a level that costs nothing on a normal run. The audit
+        // trail is per user and read through the admin UI; this is what makes a slow run visible
+        // in ordinary log search when nobody yet knows which user to look at. WARN rather than
+        // INFO past the threshold, because a reconciliation pass that takes over a second is the
+        // condition scaling-triggers.md names, and it should not need someone to already be
+        // looking for it.
+        if (elapsedMs >= SLOW_RUN_WARN_MS) {
+            log.warn("Reconciliation for user {} took {} ms over {} transactions ({} rows written). "
+                            + "See docs/engineering/scaling-triggers.md -- this pass is synchronous on the request thread.",
+                    userId, elapsedMs, all.size(), dirty.size());
+        } else if (log.isDebugEnabled()) {
+            log.debug("Reconciliation for user {}: {} transactions, {} ms, {} rows written.",
+                    userId, all.size(), elapsedMs, dirty.size());
+        }
     }
 
     private String duplicateKey(Transaction t) {

@@ -9,6 +9,7 @@ import org.hibernate.type.SqlTypes;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Entity
@@ -125,6 +126,18 @@ public class Transaction extends BaseEntity {
     @Column(name = "refund_of_transaction_id")
     private UUID refundOfTransactionId;
 
+    // WHY reconciliationStatus is what it is -- the signals the matching pass actually weighed,
+    // not a re-derivation after the fact. See ReconciliationExplanation for the shape and V55 for
+    // why it is JSONB, nullable, and never backfilled. Null means "classified before this existed,
+    // or never matched"; it is not a failure state.
+    //
+    // Same @JdbcTypeCode(SqlTypes.JSON) + Map mapping AuditLog.metadata already uses, rather than
+    // a String this class would then have to serialize into -- keeping one JSON-column convention
+    // means a reader who has seen one has seen both.
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "reconciliation_explanation", columnDefinition = "jsonb")
+    private Map<String, Object> reconciliationExplanation;
+
     // Phase 1 "capture facts" (docs/engineering/financial-document-intelligence-principles.md):
     // best-effort, nullable, never guessed -- see StagedRow.referenceNumber/balanceAfter for the
     // exact staging-time extraction these two are copied from at confirm() time. referenceNumber
@@ -185,6 +198,11 @@ public class Transaction extends BaseEntity {
     public void setDecisionRuleId(UUID decisionRuleId) { this.decisionRuleId = decisionRuleId; }
     public UUID getRefundOfTransactionId() { return refundOfTransactionId; }
     public void setRefundOfTransactionId(UUID refundOfTransactionId) { this.refundOfTransactionId = refundOfTransactionId; }
+
+    public Map<String, Object> getReconciliationExplanation() { return reconciliationExplanation; }
+    public void setReconciliationExplanation(Map<String, Object> reconciliationExplanation) {
+        this.reconciliationExplanation = reconciliationExplanation;
+    }
     public String getReferenceNumber() { return referenceNumber; }
     public void setReferenceNumber(String referenceNumber) { this.referenceNumber = referenceNumber; }
     public BigDecimal getBalanceAfter() { return balanceAfter; }
