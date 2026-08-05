@@ -57,13 +57,30 @@ public class StatementContentService {
      * because that is never what anyone intended in any profile.
      */
     public StatementContentService(Optional<StatementStorage> storage,
-                                    @Value("${app.statement-storage.provider:}") String configuredProvider) {
+                                    @Value("${app.statement-storage.provider:}") String configuredProvider,
+                                    @Value("${STORAGE_PROVIDER:}") String nearMissEnvVar) {
         this.storage = storage;
         if (storage.isEmpty() && configuredProvider != null && !configuredProvider.isBlank()) {
             throw new IllegalStateException(
                     "app.statement-storage.provider is set to \"" + configuredProvider + "\", which matches no "
                     + "StatementStorage implementation -- statements would silently keep going to the database. "
-                    + "Supported values: \"filesystem\", or leave it unset to keep statement bytes in the database.");
+                    + "Supported values: \"filesystem\", \"r2\", or leave it unset to keep statement bytes in "
+                    + "the database.");
+        }
+        // STORAGE_PROVIDER is the name people reach for, and it is read by nothing. Setting it and
+        // nothing else produces the one outcome no error would ever surface: object storage stays
+        // off, every import succeeds, the health endpoint is green, and the bucket stays empty
+        // until somebody happens to look at it. The near miss is only reportable because the
+        // correct variable is absent -- if both are set, the real one wins and there is nothing to
+        // warn about.
+        if (storage.isEmpty() && (configuredProvider == null || configuredProvider.isBlank())
+                && nearMissEnvVar != null && !nearMissEnvVar.isBlank()) {
+            throw new IllegalStateException(
+                    "STORAGE_PROVIDER is set to \"" + nearMissEnvVar + "\" but nothing reads it. The "
+                    + "variable this application uses is STATEMENT_STORAGE_PROVIDER. Rename it, or "
+                    + "unset STORAGE_PROVIDER if keeping statement bytes in the database is what you "
+                    + "want -- refusing to start is deliberate, because the alternative is object "
+                    + "storage silently staying off with every import still succeeding.");
         }
         if (storage.isEmpty()) {
             log.info("No statement storage provider configured -- statement bytes stay in the database "

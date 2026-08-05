@@ -52,7 +52,7 @@ class StatementImportServiceDeleteTest {
         service = new StatementImportService(
                 statementImportRepository, mock(AccountRepository.class), mock(CategoryRepository.class),
                 transactionRepository, reconciliationService, recurringService,
-                mock(ImportService.class), mock(AuditService.class), mock(BankManagementService.class), new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), ""));
+                mock(ImportService.class), mock(AuditService.class), mock(BankManagementService.class), new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), "", ""));
 
         StatementImport statementImport = new StatementImport();
         ReflectionTestUtils.setField(statementImport, "id", statementImportId);

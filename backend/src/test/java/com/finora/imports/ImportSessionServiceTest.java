@@ -41,7 +41,7 @@ class ImportSessionServiceTest {
     void setUp() {
         importSessionRepository = mock(ImportSessionRepository.class);
         ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
-        service = new ImportSessionService(importSessionRepository, objectMapper, new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), ""));
+        service = new ImportSessionService(importSessionRepository, objectMapper, new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), "", ""));
         when(importSessionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
     }
 
