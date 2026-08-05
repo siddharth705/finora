@@ -5,6 +5,7 @@ import { CheckCircle2, UploadCloud, AlertTriangle, Clock, FileText, FileSpreadsh
 import { importApi, statementImportsApi, categoriesApi, accountsApi } from '../api/endpoints';
 import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID } from '../api/errorCodes';
 import { BankLogo } from '../components/BankLogo';
+import { MaskedAccountNumber } from '../components/MaskedAccountNumber';
 import { matchExistingAccount } from '../lib/accountMatch';
 import type { Account, DetectedAccountInfo, ImportSummary, ReimportResult, StagedAccountSection, StagedRow, UnparseableRow } from '../types';
 import { formatDate } from '../utils/date';
@@ -994,8 +995,15 @@ function AccountChoiceFields({
           )}
           {detectedAccount?.accountNumberMasked && (
             <div>
-              <label htmlFor="import-account-number" className="block text-xs uppercase text-muted mb-1">Account number (detected)</label>
-              <input id="import-account-number" value={detectedAccount.accountNumberMasked} disabled className="border border-border rounded-lg px-3 py-2 text-sm w-full bg-bg text-muted" />
+              <span className="block text-xs uppercase text-muted mb-1">Account number (detected)</span>
+              {/* Hidden by default with an eye to reveal, matching how the Accounts page shows the
+                  same field. This used to render the number outright in a disabled input -- the one
+                  place in the app that did, and the one screen most likely to be shared while
+                  someone walks through an import. What "reveal" shows is the bank's own masked form
+                  (e.g. "XXXXXX4587"); a full number does not exist to show. */}
+              <div className="border border-border rounded-lg px-3 py-2 text-sm w-full bg-bg text-muted">
+                <MaskedAccountNumber value={detectedAccount.accountNumberMasked} />
+              </div>
             </div>
           )}
           {detectedAccount?.branchName && (
@@ -1156,7 +1164,14 @@ function ImportSummaryScreen({
               <p className="text-xs text-muted truncate">
                 {account.name}
                 {account.accountHolderName ? ` • ${account.accountHolderName}` : ''}
-                {account.accountNumberMasked ? ` • •••• ••••` : ''}
+                {/* Was a hard-coded "•••• ••••" with no way to see the number at all -- the exact
+                    opposite failure to the detected-account field above, on the same page. */}
+                {account.accountNumberMasked && (
+                  <>
+                    {' • '}
+                    <MaskedAccountNumber value={account.accountNumberMasked} />
+                  </>
+                )}
               </p>
             </div>
           </div>

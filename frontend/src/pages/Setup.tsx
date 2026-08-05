@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  UploadCloud, Eye, EyeOff, User, CreditCard, Landmark, Wallet, Calendar, CheckCircle2,
+  UploadCloud, User, CreditCard, Landmark, Wallet, Calendar, CheckCircle2,
   MoreVertical, Pencil, Trash2, FileText, Plus,
 } from 'lucide-react';
 import { accountsApi, banksApi } from '../api/endpoints';
 import { BankLogo } from '../components/BankLogo';
+import { MaskedAccountNumber } from '../components/MaskedAccountNumber';
 import type { Account, BankInfo } from '../types';
 import { formatDate } from '../utils/date';
 
@@ -27,12 +28,6 @@ function fmtDate(d: string | null) {
   if (!d) return null;
   return formatDate(d);
 }
-
-// How long a revealed account number stays visible before auto-hiding again -- a common banking
-// UX pattern (see brief: "automatically mask it again after a short timeout"). Also re-masks
-// immediately on unmount, i.e. the instant the user navigates away from this page, since the
-// `revealed` state itself simply stops existing at that point.
-const AUTO_REMASK_MS = 8000;
 
 /** A single label + value cell in the account card's info grid -- kept as one component so
  *  every field (holder name, balance, last imported, ...) gets identical spacing/typography
@@ -63,43 +58,6 @@ export default function Setup() {
   const [bankSearch, setBankSearch] = useState('');
   const [branchName, setBranchName] = useState('');
   const [ifscCode, setIfscCode] = useState('');
-
-  // Which accounts currently have their masked number revealed — a plain UI toggle, not a
-  // security boundary: what's stored server-side (accountNumberMasked) was already masked
-  // before it ever reached us, either by the bank's own export or by CsvImportService's
-  // maskAccountNumber(). Finora never stores a true, full account number at all -- revealing
-  // just swaps the hidden "•••• ••••" placeholder for that already-masked value (e.g.
-  // "••••4802") instead of leaving even that much visible by default on a shared screen.
-  const [revealed, setRevealed] = useState<Set<string>>(new Set());
-  const remaskTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-
-  useEffect(() => {
-    // Every pending auto-remask timer is dropped the instant this page unmounts -- combined
-    // with `revealed` living only in this component's state, that's what satisfies "mask it
-    // again ... when the user leaves the page" with no extra code.
-    const timers = remaskTimers.current;
-    return () => timers.forEach(clearTimeout);
-  }, []);
-
-  function toggleRevealed(id: string) {
-    setRevealed((prev) => {
-      const next = new Set(prev);
-      const existingTimer = remaskTimers.current.get(id);
-      if (existingTimer) { clearTimeout(existingTimer); remaskTimers.current.delete(id); }
-
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-        const timer = setTimeout(() => {
-          setRevealed((cur) => { const copy = new Set(cur); copy.delete(id); return copy; });
-          remaskTimers.current.delete(id);
-        }, AUTO_REMASK_MS);
-        remaskTimers.current.set(id, timer);
-      }
-      return next;
-    });
-  }
 
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -209,7 +167,6 @@ export default function Setup() {
           </div>
         ) : (
           accounts.map((a) => {
-            const isRevealed = revealed.has(a.id);
             const lastImported = fmtDate(a.lastImportedAt);
             const periodStart = fmtDate(a.lastStatementPeriodStart);
             const periodEnd = fmtDate(a.lastStatementPeriodEnd);
@@ -306,19 +263,11 @@ export default function Setup() {
                   </InfoField>
 
                   <InfoField icon={CreditCard} label="Account Number">
-                    {a.accountNumberMasked ? (
-                      <span className="inline-flex items-center gap-1.5">
-                        {isRevealed ? a.accountNumberMasked : '•••• ••••'}
-                        <button
-                          type="button"
-                          onClick={() => toggleRevealed(a.id)}
-                          title={isRevealed ? 'Hide account number' : 'Show account number'}
-                          className="text-muted hover:text-ink align-middle"
-                        >
-                          {isRevealed ? <EyeOff size={13} /> : <Eye size={13} />}
-                        </button>
-                      </span>
-                    ) : 'Not Available'}
+                    {/* Behaviour is unchanged -- hidden by default, an eye to reveal, and an
+                        8-second auto-remask. It now lives in MaskedAccountNumber so Import.tsx
+                        shows this field the same way instead of a third and fourth variation of
+                        it; see that component for what "reveal" does and does not expose. */}
+                    <MaskedAccountNumber value={a.accountNumberMasked} absent="Not Available" />
                   </InfoField>
                   <InfoField icon={Landmark} label="Account Type">
                     {TYPE_LABEL[a.accountType]}
