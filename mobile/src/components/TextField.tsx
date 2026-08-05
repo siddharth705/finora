@@ -34,6 +34,11 @@ export function TextField({ label, value, onChangeText, secure = false, error, p
           secureTextEntry={secure && !revealed}
           placeholderTextColor={c.muted}
           style={[styles.input, { color: c.ink }]}
+          // The visible <Text> above is a sibling, not a linked <label> -- React Native has no
+          // htmlFor. Without this the field announces as an unnamed "text field", and a form of
+          // them is indistinguishable by ear. Overridable via ...rest for the rare field whose
+          // spoken name should differ from its printed one.
+          accessibilityLabel={label}
           {...rest}
         />
         {secure ? (

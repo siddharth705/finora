@@ -1,37 +1,39 @@
 import { FlatList, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { radius, spacing, useTheme } from '../../theme';
+import { radius, spacing, useTheme } from '../theme';
 
 /**
- * Replaces the web review table's inline `<select>`. A native picker sheet is the equivalent
- * affordance -- a dropdown inside a scrolling list of cards is fiddly to hit and easy to change by
+ * Replaces the web's inline `<select>` wherever one appears -- the import review's category
+ * dropdown, the budget form's category, the reports month picker. A native picker sheet is the
+ * equivalent affordance: a dropdown inside a scrolling list is fiddly to hit and easy to change by
  * accident while scrolling.
  */
 interface Props {
   visible: boolean;
-  categories: string[];
+  title: string;
+  options: string[];
   selected: string | null;
-  onSelect: (category: string) => void;
+  onSelect: (option: string) => void;
   onClose: () => void;
 }
 
-export function CategoryPickerModal({ visible, categories, selected, onSelect, onClose }: Props) {
+export function OptionPickerModal({ visible, title, options, selected, onSelect, onClose }: Props) {
   const c = useTheme();
   const insets = useSafeAreaInsets();
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close category picker" />
+      <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel={`Close ${title} picker`} />
       <View style={[styles.sheet, { backgroundColor: c.card, paddingBottom: insets.bottom + spacing.md }]}>
         <View style={styles.header}>
-          <Text style={[styles.title, { color: c.ink }]}>Category</Text>
+          <Text style={[styles.title, { color: c.ink }]}>{title}</Text>
           <Pressable onPress={onClose} hitSlop={12} accessibilityRole="button">
             <Text style={[styles.done, { color: c.primary }]}>Done</Text>
           </Pressable>
         </View>
 
         <FlatList
-          data={categories}
+          data={options}
           keyExtractor={(item) => item}
           style={styles.list}
           renderItem={({ item }) => {
@@ -55,6 +57,8 @@ export function CategoryPickerModal({ visible, categories, selected, onSelect, o
   );
 }
 
+const ROW_HEIGHT = 48;
+
 const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
   sheet: {
@@ -77,7 +81,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 14,
+    height: ROW_HEIGHT,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   optionText: { fontSize: 15 },

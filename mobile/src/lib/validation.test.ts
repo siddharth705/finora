@@ -1,5 +1,6 @@
 import {
-  EMAIL_PATTERN, FULL_NAME_PATTERN, PHONE_PATTERN, passwordStrength, sanitizeOtp, sanitizePhoneNumber,
+  EMAIL_PATTERN, FULL_NAME_PATTERN, PHONE_PATTERN, parsePositiveAmount, passwordStrength,
+  sanitizeOtp, sanitizePhoneNumber,
 } from './validation';
 
 /*
@@ -101,6 +102,31 @@ describe('EMAIL_PATTERN', () => {
 
   it.each(INVALID_EMAILS)('rejects %s', (e) => {
     expect(EMAIL_PATTERN.test(e)).toBe(false);
+  });
+});
+
+describe('parsePositiveAmount', () => {
+  it('accepts plain and decimal amounts', () => {
+    expect(parsePositiveAmount('5000')).toBe(5000);
+    expect(parsePositiveAmount('1234.56')).toBe(1234.56);
+    expect(parsePositiveAmount('  250  ')).toBe(250);
+  });
+
+  it('rejects zero, negatives and blanks', () => {
+    expect(parsePositiveAmount('0')).toBeNull();
+    expect(parsePositiveAmount('-500')).toBeNull();
+    expect(parsePositiveAmount('')).toBeNull();
+    expect(parsePositiveAmount('   ')).toBeNull();
+  });
+
+  // The bug this exists to prevent: parseFloat('12abc') is 12, so a half-typed amount used to be
+  // accepted silently. And parseFloat('abc') is NaN, which passes any `!(x > 0)` check written the
+  // other way round and lands as "₹NaN" on screen.
+  it('rejects part-numeric and non-numeric input outright', () => {
+    expect(parsePositiveAmount('12abc')).toBeNull();
+    expect(parsePositiveAmount('abc')).toBeNull();
+    expect(parsePositiveAmount('1,000')).toBeNull();
+    expect(parsePositiveAmount('Infinity')).toBeNull();
   });
 });
 

@@ -9,7 +9,7 @@ import type { QueryClient } from '@tanstack/react-query';
  * visible from where the edit happened: 'report'/'report-months' feed the Dashboard's cash-flow
  * chart, which the Ledger doesn't render but every edit changes the totals of.
  */
-const FINANCIAL_QUERY_KEYS = [
+export const FINANCIAL_QUERY_KEYS = [
   'transactions',
   'dashboard-summary',
   'accounts',
@@ -20,6 +20,16 @@ const FINANCIAL_QUERY_KEYS = [
   'report-months',
   'report',
   'statement-imports',
+  // Both added with the Phase 4 screens, and both are exactly the case this module's comment
+  // warns about -- a key whose screen isn't visible from where the edit happens. Every balance
+  // change moves net worth, and every transaction change can create or break a recurring-payment
+  // pattern; without these, the Investments and Insights screens keep showing pre-import figures
+  // until their caches age out on their own.
+  'networth',
+  'recurring',
+  // Settings' Data section: statements imported, transactions imported/skipped, last import.
+  // Every one of those is a direct count of the thing an import or a statement deletion changes.
+  'import-statistics',
 ] as const;
 
 export function invalidateFinancialData(queryClient: QueryClient) {

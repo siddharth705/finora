@@ -1,6 +1,7 @@
 import {
   CASHFLOW_PAD_TOP, CASHFLOW_PLOT_HEIGHT, DONUT_CENTER, DONUT_RADIUS, DONUT_SIZE, DONUT_STROKE,
-  arcPath, buildArcs, cashFlowScale, pointOnCircle,
+  TREND_PAD_TOP, TREND_PLOT_HEIGHT,
+  arcPath, buildArcs, cashFlowScale, pointOnCircle, trendScale,
 } from './chartGeometry';
 
 describe('donut geometry', () => {
@@ -49,6 +50,30 @@ describe('donut geometry', () => {
   it('yields nothing for empty or all-zero input', () => {
     expect(buildArcs([])).toEqual([]);
     expect(buildArcs([{ label: 'z', value: 0 }])).toEqual([]);
+  });
+
+  /**
+   * Slices are identified by position, not by label. Spend categories are unique, but investment
+   * holdings are named by the user and two can genuinely share a name -- and DonutChart uses this
+   * for both the React key and the colour lookup, so a shared label collapsed them into one key
+   * and painted the second with the first's colour.
+   */
+  it('keeps same-named slices distinguishable by their original position', () => {
+    const arcs = buildArcs([
+      { label: 'Gold ETF', value: 10 },
+      { label: 'Gold ETF', value: 30 },
+    ]);
+    expect(arcs.map((a) => a.index)).toEqual([0, 1]);
+  });
+
+  it('indexes against the caller’s array, not the filtered one', () => {
+    const arcs = buildArcs([
+      { label: 'a', value: 10 },
+      { label: 'dropped', value: 0 },
+      { label: 'b', value: 10 },
+    ]);
+    // 'b' is arc 1 but slice 2 -- colouring by arc position would read the dropped slice's colour.
+    expect(arcs.map((a) => a.index)).toEqual([0, 2]);
   });
 
   it('drops zero-value categories but still closes the circle', () => {
@@ -102,5 +127,48 @@ describe('cash flow scale', () => {
     expect(max).toBe(1); // floored, never 0
     expect(Number.isFinite(yAt(0))).toBe(true);
     expect(yAt(0)).toBeCloseTo(CASHFLOW_PAD_TOP + CASHFLOW_PLOT_HEIGHT);
+  });
+});
+
+describe('net worth trend scale', () => {
+  const WIDTH = 320;
+
+  it('spans the full width and plot height across the data range', () => {
+    const { xAt, yAt, min, max } = trendScale([120000, 180000, 150000], WIDTH);
+    expect(xAt(0)).toBe(0);
+    expect(xAt(2)).toBeCloseTo(WIDTH);
+    expect(min).toBe(120000);
+    expect(max).toBe(180000);
+    expect(yAt(max)).toBeCloseTo(TREND_PAD_TOP);
+    expect(yAt(min)).toBeCloseTo(TREND_PAD_TOP + TREND_PLOT_HEIGHT);
+  });
+
+  /**
+   * The reason this scale exists rather than reusing cashFlowScale: net worth is a signed
+   * quantity. Anchoring at zero the way income/expense does would push a negative series off the
+   * bottom of the plot entirely.
+   */
+  it('plots a negative net worth inside the canvas', () => {
+    const { yAt } = trendScale([-50000, -20000], WIDTH);
+    expect(yAt(-50000)).toBeCloseTo(TREND_PAD_TOP + TREND_PLOT_HEIGHT);
+    expect(yAt(-20000)).toBeCloseTo(TREND_PAD_TOP);
+  });
+
+  it('centres a flat series instead of dividing by zero', () => {
+    const { yAt } = trendScale([90000, 90000, 90000], WIDTH);
+    expect(Number.isNaN(yAt(90000))).toBe(false);
+    expect(yAt(90000)).toBeCloseTo(TREND_PAD_TOP + TREND_PLOT_HEIGHT / 2);
+  });
+
+  it('centres a single point instead of dividing by zero', () => {
+    const { xAt, yAt } = trendScale([42], WIDTH);
+    expect(xAt(0)).toBe(WIDTH / 2);
+    expect(Number.isFinite(yAt(42))).toBe(true);
+  });
+
+  it('survives an empty series', () => {
+    const { xAt, yAt } = trendScale([], WIDTH);
+    expect(Number.isFinite(xAt(0))).toBe(true);
+    expect(Number.isFinite(yAt(0))).toBe(true);
   });
 });

@@ -11,13 +11,20 @@ export type AuthStackParamList = {
 };
 
 /**
- * The "More" tab is a stack, not a single screen: it's the catch-all menu that Budgets, Goals,
- * Statement History, and Settings all get pushed onto as later phases land.
+ * The "More" tab is a stack, not a single screen: it's the catch-all menu that everything outside
+ * the four tabs gets pushed onto.
  */
 export type MoreStackParamList = {
   MoreHome: undefined;
   Accounts: undefined;
   Statements: undefined;
+  Budgets: undefined;
+  Goals: undefined;
+  Reports: undefined;
+  Insights: undefined;
+  Investments: undefined;
+  Profile: undefined;
+  Settings: undefined;
 };
 
 /**
@@ -43,9 +50,11 @@ export interface ReimportParams {
 }
 
 /**
- * Only the tabs whose screens actually exist. The roadmap's target IA also has an Insights tab
- * grouping Reports/Insights/Investments (Phase 4) -- added when there's something behind it,
- * rather than mounted now as an empty placeholder.
+ * Four tabs, deliberately, even though Phase 4 landed the Reports/Insights/Investments screens the
+ * roadmap sketched as a fifth "Insights" tab. Those three are report surfaces people open
+ * occasionally, not destinations they switch between mid-task, and a fifth tab would shrink every
+ * label toward the width where both platforms start truncating them. They live in the More stack
+ * with Budgets and Goals instead.
  */
 export type AppTabParamList = {
   Home: undefined;

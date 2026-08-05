@@ -3,10 +3,27 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Card } from '../components/Card';
 import { useAuth } from '../context/AuthContext';
-import { radius, spacing, useTheme } from '../theme';
+import { initials } from '../lib/format';
+import { spacing, useTheme } from '../theme';
 import type { MoreStackParamList } from '../navigation/types';
 
 type Props = NativeStackScreenProps<MoreStackParamList, 'MoreHome'>;
+
+/**
+ * Ordered roughly by how often they're opened: the money you hold, then the plans against it, then
+ * the reporting surfaces. Typed against the stack's own param list, so deleting or renaming a route
+ * breaks this at compile time rather than at the tap.
+ */
+const MENU_ITEMS: { label: string; route: keyof Omit<MoreStackParamList, 'MoreHome'> }[] = [
+  { label: 'Accounts', route: 'Accounts' },
+  { label: 'Investments', route: 'Investments' },
+  { label: 'Budgets', route: 'Budgets' },
+  { label: 'Goals', route: 'Goals' },
+  { label: 'Reports', route: 'Reports' },
+  { label: 'Insights', route: 'Insights' },
+  { label: 'Statement History', route: 'Statements' },
+  { label: 'Settings', route: 'Settings' },
+];
 
 export function MoreScreen({ navigation }: Props) {
   const c = useTheme();
@@ -27,69 +44,53 @@ export function MoreScreen({ navigation }: Props) {
     >
       <Text style={[styles.title, { color: c.ink }]}>More</Text>
 
-      <Card style={styles.profileCard}>
-        {/* Decorative initial -- the name and email are read out right beside it, so announcing
-            a lone "S" first is pure noise. */}
-        <View
-          style={[styles.avatar, { backgroundColor: c.primary }]}
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-        >
-          <Text style={styles.avatarText}>{(fullName ?? email ?? '?').charAt(0).toUpperCase()}</Text>
-        </View>
-        <View style={styles.profileText}>
-          <Text style={[styles.name, { color: c.ink }]} numberOfLines={1}>
-            {fullName ?? 'Your account'}
-          </Text>
-          <Text style={[styles.email, { color: c.muted }]} numberOfLines={1}>
-            {email}
-          </Text>
-        </View>
-      </Card>
+      {/* The whole card opens Profile -- tapping your own name and photo to edit them is the
+          convention on every phone, and it saves a menu row for the same destination. */}
+      <Pressable
+        onPress={() => navigation.navigate('Profile')}
+        accessibilityRole="button"
+        accessibilityLabel={`Profile: ${fullName ?? email ?? 'your account'}`}
+        accessibilityHint="Opens your profile"
+      >
+        <Card style={styles.profileCard}>
+          {/* Decorative initial -- the name and email are read out right beside it, so announcing
+              a lone "S" first is pure noise. */}
+          <View
+            style={[styles.avatar, { backgroundColor: c.primary }]}
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+          >
+            <Text style={styles.avatarText}>{initials(fullName ?? email)}</Text>
+          </View>
+          <View style={styles.profileText}>
+            <Text style={[styles.name, { color: c.ink }]} numberOfLines={1}>
+              {fullName ?? 'Your account'}
+            </Text>
+            <Text style={[styles.email, { color: c.muted }]} numberOfLines={1}>
+              {email}
+            </Text>
+          </View>
+          <Text style={[styles.chevron, { color: c.muted }]} accessibilityElementsHidden importantForAccessibility="no">›</Text>
+        </Card>
+      </Pressable>
 
       <Card style={styles.menuCard}>
-        <Pressable
-          onPress={() => navigation.navigate('Accounts')}
-          style={[styles.menuRow, { borderBottomColor: c.border }]}
-          android_ripple={{ color: c.border }}
-          accessibilityRole="button"
-          accessibilityLabel="Accounts"
-        >
-          <Text style={[styles.menuLabel, { color: c.ink }]}>Accounts</Text>
-          {/* Decorative -- the row already announces itself as a button, so a screen reader
-              reading "greater-than sign" here would be noise. */}
-          <Text style={[styles.chevron, { color: c.muted }]} accessibilityElementsHidden importantForAccessibility="no">›</Text>
-        </Pressable>
-
-        <Pressable
-          onPress={() => navigation.navigate('Statements')}
-          style={[styles.menuRow, { borderBottomColor: c.border }]}
-          android_ripple={{ color: c.border }}
-          accessibilityRole="button"
-          accessibilityLabel="Statement History"
-        >
-          <Text style={[styles.menuLabel, { color: c.ink }]}>Statement History</Text>
-          <Text style={[styles.chevron, { color: c.muted }]} accessibilityElementsHidden importantForAccessibility="no">›</Text>
-        </Pressable>
-
-        {/* Budgets, Goals, and Settings land in later phases -- listed as disabled rows rather
-            than omitted so the shape of this menu doesn't shift under users as each one arrives,
-            but they're visibly not tappable yet rather than pretending to work. */}
-        {['Budgets', 'Goals', 'Settings'].map((label) => (
-          <View
-            key={label}
+        {MENU_ITEMS.map(({ label, route }) => (
+          <Pressable
+            key={route}
+            onPress={() => navigation.navigate(route)}
             style={[styles.menuRow, { borderBottomColor: c.border }]}
-            // Grouped into one node so it announces as "Budgets, not available yet" rather than
-            // two unrelated fragments, and marked disabled so it isn't mistaken for a live control.
-            accessible
+            android_ripple={{ color: c.border }}
             accessibilityRole="button"
-            accessibilityState={{ disabled: true }}
-            accessibilityLabel={`${label}, not available yet`}
+            accessibilityLabel={label}
           >
-            <Text style={[styles.menuLabel, { color: c.muted }]}>{label}</Text>
-            <Text style={[styles.soon, { color: c.muted, backgroundColor: c.primaryLight }]}>Soon</Text>
-          </View>
+            <Text style={[styles.menuLabel, { color: c.ink }]}>{label}</Text>
+            {/* Decorative -- the row already announces itself as a button, so a screen reader
+                reading "greater-than sign" here would be noise. */}
+            <Text style={[styles.chevron, { color: c.muted }]} accessibilityElementsHidden importantForAccessibility="no">›</Text>
+          </Pressable>
         ))}
+
       </Card>
 
       <Pressable onPress={confirmSignOut} style={styles.signOutRow} hitSlop={12} accessibilityRole="button">
@@ -125,14 +126,6 @@ const styles = StyleSheet.create({
   },
   menuLabel: { fontSize: 14 },
   chevron: { fontSize: 20, lineHeight: 20 },
-  soon: {
-    fontSize: 10,
-    fontWeight: '600',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radius.md,
-    overflow: 'hidden',
-  },
   signOutRow: { marginTop: spacing.lg, alignItems: 'center' },
   signOut: { fontSize: 14, fontWeight: '600' },
 });
