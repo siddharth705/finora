@@ -83,14 +83,30 @@ not part of the suite (the name matches none of surefire's includes), so run it 
 cd backend && ./mvnw -o test -Dtest=ReconciliationScalingBenchmark -DfailIfNoTests=false
 ```
 
+> **Correction, same day.** The numbers first published here were measured wrong and were roughly
+> five times too low on both sides. `reconcileForUser` **mutates** the transactions it classifies,
+> and every pass skips what a previous run already settled — duplicates skip a non-null
+> `isDuplicateOf`, the transfer candidate list filters out `isTransfer()`, the refund pass skips any
+> income whose status is no longer `OK`. The benchmark warmed up on the *same* list it then timed,
+> so every reported figure was a **second** run over already-reconciled data, doing a fraction of
+> the work of the case that actually happens: a real import, reconciling rows nothing has touched.
+>
+> Fixed by giving each timed run its own fresh history. The table below is re-measured, and the
+> "before" column was produced by checking the pre-fix service back out and running it through the
+> corrected benchmark rather than by scaling the old numbers.
+>
+> The correction does not change the decision — it strengthens it. The ratio was about right
+> (4.8× reported, 5.2× actual); the **severity** was badly understated.
+
 | transactions | `reconcileForUser` (before) | `reconcileForUser` (after) | `detectForUser` |
 |---:|---:|---:|---:|
-| 1,000 | 109 ms | 105–127 ms | 1 ms |
-| 10,000 | 848 ms | 414–455 ms | 1 ms |
-| 50,000 | 8,357 ms | **1,510–1,757 ms** | 1 ms |
+| 1,000 | 271 ms | 266 ms | 4 ms |
+| 10,000 | 2,145 ms | 1,183 ms | 3 ms |
+| 50,000 | **52,826 ms** | **10,173 ms** | 2 ms |
 
-The "after" column is the date-windowed fix described below, measured over two runs to show
-variance rather than quoting a single flattering number.
+The "after" column is the date-windowed fix described below. At 50k the pass took **52.8 seconds**
+of synchronous, request-thread work before it, and takes **10.2 seconds** after — a 5.2× reduction
+that saves 42.7 seconds per run, and still leaves a number nobody should be comfortable with.
 
 **Status per finding**, using the lifecycle *observed → measured → triggered → implemented*:
 
@@ -118,12 +134,37 @@ variance rather than quoting a single flattering number.
   therefore not a determinism regression traded for speed; it is a determinism **improvement** that
   happened to be a prerequisite.
 
-  **What it does not fix, stated plainly.** 1.5–1.8 s at 50k is a 4.8× improvement, not a solved
-  problem. The residue is the refund pass: a 180-day window covers roughly a quarter of a two-year
-  corpus, so that loop is still quadratic with a smaller constant, and it now dominates. If this
-  becomes a complaint again, the next move is narrowing refund candidates by account or merchant
-  before the date window — not a background worker, which would still be doing the same quadratic
-  work, just somewhere the user cannot see it.
+  **What it does not fix, stated plainly.** 10.2 s at 50k is a 5.2× improvement, not a solved
+  problem — and on the corrected measurement it is still well past this section's own trigger. The
+  residue is the refund pass: a 180-day window covers roughly a quarter of a two-year corpus, so
+  that loop is still quadratic with a smaller constant, and it now dominates. The next move is
+  narrowing refund candidates by account (measured below) — not a background worker, which would
+  still be doing the same quadratic work, just somewhere the user cannot see it.
+
+### Measurement: bucketing refund candidates by account
+
+Run `measureRefundCandidateReductionFromAccountBucketing` in the same benchmark class. A refund
+lands back on the account its purchase was made on, so every candidate on a *different* account is
+examined and rejected. Account assignment is uniform in the fixture, so the reduction is
+structurally `1 − 1/accounts`:
+
+| accounts held | candidates examined | after bucketing | removed |
+|---:|---:|---:|---:|
+| 2 | 5,575,478 | 2,788,166 | 50.0% |
+| 3 | 5,575,478 | 1,860,382 | 66.6% |
+| 5 | 5,575,478 | 1,117,231 | 80.0% |
+| 10 | 5,575,478 | 559,181 | 90.0% |
+
+**Read as a ceiling, not a saving.** Each removed candidate removes one
+`getAccountId().equals(...)` — among the cheapest predicates in the pass — while bucketing adds a
+grouping pass and a per-account structure to build and keep correct. A two-thirds cut in
+*iterations* is not a two-thirds cut in *time*.
+
+**Not yet proposed for implementation.** The honest limit of this measurement is that the isolated
+loop over-counts: it does not model the earlier passes having already consumed many incomes, so it
+reports more cross-account work than the real pass performs. Deciding this properly needs a
+prototype timed end-to-end against `reconcileForUser`, not an isolated loop — which is the next
+step, and a proposal before any change lands.
 - **`detectForUser` — MEASURED, NOT triggered.** 1 ms at every size. The in-memory cost the audit
   attributed to it is not there.
 - **`saveAll(active)` write-back (`RecurringService`) — STILL UNMEASURED.** The benchmark mocks the
