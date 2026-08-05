@@ -58,6 +58,7 @@ const config: ExpoConfig = {
   plugins: [
     'expo-secure-store',
     'expo-sharing',
+    '@react-native-community/datetimepicker',
     '@react-native-firebase/app',
     '@react-native-firebase/auth',
     [

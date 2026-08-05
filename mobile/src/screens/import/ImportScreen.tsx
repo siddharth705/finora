@@ -7,7 +7,7 @@ import { useRoute, type RouteProp } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button } from '../../components/Button';
 import { Card, SectionHeading } from '../../components/Card';
-import { CategoryPickerModal } from './CategoryPickerModal';
+import { OptionPickerModal } from '../../components/OptionPickerModal';
 import { StagedRowCard } from './StagedRowCard';
 import { accountsApi, categoriesApi, importApi, statementImportsApi, type RNFile } from '../../api/endpoints';
 import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../../api/errorCodes';
@@ -560,9 +560,10 @@ export function ImportScreen() {
         }
       />
 
-      <CategoryPickerModal
+      <OptionPickerModal
         visible={categoryPickerFor !== null}
-        categories={categories}
+        title="Category"
+        options={categories}
         selected={categoryPickerFor !== null ? chosenCategory[categoryPickerFor] : null}
         onSelect={(category) => {
           setChosenCategory((prev) =>

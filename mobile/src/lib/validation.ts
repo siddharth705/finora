@@ -41,6 +41,25 @@ export function sanitizeOtp(raw: string): string {
 }
 
 /**
+ * Every money field in the app takes the same rule -- a real number greater than zero -- and the
+ * web app re-derives it inline in Budgets.tsx, Goals.tsx and Investments.tsx, which is how
+ * Investments.tsx came to be missing it entirely for a while: `parseFloat` returned NaN, `NaN > 0`
+ * was false but nothing checked it, and "₹NaN" rendered across the totals. One function, one test.
+ *
+ * Returns null when the input isn't usable, so callers branch on the value rather than repeating
+ * the predicate.
+ */
+export function parsePositiveAmount(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  // parseFloat("12abc") is 12 -- permissive enough to accept input a user never meant. Number()
+  // rejects the whole string, which is the behavior wanted for a field that must be only a number.
+  const value = Number(trimmed);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return value;
+}
+
+/**
  * Four independent signals, no library. Purely a nudge shown under the field -- never a
  * submission gate; the backend's 8-character minimum is the real requirement.
  */

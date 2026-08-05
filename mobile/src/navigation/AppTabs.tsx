@@ -7,6 +7,11 @@ import { AccountsScreen } from '../screens/AccountsScreen';
 import { StatementHistoryScreen } from '../screens/StatementHistoryScreen';
 import { ImportScreen } from '../screens/import/ImportScreen';
 import { MoreScreen } from '../screens/MoreScreen';
+import { BudgetsScreen } from '../screens/BudgetsScreen';
+import { GoalsScreen } from '../screens/GoalsScreen';
+import { ReportsScreen } from '../screens/ReportsScreen';
+import { InsightsScreen } from '../screens/InsightsScreen';
+import { InvestmentsScreen } from '../screens/InvestmentsScreen';
 import { useTheme } from '../theme';
 import type { AppTabParamList, MoreStackParamList } from './types';
 
@@ -28,6 +33,15 @@ function MoreNavigator() {
       <MoreStack.Screen name="MoreHome" component={MoreScreen} options={{ headerShown: false }} />
       <MoreStack.Screen name="Accounts" component={AccountsScreen} options={{ headerShown: false }} />
       <MoreStack.Screen name="Statements" component={StatementHistoryScreen} options={{ headerShown: false }} />
+      {/* Header shown, unlike Accounts/Statements above: these five render no title of their own
+          and rely on it for both the screen name and the back button. A pushed screen with neither
+          leaves an edge-swipe (iOS) or the hardware key (Android) as the only way back, which is
+          nothing at all for a screen-reader user. */}
+      <MoreStack.Screen name="Budgets" component={BudgetsScreen} />
+      <MoreStack.Screen name="Goals" component={GoalsScreen} />
+      <MoreStack.Screen name="Reports" component={ReportsScreen} />
+      <MoreStack.Screen name="Insights" component={InsightsScreen} />
+      <MoreStack.Screen name="Investments" component={InvestmentsScreen} />
     </MoreStack.Navigator>
   );
 }

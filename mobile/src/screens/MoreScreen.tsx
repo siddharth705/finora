@@ -8,6 +8,21 @@ import type { MoreStackParamList } from '../navigation/types';
 
 type Props = NativeStackScreenProps<MoreStackParamList, 'MoreHome'>;
 
+/**
+ * Ordered roughly by how often they're opened: the money you hold, then the plans against it, then
+ * the reporting surfaces. Typed against the stack's own param list, so deleting or renaming a route
+ * breaks this at compile time rather than at the tap.
+ */
+const MENU_ITEMS: { label: string; route: keyof Omit<MoreStackParamList, 'MoreHome'> }[] = [
+  { label: 'Accounts', route: 'Accounts' },
+  { label: 'Investments', route: 'Investments' },
+  { label: 'Budgets', route: 'Budgets' },
+  { label: 'Goals', route: 'Goals' },
+  { label: 'Reports', route: 'Reports' },
+  { label: 'Insights', route: 'Insights' },
+  { label: 'Statement History', route: 'Statements' },
+];
+
 export function MoreScreen({ navigation }: Props) {
   const c = useTheme();
   const insets = useSafeAreaInsets();
@@ -48,48 +63,38 @@ export function MoreScreen({ navigation }: Props) {
       </Card>
 
       <Card style={styles.menuCard}>
-        <Pressable
-          onPress={() => navigation.navigate('Accounts')}
-          style={[styles.menuRow, { borderBottomColor: c.border }]}
-          android_ripple={{ color: c.border }}
-          accessibilityRole="button"
-          accessibilityLabel="Accounts"
-        >
-          <Text style={[styles.menuLabel, { color: c.ink }]}>Accounts</Text>
-          {/* Decorative -- the row already announces itself as a button, so a screen reader
-              reading "greater-than sign" here would be noise. */}
-          <Text style={[styles.chevron, { color: c.muted }]} accessibilityElementsHidden importantForAccessibility="no">›</Text>
-        </Pressable>
-
-        <Pressable
-          onPress={() => navigation.navigate('Statements')}
-          style={[styles.menuRow, { borderBottomColor: c.border }]}
-          android_ripple={{ color: c.border }}
-          accessibilityRole="button"
-          accessibilityLabel="Statement History"
-        >
-          <Text style={[styles.menuLabel, { color: c.ink }]}>Statement History</Text>
-          <Text style={[styles.chevron, { color: c.muted }]} accessibilityElementsHidden importantForAccessibility="no">›</Text>
-        </Pressable>
-
-        {/* Budgets, Goals, and Settings land in later phases -- listed as disabled rows rather
-            than omitted so the shape of this menu doesn't shift under users as each one arrives,
-            but they're visibly not tappable yet rather than pretending to work. */}
-        {['Budgets', 'Goals', 'Settings'].map((label) => (
-          <View
-            key={label}
+        {MENU_ITEMS.map(({ label, route }) => (
+          <Pressable
+            key={route}
+            onPress={() => navigation.navigate(route)}
             style={[styles.menuRow, { borderBottomColor: c.border }]}
-            // Grouped into one node so it announces as "Budgets, not available yet" rather than
-            // two unrelated fragments, and marked disabled so it isn't mistaken for a live control.
-            accessible
+            android_ripple={{ color: c.border }}
             accessibilityRole="button"
-            accessibilityState={{ disabled: true }}
-            accessibilityLabel={`${label}, not available yet`}
+            accessibilityLabel={label}
           >
-            <Text style={[styles.menuLabel, { color: c.muted }]}>{label}</Text>
-            <Text style={[styles.soon, { color: c.muted, backgroundColor: c.primaryLight }]}>Soon</Text>
-          </View>
+            <Text style={[styles.menuLabel, { color: c.ink }]}>{label}</Text>
+            {/* Decorative -- the row already announces itself as a button, so a screen reader
+                reading "greater-than sign" here would be noise. */}
+            <Text style={[styles.chevron, { color: c.muted }]} accessibilityElementsHidden importantForAccessibility="no">›</Text>
+          </Pressable>
         ))}
+
+        {/* Settings is the last screen still to land (Phase 5) -- listed as a disabled row rather
+            than omitted so the shape of this menu doesn't shift under users when it arrives, but
+            visibly not tappable rather than pretending to work.
+            Grouped into one accessible node so it announces as "Settings, not available yet"
+            rather than two unrelated fragments, and marked disabled so it isn't mistaken for a
+            live control. */}
+        <View
+          style={[styles.menuRow, { borderBottomColor: c.border }]}
+          accessible
+          accessibilityRole="button"
+          accessibilityState={{ disabled: true }}
+          accessibilityLabel="Settings, not available yet"
+        >
+          <Text style={[styles.menuLabel, { color: c.muted }]}>Settings</Text>
+          <Text style={[styles.soon, { color: c.muted, backgroundColor: c.primaryLight }]}>Soon</Text>
+        </View>
       </Card>
 
       <Pressable onPress={confirmSignOut} style={styles.signOutRow} hitSlop={12} accessibilityRole="button">

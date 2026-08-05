@@ -23,7 +23,9 @@ export interface Slice {
 export function DonutChart({ slices, centerLabel }: { slices: Slice[]; centerLabel?: string }) {
   const c = useTheme();
   const arcs = buildArcs(slices);
-  const colorFor = (label: string) => slices.find((s) => s.label === label)?.color ?? c.primary;
+  // By position, not by label -- see ArcSlice.index. Looking the colour up by label gave two
+  // same-named holdings the same colour and one shared React key.
+  const colorFor = (arcIndex: number) => slices[arcIndex]?.color ?? c.primary;
 
   if (arcs.length === 0) {
     return (
@@ -50,19 +52,19 @@ export function DonutChart({ slices, centerLabel }: { slices: Slice[]; centerLab
             {arcs.map((a) =>
               a.full ? (
                 <Circle
-                  key={a.label}
+                  key={a.index}
                   cx={DONUT_CENTER}
                   cy={DONUT_CENTER}
                   r={DONUT_RADIUS}
-                  stroke={colorFor(a.label)}
+                  stroke={colorFor(a.index)}
                   strokeWidth={DONUT_STROKE}
                   fill="none"
                 />
               ) : (
                 <Path
-                  key={a.label}
+                  key={a.index}
                   d={arcPath(a.start, a.end)}
-                  stroke={colorFor(a.label)}
+                  stroke={colorFor(a.index)}
                   strokeWidth={DONUT_STROKE}
                   fill="none"
                   strokeLinecap="butt"
@@ -85,8 +87,8 @@ export function DonutChart({ slices, centerLabel }: { slices: Slice[]; centerLab
           representation of the chart, not just a colour key. */}
       <View style={styles.legend}>
         {arcs.map((a) => (
-          <View key={a.label} style={styles.legendRow} accessible accessibilityLabel={`${a.label}: ${fmtCurrency(a.value)}`}>
-            <View style={[styles.swatch, { backgroundColor: colorFor(a.label) }]} />
+          <View key={a.index} style={styles.legendRow} accessible accessibilityLabel={`${a.label}: ${fmtCurrency(a.value)}`}>
+            <View style={[styles.swatch, { backgroundColor: colorFor(a.index) }]} />
             <Text style={[styles.legendLabel, { color: c.ink }]} numberOfLines={1}>
               {a.label}
             </Text>

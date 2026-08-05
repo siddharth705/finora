@@ -60,6 +60,23 @@ jest.mock('@expo/vector-icons/Ionicons', () => {
   };
 });
 
+// Safe-area insets come from a native module and are otherwise only available under a real
+// <SafeAreaProvider>. Zeroed here so every screen test doesn't have to wrap its own provider --
+// no assertion in this suite depends on the notch size.
+jest.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+  SafeAreaProvider: ({ children }: { children: unknown }) => children,
+}));
+
+// The system date picker is a native module. Rendered as nothing, with the imperative Android
+// entry point stubbed: DateField's job under test is what it does with the value it gets back, and
+// the OS dialog itself has no JS implementation to exercise.
+jest.mock('@react-native-community/datetimepicker', () => ({
+  __esModule: true,
+  default: () => null,
+  DateTimePickerAndroid: { open: jest.fn(), dismiss: jest.fn() },
+}));
+
 // Sentry's native module isn't present under the runner. The scrubbers in lib/monitoring.ts are
 // pure functions tested directly, so nothing here needs the real SDK -- and EXPO_PUBLIC_SENTRY_DSN
 // is deliberately left unset so initMonitoring() no-ops and no test can emit a real event.
