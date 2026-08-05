@@ -128,20 +128,44 @@ across two passes, it is the highest-value item in this document.
 
 ---
 
-## 4. Content-addressed storage does not verify content on read
+## 4. ~~Content-addressed storage does not verify content on read~~ — RESOLVED
 
-**Area:** backend (`imports/storage`) · **Category:** data integrity · **Needs:** a design decision
+**Area:** backend (`imports/storage`) · **Category:** data integrity · **Closed by** `ContentAddress.requireMatches()`
 
-`StatementStorage.retrieve()` returns the bytes at an address without re-hashing them. A
-content-addressed store that never verifies on read cannot detect bit-rot or a mis-filed object — it
-returns wrong bytes as though they were correct.
+Verification happens in two places, both routed through one implementation:
 
-**Why deferred:** there are several reasonable answers (verify every read; sample a percentage;
-verify only during the Phase 3 backfill) with a real SHA-256-per-read cost, and the interface
-javadoc never promised verification. Choosing one is a design decision.
+- **`StatementContentService.read()`** — the single choke point every read already goes through, so a
+  future R2/S3 provider inherits the guarantee rather than having to reimplement it.
+- **`StatementBackfillWorker.write()`** — reads each object back before recording its address. This is
+  the last moment the check is possible: Phase 4 drops `file_content` on the strength of these rows,
+  after which the copy that makes a comparison meaningful is gone. It matters most for *deduplicated*
+  rows, the majority, where `store()` writes nothing and the address points at bytes an earlier row
+  put there — which this row would otherwise attest to without ever having looked at them.
 
-**Recommended:** verify during the Phase 3 backfill at minimum, since that is the point at which
-every object is read once anyway and a mismatch is most actionable.
+**Two things in the original deferral turned out not to hold**, which is the part worth carrying
+forward:
+
+1. *"A real SHA-256-per-read cost."* There are five read sites, all user-initiated — import confirm
+   (×2), download, re-import (×2). A hash over a few MB is invisible beside object-store latency and
+   PDF parsing, and none of it is on a hot path. The cost objection was reasonable in the abstract
+   and simply did not survive looking at the call sites.
+2. *"Verify during the backfill, since every object is read once anyway."* The backfill reads
+   `file_content` from the **database** and writes *to* storage; it never reads back. The read-back
+   had to be added deliberately rather than folded into a read that was already happening.
+
+`StatementIntegrityException` extends `StatementStorageException` rather than reusing it: *missing* is
+an availability problem that may resolve when a provider recovers, *corrupt* is a correctness problem
+that returns the same wrong bytes forever. Same supertype, so no caller changes; separable, so
+alerting can tell a transient outage from a data-integrity event.
+
+**Where the code landed.** The implementation is in commit `6b786b2`, whose message describes only the
+Repository Guardian work. Two sessions were working in one tree and one git index; that commit picked
+up both changes. Nothing is missing or wrong in the code — this note exists so the storage-integrity
+rationale is recorded somewhere, since the commit message does not carry it.
+
+**Smaller storage notes from the original finding, still open:** the orphaned `.partial-*.tmp` on a
+JVM kill between `createTempFile` and `ATOMIC_MOVE`, and the theoretical Windows `ATOMIC_MOVE` failure.
+Both remain deferred to a future unreferenced-object sweep, unchanged by this work.
 
 **Two smaller storage notes, both genuinely minor:**
 
