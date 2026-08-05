@@ -27,6 +27,9 @@ export const FINANCIAL_QUERY_KEYS = [
   // until their caches age out on their own.
   'networth',
   'recurring',
+  // Settings' Data section: statements imported, transactions imported/skipped, last import.
+  // Every one of those is a direct count of the thing an import or a statement deletion changes.
+  'import-statistics',
 ] as const;
 
 export function invalidateFinancialData(queryClient: QueryClient) {

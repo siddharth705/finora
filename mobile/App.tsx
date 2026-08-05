@@ -7,6 +7,7 @@ import { OfflineBoundary } from './src/components/OfflineBanner';
 import { AuthProvider } from './src/context/AuthContext';
 import { initMonitoring, withMonitoring } from './src/lib/monitoring';
 import { RootNavigator } from './src/navigation/RootNavigator';
+import { ThemeProvider } from './src/theme';
 
 // Before the component, not inside an effect: an error thrown during the first render is exactly
 // the kind worth capturing, and by the time an effect runs it would already be too late. No-ops
@@ -26,12 +27,17 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <SafeAreaProvider>
-        <AuthProvider>
-          <OfflineBoundary>
-            <RootNavigator />
-          </OfflineBoundary>
-          <StatusBar style="auto" />
-        </AuthProvider>
+        {/* Inside AuthProvider is tempting but wrong: the provider reads the account's saved theme
+            itself from storage, and sitting outside means the choice is already applied to the auth
+            screens a signed-out user sees. */}
+        <ThemeProvider>
+          <AuthProvider>
+            <OfflineBoundary>
+              <RootNavigator />
+            </OfflineBoundary>
+            <StatusBar style="auto" />
+          </AuthProvider>
+        </ThemeProvider>
       </SafeAreaProvider>
     </QueryClientProvider>
   );

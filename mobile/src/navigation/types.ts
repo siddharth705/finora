@@ -12,7 +12,7 @@ export type AuthStackParamList = {
 
 /**
  * The "More" tab is a stack, not a single screen: it's the catch-all menu that everything outside
- * the four tabs gets pushed onto. Settings is the last one still to land (Phase 5).
+ * the four tabs gets pushed onto.
  */
 export type MoreStackParamList = {
   MoreHome: undefined;
@@ -23,6 +23,8 @@ export type MoreStackParamList = {
   Reports: undefined;
   Insights: undefined;
   Investments: undefined;
+  Profile: undefined;
+  Settings: undefined;
 };
 
 /**

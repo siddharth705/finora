@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import {
   ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View,
 } from 'react-native';
@@ -12,6 +12,7 @@ import { budgetsApi, categoriesApi } from '../api/endpoints';
 import { toUserMessage } from '../lib/apiError';
 import { fmtCurrency } from '../lib/format';
 import { useSingleFlight } from '../lib/useSingleFlight';
+import { useTransientFlag } from '../lib/useTransientFlag';
 import { parsePositiveAmount } from '../lib/validation';
 import { radius, spacing, useTheme } from '../theme';
 
@@ -30,16 +31,9 @@ export function BudgetsScreen() {
   const [limit, setLimit] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
-  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [saved, confirmSaved] = useTransientFlag();
   const singleFlight = useSingleFlight();
-
-  // The "Saved." confirmation clears itself after a beat. Left uncleared, that timer outlives the
-  // screen and fires into an unmounted tree -- and holds the JS runtime awake until it does.
-  useEffect(() => () => {
-    if (savedTimer.current) clearTimeout(savedTimer.current);
-  }, []);
 
   const { data: budgets = [], isLoading, isError, isFetching, refetch } = useQuery({
     queryKey: ['budgets'],
@@ -69,9 +63,7 @@ export function BudgetsScreen() {
         await budgetsApi.upsert(category, amount);
         setCategory(null);
         setLimit('');
-        setSaved(true);
-        if (savedTimer.current) clearTimeout(savedTimer.current);
-        savedTimer.current = setTimeout(() => setSaved(false), 2000);
+        confirmSaved();
         // Dashboard's budget widget and the health score/notifications both read this -- see the
         // web page's own comment. 'budgets' alone would leave the Dashboard stale until its cache
         // aged out.

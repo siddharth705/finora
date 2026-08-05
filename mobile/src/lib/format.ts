@@ -71,6 +71,46 @@ export function monthLabel(monthStr: string): string {
   return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
 }
 
+/** Up to two letters for the avatar badge. "?" rather than an empty circle when there's no name. */
+export function initials(name: string | null | undefined): string {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '?';
+}
+
+/** "August 2026" -- for "Member since", where a precise day is noise. */
+export function fmtMonthYear(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return '—';
+  return parsed.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+}
+
+/**
+ * "today" / "3 days ago" / "2 months ago" -- for facts where the gap is the point ("last changed",
+ * "last active") and the exact timestamp is not.
+ *
+ * Returns null rather than a string for missing or unparseable input, so callers can distinguish
+ * "never happened" from "happened at some point" and word it themselves.
+ *
+ * Months and years are approximated at 30 and 360 days. That is deliberate for a phrase already
+ * hedged by the word "ago": calendar-exact arithmetic would change "11 months ago" to "1 year ago"
+ * on a date nobody is checking against a calendar.
+ */
+export function fmtRelativeTime(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return null;
+  const days = Math.floor((Date.now() - then) / (1000 * 60 * 60 * 24));
+  if (days < 1) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 30) return `${days} days ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months} month${months === 1 ? '' : 's'} ago`;
+  const years = Math.floor(months / 12);
+  return `${years} year${years === 1 ? '' : 's'} ago`;
+}
+
 /**
  * Reads the current hour in the user's chosen timezone (see Settings) rather than the device
  * clock. The two only differ when someone's device is set to a different zone than the one they

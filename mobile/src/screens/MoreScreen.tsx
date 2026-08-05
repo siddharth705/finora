@@ -3,7 +3,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Card } from '../components/Card';
 import { useAuth } from '../context/AuthContext';
-import { radius, spacing, useTheme } from '../theme';
+import { initials } from '../lib/format';
+import { spacing, useTheme } from '../theme';
 import type { MoreStackParamList } from '../navigation/types';
 
 type Props = NativeStackScreenProps<MoreStackParamList, 'MoreHome'>;
@@ -21,6 +22,7 @@ const MENU_ITEMS: { label: string; route: keyof Omit<MoreStackParamList, 'MoreHo
   { label: 'Reports', route: 'Reports' },
   { label: 'Insights', route: 'Insights' },
   { label: 'Statement History', route: 'Statements' },
+  { label: 'Settings', route: 'Settings' },
 ];
 
 export function MoreScreen({ navigation }: Props) {
@@ -42,25 +44,35 @@ export function MoreScreen({ navigation }: Props) {
     >
       <Text style={[styles.title, { color: c.ink }]}>More</Text>
 
-      <Card style={styles.profileCard}>
-        {/* Decorative initial -- the name and email are read out right beside it, so announcing
-            a lone "S" first is pure noise. */}
-        <View
-          style={[styles.avatar, { backgroundColor: c.primary }]}
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-        >
-          <Text style={styles.avatarText}>{(fullName ?? email ?? '?').charAt(0).toUpperCase()}</Text>
-        </View>
-        <View style={styles.profileText}>
-          <Text style={[styles.name, { color: c.ink }]} numberOfLines={1}>
-            {fullName ?? 'Your account'}
-          </Text>
-          <Text style={[styles.email, { color: c.muted }]} numberOfLines={1}>
-            {email}
-          </Text>
-        </View>
-      </Card>
+      {/* The whole card opens Profile -- tapping your own name and photo to edit them is the
+          convention on every phone, and it saves a menu row for the same destination. */}
+      <Pressable
+        onPress={() => navigation.navigate('Profile')}
+        accessibilityRole="button"
+        accessibilityLabel={`Profile: ${fullName ?? email ?? 'your account'}`}
+        accessibilityHint="Opens your profile"
+      >
+        <Card style={styles.profileCard}>
+          {/* Decorative initial -- the name and email are read out right beside it, so announcing
+              a lone "S" first is pure noise. */}
+          <View
+            style={[styles.avatar, { backgroundColor: c.primary }]}
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+          >
+            <Text style={styles.avatarText}>{initials(fullName ?? email)}</Text>
+          </View>
+          <View style={styles.profileText}>
+            <Text style={[styles.name, { color: c.ink }]} numberOfLines={1}>
+              {fullName ?? 'Your account'}
+            </Text>
+            <Text style={[styles.email, { color: c.muted }]} numberOfLines={1}>
+              {email}
+            </Text>
+          </View>
+          <Text style={[styles.chevron, { color: c.muted }]} accessibilityElementsHidden importantForAccessibility="no">›</Text>
+        </Card>
+      </Pressable>
 
       <Card style={styles.menuCard}>
         {MENU_ITEMS.map(({ label, route }) => (
@@ -79,22 +91,6 @@ export function MoreScreen({ navigation }: Props) {
           </Pressable>
         ))}
 
-        {/* Settings is the last screen still to land (Phase 5) -- listed as a disabled row rather
-            than omitted so the shape of this menu doesn't shift under users when it arrives, but
-            visibly not tappable rather than pretending to work.
-            Grouped into one accessible node so it announces as "Settings, not available yet"
-            rather than two unrelated fragments, and marked disabled so it isn't mistaken for a
-            live control. */}
-        <View
-          style={[styles.menuRow, { borderBottomColor: c.border }]}
-          accessible
-          accessibilityRole="button"
-          accessibilityState={{ disabled: true }}
-          accessibilityLabel="Settings, not available yet"
-        >
-          <Text style={[styles.menuLabel, { color: c.muted }]}>Settings</Text>
-          <Text style={[styles.soon, { color: c.muted, backgroundColor: c.primaryLight }]}>Soon</Text>
-        </View>
       </Card>
 
       <Pressable onPress={confirmSignOut} style={styles.signOutRow} hitSlop={12} accessibilityRole="button">
@@ -130,14 +126,6 @@ const styles = StyleSheet.create({
   },
   menuLabel: { fontSize: 14 },
   chevron: { fontSize: 20, lineHeight: 20 },
-  soon: {
-    fontSize: 10,
-    fontWeight: '600',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radius.md,
-    overflow: 'hidden',
-  },
   signOutRow: { marginTop: spacing.lg, alignItems: 'center' },
   signOut: { fontSize: 14, fontWeight: '600' },
 });

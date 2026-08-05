@@ -1,4 +1,7 @@
-import { fmtCurrency, fmtDate, fromLocalDateString, monthLabel, toLocalDateString } from './format';
+import {
+  fmtCurrency, fmtDate, fmtMonthYear, fmtRelativeTime, fromLocalDateString, initials, monthLabel,
+  toLocalDateString,
+} from './format';
 
 describe('fmtCurrency', () => {
   // The bug this preserves: string-concatenating the symbol produced "₹-500" for a negative.
@@ -62,6 +65,63 @@ describe('fmtDate', () => {
     expect(fmtDate(undefined)).toBeNull();
     expect(fmtDate('')).toBeNull();
     expect(fmtDate('not a date')).toBeNull();
+  });
+});
+
+describe('initials', () => {
+  it('takes the first letter of the first two words', () => {
+    expect(initials('Ada Lovelace')).toBe('AL');
+    expect(initials('  ada   lovelace  ')).toBe('AL');
+  });
+
+  it('handles a single name', () => {
+    expect(initials('Ada')).toBe('A');
+  });
+
+  it('falls back to a placeholder rather than an empty badge', () => {
+    expect(initials(null)).toBe('?');
+    expect(initials(undefined)).toBe('?');
+    expect(initials('   ')).toBe('?');
+  });
+});
+
+describe('fmtMonthYear', () => {
+  it('renders month and year', () => {
+    const out = fmtMonthYear('2026-08-05T10:00:00Z');
+    expect(out).toContain('2026');
+    expect(out).toMatch(/august/i);
+  });
+
+  it('returns a dash for missing or unparseable input', () => {
+    expect(fmtMonthYear(null)).toBe('—');
+    expect(fmtMonthYear('not a date')).toBe('—');
+  });
+});
+
+describe('fmtRelativeTime', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const ago = (days: number) => new Date(Date.now() - days * DAY).toISOString();
+
+  it('words the near past in days', () => {
+    expect(fmtRelativeTime(ago(0))).toBe('today');
+    expect(fmtRelativeTime(ago(1))).toBe('yesterday');
+    expect(fmtRelativeTime(ago(5))).toBe('5 days ago');
+    expect(fmtRelativeTime(ago(29))).toBe('29 days ago');
+  });
+
+  it('switches to months and years, singular where it should be', () => {
+    expect(fmtRelativeTime(ago(30))).toBe('1 month ago');
+    expect(fmtRelativeTime(ago(75))).toBe('2 months ago');
+    expect(fmtRelativeTime(ago(365))).toBe('1 year ago');
+    expect(fmtRelativeTime(ago(800))).toBe('2 years ago');
+  });
+
+  // Null, not a string: the caller has to be able to say "Never changed" rather than print a gap
+  // that never happened.
+  it('returns null when there is no timestamp to compare', () => {
+    expect(fmtRelativeTime(null)).toBeNull();
+    expect(fmtRelativeTime(undefined)).toBeNull();
+    expect(fmtRelativeTime('not a date')).toBeNull();
   });
 });
 

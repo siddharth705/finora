@@ -30,6 +30,11 @@ const NON_FINANCIAL_KEYS = new Set([
   // own rows do not change under it; deleting the statement removes the row entirely, and
   // 'statement-imports' (which is in the cascade) is what drives that.
   'statement-import-transactions',
+  // Active sessions. Changes on sign-in, sign-out and password change -- never as a side effect of
+  // editing a transaction. SettingsScreen refreshes it directly after a password change.
+  'devices',
+  // The auto-apply confidence threshold. A preference the user sets; no financial write moves it.
+  'workspace-settings',
 ]);
 
 function sourceFiles(dir: string): string[] {

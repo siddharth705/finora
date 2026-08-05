@@ -12,6 +12,8 @@ import { GoalsScreen } from '../screens/GoalsScreen';
 import { ReportsScreen } from '../screens/ReportsScreen';
 import { InsightsScreen } from '../screens/InsightsScreen';
 import { InvestmentsScreen } from '../screens/InvestmentsScreen';
+import { ProfileScreen } from '../screens/ProfileScreen';
+import { SettingsScreen } from '../screens/SettingsScreen';
 import { useTheme } from '../theme';
 import type { AppTabParamList, MoreStackParamList } from './types';
 
@@ -42,6 +44,8 @@ function MoreNavigator() {
       <MoreStack.Screen name="Reports" component={ReportsScreen} />
       <MoreStack.Screen name="Insights" component={InsightsScreen} />
       <MoreStack.Screen name="Investments" component={InvestmentsScreen} />
+      <MoreStack.Screen name="Profile" component={ProfileScreen} />
+      <MoreStack.Screen name="Settings" component={SettingsScreen} />
     </MoreStack.Navigator>
   );
 }
