@@ -6,8 +6,11 @@ import org.springframework.context.annotation.Configuration;
 import java.util.Optional;
 
 /**
- * Deliberately broken fixture -- NOT production code, and never registered with Spring (it lives
- * in test sources, which component scanning never reaches).
+ * Deliberately broken fixture -- NOT production code, and it lives in test sources.
+ * It IS nonetheless component-scanned: target/test-classes sits under
+ * com.finora, so @SpringBootTest registers a stereotype-annotated fixture as a real bean --
+ * which is why these fixtures take no constructor dependencies. Giving one an un-declared
+ * dependency fails context loading for every integration test in the suite.
  *
  * <p>Reproduces the exact shape of the real {@code FirebaseConfig} bug: a {@code @Bean} method
  * declared to return {@code Optional<String>}. Spring registers a bean of type

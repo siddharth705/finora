@@ -7,8 +7,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Deliberately vulnerable fixture -- NOT production code, and never registered with Spring (it
- * lives in test sources, which component scanning never reaches).
+ * Deliberately vulnerable fixture -- NOT production code, and it lives in test sources.
+ * It IS nonetheless component-scanned: target/test-classes sits under
+ * com.finora, so @SpringBootTest registers a stereotype-annotated fixture as a real bean --
+ * which is why these fixtures take no constructor dependencies. Giving one an un-declared
+ * dependency fails context loading for every integration test in the suite.
  *
  * <p>This reproduces the exact shape of the real AdminSearchController bug: an admin-mapped
  * handler with no {@code @PreAuthorize}, reachable by any authenticated user. Its only purpose is
