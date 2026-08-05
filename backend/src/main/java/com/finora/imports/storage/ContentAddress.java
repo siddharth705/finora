@@ -51,11 +51,10 @@ public record ContentAddress(String hash, String key) {
     /**
      * Fails unless {@code content} actually hashes to {@code expectedHash}.
      *
-     * <p>The single implementation of the integrity check, used both when reading a statement back
-     * for a user and when the Phase 3 backfill reads an object back after writing it. Content
-     * addressing's whole premise is that the hash IS the identity; a store that never re-derives it
-     * is asserting that premise rather than checking it, and returns wrong bytes as confidently as
-     * right ones.
+     * <p>The single implementation of the integrity check, called on every read through
+     * {@code StatementContentService}. Content addressing's whole premise is that the hash IS the
+     * identity; a store that never re-derives it is asserting that premise rather than checking it,
+     * and returns wrong bytes as confidently as right ones.
      *
      * <p>What this actually catches: bit-rot, a provider handing back the wrong object for a key,
      * a key collision after a layout change, and a botched migration or restore. None of those are

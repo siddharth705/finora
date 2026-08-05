@@ -155,12 +155,59 @@ boundary and let no Cloudflare specific leak past it.
 
 Additive first, destructive last; every step reversible until the final one.
 
+### 5.0 The backfill was removed, because there was nothing to back fill
+
+Phase 3 shipped and was then deleted. It existed to move historical `BYTEA` rows into object
+storage, and there are none: the development database has no schema at all, and the
+`finora-statements` R2 bucket reports 0 objects. No production statements have ever been imported.
+
+A migration with nothing to migrate is not harmless. It was ~600 lines — a service, a worker, an
+admin endpoint and three test classes — sitting on the path that handles people's bank statements,
+permanently untested against real input because real input never existed. Dead code there is worse
+than dead code anywhere else in the repository.
+
+What survives is the part that was never about migration: **every read re-derives the SHA-256 and
+compares it to the hash the row recorded** (`ContentAddress.requireMatches`, called from
+`StatementContentService`). That was introduced alongside the backfill's read-back check and is
+deliberately placed at the single read choke point rather than inside a provider, so an R2
+implementation inherits it instead of having to remember it. Cost is one hash over bytes already
+fetched over the network and about to be PDF-parsed — invisible next to either.
+
+So the model is now simply:
+
+```
+upload ──► SHA-256 ──► store object ──► persist hash + key
+read   ──► fetch ────► SHA-256 ──────► compare ──► mismatch = StatementIntegrityException
+```
+
+**Why `file_content` still exists.** Not redundancy for its own sake. Railway's container
+filesystem is **ephemeral**, and `FilesystemStatementStorage` is currently the only provider — so
+the BYTEA column is the only durable copy, and dropping it now would lose every statement on each
+deploy. Phase 4's precondition is therefore no longer "the backfill reports complete"; it is **a
+durable provider is configured and in use**. `V55`'s self-guard, which refuses to drop the column
+while any row lacks a content address, stays as the mechanical check.
+
+**Still needed for R2**, once an API token exists (create it in the Cloudflare dashboard; the
+secret goes into Railway's environment, never into the repository or a chat):
+
+| Variable | Value |
+|---|---|
+| `STATEMENT_STORAGE_PROVIDER` | `r2` |
+| `R2_ACCOUNT_ID` | Cloudflare account id |
+| `R2_BUCKET` | `finora-statements` |
+| `R2_ACCESS_KEY_ID` | from the R2 API token |
+| `R2_SECRET_ACCESS_KEY` | from the R2 API token |
+
+`R2StatementStorage` is not written yet — deliberately, so it can be integration-tested against the
+real bucket as it is built rather than mocked and hoped for. `FG-009` keeps the swap honest: nothing
+outside `com.finora.imports.storage` may name a concrete provider, so this stays a config change.
+
 | Phase | Change | Reversible |
 |---|---|---|
-| **1 — BUILT** | `StatementStorage` + `ContentAddress` + `FilesystemStatementStorage`. Content-addressed, provider-selected, fully tested. **Not yet called by the import pipeline** — see below. | Yes — no storage change at all |
-| **2** | New uploads go to R2. Persist object key + content hash + metadata. | Yes — old rows untouched |
-| **3 — BUILT** | Backfill existing `BYTEA` into storage, **deduplicating** — identical content writes one object. Batched, resumable, driven from an admin endpoint. | Yes — column still present |
-| **4** | Drop `file_content`. | **No** |
+| **1 — BUILT** | `StatementStorage` + `ContentAddress` + `FilesystemStatementStorage`. Content-addressed, provider-selected, fully tested. | Yes — no storage change at all |
+| **2 — BUILT** | New uploads go to storage. Persist object key + content hash. Dual-write: `file_content` still filled. | Yes — old rows untouched |
+| ~~**3 — backfill**~~ | ~~Backfill existing `BYTEA` into storage~~ — **REMOVED 2026-08-05, see §5.0** | n/a |
+| **4** | Drop `file_content`. Blocked on a durable provider — see §5.0. | **No** |
 
 Phase 1 is deliberately behaviour-preserving. It is what makes every later phase small, and it can
 ship and prove itself in production while nothing yet depends on R2.
@@ -180,27 +227,8 @@ the outset precisely so that step does not reshape it.
 pipeline behaves exactly as before — asserted by `StatementStorageWiringTest`, so "Phase 1 changed
 nothing" is checked rather than claimed.
 
-Phase 4 is its own change, its own migration, its own deploy — and only once Phase 3 reports every
-row carrying a key.
-
-### 5.2 Running the backfill (Phase 3)
-
-`GET /api/v1/admin/imports/storage/backfill` reports progress; `POST` the same path runs one batch
-(`?limit=`, default 25, capped at 200). Call it repeatedly until `remaining` is zero — `complete`
-turning true is the precondition for Phase 4, and dropping `file_content` before then would destroy
-the only copy of every unaddressed row.
-
-Deliberately batched and operator-driven rather than scheduled. This codebase has no background job
-infrastructure, and for a migration over potentially gigabytes of customer statements that is the
-better shape anyway: bounded memory (each row can carry 10 MB), interruptible, and a decision point
-between batches. It refuses to run at all with no provider configured, rather than reporting "0
-processed" — which on a status page reads as *already done* and could green-light Phase 4.
-
-Each row is addressed in its own `REQUIRES_NEW` transaction, so one unreadable file cannot roll back
-the good rows beside it; failures are reported and the row is simply retried next run.
-
-`stored` versus `deduplicated` in the response is the first real measurement of §2.1 — how much of
-the database was the same file stored repeatedly.
+Phase 4 is its own change, its own migration, its own deploy — and only once a durable provider
+is configured and every row carries a key.
 
 ### 5.1 Dual-write semantics
 

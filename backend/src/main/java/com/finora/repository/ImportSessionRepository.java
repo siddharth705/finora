@@ -38,11 +38,4 @@ public interface ImportSessionRepository extends JpaRepository<ImportSession, UU
             "WHERE s.id = :id AND s.status = 'STAGED'")
     int claimForConfirmation(@Param("id") UUID id);
 
-    // ---- Phase 3 backfill ----
-    // Ids only; the backfill loads one row at a time. See StatementImportRepository's equivalent.
-    @Query(value = "SELECT id FROM import_sessions WHERE content_hash IS NULL", nativeQuery = true)
-    List<UUID> findIdsWithoutContentAddress(Pageable pageable);
-
-    @Query(value = "SELECT COUNT(*) FROM import_sessions WHERE content_hash IS NULL", nativeQuery = true)
-    long countWithoutContentAddress();
 }

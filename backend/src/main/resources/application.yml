@@ -171,9 +171,19 @@ app:
     # bean, StatementContentService.store() returns empty, and statements stay as BYTEA on
     # statement_imports/import_sessions exactly as before.
     #
-    # Phase 2 is a DUAL WRITE: with a provider set, a new upload writes its bytes to object storage
+    # This is a DUAL WRITE: with a provider set, a new upload writes its bytes to object storage
     # AND still fills file_content, so turning the provider back off is a config rollback rather
-    # than a deploy. Phase 3 backfills pre-V54 rows; Phase 4 drops the column.
+    # than a deploy. Every read re-derives the SHA-256 and compares it against the row's recorded
+    # hash (ContentAddress.requireMatches, called from StatementContentService).
+    #
+    # There is no backfill, and deliberately so: the migration/backfill phase was removed once it
+    # was established there is no historical statement content to migrate. New uploads are
+    # addressed from the moment they arrive.
+    #
+    # file_content stays until the r2 provider exists. It is not redundancy for its own sake --
+    # Railway's container filesystem is EPHEMERAL, so with provider=filesystem the BYTEA column is
+    # the only durable copy, and dropping it before a durable provider is configured would lose
+    # every statement on each deploy.
     #
     # Deliberately has no default: no bean is created unless a provider is named, so an unset value
     # preserves today's behaviour rather than silently activating a store nobody asked for. A value
