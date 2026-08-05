@@ -187,8 +187,13 @@ deploy. Phase 4's precondition is therefore no longer "the backfill reports comp
 durable provider is configured and in use**. `V55`'s self-guard, which refuses to drop the column
 while any row lacks a content address, stays as the mechanical check.
 
-**Still needed for R2**, once an API token exists (create it in the Cloudflare dashboard; the
-secret goes into Railway's environment, never into the repository or a chat):
+**R2 is implemented and inert.** `R2StatementStorage` speaks the S3 API through the AWS SDK, is
+selected by `app.statement-storage.provider=r2`, and does nothing at all until that is set — with
+the provider unset there is no storage bean and statements keep going to `BYTEA` exactly as before,
+which `StatementStorageWiringTest` asserts rather than assumes.
+
+To turn it on, set these in Railway. The two keys come from an R2 API token (Cloudflare dashboard →
+R2 → **Manage API Tokens**) and must never be committed:
 
 | Variable | Value |
 |---|---|
@@ -198,9 +203,21 @@ secret goes into Railway's environment, never into the repository or a chat):
 | `R2_ACCESS_KEY_ID` | from the R2 API token |
 | `R2_SECRET_ACCESS_KEY` | from the R2 API token |
 
-`R2StatementStorage` is not written yet — deliberately, so it can be integration-tested against the
-real bucket as it is built rather than mocked and hoped for. `FG-009` keeps the swap honest: nothing
-outside `com.finora.imports.storage` may name a concrete provider, so this stays a config change.
+Set the provider **and** all four, or none. With `provider=r2` and any one missing the application
+refuses to start and names the missing environment variable — deliberately, because the alternative
+is a deploy that looks healthy and fails the first time a real user imports a statement, at which
+point the only copy of their file is in a request that already returned 500.
+
+Three things are R2-specific rather than generic S3, and each fails confusingly if missed: the
+region is the literal string `auto`, addressing must be path-style, and the SDK's automatic
+checksums (`x-amz-checksum-crc32`, on by default since AWS SDK 2.30) must be set to `WHEN_REQUIRED`
+because R2 does not implement that flavour consistently — the symptom is a signature error that
+reads like bad credentials. Disabling them costs nothing here: this system verifies SHA-256 over
+the bytes on every read against a hash held in the database, which is a strictly stronger check
+than a transport CRC and is the one that catches a provider returning the wrong object.
+
+`FG-009` keeps the swap a config change: nothing outside `com.finora.imports.storage` may name a
+concrete provider.
 
 | Phase | Change | Reversible |
 |---|---|---|

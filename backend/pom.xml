@@ -142,6 +142,30 @@
       <version>3.0.3</version>
     </dependency>
 
+    <!-- Cloudflare R2 speaks the S3 API, so the official AWS SDK is the client; there is no
+         Cloudflare-specific SDK to prefer, and R2's own documentation points at exactly this.
+
+         apache-client is pinned explicitly rather than left to the default. The SDK otherwise
+         resolves netty-nio-client, which pulls a Netty stack this application does not otherwise
+         have and does not need for a handful of user-initiated object reads and writes. Excluding
+         it keeps the dependency surface and the startup cost down. -->
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>s3</artifactId>
+      <version>2.31.7</version>
+      <exclusions>
+        <exclusion>
+          <groupId>software.amazon.awssdk</groupId>
+          <artifactId>netty-nio-client</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>apache-client</artifactId>
+      <version>2.31.7</version>
+    </dependency>
+
     <!-- Firebase Admin SDK: server-side verification of Firebase ID tokens issued by Firebase
          Phone Authentication (the frontend's own client-side SDK handles OTP send/verify directly
          against Firebase; this is only what lets the backend trust the resulting token instead of

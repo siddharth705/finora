@@ -207,12 +207,24 @@ app:
     # preserves today's behaviour rather than silently activating a store nobody asked for. A value
     # that IS set but matches no implementation is rejected at startup rather than silently
     # behaving like "unset" -- see StatementContentService's constructor.
-    # "filesystem" is for local development and tests; "r2" is not implemented yet.
+    # "filesystem" is for local development and tests; "r2" is Cloudflare R2, for production.
     provider: ${STATEMENT_STORAGE_PROVIDER:}
     filesystem:
       # Only read when provider=filesystem. Single-instance only -- two backends would each see
       # their own disk. See FilesystemStatementStorage's own doc comment.
       root: ${STATEMENT_STORAGE_FS_ROOT:./data/statements}
+    r2:
+      # Only read when provider=r2, and every one of them is then REQUIRED: R2StatementStorage
+      # refuses to construct with any of them blank, so the application fails at startup rather
+      # than accepting uploads it has nowhere durable to put.
+      #
+      # The two keys come from an R2 API token (Cloudflare dashboard, R2 > Manage API Tokens) and
+      # belong in Railway's environment variables. They must never be committed, and there is
+      # deliberately no default here that would let a blank value look configured.
+      account-id: ${R2_ACCOUNT_ID:}
+      bucket: ${R2_BUCKET:}
+      access-key-id: ${R2_ACCESS_KEY_ID:}
+      secret-access-key: ${R2_SECRET_ACCESS_KEY:}
 
 management:
   endpoints:

@@ -18,7 +18,14 @@ class StatementStorageWiringTest {
 
     private final ApplicationContextRunner context = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of())
-            .withUserConfiguration(FilesystemStatementStorage.class);
+            .withUserConfiguration(FilesystemStatementStorage.class, R2StatementStorage.class);
+
+    private static final String[] R2_CREDENTIALS = {
+            "app.statement-storage.r2.account-id=test-account",
+            "app.statement-storage.r2.bucket=finora-statements-test",
+            "app.statement-storage.r2.access-key-id=test-key-id",
+            "app.statement-storage.r2.secret-access-key=test-secret",
+    };
 
     @Test
     void noProviderConfigured_meansNoStorageBeanAtAll() {
@@ -34,6 +41,56 @@ class StatementStorageWiringTest {
                         "app.statement-storage.provider=filesystem",
                         "app.statement-storage.filesystem.root=${java.io.tmpdir}/finora-wiring-test")
                 .run(ctx -> assertThat(ctx).hasSingleBean(FilesystemStatementStorage.class));
+    }
+
+    @Test
+    void r2Provider_activatesTheR2Implementation() {
+        // Constructing the S3 client makes no network call, so this is safe offline with fake
+        // credentials. It proves the conditional and the required-property validation, not that
+        // R2 is reachable.
+        context.withPropertyValues("app.statement-storage.provider=r2")
+                .withPropertyValues(R2_CREDENTIALS)
+                .run(ctx -> {
+                    assertThat(ctx).hasSingleBean(R2StatementStorage.class);
+                    assertThat(ctx).doesNotHaveBean(FilesystemStatementStorage.class);
+                });
+    }
+
+    @Test
+    void r2ProviderWithoutCredentials_failsAtStartupRatherThanAtTheFirstUpload() {
+        // The failure mode this prevents is a deploy that looks completely healthy -- context up,
+        // health endpoint green -- and then fails the first time a real user imports a statement,
+        // by which point the only copy of their file is in a request that already returned 500.
+        //
+        // Asserts the REASON, not merely that startup failed. Written as a bare hasFailed() first,
+        // it passed against a context that was dying of "No default constructor found" -- a real
+        // bug in the bean, entirely unrelated to credentials, which the test happily reported as
+        // success. A test that accepts any failure cannot tell the failure it wants from the one
+        // it is hiding.
+        context.withPropertyValues("app.statement-storage.provider=r2")
+                .run(ctx -> assertThat(ctx).getFailure()
+                        .rootCause()
+                        .isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("R2_ACCOUNT_ID"));
+    }
+
+    @Test
+    void r2ProviderNamesTheMissingEnvironmentVariable() {
+        context.withPropertyValues("app.statement-storage.provider=r2")
+                .withPropertyValues(
+                        "app.statement-storage.r2.account-id=test-account",
+                        "app.statement-storage.r2.bucket=finora-statements-test",
+                        "app.statement-storage.r2.access-key-id=test-key-id")
+                .run(ctx -> assertThat(ctx).getFailure()
+                        // Naming the env var, not just the Spring property, is the difference
+                        // between a fixable error and a hunt through application.yml for whatever
+                        // ${...} feeds it.
+                        .hasRootCauseMessage(
+                                "app.statement-storage.provider is 'r2' but "
+                                + "app.statement-storage.r2.secret-access-key is not set "
+                                + "(environment variable R2_SECRET_ACCESS_KEY). Statements would "
+                                + "have nowhere durable to go, so the application refuses to start "
+                                + "rather than accepting uploads it cannot store."));
     }
 
     @Test
