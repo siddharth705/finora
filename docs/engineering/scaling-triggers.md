@@ -124,11 +124,18 @@ cd backend && ./mvnw -o test -Dtest=ReconciliationScalingBenchmark -DfailIfNoTes
 |---:|---:|---:|---:|
 | 1,000 | 271 ms | 266 ms | 4 ms |
 | 10,000 | 2,145 ms | 1,183 ms | 3 ms |
-| 50,000 | **52,826 ms** | **10,173 ms** | 2 ms |
+| 50,000 | **52,826 ms** | 10,173 ms *(see below)* | 2 ms |
 
 The "after" column is the date-windowed fix described below. At 50k the pass took **52.8 seconds**
-of synchronous, request-thread work before it, and takes **10.2 seconds** after — a 5.2× reduction
-that saves 42.7 seconds per run, and still leaves a number nobody should be comfortable with.
+of synchronous, request-thread work before it.
+
+> **Read the 50k "after" figure as an upper bound, not a measurement.** It is a single sample, and
+> it was later found to have been taken while a concurrent build was running on the same machine.
+> Three quiet samples of the same code give **2,495 / 2,707 / 3,795 ms** — a median of about
+> **2.7 s**. Run-to-run variance here is roughly 1.5×, so single samples are not trustworthy and
+> differences inside that band are noise. See the account-bucketing section for how this was
+> discovered and what it cost. The windowing improvement itself (52.8 s → single-digit seconds) is
+> far outside the noise band and is not in question.
 
 **Status per finding**, using the lifecycle *observed → measured → triggered → implemented*:
 
@@ -156,12 +163,15 @@ that saves 42.7 seconds per run, and still leaves a number nobody should be comf
   therefore not a determinism regression traded for speed; it is a determinism **improvement** that
   happened to be a prerequisite.
 
-  **What it does not fix, stated plainly.** 10.2 s at 50k is a 5.2× improvement, not a solved
-  problem — and on the corrected measurement it is still well past this section's own trigger. The
-  residue is the refund pass: a 180-day window covers roughly a quarter of a two-year corpus, so
-  that loop is still quadratic with a smaller constant, and it now dominates. The next move is
-  narrowing refund candidates by account (measured below) — not a background worker, which would
-  still be doing the same quadratic work, just somewhere the user cannot see it.
+  **What it does not fix, stated plainly.** At a ~2.7 s median for 50k this is a large improvement,
+  not a solved problem — it remains seconds of synchronous work on a request thread, paid after
+  every transaction edit. The residue is the refund pass, whose 180-day window covers roughly a
+  quarter of a two-year corpus, so that loop is still quadratic with a smaller constant.
+  Account-bucketing it was the obvious next move; it was prototyped, measured, and **rejected** for
+  showing no improvement (below). What would actually help next is unknown, and the honest position
+  is that nobody should guess: the next candidate needs the same end-to-end treatment, and a
+  background worker is not it — that would do the same quadratic work somewhere the user cannot
+  see it.
 
 ### Measurement: bucketing refund candidates by account — 2026-08-05 (methodology v2)
 
@@ -182,11 +192,43 @@ structurally `1 − 1/accounts`:
 grouping pass and a per-account structure to build and keep correct. A two-thirds cut in
 *iterations* is not a two-thirds cut in *time*.
 
-**Not yet proposed for implementation.** The honest limit of this measurement is that the isolated
-loop over-counts: it does not model the earlier passes having already consumed many incomes, so it
-reports more cross-account work than the real pass performs. Deciding this properly needs a
-prototype timed end-to-end against `reconcileForUser`, not an isolated loop — which is the next
-step, and a proposal before any change lands.
+**Prototyped, measured end-to-end, and rejected — 2026-08-05.**
+
+The isolated count above says two thirds of the work disappears. It was built anyway, timed against
+the whole `reconcileForUser` run, and compared with the baseline **re-measured on the same machine
+in the same session**. That last part is what decided it:
+
+| 50k transactions, 3 samples each | run 1 | run 2 | run 3 | median |
+|---|---:|---:|---:|---:|
+| baseline (no bucketing) | 2,495 ms | 2,707 ms | 3,795 ms | **2,707 ms** |
+| with account bucketing | 2,489 ms | 3,360 ms | 4,349 ms | **3,360 ms** |
+
+The ranges overlap almost completely and the bucketed median is *worse*. **There is no measurable
+improvement.** The prototype was correct — all 1,222 tests passed and no reconciliation outcome
+changed — and it still does not earn its place.
+
+Why the isolated measurement was so misleading, since the gap is instructive:
+
+- It counted iterations, and each removed iteration is one `getAccountId().equals(...)` — a
+  reference compare and a UUID compare, among the cheapest operations in the pass. Two thirds of
+  nearly nothing is nothing.
+- It did not model the earlier passes consuming incomes before the refund pass ever sees them, so
+  it over-reported the work available to remove.
+- Against that, bucketing adds a `groupingBy` over every candidate, plus a map lookup per income —
+  real cost, paid on every run, including the overwhelmingly common small ones.
+
+**The rule this reinforces:** a count is a hypothesis, not a measurement. Only an end-to-end timing
+against a baseline taken under the same conditions can settle whether a change is worth making.
+
+**And a caution about this machine.** An earlier single-sample figure of 10,173 ms for the same
+baseline was taken while a concurrent build was running, and is roughly 3–4× the median measured
+quietly. Run-to-run variance here is around 1.5×, so:
+
+- Differences **within ~1.5×** mean nothing without repeated matched-condition sampling. Account
+  bucketing sits entirely inside that band.
+- The windowing change (52.8 s → single-digit seconds) is far outside it and remains real.
+- Always take a fresh baseline in the same session as the change being evaluated. Never compare
+  against a number measured earlier.
 - **`detectForUser` — MEASURED, NOT triggered.** 1 ms at every size. The in-memory cost the audit
   attributed to it is not there.
 - **`saveAll(active)` write-back (`RecurringService`) — STILL UNMEASURED.** The benchmark mocks the
