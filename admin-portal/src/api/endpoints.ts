@@ -364,3 +364,17 @@ export const adminStatementAnalysisApi = {
   byReference: (reference: string) =>
     api.get<StatementAnalysisDetailDto>(`/admin/imports/analyses/${encodeURIComponent(reference)}`).then((r) => r.data),
 };
+
+/** Runs the engine on a document and imports nothing. Separate permission (ENGINE_ANALYSIS_RUN)
+ *  from the read-only reports above -- see AdminAnalysisService for why, and for how "writes
+ *  nothing" is actually enforced. The password rides in the multipart body, never the URL. */
+export const adminAnalysisRunApi = {
+  analyze: (file: File, password?: string) => {
+    const form = new FormData();
+    form.append('file', file);
+    if (password) form.append('password', password);
+    return api
+      .post<StatementAnalysisDetailDto>('/admin/imports/analyses', form)
+      .then((r) => r.data);
+  },
+};

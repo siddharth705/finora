@@ -290,19 +290,10 @@ public class ImportService {
      * whoever picks up the report can see what the document actually contained without needing the
      * file itself.
      */
+    /** Delegates to {@link ExtractionCheck}, which admin analysis shares so both paths reach the
+     *  same verdict on the same document. */
     private void rejectIfNothingWasExtracted(StagingResponse staged, DocumentContext ctx) {
-        if (!staged.rows().isEmpty()) return;
-
-        boolean locatedATable = ctx != null && ctx.buildMetadata().tables() > 0;
-        int recoveredLines = staged.unparseableRows() == null ? 0 : staged.unparseableRows().size();
-        throw new ApiException(
-                locatedATable ? ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND : ErrorCode.IMPORT_NO_HEADER_DETECTED,
-                (locatedATable
-                        ? "Finora found a transaction table in this statement but could not read any transactions from it."
-                        : "Finora could not find a transaction table anywhere in this statement.")
-                        + (recoveredLines > 0
-                        ? " " + recoveredLines + " line(s) of text were recovered and recorded for review."
-                        : ""));
+        ExtractionCheck.rejectIfNothingWasExtracted(staged, ctx);
     }
 
     private StagingResponse toStagingResponse(StagedAccountSection section) {

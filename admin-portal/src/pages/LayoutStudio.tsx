@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  RefreshCw, FileSearch, AlertTriangle, CheckCircle2, Layers, Ruler, ChevronRight, ChevronDown,
+  RefreshCw, FileSearch, AlertTriangle, CheckCircle2, Layers, Ruler, ChevronRight, ChevronDown, Upload,
 } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
-import { adminStatementAnalysisApi } from '../api/endpoints';
+import { useAdminAuth } from '../context/AdminAuthContext';
+import { useNotify } from '../context/NotificationContext';
+import { adminStatementAnalysisApi, adminAnalysisRunApi } from '../api/endpoints';
 import type {
   StatementAnalysisDto, StatementAnalysisSummaryDto, UnanchoredReasons,
 } from '../types';
@@ -324,8 +326,111 @@ function NotYetRecorded() {
   );
 }
 
+/** IMPORT_008 = encrypted, no password given. IMPORT_009 = password given and wrong. */
+const PASSWORD_CODES = ['IMPORT_008', 'IMPORT_009'];
+
+/**
+ * Run the engine on a document without importing it.
+ *
+ * <p>The change that turns this page from a viewer into a workbench: until now every analysis in
+ * the table arrived because a real customer uploaded something. An engineer studying a layout had
+ * to find a statement, write a probe and read a console.
+ *
+ * <p>Nothing is imported and nothing is stored — not the file, not the transactions, not even the
+ * merchants the parser resolves on the way through. See AdminAnalysisService for how that is
+ * enforced, which is less obvious than it looks.
+ */
+function AnalysisUploadPanel({ onAnalysed }: { onAnalysed: (reference: string) => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [password, setPassword] = useState('');
+  const [needsPassword, setNeedsPassword] = useState(false);
+  const queryClient = useQueryClient();
+  const notify = useNotify();
+
+  const run = useMutation({
+    mutationFn: () => adminAnalysisRunApi.analyze(file as File, password || undefined),
+    onSuccess: (detail) => {
+      const { outcome, failureCode, reference } = detail.analysis;
+
+      // A failed parse is a successful analysis -- the backend returns 200 with a FAILED row on
+      // purpose, so the admin gets the evidence link precisely when the engine could not read the
+      // document. The one failure worth interrupting for is a password, because that one the
+      // admin can actually fix and retry.
+      if (outcome === 'FAILED' && failureCode && PASSWORD_CODES.includes(failureCode)) {
+        setNeedsPassword(true);
+        notify.error('This document is encrypted. Enter its password and analyse again.');
+      } else if (outcome === 'FAILED') {
+        notify.error(`Analysed — the engine could not read this document (${failureCode}).`);
+      } else {
+        notify.success(`Analysed as ${reference}.`);
+        setNeedsPassword(false);
+      }
+
+      setPassword('');
+      void queryClient.invalidateQueries({ queryKey: ['admin-analyses'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-analyses-summary'] });
+      onAnalysed(reference);
+    },
+    onError: () => notify.error("Couldn't analyse that document — please try again."),
+  });
+
+  return (
+    <section aria-labelledby="upload-heading" className="bg-card border border-border rounded-xl2 shadow-card p-4">
+      <div className="flex items-center gap-2">
+        <Upload size={14} className="text-primary" />
+        <h2 id="upload-heading" className="text-sm font-semibold text-ink">Analyse a statement</h2>
+      </div>
+      <p className="text-sm text-muted mt-1">
+        Runs the real engine and imports nothing — no account, no transactions, and the file itself
+        is not stored. Leaves a permanent analysis you can link to.
+      </p>
+
+      <div className="flex flex-wrap items-end gap-3 mt-3">
+        <div>
+          <label htmlFor="analysis-file" className="block text-xs text-muted mb-1">Statement (PDF or CSV)</label>
+          <input
+            id="analysis-file"
+            type="file"
+            accept=".pdf,.csv"
+            onChange={(event) => {
+              setFile(event.target.files?.[0] ?? null);
+              setNeedsPassword(false);
+            }}
+            className="text-sm text-ink file:mr-3 file:rounded-lg file:border file:border-border file:bg-bg file:px-3 file:py-1.5 file:text-sm file:text-ink"
+          />
+        </div>
+
+        {needsPassword && (
+          <div>
+            <label htmlFor="analysis-password" className="block text-xs text-muted mb-1">Document password</label>
+            <input
+              id="analysis-password"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="off"
+              className="text-sm text-ink border border-border rounded-lg px-3 py-1.5 bg-card"
+            />
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={() => run.mutate()}
+          disabled={!file || run.isPending}
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-white bg-primary rounded-lg px-3.5 py-2 disabled:opacity-50"
+        >
+          {run.isPending ? <RefreshCw size={14} className="animate-spin" /> : <Upload size={14} />}
+          {run.isPending ? 'Analysing…' : 'Analyse'}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function LayoutStudioContent() {
   const [selected, setSelected] = useState<string | null>(null);
+  const { hasPermission } = useAdminAuth();
 
   const summary = useQuery({
     queryKey: ['admin-analyses-summary'],
@@ -366,6 +471,8 @@ function LayoutStudioContent() {
           <RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} /> Refresh
         </button>
       </div>
+
+      {hasPermission('ENGINE_ANALYSIS_RUN') && <AnalysisUploadPanel onAnalysed={setSelected} />}
 
       <SummaryStrip summary={summary.data} />
 

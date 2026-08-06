@@ -1,0 +1,45 @@
+package com.finora.imports;
+
+import com.finora.dto.ImportDto.StagingResponse;
+import com.finora.exception.ApiException;
+import com.finora.exception.ErrorCode;
+
+/**
+ * The one rule that decides whether the engine got anything usable out of a document.
+ *
+ * <p>Extracted from {@code ImportService} when admin analysis needed it too. Left where it was, the
+ * two paths would have disagreed about the same file: a document yielding no transactions is
+ * {@code IMPORT_001} for a customer, and the admin tool — which calls the preview generator
+ * directly, below the layer that threw — would have recorded it as PARSED with zero rows. An
+ * analysis workbench whose verdict differs from what the customer actually got is worse than no
+ * workbench, because the engineer investigating a complaint would be looking at a different
+ * outcome than the one being complained about.
+ */
+final class ExtractionCheck {
+
+    private ExtractionCheck() {
+    }
+
+    /**
+     * Throws when a document produced no transactions at all.
+     *
+     * <p>Distinguishes the two ways that happens, because they need different fixes: no table
+     * found anywhere ({@code IMPORT_NO_HEADER_DETECTED}) is a layout the engine does not
+     * recognise, whereas a table located but unreadable ({@code IMPORT_NO_TRANSACTIONS_FOUND}) is
+     * a layout it recognises and cannot parse.
+     */
+    static void rejectIfNothingWasExtracted(StagingResponse staged, DocumentContext ctx) {
+        if (!staged.rows().isEmpty()) return;
+
+        boolean locatedATable = ctx != null && ctx.buildMetadata().tables() > 0;
+        int recoveredLines = staged.unparseableRows() == null ? 0 : staged.unparseableRows().size();
+        throw new ApiException(
+                locatedATable ? ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND : ErrorCode.IMPORT_NO_HEADER_DETECTED,
+                (locatedATable
+                        ? "Finora found a transaction table in this statement but could not read any transactions from it."
+                        : "Finora could not find a transaction table anywhere in this statement.")
+                        + (recoveredLines > 0
+                        ? " " + recoveredLines + " line(s) of text were recovered and recorded for review."
+                        : ""));
+    }
+}

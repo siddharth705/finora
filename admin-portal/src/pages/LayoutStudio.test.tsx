@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import LayoutStudio from './LayoutStudio';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { mockAdminAuthState } from '../test/mockAdminAuth';
-import { adminStatementAnalysisApi } from '../api/endpoints';
+import { adminStatementAnalysisApi, adminAnalysisRunApi } from '../api/endpoints';
 import type {
   StatementAnalysisDto, StatementAnalysisDetailDto, StatementAnalysisSummaryDto,
 } from '../types';
@@ -16,9 +16,13 @@ vi.mock('../context/AdminAuthContext', () => ({
 }));
 vi.mock('../api/endpoints', () => ({
   adminStatementAnalysisApi: { recent: vi.fn(), summary: vi.fn(), byReference: vi.fn() },
+  adminAnalysisRunApi: { analyze: vi.fn() },
 }));
+
+const notifySuccess = vi.fn();
+const notifyError = vi.fn();
 vi.mock('../context/NotificationContext', () => ({
-  useNotify: () => ({ success: vi.fn(), error: vi.fn() }),
+  useNotify: () => ({ success: notifySuccess, error: notifyError }),
 }));
 
 function renderPage() {
@@ -90,9 +94,16 @@ const DETAIL: StatementAnalysisDetailDto = {
   timesLayoutFailed: 11,
 };
 
+/** A parse failure: 200 with a FAILED analysis, not an HTTP error -- see the backend controller. */
+const ENCRYPTED_DETAIL: StatementAnalysisDetailDto = {
+  analysis: { ...LOCKED, failureCode: 'IMPORT_008' },
+  timesLayoutSeen: 0,
+  timesLayoutFailed: 0,
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
-  mockAuth(['PLATFORM_DIAGNOSTICS_VIEW']);
+  mockAuth(['PLATFORM_DIAGNOSTICS_VIEW', 'ENGINE_ANALYSIS_RUN']);
   vi.mocked(adminStatementAnalysisApi.summary).mockResolvedValue(SUMMARY);
   vi.mocked(adminStatementAnalysisApi.recent).mockResolvedValue([PARSED, LOCKED]);
   vi.mocked(adminStatementAnalysisApi.byReference).mockResolvedValue(DETAIL);
@@ -189,5 +200,65 @@ describe('LayoutStudio', () => {
       expect(adminStatementAnalysisApi.recent).not.toHaveBeenCalled();
     });
     expect(screen.queryByText('FP-1-7A91D3C2')).not.toBeInTheDocument();
+  });
+
+  describe('analysing a document', () => {
+    function pdf(name = 'statement.pdf') {
+      return new File(['%PDF-1.4 pretend'], name, { type: 'application/pdf' });
+    }
+
+    it('runs the engine and opens the analysis it produced', async () => {
+      const user = userEvent.setup();
+      vi.mocked(adminAnalysisRunApi.analyze).mockResolvedValue(DETAIL);
+      renderPage();
+
+      await user.upload(await screen.findByLabelText(/statement \(pdf or csv\)/i), pdf());
+      await user.click(screen.getByRole('button', { name: /^analyse$/i }));
+
+      await waitFor(() => expect(adminAnalysisRunApi.analyze).toHaveBeenCalled());
+      // The detail panel opening is the observable outcome -- an admin who just analysed something
+      // should be looking at it, not hunting for it in the table.
+      expect(await screen.findByRole('heading', { name: 'This layout' })).toBeInTheDocument();
+    });
+
+    it('asks for a password when the document turns out to be encrypted', async () => {
+      // IMPORT_008 comes back as a 200 with a FAILED analysis, so nothing throws. The page has to
+      // notice the failure CODE to offer the retry -- treating any 200 as success would leave the
+      // admin staring at an empty analysis with no way forward.
+      const user = userEvent.setup();
+      vi.mocked(adminAnalysisRunApi.analyze).mockResolvedValue(ENCRYPTED_DETAIL);
+      renderPage();
+
+      await user.upload(await screen.findByLabelText(/statement \(pdf or csv\)/i), pdf('locked.pdf'));
+      expect(screen.queryByLabelText(/document password/i)).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /^analyse$/i }));
+
+      expect(await screen.findByLabelText(/document password/i)).toBeInTheDocument();
+      expect(notifyError).toHaveBeenCalledWith(expect.stringMatching(/encrypted/i));
+    });
+
+    it('sends the password in the request body once given', async () => {
+      const user = userEvent.setup();
+      vi.mocked(adminAnalysisRunApi.analyze).mockResolvedValue(ENCRYPTED_DETAIL);
+      renderPage();
+
+      await user.upload(await screen.findByLabelText(/statement \(pdf or csv\)/i), pdf('locked.pdf'));
+      await user.click(screen.getByRole('button', { name: /^analyse$/i }));
+      await user.type(await screen.findByLabelText(/document password/i), 'letmein');
+      await user.click(screen.getByRole('button', { name: /^analyse$/i }));
+
+      expect(adminAnalysisRunApi.analyze).toHaveBeenLastCalledWith(expect.any(File), 'letmein');
+    });
+
+    it('hides the upload panel from someone who may only read the reports', async () => {
+      // Running the engine is a separately grantable permission (V61) precisely because viewing
+      // diagnostics is documented as read-only. The UI has to honour that split, not just the API.
+      mockAuth(['PLATFORM_DIAGNOSTICS_VIEW']);
+      renderPage();
+
+      expect(await screen.findByText('FP-1-7A91D3C2')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^analyse$/i })).not.toBeInTheDocument();
+    });
   });
 });

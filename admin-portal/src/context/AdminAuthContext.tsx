@@ -29,6 +29,9 @@ export const ADMIN_PORTAL_PERMISSIONS = [
   'ROLE_MANAGE', 'PERMISSION_MANAGE', 'SYSTEM_SETTINGS', 'PLATFORM_STATS_VIEW',
   'BANK_MANAGE', 'RULE_MANAGE', 'MERCHANT_MANAGE', 'RECONCILIATION_VIEW', 'PLATFORM_ANALYTICS_VIEW',
   'PLATFORM_DIAGNOSTICS_VIEW', 'RELATIONSHIP_MANAGE',
+  // Layout Studio's upload. Separate from PLATFORM_DIAGNOSTICS_VIEW, which reads the reports:
+  // running the engine on a document is an action, and V61 made the two separately grantable.
+  'ENGINE_ANALYSIS_RUN',
 ];
 
 export interface AdminAuthState {
