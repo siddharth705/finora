@@ -75,6 +75,26 @@ policy for a single validator with nothing to weigh it against. It waits until a
 exists. What does NOT wait is the wire format: `VerificationReport` already carries a list of
 findings, so adding validators later appends to it and changes nothing else.
 
+### Deferred: a separate `severity` on each finding
+
+Considered and not added. The argument for it is real -- `outcome` answers "did this rule pass",
+`severity` answers "how much does that matter", and those genuinely diverge for a rule that fails
+without it being important (a layout heuristic, say).
+
+Two reasons to wait, and the first is the general rule:
+
+- **Generalise now what would be BREAKING later; defer what is ADDITIVE.** Replacing a row-shaped
+  payload with `details` had to happen before a second validator, because changing it afterwards
+  breaks every client. Adding a `severity` field later breaks nobody. That asymmetry is the whole
+  criterion, and it is worth applying deliberately rather than generalising everything on instinct.
+- **Today it would duplicate `outcome`.** The balance chain already distinguishes WARNING from
+  FAILED, which IS a severity judgement -- "a few rows disagree" versus "this column is being
+  misread". A second field would carry the same information under another name, which is the
+  two-sources-of-truth problem that removed the report's overall status.
+
+Revisit when a rule exists whose failure is genuinely low-stakes. At that point there is something
+to calibrate the scale against, instead of one producer and a guess.
+
 ## Evidence quality, not one-off checks
 
 Rather than adding a bespoke check per ambiguity, validators should grade the evidence behind a
