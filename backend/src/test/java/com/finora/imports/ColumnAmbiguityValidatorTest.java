@@ -44,7 +44,7 @@ class ColumnAmbiguityValidatorTest {
     @Test
     void flagsARowWhereBothDirectionsClaimTheMoney() {
         var finding = validator.check(List.of(
-                row("Narration", "SOMETHING", "Withdrawals", "436.00", "Deposits", "25,000.00")));
+                row("Txn Date", "10/07/2026", "Narration", "SOMETHING", "Withdrawals", "436.00", "Deposits", "25,000.00")));
 
         assertThat(finding.outcome()).isEqualTo("WARNING");
         assertThat(finding.details().get("ambiguities").toString())
@@ -56,8 +56,8 @@ class ColumnAmbiguityValidatorTest {
         // Most Indian statements do exactly this. Treating it as ambiguous would warn on almost
         // every row of almost every import, which is how a verification panel becomes wallpaper.
         var finding = validator.check(List.of(
-                row("Narration", "PREMIUM", "Withdrawals", "20.00", "Deposits", "0.00"),
-                row("Narration", "UPI CREDIT", "Withdrawals", "0.00", "Deposits", "25,000.00")));
+                row("Txn Date", "16/07/2026", "Narration", "PREMIUM", "Withdrawals", "20.00", "Deposits", "0.00"),
+                row("Txn Date", "10/07/2026", "Narration", "UPI CREDIT", "Withdrawals", "0.00", "Deposits", "25,000.00")));
 
         assertThat(finding.outcome()).isEqualTo("VERIFIED");
         assertThat(finding.details()).containsEntry("ambiguousRows", 0);
@@ -68,7 +68,7 @@ class ColumnAmbiguityValidatorTest {
         // A narration routinely carries several numbers -- a reference, a date, a UPI id. Only the
         // columns that decide how much and which way can be ambiguous about how much and which way.
         var finding = validator.check(List.of(
-                row("Narration", "999999999-UPI-999999999999 Ref 9999999999999999",
+                row("Txn Date", "10/07/2026", "Narration", "999999999-UPI-999999999999 Ref 9999999999999999",
                     "Withdrawals", "20.00", "Deposits", "0.00")));
 
         assertThat(finding.outcome()).isEqualTo("VERIFIED");
@@ -77,8 +77,8 @@ class ColumnAmbiguityValidatorTest {
     @Test
     void reportsWhichRowSoItCanBeFound() {
         var finding = validator.check(List.of(
-                row("Withdrawals", "20.00", "Deposits", "0.00"),
-                row("Withdrawals", "0.00", "Deposits", "0.00 25,000.00")));
+                row("Txn Date", "16/07/2026", "Withdrawals", "20.00", "Deposits", "0.00"),
+                row("Txn Date", "10/07/2026", "Withdrawals", "0.00", "Deposits", "0.00 25,000.00")));
 
         assertThat(finding.details().get("ambiguities").toString()).contains("rowIndex=1");
         assertThat(finding.details()).containsEntry("rowsChecked", 2);
@@ -89,12 +89,29 @@ class ColumnAmbiguityValidatorTest {
         // Escalating on volume would imply a view about which reading is right. This rule has none
         // -- it reports that the document did not say, and most guesses it flags will be correct.
         var finding = validator.check(List.of(
-                row("Deposits", "0.00 100.00"),
-                row("Deposits", "0.00 200.00"),
-                row("Deposits", "0.00 300.00")));
+                row("Txn Date", "01/07/2026", "Deposits", "0.00 100.00"),
+                row("Txn Date", "02/07/2026", "Deposits", "0.00 200.00"),
+                row("Txn Date", "03/07/2026", "Deposits", "0.00 300.00")));
 
         assertThat(finding.outcome()).isEqualTo("WARNING");
         assertThat(finding.details()).containsEntry("ambiguousRows", 3);
+    }
+
+    @Test
+    void ignoresTrailingBoilerplateThatIsNotATransaction() {
+        // Found by running the diagnostic against a statement that parses perfectly and watching
+        // this rule warn anyway. A statement's summary block lands in whichever column its x
+        // position falls under -- here several amounts in a direction column -- and flagging it
+        // put a warning on a flawless import, which is the exact false accusation this framework
+        // is built to avoid.
+        var finding = validator.check(List.of(
+                row("Txn Date", "10/07/2026", "Narration", "UPI CREDIT",
+                    "Withdrawals", "0.00", "Deposits", "25,000.00"),
+                row("Txn Date", "Total Withdrawal Balance***", "Narration", "Opening Balance Debit Amount",
+                    "Withdrawals", "Credit Amount 538.00 25,000.00 Credit Count 3 1")));
+
+        assertThat(finding.outcome()).isEqualTo("VERIFIED");
+        assertThat(finding.details()).containsEntry("ambiguousRows", 0);
     }
 
     @Test

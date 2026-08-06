@@ -237,11 +237,84 @@ class PdfPipelineDiagnostic {
         }
 
         PdfPreviewGenerator generator = new PdfPreviewGenerator(textExtractor, tableLocator, metadataExtractor, transactionNormalizer, com.finora.imports.product.ProductDiscovery.standard(), new com.finora.imports.product.ProductAttributeExtractor(), new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(), new com.finora.imports.StatementTotalsValidator(), new com.finora.imports.SummaryTotalsValidator(), new com.finora.imports.ColumnAmbiguityValidator()));
-        List<StagedAccountSection> finalSections = generator.generateSections(UUID.randomUUID(), pdfPath.getFileName().toString(), bytes);
+        var generated = generator.generateSectionsWithContext(
+                UUID.randomUUID(), pdfPath.getFileName().toString(), bytes, null);
+        List<StagedAccountSection> finalSections = generated.sections();
         System.out.println("=== Final staged output: " + finalSections.size() + " account section(s) ===");
         for (var s : finalSections) {
             System.out.println("  rows=" + s.rows().size() + " account=" + s.detectedAccount());
         }
+        System.out.println();
+        printVerificationReport(pdfPath, generated);
+    }
+
+    /**
+     * The verification report, human-readable and then as one line of JSON.
+     *
+     * <p>This exists because running a statement through the pipeline used to answer "did it parse"
+     * and not "can we prove it parsed correctly" -- the findings were computed and thrown away.
+     * Across a corpus, which rule fires and how often is the evidence that should decide what
+     * parser work is worth doing next, and until it is printed there is nothing to count.
+     *
+     * <p>The JSON line is deliberately separate from the human output rather than a prettier
+     * version of it: it exists to be collected across many runs and diffed between parser versions,
+     * which is not something anyone should be scraping console prose to do. It is keyed by layout
+     * fingerprint so results group by LAYOUT rather than by bank -- two banks can share a layout and
+     * one bank can have several, and it is the layout that parsing succeeds or fails against.
+     *
+     * <p>Prints no account holder, no account number and no transaction description: the point of
+     * running this locally is that the document never leaves the machine, and a report that carried
+     * those would quietly become a file someone pastes into a ticket.
+     */
+    private void printVerificationReport(Path pdfPath, PdfPreviewGenerator.PdfGenerationResult generated) {
+        String fingerprint = generated.documentContext() == null ? "unknown"
+                : generated.documentContext().buildFingerprint();
+
+        System.out.println("=== Verification ===");
+        System.out.println("  layout: " + fingerprint);
+
+        StringBuilder json = new StringBuilder();
+        json.append("{\"file\":\"").append(pdfPath.getFileName()).append("\"")
+            .append(",\"layout\":\"").append(fingerprint).append("\"")
+            .append(",\"sections\":[");
+
+        for (int i = 0; i < generated.sections().size(); i++) {
+            StagedAccountSection section = generated.sections().get(i);
+            var report = section.verification();
+            var bank = section.detectedAccount() == null ? null : section.detectedAccount().bank();
+            System.out.println("  section " + i + " (" + (bank == null ? "unknown bank" : bank.id())
+                    + ", " + section.rows().size() + " rows)");
+
+            if (i > 0) json.append(",");
+            json.append("{\"bank\":\"").append(bank == null ? "" : bank.id()).append("\"")
+                .append(",\"rows\":").append(section.rows().size())
+                .append(",\"findings\":{");
+
+            if (report == null || report.findings().isEmpty()) {
+                System.out.println("    (verification did not run)");
+            } else {
+                for (int f = 0; f < report.findings().size(); f++) {
+                    var finding = report.findings().get(f);
+                    Object cause = finding.details() == null ? null : finding.details().get("suspectedCause");
+                    System.out.printf("    %-18s %-15s%s%n", finding.rule(), finding.outcome(),
+                            cause == null ? "" : "  cause=" + cause);
+                    // The explanation is the actionable half of a failed finding -- printing the
+                    // outcome without it reproduces exactly the "FAILED, now go and work out why"
+                    // that this whole framework exists to move past.
+                    Object explanation = finding.details() == null ? null : finding.details().get("explanation");
+                    if (explanation != null) System.out.println("      " + explanation);
+
+                    if (f > 0) json.append(",");
+                    json.append("\"").append(finding.rule()).append("\":\"")
+                        .append(finding.outcome()).append(cause == null ? "" : "/" + cause).append("\"");
+                }
+            }
+            json.append("}}");
+        }
+        json.append("]}");
+
+        System.out.println();
+        System.out.println("JSON " + json);
     }
 
     /**

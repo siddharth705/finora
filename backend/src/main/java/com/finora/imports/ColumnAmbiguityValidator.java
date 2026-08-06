@@ -78,6 +78,14 @@ public class ColumnAmbiguityValidator {
         for (int i = 0; i < rawRows.size(); i++) {
             Map<String, String> row = rawRows.get(i);
             if (row == null) continue;
+            // Only rows that are actually transactions. The located rows include everything after
+            // the header, boilerplate included, and a statement's trailing summary block routinely
+            // lands in a direction column as something like "Credit Amount 538.00 25,000.00 Credit
+            // Count 3 1" -- several amounts in one cell, and not remotely ambiguous, because it was
+            // never a transaction. Found by running this against a real statement that parses
+            // perfectly and watching it report a warning anyway. Mirrors TransactionNormalizer's
+            // own gate: no date, no transaction.
+            if (!looksLikeATransaction(row)) continue;
 
             String creditColumn = null, debitColumn = null;
             BigDecimal credit = null, debit = null;
@@ -126,6 +134,14 @@ public class ColumnAmbiguityValidator {
                 : found.size() + " rows could be read more than one way. The import used its best "
                   + "reading of each, but the statement did not settle them — worth checking them.");
         return new ImportDto.VerificationFinding(RULE, "WARNING", details);
+    }
+
+    /** Checked by value rather than by column name: a summary block's text lands in whichever
+     *  column its x position happens to fall under, so trusting the column heading here would be
+     *  trusting the very bucketing that is under suspicion. */
+    private static boolean looksLikeATransaction(Map<String, String> row) {
+        return row.values().stream()
+                .anyMatch(v -> v != null && CsvParser.parseDate(v.trim()) != null);
     }
 
     private static int countAmounts(String value) {
