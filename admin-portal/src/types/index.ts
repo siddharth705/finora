@@ -564,3 +564,51 @@ export interface FeatureFlagDto {
 export interface UpdateFeatureFlagRequest {
   enabled: boolean;
 }
+
+/* ── Layout Studio ─────────────────────────────────────────────────────────────────────────────
+ * The read side of statement_analysis_sessions: one row per upload ATTEMPT, successes and
+ * failures alike. Distinct from the layout-intelligence types above, which are derived from
+ * statement_imports and therefore only ever describe documents that succeeded.
+ *
+ * Nothing here identifies a person: no file name, no user id. A document is referred to by its
+ * quotable handle (SA-20260806-0145), a layout by its fingerprint. See
+ * StatementAnalysisReportService's doc comment for why.
+ */
+
+/** Reason -> count. Ordered by count descending, dominant reason first. */
+export type UnanchoredReasons = Record<string, number>;
+
+export interface StatementAnalysisDto {
+  reference: string;
+  sourceFormat: string | null;
+  /** Null when the document failed before it could be characterised -- e.g. a wrong password. */
+  layoutFingerprint: string | null;
+  outcome: 'PARSED' | 'FAILED';
+  failureCode: string | null;
+  sectionCount: number | null;
+  /** Null means never measured. Deliberately NOT the same as 0 -- see the page's RowCount cell. */
+  rowCount: number | null;
+  unanchoredReasons: UnanchoredReasons;
+  unanchoredRowCount: number;
+  durationMs: number | null;
+  byteSize: number | null;
+  createdAt: string;
+}
+
+export interface StatementAnalysisDetailDto {
+  analysis: StatementAnalysisDto;
+  /** Including this one. 0 when the document was never characterised at all. */
+  timesLayoutSeen: number;
+  timesLayoutFailed: number;
+}
+
+export interface StatementAnalysisSummaryDto {
+  analysesInWindow: number;
+  totalAnalysesEver: number;
+  parsed: number;
+  failed: number;
+  distinctLayouts: number;
+  rowsExtractedInWindow: number;
+  unanchoredRowsInWindow: number;
+  unanchoredReasons: UnanchoredReasons;
+}

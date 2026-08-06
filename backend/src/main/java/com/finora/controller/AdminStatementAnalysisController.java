@@ -4,6 +4,7 @@ import com.finora.dto.ApiResponse;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
 import com.finora.imports.analysis.StatementAnalysisReportService;
+import com.finora.imports.analysis.StatementAnalysisReportService.AnalysisDetail;
 import com.finora.imports.analysis.StatementAnalysisReportService.AnalysisSummary;
 import com.finora.imports.analysis.StatementAnalysisReportService.AnalysisView;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -61,10 +62,14 @@ public class AdminStatementAnalysisController {
         return ApiResponse.ok(reportService.summary());
     }
 
-    /** One analysis by its quotable handle, e.g. {@code SA-20260806-0145}. */
+    /**
+     * One analysis by its quotable handle, e.g. {@code SA-20260806-0145}, with what is already
+     * known about its layout — so opening it does not mean rediscovering that this fingerprint has
+     * defeated the parser eleven times before.
+     */
     @GetMapping("/{reference}")
-    public ApiResponse<AnalysisView> byReference(@PathVariable String reference) {
-        return ApiResponse.ok(reportService.byReference(reference)
+    public ApiResponse<AnalysisDetail> byReference(@PathVariable String reference) {
+        return ApiResponse.ok(reportService.detailByReference(reference)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND)));
     }
 }

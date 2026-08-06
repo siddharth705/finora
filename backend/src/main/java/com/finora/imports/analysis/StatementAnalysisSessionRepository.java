@@ -42,6 +42,19 @@ public interface StatementAnalysisSessionRepository extends JpaRepository<Statem
 
     long countByOutcome(StatementAnalysisSession.Outcome outcome);
 
+    /**
+     * How often this exact layout has been seen, and how often it defeated the parser.
+     *
+     * <p>The pair is what stops an investigation being repeated. Opening one analysis and reading
+     * "this fingerprint has been seen 12 times and failed 11 of them" is a different situation
+     * from "seen once" — the first is a layout the engine cannot read, the second is a document
+     * nobody has looked at yet, and they deserve different amounts of attention.
+     */
+    long countByLayoutFingerprint(String layoutFingerprint);
+
+    long countByLayoutFingerprintAndOutcome(String layoutFingerprint,
+                                            StatementAnalysisSession.Outcome outcome);
+
     @Query("SELECT COUNT(DISTINCT s.layoutFingerprint) FROM StatementAnalysisSession s WHERE s.layoutFingerprint IS NOT NULL")
     long countDistinctLayouts();
 }

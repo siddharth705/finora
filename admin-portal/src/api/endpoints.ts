@@ -14,6 +14,9 @@ import type {
   UpdateBankRequest, UpdateFeatureFlagRequest,
   UpdatePlatformSettingsRequest, UpdateRelationshipRequest,
   UpdateRuleRequest, UserDetailDto, UserSummaryDto, WorkspaceSummaryDto,
+  StatementAnalysisDto,
+  StatementAnalysisDetailDto,
+  StatementAnalysisSummaryDto,
 } from '../types';
 
 // Which portal this account belongs to. The same person may hold a USER account and an ADMIN
@@ -348,4 +351,16 @@ export const setupApi = {
     rawApi.post<ApiEnvelope<null>>('/setup/complete', request, {
       headers: { Authorization: `Bearer ${bootstrapToken}` },
     }).then((r) => r.data),
+};
+
+/** Layout Studio -- the read side of the analysis evidence table. Same PLATFORM_DIAGNOSTICS_VIEW
+ *  gate as adminLayoutsApi, different source: every upload attempt rather than only the confirmed
+ *  imports, which is where the failures are. */
+export const adminStatementAnalysisApi = {
+  recent: (limit = 50) =>
+    api.get<StatementAnalysisDto[]>('/admin/imports/analyses', { params: { limit } }).then((r) => r.data),
+  summary: () =>
+    api.get<StatementAnalysisSummaryDto>('/admin/imports/analyses/summary').then((r) => r.data),
+  byReference: (reference: string) =>
+    api.get<StatementAnalysisDetailDto>(`/admin/imports/analyses/${encodeURIComponent(reference)}`).then((r) => r.data),
 };

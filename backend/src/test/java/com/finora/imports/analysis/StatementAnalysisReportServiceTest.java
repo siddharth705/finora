@@ -120,6 +120,39 @@ class StatementAnalysisReportServiceTest {
     }
 
     @Test
+    void openingAnAnalysisShowsHowOftenItsLayoutHasAlreadyFailed() {
+        // The point of the detail view: "seen 12 times, failed 11" and "seen once" are the same
+        // document to a parser and completely different situations to a person deciding whether to
+        // spend a day on it.
+        when(repository.findByReference("SA-1")).thenReturn(java.util.Optional.of(parsed("SA-1", "FP-A", 2, null)));
+        when(repository.countByLayoutFingerprint("FP-A")).thenReturn(12L);
+        when(repository.countByLayoutFingerprintAndOutcome("FP-A", StatementAnalysisSession.Outcome.FAILED))
+                .thenReturn(11L);
+
+        var detail = service.detailByReference("SA-1").orElseThrow();
+
+        assertThat(detail.timesLayoutSeen()).isEqualTo(12);
+        assertThat(detail.timesLayoutFailed()).isEqualTo(11);
+        assertThat(detail.analysis().reference()).isEqualTo("SA-1");
+    }
+
+    @Test
+    void anUncharacterisedDocumentReportsNoLayoutHistoryRatherThanSeenOnce() {
+        // A wrong PDF password never produces a fingerprint. Counting that as "this layout has been
+        // seen once" would invent a layout that was never identified, and it would accumulate:
+        // every locked file would look like another sighting of the same nonexistent thing.
+        when(repository.findByReference("SA-LOCKED")).thenReturn(java.util.Optional.of(
+                StatementAnalysisSession.failed("SA-LOCKED", UUID.randomUUID(),
+                        StatementAnalysisSession.Source.CUSTOMER_IMPORT, "locked.pdf", "PDF", 1L,
+                        null, "IMPORT_008", "wrong password", 10L, null, null)));
+
+        var detail = service.detailByReference("SA-LOCKED").orElseThrow();
+
+        assertThat(detail.timesLayoutSeen()).isZero();
+        org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).countByLayoutFingerprint(any());
+    }
+
+    @Test
     void anUnknownReferenceIsAbsentRatherThanAnEmptyRow() {
         when(repository.findByReference("SA-NOPE")).thenReturn(java.util.Optional.empty());
         assertThat(service.byReference("SA-NOPE")).isEmpty();

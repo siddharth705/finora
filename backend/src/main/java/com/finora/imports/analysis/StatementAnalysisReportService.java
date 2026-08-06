@@ -96,6 +96,22 @@ public class StatementAnalysisReportService {
             Map<String, Integer> unanchoredReasons
     ) {}
 
+    /**
+     * One analysis plus what is already known about its layout.
+     *
+     * <p>Separate from the list view on purpose: the recurrence counts cost two extra queries per
+     * analysis, which is fine for the one document someone opened and would be an N+1 across a
+     * page of fifty.
+     *
+     * @param timesLayoutSeen   including this one. Zero when the document never got far enough to
+     *                          be characterised, which is not "never seen before" — it is "there
+     *                          is nothing to compare it to".
+     * @param timesLayoutFailed how many of those defeated the parser. Read against
+     *                          {@code timesLayoutSeen}: 11 of 12 is a layout the engine cannot
+     *                          read, 1 of 12 is one odd document.
+     */
+    public record AnalysisDetail(AnalysisView analysis, long timesLayoutSeen, long timesLayoutFailed) {}
+
     private final StatementAnalysisSessionRepository repository;
     private final ObjectMapper objectMapper;
 
@@ -117,6 +133,19 @@ public class StatementAnalysisReportService {
     @Transactional(readOnly = true)
     public java.util.Optional<AnalysisView> byReference(String reference) {
         return repository.findByReference(reference).map(this::toView);
+    }
+
+    /** The same analysis, plus how often its layout has been seen and how often it failed. */
+    @Transactional(readOnly = true)
+    public java.util.Optional<AnalysisDetail> detailByReference(String reference) {
+        return repository.findByReference(reference).map(session -> {
+            String fingerprint = session.getLayoutFingerprint();
+            if (fingerprint == null) return new AnalysisDetail(toView(session), 0, 0);
+            return new AnalysisDetail(toView(session),
+                    repository.countByLayoutFingerprint(fingerprint),
+                    repository.countByLayoutFingerprintAndOutcome(fingerprint,
+                            StatementAnalysisSession.Outcome.FAILED));
+        });
     }
 
     @Transactional(readOnly = true)
