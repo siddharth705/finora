@@ -92,6 +92,47 @@ nothing of that shape surviving in the codebase afterward, hasn't actually follo
 
 ---
 
+## The Trust Rule
+
+> **Finora does not mark imported data as verified because parsing completed successfully.
+> Verification is granted only when independent rules confirm the imported data is consistent with
+> evidence contained in the source statement. Every new parser capability should, where possible,
+> ship with a verification rule that can contradict it.**
+
+Not the same as the Capability Rule above, and the difference is the point. The Capability Rule
+governs *whether a change was worth making*. This one governs *what the system is entitled to
+claim afterwards*. A parser can gain a genuine new capability and still be wrong on the very next
+document; "it parsed" has never been evidence that "it parsed correctly".
+
+Nor is it the "evidence before capability" discipline in
+[scaling-triggers.md](scaling-triggers.md) and
+[api-compatibility-policy.md](api-compatibility-policy.md). That one is about **when to build**:
+do not add infrastructure ahead of a condition that makes it necessary. This one is about **what
+to assert**: do not report correctness you cannot demonstrate. A codebase can follow either while
+violating the other.
+
+**Why this became a rule.** A real HDFC statement imported three withdrawals as ₹0 and a deposit
+in the wrong direction. Every stage reported success — the parser did not throw, the normalizer
+produced rows, the preview rendered cleanly, and the numbers were wrong. Nothing in the pipeline
+compared its output to anything, so nothing could have noticed. The user found it by eye.
+
+**What makes it achievable here.** Bank statements are self-proving documents: the ground truth
+ships inside the file. Every row prints the balance after it; most statements print their own
+debit and credit totals. That evidence was sitting unused. See
+[import-verification-framework.md](import-verification-framework.md) for the framework this rule
+produced, and for why it reports rather than gates — a verification that refuses an import turns
+any false positive into "Finora cannot read my statement", which is worse than the failure it
+prevents.
+
+**In practice**, three states must stay distinct, because collapsing them into one green tick is
+how a system starts lying quietly:
+
+| State | Meaning |
+|---|---|
+| not checked | no verification ran — say nothing, claim nothing |
+| checked, not applicable | ran, but the document carried no evidence to check against |
+| verified | a rule executed and the data agreed with the statement |
+
 ## Financial Document, not PDF
 
 The pipeline is described below in PDF-specific class names (`PdfTextExtractor`,
