@@ -36,7 +36,7 @@ export default function ForgotPassword() {
     <div className="min-h-screen flex items-center justify-center bg-bg">
       <div className="bg-card rounded-xl2 p-8 w-full max-w-sm shadow-soft border border-border">
         <div className="flex items-center gap-2 mb-6">
-          <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-400 to-primary-dark flex items-center justify-center">
+          <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center">
             <Sparkles size={14} className="text-white" strokeWidth={2.5} />
           </span>
           <span className="font-extrabold tracking-wide text-ink">FINORA</span>

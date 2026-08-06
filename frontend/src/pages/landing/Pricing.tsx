@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom';
 import { Check, Minus } from 'lucide-react';
-import { SUPPORT_MAILTO } from '../../lib/contact';
 import { Reveal, Section, SectionHeading } from './primitives';
 import { AVAILABILITY_LABEL, AVAILABILITY_STYLE, COMPARISON, PRICING_CARDS } from './plans';
 
@@ -18,11 +17,16 @@ import { AVAILABILITY_LABEL, AVAILABILITY_STYLE, COMPARISON, PRICING_CARDS } fro
  * There is no billing anywhere in the backend -- no plan field on User, no payment integration --
  * so nothing here can be purchased today by design, not by oversight.
  *
- * The waitlist CTA is a mailto, using the same SUPPORT_MAILTO the rest of the app uses. That is
- * not a placeholder: a form posting to nothing would look more finished and collect nobody, which
- * is exactly what the old newsletter box on this page did. A mailto actually delivers.
+ * THERE IS NO WAITLIST CTA, and that is a decision rather than an omission. This carried a
+ * "Join the waitlist" mailto, which did deliver -- but nothing STORES the interest, nobody is
+ * queued, and no notification fires when Premium launches. A button that cannot keep the promise
+ * in its own label is the same failure as the newsletter box this page used to carry, which
+ * thanked you and discarded the address. Unavailable tiers state their status and stop there.
+ * Add the CTA the day an endpoint exists to receive it.
+ *
+ * The cards lead with what a plan is FOR rather than what it contains. Feature-by-feature belongs
+ * in the comparison table below, where someone deliberately comparing can find it.
  */
-const WAITLIST_MAILTO = `${SUPPORT_MAILTO}?subject=${encodeURIComponent('Finora Premium waitlist')}`;
 
 export function Pricing() {
   return (
@@ -52,7 +56,7 @@ export function Pricing() {
                 </p>
               )}
 
-              <p className="text-sm mb-5" style={{ color: 'var(--m-ink-2)' }}>{plan.blurb}</p>
+              <p className="text-[15px] font-medium mb-5" style={{ color: 'var(--m-ink)' }}>{plan.promise}</p>
 
               <ul className="space-y-2 mb-6 flex-1">
                 {plan.features.map((f) => (
@@ -65,10 +69,11 @@ export function Pricing() {
 
               {plan.availability === 'available' ? (
                 <Link to="/register" className="m-btn m-btn-primary w-full">Start free</Link>
-              ) : plan.availability === 'coming-soon' ? (
-                <a href={WAITLIST_MAILTO} className="m-btn m-btn-ghost w-full">Join the waitlist</a>
               ) : (
-                <span className="m-btn m-btn-ghost w-full opacity-55 cursor-default" aria-disabled="true">Not yet planned for release</span>
+                // A statement, not a control. See the note at the top of this file.
+                <p className="text-center text-sm py-3" style={{ color: 'var(--m-ink-3)' }}>
+                  {plan.availability === 'coming-soon' ? 'Launching soon.' : 'Not yet scheduled.'}
+                </p>
               )}
             </div>
           </Reveal>

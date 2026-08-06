@@ -1,8 +1,9 @@
 import { Link } from 'react-router-dom';
 import { Instagram } from 'lucide-react';
 import { Logo } from './Nav';
+import { footer } from './landing-config';
 
-const INSTAGRAM_URL = 'https://www.instagram.com/finoratech.info/';
+
 
 const COLUMNS: { title: string; links: [string, string][] }[] = [
   { title: 'Product', links: [['How it works', '#how'], ['Import', '#import'], ['Security', '#security'], ['Pricing', '#pricing'], ['FAQ', '#faq']] },
@@ -27,23 +28,23 @@ export function SiteFooter() {
           <div>
             <Logo invert />
             <p className="text-sm mt-3 max-w-xs leading-relaxed text-slate-400">
-              Helping people understand their finances with clarity, transparency and confidence.
+              {footer.mission}
             </p>
             <div className="mt-5 space-y-1">
-              {['Built with transparency.', 'Designed for trust.', 'Made in India.'].map((line) => (
+              {footer.principles.map((line) => (
                 <p key={line} className="text-[13px] font-medium text-slate-500">{line}</p>
               ))}
             </div>
 
             <a
-              href={INSTAGRAM_URL}
+              href={footer.instagram}
               target="_blank"
               rel="noopener noreferrer"
               className="m-tap inline-flex items-center gap-2 mt-5 text-sm text-slate-400 hover:text-white transition-colors"
               aria-label="Finora on Instagram (opens in a new tab)"
             >
               <Instagram size={17} />
-              @finoratech.info
+              {footer.instagramHandle}
             </a>
           </div>
 
@@ -67,7 +68,7 @@ export function SiteFooter() {
 
         <div className="pt-7 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-3">
           <p className="text-xs text-slate-500">© {new Date().getFullYear()} Finora. All rights reserved.</p>
-          <p className="text-xs text-slate-500">Understand every rupee. Not just your balance.</p>
+          <p className="text-xs text-slate-500">{footer.tagline}</p>
         </div>
       </div>
     </footer>

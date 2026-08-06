@@ -28,7 +28,14 @@ export interface Plan {
   availability: Availability;
   blurb: string;
   features: string[];
-  /** Shown in the "Growing with you" ladder. Shorter than `features` -- it is a summary, not a spec. */
+  /**
+   * What this plan is FOR, in one line. The card leads with this rather than a feature list --
+   * people don't buy "unlimited accounts", they buy going deeper into their own finances.
+   */
+  promise: string;
+  /** The outcome this stage unlocks, for the "Growing with you" ladder. Progress, not features. */
+  stage: { when: string; outcome: string };
+  /** Kept for the comparison table, which is where feature-by-feature belongs. */
   ladder: string[];
 }
 
@@ -54,6 +61,8 @@ export const PLANS: Plan[] = [
     cadence: '/month',
     availability: 'available',
     blurb: 'Everything you need to organize your money.',
+    promise: 'Get your money in order.',
+    stage: { when: 'Today', outcome: 'Organize your money.' },
     features: [
       'Import statements (PDF & CSV)',
       'Password-protected and multi-account files',
@@ -69,6 +78,8 @@ export const PLANS: Plan[] = [
     price: null,
     availability: 'coming-soon',
     blurb: 'For people who want deeper financial intelligence.',
+    promise: 'For people who simply want to go deeper.',
+    stage: { when: 'Tomorrow', outcome: 'Understand your spending patterns.' },
     features: [
       'Unlimited accounts',
       'Advanced analytics',
@@ -84,6 +95,8 @@ export const PLANS: Plan[] = [
     price: null,
     availability: 'planned',
     blurb: 'Manage household finances together.',
+    promise: 'For a household, not just a person.',
+    stage: { when: 'Later', outcome: "Manage your family's finances together." },
     features: ['Shared dashboards', 'Household budgets', 'Shared financial goals'],
     ladder: ['Shared dashboards', 'Household budgets', 'Shared goals'],
   },
@@ -93,6 +106,8 @@ export const PLANS: Plan[] = [
     price: null,
     availability: 'exploring',
     blurb: 'For financial professionals and businesses.',
+    promise: 'Where Finora is headed next.',
+    stage: { when: 'Eventually', outcome: 'Plan your financial future.' },
     features: ['Tools for professionals', 'Deeper financial intelligence'],
     ladder: ['Tools for professionals', 'Deeper financial intelligence'],
   },

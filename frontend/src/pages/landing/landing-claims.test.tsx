@@ -2,7 +2,8 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import Landing from '../Landing';
-import { PLANS } from './plans';
+import { AVAILABILITY_LABEL, PLANS } from './plans';
+import { beforeAfter } from './landing-config';
 
 /**
  * Enforces the mechanically-checkable half of docs/engineering/marketing-claims-checklist.md.
@@ -118,17 +119,10 @@ describe('landing page — marketing claims', () => {
     ).toBe(0);
   });
 
-  it('routes the Premium waitlist somewhere that actually delivers', () => {
-    const { container } = renderLanding();
-    const waitlistLinks = [...container.querySelectorAll('a')].filter((a) =>
-      /waitlist/i.test(a.textContent ?? '')
-    );
-
-    expect(waitlistLinks.length).toBeGreaterThan(0);
-    for (const link of waitlistLinks) {
-      expect(link.getAttribute('href')).toMatch(/^mailto:.+@.+\?subject=/);
-    }
-  });
+  // The waitlist assertion that used to sit here required a waitlist link to EXIST. It was
+  // removed with the CTA itself: nothing stores the interest, so the control could not keep the
+  // promise in its own label. The inverse rule -- no signup control without a destination -- is
+  // enforced below, and is the one that actually matters.
 
   it('labels the unreleased mobile apps as unreleased', () => {
     renderLanding();
@@ -144,5 +138,75 @@ describe('landing page — marketing claims', () => {
       expect(rel).toContain('noopener');
       expect(rel).toContain('noreferrer');
     }
+  });
+});
+
+/**
+ * Controls that promise something must be able to deliver it. Every rule here corresponds to a
+ * dead control that actually shipped -- a nav item that scrolled nowhere, a waitlist button that
+ * stored nothing. A control the page cannot honour is the same broken promise as a false claim,
+ * just wearing a border.
+ */
+describe('landing page — nothing that promises what it cannot do', () => {
+  it('points every in-page link at a section that exists', () => {
+    const { container } = renderLanding();
+
+    // The nav's "Before & after" linked to #difference while no section carried that id, so the
+    // item silently did nothing. Checked for every anchor rather than that one.
+    const broken = [...container.querySelectorAll('a[href^="#"]')]
+      .map((a) => a.getAttribute('href') as string)
+      .filter((href) => href.length > 1)
+      .filter((href) => !container.querySelector(`[id="${href.slice(1)}"]`));
+
+    expect([...new Set(broken)], 'These anchors scroll nowhere — the target id does not exist.').toEqual([]);
+  });
+
+  /**
+   * No waitlist, notify-me or subscribe control unless something receives it. A mailto counts
+   * (it genuinely delivers); a button wired to nothing does not, and neither does a form with no
+   * action -- that is what the old newsletter box was.
+   */
+  it('offers no signup control without a destination', () => {
+    const { container } = renderLanding();
+
+    const suspicious = [...container.querySelectorAll('a,button')]
+      .filter((el) => /waitlist|notify me|subscribe|join the list/i.test(el.textContent ?? ''))
+      .filter((el) => {
+        const href = el.getAttribute('href') ?? '';
+        return !(href.startsWith('mailto:') || href.startsWith('http') || href.startsWith('/'));
+      })
+      .map((el) => (el.textContent ?? '').trim().slice(0, 40));
+
+    expect(
+      suspicious,
+      'A signup control must lead somewhere that receives it. Remove it, or wire a real endpoint.'
+    ).toEqual([]);
+  });
+
+  it('never marks an available plan as coming soon, or an unavailable one as available', () => {
+    for (const plan of PLANS) {
+      const label = AVAILABILITY_LABEL[plan.availability];
+      if (plan.availability === 'available') {
+        expect(label, `"${plan.name}" is available but labelled "${label}".`).toMatch(/available/i);
+      } else {
+        expect(label, `"${plan.name}" is not available but labelled "${label}".`).not.toMatch(/available/i);
+      }
+    }
+  });
+
+  it('offers a purchase action only on a plan that can be purchased', () => {
+    const { container } = renderLanding();
+    const pricing = container.querySelector('#pricing');
+
+    const buyish = [...(pricing?.querySelectorAll('a,button') ?? [])]
+      .filter((el) => /start free|get started|subscribe|buy|upgrade now/i.test(el.textContent ?? ''));
+
+    // Exactly one purchasable plan today, so exactly one call to action in this section.
+    expect(buyish).toHaveLength(PLANS.filter((p) => p.availability === 'available').length);
+  });
+
+  // The parallel structure IS the argument of that section; unequal columns break the comparison.
+  it('keeps the before and after columns the same length', () => {
+    expect(beforeAfter.before).toHaveLength(beforeAfter.after.length);
   });
 });

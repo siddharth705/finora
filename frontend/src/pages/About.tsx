@@ -48,7 +48,7 @@ export default function About() {
           { icon: <TrendingUp size={18} />, title: 'Future Roadmap', body: 'Data export, richer investment tracking, and deeper AI-driven recommendations are all active areas of development.' },
         ].map((item) => (
           <div key={item.title} className="bg-[#12142a] border border-white/10 rounded-xl p-5">
-            <div className="w-9 h-9 rounded-lg bg-indigo-500/10 text-indigo-300 flex items-center justify-center mb-3">{item.icon}</div>
+            <div className="w-9 h-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center mb-3">{item.icon}</div>
             <h3 className="font-semibold text-white text-sm mb-1.5">{item.title}</h3>
             <p className="text-xs text-gray-400 leading-relaxed">{item.body}</p>
           </div>

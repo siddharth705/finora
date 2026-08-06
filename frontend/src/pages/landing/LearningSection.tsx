@@ -1,5 +1,6 @@
 import { Check } from 'lucide-react';
 import { Section, SectionHeading, useStagedReveal } from './primitives';
+import { learning } from './landing-config';
 
 /**
  * The learning loop, played rather than diagrammed.
@@ -31,9 +32,9 @@ export function LearningSection() {
     <Section tone="deep">
       <SectionHeading
         invert
-        eyebrow="It learns from you"
-        title={<>Correct it once.<br />Never correct it again.</>}
-        blurb="Your corrections are the training. Every month it needs you less."
+        eyebrow={learning.eyebrow}
+        title={<>{learning.title}<br />{learning.titleLine2}</>}
+        blurb={learning.blurb}
       />
       <div ref={ref} className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {STAGES.map((s, i) => {
@@ -69,7 +70,7 @@ export function LearningSection() {
         })}
       </div>
       <p className="text-center text-sm mt-8 text-slate-400">
-        Nothing is filed quietly. Anything it isn&apos;t sure about waits for you.
+        {learning.footnote}
       </p>
     </Section>
   );

@@ -107,7 +107,7 @@ export default function Help() {
         <div className="space-y-3 mb-10">
           {filtered.map((a) => (
             <div key={a.question} className="bg-[#12142a] border border-white/10 rounded-xl p-5">
-              <span className="text-[10px] uppercase tracking-wide text-indigo-300 font-semibold">{a.category}</span>
+              <span className="text-[10px] uppercase tracking-wide text-primary font-semibold">{a.category}</span>
               <h3 className="font-semibold text-white text-sm mt-1 mb-1.5">{a.question}</h3>
               <p className="text-xs text-gray-400 leading-relaxed">{a.answer}</p>
             </div>

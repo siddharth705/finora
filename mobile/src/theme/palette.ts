@@ -13,14 +13,14 @@
  * Nothing imports this file directly -- `../theme` is still the one entry point.
  */
 export const light = {
-  bg: '#f4f5fb',
+  bg: '#F8FAFC',
   card: '#ffffff',
-  border: '#e7e8f2',
-  ink: '#1b1e2b',
-  muted: '#6b7280',
-  primary: '#6366f1',
-  primaryDark: '#4f46e5',
-  primaryLight: '#eef0fd',
+  border: '#E6EAF2',
+  ink: '#0F172A',
+  muted: '#64748B',
+  primary: '#2563EB',
+  primaryDark: '#1D4ED8',
+  primaryLight: '#EFF5FF',
   success: '#16a34a',
   successBg: '#dcfce7',
   danger: '#dc2626',
@@ -32,18 +32,18 @@ export const light = {
   // A separate token rather than a change to `warning` itself, since that value is shared with
   // the web app and is fine in the roles it's actually used for there.
   warningInk: '#92400e',
-  inputBg: '#ffffff',
+  inputBg: '#FFFFFF',
 };
 
 export const dark: typeof light = {
-  bg: '#0d0e1a',
-  card: '#171933',
-  border: '#2a2d4d',
-  ink: '#e8e9f3',
-  muted: '#8b8fa8',
-  primary: '#818cf8',
-  primaryDark: '#6366f1',
-  primaryLight: '#22254a',
+  bg: '#0B1220',
+  card: '#151C2C',
+  border: '#253044',
+  ink: '#E2E8F0',
+  muted: '#94A3B8',
+  primary: '#60A5FA',
+  primaryDark: '#3B82F6',
+  primaryLight: '#172554',
   success: '#22c55e',
   successBg: '#12301f',
   danger: '#f87171',
@@ -52,7 +52,7 @@ export const dark: typeof light = {
   warningBg: '#3a2a0a',
   // Dark theme already clears AA comfortably (8.30:1), so this is the same value as `warning`.
   warningInk: '#fbbf24',
-  inputBg: '#0d0e1a',
+  inputBg: '#0B1220',
 };
 
 export type Palette = typeof light;

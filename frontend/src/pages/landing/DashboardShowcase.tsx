@@ -1,5 +1,6 @@
 import { Reveal, Section, SectionHeading } from './primitives';
 import { DashboardMock } from './DashboardMock';
+import { showcase } from './landing-config';
 
 /**
  * The payoff shot. Shown whole and at once -- by this point in the page the argument has been
@@ -9,9 +10,9 @@ export function DashboardShowcase() {
   return (
     <Section id="how">
       <SectionHeading
-        eyebrow="See it in action"
-        title={<>Everything.<br />In one place.</>}
-        blurb="Accounts, transactions, budgets, goals, reports and insights — one picture instead of six tabs."
+        eyebrow={showcase.eyebrow}
+        title={<>{showcase.title}<br />{showcase.titleLine2}</>}
+        blurb={showcase.blurb}
       />
       <Reveal><DashboardMock withSidebar /></Reveal>
     </Section>

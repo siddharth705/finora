@@ -1,5 +1,6 @@
 import { FileText, Lock, Sheet } from 'lucide-react';
 import { Eyebrow, FlowArrow, Reveal, Section } from './primitives';
+import { importSection } from './landing-config';
 
 /**
  * Import, shown as a mechanism rather than described as one.
@@ -17,21 +18,16 @@ const INPUTS = [
   { icon: <Lock size={15} />, label: 'Protected PDF', tint: '#2563EB' },
 ];
 
-const SUPPORTED = ['PDF', 'CSV', 'Password-protected', 'Multiple accounts', 'Composite statements'];
-
 export function ImportSection() {
   return (
     <Section id="import">
       <div className="grid lg:grid-cols-2 gap-14 items-center">
         <Reveal>
-          <Eyebrow>Import anything</Eyebrow>
-          <h2 className="m-h2 mb-4">Upload once.<br />Everything else is automatic.</h2>
-          <p className="m-lead mb-6">
-            Finora reads the statement, finds the accounts, sorts the transactions and has it ready
-            before you've put the kettle on.
-          </p>
+          <Eyebrow>{importSection.eyebrow}</Eyebrow>
+          <h2 className="m-h2 mb-4">{importSection.title}<br />{importSection.titleLine2}</h2>
+          <p className="m-lead mb-6">{importSection.blurb}</p>
           <div className="flex flex-wrap gap-2">
-            {SUPPORTED.map((s) => (
+            {importSection.supported.map((s) => (
               <span key={s} className="text-xs font-medium px-3 py-1.5 rounded-full" style={{ background: 'var(--m-brand-wash)', color: 'var(--m-brand-deep)' }}>
                 {s}
               </span>

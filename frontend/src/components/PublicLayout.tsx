@@ -14,7 +14,7 @@ export function PublicLayout({ title, subtitle, children }: { title: string; sub
       <header className="sticky top-0 z-30 bg-[#0a0b16]/90 backdrop-blur border-b border-white/5">
         <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2">
-            <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-400 to-primary-dark flex items-center justify-center text-white font-black text-sm">F</span>
+            <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white font-black text-sm">F</span>
             <span className="font-extrabold tracking-wide text-white">Finora</span>
           </Link>
           <Link to="/" className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-white transition-colors">
@@ -25,7 +25,7 @@ export function PublicLayout({ title, subtitle, children }: { title: string; sub
 
       <section className="border-b border-white/5">
         <div className="max-w-4xl mx-auto px-6 pt-16 pb-10">
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-300 bg-indigo-500/10 border border-indigo-400/20 rounded-full px-3 py-1 mb-4">
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-primary bg-primary/10 border border-primary/20 rounded-full px-3 py-1 mb-4">
             <Sparkles size={12} /> Finora
           </span>
           <h1 className="text-3xl md:text-4xl font-extrabold text-white mb-3">{title}</h1>

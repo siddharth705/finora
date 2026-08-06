@@ -1,5 +1,6 @@
 import { DashboardMock } from './DashboardMock';
 import { Reveal, Section, SectionHeading, useStagedReveal } from './primitives';
+import { journey } from './landing-config';
 
 /**
  * The timeline, told as change rather than as months.
@@ -13,28 +14,21 @@ import { Reveal, Section, SectionHeading, useStagedReveal } from './primitives';
  * stays in the second person about what becomes visible, never a claim about how much a user will
  * save -- that would be a financial promise nothing in the codebase can keep.
  */
-const MILESTONES = [
-  { month: 'January', headline: 'You start tracking.', body: 'One statement in. The month stops being a mystery.' },
-  { month: 'March', headline: 'Patterns surface.', body: 'Three months of history is enough to see what repeats.' },
-  { month: 'June', headline: 'Budgets that fit.', body: 'Limits set against what you actually spend, not a guess.' },
-  { month: 'December', headline: 'You know your money.', body: 'A full year, readable at a glance. No spreadsheet involved.' },
-];
-
 export function Journey() {
-  const { ref, step } = useStagedReveal(MILESTONES.length, 420);
+  const { ref, step } = useStagedReveal(journey.milestones.length, 420);
 
   return (
     <Section>
       <SectionHeading
-        eyebrow="Over time"
-        title={<>It gets better<br />the longer you use it.</>}
-        blurb="One statement is useful. A year of them is a different thing entirely."
+        eyebrow={journey.eyebrow}
+        title={<>{journey.title}<br />{journey.titleLine2}</>}
+        blurb={journey.blurb}
       />
 
       <div ref={ref} className="max-w-3xl mx-auto">
-        {MILESTONES.map((m, i) => {
+        {journey.milestones.map((m, i) => {
           const active = step >= i + 1;
-          const last = i === MILESTONES.length - 1;
+          const last = i === journey.milestones.length - 1;
           return (
             <div key={m.month} className="grid grid-cols-[auto_1fr] gap-5">
               {/* Rail: the dot marks the month, the line carries the eye to the next one. */}
@@ -70,7 +64,7 @@ export function Journey() {
 
       <Reveal delayMs={160}>
         <div className="flex flex-wrap justify-center gap-2.5 mt-2 mb-12">
-          {['Insights', 'Habits', 'Spending patterns', 'Trends'].map((o) => (
+          {journey.outcomes.map((o) => (
             <span key={o} className="m-node" style={{ borderColor: '#DBEAFE', background: '#EFF5FF', color: '#1D4ED8' }}>
               {o}
             </span>

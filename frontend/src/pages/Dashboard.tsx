@@ -130,7 +130,7 @@ export default function Dashboard() {
     { label: 'Total Balance', value: fmt(summary.currentBalance), delta: null as number | null, icon: Wallet, iconBg: 'bg-blue-100', iconColor: 'text-blue-600' },
     { label: 'Total Income', value: fmt(summary.monthlyIncome), delta: summary.incomeDeltaPct, icon: ArrowDownCircle, iconBg: 'bg-green-100', iconColor: 'text-green-600' },
     { label: 'Total Expenses', value: fmt(summary.monthlyExpense), delta: summary.expenseDeltaPct, icon: ArrowUpCircle, iconBg: 'bg-red-100', iconColor: 'text-red-600', invertDelta: true },
-    { label: 'Net Savings', value: fmt(summary.netCashFlow), delta: summary.netDeltaPct, icon: PiggyBank, iconBg: 'bg-indigo-100', iconColor: 'text-indigo-600' },
+    { label: 'Net Savings', value: fmt(summary.netCashFlow), delta: summary.netDeltaPct, icon: PiggyBank, iconBg: 'bg-primary-light', iconColor: 'text-primary' },
     { label: 'Savings Rate', value: summary.savingsRatePct.toFixed(0) + '%', delta: null as number | null, icon: PieChart, iconBg: 'bg-purple-100', iconColor: 'text-purple-600' },
   ];
 
@@ -267,7 +267,7 @@ export default function Dashboard() {
               <p className="text-xs text-muted italic">No transactions yet.</p>
             ) : recentTxns.map((t) => {
               const Icon = CATEGORY_ICON[t.categoryName] ?? ShoppingBag;
-              const color = t.type === 'INCOME' ? '#16a34a' : (CATEGORY_COLOR[t.categoryName] ?? '#6366f1');
+              const color = t.type === 'INCOME' ? '#16a34a' : (CATEGORY_COLOR[t.categoryName] ?? '#2563EB');
               return (
                 <div key={t.id} className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: color + '20' }}>

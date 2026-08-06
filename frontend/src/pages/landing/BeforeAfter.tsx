@@ -1,5 +1,6 @@
 import { ArrowDown } from 'lucide-react';
 import { Reveal, Section, SectionHeading } from './primitives';
+import { beforeAfter } from './landing-config';
 
 /**
  * The section the page was missing, and the one that does the most work.
@@ -10,21 +11,7 @@ import { Reveal, Section, SectionHeading } from './primitives';
  * is ever edited.
  */
 // Five beats each, and they line up row for row on purpose: the reader compares step 3 to step 3,
-// not paragraph to paragraph. Both columns must stay the same length if this is ever edited.
-const BEFORE = [
-  'Download the statement',
-  'Scroll hundreds of rows',
-  'Categorize by hand',
-  'Paste into a spreadsheet',
-  'Still not certain',
-];
-const AFTER = [
-  'Upload the statement',
-  'Organized automatically',
-  'Categorized, and it learns',
-  'A dashboard, already current',
-  'You actually know',
-];
+// not paragraph to paragraph. Both columns must stay the same length -- asserted in the test.
 
 function Column({ label, steps, tone }: {
   label: string;
@@ -65,7 +52,7 @@ function Column({ label, steps, tone }: {
         ))}
       </ol>
       <p className="mt-6 text-2xl" style={{ fontFamily: "'Manrope', Inter, sans-serif", fontWeight: 800, letterSpacing: '-.02em', color: after ? 'var(--m-brand)' : '#94A3B8' }}>
-        {after ? 'Confidence.' : 'Confusion.'}
+        {after ? beforeAfter.afterVerdict : beforeAfter.beforeVerdict}
       </p>
     </div>
   );
@@ -73,15 +60,18 @@ function Column({ label, steps, tone }: {
 
 export function BeforeAfter() {
   return (
-    <Section tone="alt">
+    // id is load-bearing: the nav links here as "Before & after". It was missing, so that nav
+    // item silently did nothing. landing-claims.test.tsx now fails the build on any in-page
+    // anchor with no matching element.
+    <Section id="difference" tone="alt">
       <SectionHeading
-        eyebrow="The difference"
-        title="Same statement. Different month."
-        blurb="Nothing about your bank changes. What changes is how much of your Sunday it costs."
+        eyebrow={beforeAfter.eyebrow}
+        title={beforeAfter.title}
+        blurb={beforeAfter.blurb}
       />
       <div className="grid md:grid-cols-2 gap-5 max-w-4xl mx-auto">
-        <Reveal><Column label="Before Finora" steps={BEFORE} tone="before" /></Reveal>
-        <Reveal delayMs={140}><Column label="With Finora" steps={AFTER} tone="after" /></Reveal>
+        <Reveal><Column label="Before Finora" steps={beforeAfter.before} tone="before" /></Reveal>
+        <Reveal delayMs={140}><Column label="With Finora" steps={beforeAfter.after} tone="after" /></Reveal>
       </div>
     </Section>
   );
