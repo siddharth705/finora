@@ -1,0 +1,129 @@
+package com.finora.imports.analysis;
+
+import com.finora.AbstractIntegrationTest;
+import com.finora.exception.ApiException;
+import com.finora.exception.ErrorCode;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/**
+ * The property this whole table depends on: a failure is still recorded when the operation that
+ * discovered it rolls back.
+ *
+ * <p>Not a theoretical concern. Parse failures are reported by throwing {@link ApiException}, a
+ * RuntimeException, which marks the caller's transaction rollback-only — so a naive insert would
+ * produce a table that captures every success and silently loses every failure. That is precisely
+ * inverted from the reason it exists.
+ *
+ * <p>The same shape had already caused a real security bug here: reuse detection wrote an
+ * account-wide revocation, threw to reject the request, and the revocation was rolled back while
+ * the API reported "all sessions have been signed out". Three unit tests covered that path and all
+ * three passed, because they mocked the repository — {@code save} was called, {@code verify()}
+ * succeeded, and no transaction existed to undo it. So this test uses a real database and a real
+ * rollback, because a mock physically cannot observe the failure mode.
+ */
+@org.springframework.context.annotation.Import(StatementAnalysisRecorderIT.RollbackHarness.class)
+class StatementAnalysisRecorderIT extends AbstractIntegrationTest {
+
+    @Autowired private StatementAnalysisRecorder recorder;
+    @Autowired private StatementAnalysisSessionRepository repository;
+    @Autowired private RollbackHarness harness;
+
+    /**
+     * A caller that records evidence and then fails, which is the exact shape of every parse
+     * failure in {@code ImportService}: record, then throw.
+     */
+    static class RollbackHarness {
+        private final StatementAnalysisRecorder recorder;
+
+        RollbackHarness(StatementAnalysisRecorder recorder) {
+            this.recorder = recorder;
+        }
+
+        @Transactional
+        public String recordThenFail(UUID userId) {
+            String reference = recorder.recordFailed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT,
+                    "hdfc-savings.pdf", "PDF", 4096L, "FP-TEST-1A9E", "IMPORT_001",
+                    "No transaction table found", 120L);
+            throw new ApiException(ErrorCode.IMPORT_NO_HEADER_DETECTED, "No transaction table found");
+        }
+    }
+
+    @Test
+    void aFailureSurvivesTheRollbackOfTheOperationThatReportedIt() {
+        UUID userId = UUID.randomUUID();
+        long before = repository.count();
+
+        assertThatThrownBy(() -> harness.recordThenFail(userId)).isInstanceOf(ApiException.class);
+
+        // The witness is the row's continued existence AFTER the enclosing transaction rolled back.
+        // Asserting only that recordFailed returned a reference would pass against a plain
+        // @Transactional recorder whose insert is then discarded -- the observation would be true
+        // for two different reasons, and only one of them is the property under test.
+        assertThat(repository.count())
+                .as("the evidence row must outlive the transaction that threw; without "
+                    + "REQUIRES_NEW every failed parse is silently unrecorded")
+                .isEqualTo(before + 1);
+
+        var recorded = repository.findAll().stream()
+                .filter(s -> userId.equals(s.getUserId()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(recorded.getOutcome()).isEqualTo(StatementAnalysisSession.Outcome.FAILED);
+        assertThat(recorded.getFailureCode()).isEqualTo("IMPORT_001");
+        assertThat(recorded.getLayoutFingerprint()).isEqualTo("FP-TEST-1A9E");
+    }
+
+    @Test
+    void referencesAreUniqueAndHumanQuotable() {
+        String first = recorder.recordParsed(UUID.randomUUID(), StatementAnalysisSession.Source.ADMIN_ANALYSIS,
+                "a.pdf", "PDF", 1L, "FP-A", 1, 1L);
+        String second = recorder.recordParsed(UUID.randomUUID(), StatementAnalysisSession.Source.ADMIN_ANALYSIS,
+                "b.pdf", "PDF", 1L, "FP-B", 1, 1L);
+
+        // From a database sequence, not a row count: two concurrent uploads counting rows would
+        // pick the same number, and the unique constraint would then drop whichever lost the race.
+        assertThat(first).isNotEqualTo(second);
+        assertThat(first).matches("SA-\\d{8}-\\d{4}");
+    }
+
+    @Test
+    void recordingNeverBreaksTheUploadWhenItCannotWrite() {
+        // failureDetail far beyond the column's tolerance, standing in for any write that goes
+        // wrong. A telemetry insert must never be the reason a user's statement import fails --
+        // the compensating control is the ERROR log, not a propagated exception.
+        String enormous = "x".repeat(50_000);
+
+        String reference = recorder.recordFailed(UUID.randomUUID(), StatementAnalysisSession.Source.CUSTOMER_IMPORT,
+                "big.pdf", "PDF", 1L, "FP-C", "IMPORT_001", enormous, 1L);
+
+        // Either it truncated and stored (a reference), or it failed and returned null. Both are
+        // acceptable; throwing is not.
+        assertThat(reference == null || reference.startsWith("SA-")).isTrue();
+    }
+
+    @Test
+    void adminAnalysisAndCustomerImportAreDistinguishable() {
+        // Both sources share one pipeline on purpose -- a customer hitting an unknown layout is at
+        // least as informative as an admin doing it deliberately -- but the reports have to be able
+        // to separate deliberate probing from real usage.
+        recorder.recordParsed(UUID.randomUUID(), StatementAnalysisSession.Source.ADMIN_ANALYSIS,
+                "probe.pdf", "PDF", 1L, "FP-SHARED", 1, 1L);
+        recorder.recordParsed(UUID.randomUUID(), StatementAnalysisSession.Source.CUSTOMER_IMPORT,
+                "real.pdf", "PDF", 1L, "FP-SHARED", 1, 1L);
+
+        var bySource = repository.findAll().stream()
+                .filter(s -> "FP-SHARED".equals(s.getLayoutFingerprint()))
+                .map(StatementAnalysisSession::getSource)
+                .toList();
+        assertThat(bySource).containsExactlyInAnyOrder(
+                StatementAnalysisSession.Source.ADMIN_ANALYSIS,
+                StatementAnalysisSession.Source.CUSTOMER_IMPORT);
+    }
+}

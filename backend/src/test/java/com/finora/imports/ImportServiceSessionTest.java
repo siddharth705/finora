@@ -79,7 +79,8 @@ class ImportServiceSessionTest {
         importService = new ImportService(accountRepository, accountService, transactionRepository,
                 merchantRepository, statementImportRepository, categorizationService, reconciliationService,
                 recurringService, previewGenerator, duplicateDetector, ruleLearningService, importSessionService,
-                pdfPreviewGenerator, productIdentityResolver, new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), "", ""));
+                pdfPreviewGenerator, productIdentityResolver, new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), "", ""),
+                mock(com.finora.imports.analysis.StatementAnalysisRecorder.class));
 
         Account account = new Account();
         ReflectionTestUtils.setField(account, "id", accountId);

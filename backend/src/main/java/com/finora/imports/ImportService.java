@@ -1,5 +1,7 @@
 package com.finora.imports;
 
+import com.finora.imports.analysis.StatementAnalysisSession;
+import com.finora.imports.analysis.StatementAnalysisRecorder;
 import com.finora.accounts.AccountDto;
 import com.finora.dto.ImportDto.*;
 import com.finora.entity.Account;
@@ -80,6 +82,7 @@ public class ImportService {
     private final ImportSessionService importSessionService;
     private final com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator;
     private final ProductIdentityResolver productIdentityResolver;
+    private final StatementAnalysisRecorder analysisRecorder;
     private final com.finora.imports.storage.StatementContentService statementContentService;
 
     public ImportService(AccountRepository accountRepository, AccountService accountService,
@@ -94,7 +97,9 @@ public class ImportService {
                           ImportSessionService importSessionService,
                           com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator,
                           ProductIdentityResolver productIdentityResolver,
-                          com.finora.imports.storage.StatementContentService statementContentService) {
+                          com.finora.imports.storage.StatementContentService statementContentService,
+                          StatementAnalysisRecorder analysisRecorder) {
+        this.analysisRecorder = analysisRecorder;
         this.productIdentityResolver = productIdentityResolver;
         this.statementContentService = statementContentService;
         this.accountRepository = accountRepository;
@@ -120,12 +125,39 @@ public class ImportService {
     public StagingSessionResponse parseAndStageWithSession(UUID userId, MultipartFile file) throws IOException {
         byte[] fileContent = file.getBytes();
         String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "statement.csv";
-        var result = previewGenerator.generateWithContext(userId, fileName, new java.io.ByteArrayInputStream(fileContent));
-        StagingResponse staged = result.response();
-        rejectIfNothingWasExtracted(staged, result.documentContext());
-        var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount(),
-                result.documentContext());
-        return new StagingSessionResponse(session.getId(), staged);
+        long startedAtMs = System.currentTimeMillis();
+        // Captured inside the try so the catch can still record it: a document that parsed far
+        // enough to be characterised and THEN failed is the most useful failure there is, because
+        // the fingerprint is what makes it findable again.
+        String fingerprint = null;
+        try {
+            var result = previewGenerator.generateWithContext(userId, fileName, new java.io.ByteArrayInputStream(fileContent));
+            fingerprint = fingerprintOf(result.documentContext());
+            StagingResponse staged = result.response();
+            rejectIfNothingWasExtracted(staged, result.documentContext());
+            var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount(),
+                    result.documentContext());
+            analysisRecorder.recordParsed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
+                    "CSV", fileContent.length, fingerprint, 1, System.currentTimeMillis() - startedAtMs);
+            return new StagingSessionResponse(session.getId(), staged);
+        } catch (ApiException e) {
+            analysisRecorder.recordFailed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
+                    "CSV", fileContent.length, fingerprint, e.getCode() == null ? null : e.getCode().name(),
+                    e.getMessage(), System.currentTimeMillis() - startedAtMs);
+            throw e;
+        }
+    }
+
+    /** Null-safe: a document can fail before it has any context to fingerprint. */
+    private String fingerprintOf(com.finora.imports.DocumentContext context) {
+        try {
+            return context == null ? null : context.buildFingerprint();
+        } catch (RuntimeException e) {
+            // Fingerprinting is evidence, not control flow. A malformed document that defeats the
+            // fingerprinter must still produce a recorded failure, and must still fail for its own
+            // reason rather than this one.
+            return null;
+        }
     }
 
     /**
@@ -141,26 +173,47 @@ public class ImportService {
     public PdfStagingSessionResponse parseAndStagePdfWithSession(UUID userId, MultipartFile file, String password) throws IOException {
         byte[] fileContent = file.getBytes();
         String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "statement.pdf";
-        // Parsing happens BEFORE createSession, which is what makes the password retry clean: a
-        // wrong or missing password throws here, so no ImportSession row exists to orphan and the
-        // client simply calls this endpoint again with the same file.
-        var result = pdfPreviewGenerator.generateSectionsWithContext(userId, fileName, fileContent, password);
-        List<StagedAccountSection> sections = onlySectionsThatAreActuallyAccounts(result.sections());
+        long startedAtMs = System.currentTimeMillis();
+        String fingerprint = null;
+        try {
+            // Parsing happens BEFORE createSession, which is what makes the password retry clean: a
+            // wrong or missing password throws here, so no ImportSession row exists to orphan and the
+            // client simply calls this endpoint again with the same file.
+            var result = pdfPreviewGenerator.generateSectionsWithContext(userId, fileName, fileContent, password);
+            fingerprint = fingerprintOf(result.documentContext());
+            List<StagedAccountSection> sections = onlySectionsThatAreActuallyAccounts(result.sections());
 
-        if (sections.size() <= 1) {
-            // The common case (and the only case a CSV upload can ever produce): behaves exactly
-            // as this method always has, just wrapped in the new response envelope.
-            StagingResponse staged = sections.isEmpty()
-                    ? new StagingResponse(List.of(), 0, 0, null, List.of())
-                    : toStagingResponse(sections.get(0));
-            rejectIfNothingWasExtracted(staged, result.documentContext());
-            var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount(),
-                    result.documentContext());
-            return new PdfStagingSessionResponse(session.getId(), false, staged, null);
+            if (sections.size() <= 1) {
+                // The common case (and the only case a CSV upload can ever produce): behaves exactly
+                // as this method always has, just wrapped in the new response envelope.
+                StagingResponse staged = sections.isEmpty()
+                        ? new StagingResponse(List.of(), 0, 0, null, List.of())
+                        : toStagingResponse(sections.get(0));
+                rejectIfNothingWasExtracted(staged, result.documentContext());
+                var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount(),
+                        result.documentContext());
+                recordPdfParsed(userId, fileName, fileContent.length, fingerprint, sections.size(), startedAtMs);
+                return new PdfStagingSessionResponse(session.getId(), false, staged, null);
+            }
+
+            var session = importSessionService.createMultiSection(userId, fileName, fileContent, sections, result.documentContext());
+            recordPdfParsed(userId, fileName, fileContent.length, fingerprint, sections.size(), startedAtMs);
+            return new PdfStagingSessionResponse(session.getId(), true, null, sections);
+        } catch (ApiException e) {
+            // The whole point of the evidence table. A password failure carries no fingerprint --
+            // the document was never opened -- but IMPORT_001 and IMPORT_007 do, and those are the
+            // ones that say "this layout defeated the parser", which is unanswerable today.
+            analysisRecorder.recordFailed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
+                    "PDF", fileContent.length, fingerprint, e.getCode() == null ? null : e.getCode().name(),
+                    e.getMessage(), System.currentTimeMillis() - startedAtMs);
+            throw e;
         }
+    }
 
-        var session = importSessionService.createMultiSection(userId, fileName, fileContent, sections, result.documentContext());
-        return new PdfStagingSessionResponse(session.getId(), true, null, sections);
+    private void recordPdfParsed(UUID userId, String fileName, long byteSize, String fingerprint,
+                                  int sectionCount, long startedAtMs) {
+        analysisRecorder.recordParsed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
+                "PDF", byteSize, fingerprint, sectionCount, System.currentTimeMillis() - startedAtMs);
     }
 
     /**
