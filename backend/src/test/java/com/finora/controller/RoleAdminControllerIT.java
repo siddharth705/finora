@@ -33,11 +33,20 @@ class RoleAdminControllerIT extends AbstractIntegrationTest {
     private final ObjectMapper mapper = new ObjectMapper();
 
     private User createUser(String role) {
+        return createUser(role, User.SCOPE_ADMIN);
+    }
+
+    /** Scope matters now that RoleService refuses to attach a permission-carrying role to a
+     *  USER-scope account -- see requireScopeCanHold. Admin-portal accounts are the default here
+     *  because that is what every test in this class is about; the USER-scope overload exists to
+     *  exercise the refusal itself. */
+    private User createUser(String role, String accountScope) {
         User user = new User();
         user.setEmail("rbac-mgmt-" + UUID.randomUUID() + "@example.com");
         user.setPasswordHash("irrelevant-for-this-test");
         user.setFullName("RBAC Management Test User");
         user.setRole(role);
+        user.setAccountScope(accountScope);
         user.setPhoneVerified(true); // see AdminRbacIT for why this must be set
         return userRepository.save(user);
     }
@@ -86,6 +95,40 @@ class RoleAdminControllerIT extends AbstractIntegrationTest {
 
         User reloaded = userRepository.findById(target.getId()).orElseThrow();
         assertThat(reloaded.getRoles()).extracting("name").contains("ADMIN");
+    }
+
+    /**
+     * V52 introduced account_scope so one person can hold a consumer account and an admin account
+     * under one email, and stated that scope "is what login disambiguates on". It disambiguated
+     * login and nothing else -- no scope claim in the JWT, and AuthorizationService never reads
+     * the field -- so an admin role attached to a USER-scope account turned an ordinary
+     * consumer-app session into a working admin session at every @PreAuthorize check. Nothing
+     * enforced the convention that this never happens; this is that enforcement.
+     */
+    @Test
+    void assigningAnAdminRole_toAConsumerScopedAccount_isRefused() {
+        User superAdmin = createUser("SUPER_ADMIN");
+        User consumer = createUser("USER", User.SCOPE_USER);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/users/" + consumer.getId() + "/roles/ADMIN",
+                HttpMethod.POST, new HttpEntity<>(bearerFor(superAdmin)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(userRepository.findById(consumer.getId()).orElseThrow().getRoles()).isEmpty();
+    }
+
+    /** An admin granting themselves a stronger role was a single call away: actingAdminId reached
+     *  assignRole for the audit entry alone and was never compared to the target. */
+    @Test
+    void assigningARoleToYourOwnAccount_isRefused() {
+        User superAdmin = createUser("SUPER_ADMIN");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/users/" + superAdmin.getId() + "/roles/ADMIN",
+                HttpMethod.POST, new HttpEntity<>(bearerFor(superAdmin)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     }
 
     @Test

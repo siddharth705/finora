@@ -56,6 +56,15 @@ public class User {
      *  literal so the default and the demotion target cannot drift into disagreeing. */
     public static final String DEFAULT_ROLE = "USER";
 
+    /** The role that can administer everything, including granting and revoking roles. Named
+     *  because {@code RoleService.revokeRole} has to recognise it to refuse demoting the last one
+     *  -- a platform with no SUPER_ADMIN cannot be recovered through any endpoint, since
+     *  BootstrapService only mints a bootstrap account while setup_completed is false. */
+    public static final String SUPER_ADMIN_ROLE = "SUPER_ADMIN";
+
+    /** The status a usable account carries. {@code SUSPENDED} is the other. */
+    public static final String STATUS_ACTIVE = "ACTIVE";
+
     // Legacy single-role string, kept for backward compatibility -- see
     // V16__rbac_roles_permissions.sql and AuthorizationService. New code assigning a user
     // access beyond this should prefer `roles` below (supports more than one, and drives

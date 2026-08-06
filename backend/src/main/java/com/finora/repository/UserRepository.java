@@ -73,6 +73,27 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     long countByLockedUntilAfter(Instant threshold);
 
     /**
+     * How many usable accounts currently hold {@code roleName}, counting BOTH grant mechanisms.
+     *
+     * <p>Backs {@code RoleService.revokeRole}'s refusal to demote the last SUPER_ADMIN. Counting
+     * only {@code user_roles} would have been wrong in exactly the case that matters:
+     * {@code User.role} is a live grant too, not a legacy label -- {@code AuthorizationService
+     * .effectiveAuthorities} resolves a Role by that string and grants its whole permission set,
+     * which is precisely the mistake {@code revokeRole}'s own doc comment records having made
+     * once already. {@code SetupService} writes SUPER_ADMIN to both, so either alone would count
+     * the first administrator correctly by luck and a later one incorrectly.
+     *
+     * <p>Suspended accounts are excluded: an account that cannot log in is not a way back into
+     * the platform, so it must not be what makes revoking the last working Super Admin look safe.
+     */
+    @Query("""
+           SELECT COUNT(DISTINCT u.id) FROM User u LEFT JOIN u.roles r
+           WHERE (u.role = :roleName OR r.name = :roleName) AND u.status = :activeStatus
+           """)
+    long countActiveUsersWithRole(@Param("roleName") String roleName,
+                                  @Param("activeStatus") String activeStatus);
+
+    /**
      * Reads just the phone-verified flag for one user, for {@code PhoneVerificationFilter}.
      *
      * <p>That filter ran a full {@code findById} on every authenticated request purely to read one

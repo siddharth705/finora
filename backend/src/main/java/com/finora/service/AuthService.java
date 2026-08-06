@@ -472,6 +472,11 @@ public class AuthService {
             return new ForgotPasswordResponse(genericMessage, null);
         }
 
+        // One live reset link per account at a time. Issuing a new link used to leave every
+        // previously issued one usable for the rest of its own TTL, so "I didn't request this,
+        // let me request my own" quietly widened the window instead of closing it.
+        resetTokenRepository.markAllUnusedAsUsed(userOpt.get().getId(), Instant.now());
+
         byte[] randomBytes = new byte[32];
         secureRandom.nextBytes(randomBytes);
         String rawToken = Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
@@ -566,8 +571,27 @@ public class AuthService {
 
         prt.setUsedAt(Instant.now());
         resetTokenRepository.save(prt);
+        // Every OTHER live reset link for this account dies with the one just consumed. Marking
+        // only the consumed token left an attacker who had triggered their own reset for the
+        // victim's address holding a link that still worked for the rest of its 30-minute TTL --
+        // so a victim who noticed and reset their own password could be immediately reset again,
+        // with no recovery action available to them.
+        int alsoInvalidated = resetTokenRepository.markAllUnusedAsUsed(user.getId(), now);
 
-        auditService.record(user.getId(), "PASSWORD_RESET", "User", user.getId(), Map.of("method", "firebase_phone"));
+        // Password reset is the canonical response to a suspected compromise, and it has to end
+        // the attacker's session, not just change the lock. Without this the attacker's refresh
+        // token kept rotating for up to the 7-day absolute cap while the victim received a
+        // "your password was changed" email suggesting the incident was resolved.
+        // PasswordChangeService.complete -- the authenticated change-password path -- already
+        // does this; RefreshTokenService's own class docs name password change as one of the
+        // cases warranting account-wide revocation. The forgot-password path was never wired to
+        // it. Unconditional here, unlike complete()'s opt-in signOutOtherDevices: whoever
+        // completes a reset is not holding a session to preserve.
+        refreshTokenService.revokeAllForUser(user.getId());
+
+        auditService.record(user.getId(), "PASSWORD_RESET", "User", user.getId(),
+                Map.of("method", "firebase_phone", "sessionsRevoked", true,
+                        "otherResetLinksInvalidated", alsoInvalidated));
         EmailResult changedEmailResult = emailProvider.sendPasswordChangedEmail(user.getEmail());
         auditService.record(user.getId(), "EMAIL_SENT", "User", user.getId(), Map.of(
                 "type", "password_changed", "provider", changedEmailResult.provider().name(), "success", changedEmailResult.success()));

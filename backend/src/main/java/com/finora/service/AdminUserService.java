@@ -42,15 +42,17 @@ public class AdminUserService {
     private final TransactionRepository transactionRepository;
     private final AuditService auditService;
     private final AuthService authService;
+    private final RefreshTokenService refreshTokenService;
 
     public AdminUserService(UserRepository userRepository, AccountRepository accountRepository,
                              TransactionRepository transactionRepository, AuditService auditService,
-                             AuthService authService) {
+                             AuthService authService, RefreshTokenService refreshTokenService) {
         this.userRepository = userRepository;
         this.accountRepository = accountRepository;
         this.transactionRepository = transactionRepository;
         this.auditService = auditService;
         this.authService = authService;
+        this.refreshTokenService = refreshTokenService;
     }
 
     /** Support-assisted signup (USER_CREATE) -- delegates the actual user-creation work to
@@ -93,6 +95,29 @@ public class AdminUserService {
                     throw new ApiException(HttpStatus.CONFLICT, "Another account already uses this phone number.");
                 }
                 user.setPhoneNumber(normalized);
+                // A number nobody has proved control of is not a verified number. Changing the
+                // number without clearing this left phoneVerified asserting something that was
+                // never true of the new value -- and phoneVerified is not decoration, it is a
+                // security control: AuthService.resetPassword and verifyPhoneWithFirebase both
+                // accept a Firebase token only if its phone_number matches THIS field, which is
+                // the entire reason the reset flow has a second factor at all ("the reset token
+                // alone -- proof of email access -- is no longer enough"). Without this line an
+                // admin holding only USER_UPDATE could point any account's phone, a SUPER_ADMIN's
+                // included, at a handset they control and inherit that second factor.
+                //
+                // The comment above is about an admin edit locking a user OUT because Firebase
+                // could never match again. Normalizing fixed that; this is the converse question
+                // it left unasked -- what happens once it does match.
+                //
+                // setPhoneVerified(false) had no call site anywhere in the backend before this.
+                user.setPhoneVerified(false);
+                // Same reasoning as suspend(): a security-state change that leaves existing
+                // sessions running has not taken effect yet. PhoneVerificationFilter will now 403
+                // this account's requests until it re-verifies, but only on the NEXT request --
+                // revoking refresh tokens stops the session renewing indefinitely in the meantime.
+                refreshTokenService.revokeAllForUser(userId);
+                auditService.record(userId, "PHONE_VERIFICATION_RESET", "User", userId,
+                        Map.of("reason", "phone_number_changed_by_admin", "changedBy", actingAdminId.toString()));
             }
         }
         if (req.lowBalanceThreshold() != null) user.setLowBalanceThreshold(req.lowBalanceThreshold());
@@ -161,6 +186,18 @@ public class AdminUserService {
         if (!user.isSuspended()) {
             user.setStatus("SUSPENDED");
             userRepository.save(user);
+            // Suspension has to EVICT, not just bar the door. Status alone blocks new logins and
+            // refreshes, but it does nothing about an access token already issued: JwtAuthFilter
+            // authenticates it normally for the rest of its 15-minute life, because
+            // CurrentUserDetailsService builds the principal without .disabled() and
+            // AuthorizationService.effectiveAuthorities never reads user.status. SetupService
+            // already documents that gap and works around it for the bootstrap account alone
+            // ("Explicitly revoking BOOTSTRAP_ADMIN means SYSTEM_INITIALIZE is gone immediately,
+            // not just until this token's 15-minute expiry"); ordinary suspension had no
+            // equivalent. Revoking every refresh token closes the renewal path in the same
+            // transaction as the status change, so the suspended session cannot outlive the
+            // access token it is currently holding.
+            refreshTokenService.revokeAllForUser(userId);
             auditService.record(userId, "ACCOUNT_SUSPENDED", "User", userId, Map.of("suspendedBy", actingAdminId.toString()));
         }
         return toSummary(user);

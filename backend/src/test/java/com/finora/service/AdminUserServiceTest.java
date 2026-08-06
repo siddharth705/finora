@@ -30,6 +30,7 @@ class AdminUserServiceTest {
 
     private UserRepository userRepository;
     private AuditService auditService;
+    private RefreshTokenService refreshTokenService;
     private AdminUserService adminUserService;
     private final UUID adminId = UUID.randomUUID();
     private final UUID targetId = UUID.randomUUID();
@@ -38,9 +39,10 @@ class AdminUserServiceTest {
     void setUp() {
         userRepository = mock(UserRepository.class);
         auditService = mock(AuditService.class);
+        refreshTokenService = mock(RefreshTokenService.class);
         adminUserService = new AdminUserService(
                 userRepository, mock(AccountRepository.class), mock(TransactionRepository.class), auditService,
-                mock(AuthService.class));
+                mock(AuthService.class), refreshTokenService);
     }
 
     private User user(UUID id, String status) {
@@ -75,6 +77,66 @@ class AdminUserServiceTest {
         assertThat(target.getStatus()).isEqualTo("SUSPENDED");
         verify(userRepository).save(target);
         verify(auditService).record(eq(targetId), eq("ACCOUNT_SUSPENDED"), eq("User"), eq(targetId), any());
+    }
+
+    /**
+     * Suspension has to evict, not just bar the door.
+     *
+     * <p>Status alone stops new logins and refreshes, but does nothing about an access token
+     * already issued: CurrentUserDetailsService builds the principal without {@code .disabled()}
+     * and AuthorizationService.effectiveAuthorities never reads user.status, so JwtAuthFilter
+     * keeps authenticating it. SetupService documents that gap and works around it for the
+     * bootstrap account alone; ordinary suspension had no equivalent, so a suspended account kept
+     * its session alive by refreshing.
+     */
+    @Test
+    void suspend_revokesEveryRefreshToken_soTheSessionCannotOutliveTheSuspension() {
+        User target = user(targetId, "ACTIVE");
+        when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
+
+        adminUserService.suspend(targetId, adminId);
+
+        verify(refreshTokenService).revokeAllForUser(targetId);
+    }
+
+    /**
+     * phoneVerified is a security control, not a label: AuthService.resetPassword and
+     * verifyPhoneWithFirebase both accept a Firebase token only when its phone_number matches
+     * User.phoneNumber, which is the whole reason the reset flow has a second factor. Leaving the
+     * flag set after an admin repoints the number would hand that second factor to whoever holds
+     * the new handset -- reachable by an admin with only USER_UPDATE, against any account
+     * including a SUPER_ADMIN.
+     */
+    @Test
+    void updateProfile_clearsPhoneVerification_whenAnAdminChangesTheNumber() {
+        User target = user(targetId, "ACTIVE");
+        target.setPhoneNumber("+919999999999");
+        target.setPhoneVerified(true);
+        when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
+        when(userRepository.existsByPhoneNumberAndAccountScope(any(), any())).thenReturn(false);
+
+        adminUserService.updateProfile(adminId, targetId, new AdminUpdateUserRequest(
+                null, "+918888888888", null, null));
+
+        assertThat(target.isPhoneVerified()).isFalse();
+        verify(refreshTokenService).revokeAllForUser(targetId);
+        verify(auditService).record(eq(targetId), eq("PHONE_VERIFICATION_RESET"), eq("User"), eq(targetId), any());
+    }
+
+    /** Only an actual change resets verification -- resubmitting the same number (an admin saving
+     *  an unrelated field on the same form) must not sign the user out and force re-verification. */
+    @Test
+    void updateProfile_leavesPhoneVerificationAlone_whenTheNumberIsUnchanged() {
+        User target = user(targetId, "ACTIVE");
+        target.setPhoneNumber("+919999999999");
+        target.setPhoneVerified(true);
+        when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
+
+        adminUserService.updateProfile(adminId, targetId, new AdminUpdateUserRequest(
+                "Renamed User", "+919999999999", null, null));
+
+        assertThat(target.isPhoneVerified()).isTrue();
+        verify(refreshTokenService, never()).revokeAllForUser(any());
     }
 
     @Test
