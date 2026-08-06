@@ -3,7 +3,7 @@ import type {
 
   Account, AccountStatementGroup, BankInfo, Budget, DashboardSummary, DetectedAccountInfo, Goal,
   ImportSummary, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, Transaction,
-  WorkspaceSettings, UnparseableRow,
+  WorkspaceSettings, UnparseableRow, VerificationReport,
 } from '../types';
 
 // Which portal this account belongs to. The same person may hold a USER account and an ADMIN
@@ -210,6 +210,9 @@ interface StagingResult {
   flaggedDuplicates: number;
   detectedAccount: DetectedAccountInfo;
   unparseableRows: UnparseableRow[];
+  // Optional rather than required: absent means an older backend that predates verification,
+  // which is the same "not checked" state as an explicit null and must not read as a failure.
+  verification?: VerificationReport | null;
 }
 
 // A PDF upload can now detect more than one account section in a single file (e.g. an

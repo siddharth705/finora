@@ -6,8 +6,9 @@ import { importApi, statementImportsApi, categoriesApi, accountsApi } from '../a
 import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID } from '../api/errorCodes';
 import { BankLogo } from '../components/BankLogo';
 import { MaskedAccountNumber } from '../components/MaskedAccountNumber';
+import { VerificationPanel } from '../components/VerificationPanel';
 import { matchExistingAccount } from '../lib/accountMatch';
-import type { Account, DetectedAccountInfo, ImportSummary, ReimportResult, StagedAccountSection, StagedRow, UnparseableRow } from '../types';
+import type { Account, DetectedAccountInfo, VerificationReport, ImportSummary, ReimportResult, StagedAccountSection, StagedRow, UnparseableRow } from '../types';
 import { formatDate } from '../utils/date';
 
 type Step = 'upload' | 'review' | 'summary';
@@ -39,6 +40,9 @@ interface SectionState {
   // "Never lose information" (see the engineering principles doc) -- rows the backend couldn't
   // parse into a transaction, shown for transparency, never confirmable into the ledger.
   unparseableRows: UnparseableRow[];
+  // Per section, never merged -- one section of a composite statement can verify while another
+  // does not, and a combined verdict would hide that.
+  verification: VerificationReport | null;
 }
 
 function initialSectionState(section: StagedAccountSection, existingAccounts: Account[]): SectionState {
@@ -61,6 +65,7 @@ function initialSectionState(section: StagedAccountSection, existingAccounts: Ac
     newCreditLimit: detected.creditLimit != null ? String(detected.creditLimit) : '',
     newDueDate: detected.paymentDueDate ?? '',
     unparseableRows: section.unparseableRows,
+    verification: section.verification ?? null,
   };
 }
 
@@ -112,6 +117,7 @@ export default function Import() {
   // Target account: an existing one, or a new one built from what the statement told us
   const [existingAccounts, setExistingAccounts] = useState<Account[]>([]);
   const [detectedAccount, setDetectedAccount] = useState<DetectedAccountInfo | null>(null);
+  const [verification, setVerification] = useState<VerificationReport | null>(null);
   const [accountChoice, setAccountChoice] = useState<AccountChoice>('new');
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [newName, setNewName] = useState('');
@@ -163,6 +169,7 @@ export default function Import() {
       setIncluded(reimportState.staging.rows.map((r) => !r.likelyDuplicate));
       setChosenCategory(reimportState.staging.rows.map((r) => r.suggestedCategory));
       setDetectedAccount(reimportState.staging.detectedAccount);
+      setVerification(reimportState.staging.verification ?? null);
       setUnparseableRows(reimportState.staging.unparseableRows);
       setAccountChoice('existing');
       setSelectedAccountId(reimportState.accountId);
@@ -227,6 +234,7 @@ export default function Import() {
       setIncluded(staging.rows.map((r) => !r.likelyDuplicate));
       setChosenCategory(staging.rows.map((r) => r.suggestedCategory));
       setDetectedAccount(staging.detectedAccount);
+      setVerification(staging.verification ?? null);
       setUnparseableRows(staging.unparseableRows);
 
       // Pre-fill the new-account form from whatever the statement told us — every field here
@@ -644,6 +652,10 @@ export default function Import() {
                 {section.detectedAccount.bank.id !== 'OTHER' && ` — ${section.detectedAccount.bank.officialName}`}
               </h3>
 
+              {/* This section's own report. Composite statements are exactly where a merged verdict
+                  would mislead -- a savings section can verify while a credit-card section does not. */}
+              <VerificationPanel verification={section.verification} />
+
               <AccountChoiceFields
                 existingAccounts={existingAccounts}
                 detectedAccount={section.detectedAccount}
@@ -690,6 +702,10 @@ export default function Import() {
 
       {step === 'review' && !multiSections && (
         <>
+          {/* Above the account card on purpose: whether the numbers can be trusted is worth
+              reading before deciding where to put them. */}
+          <VerificationPanel verification={verification} />
+
           {reimportState ? (
             <div className="bg-card rounded-xl2 shadow-card border border-border p-5">
               <h2 className="font-semibold text-ink text-sm mb-1">Re-importing statement</h2>

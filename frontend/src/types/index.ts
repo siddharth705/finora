@@ -208,6 +208,45 @@ export type FinancialProductType =
   | 'LOAN' | 'INSURANCE' | 'FOREX_CARD'
   | 'UNKNOWN';
 
+// Whether an import can be proven faithful to the statement it came from, and on what basis --
+// see ImportDto.VerificationReport on the backend, and
+// docs/engineering/import-verification-framework.md for the reasoning.
+//
+// Deliberately has NO document-level status. The backend removed it because deriving one verdict
+// from several rules is an aggregator's job and no aggregator exists yet; the UI must not
+// reinvent it, or it becomes a second source of truth that can disagree with the findings it
+// claims to summarise.
+export interface VerificationReport {
+  findings: VerificationFinding[];
+}
+
+// One check's result. `rule` is a stable machine identifier ("BALANCE_CHAIN"), never a label --
+// the UI maps it to a renderer, so a new validator is additive rather than another branch.
+// `outcome` is that rule's verdict about its OWN domain, not the document's.
+// `details` is a per-rule payload: the balance chain reports per-row discrepancies, while checks
+// planned next (statement totals, structural) have no row to point at at all.
+export interface VerificationFinding {
+  rule: string;
+  outcome: 'VERIFIED' | 'WARNING' | 'FAILED' | 'NOT_APPLICABLE';
+  details: Record<string, unknown>;
+}
+
+// The balance chain's own `details` shape. Named here so its renderer is typed rather than
+// reaching into an untyped record -- other rules will declare their own.
+export interface BalanceChainDetails {
+  rowsChecked: number;
+  rowsWithBalance: number;
+  anchoredOnOpeningBalance: boolean;
+  discrepancies: BalanceRowDiscrepancy[];
+}
+
+export interface BalanceRowDiscrepancy {
+  rowIndex: number;
+  expectedBalance: number;
+  actualBalance: number;
+  difference: number;
+}
+
 // One detected account section within a single multi-account PDF upload (e.g. an HSBC-style
 // "Composite Statement" bundling a savings account and a credit-card account in one file) --
 // see ImportDto.StagedAccountSection on the backend. Structurally identical to the single-account
@@ -218,6 +257,10 @@ export interface StagedAccountSection {
   totalParsed: number;
   flaggedDuplicates: number;
   unparseableRows: UnparseableRow[];
+  // Optional and nullable. Null means verification was not performed at all, which is distinct from a report whose
+  // finding says NOT_APPLICABLE ("checked; this statement has no running balance to check with").
+  // Per section, never merged: one section of a composite statement can verify while another does not.
+  verification?: VerificationReport | null;
 }
 
 export interface ImportSummary {
@@ -282,6 +325,7 @@ export interface ReimportResult {
     flaggedDuplicates: number;
     detectedAccount: DetectedAccountInfo;
     unparseableRows: UnparseableRow[];
+    verification?: VerificationReport | null;
   };
   accountId: string;
   accountName: string;
