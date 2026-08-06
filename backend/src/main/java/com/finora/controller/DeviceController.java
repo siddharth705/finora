@@ -2,7 +2,9 @@ package com.finora.controller;
 
 import com.finora.dto.ApiResponse;
 import com.finora.config.JwtProperties;
+import com.finora.security.JwtAuthFilter;
 import com.finora.dto.DeviceSessionDto;
+import jakarta.servlet.http.HttpServletRequest;
 import com.finora.security.CurrentUser;
 import com.finora.service.RefreshTokenService;
 import org.springframework.web.bind.annotation.*;
@@ -33,9 +35,15 @@ public class DeviceController {
     }
 
     @GetMapping
-    public ApiResponse<List<DeviceSessionDto>> list() {
+    public ApiResponse<List<DeviceSessionDto>> list(HttpServletRequest request) {
+        // Which session is asking, taken from the caller's own access token rather than from
+        // anything the client sends. The client never learns or stores a session id, so there is
+        // no second identifier to keep in sync and nothing a caller could spoof to make another
+        // device look like its own.
+        UUID callerSessionId = (UUID) request.getAttribute(JwtAuthFilter.SESSION_ID_ATTRIBUTE);
+
         List<DeviceSessionDto> sessions = refreshTokenService.listActiveSessions(currentUser.id()).stream()
-                .map(rt -> DeviceSessionDto.from(rt, jwtProperties.getAbsoluteSessionMs()))
+                .map(rt -> DeviceSessionDto.from(rt, jwtProperties.getAbsoluteSessionMs(), callerSessionId))
                 .toList();
         return ApiResponse.ok(sessions);
     }

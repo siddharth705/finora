@@ -48,7 +48,7 @@ class AuthServiceRegisterTest {
         // duplicate-rejection tests above throw before getting there.
         RefreshTokenService refreshTokenService = mock(RefreshTokenService.class);
         when(refreshTokenService.issue(any())).thenReturn(
-                new RefreshTokenService.IssuedToken("test-refresh-token", java.time.Instant.now().plusSeconds(3600)));
+                new RefreshTokenService.IssuedToken("test-refresh-token", java.time.Instant.now().plusSeconds(3600), java.util.UUID.randomUUID()));
 
         // register() checks platformSettingsService.getEntity().isRegistrationsEnabled() before
         // doing anything else -- defaults to a real entity with registrationsEnabled=true (the

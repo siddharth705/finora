@@ -319,7 +319,14 @@ export default function Settings() {
                   <div className="flex items-center gap-2.5 min-w-0">
                     <Smartphone size={15} className="text-muted flex-shrink-0" />
                     <div className="min-w-0">
-                      <p className="text-sm text-ink truncate">{deviceLabel(s)}</p>
+                      <p className="text-sm text-ink truncate">
+                        {deviceLabel(s)}
+                        {s.current && (
+                          <span className="ml-2 text-[10px] font-medium uppercase tracking-wide text-success bg-success-bg rounded px-1.5 py-0.5 align-middle">
+                            This device
+                          </span>
+                        )}
+                      </p>
                       <p className="text-[11px] text-muted truncate">
                         {s.lastSeenAt ? `Last active ${formatRelativeTime(s.lastSeenAt) ?? 'recently'}` : 'Not used yet'}
                         {s.lastSeenIp ? ` · ${s.lastSeenIp}` : ''}

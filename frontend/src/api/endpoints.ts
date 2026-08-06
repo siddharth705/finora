@@ -459,7 +459,15 @@ export const passwordChangeApi = {
 // that token, not a durable per-device fingerprint (see RefreshToken's own doc comment on the
 // backend), so any of them can legitimately be null.
 export interface DeviceSession {
+  // The current refresh TOKEN's id -- changes on every rotation. Still what revoke() takes.
   id: string;
+  // The SESSION's id, stable across rotations. Not used by the UI today; exposed because
+  // anything scoped to the sign-in rather than the token (device naming, trusted devices) keys
+  // off it.
+  sessionId: string;
+  // Whether this is the session making the request. Decided server-side from the caller's own
+  // access token, so the client neither stores nor sends a session id.
+  current: boolean;
   browser: string | null;
   device: string | null;
   lastSeenIp: string | null;

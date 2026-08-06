@@ -110,8 +110,11 @@ public class AuthService {
         auditService.record(user.getId(), "EMAIL_SENT", "User", user.getId(), Map.of(
                 "type", "welcome", "provider", welcomeEmailResult.provider().name(), "success", welcomeEmailResult.success()));
 
-        String accessToken = jwtService.generateToken(user.getId(), user.getEmail());
-        String refreshToken = refreshTokenService.issue(user.getId()).rawToken();
+        // Refresh token first: it is what mints the session, and the access token has to carry
+        // that session's id in its sid claim.
+        var issued = refreshTokenService.issue(user.getId());
+        String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId());
+        String refreshToken = issued.rawToken();
         return new AuthResponse(accessToken, refreshToken, user.getEmail(), user.getFullName(),
                 user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()));
     }
@@ -325,8 +328,11 @@ public class AuthService {
 
         auditService.record(user.getId(), "USER_LOGIN", "User", user.getId());
 
-        String accessToken = jwtService.generateToken(user.getId(), user.getEmail());
-        String refreshToken = refreshTokenService.issue(user.getId()).rawToken();
+        // Refresh token first: it is what mints the session, and the access token has to carry
+        // that session's id in its sid claim.
+        var issued = refreshTokenService.issue(user.getId());
+        String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId());
+        String refreshToken = issued.rawToken();
         return new AuthResponse(accessToken, refreshToken, user.getEmail(), user.getFullName(), user.isPhoneVerified(),
                 PhoneMasking.mask(user.getPhoneNumber()));
     }
@@ -345,7 +351,8 @@ public class AuthService {
                     "This account has been suspended. Contact support for assistance.");
         }
 
-        String newAccessToken = jwtService.generateToken(user.getId(), user.getEmail());
+        String newAccessToken = jwtService.generateToken(user.getId(), user.getEmail(),
+                rotation.newToken().sessionId());
         return new RefreshResponse(newAccessToken, rotation.newToken().rawToken());
     }
 

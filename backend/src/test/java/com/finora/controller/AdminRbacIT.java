@@ -47,7 +47,7 @@ class AdminRbacIT extends AbstractIntegrationTest {
     @Test
     void regularUser_isForbiddenFromAdminEndpoint() {
         User user = createUser("USER");
-        String token = jwtService.generateToken(user.getId(), user.getEmail());
+        String token = jwtService.generateToken(user.getId(), user.getEmail(), java.util.UUID.randomUUID());
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
@@ -62,7 +62,7 @@ class AdminRbacIT extends AbstractIntegrationTest {
     void adminUser_canAccessAdminEndpoint() {
         User admin = createUser("ADMIN");
         User targetUser = createUser("USER");
-        String token = jwtService.generateToken(admin.getId(), admin.getEmail());
+        String token = jwtService.generateToken(admin.getId(), admin.getEmail(), java.util.UUID.randomUUID());
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);

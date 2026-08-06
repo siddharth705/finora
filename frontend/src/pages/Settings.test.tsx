@@ -40,6 +40,8 @@ function userSettings(overrides: Partial<Record<string, unknown>> = {}) {
 function deviceSession(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: 'session-1',
+    sessionId: 'sess-aaa',
+    current: false,
     browser: 'Chrome',
     device: 'Windows',
     lastSeenIp: '203.0.113.5',
@@ -199,6 +201,24 @@ describe('Settings', () => {
 
     expect(await screen.findByText('Chrome on Windows')).toBeInTheDocument();
     expect(screen.queryByText(/Expires in/)).not.toBeInTheDocument();
+  });
+
+  it('marks only the calling session as this device', async () => {
+    vi.mocked(deviceApi.list).mockReset().mockResolvedValue([
+      deviceSession({ id: 'a', sessionId: 'sess-a', current: false, browser: 'Safari', device: 'macOS' }) as never,
+      deviceSession({ id: 'b', sessionId: 'sess-b', current: true }) as never,
+    ]);
+
+    renderSettings();
+
+    // Asserts WHICH row carries the badge, not merely that exactly one does. Written the weaker
+    // way first, it passed with the condition inverted -- one badge still rendered, just on the
+    // wrong device, which is the entire bug this test exists to catch and the worst possible one
+    // here: a user signing out the session they are sitting in.
+    const badge = await screen.findByText('This device');
+    expect(badge.parentElement).toHaveTextContent('Chrome on Windows');
+    expect(badge.parentElement).not.toHaveTextContent('Safari');
+    expect(screen.getAllByText('This device')).toHaveLength(1);
   });
 
   it('shows a friendly message when there are no active sessions', async () => {

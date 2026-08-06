@@ -44,7 +44,7 @@ class GlobalAuditLogIT extends AbstractIntegrationTest {
 
     private HttpHeaders bearerFor(User user) {
         HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(jwtService.generateToken(user.getId(), user.getEmail()));
+        headers.setBearerAuth(jwtService.generateToken(user.getId(), user.getEmail(), java.util.UUID.randomUUID()));
         return headers;
     }
 

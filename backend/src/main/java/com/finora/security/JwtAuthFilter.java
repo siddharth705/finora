@@ -24,6 +24,12 @@ import java.io.IOException;
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
 
+    /**
+     * Request attribute holding the {@code sid} claim of the token that authenticated this
+     * request, as a {@link java.util.UUID}, or null when the token predates the claim.
+     */
+    public static final String SESSION_ID_ATTRIBUTE = "com.finora.security.sessionId";
+
     private static final Logger log = LoggerFactory.getLogger(JwtAuthFilter.class);
 
     private final JwtService jwtService;
@@ -60,6 +66,14 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 var authToken = new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
                 authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                 SecurityContextHolder.getContext().setAuthentication(authToken);
+
+                // Which SESSION this request belongs to, for the handful of endpoints that need to
+                // tell "this device" from the others. A request attribute rather than the
+                // Authentication's details, which already carries WebAuthenticationDetails and is
+                // read by Spring Security itself -- overloading it would couple an application
+                // concern to framework state. Null for a token minted before the sid claim existed,
+                // which callers must treat as "unknown", never as "not the current session".
+                request.setAttribute(SESSION_ID_ATTRIBUTE, jwtService.extractSessionId(token));
             }
         } catch (Exception e) {
             // A stale/malformed token (e.g. referencing a user that no longer exists after a DB

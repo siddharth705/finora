@@ -30,6 +30,16 @@ public class RefreshToken {
      * <p>Distinct from {@link #createdAt}, which rotation resets to the time of the most
      * recent refresh. Only this field can bound how long a session may live in total.
      */
+    /**
+     * Stable identity of the sign-in session, carried across every rotation.
+     *
+     * <p>{@link #id} identifies a TOKEN and changes each refresh; this identifies the
+     * session that token belongs to. It is what the access token's {@code sid} claim
+     * carries, and the anchor for anything later scoped to a session rather than a token.
+     */
+    @Column(name = "session_id", nullable = false, updatable = false)
+    private UUID sessionId = UUID.randomUUID();
+
     @Column(name = "session_started_at", nullable = false, updatable = false)
     private Instant sessionStartedAt = Instant.now();
 
@@ -73,6 +83,8 @@ public class RefreshToken {
     public void setRevokedAt(Instant revokedAt) { this.revokedAt = revokedAt; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getSessionStartedAt() { return sessionStartedAt; }
+    public UUID getSessionId() { return sessionId; }
+    public void setSessionId(UUID sessionId) { this.sessionId = sessionId; }
     public void setSessionStartedAt(Instant sessionStartedAt) { this.sessionStartedAt = sessionStartedAt; }
     public String getBrowser() { return browser; }
     public void setBrowser(String browser) { this.browser = browser; }

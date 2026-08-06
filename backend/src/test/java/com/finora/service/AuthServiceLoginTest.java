@@ -49,7 +49,7 @@ class AuthServiceLoginTest {
         // resolveEmailForLogin-only tests never call login() at all, which is why this had never
         // been caught until this suite actually got to run.
         when(refreshTokenService.issue(any())).thenReturn(
-                new RefreshTokenService.IssuedToken("test-refresh-token", java.time.Instant.now().plusSeconds(3600)));
+                new RefreshTokenService.IssuedToken("test-refresh-token", java.time.Instant.now().plusSeconds(3600), java.util.UUID.randomUUID()));
 
         // registerFailedLogin() (invoked from login()'s catch block whenever the user is known)
         // reads live lockout policy off this on every failed attempt -- a real entity with the

@@ -28,12 +28,16 @@ public class JwtService {
         this.signingKey = Keys.hmacShaKeyFor(jwtProperties.getSecret().getBytes(StandardCharsets.UTF_8));
     }
 
-    public String generateToken(UUID userId, String email) {
+    public String generateToken(UUID userId, String email, UUID sessionId) {
         Date now = new Date();
         Date expiry = new Date(now.getTime() + jwtProperties.getExpirationMs());
         return Jwts.builder()
                 .subject(userId.toString())
                 .claim("email", email)
+                // Standard claim name for a session identifier. It lets the server answer
+                // "which session is this request from" without the client storing or sending
+                // anything extra, and without a second identifier to keep in sync.
+                .claim("sid", sessionId.toString())
                 .issuedAt(now)
                 .expiration(expiry)
                 .signWith(signingKey)
@@ -42,6 +46,16 @@ public class JwtService {
 
     public UUID extractUserId(String token) {
         return UUID.fromString(extractClaim(token, Claims::getSubject));
+    }
+
+    /** The session this token was minted for, or null for a token issued before sid existed. */
+    public UUID extractSessionId(String token) {
+        String sid = extractClaim(token, c -> c.get("sid", String.class));
+        try {
+            return sid == null ? null : UUID.fromString(sid);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     public String extractEmail(String token) {

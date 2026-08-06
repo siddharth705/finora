@@ -48,12 +48,12 @@ public class RefreshTokenService {
         this.clientIpResolver = clientIpResolver;
     }
 
-    public record IssuedToken(String rawToken, Instant expiresAt) {}
+    public record IssuedToken(String rawToken, Instant expiresAt, UUID sessionId) {}
     public record RotationResult(UUID userId, IssuedToken newToken) {}
 
-    /** A fresh sign-in: the session clock starts now. */
+    /** A fresh sign-in: a new session, whose clock starts now. */
     public IssuedToken issue(UUID userId) {
-        return issue(userId, Instant.now());
+        return issue(userId, Instant.now(), UUID.randomUUID());
     }
 
     /**
@@ -61,7 +61,7 @@ public class RefreshTokenService {
      *        value forward rather than {@code now}, which is the whole mechanism behind the
      *        absolute cap -- resetting it here would restore the perpetual sliding session.
      */
-    public IssuedToken issue(UUID userId, Instant sessionStartedAt) {
+    public IssuedToken issue(UUID userId, Instant sessionStartedAt, UUID sessionId) {
         byte[] randomBytes = new byte[32];
         secureRandom.nextBytes(randomBytes);
         String rawToken = Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
@@ -70,12 +70,13 @@ public class RefreshTokenService {
         rt.setUserId(userId);
         rt.setTokenHash(TokenHasher.sha256(rawToken));
         rt.setSessionStartedAt(sessionStartedAt);
+        rt.setSessionId(sessionId);
         Instant expiresAt = Instant.now().plusMillis(jwtProperties.getRefreshExpirationMs());
         rt.setExpiresAt(expiresAt);
         captureDeviceMetadata(rt);
         refreshTokenRepository.save(rt);
 
-        return new IssuedToken(rawToken, expiresAt);
+        return new IssuedToken(rawToken, expiresAt, sessionId);
     }
 
     /** Best-effort device-session labels (see RefreshToken's own doc comment) from the live
@@ -152,7 +153,7 @@ public class RefreshTokenService {
 
         // The ORIGINAL session start, not now. This single argument is the difference between a
         // 7-day cap and no cap at all.
-        IssuedToken newToken = issue(rt.getUserId(), rt.getSessionStartedAt());
+        IssuedToken newToken = issue(rt.getUserId(), rt.getSessionStartedAt(), rt.getSessionId());
         return new RotationResult(rt.getUserId(), newToken);
     }
 
