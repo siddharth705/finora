@@ -116,14 +116,43 @@ class RefreshTokenSessionLimitsTest {
     }
 
     @Test
-    void hittingTheAbsoluteCapSignsOutEveryDeviceNotJustThisOne() {
+    void hittingTheAbsoluteCapEndsOnlyThisDevicesSession() {
         existingToken(Duration.ofMinutes(1), Duration.ofDays(8));
-        when(repository.findByUserIdAndRevokedAtIsNull(any(UUID.class))).thenReturn(List.of());
 
         assertThatThrownBy(() -> service.rotate(RAW_TOKEN)).isInstanceOf(ApiException.class);
 
-        // The cap is a property of the SESSION, and a session spans the devices signed in from it.
-        // Ending it on one device while a phone keeps refreshing would make the limit decorative.
+        ArgumentCaptor<RefreshToken> saved = ArgumentCaptor.forClass(RefreshToken.class);
+        verify(repository).save(saved.capture());
+        assertThat(saved.getValue().getRevokedAt()).isNotNull();
+
+        // Every device carries its OWN session_started_at, stamped when that device signed in, so
+        // a phone that signed in later reaches its cap later and needs no help from here. Signing
+        // everything out would take down sessions that are nowhere near their limit, and would put
+        // an ordinary seven-day expiry in the same bucket as refresh-token reuse -- which really
+        // does mean theft, and whose all-sessions revocation is worth keeping distinct.
+        verify(repository, never()).findByUserIdAndRevokedAtIsNull(any(UUID.class));
+        verify(repository, never()).saveAll(any());
+    }
+
+    @Test
+    void refreshTokenReuseStillSignsOutEverything() {
+        // The contrast that makes the change above safe: reuse of an already-rotated token is a
+        // genuine theft signal, and that path must keep its blast radius.
+        RefreshToken revoked = new RefreshToken();
+        revoked.setUserId(userId);
+        revoked.setTokenHash(TokenHasher.sha256(RAW_TOKEN));
+        revoked.setExpiresAt(Instant.now().plus(Duration.ofDays(30)));
+        revoked.setSessionStartedAt(Instant.now().minus(Duration.ofHours(1)));
+        revoked.setRevokedAt(Instant.now().minus(Duration.ofMinutes(1)));
+        when(repository.findByTokenHash(TokenHasher.sha256(RAW_TOKEN)))
+                .thenReturn(Optional.of(revoked));
+        when(repository.findByUserIdAndRevokedAtIsNull(any(UUID.class))).thenReturn(List.of());
+
+        assertThatThrownBy(() -> service.rotate(RAW_TOKEN))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getCode())
+                .isEqualTo(ErrorCode.AUTH_SESSION_REVOKED);
+
         verify(repository).findByUserIdAndRevokedAtIsNull(userId);
         verify(repository).saveAll(any());
     }

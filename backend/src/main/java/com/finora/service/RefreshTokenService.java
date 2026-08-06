@@ -126,9 +126,22 @@ public class RefreshTokenService {
         // Absolute cap, measured from sign-in and immune to rotation. Without this, a session that
         // is merely USED often enough never ends -- which is what let a nine-hour-old browser tab
         // walk straight back into someone's bank statements.
+        //
+        // Revokes THIS session only, deliberately. Written first as revokeAllForUser on the
+        // reasoning that a phone still refreshing would make the cap decorative -- which is simply
+        // false: session_started_at is stamped at each DEVICE's sign-in, so a phone that signed in
+        // on day 3 reaches its own cap on day 10 regardless of what the laptop does. Every device
+        // already ages out on its own clock, so signing them all out bought nothing and cost the
+        // user every other device because one of them happened to expire first.
+        //
+        // It also puts a routine lifecycle event in the same bucket as a compromise response.
+        // revokeAllForUser belongs to the cases that genuinely imply theft -- refresh token reuse
+        // above, password change, an explicit "sign out everywhere" -- and dulls that signal if it
+        // fires every seven days for everybody.
         if (jwtProperties.getAbsoluteSessionMs() > 0
                 && rt.getSessionStartedAt().plusMillis(jwtProperties.getAbsoluteSessionMs()).isBefore(now)) {
-            revokeAllForUser(rt.getUserId());
+            rt.setRevokedAt(now);
+            refreshTokenRepository.save(rt);
             throw new ApiException(ErrorCode.AUTH_SESSION_MAX_AGE,
                     "Session reached its maximum length.");
         }
