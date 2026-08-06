@@ -139,3 +139,172 @@ input, textarea, select {
     transform: none !important;
   }
 }
+
+/* ==================================================================
+   MARKETING SURFACE (landing page only)
+   ==================================================================
+
+   Everything below is scoped to `.marketing` and deliberately does NOT reuse the app tokens
+   above. Those are tuned for a dashboard -- --color-bg is app chrome, shadow-card is a 1px
+   list-row shadow -- and the landing page inheriting them is precisely why it used to read as a
+   settings screen with marketing copy on it.
+
+   Light-only, on purpose. The page is art-directed around two deliberate dark bands; if the whole
+   page could also go dark, those bands stop reading as intentional. The app's own light/dark
+   toggle is untouched -- this scope simply doesn't participate.
+
+   Values come from the V3 brief's palette. Headings use Manrope, body stays Inter. */
+.marketing {
+  --m-surface:      #FFFFFF;
+  --m-surface-alt:  #F8FAFC;
+  --m-surface-deep: #0B1220;   /* "How Finora Thinks" / "What Finora Will Never Do" */
+  --m-line:         #E6EAF2;
+
+  --m-ink:   #0F172A;
+  --m-ink-2: #475569;
+  --m-ink-3: #64748B;
+
+  --m-brand:      #2563EB;
+  --m-brand-deep: #1D4ED8;
+  --m-brand-wash: #EFF5FF;
+
+  --m-success: #16A34A;
+  --m-warning: #F59E0B;
+
+  --m-r:    14px;
+  --m-r-lg: 20px;
+  --m-shadow:      0 1px 2px rgb(15 23 42 / .04), 0 8px 24px -12px rgb(15 23 42 / .10);
+  --m-shadow-lift: 0 1px 2px rgb(15 23 42 / .04), 0 18px 40px -18px rgb(15 23 42 / .18);
+  --m-shadow-hero: 0 40px 80px -32px rgb(15 23 42 / .28);
+
+  background: var(--m-surface);
+  color: var(--m-ink-2);
+}
+
+@layer components {
+  /* The small uppercase label above a section heading. Carries more of the "designed" feel
+     than any other single element in the layout. */
+  .m-eyebrow {
+    font-size: .6875rem;
+    font-weight: 700;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--m-brand);
+  }
+
+  /* Vertical rhythm. The page breathes because sections are ~112px tall, not 80px. */
+  .m-section     { padding-block: 7rem; background: var(--m-surface); }
+  .m-section-alt { padding-block: 7rem; background: var(--m-surface-alt); }
+  .m-section-deep {
+    padding-block: 7rem;
+    color: #E2E8F0;
+    /* The radial wash is what stops a dark band reading as a flat black rectangle. */
+    background:
+      radial-gradient(58% 76% at 76% 40%, rgb(37 99 235 / .20), transparent 62%),
+      var(--m-surface-deep);
+  }
+
+  /* Manrope, tight tracking, heavy. Most of the typographic difference lives here. */
+  .m-display {
+    font-family: 'Manrope', 'Inter', system-ui, sans-serif;
+    font-size: clamp(2.5rem, 5.2vw, 3.75rem);
+    font-weight: 800;
+    letter-spacing: -.035em;
+    line-height: 1.03;
+    color: var(--m-ink);
+  }
+  .m-h2 {
+    font-family: 'Manrope', 'Inter', system-ui, sans-serif;
+    font-size: clamp(1.875rem, 3.2vw, 2.5rem);
+    font-weight: 800;
+    letter-spacing: -.025em;
+    line-height: 1.12;
+    color: var(--m-ink);
+  }
+  .m-h3 {
+    font-family: 'Manrope', 'Inter', system-ui, sans-serif;
+    font-weight: 700;
+    letter-spacing: -.015em;
+    color: var(--m-ink);
+  }
+  .m-lead { font-size: 1.0625rem; line-height: 1.7; color: var(--m-ink-2); }
+
+  /* Flat, thin-bordered, barely shadowed -- not the app's elevated card. */
+  .m-card {
+    background: var(--m-surface);
+    border: 1px solid var(--m-line);
+    border-radius: var(--m-r);
+    box-shadow: var(--m-shadow);
+    transition: box-shadow .25s ease, transform .25s ease;
+  }
+  .m-card-hover:hover { box-shadow: var(--m-shadow-lift); transform: translateY(-3px); }
+
+  /* A node in the import / learning flow diagrams. */
+  .m-node {
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    padding: .625rem .875rem;
+    background: var(--m-surface);
+    border: 1px solid var(--m-line);
+    border-radius: 10px;
+    font-size: .8125rem;
+    font-weight: 500;
+    color: var(--m-ink);
+    box-shadow: 0 1px 2px rgb(15 23 42 / .05);
+  }
+  .m-section-deep .m-node {
+    background: rgb(255 255 255 / .06);
+    border-color: rgb(255 255 255 / .12);
+    color: #E2E8F0;
+    box-shadow: none;
+  }
+
+  /* Touch-target floor for text links (nav, footer). Measured on a 375px viewport, footer links
+     were 17px tall -- a column of those, tightly stacked, is genuinely hard to hit. Applied only
+     below md: on a pointer device 17px is a fine link, and forcing 44px there would stretch the
+     footer columns for no benefit. Height only, so nothing shifts horizontally. */
+  @media (max-width: 767px) {
+    .m-tap { display: inline-flex; align-items: center; min-height: 44px; }
+  }
+
+  .m-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: .5rem;
+    /* 48px floor: the brief asks for large tap targets, and this is the control it applies to. */
+    min-height: 48px;
+    padding-inline: 1.5rem;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: .9375rem;
+    transition: background-color .2s ease, box-shadow .2s ease, transform .2s ease;
+  }
+  .m-btn-primary { background: var(--m-brand); color: #fff; box-shadow: 0 8px 20px -10px rgb(37 99 235 / .8); }
+  .m-btn-primary:hover { background: var(--m-brand-deep); transform: translateY(-1px); }
+  .m-btn-ghost { background: var(--m-surface); color: var(--m-ink); border: 1px solid var(--m-line); }
+  .m-btn-ghost:hover { border-color: #CBD5E1; transform: translateY(-1px); }
+
+  /* Sticky mobile action bar. Hidden at md+, where the hero CTAs are still reachable. */
+  .m-mobile-cta {
+    position: fixed;
+    inset-inline: 0;
+    bottom: 0;
+    z-index: 40;
+    padding: .75rem 1rem calc(.75rem + env(safe-area-inset-bottom));
+    background: rgb(255 255 255 / .92);
+    backdrop-filter: blur(12px);
+    border-top: 1px solid var(--m-line);
+  }
+}
+
+/* Line charts that draw themselves as they scroll into view (brief: "line charts draw
+   themselves on scroll"). Paired with a dash-array set inline to the path's own length. */
+@keyframes drawLine { to { stroke-dashoffset: 0; } }
+.m-draw { animation: drawLine 1.6s ease forwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  .m-draw { animation: none !important; stroke-dashoffset: 0 !important; }
+  .m-card-hover:hover, .m-btn-primary:hover, .m-btn-ghost:hover { transform: none; }
+}

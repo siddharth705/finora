@@ -34,7 +34,11 @@ describe('App routing — unmatched paths', () => {
     // Something real is on screen. Asserted as "the render is not empty" rather than by hunting
     // for a specific string, because an empty render is precisely and entirely what the bug was.
     await waitFor(() => expect(container.textContent?.trim()).not.toBe(''));
-    expect(await screen.findAllByText(/Get Started Free/i)).not.toHaveLength(0);
+    // And it is specifically the landing page, asserted structurally. This used to match the CTA
+    // text ("Get Started Free"), which contradicted the comment directly above it and duly broke
+    // the moment that button was reworded -- a copy edit failing a routing test tells you nothing
+    // about routing. A sign-up link is what the landing page is FOR, so it survives rewording.
+    await waitFor(() => expect(container.querySelector('a[href="/register"]')).not.toBeNull());
   });
 
   it('leaves a route that does exist alone', async () => {
