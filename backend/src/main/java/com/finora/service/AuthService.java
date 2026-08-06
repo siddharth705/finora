@@ -347,6 +347,20 @@ public class AuthService {
      * only the inner method looks correct, changes nothing, and leaves the revocations it writes —
      * including reuse detection signing out every session after a suspected token theft — quietly
      * discarded. See that method's own comment for the full reasoning.
+     *
+     * <p><b>Worth replacing eventually.</b> This is a rule about a transaction BOUNDARY, not about
+     * the operation, so it has to be repeated by every future caller that wraps this method in a
+     * transaction of its own — and forgetting reinstates the original bug with no visible symptom.
+     * The sturdier shape is to commit the revocation in its own transaction ({@code REQUIRES_NEW},
+     * in a separate bean since Spring does not proxy self-invocation — {@code StatementBackfillWorker}
+     * used to exist for exactly that reason), so that a security state change cannot be undone by
+     * whatever business operation happens to be reporting the failure. Not done here because it is
+     * a refactor of a working, tested fix rather than a fix.
+     *
+     * <p>Until then, {@code RefreshTokenTransportIT.issuanceRotationInvalidationAndReuseDetection…}
+     * is the guard: it replays a used cookie and asserts an untouched SECOND session dies, which
+     * only a committed account-wide revocation satisfies. Anyone who adds an outer transaction
+     * without this rule will see that test go red.
      */
     @Transactional(noRollbackFor = ApiException.class)
     public RefreshResponse refresh(RefreshRequest request) {
