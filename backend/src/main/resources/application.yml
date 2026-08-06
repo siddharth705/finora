@@ -129,6 +129,24 @@ app:
     # by the refresh token instead, which can be individually revoked (the access token can't).
     expiration-ms: ${JWT_EXPIRATION_MS:900000}          # 15 min
     refresh-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:2592000000}  # 30 days
+    # Two independent limits on top of the refresh token's own expiry, because on their own a
+    # 15-minute access token and a rotating 30-day refresh token produce a session that NEVER ends:
+    # every rotation issues a fresh 30 days, so using the app once a month keeps you signed in
+    # forever. For a product holding bank statements, tax documents and salary slips, that is the
+    # wrong default -- it is the e-commerce answer, not the financial one.
+    #
+    # Idle: how long without a refresh before the session dies. Rotation happens whenever the
+    # client needs a new access token, so the current token's age is a direct measure of
+    # inactivity. 30 minutes matches what banks do. Raise it if support sees people being signed
+    # out mid-task (the ErrorCode for it, AUTH_005, is deliberately distinct so that is visible in
+    # logs rather than buried in generic expiry).
+    idle-timeout-ms: ${JWT_IDLE_TIMEOUT_MS:1800000}                 # 30 min
+    # Absolute: the longest a session may live no matter how actively it is used, measured from
+    # sign-in and unaffected by rotation. This is the one that ends "logged in since March".
+    absolute-session-ms: ${JWT_ABSOLUTE_SESSION_MS:604800000}       # 7 days
+    #
+    # Both accept 0 to disable, which exists for tests and for a deliberate, documented decision --
+    # not as a convenient way to silence an inconvenient logout.
   cors:
     # Both frontends by default: the user app (frontend/, port 5173) and the admin portal
     # (admin-portal/, port 5174) -- see CorsConfig, which .trim()s each entry, so the comma

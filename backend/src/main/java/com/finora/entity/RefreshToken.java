@@ -24,6 +24,15 @@ public class RefreshToken {
     @Column(name = "revoked_at")
     private Instant revokedAt;
 
+    /**
+     * When the user signed in, carried forward unchanged by every rotation.
+     *
+     * <p>Distinct from {@link #createdAt}, which rotation resets to the time of the most
+     * recent refresh. Only this field can bound how long a session may live in total.
+     */
+    @Column(name = "session_started_at", nullable = false, updatable = false)
+    private Instant sessionStartedAt = Instant.now();
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
@@ -63,6 +72,8 @@ public class RefreshToken {
     public Instant getRevokedAt() { return revokedAt; }
     public void setRevokedAt(Instant revokedAt) { this.revokedAt = revokedAt; }
     public Instant getCreatedAt() { return createdAt; }
+    public Instant getSessionStartedAt() { return sessionStartedAt; }
+    public void setSessionStartedAt(Instant sessionStartedAt) { this.sessionStartedAt = sessionStartedAt; }
     public String getBrowser() { return browser; }
     public void setBrowser(String browser) { this.browser = browser; }
     public String getDevice() { return device; }

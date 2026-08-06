@@ -76,6 +76,17 @@ public enum ErrorCode {
     AUTH_SESSION_REVOKED("AUTH_004", HttpStatus.UNAUTHORIZED,
             "For your security, all sessions were signed out. Please sign in again."),
 
+    // Separate from AUTH_002 for the same reason AUTH_004 is: all three end the session, but a user
+    // deciding whether something is wrong needs to know WHY. "Signed out after a period of
+    // inactivity" is reassuring and self-explanatory; "session expired" for a session the user was
+    // actively using reads like a fault. Support needs to tell them apart in logs too -- a spike in
+    // AUTH_005 means the idle window is too aggressive for how people actually work, which is
+    // invisible if it is bucketed with ordinary expiry.
+    AUTH_SESSION_IDLE("AUTH_005", HttpStatus.UNAUTHORIZED,
+            "Signed out after a period of inactivity. Please sign in again."),
+    AUTH_SESSION_MAX_AGE("AUTH_006", HttpStatus.UNAUTHORIZED,
+            "Your session reached its maximum length. Please sign in again."),
+
     // Generic fallbacks — used by GlobalExceptionHandler when no more specific code applies
     VALIDATION_ERROR("VAL_001", HttpStatus.BAD_REQUEST, "Validation failed"),
     NOT_FOUND("GEN_001", HttpStatus.NOT_FOUND, "No such endpoint"),

@@ -51,7 +51,17 @@ public class RefreshTokenService {
     public record IssuedToken(String rawToken, Instant expiresAt) {}
     public record RotationResult(UUID userId, IssuedToken newToken) {}
 
+    /** A fresh sign-in: the session clock starts now. */
     public IssuedToken issue(UUID userId) {
+        return issue(userId, Instant.now());
+    }
+
+    /**
+     * @param sessionStartedAt when the user actually signed in. Rotation passes the ORIGINAL
+     *        value forward rather than {@code now}, which is the whole mechanism behind the
+     *        absolute cap -- resetting it here would restore the perpetual sliding session.
+     */
+    public IssuedToken issue(UUID userId, Instant sessionStartedAt) {
         byte[] randomBytes = new byte[32];
         secureRandom.nextBytes(randomBytes);
         String rawToken = Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
@@ -59,6 +69,7 @@ public class RefreshTokenService {
         RefreshToken rt = new RefreshToken();
         rt.setUserId(userId);
         rt.setTokenHash(TokenHasher.sha256(rawToken));
+        rt.setSessionStartedAt(sessionStartedAt);
         Instant expiresAt = Instant.now().plusMillis(jwtProperties.getRefreshExpirationMs());
         rt.setExpiresAt(expiresAt);
         captureDeviceMetadata(rt);
@@ -93,14 +104,41 @@ public class RefreshTokenService {
             throw new ApiException(ErrorCode.AUTH_SESSION_REVOKED,
                     "This refresh token has already been used. All sessions have been signed out as a precaution.");
         }
-        if (rt.getExpiresAt().isBefore(Instant.now())) {
+        Instant now = Instant.now();
+        if (rt.getExpiresAt().isBefore(now)) {
             throw new ApiException(ErrorCode.AUTH_TOKEN_EXPIRED, "Refresh token expired — please sign in again.");
         }
 
-        rt.setRevokedAt(Instant.now());
+        // Idle timeout, measured from when THIS token was created. Every rotation mints a new
+        // token, so the current token's age is the time since the last refresh -- which, with a
+        // 15-minute access token, is the time since the client last needed one. createdAt rather
+        // than lastSeenAt deliberately: lastSeenAt is best-effort device metadata that
+        // captureDeviceMetadata silently skips when there is no request context, so a null or
+        // stale value would quietly disable this check. createdAt is NOT NULL with a default.
+        if (jwtProperties.getIdleTimeoutMs() > 0
+                && rt.getCreatedAt().plusMillis(jwtProperties.getIdleTimeoutMs()).isBefore(now)) {
+            rt.setRevokedAt(now);
+            refreshTokenRepository.save(rt);
+            throw new ApiException(ErrorCode.AUTH_SESSION_IDLE,
+                    "Signed out after a period of inactivity.");
+        }
+
+        // Absolute cap, measured from sign-in and immune to rotation. Without this, a session that
+        // is merely USED often enough never ends -- which is what let a nine-hour-old browser tab
+        // walk straight back into someone's bank statements.
+        if (jwtProperties.getAbsoluteSessionMs() > 0
+                && rt.getSessionStartedAt().plusMillis(jwtProperties.getAbsoluteSessionMs()).isBefore(now)) {
+            revokeAllForUser(rt.getUserId());
+            throw new ApiException(ErrorCode.AUTH_SESSION_MAX_AGE,
+                    "Session reached its maximum length.");
+        }
+
+        rt.setRevokedAt(now);
         refreshTokenRepository.save(rt);
 
-        IssuedToken newToken = issue(rt.getUserId());
+        // The ORIGINAL session start, not now. This single argument is the difference between a
+        // 7-day cap and no cap at all.
+        IssuedToken newToken = issue(rt.getUserId(), rt.getSessionStartedAt());
         return new RotationResult(rt.getUserId(), newToken);
     }
 
