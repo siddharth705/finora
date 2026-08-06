@@ -99,16 +99,17 @@ describe('VerificationPanel', () => {
 
   it('names an unknown rule instead of hiding it or dumping raw data', async () => {
     // A newer backend reporting a check this build has no renderer for. Deliberately a rule that
-    // does not exist yet -- this test originally used STATEMENT_TOTALS, which stopped being unknown
-    // the moment that validator shipped, which is itself the behaviour under test working.
+    // does not exist yet. This test has now been rewritten twice, first off STATEMENT_TOTALS and
+    // then off COLUMN_AMBIGUITY, each time because the rule it named stopped being unknown when
+    // that validator shipped -- which is the behaviour under test working, not a flaky test.
     const user = userEvent.setup();
     render(<VerificationPanel verification={{
-      findings: [{ rule: 'COLUMN_AMBIGUITY', outcome: 'FAILED', details: { row: 17 } }],
+      findings: [{ rule: 'CURRENCY_CONSISTENCY', outcome: 'FAILED', details: { row: 17 } }],
     }} />);
 
     await user.click(screen.getByRole('button', { name: /Statement verification/ }));
 
-    expect(screen.getByText(/COLUMN_AMBIGUITY/)).toBeInTheDocument();
+    expect(screen.getByText(/CURRENCY_CONSISTENCY/)).toBeInTheDocument();
     expect(screen.getByText(/doesn't know how to display yet/)).toBeInTheDocument();
     expect(screen.queryByText(/\{/)).not.toBeInTheDocument();
   });

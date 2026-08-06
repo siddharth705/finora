@@ -242,6 +242,50 @@ const RULE_RENDERERS: Record<string, { label: string; render: (f: VerificationFi
       );
     },
   },
+  COLUMN_AMBIGUITY: {
+    label: 'Rows that could be read two ways',
+    render: (finding) => {
+      const d = finding.details as {
+        reason?: string; explanation?: string; rowsChecked?: number; ambiguousRows?: number;
+        ambiguities?: { rowIndex: number; kind: string; column: string; value: string }[];
+      };
+      if (d?.reason) return <p className="text-xs text-muted">{d.reason}</p>;
+      const rows = d?.ambiguities ?? [];
+      if (rows.length === 0) {
+        return (
+          <p className="text-xs text-muted">
+            Every transaction's amount and direction was stated by the document, not assumed.
+          </p>
+        );
+      }
+      return (
+        <>
+          {d?.explanation && <p className="text-xs text-muted">{d.explanation}</p>}
+          <div className="mt-2 overflow-x-auto">
+            <table className="text-xs w-full">
+              <thead>
+                <tr className="text-muted text-left">
+                  <th className="pr-3 font-medium py-1">Row</th>
+                  <th className="pr-3 font-medium py-1">Column</th>
+                  <th className="font-medium py-1">What the document had</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((a) => (
+                  <tr key={`${a.rowIndex}-${a.column}`} className="text-ink border-t border-border">
+                    {/* +1 so it matches the row number a person counts on screen. */}
+                    <td className="pr-3 py-1">{a.rowIndex + 1}</td>
+                    <td className="pr-3 py-1 text-muted">{a.column}</td>
+                    <td className="py-1 text-warning">{a.value}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      );
+    },
+  },
 };
 
 function money(n: number | null | undefined) {
