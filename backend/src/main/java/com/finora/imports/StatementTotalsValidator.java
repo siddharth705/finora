@@ -28,7 +28,7 @@ import java.util.Map;
  * does not by itself mean the rows are wrong. So this also compares the LAST row's own running
  * balance against the detected closing balance. When those agree, the rows and the closing balance
  * corroborate each other and the opening balance is the outlier; when they do not, the rows are
- * implicated. Reporting "these three do not agree" without saying which is odd would send someone
+ * implicated. Reporting "these three do not agree" without saying which is suspect would send someone
  * to re-read every transaction when the actual fault is one misdetected header field.
  *
  * <p>That distinction is not hypothetical either. On the motivating HDFC statement the opening
@@ -84,7 +84,11 @@ public class StatementTotalsValidator {
         if (lastRowBalance != null) {
             boolean rowsAgreeWithClosing = lastRowBalance.compareTo(closingBalance) == 0;
             details.put("lastRowBalance", lastRowBalance);
-            details.put("likelyCause", rowsAgreeWithClosing
+            // "suspected", not "likely": this is an inference from one corroborating signal, not a
+            // computed probability. The rows agreeing with the closing balance makes the opening
+            // balance the best explanation available, not a proven one -- and a field that sounds
+            // authoritative invites acting on it without checking.
+            details.put("suspectedCause", rowsAgreeWithClosing
                     ? "OPENING_BALANCE"
                     : "TRANSACTIONS");
             details.put("explanation", rowsAgreeWithClosing

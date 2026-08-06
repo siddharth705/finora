@@ -71,7 +71,7 @@ class StatementTotalsValidatorTest {
         var finding = validator.check(correctRows(), new BigDecimal("50000.00"), new BigDecimal("24462.00"));
 
         assertThat(finding.outcome()).isEqualTo("FAILED");
-        assertThat(finding.details()).containsEntry("likelyCause", "OPENING_BALANCE");
+        assertThat(finding.details()).containsEntry("suspectedCause", "OPENING_BALANCE");
         assertThat(finding.details().get("explanation").toString()).contains("opening balance that does not fit");
         // Negative: the stated closing is 50,000 BELOW what the inflated opening predicts, which
         // reads directly as "the opening balance is overstated by 50,000".
@@ -90,7 +90,7 @@ class StatementTotalsValidatorTest {
         var finding = validator.check(rows, new BigDecimal("0.00"), new BigDecimal("24544.00"));
 
         assertThat(finding.outcome()).isEqualTo("FAILED");
-        assertThat(finding.details()).containsEntry("likelyCause", "TRANSACTIONS");
+        assertThat(finding.details()).containsEntry("suspectedCause", "TRANSACTIONS");
     }
 
     @Test

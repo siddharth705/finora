@@ -1,7 +1,12 @@
 # Import Verification Framework
 
-**Status: direction, partially built.** One layer exists (`BalanceChainValidator`, `fe1302e`). This
-records the shape the rest should take, and one correction to what already shipped.
+**Status: framework proven, adding rules.** Layers 3 and 4 are built and displayed
+(`BalanceChainValidator`, `StatementTotalsValidator`). Phase 3 was the test of the design rather
+than of the code: adding a second validator cost one class, one line in `ImportVerifier`, and one
+renderer entry — no wire format change, no producer change, no UI restructuring. From here a new
+validator is a feature, not framework work; needing to touch `VerificationReport`,
+`ImportVerifier` or the renderer registry for one would be the signal that this has stopped
+holding.
 
 ---
 
@@ -116,7 +121,7 @@ evidence, and it composes with everything else automatically.
 | 1. Structural — required columns, dates, balances parsed | partial | `rejectIfNothingWasExtracted`, header detection |
 | 2. Row validity — exactly one of debit/credit, etc. | partial | rows drop with reasons |
 | **3. Arithmetic — `previous ± amount == balance`** | **built** | `BalanceChainValidator` |
-| 4. Statement totals — `opening + credits − debits == closing` | not built | **anchors layer 3, see below** |
+| 4. Statement totals — `opening + credits − debits == closing` | **built** | `StatementTotalsValidator` — anchors layer 3, see below |
 | 5. Summary — the bank's own printed totals and counts | not built | HDFC prints `Debit 538.00, Count 3` |
 | 6. Semantic — direction agrees with balance movement | free | falls out of layer 3 |
 | 7. Cross-field — mutually-exclusive columns both populated | not built | becomes evidence grading, above |
