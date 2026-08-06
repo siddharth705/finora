@@ -1,13 +1,78 @@
 # Import Verification Framework
 
-**Status: framework proven, adding rules.** Layers 3 and 4 are built and displayed
-(`BalanceChainValidator`, `StatementTotalsValidator`). Phase 3 was the test of the design rather
-than of the code: adding a second validator cost one class, one line in `ImportVerifier`, and one
-renderer entry — no wire format change, no producer change, no UI restructuring. From here a new
-validator is a feature, not framework work; needing to touch `VerificationReport`,
-`ImportVerifier` or the renderer registry for one would be the signal that this has stopped
-holding.
+**Status: feature-complete (v1). Closed to new rules.** Four rules ship and are displayed:
+`BALANCE_CHAIN` (L3), `STATEMENT_TOTALS` (L4), `SUMMARY_TOTALS` (L5) and `COLUMN_AMBIGUITY` (L7),
+alongside the verification API, the preview UI, and a local diagnostic that reports findings per
+statement. The original ten-layer roadmap is **not** the plan any more — see "Why this is closed".
 
+The design held across all four additions. Each cost one class, one line in `ImportVerifier`, and
+one renderer entry: no wire format change, no producer change, no UI restructuring. Needing to
+touch `VerificationReport`, `ImportVerifier` or the renderer registry to add a rule would be the
+signal that this has stopped holding.
+
+## Why this is closed
+
+A rule earns its place by bringing in evidence that is **independent** of the parsing being checked,
+and the strong form of that is evidence the *bank* produced:
+
+| Rule | Evidence | Independent of our parsing? |
+|---|---|---|
+| L3 Balance chain | The running balance printed beside each row | Partly — same rows, different field |
+| L4 Statement totals | Opening and closing balance header fields | Partly — same rows, document-level |
+| L5 Summary totals | The bank's own printed debit/credit totals **and counts** | **Yes** — from the bank's ledger |
+| L7 Column ambiguity | The raw row before normalization | No — reports our own uncertainty |
+
+L5 is the strongest: a count cannot be derived from our reading of the document, so it can
+contradict a misreading that is otherwise entirely self-consistent. L7 is the weakest and was
+accepted as the last of its kind — it is introspection, not corroboration.
+
+**A new rule is justified only when a genuinely new source of evidence exists.** Adding rules that
+re-examine the same evidence produces the appearance of more verification without more proof.
+
+## The loop that replaces it
+
+Parser quality, not more framework:
+
+1. A real statement exposes an issue.
+2. The existing rules report it — or fail to, which locates a gap.
+3. Fix the parser.
+4. Add a regression test.
+5. Move on.
+
+`PdfPipelineDiagnostic` is the instrument: run it against a statement and it prints every finding
+plus one JSON line keyed by layout fingerprint. Which rule fires, and how often, across a corpus is
+what should decide the next parser investment — not this document.
+
+Its worth is not theoretical. Its first run reported `COLUMN_AMBIGUITY` on a statement that parsed
+perfectly, because L7 was checking the trailing summary block as though it were a transaction. The
+tooling caught the verifier. A false accusation reaching users costs more than a missed catch,
+because it spends the confidence the whole framework exists to build.
+
+## Deliberately not built
+
+Each of these was raised, considered, and deferred for a stated reason — they are not oversights:
+
+- **Finding severity** — generalise now what would be BREAKING later; severity is additive.
+- **An aggregator / overall status** — combining rules needs a weighting policy, and one invented
+  before there is anything to calibrate it against is a guess wearing an authoritative face.
+- **Confidence scores** — no calibration data exists; a fabricated number is worse than none.
+- **Separating `rule` from a richer `Diagnosis { code, evidence }`** — worth doing if one rule ever
+  needs to report several diagnoses at once. None does yet.
+
+## Layout intelligence: what already exists
+
+Easy to mistake for missing, and worth stating plainly so it is not rebuilt:
+
+**Already built** — `layout_fingerprint` persisted on `import_sessions` and `statement_imports`
+since V39; `DocumentContext.buildFingerprint()` (versioned, so it cannot silently change meaning);
+`LayoutIntelligenceService` with `layoutOverview()`, `unknownHeaders()`, `timeline(fingerprint)` and
+`driftingLayouts()`; `AdminLayoutIntelligenceController`. `LayoutSummary` already carries usage
+count, first/last seen, unknown headers, median duration, rows imported/skipped, and capabilities
+split into stable versus unstable.
+
+**Missing** — verification outcomes are computed at preview time and discarded, so *layout →
+verification rate* cannot be computed. That is a small extension to an existing system, not a new
+subsystem, and it should wait until local corpus data shows the metric is operationally useful.
 ---
 
 ## The promise
