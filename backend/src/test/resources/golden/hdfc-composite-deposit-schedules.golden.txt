@@ -4,7 +4,7 @@ sections: 3
 [section 0]
   columns: [Txn Date, Narration, Withdrawals, Deposits, Closing Balance]
   rows: 136
-  auxLines: 45
+  auxLines: 169
   accountNumberMasked: ••••9999
   accountHolderName: Xxxxxxx Xxxxxx Xxxxxx
   ifscCode: HDFC0XXXXXX
@@ -26,12 +26,12 @@ sections: 3
 [section 2]
   columns: [Number, Due Date, Amount Xxxx, Due, Status, Xxxxxxx balance**]
   rows: 2
-  auxLines: 0
+  auxLines: 12
   accountNumberMasked: null
-  accountHolderName: null
+  accountHolderName: Xxxxxxxx Xxxxxxx
   ifscCode: null
   statementPeriod: null .. null
-  product: UNKNOWN (40%, UNIDENTIFIED)
+  product: UNKNOWN (49%, UNIDENTIFIED)
   mayCreateAutomatically: false
 
-capabilities: [COMPOSITE_STATEMENT, LEADING_NARRATION_CONTINUATION, OFFSET_COLUMN_ANCHORS, PAGE_BOUNDARY_ISOLATION, REPEATED_HEADER, WRAPPED_DESCRIPTION]
+capabilities: [COMPOSITE_STATEMENT, LEADING_NARRATION_CONTINUATION, OFFSET_COLUMN_ANCHORS, PAGE_BOUNDARY_ISOLATION, REPEATED_HEADER, UNANCHORED_ROWS_ABANDONED, WRAPPED_DESCRIPTION]

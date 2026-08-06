@@ -4,12 +4,12 @@ sections: 1
 [section 0]
   columns: [DATE, NARRATION, BALANCE]
   rows: 58
-  auxLines: 1
+  auxLines: 17
   accountNumberMasked: null
   accountHolderName: null
   ifscCode: null
   statementPeriod: null .. null
-  product: UNKNOWN (58%, UNIDENTIFIED)
+  product: SAVINGS (66%, UNPROVEN)
   mayCreateAutomatically: false
 
-capabilities: [LEADING_NARRATION_CONTINUATION, OFFSET_COLUMN_ANCHORS, REPEATED_ACCOUNT_BANNER, REPEATED_HEADER, WRAPPED_DESCRIPTION]
+capabilities: [LEADING_NARRATION_CONTINUATION, OFFSET_COLUMN_ANCHORS, REPEATED_ACCOUNT_BANNER, REPEATED_HEADER, UNANCHORED_ROWS_ABANDONED, WRAPPED_DESCRIPTION]

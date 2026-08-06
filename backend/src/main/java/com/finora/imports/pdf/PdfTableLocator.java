@@ -155,6 +155,34 @@ public class PdfTableLocator {
     // larger of the two real requirements seen so far; revisit if a real document needs more.
     private static final int MAX_TRAILING_CONTINUATION_ROWS = 2;
 
+    /**
+     * How many consecutive dateless rows may accumulate as LEADING narration before the extractor
+     * concludes it is not reading narration at all.
+     *
+     * <p>The trailing branch above was capped; this one was not, and that asymmetry silently
+     * destroyed whole tables. When a layout's date column fails to bucket, no row is ever an
+     * anchor, so every line falls through to the leading buffer and merges into a single map that
+     * flushes as ONE row. Measured across the corpus before this cap existed:
+     *
+     * <pre>
+     *   39-page statement   2541 lines -> 2 rows, largest cell  38,200 chars
+     *   HSBC                 153 lines -> 2 rows, largest cell  12,605 chars
+     *   HDFC credit card     112 lines -> 6 rows, largest cell   3,091 chars
+     *   Canara (healthy!)    432 lines -> 60 rows, largest cell  1,103 chars
+     * </pre>
+     *
+     * <p>Note the last line: even a document that parses well was carrying a 1,100-character cell,
+     * so this was degrading everything and only becoming fatal at the extremes. It is also where
+     * the 400-character "merchant" came from that aborted a JDBC batch and turned a misparsed Axis
+     * statement into an HTTP 500.
+     *
+     * <p>Sized well above the real requirement rather than tightly: the Canara layout this
+     * capability exists for needs a handful of leading lines, and a genuine multi-line narration
+     * could plausibly run longer. The cap is a guard against pathology, not a model of narration,
+     * so it should never fire on a document the engine actually understands.
+     */
+    private static final int MAX_LEADING_CONTINUATION_ROWS = 12;
+
     public record LocatedTable(List<Map<String, String>> rows, List<String> preTableLines) {}
 
     /** One detected account/table within a document -- {@code auxiliaryText} is the free-standing
@@ -235,6 +263,9 @@ public class PdfTableLocator {
         // claims it as its leading part -- see mergeLeadingInto's own doc comment for why that's a
         // prepend, not the ordinary append mergeInto does for trailing continuations.
         Map<String, String> pendingLeading = null;
+        // Parallel to pendingLeading: how many rows have merged into it since the last date
+        // anchor. Reset wherever pendingLeading is, or the cap would leak across sections.
+        int leadingCount = 0;
 
         for (List<PositionedText> row : rows) {
             String rowLine = lineOf(row);
@@ -275,6 +306,7 @@ public class PdfTableLocator {
                 lastRowPage = null;
                 trailingCountSinceLastAnchor = 0;
                 pendingLeading = null;
+                leadingCount = 0;
                 pendingAuxiliary.add(rowLine);
                 continue;
             }
@@ -307,6 +339,7 @@ public class PdfTableLocator {
                 lastRowPage = null;
                 trailingCountSinceLastAnchor = 0;
                 pendingLeading = null;
+                leadingCount = 0;
                 continue;
             }
 
@@ -356,6 +389,7 @@ public class PdfTableLocator {
                             currentRows.add(pendingLeading);
                         }
                         pendingLeading = null;
+                        leadingCount = 0;
                     }
                     currentRows.add(bucketed);
                     lastRowPage = row.get(0).pageIndex();
@@ -381,8 +415,24 @@ public class PdfTableLocator {
                     // footer or repeated title banner (which must never cross a page boundary into
                     // the wrong row), genuine leading narration legitimately can span a page break
                     // -- verified against the real Canara statement this capability is modeled on.
+                    if (leadingCount >= MAX_LEADING_CONTINUATION_ROWS) {
+                        // Past the point where "leading narration" is a credible explanation. A
+                        // dozen consecutive rows with no date does not mean one very wordy
+                        // transaction; it means the date column is not bucketing for this layout,
+                        // and every further merge destroys another row of a table that is plainly
+                        // there. Unbounded, this collapsed a 2541-line statement into two rows and
+                        // a 38,200-character cell.
+                        //
+                        // The line becomes auxiliary rather than being merged or dropped: it is
+                        // still document text, it is simply not a transaction, and keeping it
+                        // visible is what lets a human see what the extractor could not anchor.
+                        if (ctx != null) ctx.record("UNANCHORED_ROWS_ABANDONED");
+                        pendingAuxiliary.add(rowLine);
+                        continue;
+                    }
                     if (pendingLeading == null) pendingLeading = new LinkedHashMap<>();
                     mergeInto(pendingLeading, bucketed);
+                    leadingCount++;
                     if (ctx != null) ctx.record("LEADING_NARRATION_CONTINUATION");
                     lastRowPage = row.isEmpty() ? lastRowPage : row.get(0).pageIndex();
                 }
