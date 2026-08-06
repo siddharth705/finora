@@ -27,15 +27,15 @@ public class PreviewGenerator {
     private final TransactionNormalizer transactionNormalizer;
     private final StatementValidator statementValidator;
 
-    private final BalanceChainValidator balanceChainValidator;
+    private final ImportVerifier importVerifier;
 
     public PreviewGenerator(CsvParser csvParser, TransactionNormalizer transactionNormalizer,
                              StatementValidator statementValidator,
-                             BalanceChainValidator balanceChainValidator) {
+                             ImportVerifier importVerifier) {
         this.csvParser = csvParser;
         this.transactionNormalizer = transactionNormalizer;
         this.statementValidator = statementValidator;
-        this.balanceChainValidator = balanceChainValidator;
+        this.importVerifier = importVerifier;
     }
 
     public StagingResponse generate(UUID userId, String filename, InputStream contentStream) throws IOException {
@@ -109,7 +109,9 @@ public class PreviewGenerator {
         ctx.recordUnparseable(unparseable);
         // Cross-checks the parsed rows against the statement's own running balance. Reported, never
         // enforced -- see BalanceChainValidator for why refusing an import would be the wrong trade.
-        var verification = balanceChainValidator.report(staged, detected == null ? null : detected.openingBalance());
+        var verification = importVerifier.verify(staged,
+                detected == null ? null : detected.openingBalance(),
+                detected == null ? null : detected.closingBalance());
         return new CsvGenerationResult(
                 new StagingResponse(staged, staged.size(), dupCount, detected, unparseable, verification), ctx);
     }
