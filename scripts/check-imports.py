@@ -87,30 +87,20 @@ class Accepted:
         return (self.path, self.type_name, self.declared_in)
 
 
-ACCEPTED_FALSE_POSITIVES = [
-    Accepted(
-        path="backend/src/main/java/com/finora/service/TwoFactorSmsProvider.java",
-        type_name="Status",
-        declared_in="com.finora.entity",
-        reason=(
-            "Not a type reference. The file declares\n"
-            "      `private record TwoFactorResponse(String Status, String Details) {}` -- 'Status'\n"
-            "      is a record COMPONENT NAME, capitalised only because it mirrors 2Factor's JSON\n"
-            "      response shape, and renaming it would break Jackson binding to a third-party API.\n"
-            "      The collision is with PasswordChangeSession.Status, which this file never uses.\n"
-            "\n"
-            "      Accepted rather than fixed because separating a capitalised identifier in a\n"
-            "      declarator position from a type reference needs a real Java parser, not a\n"
-            "      tokeniser. That is a disproportionate amount of machinery for one occurrence,\n"
-            "      and every cheaper heuristic tried (ignore a capitalised token preceded by\n"
-            "      another capitalised token) also suppresses genuine references like\n"
-            "      `Map<String, Foo>`.\n"
-            "\n"
-            "      Revisit if this pattern spreads: more than two or three of these means the\n"
-            "      tokeniser is the wrong tool and the check should move to ArchUnit, which has\n"
-            "      real type information."),
-    ),
-]
+# Emptied when V62's MerchantLearningEvent introduced a second nested type named Status.
+#
+# The removed entry excused `Status` in TwoFactorSmsProvider -- a record COMPONENT name mirroring
+# 2Factor's JSON response shape, which the tokeniser could not distinguish from a reference to
+# PasswordChangeSession.Status. It went stale, but NOT because that file changed: a second type
+# named Status now exists, so the name is declared in more than one file, and the `ambiguous` rule
+# below skips every Status occurrence everywhere. The false positive is suppressed rather than
+# fixed, and one real reference to Status would now be missed along with it.
+#
+# That is the same mechanic this module's docstring already records happening once with Category.
+# The consequence worth writing down: if MerchantLearningEvent.Status is ever renamed or removed,
+# Status stops being ambiguous, the false positive comes back, and this entry has to come back
+# with it. Restore it from git history rather than rewriting the reasoning from scratch.
+ACCEPTED_FALSE_POSITIVES = []
 
 
 # --------------------------------------------------------------------------- lexing
