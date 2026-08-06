@@ -66,6 +66,19 @@ describe('AuthContext', () => {
   it('starts with no session when storage is empty', () => {
     renderHarness();
     expect(screen.getByTestId('token')).toHaveTextContent('none');
+    // phoneVerified defaults to TRUE when nothing is stored, matching AdminAuthContext. A missing
+    // key means "we haven't heard from the backend", not "not verified" -- and ProtectedRoute
+    // redirects to /verify-phone on this flag alone, before any round-trip, so treating absence
+    // as false traps an already-verified user on that screen with no client-side way out.
+    // Reachable without an upgrade: safeStorage no-ops silently on write failure, and persist()
+    // writes five keys in sequence, so a quota failure partway leaves finora_token stored and
+    // finora_phone_verified absent. PhoneVerificationFilter remains the real gate either way.
+    expect(screen.getByTestId('phoneVerified')).toHaveTextContent('true');
+  });
+
+  it('treats an explicitly stored false as unverified', () => {
+    localStorage.setItem('finora_phone_verified', 'false');
+    renderHarness();
     expect(screen.getByTestId('phoneVerified')).toHaveTextContent('false');
   });
 

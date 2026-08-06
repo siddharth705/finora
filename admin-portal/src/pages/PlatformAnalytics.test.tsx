@@ -61,13 +61,15 @@ describe('PlatformAnalytics', () => {
     renderPage();
 
     await waitFor(() => expect(screen.getByText('Groceries')).toBeInTheDocument());
-    // formatCurrency always renders exactly two decimal places (toLocaleString with
-    // minimumFractionDigits/maximumFractionDigits: 2), so a whole-number spend still shows
-    // "250.00", not "250".
-    expect(screen.getByText('250.00')).toBeInTheDocument();
+    // formatCurrency always renders exactly two decimal places, so a whole-number spend still
+    // shows "250.00", not "250" -- and now carries the rupee symbol and an explicitly pinned
+    // 'en-IN' locale, like every other money formatter in both apps. It used to omit the symbol
+    // and pass undefined as the locale, so an unlabelled figure sat next to an unlabelled
+    // transaction count and grouped according to the visiting admin's own OS locale.
+    expect(screen.getByText('₹250.00')).toBeInTheDocument();
     expect(screen.getByText('12')).toBeInTheDocument();
     expect(screen.getByText('Amazon')).toBeInTheDocument();
-    expect(screen.getByText('75.50')).toBeInTheDocument();
+    expect(screen.getByText('₹75.50')).toBeInTheDocument();
     expect(screen.getByText('3')).toBeInTheDocument();
   });
 

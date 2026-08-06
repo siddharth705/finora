@@ -24,13 +24,17 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL
   ? normalizeApiBase(import.meta.env.VITE_API_BASE_URL)
   : '/api/v1';
 
-export const api = axios.create({ baseURL: BASE_URL });
+// withCredentials: true so RefreshTokenCookie actually functions -- see the matching comment in
+// frontend/src/api/client.ts. Axios defaults it to false, so the HttpOnly refresh cookie the
+// backend sets was neither stored nor sent on this app's cross-origin deployment, and
+// CorsConfig's allowCredentials(true) had nothing to permit.
+export const api = axios.create({ baseURL: BASE_URL, withCredentials: true });
 
 // A separate, interceptor-free instance for the /auth/refresh call itself -- same reasoning as
 // the user frontend's rawApi (see finora/frontend/src/api/client.ts): if the refresh call went
 // through `api`'s own response interceptor and also got a 401, it would recursively trigger
 // another refresh attempt.
-export const rawApi = axios.create({ baseURL: BASE_URL });
+export const rawApi = axios.create({ baseURL: BASE_URL, withCredentials: true });
 
 export interface ApiEnvelope<T> {
   success: boolean;
@@ -164,6 +168,20 @@ api.interceptors.response.use(
       } else {
         endSessionAndRedirect();
       }
+    }
+
+    // Backend is the source of truth on phone verification (PhoneVerificationFilter), which 403s
+    // this code for EVERY non-excluded endpoint, not just /users/me/access. The user frontend's
+    // interceptor has always had this branch; this one did not, so the admin portal handled the
+    // condition in exactly one place -- AdminAuthContext.loadAccess(), which runs on mount and
+    // after login. A session that outlives its verification, or an admin whose verification is
+    // revoked mid-session, therefore got a silent 403 on every subsequent call: pages rendered
+    // empty or stuck loading, with the one actionable error code in the response discarded.
+    if (error.response?.status === 403 && error.response?.data?.errorCode === 'PHONE_VERIFICATION_REQUIRED') {
+      if (!window.location.pathname.startsWith('/verify-phone')) {
+        window.location.href = '/verify-phone';
+      }
+      return Promise.reject(error);
     }
 
     // Error responses use the same {success:false, message, errorCode} envelope as the user

@@ -6,8 +6,14 @@ import { DataTable, type DataTableColumn } from '../components/DataTable';
 import { adminPlatformAnalyticsApi } from '../api/endpoints';
 import type { PlatformCategorySpendDto, PlatformMerchantSpendDto } from '../types';
 
+// Matches every other money formatter in both apps: the currency symbol before the digits but
+// after the sign, and 'en-IN' pinned explicitly. This used to omit the symbol entirely and pass
+// undefined as the locale, so an unlabelled spend figure sat beside an unlabelled transaction
+// count and grouped according to the visiting admin's own OS locale -- 12,34,567 for one admin
+// and 1,234,567 for another, looking at the same platform total.
 function formatCurrency(amount: number) {
-  return amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return (amount < 0 ? '-₹' : '₹')
+    + Math.abs(amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 /**

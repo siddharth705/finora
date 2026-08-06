@@ -418,7 +418,11 @@ function CashFlowChart({ series }: { series: { month: string; income: number; ex
       options={{
         responsive: true, maintainAspectRatio: false,
         plugins: { legend: { position: 'bottom', labels: { boxWidth: 8, boxHeight: 8, usePointStyle: true } } },
-        scales: { y: { ticks: { callback: (v) => '₹' + Number(v).toLocaleString('en-IN') } } },
+        // fmt(), not string concatenation: a negative tick must render as "-₹500", not "₹-500".
+        // Dormant while this chart plots only income and expense (non-negative by construction in
+        // DashboardService) and live the moment the component or this options object is reused
+        // for a net series -- which is exactly how the same bug got everywhere else it was fixed.
+        scales: { y: { ticks: { callback: (v) => fmt(Number(v)) } } },
       }}
     />
   );

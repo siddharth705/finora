@@ -26,7 +26,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(safeStorage.getItem('finora_token'));
   const [email, setEmail] = useState<string | null>(safeStorage.getItem('finora_email'));
   const [fullName, setFullName] = useState<string | null>(safeStorage.getItem('finora_name'));
-  const [phoneVerified, setPhoneVerifiedState] = useState<boolean>(safeStorage.getItem('finora_phone_verified') === 'true');
+  // Defaults to true when there's no stored value, matching AdminAuthContext -- which already
+  // carries the reasoning this one was missing: a real `false` is only ever written by
+  // login()/persist() once the backend has actually said so, so a MISSING key means "we don't
+  // know", and treating that as "not verified" bounces an already-verified session to
+  // /verify-phone with no client-side way out. `=== 'true'` made absence mean false.
+  //
+  // Reachable in ordinary use, not just on an upgrade from a pre-field session: safeStorage
+  // silently no-ops on write failure by design, and persist() writes five keys in sequence, so a
+  // quota failure partway through leaves finora_token stored and finora_phone_verified absent.
+  // ProtectedRoute then redirects on this flag alone, before any backend round-trip.
+  //
+  // The backend remains the source of truth either way -- PhoneVerificationFilter 403s a genuinely
+  // unverified user on every other endpoint, and client.ts's interceptor turns that into the
+  // redirect. Guessing "verified" wrong costs one rejected request; guessing "unverified" wrong
+  // costs the user their session.
+  const [phoneVerified, setPhoneVerifiedState] = useState<boolean>(
+    safeStorage.getItem('finora_phone_verified') !== 'false'
+  );
 
   function persist(data: { token: string; refreshToken: string; email: string; fullName: string; phoneVerified: boolean }) {
     safeStorage.setItem('finora_token', data.token);
