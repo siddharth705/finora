@@ -1,0 +1,6 @@
+# Playwright run artefacts -- traces, screenshots and videos of individual runs. Regenerated on
+# every run and frequently large, so they never belong in the repository.
+test-results/
+playwright-report/
+blob-report/
+.playwright/
