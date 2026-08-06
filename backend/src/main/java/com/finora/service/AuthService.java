@@ -337,8 +337,18 @@ public class AuthService {
                 PhoneMasking.mask(user.getPhoneNumber()));
     }
 
-    /** Exchanges a valid, unused refresh token for a new access token + a rotated refresh token. */
-    @Transactional
+    /**
+     * Exchanges a valid, unused refresh token for a new access token + a rotated refresh token.
+     *
+     * <p>{@code noRollbackFor} has to be here as well as on
+     * {@link RefreshTokenService#rotate}, and this is the copy that actually decides. {@code rotate}
+     * joins THIS transaction rather than opening its own, so when its rejection exception
+     * propagates out through this method it is this boundary's rollback rule that runs. Marking
+     * only the inner method looks correct, changes nothing, and leaves the revocations it writes —
+     * including reuse detection signing out every session after a suspected token theft — quietly
+     * discarded. See that method's own comment for the full reasoning.
+     */
+    @Transactional(noRollbackFor = ApiException.class)
     public RefreshResponse refresh(RefreshRequest request) {
         var rotation = refreshTokenService.rotate(request.refreshToken());
         User user = userRepository.findById(rotation.userId())

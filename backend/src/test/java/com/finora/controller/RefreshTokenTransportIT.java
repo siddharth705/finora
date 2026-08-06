@@ -46,6 +46,7 @@ class RefreshTokenTransportIT extends AbstractIntegrationTest {
     @Autowired private org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
 
     private String rawToken;
+    private UUID userId;
 
     @BeforeEach
     void signIn() {
@@ -54,7 +55,8 @@ class RefreshTokenTransportIT extends AbstractIntegrationTest {
         user.setPasswordHash("irrelevant");
         user.setFullName("Transport Test");
         user = userRepository.save(user);
-        rawToken = refreshTokenService.issue(user.getId()).rawToken();
+        userId = user.getId();
+        rawToken = refreshTokenService.issue(userId).rawToken();
     }
 
     private String body(String token) throws Exception {
@@ -176,6 +178,58 @@ class RefreshTokenTransportIT extends AbstractIntegrationTest {
                 + "revoked token and reuse detection signs the user out of everything").isNotNull();
         assertThat(setCookie).doesNotContain(rawToken);
         assertSecurityAttributes(setCookie);
+    }
+
+    /** The token inside a Set-Cookie header, so a test can replay what a browser would send back. */
+    private static String cookieValue(String setCookie) {
+        assertThat(setCookie).isNotNull();
+        String firstAttribute = setCookie.split(";", 2)[0];
+        return firstAttribute.substring(firstAttribute.indexOf('=') + 1);
+    }
+
+    @Test
+    void issuanceRotationInvalidationAndReuseDetectionComposeOverTheCookieTransport() throws Exception {
+        // Each of these is covered on its own elsewhere -- rotation here, reuse detection in
+        // RefreshTokenSessionLimitsTest against a mocked repository. What no other test covers is
+        // whether they still compose once a real browser-shaped request carries them, which is the
+        // seam where a cookie-specific mistake would hide: reading the wrong cookie, writing one
+        // the next request cannot present, or rotating without revoking.
+        // A SECOND, independent session for the same user -- a phone alongside the laptop. It is
+        // never replayed and never rotated, so the only thing that can invalidate it is the
+        // account-wide revocation. Written first without it, using the rotated cookie as the
+        // witness, and that version passed even with revokeAllForUser deleted: the rotated cookie
+        // had already been exchanged a step earlier, so it was stale from ordinary rotation and
+        // proved nothing about blast radius.
+        String otherDevice = refreshTokenService.issue(userId).rawToken();
+
+        MvcResult first = mockMvc.perform(post("/api/v1/auth/refresh")
+                        .cookie(new Cookie(RefreshTokenCookie.NAME, rawToken)))
+                .andExpect(status().isOk())
+                .andReturn();
+        String rotated = cookieValue(first.getResponse().getHeader("Set-Cookie"));
+
+        assertThat(rotated).as("rotation must mint a new token").isNotEqualTo(rawToken);
+
+        // Replaying the ORIGINAL cookie is the theft signal: it was already exchanged, so anyone
+        // still holding it either kept a copy or stole one.
+        mockMvc.perform(post("/api/v1/auth/refresh")
+                        .cookie(new Cookie(RefreshTokenCookie.NAME, rawToken)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value("AUTH_004"));
+
+        // The untouched second device is now signed out too. That is the whole point of the
+        // response to a suspected theft -- invalidating the copy the attacker may also hold -- and
+        // it is the only assertion here that a cookie layer merely rejecting stale values could
+        // not satisfy.
+        mockMvc.perform(post("/api/v1/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body(otherDevice)))
+                .andExpect(status().isUnauthorized());
+
+        // ...and so is the freshly rotated one the legitimate user was holding.
+        mockMvc.perform(post("/api/v1/auth/refresh")
+                        .cookie(new Cookie(RefreshTokenCookie.NAME, rotated)))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

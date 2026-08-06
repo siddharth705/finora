@@ -95,7 +95,22 @@ public class RefreshTokenService {
         }
     }
 
-    @Transactional
+    /**
+     * {@code noRollbackFor} is load-bearing, not a style choice.
+     *
+     * <p>Three paths below deliberately WRITE a revocation and then throw to reject the request:
+     * reuse detection revokes every session, and the idle and absolute limits revoke the presented
+     * one. {@link ApiException} is a RuntimeException, so the default rollback rule discarded all
+     * three the instant they were reported — the caller got a correct 401 saying "all sessions have
+     * been signed out as a precaution" while, in the database, nothing had been signed out at all.
+     * On the reuse path that is the failure that matters most: the whole response to a suspected
+     * stolen token is to invalidate the copy the attacker holds, and it silently did not.
+     *
+     * <p>Invisible to every unit test here, because those mock the repository: {@code saveAll} was
+     * called, the verification passed, and no transaction existed to undo it. It took an
+     * end-to-end test that replayed a used cookie and then checked an untouched second device.
+     */
+    @Transactional(noRollbackFor = ApiException.class)
     public RotationResult rotate(String rawToken) {
         RefreshToken rt = refreshTokenRepository.findByTokenHash(TokenHasher.sha256(rawToken))
                 .orElseThrow(() -> new ApiException(ErrorCode.AUTH_TOKEN_EXPIRED, "Invalid refresh token"));
