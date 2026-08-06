@@ -15,6 +15,28 @@
 | `GET /evidence` | Evidence Report |
 
 Plus migration **V53**, which persists import duration — see the correction in §4.
+
+**Also shipped:** `StatementAnalysisReportService`, at `/api/v1/admin/imports/analyses` behind the
+same permission. Same category of report, different source, and the difference matters: the
+endpoints above read `statement_imports`, which is written at *confirm*, so they can only ever
+describe documents that succeeded. These read `statement_analysis_sessions`, which is written on
+every upload attempt — so failures appear, and failures are what parser work is aimed at.
+
+| Endpoint | Deliverable |
+|---|---|
+| `GET /` | Recent analyses, successes and failures together |
+| `GET /summary` | Rows extracted vs. rows that could not be anchored, with the reason histogram |
+| `GET /{reference}` | One analysis by its quotable handle (`SA-20260806-0145`) |
+
+Plus migration **V60**, which persists `row_count` and the unanchored-reason histogram. Before it,
+both were computed on every parse and discarded when the request ended: a document that yielded 2
+transactions out of 2541 lines and one that yielded 569 both stored `outcome = 'PARSED'` and were
+indistinguishable afterwards. Recovering the difference took a throwaway probe printing to a
+console on one laptop, which is not evidence anyone else can check.
+
+Neither surface carries a file name or a user id — see `StatementAnalysisReportService` for why the
+reference is the handle instead, and why a layout still reads as `FP-1-7A91D3C2` rather than a bank
+name until the curated registry exists.
 **Relationship to other docs:** the capability model, the sequencing rules and the Capability
 Backlog live in
 [financial-document-intelligence-principles.md](financial-document-intelligence-principles.md);

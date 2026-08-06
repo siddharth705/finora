@@ -1,5 +1,6 @@
 package com.finora.imports.analysis;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finora.exception.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,19 +50,23 @@ public class StatementAnalysisRecorder {
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyyMMdd");
 
     private final StatementAnalysisSessionRepository repository;
+    private final ObjectMapper objectMapper;
 
-    public StatementAnalysisRecorder(StatementAnalysisSessionRepository repository) {
+    public StatementAnalysisRecorder(StatementAnalysisSessionRepository repository,
+                                     ObjectMapper objectMapper) {
         this.repository = repository;
+        this.objectMapper = objectMapper;
     }
 
     /** @return the reference of the recorded session, or null if recording failed. */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public String recordParsed(UUID userId, StatementAnalysisSession.Source source, String fileName,
                                 String sourceFormat, long byteSize, String layoutFingerprint,
-                                int sectionCount, long durationMs) {
+                                int sectionCount, long durationMs, ParseDiagnostics diagnostics) {
         try {
             var session = StatementAnalysisSession.parsed(nextReference(), userId, source, fileName,
-                    sourceFormat, byteSize, layoutFingerprint, sectionCount, durationMs);
+                    sourceFormat, byteSize, layoutFingerprint, sectionCount, durationMs,
+                    diagnostics.rowCount(), writeHistogram(diagnostics, fileName));
             return repository.save(session).getReference();
         } catch (RuntimeException e) {
             log.error("Could not record a parsed analysis session for {} -- layout evidence for "
@@ -74,11 +79,12 @@ public class StatementAnalysisRecorder {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public String recordFailed(UUID userId, StatementAnalysisSession.Source source, String fileName,
                                 String sourceFormat, long byteSize, String layoutFingerprint,
-                                String failureCode, String failureDetail, long durationMs) {
+                                String failureCode, String failureDetail, long durationMs,
+                                ParseDiagnostics diagnostics) {
         try {
             var session = StatementAnalysisSession.failed(nextReference(), userId, source, fileName,
                     sourceFormat, byteSize, layoutFingerprint, failureCode, truncate(failureDetail),
-                    durationMs);
+                    durationMs, diagnostics.rowCount(), writeHistogram(diagnostics, fileName));
             return repository.save(session).getReference();
         } catch (RuntimeException e) {
             log.error("Could not record a FAILED analysis session for {} ({}) -- the layout that "
@@ -94,6 +100,28 @@ public class StatementAnalysisRecorder {
     private String nextReference() {
         long seq = repository.nextReferenceNumber();
         return "SA-" + LocalDate.now(ZoneOffset.UTC).format(DAY) + "-" + String.format("%04d", seq % 10_000);
+    }
+
+    /**
+     * The histogram as JSON, or null if it is empty or could not be written.
+     *
+     * <p>Serialisation gets its own try/catch rather than riding on the caller's: the enclosing
+     * catch would abandon the whole row over a diagnostics problem, throwing away the fingerprint,
+     * the outcome and the failure code — every field that already worked — to save a field that
+     * did not. Losing the histogram degrades a measurement; losing the row loses the observation.
+     *
+     * <p>Empty serialises to null, not {@code "{}"}. "Every row anchored" is the healthy case and
+     * it should read as absence, not as a document with an empty finding.
+     */
+    private String writeHistogram(ParseDiagnostics diagnostics, String fileName) {
+        if (diagnostics == null || diagnostics.unanchoredReasons().isEmpty()) return null;
+        try {
+            return objectMapper.writeValueAsString(diagnostics.unanchoredReasons());
+        } catch (RuntimeException | com.fasterxml.jackson.core.JsonProcessingException e) {
+            log.error("Could not serialise unanchored-row diagnostics for {} -- the rest of the "
+                    + "analysis row is still being written without them", fileName, e);
+            return null;
+        }
     }
 
     /**

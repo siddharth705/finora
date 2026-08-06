@@ -1,0 +1,195 @@
+package com.finora.imports.analysis;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Reads the evidence table. Until now nothing did.
+ *
+ * <p>{@code statement_analysis_sessions} has been written on every upload since V59 and read by
+ * nobody — the queries on {@link StatementAnalysisSessionRepository} existed but had no callers.
+ * Evidence that only a person with a database console can see is not much better than evidence
+ * that was never collected, and every parser investigation so far has been driven by a throwaway
+ * probe printing to a terminal instead.
+ *
+ * <h2>What these reports deliberately omit</h2>
+ * No file name and no user id, matching {@code AdminLayoutIntelligenceController}'s boundary. A
+ * statement's file name routinely carries a customer's name, and this is a platform-wide
+ * engineering surface rather than a per-user one. The handle for talking about a specific
+ * document is its {@code reference} ({@code SA-20260806-0145}) — quotable by support, resolvable
+ * by engineering, and meaningless to anyone who does not already have access.
+ *
+ * <p>That does mean a layout reads as {@code FP-1-7A91D3C2} rather than "HSBC composite". Naming a
+ * fingerprint is the job of the admin-curated layout registry, which is knowledge rather than
+ * evidence and is a separate table that does not exist yet. Showing the fingerprint is the honest
+ * intermediate state; inferring a bank name from the structure here would be a guess presented as
+ * a fact.
+ *
+ * <h2>No thresholds, no verdicts</h2>
+ * Counts only. Nothing here decides that a document is "unhealthy" or that a layout needs work —
+ * the proportions are for a person to read. A number that silently became a judgement would be
+ * the same mistake as a report that prints "0 ms faster" when it actually measured nothing.
+ */
+@Service
+public class StatementAnalysisReportService {
+
+    private static final Logger log = LoggerFactory.getLogger(StatementAnalysisReportService.class);
+
+    /**
+     * How many recent analyses the summary aggregates over.
+     *
+     * <p>Bounded rather than "all rows" because the histogram has to be summed in memory: it is
+     * stored as JSON per row, so there is no {@code GROUP BY} that can add it up in the database.
+     * A window is honest about that and stays fast as the table grows; the alternative is a report
+     * that quietly gets slower every week until someone notices.
+     */
+    private static final int SUMMARY_WINDOW = 500;
+
+    /** One analysis, as an admin sees it. */
+    public record AnalysisView(
+            String reference,
+            String sourceFormat,
+            /** Null when the document failed before it could be characterised. */
+            String layoutFingerprint,
+            String outcome,
+            String failureCode,
+            Integer sectionCount,
+            /** Null means never measured — not the same as zero. */
+            Integer rowCount,
+            /** Reason -> count, dominant reason first. Empty when every row anchored. */
+            Map<String, Integer> unanchoredReasons,
+            int unanchoredRowCount,
+            Long durationMs,
+            Long byteSize,
+            Instant createdAt
+    ) {}
+
+    /**
+     * The engine at a glance, over the last {@link #SUMMARY_WINDOW} analyses.
+     *
+     * @param unanchoredReasons every reason seen in the window, summed and ordered by count. This
+     *                          is the field that says where parser effort belongs: one dominant
+     *                          reason across many documents is a capability, the same reason in a
+     *                          single document is that document.
+     */
+    public record AnalysisSummary(
+            int analysesInWindow,
+            long totalAnalysesEver,
+            long parsed,
+            long failed,
+            long distinctLayouts,
+            long rowsExtractedInWindow,
+            int unanchoredRowsInWindow,
+            Map<String, Integer> unanchoredReasons
+    ) {}
+
+    private final StatementAnalysisSessionRepository repository;
+    private final ObjectMapper objectMapper;
+
+    public StatementAnalysisReportService(StatementAnalysisSessionRepository repository,
+                                          ObjectMapper objectMapper) {
+        this.repository = repository;
+        this.objectMapper = objectMapper;
+    }
+
+    /** Most recent first. */
+    @Transactional(readOnly = true)
+    public List<AnalysisView> recent(int limit) {
+        int capped = Math.max(1, Math.min(limit, SUMMARY_WINDOW));
+        return repository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, capped))
+                .stream().map(this::toView).toList();
+    }
+
+    /** One analysis by its quotable handle, or empty if that reference is unknown. */
+    @Transactional(readOnly = true)
+    public java.util.Optional<AnalysisView> byReference(String reference) {
+        return repository.findByReference(reference).map(this::toView);
+    }
+
+    @Transactional(readOnly = true)
+    public AnalysisSummary summary() {
+        List<AnalysisView> window = recent(SUMMARY_WINDOW);
+
+        Map<String, Integer> combined = new LinkedHashMap<>();
+        long rows = 0;
+        int unanchored = 0;
+        for (AnalysisView view : window) {
+            if (view.rowCount() != null) rows += view.rowCount();
+            unanchored += view.unanchoredRowCount();
+            view.unanchoredReasons().forEach((reason, count) -> combined.merge(reason, count, Integer::sum));
+        }
+
+        return new AnalysisSummary(
+                window.size(),
+                repository.count(),
+                repository.countByOutcome(StatementAnalysisSession.Outcome.PARSED),
+                repository.countByOutcome(StatementAnalysisSession.Outcome.FAILED),
+                repository.countDistinctLayouts(),
+                rows,
+                unanchored,
+                byCountDescending(combined));
+    }
+
+    private AnalysisView toView(StatementAnalysisSession session) {
+        Map<String, Integer> reasons = readHistogram(session);
+        int unanchored = 0;
+        for (int count : reasons.values()) unanchored += count;
+        return new AnalysisView(
+                session.getReference(),
+                session.getSourceFormat(),
+                session.getLayoutFingerprint(),
+                session.getOutcome() == null ? null : session.getOutcome().name(),
+                session.getFailureCode(),
+                session.getSectionCount(),
+                session.getRowCount(),
+                reasons,
+                unanchored,
+                session.getDurationMs(),
+                session.getByteSize(),
+                session.getCreatedAt());
+    }
+
+    /**
+     * Unreadable JSON degrades one field rather than failing the report.
+     *
+     * <p>A row written before V60 has no histogram at all, and a row written by a future version
+     * may hold a shape this one does not expect. Neither is a reason to refuse to show the
+     * fingerprint, outcome and row count sitting next to it.
+     */
+    private Map<String, Integer> readHistogram(StatementAnalysisSession session) {
+        String json = session.getUnanchoredReasonsJson();
+        if (json == null || json.isBlank()) return Map.of();
+        try {
+            Map<String, Integer> parsed = objectMapper.readValue(json, new TypeReference<>() {});
+            return parsed == null ? Map.of() : parsed;
+        } catch (Exception e) {
+            log.warn("Analysis {} has unreadable unanchored-row diagnostics; reporting the rest of "
+                    + "the row without them", session.getReference(), e);
+            return Map.of();
+        }
+    }
+
+    /** Same ordering contract as {@link ParseDiagnostics}: dominant reason first, ties by name. */
+    private static Map<String, Integer> byCountDescending(Map<String, Integer> raw) {
+        if (raw.isEmpty()) return Map.of();
+        List<Map.Entry<String, Integer>> entries = new ArrayList<>(raw.entrySet());
+        entries.sort(Comparator.<Map.Entry<String, Integer>>comparingInt(Map.Entry::getValue).reversed()
+                .thenComparing(Map.Entry::getKey));
+        Map<String, Integer> ordered = new LinkedHashMap<>();
+        for (Map.Entry<String, Integer> entry : entries) ordered.put(entry.getKey(), entry.getValue());
+        return Collections.unmodifiableMap(ordered);
+    }
+}

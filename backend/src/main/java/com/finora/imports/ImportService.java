@@ -1,5 +1,6 @@
 package com.finora.imports;
 
+import com.finora.imports.analysis.ParseDiagnostics;
 import com.finora.imports.analysis.StatementAnalysisSession;
 import com.finora.imports.analysis.StatementAnalysisRecorder;
 import com.finora.accounts.AccountDto;
@@ -130,20 +131,28 @@ public class ImportService {
         // enough to be characterised and THEN failed is the most useful failure there is, because
         // the fingerprint is what makes it findable again.
         String fingerprint = null;
+        // Hoisted for the same reason as the fingerprint, and assigned before the rejection check
+        // below: a document rejected for extracting nothing is exactly the one whose reason
+        // histogram matters, because it is the only field on that row that says why nothing
+        // anchored. Computing it inside the try and losing it in the catch would discard the
+        // evidence in precisely the case the table exists to capture.
+        ParseDiagnostics diagnostics = ParseDiagnostics.NONE;
         try {
             var result = previewGenerator.generateWithContext(userId, fileName, new java.io.ByteArrayInputStream(fileContent));
             fingerprint = fingerprintOf(result.documentContext());
             StagingResponse staged = result.response();
+            diagnostics = ParseDiagnostics.of(staged.rows().size(), result.documentContext().unanchoredReasons());
             rejectIfNothingWasExtracted(staged, result.documentContext());
             var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount(),
                     result.documentContext());
             analysisRecorder.recordParsed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
-                    "CSV", fileContent.length, fingerprint, 1, System.currentTimeMillis() - startedAtMs);
+                    "CSV", fileContent.length, fingerprint, 1, System.currentTimeMillis() - startedAtMs,
+                    diagnostics);
             return new StagingSessionResponse(session.getId(), staged);
         } catch (ApiException e) {
             analysisRecorder.recordFailed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
                     "CSV", fileContent.length, fingerprint, e.getCode() == null ? null : e.getCode().name(),
-                    e.getMessage(), System.currentTimeMillis() - startedAtMs);
+                    e.getMessage(), System.currentTimeMillis() - startedAtMs, diagnostics);
             throw e;
         }
     }
@@ -175,6 +184,7 @@ public class ImportService {
         String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "statement.pdf";
         long startedAtMs = System.currentTimeMillis();
         String fingerprint = null;
+        ParseDiagnostics diagnostics = ParseDiagnostics.NONE;
         try {
             // Parsing happens BEFORE createSession, which is what makes the password retry clean: a
             // wrong or missing password throws here, so no ImportSession row exists to orphan and the
@@ -182,6 +192,12 @@ public class ImportService {
             var result = pdfPreviewGenerator.generateSectionsWithContext(userId, fileName, fileContent, password);
             fingerprint = fingerprintOf(result.documentContext());
             List<StagedAccountSection> sections = onlySectionsThatAreActuallyAccounts(result.sections());
+            // Summed across sections rather than per section: the histogram on the DocumentContext
+            // is already whole-document, so a per-section row count would be the only figure on
+            // this row with a narrower scope than the rest of it.
+            diagnostics = ParseDiagnostics.of(
+                    sections.stream().mapToInt(section -> section.rows().size()).sum(),
+                    result.documentContext().unanchoredReasons());
 
             if (sections.size() <= 1) {
                 // The common case (and the only case a CSV upload can ever produce): behaves exactly
@@ -192,12 +208,12 @@ public class ImportService {
                 rejectIfNothingWasExtracted(staged, result.documentContext());
                 var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount(),
                         result.documentContext());
-                recordPdfParsed(userId, fileName, fileContent.length, fingerprint, sections.size(), startedAtMs);
+                recordPdfParsed(userId, fileName, fileContent.length, fingerprint, sections.size(), startedAtMs, diagnostics);
                 return new PdfStagingSessionResponse(session.getId(), false, staged, null);
             }
 
             var session = importSessionService.createMultiSection(userId, fileName, fileContent, sections, result.documentContext());
-            recordPdfParsed(userId, fileName, fileContent.length, fingerprint, sections.size(), startedAtMs);
+            recordPdfParsed(userId, fileName, fileContent.length, fingerprint, sections.size(), startedAtMs, diagnostics);
             return new PdfStagingSessionResponse(session.getId(), true, null, sections);
         } catch (ApiException e) {
             // The whole point of the evidence table. A password failure carries no fingerprint --
@@ -205,15 +221,16 @@ public class ImportService {
             // ones that say "this layout defeated the parser", which is unanswerable today.
             analysisRecorder.recordFailed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
                     "PDF", fileContent.length, fingerprint, e.getCode() == null ? null : e.getCode().name(),
-                    e.getMessage(), System.currentTimeMillis() - startedAtMs);
+                    e.getMessage(), System.currentTimeMillis() - startedAtMs, diagnostics);
             throw e;
         }
     }
 
     private void recordPdfParsed(UUID userId, String fileName, long byteSize, String fingerprint,
-                                  int sectionCount, long startedAtMs) {
+                                  int sectionCount, long startedAtMs, ParseDiagnostics diagnostics) {
         analysisRecorder.recordParsed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
-                "PDF", byteSize, fingerprint, sectionCount, System.currentTimeMillis() - startedAtMs);
+                "PDF", byteSize, fingerprint, sectionCount, System.currentTimeMillis() - startedAtMs,
+                diagnostics);
     }
 
     /**

@@ -99,6 +99,17 @@ public class StatementAnalysisSession {
     @Column(name = "duration_ms", updatable = false)
     private Long durationMs;
 
+    /**
+     * Transactions extracted. Null means never measured — a document that failed before extraction
+     * — which is a different fact from a document that was read and yielded nothing.
+     */
+    @Column(name = "row_count", updatable = false)
+    private Integer rowCount;
+
+    /** {@link ParseDiagnostics#unanchoredReasons()} as JSON, ordered by count descending. */
+    @Column(name = "unanchored_reasons_json", columnDefinition = "TEXT", updatable = false)
+    private String unanchoredReasonsJson;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
@@ -109,7 +120,10 @@ public class StatementAnalysisSession {
     private StatementAnalysisSession(String reference, UUID userId, Source source, String fileName,
                                      String sourceFormat, Long byteSize, String layoutFingerprint,
                                      Outcome outcome, String failureCode, String failureDetail,
-                                     Integer sectionCount, Long durationMs) {
+                                     Integer sectionCount, Long durationMs, Integer rowCount,
+                                     String unanchoredReasonsJson) {
+        this.rowCount = rowCount;
+        this.unanchoredReasonsJson = unanchoredReasonsJson;
         this.reference = reference;
         this.userId = userId;
         this.source = source;
@@ -127,18 +141,24 @@ public class StatementAnalysisSession {
     public static StatementAnalysisSession parsed(String reference, UUID userId, Source source,
                                                   String fileName, String sourceFormat, Long byteSize,
                                                   String layoutFingerprint, Integer sectionCount,
-                                                  Long durationMs) {
+                                                  Long durationMs, Integer rowCount,
+                                                  String unanchoredReasonsJson) {
         return new StatementAnalysisSession(reference, userId, source, fileName, sourceFormat,
-                byteSize, layoutFingerprint, Outcome.PARSED, null, null, sectionCount, durationMs);
+                byteSize, layoutFingerprint, Outcome.PARSED, null, null, sectionCount, durationMs,
+                rowCount, unanchoredReasonsJson);
     }
 
     public static StatementAnalysisSession failed(String reference, UUID userId, Source source,
                                                    String fileName, String sourceFormat, Long byteSize,
                                                    String layoutFingerprint, String failureCode,
-                                                   String failureDetail, Long durationMs) {
+                                                   String failureDetail, Long durationMs,
+                                                   Integer rowCount, String unanchoredReasonsJson) {
+        // Diagnostics on the FAILED path too, deliberately. A document rejected for extracting
+        // nothing is precisely where the histogram earns its keep: "nothing was extracted" is the
+        // symptom, and the reason breakdown is the only thing on this row that says why.
         return new StatementAnalysisSession(reference, userId, source, fileName, sourceFormat,
                 byteSize, layoutFingerprint, Outcome.FAILED, failureCode, failureDetail, null,
-                durationMs);
+                durationMs, rowCount, unanchoredReasonsJson);
     }
 
     public UUID getId() { return id; }
@@ -154,5 +174,7 @@ public class StatementAnalysisSession {
     public String getFailureDetail() { return failureDetail; }
     public Integer getSectionCount() { return sectionCount; }
     public Long getDurationMs() { return durationMs; }
+    public Integer getRowCount() { return rowCount; }
+    public String getUnanchoredReasonsJson() { return unanchoredReasonsJson; }
     public Instant getCreatedAt() { return createdAt; }
 }
