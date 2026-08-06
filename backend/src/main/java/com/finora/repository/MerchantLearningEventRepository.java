@@ -53,10 +53,15 @@ public interface MerchantLearningEventRepository extends JpaRepository<MerchantL
      * it had in flight. Recovery is deliberately time-based rather than owner-based — tracking
      * which instance holds what would need instance identity and a heartbeat, which is a lot of
      * machinery to answer a question a timestamp already answers.
+     *
+     * <p>The enum literal is written in the SOURCE form ({@code MerchantLearningEvent.Status.PROCESSING}),
+     * not the JVM binary form with a {@code $}. Hibernate accepts the binary form today, which is
+     * exactly why it is worth pinning: it is not JPQL, and a provider upgrade is free to stop
+     * accepting it.
      */
     @Query("""
            SELECT e FROM MerchantLearningEvent e
-            WHERE e.status = com.finora.entity.MerchantLearningEvent$Status.PROCESSING
+            WHERE e.status = com.finora.entity.MerchantLearningEvent.Status.PROCESSING
               AND e.updatedAt < :staleBefore
            """)
     List<MerchantLearningEvent> findStuckInProcessing(@Param("staleBefore") Instant staleBefore,

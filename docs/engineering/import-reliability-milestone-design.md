@@ -163,8 +163,27 @@ Index: `(status, next_attempt_at)` — the claim query's exact predicate.
 
 ### 2.3 Publishing without reintroducing the bug this milestone exists to fix
 
-The event row is inserted **in the import's own transaction**. The worker runs **after that
-transaction commits**.
+**The wording matters, because two readings of it are contradictory.** The event row is COMMITTED
+WITH the import; only its PROCESSING is deferred until after that commit. "Enqueued after the
+import commits" is the wrong phrasing and should not be used anywhere — it describes a design where
+a rollback would leave the queue holding work for transactions that never existed.
+
+```
+Import transaction
+    |
+    +-- persist transactions
+    +-- persist learning event      <-- same transaction, rolls back with it
+    +-- COMMIT
+             |
+             v
+      afterCommit callback
+             |
+             v
+      wake the worker
+             |
+             v
+      worker applies the learning   <-- outside the import's transaction entirely
+```
 
 Both halves matter. Writing the row outside the transaction means an import that rolls back still
 queues learning for transactions that do not exist. Processing it inside means a learning failure
@@ -193,11 +212,17 @@ carries no collision risk. The V58 gap is pre-existing and intentional (V57 → 
 
 | Migration | Change | For |
 |---|---|---|
-| **V62** | `merchant_learning_events` + index on `(status, next_attempt_at)` | Deliverable 0 |
-| **V63** | `merchants.lifecycle_status VARCHAR(16) NOT NULL DEFAULT 'APPROVED'` + index on `(user_id, lifecycle_status)` | WI4 |
-| **V64** | `MERCHANT_REVIEW` and `LEARNING_QUEUE_MANAGE` permissions, granted to ADMIN and SUPER_ADMIN | WI2, WI4 |
+| **V62** | `merchant_learning_events` + index on `(status, next_attempt_at)` | Deliverable 0 — **shipped** (`5631bb9`) |
+| **V63** | `LEARNING_QUEUE_MANAGE` permission + `merchant_learning_events.source_import_session_id` | WI2 |
+| **V64** | `merchants.lifecycle_status VARCHAR(16) NOT NULL DEFAULT 'APPROVED'` + index on `(user_id, lifecycle_status)`, and the `MERCHANT_REVIEW` permission | WI4 |
 
 The registry migration is **removed** — decision 1.2. Three migrations, not four.
+
+**Renumbered against the first draft, because Flyway versions apply in order and cannot be
+reserved.** That draft gave V63 to WI4's lifecycle column and V64 to both permissions, assuming
+WI4 would land first. WI2 is being built first, so its migration takes V63 and WI4's takes V64.
+`MERCHANT_REVIEW` moves with WI4 rather than being seeded early — an unused permission grant is a
+capability nothing needs yet.
 
 V64 follows V61's precedent: a new permission needs an explicit grant, because SUPER_ADMIN's V16
 "every permission" seed was a one-time snapshot, not a standing rule. Do not gate these behind
@@ -350,6 +375,18 @@ Tracked deliberately so this milestone's completion is not mistaken for an empty
 - **New finding #5** — access tokens survive every session revocation, so a token stays valid up to
   15 minutes after the platform has concluded it was stolen. `JwtAuthFilter` already extracts the
   `sid` claim on every request; closing this means validating it.
+
+**Follow-up work items opened by this milestone:**
+
+- **WI1A — move bulk recategorization onto the asynchronous learning pipeline.**
+  `TransactionService.bulkRecategorize` still calls `CategorizationService.learn` synchronously, in
+  a loop, up to `TransactionDto.MAX_BULK_IDS` (500) times inside one transaction. That is the
+  import path's exact pre-WI1 shape: one lost race against
+  `UNIQUE(user_id, merchant_id, category_id)` rolls back all 500 recategorizations. WI1 left it
+  alone deliberately — its scope was the import path — but the objective is to remove the last
+  synchronous BATCH learning path, not to leave one behind. Single interactive actions
+  (`updateCategory`, `confirmMerchantCategory`, `create`) stay synchronous by design; see
+  `CategorizationService.learn`'s doc comment for why.
 
 **Deferred by product decision:**
 

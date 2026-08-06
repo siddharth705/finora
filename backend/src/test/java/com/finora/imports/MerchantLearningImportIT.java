@@ -111,7 +111,7 @@ class MerchantLearningImportIT extends AbstractIntegrationTest {
                 assertThat(e.getStatus()).isEqualTo(MerchantLearningEvent.Status.PENDING));
         assertThat(learningRowsFor(f)).isEmpty();
 
-        worker.drainOnce();
+        drainUntilSettled(f);
 
         assertThat(learningRowsFor(f)).isNotEmpty();
         assertThat(eventsFor(f)).allSatisfy(e ->
@@ -150,7 +150,7 @@ class MerchantLearningImportIT extends AbstractIntegrationTest {
 
         doThrow(new DataIntegrityViolationException("duplicate key value violates unique constraint"))
                 .when(learningService).confirm(any(), any(), any());
-        worker.drainOnce();
+        drainUntilSettled(f);
 
         // The transactions survive a total failure of learning. Previously: zero.
         assertThat(transactionsFor(f)).hasSize(2);
@@ -171,13 +171,13 @@ class MerchantLearningImportIT extends AbstractIntegrationTest {
         importService.confirm(f.user().getId(), statementFile(), twoRowStatement(f.account().getId()));
 
         doThrow(new DataIntegrityViolationException("transient")).when(learningService).confirm(any(), any(), any());
-        worker.drainOnce();
+        drainUntilSettled(f);
         assertThat(learningRowsFor(f)).isEmpty();
 
         // Whatever was wrong is now fixed, and the backoff has elapsed.
         reset(learningService);
         makeAllDueNow(f);
-        worker.drainOnce();
+        drainUntilSettled(f);
 
         assertThat(learningRowsFor(f)).isNotEmpty();
         assertThat(eventsFor(f)).allSatisfy(e ->
@@ -197,7 +197,7 @@ class MerchantLearningImportIT extends AbstractIntegrationTest {
                 .when(learningService).confirm(any(), any(), any());
         for (int attempt = 0; attempt < MerchantLearningEvent.MAX_ATTEMPTS; attempt++) {
             makeAllDueNow(f);
-            worker.drainOnce();
+            drainUntilSettled(f);
         }
 
         assertThat(eventsFor(f)).allSatisfy(e -> {
@@ -224,6 +224,24 @@ class MerchantLearningImportIT extends AbstractIntegrationTest {
 
     private List<?> learningRowsFor(Fixture f) {
         return learningRepository.findByUserId(f.user().getId());
+    }
+
+    /**
+     * Drains until THIS fixture's events are no longer pending, or gives up.
+     *
+     * <p>{@code drainOnce()} claims a bounded batch (50) across the whole table, ordered by
+     * {@code next_attempt_at}. Run alone, one call covers a two-row import; run in the full suite,
+     * sibling classes' events fill the batch first and this fixture's newest rows are left behind.
+     * The batch bound is correct — it is what stops a backlog holding a connection — so the test
+     * has to drain until its own work is done rather than assume one pass suffices.
+     */
+    private void drainUntilSettled(Fixture f) {
+        for (int pass = 0; pass < 20; pass++) {
+            boolean anyPending = eventsFor(f).stream()
+                    .anyMatch(e -> e.getStatus() == MerchantLearningEvent.Status.PENDING);
+            if (!anyPending) return;
+            if (worker.drainOnce() == 0) return;
+        }
     }
 
     private void makeAllDueNow(Fixture f) {

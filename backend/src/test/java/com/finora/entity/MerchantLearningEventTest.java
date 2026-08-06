@@ -49,7 +49,10 @@ class MerchantLearningEventTest {
         assertThat(event.getStatus()).isEqualTo(MerchantLearningEvent.Status.PENDING);
         assertThat(event.getAttemptCount()).isEqualTo(1);
         assertThat(event.getFirstFailedAt()).isEqualTo(firstFailure);
-        assertThat(event.getNextAttemptAt()).isEqualTo(firstFailure.plus(Duration.ofMinutes(2)));
+        // ONE minute after the first failure, not two. recordFailure increments attemptCount
+        // before computing the delay, so passing it straight to backoffFor doubled every wait
+        // against the schedule this class documents.
+        assertThat(event.getNextAttemptAt()).isEqualTo(firstFailure.plus(Duration.ofMinutes(1)));
 
         event.recordFailure("boom again", firstFailure.plusSeconds(600));
         // Set once, never moved -- the admin queue needs "how long has this been broken", which the
@@ -76,6 +79,36 @@ class MerchantLearningEventTest {
         event.recordFailure("x".repeat(10_000), Instant.now());
 
         assertThat(event.getLastError()).hasSizeLessThanOrEqualTo(2000);
+    }
+
+    /** The documented schedule, asserted through recordFailure rather than through backoffFor --
+     *  the off-by-one lived in the caller, so testing the pure function alone could not see it. */
+    @Test
+    void theRetryScheduleIsOneTwoFourEightSixteenMinutes() {
+        MerchantLearningEvent event = anEvent();
+        Instant now = Instant.parse("2026-08-07T10:00:00Z");
+        int[] expectedMinutes = {1, 2, 4, 8};
+
+        for (int minutes : expectedMinutes) {
+            event.recordFailure("boom", now);
+            assertThat(event.getStatus()).isEqualTo(MerchantLearningEvent.Status.PENDING);
+            assertThat(event.getNextAttemptAt()).isEqualTo(now.plus(Duration.ofMinutes(minutes)));
+        }
+
+        event.recordFailure("boom", now);
+        assertThat(event.getStatus()).isEqualTo(MerchantLearningEvent.Status.FAILED);
+    }
+
+    @Test
+    void anAdminRetryClearsTheErrorItIsRespondingTo() {
+        MerchantLearningEvent event = anEvent();
+        event.recordFailure("the thing an admin just fixed", Instant.now());
+
+        event.requeueForRetry(Instant.now());
+
+        assertThat(event.getStatus()).isEqualTo(MerchantLearningEvent.Status.PENDING);
+        assertThat(event.getLastError()).isNull();
+        assertThat(event.getFirstFailedAt()).as("history survives a retry").isNotNull();
     }
 
     @Test

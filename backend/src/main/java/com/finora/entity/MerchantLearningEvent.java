@@ -137,7 +137,11 @@ public class MerchantLearningEvent {
             this.status = Status.FAILED;
         } else {
             this.status = Status.PENDING;
-            this.nextAttemptAt = now.plus(backoffFor(this.attemptCount));
+            // attemptCount - 1, not attemptCount: it was incremented above, so after the FIRST
+            // failure it is already 1, and 2^1 would make the first retry wait two minutes rather
+            // than the documented one. Off by one against the schedule this class claims (1, 2, 4,
+            // 8, 16) -- small in isolation, but it silently doubled every wait.
+            this.nextAttemptAt = now.plus(backoffFor(this.attemptCount - 1));
         }
         this.updatedAt = now;
     }
@@ -165,6 +169,10 @@ public class MerchantLearningEvent {
     public void requeueForRetry(Instant now) {
         this.status = Status.PENDING;
         this.attemptCount = 0;
+        // Cleared, or the queue shows a PENDING row alongside the error from the attempt an admin
+        // has already responded to -- which reads as "this failed again" when nothing has run yet.
+        // firstFailedAt deliberately survives below; that is history, this is current state.
+        this.lastError = null;
         this.nextAttemptAt = now;
         this.lastRetryAt = now;
         this.updatedAt = now;

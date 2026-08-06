@@ -261,4 +261,40 @@ class AuthServiceLoginTest {
         assertThat(u.getLockedUntil()).isNotNull();
         assertThat(u.getLockedUntil()).isAfter(java.time.Instant.now().plusSeconds(29 * 60));
     }
+
+    /**
+     * Serving a lockout has to actually clear it.
+     *
+     * <p>This was latent until per-account lockout started working, and making it work is what
+     * exposed it. registerFailedLogin never resets failedLoginAttempts -- only a SUCCESSFUL login
+     * did -- but while the counter was being discarded by rollback it never reached the threshold,
+     * so a second lock could not happen either. Once the counter persisted, an account that had
+     * served its 15 minutes came back with the count still at the maximum, and ONE wrong password
+     * re-locked it for the full duration. Indefinitely, with no way out except getting the password
+     * right first time.
+     */
+    @Test
+    void login_afterAnExpiredLockout_startsCountingAgainRatherThanRelockingImmediately() {
+        var settings = new com.finora.entity.PlatformSettings();
+        settings.setMaxFailedLoginAttempts(2);
+        settings.setLockoutDurationMinutes(30);
+        when(platformSettingsService.getEntity()).thenReturn(settings);
+
+        User u = user("servedtime@example.com", "+919876500000");
+        // The state an account is in the moment its lockout expires: penalty served, counter still
+        // at the maximum that produced it.
+        u.setFailedLoginAttempts(2);
+        u.setLockedUntil(java.time.Instant.now().minusSeconds(60));
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("servedtime@example.com", "USER"))
+                .thenReturn(Optional.of(u));
+        when(authenticationManager.authenticate(any())).thenThrow(new BadCredentialsException("Bad credentials"));
+
+        try {
+            authService.login(new LoginRequest("servedtime@example.com", "wrong", "USER"));
+        } catch (Exception ignored) { /* expected */ }
+
+        // One wrong password after serving a lockout is one strike, not an instant re-lock.
+        assertThat(u.getFailedLoginAttempts()).isEqualTo(1);
+        assertThat(u.getLockedUntil()).isNull();
+    }
 }
