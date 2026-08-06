@@ -24,14 +24,31 @@ public class AuthController {
         this.authService = authService;
     }
 
+    /**
+     * Every endpoint that mints a session writes the refresh cookie, not just {@code /refresh}.
+     *
+     * <p>Wiring only the rotation path would work right up until the web client stops keeping the
+     * token in {@code localStorage}: a freshly signed-in browser would then hold no refresh
+     * credential at all, and the session would die at the first access-token expiry with nothing
+     * to rotate. The cookie has to exist from the moment the session does.
+     */
     @PostMapping("/register")
     public ResponseEntity<ApiResponse<AuthResponse>> register(@Valid @RequestBody RegisterRequest request) {
-        return ResponseEntity.ok(ApiResponse.ok(authService.register(request), "Account created"));
+        AuthResponse response = authService.register(request);
+        return withRefreshCookie(response.refreshToken())
+                .body(ApiResponse.ok(response, "Account created"));
     }
 
     @PostMapping("/login")
     public ResponseEntity<ApiResponse<AuthResponse>> login(@Valid @RequestBody LoginRequest request) {
-        return ResponseEntity.ok(ApiResponse.ok(authService.login(request), "Signed in"));
+        AuthResponse response = authService.login(request);
+        return withRefreshCookie(response.refreshToken())
+                .body(ApiResponse.ok(response, "Signed in"));
+    }
+
+    private ResponseEntity.BodyBuilder withRefreshCookie(String rawToken) {
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, refreshTokenCookie.issue(rawToken).toString());
     }
 
     @PostMapping("/forgot-password")

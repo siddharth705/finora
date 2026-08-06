@@ -43,6 +43,7 @@ class RefreshTokenTransportIT extends AbstractIntegrationTest {
     @Autowired private ObjectMapper objectMapper;
     @Autowired private UserRepository userRepository;
     @Autowired private RefreshTokenService refreshTokenService;
+    @Autowired private org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
 
     private String rawToken;
 
@@ -117,6 +118,52 @@ class RefreshTokenTransportIT extends AbstractIntegrationTest {
                 .andExpect(status().isOk());
     }
 
+    /**
+     * The security attributes, asserted identically wherever a cookie is written.
+     *
+     * <p>Every one of these is load-bearing and silently downgradeable: dropping {@code HttpOnly}
+     * hands the durable credential back to any script on the page, dropping {@code Secure} allows
+     * it over plaintext, widening {@code SameSite} reintroduces cross-site delivery, and adding a
+     * {@code Domain} turns a host-only cookie into one sent to every subdomain. None of those
+     * would fail a functional test — the flow keeps working perfectly while the protection is
+     * gone, which is exactly why they are asserted rather than reviewed.
+     */
+    private void assertSecurityAttributes(String setCookie) {
+        assertThat(setCookie).as("Set-Cookie must be present").isNotNull();
+        assertThat(setCookie)
+                .contains("HttpOnly")
+                .contains("Secure")
+                .contains("SameSite=Lax")
+                .contains("Path=/api/v1/auth");
+        assertThat(setCookie).as("host-only: a Domain attribute would send the refresh token to "
+                + "every present and future subdomain").doesNotContain("Domain=");
+    }
+
+    @Test
+    void loginIssuesTheCookieWithTheRightSecurityAttributes() throws Exception {
+        // Login, not just refresh. Once the web client stops keeping the token in localStorage, a
+        // freshly signed-in browser holds no refresh credential unless login sets it -- the
+        // session would then die at the first access-token expiry with nothing to rotate.
+        String password = "Correct-Horse-9!";
+        User user = new User();
+        user.setEmail("cookie-attrs-" + UUID.randomUUID() + "@example.com");
+        user.setPasswordHash(passwordEncoder.encode(password));
+        user.setFullName("Cookie Attrs");
+        user.setPhoneVerified(true);
+        user = userRepository.save(user);
+
+        MvcResult result = mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "identifier", user.getEmail(),
+                                "password", password,
+                                "scope", "USER"))))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        assertSecurityAttributes(result.getResponse().getHeader("Set-Cookie"));
+    }
+
     @Test
     void refreshRotatesTheCookieToTheNewToken() throws Exception {
         MvcResult result = mockMvc.perform(post("/api/v1/auth/refresh")
@@ -128,10 +175,7 @@ class RefreshTokenTransportIT extends AbstractIntegrationTest {
         assertThat(setCookie).as("rotation must move the cookie, or the next request replays a "
                 + "revoked token and reuse detection signs the user out of everything").isNotNull();
         assertThat(setCookie).doesNotContain(rawToken);
-        assertThat(setCookie).contains("HttpOnly").contains("Secure").contains("SameSite=Lax");
-        // Host-only and path-scoped: no Domain attribute, so it is never sent to another subdomain.
-        assertThat(setCookie).doesNotContain("Domain=");
-        assertThat(setCookie).contains("Path=/api/v1/auth");
+        assertSecurityAttributes(setCookie);
     }
 
     @Test
@@ -146,7 +190,7 @@ class RefreshTokenTransportIT extends AbstractIntegrationTest {
         assertThat(setCookie).contains(RefreshTokenCookie.NAME).contains("Max-Age=0");
         // Every attribute but Max-Age must match the original, or the browser treats it as a
         // different cookie and silently keeps the credential.
-        assertThat(setCookie).contains("Path=/api/v1/auth").doesNotContain("Domain=");
+        assertSecurityAttributes(setCookie);
     }
 
     @Test
