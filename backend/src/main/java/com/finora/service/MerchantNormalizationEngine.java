@@ -88,9 +88,40 @@ public class MerchantNormalizationEngine {
         this.merchantAliasRepository = merchantAliasRepository;
     }
 
+    /**
+     * The widest value {@code merchant_aliases.normalized_alias} and {@code merchants.canonical_name}
+     * can hold (V7). Both are {@code VARCHAR(255)}, and both are written from parser output.
+     */
+    private static final int MAX_STORED_LENGTH = 255;
+
     @Transactional
     public Merchant resolve(UUID userId, String description) {
-        String normalizedAlias = CategoryRules.normalize(description);
+        String rawAlias = CategoryRules.normalize(description);
+
+        // Cut it to size before the database refuses it. A real credit-card statement produced a
+        // 400-character "merchant" -- one narration that had absorbed a page of cheque
+        // instructions -- and the VARCHAR(255) insert aborted the JDBC batch. That marks the whole
+        // transaction rollback-only, so the import died later with UnexpectedRollbackException: an
+        // HTTP 500, for a document the parser had merely misread.
+        //
+        // Catching it downstream cannot help, which is the crux. By the time the constraint fires
+        // the transaction is already poisoned, and no handling un-poisons it. The write simply
+        // must not be attempted.
+        //
+        // Truncating rather than skipping, because every caller dereferences this result -- a null
+        // would trade a rollback for an NPE, the same 500 by another route. And truncation loses
+        // less than it looks: the boilerplate is APPENDED, so the first 255 characters still carry
+        // the real narration. It also stays deterministic, so the same misparsed description maps
+        // to the same merchant on re-import instead of multiplying rows.
+        if (rawAlias.length() > MAX_STORED_LENGTH) {
+            log.warn("Truncating a {}-character description to {} for merchant resolution. This is "
+                    + "a PARSER fault, not a data fault: a narration that long means row "
+                    + "segmentation absorbed surrounding page text.",
+                    rawAlias.length(), MAX_STORED_LENGTH);
+        }
+        // A separate final, not a reassignment: normalizedAlias is captured by the lambda below,
+        // and reassigning it makes it no longer effectively final.
+        final String normalizedAlias = fitToColumn(rawAlias);
 
         var existingAlias = merchantAliasRepository.findByUserIdAndNormalizedAlias(userId, normalizedAlias);
         if (existingAlias.isPresent()) {
@@ -119,7 +150,10 @@ public class MerchantNormalizationEngine {
     private Merchant createMerchantAndAlias(UUID userId, String description, String normalizedAlias) {
         Merchant merchant = new Merchant();
         merchant.setUserId(userId);
-        merchant.setCanonicalName(toDisplayName(CategoryRules.extractMerchant(description)));
+        // merchants.canonical_name is VARCHAR(255) too, and is derived from the same description,
+        // so it carries the identical hazard. Guarding only the alias would have moved the
+        // rollback one insert further down rather than removing it.
+        merchant.setCanonicalName(fitToColumn(toDisplayName(CategoryRules.extractMerchant(description))));
         merchant = merchantRepository.save(merchant);
         addAlias(merchant.getId(), userId, normalizedAlias);
         return merchant;
@@ -143,6 +177,12 @@ public class MerchantNormalizationEngine {
      * race. Losing is not a failure: the other writer stored exactly what this one wanted to, so
      * the correct response is to carry on.
      */
+    /** Never let parser output exceed what the column can hold; see resolve()'s own reasoning. */
+    private static String fitToColumn(String value) {
+        if (value == null || value.length() <= MAX_STORED_LENGTH) return value;
+        return value.substring(0, MAX_STORED_LENGTH);
+    }
+
     private void addAlias(UUID merchantId, UUID userId, String normalizedAlias) {
         if (merchantAliasRepository.findByUserIdAndNormalizedAlias(userId, normalizedAlias).isPresent()) return;
         MerchantAlias alias = new MerchantAlias();
@@ -152,9 +192,25 @@ public class MerchantNormalizationEngine {
         try {
             merchantAliasRepository.saveAndFlush(alias);
         } catch (DataIntegrityViolationException e) {
-            // A concurrent import inserted the same alias between the check above and this write.
-            // Nothing to repair and nothing to report: the alias exists with the value this call
-            // intended to give it.
+            // Only a genuine lost race is benign, and this catch used to assume every integrity
+            // violation was one. It was not: a 400-character alias tripped the VARCHAR(255) limit
+            // here and was logged, at DEBUG, as "created concurrently" -- a diagnosis that was
+            // simply untrue, for an error that had already poisoned the transaction. The import
+            // then died somewhere unrelated with UnexpectedRollbackException, and the log line
+            // that could have explained it said the opposite.
+            //
+            // Re-reading is what tells the two apart. If the row is now present, another writer
+            // really did win and there is nothing to do. If it is absent, this was not a race, and
+            // saying so is worth more than a reassuring message.
+            boolean lostARace = merchantAliasRepository
+                    .findByUserIdAndNormalizedAlias(userId, normalizedAlias).isPresent();
+            if (!lostARace) {
+                log.error("Alias insert for user {} failed for a reason that is NOT a concurrent "
+                        + "insert ({} chars). The transaction is likely already rollback-only, so "
+                        + "the import will fail downstream -- this line is the real cause.",
+                        userId, normalizedAlias.length(), e);
+                throw e;
+            }
             log.debug("Alias '{}' for user {} was created concurrently; keeping the existing row.",
                     normalizedAlias, userId);
         }
