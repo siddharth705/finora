@@ -190,19 +190,44 @@ public class BalanceChainValidator {
 
         List<Discrepancy> discrepancies = new ArrayList<>();
         int pairsChecked = 0;
-        StagedRow previous = null;
 
-        // The anchor makes the first row an ordinary link instead of an untestable one. Held as a
-        // balance rather than a row, so the loop below needs no special case for it.
-        BigDecimal previousBalance = openingBalance;
+        // One running balance, rather than a "previous row" plus a separate opening anchor.
+        //
+        // Bug fix: a row with no printed balance used to `continue` without touching the anchor,
+        // so the next balance-bearing row was checked against the last one BEFORE the gap with
+        // only its own amount added. The skipped row's effect on the balance was never included,
+        // so `expected` came up short by exactly that amount and a discrepancy was recorded
+        // against a row that was entirely correct. One balance-less row mid-statement produced one
+        // spurious discrepancy; enough of them reached FAILED on a clean import. Reachable on the
+        // PDF path in particular, where PdfTableLocator "treats everything after a header as a
+        // candidate row", so a fee line or a carried-forward line normalizes into a StagedRow with
+        // no balance and sits mid-chain.
+        //
+        // Carrying the balance forward is strictly better than either ignoring the row (the bug)
+        // or breaking the chain at it (the obvious fix). A row missing only its BALANCE still has
+        // an amount, so its effect is known exactly and the chain can continue through it with
+        // full accuracy -- which is what keeps a zero-amount note line from costing a verdict, and
+        // what makes a non-zero one stop lying. The chain only breaks where the AMOUNT is unknown,
+        // because that is the one case where the running balance genuinely cannot be carried.
+        // null means "unknown from here", so the next row is skipped rather than checked against a
+        // guess -- NOT_APPLICABLE and rowsChecked already exist as the vocabulary for that.
+        BigDecimal runningBalance = openingBalance;
 
         for (int i = 0; i < rows.size(); i++) {
             StagedRow row = rows.get(i);
-            if (row.balanceAfter() == null || row.amount() == null) continue;
 
-            if (previous != null || previousBalance != null) {
-                BigDecimal from = previous != null ? previous.balanceAfter() : previousBalance;
-                BigDecimal expected = from.add(signedAmount(row));
+            if (row.amount() == null) {
+                runningBalance = null;
+                continue;
+            }
+
+            if (row.balanceAfter() == null) {
+                if (runningBalance != null) runningBalance = runningBalance.add(signedAmount(row));
+                continue;
+            }
+
+            if (runningBalance != null) {
+                BigDecimal expected = runningBalance.add(signedAmount(row));
                 if (expected.compareTo(row.balanceAfter()) != 0) {
                     discrepancies.add(new Discrepancy(
                             i, row.date(), row.description(),
@@ -211,7 +236,9 @@ public class BalanceChainValidator {
                 }
                 pairsChecked++;
             }
-            previous = row;
+            // The statement's own printed balance wins over the computed one from here: a single
+            // misread row should cost one discrepancy, not cascade into every row after it.
+            runningBalance = row.balanceAfter();
         }
 
         if (pairsChecked < MIN_PAIRS_FOR_A_VERDICT) {

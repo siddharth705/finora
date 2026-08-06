@@ -10,6 +10,9 @@ import com.finora.repository.AuditLogRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -17,7 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.util.List;
 
 /**
@@ -31,6 +34,8 @@ import java.util.List;
  */
 @Service
 public class AdminOperationalDashboardService {
+
+    private static final Logger log = LoggerFactory.getLogger(AdminOperationalDashboardService.class);
 
     private static final int RECENT_ACTIVITY_LIMIT = 8;
 
@@ -51,13 +56,43 @@ public class AdminOperationalDashboardService {
         this.healthRegistryService = healthRegistryService;
     }
 
+    /** The zone every platform-wide "today"/"this month" tile is bucketed by. Configurable rather
+     *  than hardcoded so a deployment serving a different market can say so, and defaulted to the
+     *  one this platform actually targets rather than to UTC or to the container's arbitrary
+     *  system zone. An unparseable value falls back to the default rather than failing the whole
+     *  dashboard -- the same safe-fallback shape UserZone uses for a user's own zone. */
+    @Value("${app.platform.reporting-zone:Asia/Kolkata}")
+    private String reportingZoneId;
+
+    private ZoneId platformReportingZone() {
+        try {
+            return ZoneId.of(reportingZoneId);
+        } catch (Exception e) {
+            log.warn("app.platform.reporting-zone is not a recognized zone id ({}) -- falling back "
+                    + "to Asia/Kolkata for platform-wide 'today' tiles.", reportingZoneId);
+            return ZoneId.of("Asia/Kolkata");
+        }
+    }
+
     @Transactional(readOnly = true)
     public OperationalDashboardDto overview() {
-        // Midnight UTC, not "last 24 rolling hours" -- matches how every other "today" concept
-        // in this codebase (Transaction.txnDate-based monthly bucketing, YearMonth.now()) treats
-        // calendar days, so an admin comparing this tile against yesterday's same tile at any
-        // time of day is comparing like periods.
-        Instant startOfToday = LocalDate.now(ZoneOffset.UTC).atStartOfDay(ZoneOffset.UTC).toInstant();
+        // Midnight in the PLATFORM's reporting zone, not "last 24 rolling hours" -- so an admin
+        // comparing this tile against yesterday's same tile at any time of day is comparing like
+        // periods.
+        //
+        // This used to hardcode ZoneOffset.UTC, justified as matching "how every other 'today'
+        // concept in this codebase treats calendar days". That justification stopped being true:
+        // NetWorthService, BudgetService, GoalService, AnalyticsService and DashboardService were
+        // each changed to resolve calendar boundaries against the USER's timezone through the
+        // shared UserZone helper, precisely because a fixed zone produced wrong day and month
+        // attribution -- AnalyticsService's own comment notes that "for the first 5.5 hours of an
+        // IST month it names the previous month". A platform-wide aggregate genuinely has no one
+        // user's zone to adopt, so a fixed zone is still right here; what was wrong is that the
+        // fixed zone was not the deployment's. On an India-targeted platform, UTC midnight meant
+        // "active users today" and "imports today" reset at 05:30 IST and the first five and a
+        // half hours of each working day were attributed to yesterday.
+        ZoneId zone = platformReportingZone();
+        Instant startOfToday = LocalDate.now(zone).atStartOfDay(zone).toInstant();
 
         long totalUsers = userRepository.countByRoleNot("BOOTSTRAP_ADMIN");
         long activeUsersToday = auditLogRepository.countDistinctUsersByActionSince("USER_LOGIN", startOfToday);

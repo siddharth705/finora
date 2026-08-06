@@ -125,7 +125,7 @@ public class ImportService {
      */
     public StagingSessionResponse parseAndStageWithSession(UUID userId, MultipartFile file) throws IOException {
         byte[] fileContent = file.getBytes();
-        String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "statement.csv";
+        String fileName = StatementUpload.safeFileName(file, "statement.csv");
         long startedAtMs = System.currentTimeMillis();
         // Captured inside the try so the catch can still record it: a document that parsed far
         // enough to be characterised and THEN failed is the most useful failure there is, because
@@ -181,7 +181,7 @@ public class ImportService {
      */
     public PdfStagingSessionResponse parseAndStagePdfWithSession(UUID userId, MultipartFile file, String password) throws IOException {
         byte[] fileContent = file.getBytes();
-        String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "statement.pdf";
+        String fileName = StatementUpload.safeFileName(file, "statement.pdf");
         long startedAtMs = System.currentTimeMillis();
         String fingerprint = null;
         ParseDiagnostics diagnostics = ParseDiagnostics.NONE;
@@ -366,7 +366,7 @@ public class ImportService {
     }
 
     public ConfirmResponse confirm(UUID userId, MultipartFile file, ConfirmRequest request) throws IOException {
-        String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "statement.csv";
+        String fileName = StatementUpload.safeFileName(file, "statement.csv");
         return confirm(userId, fileName, file.getBytes(), request);
     }
 

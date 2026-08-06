@@ -1,6 +1,8 @@
 package com.finora.transactions;
 
 import com.finora.entity.Transaction;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
@@ -68,4 +70,47 @@ public record TransactionDto(
     public record FilterRequest(UUID accountId, UUID categoryId, String type, LocalDate dateFrom,
                                  LocalDate dateTo, BigDecimal amountMin, BigDecimal amountMax,
                                  String keyword, int page, int size, String sortField, String sortDir) {}
+
+    /**
+     * The most rows one bulk call may touch.
+     *
+     * <p>Both bulk endpoints took an unbounded {@code List<UUID>} straight off the request body,
+     * with no size constraint and no rate limiter on {@code /api/v1/transactions/**}. Each element
+     * costs a findById plus a write, and bulkDelete then runs reconcileForUser() and
+     * detectForUser() on top -- so a single ~10 MB JSON array (roughly 270,000 UUIDs) turned one
+     * authenticated request into hundreds of thousands of queries, holding a connection from a
+     * pool capped at 10. Every id also went into a jsonb audit row, equally unbounded.
+     *
+     * <p>500 is far above any selection a review table realistically produces and far below
+     * anything that hurts. This is the clamp discipline PageBounds already applies to every read
+     * endpoint; the write path never got it.
+     */
+    public static final int MAX_BULK_IDS = 500;
+
+    private static final String BULK_SIZE_MESSAGE =
+            "A bulk action can cover at most " + MAX_BULK_IDS + " transactions at a time.";
+
+    /**
+     * Replaces a raw {@code Map<String, Object>} body that was cast by hand:
+     * {@code (List<String>) body.get("ids")}, then {@code UUID.fromString}, then
+     * {@code (String) body.get("category")}. It was the only endpoint in the application not
+     * taking a typed, validated DTO, so it bypassed bean validation entirely and turned ordinary
+     * bad input into 500s -- a missing key threw NullPointerException, a non-array {@code ids}
+     * threw ClassCastException, a malformed uuid threw IllegalArgumentException, and all three
+     * landed on the catch-all handler as INTERNAL_ERROR logged as "Unhandled exception". A null
+     * category reached resolveOrCreateCategory unchecked.
+     */
+    public record BulkRecategorizeRequest(
+            @NotEmpty(message = "Select at least one transaction.")
+            @Size(max = MAX_BULK_IDS, message = BULK_SIZE_MESSAGE)
+            List<UUID> ids,
+            @NotBlank(message = "Category name is required")
+            @Size(max = 255, message = "Category name can't exceed 255 characters")
+            String category) {}
+
+    /** Same bound as {@link BulkRecategorizeRequest}, for the delete endpoint's id list. */
+    public record BulkDeleteRequest(
+            @NotEmpty(message = "Select at least one transaction.")
+            @Size(max = MAX_BULK_IDS, message = BULK_SIZE_MESSAGE)
+            List<UUID> ids) {}
 }

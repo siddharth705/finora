@@ -15,9 +15,26 @@ public interface ImportSessionRepository extends JpaRepository<ImportSession, UU
 
     List<ImportSession> findByUserIdAndStatusOrderByCreatedAtDesc(UUID userId, String status);
 
-    // Backs the opportunistic cleanup in ImportSessionService.createSession() -- see that
-    // class's doc comment for why this isn't a @Scheduled sweep.
-    List<ImportSession> findByUserIdAndExpiresAtBefore(UUID userId, Instant now);
+    /**
+     * Expired sessions from ANY user, oldest first, bounded by the caller's page size.
+     *
+     * <p>Backs the opportunistic cleanup in {@code ImportSessionService} -- see that class's doc
+     * comment for why this isn't a {@code @Scheduled} sweep.
+     *
+     * <p>Bug fix: the cleanup used to be scoped to the acting user
+     * ({@code findByUserIdAndExpiresAtBefore}), so an expired session was only ever deleted when
+     * THAT SAME user started another import. A user who imported once and never came back -- the
+     * one-time and trial population, by definition the largest source of abandoned sessions --
+     * left the row and the raw statement bytes inside it in the database permanently, and nothing
+     * else ever removed them. The 48-hour retention the TTL states was not enforced for precisely
+     * the population most likely to need it, on the most sensitive data this product holds.
+     *
+     * <p>Platform-wide but explicitly paged, which is what keeps the original reasoning intact:
+     * the scoping existed to avoid "a full-table scan every time anyone imports anything", and a
+     * bounded, index-ordered slice is not that. Any backlog drains over subsequent imports rather
+     * than in one unbounded delete.
+     */
+    List<ImportSession> findByExpiresAtBeforeOrderByExpiresAtAsc(Instant now, Pageable limit);
 
     /**
      * Atomically flips STAGED -> CONFIRMED, returning the number of rows actually updated (0 or

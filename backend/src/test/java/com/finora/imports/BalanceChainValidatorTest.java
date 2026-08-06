@@ -20,9 +20,11 @@ class BalanceChainValidatorTest {
 
     private final BalanceChainValidator validator = new BalanceChainValidator();
 
+    /** amount and balanceAfter are both nullable -- a real staged row can be missing either, and
+     *  the two absences mean different things to the chain (see the gap tests at the bottom). */
     private StagedRow row(String date, String description, String amount, String type, String balanceAfter) {
         return new StagedRow(
-                LocalDate.parse(date), description, new BigDecimal(amount), type,
+                LocalDate.parse(date), description, amount == null ? null : new BigDecimal(amount), type,
                 "Other", "default", null, false, null,
                 balanceAfter == null ? null : new BigDecimal(balanceAfter));
     }
@@ -213,7 +215,7 @@ class BalanceChainValidatorTest {
     @Test
     void ignoresRowsWithNoBalance_ratherThanTreatingThemAsBreaks() {
         // A mid-statement row without its own balance (a summary line, a fee note) must not be
-        // reported as a discrepancy -- the chain simply skips it and continues.
+        // reported as a discrepancy -- the chain carries through it and continues.
         var rows = List.of(
                 row("2026-07-10", "UPI CREDIT", "25000.00", "INCOME", "25000.00"),
                 row("2026-07-16", "SOME NOTE", "0.00", "EXPENSE", null),
@@ -223,5 +225,46 @@ class BalanceChainValidatorTest {
         var result = validator.validate(rows);
 
         assertThat(result.status()).isEqualTo(Outcome.VERIFIED);
+    }
+
+    /**
+     * The case the test above could not distinguish, because its balance-less row carries an
+     * amount of 0.00 and therefore moves nothing.
+     *
+     * <p>A balance-less row with a REAL amount used to be skipped outright, leaving the next
+     * balance-bearing row checked against the balance from before it with only its own amount
+     * added -- short by exactly the skipped amount, so a correct row was reported as a
+     * discrepancy. The chain now carries the known amount forward instead, which is possible
+     * precisely because only the BALANCE is missing; the amount is right there.
+     */
+    @Test
+    void carriesTheChainThroughABalancelessRow_usingItsAmount() {
+        var rows = List.of(
+                row("2026-07-10", "UPI CREDIT", "25000.00", "INCOME", "25000.00"),
+                row("2026-07-16", "ATM FEE", "20.00", "EXPENSE", null),
+                row("2026-07-16", "PMSBY PREMIUM", "80.00", "EXPENSE", "24900.00"),
+                row("2026-07-18", "APY INSTALLMENT", "2.00", "EXPENSE", "24898.00"));
+
+        var result = validator.validate(rows);
+
+        assertThat(result.status()).isEqualTo(Outcome.VERIFIED);
+        assertThat(result.discrepancies()).isEmpty();
+    }
+
+    /** Where the amount is ALSO missing, the row's effect is genuinely unknown, so the chain has
+     *  to break rather than guess. The rows after it resume a fresh chain instead of being
+     *  measured against a balance that no longer means anything. */
+    @Test
+    void breaksTheChain_whenARowHasNeitherBalanceNorAmount() {
+        var rows = List.of(
+                row("2026-07-10", "UPI CREDIT", "25000.00", "INCOME", "25000.00"),
+                row("2026-07-16", "UNREADABLE LINE", null, "EXPENSE", null),
+                row("2026-07-16", "PMSBY PREMIUM", "80.00", "EXPENSE", "24900.00"),
+                row("2026-07-18", "APY INSTALLMENT", "2.00", "EXPENSE", "24898.00"));
+
+        var result = validator.validate(rows);
+
+        // No false discrepancy against the row right after the gap, which is the whole point.
+        assertThat(result.discrepancies()).isEmpty();
     }
 }

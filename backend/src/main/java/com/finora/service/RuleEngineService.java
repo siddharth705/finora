@@ -84,14 +84,43 @@ public class RuleEngineService {
      *  first -- see CategorizationService.applySideEffectRules for how each is actually applied. */
     public List<RuleMatch> evaluateSideEffectRules(UUID userId, String description, BigDecimal amount,
                                                      String merchantName, String accountType) {
+        return evaluateSideEffectRules(sideEffectRuleSet(userId), description, amount, merchantName, accountType);
+    }
+
+    /**
+     * The USER-then-GLOBAL rule set this user's side-effect evaluation runs against, fetched once.
+     *
+     * <p>Exists so a caller evaluating MANY transactions can hoist the two queries out of its
+     * loop. {@code RecurringService.detectForUser} could not: it calls
+     * {@link #evaluateSideEffectRules(UUID, String, BigDecimal, String, String)} once per active
+     * transaction, and each call issued
+     * {@code findByUserIdAndEnabledTrueOrderByPriorityAsc(userId)} plus
+     * {@code findByScopeAndEnabledTrueOrderByPriorityAsc(GLOBAL)} -- 2N queries for N
+     * transactions, with both result sets identical on every iteration (same user, same global
+     * scope). JPA's first-level cache does not help, because it caches entities, not query
+     * results. {@code detectForUser} runs from create(), update(), delete() and bulkDelete(), so a
+     * user with 3,000 transactions incurred roughly 6,000 extra queries on every single
+     * transaction edit, holding a connection from a pool capped at 10 -- scaling with total
+     * history rather than with the size of the edit.
+     *
+     * <p>That loop's own comment says it avoided exactly this for merchants ("re-resolving each
+     * one would be a real N+1 against the merchant/alias tables for no benefit"). The merchant
+     * N+1 was avoided; the rule N+1 two lines below it was not.
+     */
+    public List<CategoryRule> sideEffectRuleSet(UUID userId) {
+        List<CategoryRule> rules = new ArrayList<>(
+                categoryRuleRepository.findByUserIdAndEnabledTrueOrderByPriorityAsc(userId));
+        rules.addAll(categoryRuleRepository.findByScopeAndEnabledTrueOrderByPriorityAsc(CategoryRule.Scope.GLOBAL));
+        return rules;
+    }
+
+    /** As {@link #evaluateSideEffectRules(UUID, String, BigDecimal, String, String)}, against a
+     *  rule set the caller already holds. Same USER-then-GLOBAL precedence, because
+     *  {@link #sideEffectRuleSet} builds the list in that order. */
+    public List<RuleMatch> evaluateSideEffectRules(List<CategoryRule> rules, String description, BigDecimal amount,
+                                                     String merchantName, String accountType) {
         List<RuleMatch> matches = new ArrayList<>();
-        for (CategoryRule rule : categoryRuleRepository.findByUserIdAndEnabledTrueOrderByPriorityAsc(userId)) {
-            if (rule.getActionType() != CategoryRule.ActionType.ASSIGN_CATEGORY
-                    && matches(rule, description, amount, merchantName, accountType)) {
-                matches.add(new RuleMatch(rule));
-            }
-        }
-        for (CategoryRule rule : categoryRuleRepository.findByScopeAndEnabledTrueOrderByPriorityAsc(CategoryRule.Scope.GLOBAL)) {
+        for (CategoryRule rule : rules) {
             if (rule.getActionType() != CategoryRule.ActionType.ASSIGN_CATEGORY
                     && matches(rule, description, amount, merchantName, accountType)) {
                 matches.add(new RuleMatch(rule));

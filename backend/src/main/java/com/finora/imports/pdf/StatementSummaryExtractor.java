@@ -167,11 +167,27 @@ public final class StatementSummaryExtractor {
         return best;
     }
 
-    /** The next visual row below row {@code i} that is close enough to belong to it. */
+    /**
+     * The next visual row below row {@code i} that is close enough to belong to it.
+     *
+     * <p>The page check is not a refinement. {@code groupIntoRows} sorts by {@code pageIndex}
+     * first and then by {@code y}, so the row after the LAST row of page N is the FIRST row of
+     * page N+1 -- and because PDFBox's {@code getYDirAdj()} measures downward from the top of
+     * each page, {@code y} resets per page. The last row of a page therefore has a large y and
+     * the first row of the next has a small one, the subtraction comes out strongly NEGATIVE, and
+     * a bare {@code <= MAX_VALUE_ROW_GAP} was trivially satisfied by a row on a different page.
+     * Any statement whose summary labels fall at a page break read its debit/credit totals and
+     * counts from unrelated text at the top of the following page -- which then went to
+     * SummaryTotalsValidator as the document's own printed evidence, so a correct parse could be
+     * reported as failing its totals check, or a wrong one could pass. "Below" cannot be
+     * expressed as a distance alone once y is page-relative.
+     */
     private static List<PositionedText> rowBelow(List<List<PositionedText>> rows, int i) {
         if (i + 1 >= rows.size()) return null;
+        List<PositionedText> current = rows.get(i);
         List<PositionedText> next = rows.get(i + 1);
-        return (next.get(0).y() - rows.get(i).get(0).y()) <= MAX_VALUE_ROW_GAP ? next : null;
+        if (next.get(0).pageIndex() != current.get(0).pageIndex()) return null;
+        return (next.get(0).y() - current.get(0).y()) <= MAX_VALUE_ROW_GAP ? next : null;
     }
 
     private static List<List<PositionedText>> groupIntoRows(List<PositionedText> runs) {

@@ -63,8 +63,8 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, UUID> {
     @Query("""
         SELECT a FROM AuditLog a
         WHERE (:q IS NULL
-               OR LOWER(a.action) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
-               OR LOWER(a.entityType) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
+               OR LOWER(a.action) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')) ESCAPE '\\'
+               OR LOWER(a.entityType) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')) ESCAPE '\\')
           AND (CAST(:dateFrom AS timestamp) IS NULL OR a.createdAt >= :dateFrom)
           AND (CAST(:dateTo AS timestamp) IS NULL OR a.createdAt < :dateTo)
         """)

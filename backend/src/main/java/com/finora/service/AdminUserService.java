@@ -10,6 +10,7 @@ import com.finora.exception.ApiException;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
+import com.finora.util.LikePatterns;
 import com.finora.util.PhoneNumbers;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -150,7 +151,9 @@ public class AdminUserService {
         int safePage = com.finora.util.PageBounds.safePage(page);
         // Blank search text is the same as "no filter" -- an admin clearing the search box
         // shouldn't have to also know that empty string vs. null behaves differently server-side.
-        String normalizedQ = (q == null || q.isBlank()) ? null : q.trim();
+        // LikePatterns.escape: the term is bound into a LIKE, where % and _ are wildcards even
+        // inside a bound parameter. Searching "50%" used to match every row containing "50".
+        String normalizedQ = (q == null || q.isBlank()) ? null : LikePatterns.escape(q.trim());
         String normalizedStatus = (status == null || status.isBlank()) ? null : status.trim();
 
         var pageResult = userRepository.search(normalizedQ, normalizedStatus,

@@ -114,10 +114,16 @@ public class RecurringService {
         // every active transaction a user has, and re-resolving each one would be a real N+1
         // against the merchant/alias tables for no benefit, since MARK_SUBSCRIPTION rules in
         // practice target DESCRIPTION ("netflix", "spotify"), not MERCHANT.
+        // Fetched ONCE, outside the loop. Each evaluateSideEffectRules(userId, ...) call issued
+        // two repository queries, and both result sets are identical on every iteration -- the
+        // same user and the same global scope -- so this loop was 2N queries for N transactions,
+        // on every transaction create, edit and delete. Same N+1 the comment above says it avoided
+        // for merchants, two lines further down and missed. See sideEffectRuleSet.
+        List<CategoryRule> sideEffectRules = ruleEngineService.sideEffectRuleSet(userId);
         for (Transaction t : active) {
             if (t.isRecurring()) continue;
             boolean subscriptionRuleMatch = ruleEngineService.evaluateSideEffectRules(
-                            userId, t.getDescription(), t.getAmount(), t.getMerchant(), null).stream()
+                            sideEffectRules, t.getDescription(), t.getAmount(), t.getMerchant(), null).stream()
                     .anyMatch(m -> m.rule().getActionType() == CategoryRule.ActionType.MARK_SUBSCRIPTION);
             if (subscriptionRuleMatch) t.setRecurring(true);
         }

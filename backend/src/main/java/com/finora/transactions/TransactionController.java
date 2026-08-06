@@ -77,17 +77,15 @@ public class TransactionController {
     }
 
     @PostMapping("/bulk-delete")
-    public ResponseEntity<ApiResponse<Void>> bulkDelete(@RequestBody List<UUID> ids) {
-        transactionService.bulkDelete(currentUser.id(), ids);
-        return ResponseEntity.ok(ApiResponse.ok(null, ids.size() + " transaction(s) deleted"));
+    public ResponseEntity<ApiResponse<Void>> bulkDelete(@Valid @RequestBody TransactionDto.BulkDeleteRequest request) {
+        transactionService.bulkDelete(currentUser.id(), request.ids());
+        return ResponseEntity.ok(ApiResponse.ok(null, request.ids().size() + " transaction(s) deleted"));
     }
 
     @PostMapping("/bulk-category")
-    public ResponseEntity<ApiResponse<Void>> bulkRecategorize(@RequestBody Map<String, Object> body) {
-        @SuppressWarnings("unchecked")
-        List<String> idStrings = (List<String>) body.get("ids");
-        List<UUID> ids = idStrings.stream().map(UUID::fromString).toList();
-        transactionService.bulkRecategorize(currentUser.id(), ids, (String) body.get("category"));
-        return ResponseEntity.ok(ApiResponse.ok(null, ids.size() + " transaction(s) recategorized"));
+    public ResponseEntity<ApiResponse<Void>> bulkRecategorize(
+            @Valid @RequestBody TransactionDto.BulkRecategorizeRequest request) {
+        transactionService.bulkRecategorize(currentUser.id(), request.ids(), request.category());
+        return ResponseEntity.ok(ApiResponse.ok(null, request.ids().size() + " transaction(s) recategorized"));
     }
 }

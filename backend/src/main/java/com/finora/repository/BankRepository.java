@@ -20,8 +20,8 @@ public interface BankRepository extends JpaRepository<Bank, String> {
      *  picker use case, not this one). */
     @Query("""
         SELECT b FROM Bank b
-        WHERE LOWER(b.officialName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
-           OR LOWER(b.shortName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+        WHERE LOWER(b.officialName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')) ESCAPE '\\'
+           OR LOWER(b.shortName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')) ESCAPE '\\'
         ORDER BY b.officialName ASC
         """)
     List<Bank> searchByName(@Param("q") String q, Pageable pageable);

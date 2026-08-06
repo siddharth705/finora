@@ -276,18 +276,36 @@ public class PdfPreviewGenerator {
             }
         }
 
-        // Bug fix: some real exports (PNB ONE) list transactions newest-first -- the balance-chain
-        // reconstruction below is already value-based (BalanceChainUtil.first/last match by implied
-        // pre-transaction balance, never by list position) so it's unaffected by this, but the
-        // staged rows themselves used to come back in raw file order, i.e. reverse-chronological,
-        // which read oddly in the review table. Sorted here, once, right before returning.
+        // The document's own row sequence, captured BEFORE the display sort below.
+        //
+        // Bug fix: the sort was applied first and the sorted list was then handed to
+        // importVerifier.verify(), which forwards it to BalanceChainValidator -- whose contract
+        // says in as many words that "the chain is only meaningful along the document's own
+        // sequence, which for same-day transactions is not date order ... rows arrive here
+        // already sequenced." That validator walks the list positionally, carrying `previous`
+        // forward, so on a newest-first export (PNB ONE, named in the sort comment below) the
+        // sort reversed the entire sequence and every link computed against the wrong
+        // predecessor. Essentially every pair was flagged, the discrepancy ratio cleared
+        // FAILED_THRESHOLD, and a perfectly parsed statement was reported to the user as failing
+        // its own verification -- the check manufacturing the misread it exists to catch. The CSV
+        // path does not sort, so the two staging paths disagreed about the same document, which
+        // is the drift BalanceChainValidator.report() was centralised to prevent.
+        //
+        // The sort's own justification was right about BalanceChainUtil, which is value-based and
+        // genuinely order-independent, and wrong about BalanceChainValidator, which is a
+        // different class.
+        List<StagedRow> documentOrder = List.copyOf(staged);
+
+        // Some real exports (PNB ONE) list transactions newest-first, which reads oddly in the
+        // review table. Purely presentational, and now provably so: everything order-sensitive
+        // reads documentOrder above.
         staged.sort(Comparator.comparing(StagedRow::date));
 
         int dupCount = (int) staged.stream().filter(StagedRow::likelyDuplicate).count();
         DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, staged, balancePoints, product, ctx);
         // Per section rather than per file: a composite statement's sections have separate balance
         // chains, and one can verify while another does not.
-        var verification = importVerifier.verify(staged,
+        var verification = importVerifier.verify(documentOrder,
                 detected == null ? null : detected.openingBalance(),
                 detected == null ? null : detected.closingBalance(),
                 printedSummary, section.rows());

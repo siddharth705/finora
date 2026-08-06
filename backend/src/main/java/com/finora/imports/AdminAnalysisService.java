@@ -18,7 +18,6 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.List;
-import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -96,8 +95,11 @@ public class AdminAnalysisService {
         TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
 
         byte[] content = file.getBytes();
-        String fileName = file.getOriginalFilename() == null ? "statement" : file.getOriginalFilename();
-        String format = looksLikePdf(fileName) ? "PDF" : "CSV";
+        // Sanitized, not taken verbatim: this value is persisted on the analysis row and rendered
+        // in the admin workbench, and it also reaches the log lines below -- an unfiltered CR/LF
+        // in a filename can forge a log entry.
+        String fileName = StatementUpload.safeFileName(file, "statement");
+        String format = StatementUpload.looksLike(fileName, StatementUpload.Format.PDF) ? "PDF" : "CSV";
         long startedAtMs = System.currentTimeMillis();
 
         String fingerprint = null;
@@ -170,7 +172,4 @@ public class AdminAnalysisService {
                 "The document was analysed but the analysis could not be saved.");
     }
 
-    private static boolean looksLikePdf(String fileName) {
-        return fileName.toLowerCase(Locale.ROOT).endsWith(".pdf");
-    }
 }
