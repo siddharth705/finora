@@ -160,6 +160,29 @@ const RULE_RENDERERS: Record<string, { label: string; render: (f: VerificationFi
       );
     },
   },
+  STATEMENT_TOTALS: {
+    label: 'Statement totals',
+    render: (finding) => {
+      const d = finding.details as {
+        reason?: string; openingBalance?: number; closingBalance?: number;
+        totalCredits?: number; totalDebits?: number; expectedClosingBalance?: number;
+        difference?: number; explanation?: string;
+      };
+      if (d?.reason) return <p className="text-xs text-muted">{d.reason}</p>;
+      return (
+        <>
+          <p className="text-xs text-muted">
+            Opening {money(d?.openingBalance)} + credits {money(d?.totalCredits)} − debits{' '}
+            {money(d?.totalDebits)} = {money(d?.expectedClosingBalance)}, against a stated closing
+            balance of {money(d?.closingBalance)}.
+          </p>
+          {/* Which of the three facts is the outlier. Without this the reader is told the statement
+              does not add up and left to work out whether to distrust the rows or one header field. */}
+          {d?.explanation && <p className="text-xs text-warning mt-1">{d.explanation}</p>}
+        </>
+      );
+    },
+  },
 };
 
 function money(n: number | null | undefined) {
