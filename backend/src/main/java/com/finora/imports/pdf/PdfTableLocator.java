@@ -426,7 +426,15 @@ public class PdfTableLocator {
                         // The line becomes auxiliary rather than being merged or dropped: it is
                         // still document text, it is simply not a transaction, and keeping it
                         // visible is what lets a human see what the extractor could not anchor.
-                        if (ctx != null) ctx.record("UNANCHORED_ROWS_ABANDONED");
+                        if (ctx != null) {
+                            ctx.record("UNANCHORED_ROWS_ABANDONED");
+                            // Counted, not merely flagged. The capability set answers "did this
+                            // happen"; only the histogram answers "which fault dominates", and
+                            // only that points at a subsystem. Measured with set semantics first,
+                            // and every document -- including ones that parse perfectly -- lit
+                            // every reason, which told us nothing.
+                            ctx.recordUnanchored(anchorFailureReason(bucketed, headerNames));
+                        }
                         pendingAuxiliary.add(rowLine);
                         continue;
                     }
@@ -477,6 +485,56 @@ public class PdfTableLocator {
     private boolean hasDateValue(Map<String, String> bucketed) {
         String dateRaw = CsvParser.firstNonBlank(bucketed, DATE_HINTS.toArray(new String[0]));
         return dateRaw != null && CsvParser.parseDate(dateRaw.trim()) != null;
+    }
+
+    /**
+     * WHY a row could not become a transaction anchor.
+     *
+     * <p>"Rows were abandoned" says a table was lost; it does not say where to look. These three
+     * outcomes point at different subsystems, and telling them apart is the difference between
+     * days of investigation and minutes:
+     *
+     * <ul>
+     *   <li>{@code NO_DATE_COLUMN} — the header has no date-like column at all. The header
+     *       detector matched on other hints; this is a table Finora cannot anchor by date.</li>
+     *   <li>{@code DATE_COLUMN_EMPTY} — a date column exists but nothing bucketed into it. A
+     *       GEOMETRY problem: the values are landing under a different anchor.</li>
+     *   <li>{@code DATE_UNPARSEABLE} — a value is present and {@code parseDate} rejects it. A
+     *       NORMALIZATION problem: a format the parser does not know.</li>
+     * </ul>
+     *
+     * <p>Recorded as a capability marker so it reaches the fingerprint and, once the Evidence
+     * Store lands, the per-layout diagnostics — rather than a log line nobody reads.
+     */
+    private String anchorFailureReason(Map<String, String> bucketed, List<String> headerNames) {
+        boolean hasDateColumn = headerNames != null && headerNames.stream()
+                .anyMatch(h -> matchesAnyHint(CsvParser.normalizeHeaderCell(h), DATE_HINTS));
+        if (!hasDateColumn) return "UNANCHORED_NO_DATE_COLUMN";
+
+        String dateRaw = CsvParser.firstNonBlank(bucketed, DATE_HINTS.toArray(new String[0]));
+        if (dateRaw == null || dateRaw.isBlank()) return "UNANCHORED_DATE_COLUMN_EMPTY";
+        return "UNANCHORED_DATE_UNPARSEABLE:" + shapeOf(dateRaw.trim());
+    }
+
+    /**
+     * A value's SHAPE with its content removed: digits become 9, letters X, everything else kept.
+     *
+     * <p>"We rejected 97 values in the date column" says a format is unsupported; it does not say
+     * which, and the obvious next step -- print the values -- means putting statement content in a
+     * diagnostic. A shape carries the whole answer and none of the data: {@code 99/99/9999} and
+     * {@code 99-XXX-99 99:99:99} are immediately actionable, and neither is anybody's transaction.
+     *
+     * <p>Truncated, because a mis-bucketed narration line landing in the date column would
+     * otherwise produce a shape as long as the sentence.
+     */
+    private static String shapeOf(String value) {
+        StringBuilder shape = new StringBuilder();
+        for (int i = 0; i < value.length() && i < 24; i++) {
+            char c = value.charAt(i);
+            shape.append(Character.isDigit(c) ? '9' : Character.isLetter(c) ? 'X' : c);
+        }
+        if (value.length() > 24) shape.append('~');
+        return shape.toString();
     }
 
     /** Merges a continuation row's non-blank column values into the transaction row above it --

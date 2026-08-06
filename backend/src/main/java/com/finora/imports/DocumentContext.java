@@ -39,6 +39,17 @@ public class DocumentContext {
     // themselves: see UnparseableRowSummary.
     private UnparseableRowSummary unparseable;
 
+    /**
+     * How many rows failed to become transaction anchors, per reason.
+     *
+     * <p>A histogram, not a set, and the distinction is the whole point. {@link #record} has set
+     * semantics, so a single occurrence of a reason anywhere in a 2500-line document lights the
+     * same marker as two thousand occurrences — which makes "was this a geometry problem or a
+     * format problem" unanswerable. Both reasons appear in every real statement measured,
+     * including ones that parse perfectly; only the proportion says where the fault is.
+     */
+    private final java.util.Map<String, Integer> unanchoredReasons = new java.util.LinkedHashMap<>();
+
     public DocumentContext(String sourceFormat, String parser) {
         this.sourceFormat = sourceFormat;
         this.parser = parser;
@@ -84,6 +95,16 @@ public class DocumentContext {
 
     public List<CapabilityActivation> capabilities() {
         return List.copyOf(capabilities);
+    }
+
+    /** Counts one row that could not be anchored, by reason. See {@link #unanchoredReasons}. */
+    public void recordUnanchored(String reason) {
+        unanchoredReasons.merge(reason, 1, Integer::sum);
+    }
+
+    /** Reason to count. Empty when every row anchored, which is the healthy case. */
+    public java.util.Map<String, Integer> unanchoredReasons() {
+        return java.util.Map.copyOf(unanchoredReasons);
     }
 
     public FinancialDocumentMetadata buildMetadata() {
