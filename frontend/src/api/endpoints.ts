@@ -466,6 +466,13 @@ export interface DeviceSession {
   lastSeenAt: string | null;
   createdAt: string;
   expiresAt: string;
+  // When the user signed in ON THIS DEVICE. Distinct from createdAt, which rotation resets to the
+  // time of the most recent token refresh -- roughly every fifteen minutes, so it says nothing
+  // about how old the session is.
+  sessionStartedAt: string;
+  // sessionStartedAt + the absolute session cap, computed server-side so the countdown does not
+  // depend on the device's own clock being correct. Null when the cap is disabled.
+  sessionExpiresAt: string | null;
 }
 export const deviceApi = {
   list: () => api.get<DeviceSession[]>('/users/me/devices').then((r) => r.data),

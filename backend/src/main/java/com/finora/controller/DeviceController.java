@@ -1,6 +1,7 @@
 package com.finora.controller;
 
 import com.finora.dto.ApiResponse;
+import com.finora.config.JwtProperties;
 import com.finora.dto.DeviceSessionDto;
 import com.finora.security.CurrentUser;
 import com.finora.service.RefreshTokenService;
@@ -22,16 +23,19 @@ public class DeviceController {
 
     private final RefreshTokenService refreshTokenService;
     private final CurrentUser currentUser;
+    private final JwtProperties jwtProperties;
 
-    public DeviceController(RefreshTokenService refreshTokenService, CurrentUser currentUser) {
+    public DeviceController(RefreshTokenService refreshTokenService, CurrentUser currentUser,
+                            JwtProperties jwtProperties) {
         this.refreshTokenService = refreshTokenService;
         this.currentUser = currentUser;
+        this.jwtProperties = jwtProperties;
     }
 
     @GetMapping
     public ApiResponse<List<DeviceSessionDto>> list() {
         List<DeviceSessionDto> sessions = refreshTokenService.listActiveSessions(currentUser.id()).stream()
-                .map(DeviceSessionDto::from)
+                .map(rt -> DeviceSessionDto.from(rt, jwtProperties.getAbsoluteSessionMs()))
                 .toList();
         return ApiResponse.ok(sessions);
     }

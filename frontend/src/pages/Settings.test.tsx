@@ -46,6 +46,10 @@ function deviceSession(overrides: Partial<Record<string, unknown>> = {}) {
     lastSeenAt: '2026-07-30T00:00:00Z',
     createdAt: '2026-07-01T00:00:00Z',
     expiresAt: '2026-08-30T00:00:00Z',
+    // Distinct from createdAt on purpose: rotation resets createdAt every refresh, so a fixture
+    // where they are equal cannot catch the UI reading the wrong one for "signed in".
+    sessionStartedAt: '2026-06-28T00:00:00Z',
+    sessionExpiresAt: '2026-07-05T00:00:00Z',
     ...overrides,
   };
 }
@@ -156,6 +160,45 @@ describe('Settings', () => {
 
     expect(await screen.findByText('Chrome on Windows')).toBeInTheDocument();
     expect(screen.getByText(/203\.0\.113\.5/)).toBeInTheDocument();
+  });
+
+  it('shows when each session started and when it will expire', async () => {
+    // Computed relative to now rather than hard-coded, because the label is a countdown -- a fixed
+    // date would silently become "Expires shortly" once it drifted into the past and the test
+    // would still pass while asserting nothing about the countdown.
+    const day = 24 * 3_600_000;
+    vi.mocked(deviceApi.list).mockReset().mockResolvedValue([
+      deviceSession({
+        // The real-world shape: createdAt is the LAST ROTATION, minutes ago, while the session
+        // itself started days back. Asserting only that the words "Signed in" appear would pass
+        // against either field -- verified by swapping them, which is why these are now four days
+        // apart and the assertion names the value.
+        createdAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+        sessionStartedAt: new Date(Date.now() - 4 * day).toISOString(),
+        sessionExpiresAt: new Date(Date.now() + 3 * day).toISOString(),
+      }) as never,
+    ]);
+
+    renderSettings();
+
+    expect(await screen.findByText(/Signed in 4 days ago/)).toBeInTheDocument();
+    expect(screen.getByText(/Expires in 3 days/)).toBeInTheDocument();
+    // createdAt would render "today"; seeing that here means the UI is reporting the age of the
+    // current token rather than of the session.
+    expect(screen.queryByText(/Signed in today/)).not.toBeInTheDocument();
+  });
+
+  it('omits the expiry countdown when the absolute session cap is disabled', async () => {
+    // The cap is configurable and 0 turns it off, in which case the backend sends null. Inventing
+    // a date there would tell the user their session ends when it does not.
+    vi.mocked(deviceApi.list).mockReset().mockResolvedValue([
+      deviceSession({ sessionExpiresAt: null }) as never,
+    ]);
+
+    renderSettings();
+
+    expect(await screen.findByText('Chrome on Windows')).toBeInTheDocument();
+    expect(screen.queryByText(/Expires in/)).not.toBeInTheDocument();
   });
 
   it('shows a friendly message when there are no active sessions', async () => {

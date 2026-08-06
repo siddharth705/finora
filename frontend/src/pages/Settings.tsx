@@ -50,6 +50,30 @@ function deviceLabel(session: DeviceSession): string {
   return session.browser || session.device || 'Unknown device';
 }
 
+/**
+ * "Expires in 2 days" for the absolute session cap.
+ *
+ * Answers the question a user actually has when they get signed out — "why did that happen, and
+ * when will it happen again" — which is most of what makes an automatic sign-out feel like a fault
+ * rather than a policy. Deliberately coarse: hours below a day, days above it. A live countdown
+ * would imply a precision the idle timeout can undercut at any moment, since a session can also
+ * end 30 minutes after the last activity, well before this date.
+ *
+ * Null when the backend reports no cap (it is configurable, and 0 disables it), rather than
+ * inventing a date.
+ */
+function expiresInLabel(sessionExpiresAt: string | null): string | null {
+  if (!sessionExpiresAt) return null;
+  const ms = new Date(sessionExpiresAt).getTime() - Date.now();
+  if (Number.isNaN(ms)) return null;
+  if (ms <= 0) return 'Expires shortly';
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours < 1) return 'Expires within the hour';
+  if (hours < 24) return `Expires in ${hours} hour${hours === 1 ? '' : 's'}`;
+  const days = Math.round(hours / 24);
+  return `Expires in ${days} day${days === 1 ? '' : 's'}`;
+}
+
 export default function Settings() {
   const { theme, setTheme } = useTheme();
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -279,7 +303,8 @@ export default function Settings() {
           <p className="text-ink font-medium text-sm">Active Sessions</p>
           <p className="text-muted text-[11px] mt-0.5 mb-3">
             Every device currently signed in to your account. Signing one out here ends that
-            session the next time it needs to refresh.
+            session the next time it needs to refresh. Sessions also end on their own — after 30
+            minutes of inactivity, or 7 days after signing in, whichever comes first.
           </p>
           {sessionsLoading ? (
             <p className="text-xs text-muted">Loading…</p>
@@ -298,6 +323,10 @@ export default function Settings() {
                       <p className="text-[11px] text-muted truncate">
                         {s.lastSeenAt ? `Last active ${formatRelativeTime(s.lastSeenAt) ?? 'recently'}` : 'Not used yet'}
                         {s.lastSeenIp ? ` · ${s.lastSeenIp}` : ''}
+                      </p>
+                      <p className="text-[11px] text-muted truncate">
+                        Signed in {formatRelativeTime(s.sessionStartedAt) ?? 'recently'}
+                        {expiresInLabel(s.sessionExpiresAt) ? ` · ${expiresInLabel(s.sessionExpiresAt)}` : ''}
                       </p>
                     </div>
                   </div>

@@ -119,8 +119,10 @@ public class RefreshTokenService {
                 && rt.getCreatedAt().plusMillis(jwtProperties.getIdleTimeoutMs()).isBefore(now)) {
             rt.setRevokedAt(now);
             refreshTokenRepository.save(rt);
-            throw new ApiException(ErrorCode.AUTH_SESSION_IDLE,
-                    "Signed out after a period of inactivity.");
+            // No custom message: ErrorCode's own copy is written for the user and ends with
+            // "Please sign in again", and this string is what Login.tsx renders verbatim after
+            // client.ts carries it through SESSION_ENDED_REASON_KEY.
+            throw new ApiException(ErrorCode.AUTH_SESSION_IDLE);
         }
 
         // Absolute cap, measured from sign-in and immune to rotation. Without this, a session that
@@ -142,8 +144,7 @@ public class RefreshTokenService {
                 && rt.getSessionStartedAt().plusMillis(jwtProperties.getAbsoluteSessionMs()).isBefore(now)) {
             rt.setRevokedAt(now);
             refreshTokenRepository.save(rt);
-            throw new ApiException(ErrorCode.AUTH_SESSION_MAX_AGE,
-                    "Session reached its maximum length.");
+            throw new ApiException(ErrorCode.AUTH_SESSION_MAX_AGE);
         }
 
         rt.setRevokedAt(now);
