@@ -66,7 +66,7 @@ public class PasswordChangeService {
      *  real phone number so the frontend can hand it straight to Firebase's
      *  signInWithPhoneNumber() -- this backend never sends the OTP itself (see
      *  PhoneVerificationProvider's own doc comment). */
-    @Transactional
+    @Transactional(noRollbackFor = ApiException.class)
     public StartResponse start(UUID userId, StartRequest request) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
@@ -110,7 +110,7 @@ public class PasswordChangeService {
      *  are an invalid/expired token or one that proves the WRONG phone number, both of which are
      *  real errors, not a "try again" state, so this throws rather than returning a soft
      *  verified:false the way the OTP-based version used to. */
-    @Transactional
+    @Transactional(noRollbackFor = ApiException.class)
     public VerifyOtpResponse verifyOtp(UUID userId, VerifyOtpRequest request) {
         PasswordChangeSession session = loadActiveSession(userId, request.sessionId(), PasswordChangeSession.Status.STARTED,
                 "This step has already been completed, or the session is no longer valid. Please start again.");
@@ -155,7 +155,7 @@ public class PasswordChangeService {
      *  duplicate PASSWORD_CHANGED audit entry). The session's own persisted
      *  signedOutOtherDevices is what makes the replayed response correct even if the caller's
      *  request body somehow disagreed with what actually happened the first time. */
-    @Transactional
+    @Transactional(noRollbackFor = ApiException.class)
     public CompleteResponse complete(UUID userId, CompleteRequest request) {
         PasswordChangeSession session = resolveSession(userId, request.sessionId());
 

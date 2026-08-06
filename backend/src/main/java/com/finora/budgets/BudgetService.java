@@ -82,14 +82,24 @@ public class BudgetService {
      * partway through (e.g. the budget save failing after the category save already committed)
      * could leave an orphan category with no budget behind it.
      *
-     * Also closes a real, previously unhandled race: findByUserIdAndCategoryId().orElseGet(new)
-     * then save() is a check-then-act -- two concurrent upserts for the same category could both
-     * see no existing budget and both try to INSERT. budgets(user_id, category_id) already has a
-     * UNIQUE constraint (V1__init_schema.sql) preventing the actual duplicate-row corruption, but
-     * nothing here ever caught the resulting DataIntegrityViolationException -- the loser of that
-     * race got an unhandled 500 instead of the "update the existing budget" behavior upsert()'s
-     * own name promises. Same fix shape as NetWorthService.saveSnapshotForToday()'s equivalent
-     * bug: catch it and update the concurrent winner's row instead.
+     * <p>findByUserIdAndCategoryId().orElseGet(new) then save() is a check-then-act, and
+     * budgets(user_id, category_id) has a UNIQUE constraint (V1__init_schema.sql) that stops two
+     * concurrent upserts corrupting the table. This method used to wrap the save in a
+     * try/catch(DataIntegrityViolationException) claiming to convert that race into an update of
+     * the winner's row. <b>That catch was unreachable and has been removed.</b> Budget extends
+     * BaseEntity, whose id is {@code @GeneratedValue} on a UUID assigned in memory, so save()
+     * routes through merge() and the INSERT is deferred to the flush at commit -- which happens
+     * after this method has already returned. The try block completed without exception every
+     * time, and the recovery inside the catch could not have worked anyway: by the time a
+     * constraint violation exists the transaction is already rollback-only, and re-reading and
+     * re-saving inside it fails too (the rule MerchantNormalizationEngine.resolve states as "no
+     * handling un-poisons it").
+     *
+     * <p>What actually happens on a lost race, then and now: the violation surfaces at commit,
+     * Spring translates it to DataIntegrityViolationException, and GlobalExceptionHandler answers
+     * 409 CONFLICT with "refresh and try again". That is a correct, honest response to a genuine
+     * double-submit. Dead code plus a comment asserting a behaviour the code does not have is
+     * strictly worse than neither, because it stops the next reader re-investigating.
      */
     @Transactional
     public BudgetDto upsert(UUID userId, BudgetDto.UpsertRequest req) {
@@ -106,14 +116,7 @@ public class BudgetService {
         budget.setUserId(userId);
         budget.setCategoryId(category.getId());
         budget.setMonthlyLimit(req.monthlyLimit());
-        Budget saved;
-        try {
-            saved = budgetRepository.save(budget);
-        } catch (org.springframework.dao.DataIntegrityViolationException e) {
-            saved = budgetRepository.findByUserIdAndCategoryId(userId, category.getId()).orElseThrow(() -> e);
-            saved.setMonthlyLimit(req.monthlyLimit());
-            saved = budgetRepository.save(saved);
-        }
+        Budget saved = budgetRepository.save(budget);
         // Bug fix: this service never called AuditService at all, unlike every other mutating
         // service in the codebase (see AuditService's own class doc, which names Budget/Goal as
         // the known-remaining gap) -- a budget limit change was invisible in the general activity

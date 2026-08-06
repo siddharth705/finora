@@ -32,13 +32,13 @@ import java.util.UUID;
  * against a merchant's category distribution, recomputes confidence from real evidence, writes
  * an append-only audit trail, and supports undo.
  *
- * Deliberately NOT wired into TransactionService/ImportService yet - per the spec's Milestone A
- * scope, this is built and tested standalone first. When Milestone B integrates it, confirm()
- * will need to run with Propagation.REQUIRES_NEW so a learning-update failure doesn't roll back
- * the caller's already-applied category change (spec Section 10: "Learning update fails after a
- * transaction has been categorized" - do NOT rollback the category, only retry/flag learning).
- * That propagation change is out of scope for this milestone and left as a one-line TODO rather
- * than solved speculatively now.
+ * This IS now wired into TransactionService/ImportService (the "deliberately NOT wired in yet"
+ * note this comment used to carry expired at Milestone B). The isolation requirement it recorded
+ * -- spec Section 10, "Learning update fails after a transaction has been categorized": do NOT
+ * rollback the category, only retry/flag learning -- is still unmet, and the one-line
+ * Propagation.REQUIRES_NEW it proposed is NOT the fix. See confirm()'s own doc comment for why
+ * that annotation would fail every first-time merchant on a foreign key, and what closing this
+ * actually requires.
  *
  * Financial Intelligence Workspace, Learning Engine module additions: reset() (bulk-clear a
  * merchant's distribution, distinct from undo()'s one-step-back), timeline()/summary() (the
@@ -88,6 +88,30 @@ public class MerchantLearningService {
      * confirmed category was already the top pick going in. Audited as CORRECTED if a different
      * category was previously the top pick - this IS the conflict-detection the spec calls for,
      * expressed as "did the leading category change" rather than a separate conflict flag.
+     */
+    /**
+     * <p><b>Known defect, deliberately not closed with {@code REQUIRES_NEW} -- that fix does not
+     * work here, and the class comment above is wrong to prescribe it.</b> The exposure is real:
+     * the {@code filter(...).findFirst().orElseGet(...)} below is a check-then-act against V7's
+     * {@code UNIQUE(user_id, merchant_id, category_id)}, and because this joins the caller's
+     * transaction, a lost race takes the caller down with it -- on
+     * {@code ImportService.confirm}, that is every transaction insert for a statement the user
+     * has already reviewed.
+     *
+     * <p>{@code REQUIRES_NEW} would trade a rare race for a constant failure.
+     * {@code merchant_category_learning} carries {@code NOT NULL} foreign keys to both
+     * {@code merchants(id)} and {@code categories(id)}, and on the path that actually calls this
+     * ({@code CategorizationService.learn} -> {@code MerchantNormalizationEngine.resolve} /
+     * {@code resolveOrCreateCategory}) both parent rows are routinely created in the CALLER's
+     * still-uncommitted transaction. A suspended-and-restarted inner transaction cannot see them,
+     * so every first-time merchant or first-time category would fail its foreign-key check. That
+     * is why {@code StatementAnalysisRecorder} can use {@code REQUIRES_NEW} and this cannot: its
+     * evidence row has no foreign key into the work being analysed.
+     *
+     * <p>Closing this properly means removing the race rather than isolating it -- which is the
+     * rule {@code MerchantNormalizationEngine.resolve} already states ("The write simply must not
+     * be attempted"), and which needs a write-path change here, not an annotation. Left open
+     * rather than papered over, so the next reader does not ship the foreign-key regression.
      */
     @Transactional
     public LearningResult confirm(UUID userId, UUID merchantId, UUID categoryId) {

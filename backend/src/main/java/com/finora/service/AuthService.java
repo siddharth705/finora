@@ -278,7 +278,23 @@ public class AuthService {
         return User.SCOPE_ADMIN.equalsIgnoreCase(request.scope()) ? User.SCOPE_ADMIN : User.SCOPE_USER;
     }
 
-    @Transactional
+    /**
+     * <p><b>{@code noRollbackFor} is load-bearing here, exactly as it is on {@link #refresh}.</b>
+     * The bad-password path WRITES and then THROWS: {@link #registerFailedLogin} increments
+     * {@code failedLoginAttempts}, sets {@code lockedUntil} once the configured maximum is
+     * reached, and records an {@code ACCOUNT_LOCKED} audit entry -- and then this method throws
+     * {@code ApiException} to reject the attempt. {@code ApiException} is a RuntimeException, so
+     * under the default rollback rule every one of those writes was discarded the instant it was
+     * reported. The counter never persisted, never reached
+     * {@code settings.getMaxFailedLoginAttempts()}, and per-account lockout therefore did not
+     * function at all -- leaving {@code RateLimitFilter}'s per-IP limiter as the only working half
+     * of a two-part defence its own comment describes as complementary.
+     *
+     * <p>Invisible to the unit tests here for the same reason {@code RefreshTokenService.rotate}
+     * documents: they mock {@code userRepository}, so {@code save} was called, the verification
+     * passed, and no transaction existed to undo it.
+     */
+    @Transactional(noRollbackFor = ApiException.class)
     public AuthResponse login(LoginRequest request) {
         // Resolve email-or-phone down to the user's actual email up front -- everything below
         // this line (lockout check, Spring Security authentication, JWT subject) is unchanged

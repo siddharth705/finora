@@ -115,7 +115,15 @@ public class CategorizationService {
 
     /** Called whenever a user sets/corrects a transaction's category — records a real
      *  confirmation against the merchant's distribution (with audit trail + undo support),
-     *  not a flat overwrite of a single "last category" value. */
+     *  not a flat overwrite of a single "last category" value.
+     *
+     *  <p>Note this path does NOT yet satisfy spec Section 10 ("Learning update fails after a
+     *  transaction has been categorized" -- do NOT rollback the category). A failure inside
+     *  confirm() still propagates and still takes the caller's transaction with it; a try/catch
+     *  here would not change that, because a constraint violation has already marked the shared
+     *  transaction rollback-only by the time it could be caught. See
+     *  {@link MerchantLearningService#confirm}'s doc comment for why the obvious
+     *  {@code REQUIRES_NEW} fix is unavailable and what closing it actually takes. */
     public void learn(UUID userId, String description, UUID categoryId) {
         Merchant merchant = merchantNormalizationEngine.resolve(userId, description);
         merchantLearningService.confirm(userId, merchant.getId(), categoryId);

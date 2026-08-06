@@ -10,6 +10,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.io.IOException;
 import java.util.Map;
@@ -125,12 +127,40 @@ public class SetupService {
         // immediately, not just "until this token's 15-minute expiry" (application.yml).
         roleService.revokeRole(bootstrapUserId, bootstrapUserId, "BOOTSTRAP_ADMIN");
 
-        // setup_completed was already flipped atomically at the top of this method -- see
-        // tryMarkSetupCompleted's own doc comment for why it moved there.
-        deleteSetupKeyFileIfPresent();
-
         auditService.record(bootstrapUserId, "SETUP_COMPLETED", "User", newAdmin.getId(),
                 Map.of("newAdminEmail", newAdmin.getEmail()));
+
+        // setup_completed was already flipped atomically at the top of this method -- see
+        // tryMarkSetupCompleted's own doc comment for why it moved there.
+        //
+        // Deleting the key file is an IRREVERSIBLE side effect on a non-transactional resource,
+        // so it must not happen until this transaction is known to have committed. It used to run
+        // inline, ahead of the audit insert above: any failure after that point -- the insert
+        // itself, a constraint flushed at commit, a connection drop -- rolled the database back to
+        // setup_completed = false with no SUPER_ADMIN created, while the key file stayed deleted.
+        // BootstrapService only ever mints a bootstrap account when setup_completed is false AND
+        // no such account exists, so the restart takes its "already exists" branch and never
+        // issues a replacement: a fresh install recoverable only by direct database surgery.
+        // afterCommit runs only on the success path, and its own failure is already best-effort
+        // (see deleteSetupKeyFileIfPresent).
+        runAfterCommit(this::deleteSetupKeyFileIfPresent);
+    }
+
+    /** Defers work until the current transaction has actually committed. Falls back to running it
+     *  inline when there is no active transaction synchronization, so a caller outside a
+     *  transaction (tests, a future non-transactional path) still behaves sensibly rather than
+     *  silently skipping the work. */
+    private static void runAfterCommit(Runnable action) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            action.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                action.run();
+            }
+        });
     }
 
     /**
