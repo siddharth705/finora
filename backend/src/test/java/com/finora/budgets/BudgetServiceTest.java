@@ -150,27 +150,39 @@ class BudgetServiceTest {
         assertThat(transactional).isNotNull();
     }
 
+    /**
+     * Replaces {@code upsert_recoversGracefully_whenAConcurrentUpsertWinsTheUniqueConstraintRace},
+     * which asserted a recovery that could not happen.
+     *
+     * <p>That test stubbed {@code budgetRepository.save(...)} to throw
+     * DataIntegrityViolationException synchronously, then verified the catch block's re-read and
+     * re-save ran. Both halves were fiction. Budget extends BaseEntity, whose id is
+     * {@code @GeneratedValue} on a UUID assigned in memory, so Spring Data's isNew() check sends
+     * save() through merge() and the INSERT is deferred to the flush at commit -- after upsert()
+     * has already returned. A real save() therefore never threw here, the catch never ran, and
+     * the violation surfaced at commit instead. Even had it fired, the recovery inside it would
+     * have run against a transaction the violation had already marked rollback-only.
+     *
+     * <p>A mocked repository cannot show any of that, which is exactly why the test passed for as
+     * long as it did. What the code actually guarantees is what is asserted here: budgets are
+     * upserted by value on the normal path, and a genuine concurrent double-submit is left to the
+     * UNIQUE constraint and answered as 409 CONFLICT by GlobalExceptionHandler's existing
+     * DataIntegrityViolationException handler.
+     */
     @Test
-    void upsert_recoversGracefully_whenAConcurrentUpsertWinsTheUniqueConstraintRace() {
-        // budgets(user_id, category_id) already has a UNIQUE constraint (V1__init_schema.sql) --
-        // this simulates losing that race (a concurrent upsert for the same category created the
-        // row first) and proves upsert() now updates that row instead of surfacing the raw
-        // DataIntegrityViolationException.
+    void upsert_updatesTheExistingRow_ratherThanInsertingASecondBudgetForTheSameCategory() {
         Category dining = category("Dining");
         when(categoryRepository.findByUserIdAndName(userId, "Dining")).thenReturn(Optional.of(dining));
 
-        Budget winnersRow = budget(dining.getId(), new BigDecimal("3000.00"));
-        when(budgetRepository.findByUserIdAndCategoryId(userId, dining.getId()))
-                .thenReturn(Optional.empty())
-                .thenReturn(Optional.of(winnersRow));
-        when(budgetRepository.save(any()))
-                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("duplicate key"))
-                .thenAnswer(inv -> inv.getArgument(0));
+        Budget existing = budget(dining.getId(), new BigDecimal("3000.00"));
+        when(budgetRepository.findByUserIdAndCategoryId(userId, dining.getId())).thenReturn(Optional.of(existing));
+        when(budgetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         BudgetDto result = budgetService.upsert(userId, new BudgetDto.UpsertRequest("Dining", new BigDecimal("6000.00")));
 
         assertThat(result.monthlyLimit()).isEqualByComparingTo("6000.00");
-        assertThat(winnersRow.getMonthlyLimit()).isEqualByComparingTo("6000.00");
-        verify(budgetRepository, times(2)).save(any());
+        assertThat(existing.getMonthlyLimit()).isEqualByComparingTo("6000.00");
+        // Exactly one write. Two means the dead catch has been reintroduced.
+        verify(budgetRepository, times(1)).save(any());
     }
 }

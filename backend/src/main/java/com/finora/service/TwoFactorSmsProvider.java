@@ -1,6 +1,7 @@
 package com.finora.service;
 
 import com.finora.config.SmsProperties;
+import com.finora.util.PhoneMasking;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -61,15 +62,44 @@ public class TwoFactorSmsProvider implements SmsProvider {
             boolean success = response != null && "Success".equalsIgnoreCase(response.Status());
             String messageId = response != null ? response.Details() : null;
             if (success) {
-                log.info("SMS sent via 2Factor to {} (messageId={})", request.to(), messageId);
+                log.info("SMS sent via 2Factor to {} (messageId={})", PhoneMasking.mask(request.to()), messageId);
                 return SmsResult.success(ProviderType.TWO_FACTOR, messageId);
             }
-            log.error("2Factor reported failure sending SMS to {}: {}", request.to(), response);
+            log.error("2Factor reported failure sending SMS to {}: status={}",
+                    PhoneMasking.mask(request.to()), response == null ? "no response body" : response.Status());
             return SmsResult.failure(ProviderType.TWO_FACTOR, "2Factor reported a non-success status");
         } catch (Exception e) {
-            log.error("Failed to send SMS to {}: {}", request.to(), e.getMessage());
-            return SmsResult.failure(ProviderType.TWO_FACTOR, e.getMessage());
+            log.error("Failed to send SMS to {}: {}", PhoneMasking.mask(request.to()), redact(e.getMessage()));
+            return SmsResult.failure(ProviderType.TWO_FACTOR, redact(e.getMessage()));
         }
+    }
+
+    /**
+     * Removes the API key from anything on its way to a log or a result object.
+     *
+     * <p>2Factor's API takes its key as a PATH SEGMENT, not a header or a body field, so the live
+     * credential is part of the request URI by design and cannot be moved. Spring's
+     * {@code RestClient} surfaces transport failures as {@code ResourceAccessException}, whose
+     * message embeds the full URI -- {@code I/O error on POST request for
+     * "https://2factor.in/API/V1/<KEY>/ADDON_SERVICES/SEND/TSMS": connect timed out}. So a DNS
+     * blip, a timeout or a TLS failure, none of which requires any attacker action, wrote a
+     * long-lived transactional SMS credential into the application log at ERROR level, where
+     * whatever aggregator the deployment uses then retained it.
+     *
+     * <p>The same string was also handed to {@code SmsResult.failure(...)}. Nothing reads it
+     * today beyond {@code result.success()}, but a result object is exactly the kind of thing a
+     * future caller surfaces to a client, and the key must not be sitting in it when that
+     * happens.
+     *
+     * <p>Redacting at the boundary rather than trying to recognise the exception type: the key is
+     * a known constant, so removing it by value cannot miss a wrapper or a cause chain that
+     * happens to quote the URI.
+     */
+    private String redact(String message) {
+        if (message == null) return null;
+        String key = smsProperties.getTwoFactorApiKey();
+        if (key == null || key.isBlank()) return message;
+        return message.replace(key, "***REDACTED***");
     }
 
     @Override

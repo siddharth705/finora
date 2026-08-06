@@ -16,6 +16,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.*;
 
 class RecurringServiceTest {
@@ -171,7 +172,10 @@ class RecurringServiceTest {
         // unstubbed empty-list default, and the "did a MARK_SUBSCRIPTION rule match" check always
         // saw zero matches regardless of what was configured above -- the test was asserting on
         // behavior it wasn't actually exercising.
-        when(ruleEngineService.evaluateSideEffectRules(eq(userId), any(), any(), any(), any()))
+        when(ruleEngineService.sideEffectRuleSet(userId)).thenReturn(List.of(markSubscriptionRule()));
+        // The service now hoists the two rule queries out of the per-transaction loop and
+        // evaluates against the pre-fetched set, so this stubs the List<CategoryRule> overload.
+        when(ruleEngineService.evaluateSideEffectRules(anyList(), any(), any(), any(), any()))
                 .thenReturn(List.of(new RuleEngineService.RuleMatch(markSubscriptionRule())));
 
         recurringService.detectForUser(userId);
@@ -195,7 +199,7 @@ class RecurringServiceTest {
         recurringService.detectForUser(userId);
 
         assertThat(txns).allSatisfy(t -> assertThat(t.isRecurring()).isTrue());
-        verify(ruleEngineService, never()).evaluateSideEffectRules(any(), any(), any(), any(), any());
+        verify(ruleEngineService, never()).evaluateSideEffectRules(anyList(), any(), any(), any(), any());
     }
 
     @Test

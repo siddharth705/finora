@@ -41,7 +41,7 @@ public class UserController {
     }
 
     @PutMapping
-    public ApiResponse<UserSettingsDto> update(@RequestBody UserSettingsDto.UpdateRequest request) {
+    public ApiResponse<UserSettingsDto> update(@Valid @RequestBody UserSettingsDto.UpdateRequest request) {
         return ApiResponse.ok(userSettingsService.update(currentUser.id(), request), "Preferences saved");
     }
 

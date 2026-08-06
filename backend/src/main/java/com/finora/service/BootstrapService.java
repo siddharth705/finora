@@ -12,7 +12,6 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.security.SecureRandom;
@@ -64,8 +63,28 @@ public class BootstrapService implements ApplicationRunner {
         this.setupKeyFileWriter = setupKeyFileWriter;
     }
 
+    /**
+     * <p><b>Deliberately not {@code @Transactional}.</b> It used to be, and that silently defeated
+     * the race handling below. Once a constraint violation fires, the JPA session marks the
+     * surrounding transaction rollback-only; catching the exception and returning normally then
+     * makes Spring throw {@code UnexpectedRollbackException} at commit -- which propagates out of
+     * this {@code ApplicationRunner} and aborts startup, the exact outcome the catch was written
+     * to prevent. {@code MerchantNormalizationEngine.resolve} states the rule this ran into:
+     * "By the time the constraint fires the transaction is already poisoned, and no handling
+     * un-poisons it."
+     *
+     * <p>With no outer transaction, the violation is raised and rolled back entirely inside
+     * {@code saveAndFlush}'s own repository-level transaction, so it arrives here as an ordinary
+     * catchable exception with nothing left poisoned behind it.
+     *
+     * <p>Atomicity is preserved by construction rather than by a transaction: the BOOTSTRAP_ADMIN
+     * role is resolved and attached BEFORE the single save, so the user row and its {@code
+     * user_roles} grant are written in one flush. There is no longer an intermediate state where
+     * a bootstrap account exists without the role that makes it usable -- which matters more than
+     * it looks, because a half-created account still takes the "already exists" early return
+     * above on the next startup and would never be repaired.
+     */
     @Override
-    @Transactional
     public void run(ApplicationArguments args) {
         // Single flag lookup (Gap 6), not a "SELECT * FROM users WHERE role='SUPER_ADMIN'" scan
         // on every boot -- and, per Gap 7, this is the ONLY condition that ever creates a
@@ -103,14 +122,23 @@ public class BootstrapService implements ApplicationRunner {
         // with a plain WHERE clause, not a schema change.
         bootstrap.setRole("BOOTSTRAP_ADMIN");
 
+        // Resolved and attached BEFORE the save, so the users row and its user_roles grant go in
+        // as one unit -- see this method's doc comment for why that replaces the transaction this
+        // method used to carry. A missing role here is a genuine deployment fault (the migration
+        // did not run) and still aborts startup loudly, before anything has been written.
+        Role bootstrapRole = roleRepository.findByName("BOOTSTRAP_ADMIN")
+                .orElseThrow(() -> new IllegalStateException(
+                        "BOOTSTRAP_ADMIN role missing -- V33__bootstrap_admin.sql did not run"));
+        bootstrap.getRoles().add(bootstrapRole);
+
         try {
-            // saveAndFlush, not save: a plain save()'s INSERT is normally deferred until this
-            // @Transactional method commits, which happens *after* run() returns -- a try-catch
-            // around a plain save() would never see a constraint violation at all. Flushing forces
-            // the INSERT (and therefore User.email's unique constraint check) to happen right here,
-            // where a concurrent race against another instance/thread can actually be caught,
-            // instead of surfacing later as an uncaught exception that aborts application startup
-            // entirely (Spring Boot treats any exception from an ApplicationRunner as fatal).
+            // saveAndFlush, not save: a plain save()'s INSERT is deferred to the end of the
+            // repository's own transaction, and the exception would then surface after this
+            // try block rather than inside it. Flushing forces the INSERT -- and therefore
+            // User.email's unique constraint check -- to happen right here, where a concurrent
+            // race against another instance can actually be caught, instead of surfacing later as
+            // an uncaught exception that aborts application startup entirely (Spring Boot treats
+            // any exception from an ApplicationRunner as fatal).
             bootstrap = userRepository.saveAndFlush(bootstrap);
         } catch (DataIntegrityViolationException e) {
             // Lost a benign race: another instance (or another thread, in a multi-instance
@@ -121,12 +149,6 @@ public class BootstrapService implements ApplicationRunner {
             log.info("Bootstrap admin account was created concurrently by another instance; skipping.");
             return;
         }
-
-        Role bootstrapRole = roleRepository.findByName("BOOTSTRAP_ADMIN")
-                .orElseThrow(() -> new IllegalStateException(
-                        "BOOTSTRAP_ADMIN role missing -- V33__bootstrap_admin.sql did not run"));
-        bootstrap.getRoles().add(bootstrapRole);
-        bootstrap = userRepository.save(bootstrap);
 
         // Not attributed to any acting admin -- there isn't one yet, this is the system creating
         // its own installer identity. auditService.record's actor field is this account itself,

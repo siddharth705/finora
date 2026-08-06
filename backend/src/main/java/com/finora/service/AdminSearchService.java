@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import com.finora.util.LikePatterns;
 
 /**
  * Global Search (Admin Portal Phase 2) -- one query fanned out across every admin entity that has
@@ -56,8 +57,12 @@ public class AdminSearchService {
 
     @Transactional(readOnly = true)
     public List<SearchResultDto> search(String rawQuery) {
-        String q = rawQuery == null ? "" : rawQuery.trim();
-        if (q.isEmpty()) return List.of();
+        String trimmed = rawQuery == null ? "" : rawQuery.trim();
+        if (trimmed.isEmpty()) return List.of();
+        // Escaped once here rather than in each searchX() below -- all three repository queries
+        // this fans out to bind the term into a LIKE, where % and _ are wildcards even inside a
+        // bound parameter. See LikePatterns.
+        String q = LikePatterns.escape(trimmed);
 
         List<SearchResultDto> results = new ArrayList<>();
         results.addAll(searchUsers(q));

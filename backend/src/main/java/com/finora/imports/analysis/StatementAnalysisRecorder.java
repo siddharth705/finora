@@ -96,10 +96,23 @@ public class StatementAnalysisRecorder {
     /**
      * {@code SA-20260806-0145}. The date makes it readable at a glance; the sequence makes it
      * unique without a per-day counter that two concurrent uploads could race on.
+     *
+     * <p>Bug fix: this used {@code seq % 10_000}, which truncated an unbounded database sequence
+     * to four digits, so the 10,001st reference in a calendar day repeated the 1st. The column is
+     * {@code VARCHAR(24) NOT NULL UNIQUE} (V59), so the insert was then rejected, the surrounding
+     * {@code catch (RuntimeException)} logged "the layout that defeated the parser is now
+     * unrecorded" and returned null -- the table quietly stopped accepting the evidence V59
+     * exists to collect ("Every upload leaves a record, whether or not it ever becomes an
+     * import"). The modulo was never a column-width constraint: VARCHAR(24) leaves ample room,
+     * and the doc comment's own claim that "the sequence makes it unique" is only true once the
+     * sequence is allowed to be the value.
+     *
+     * <p>{@code %04d} is kept as a minimum width, so everyday references still read
+     * {@code SA-20260806-0145} and only genuinely large sequences grow past four digits.
      */
     private String nextReference() {
         long seq = repository.nextReferenceNumber();
-        return "SA-" + LocalDate.now(ZoneOffset.UTC).format(DAY) + "-" + String.format("%04d", seq % 10_000);
+        return "SA-" + LocalDate.now(ZoneOffset.UTC).format(DAY) + "-" + String.format("%04d", seq);
     }
 
     /**

@@ -50,7 +50,7 @@ public interface MerchantRepository extends JpaRepository<Merchant, UUID> {
      *  one per user who happens to have created it. */
     @Query("""
         SELECT DISTINCT m.canonicalName FROM Merchant m
-        WHERE LOWER(m.canonicalName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%'))
+        WHERE LOWER(m.canonicalName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')) ESCAPE '\\'
         ORDER BY m.canonicalName ASC
         """)
     List<String> searchDistinctCanonicalNames(@Param("q") String q, Pageable pageable);

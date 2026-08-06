@@ -17,5 +17,28 @@ public record UserSettingsDto(
         // "Last changed" only renders when this is non-null, never a guessed fallback date.
         Instant passwordChangedAt
 ) {
-    public record UpdateRequest(BigDecimal lowBalanceThreshold, String theme, String timezone, String fullName) {}
+    /**
+     * <p>Bug fix: this record declared NO constraints at all, and UserController.update() applied
+     * no {@code @Valid} either -- so the self-service path accepted an unbounded {@code fullName}
+     * and an arbitrary {@code theme}, while the two other writers to the same columns
+     * ({@code RegisterRequest} and {@code AdminUpdateUserRequest}) both constrain them. Two
+     * writers to one field, one validated and one not, is the same asymmetry that produced the
+     * un-normalized phone numbers {@code AdminUserService.updateProfile} documents having had to
+     * repair. Here it meant an over-long value reached the database and came back as a confusing
+     * 409 from the constraint rather than a message naming the field.
+     *
+     * <p>{@code theme} is bounded but deliberately not enumerated here -- {@code UserSettingsService}
+     * validates it against the real option list, next to the timezone check, because both are
+     * questions about a value's meaning rather than its shape.
+     */
+    public record UpdateRequest(
+            @jakarta.validation.constraints.DecimalMin(value = "0.0", message = "Low balance threshold can't be negative")
+            @jakarta.validation.constraints.Digits(integer = 12, fraction = 2, message = "Low balance threshold must be a money amount")
+            BigDecimal lowBalanceThreshold,
+            @jakarta.validation.constraints.Size(max = 20, message = "Theme is not a valid option")
+            String theme,
+            @jakarta.validation.constraints.Size(max = 64, message = "Timezone is too long to be a valid zone id")
+            String timezone,
+            @jakarta.validation.constraints.Pattern(regexp = AuthDtos.FULL_NAME_REGEXP, message = AuthDtos.FULL_NAME_MESSAGE)
+            String fullName) {}
 }

@@ -80,16 +80,16 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
           AND (:amountMin IS NULL OR t.amount >= :amountMin)
           AND (:amountMax IS NULL OR t.amount <= :amountMax)
           AND (:keyword IS NULL
-               OR LOWER(t.description) LIKE LOWER(CONCAT('%', CAST(:keyword AS string), '%'))
-               OR LOWER(t.merchant) LIKE LOWER(CONCAT('%', CAST(:keyword AS string), '%'))
+               OR LOWER(t.description) LIKE LOWER(CONCAT('%', CAST(:keyword AS string), '%')) ESCAPE '\\'
+               OR LOWER(t.merchant) LIKE LOWER(CONCAT('%', CAST(:keyword AS string), '%')) ESCAPE '\\'
                OR t.accountId IN (
                     SELECT a.id FROM Account a
                     WHERE a.userId = :userId
                       AND (
-                           LOWER(a.name) LIKE LOWER(CONCAT('%', CAST(:keyword AS string), '%'))
-                        OR (a.accountHolderName IS NOT NULL AND LOWER(a.accountHolderName) LIKE LOWER(CONCAT('%', CAST(:keyword AS string), '%')))
-                        OR (a.branchName IS NOT NULL AND LOWER(a.branchName) LIKE LOWER(CONCAT('%', CAST(:keyword AS string), '%')))
-                        OR (a.ifscCode IS NOT NULL AND LOWER(a.ifscCode) LIKE LOWER(CONCAT('%', CAST(:keyword AS string), '%')))
+                           LOWER(a.name) LIKE LOWER(CONCAT('%', CAST(:keyword AS string), '%')) ESCAPE '\\'
+                        OR (a.accountHolderName IS NOT NULL AND LOWER(a.accountHolderName) LIKE LOWER(CONCAT('%', CAST(:keyword AS string), '%')) ESCAPE '\\')
+                        OR (a.branchName IS NOT NULL AND LOWER(a.branchName) LIKE LOWER(CONCAT('%', CAST(:keyword AS string), '%')) ESCAPE '\\')
+                        OR (a.ifscCode IS NOT NULL AND LOWER(a.ifscCode) LIKE LOWER(CONCAT('%', CAST(:keyword AS string), '%')) ESCAPE '\\')
                         OR a.bankId IN :bankIds
                       )
                ))

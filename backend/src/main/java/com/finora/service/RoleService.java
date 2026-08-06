@@ -76,6 +76,20 @@ public class RoleService {
         Role role = roleRepository.findByName(roleName)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "No such role: " + roleName));
 
+        // actingAdminId used to reach this method for the audit entry alone and was never compared
+        // to the target, so any holder of ROLE_MANAGE could grant themselves SUPER_ADMIN in one
+        // call. AdminUserService.suspend already blocks self-targeting on the far less
+        // consequential action ("worth blocking outright rather than trusting every caller of this
+        // UI to never misclick on their own row"); escalation deserves at least the same.
+        //
+        // Grant only. Self-REVOKE stays allowed: it de-escalates, and SetupService.completeSetup
+        // depends on it to strip BOOTSTRAP_ADMIN from the bootstrap account itself.
+        if (userId.equals(actingAdminId)) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "You cannot grant a role to your own account. Ask another administrator to do it.");
+        }
+        requireScopeCanHold(user, role);
+
         user.getRoles().add(role);
         userRepository.save(user);
         auditService.record(userId, "ROLE_ASSIGNED", "User", userId,
@@ -117,6 +131,19 @@ public class RoleService {
         Role role = roleRepository.findByName(roleName)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "No such role: " + roleName));
 
+        // The platform must never be left with no account able to administer it. Revoking the
+        // last SUPER_ADMIN was an irreversible lockout: BootstrapService only ever mints a
+        // bootstrap account when setup_completed is false, and by this point it is true, so there
+        // is no automated way back -- recovery means direct database access. deleteRole() and
+        // deletePermission() already refuse to remove something still in use; this is the same
+        // class of guard on the one operation that did not have it.
+        if (User.SUPER_ADMIN_ROLE.equals(roleName)
+                && userRepository.countActiveUsersWithRole(User.SUPER_ADMIN_ROLE, User.STATUS_ACTIVE) <= 1) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "This is the last active Super Admin account. Grant SUPER_ADMIN to another "
+                            + "account before revoking it from this one.");
+        }
+
         user.getRoles().remove(role);
         boolean clearedLegacyRole = roleName.equals(user.getRole());
         if (clearedLegacyRole) user.setRole(User.DEFAULT_ROLE);
@@ -126,6 +153,48 @@ public class RoleService {
         auditService.record(userId, "ROLE_REVOKED", "User", userId,
                 Map.of("role", roleName, "actorId", actingAdminId.toString(),
                         "legacyRoleCleared", Boolean.toString(clearedLegacyRole)));
+    }
+
+    /**
+     * Refuses to attach an admin-surface role to a consumer-app account.
+     *
+     * <p>V52 introduced {@code account_scope} so one person can hold a USER-portal and an
+     * ADMIN-portal account under the same email, and states that scope "is what login
+     * disambiguates on". It disambiguates login and nothing else: {@code JwtService} mints no
+     * scope claim, and {@code AuthorizationService.effectiveAuthorities}/{@code meAccess} compute
+     * authorities from roles alone without ever reading it. So an access token issued to a
+     * USER-scope account is indistinguishable from an ADMIN-scope one at every {@code
+     * @PreAuthorize} check, and the separation between the two portals rested entirely on nobody
+     * ever granting an admin role to a USER-scope account -- a convention of the V16 seed, not an
+     * invariant anything enforced.
+     *
+     * <p>This enforces it at the one place that can create that state. It is not a substitute for
+     * a scope claim carried in the token and checked at authorization time, which is the real
+     * fix; it closes the door that leads to the room.
+     *
+     * <p>"Admin-surface" is decided by evidence rather than by a hardcoded list: a role qualifies
+     * if it carries any permission at all. That is exact here -- every permission the schema
+     * seeds gates an {@code /api/v1/admin/**} or setup endpoint, and no user-facing endpoint in
+     * the application carries a {@code @PreAuthorize} of any kind. A role with no permissions
+     * (USER, and any custom role not yet granted one) stays freely assignable to either scope.
+     */
+    private static void requireScopeCanHold(User user, Role role) {
+        if (role.getPermissions().isEmpty()) return;
+        if (User.SCOPE_ADMIN.equalsIgnoreCase(user.getAccountScope())) return;
+        throw new ApiException(HttpStatus.FORBIDDEN,
+                "\"" + role.getName() + "\" grants admin permissions and can only be assigned to an "
+                        + "admin-portal account. This account is a consumer (USER-scope) account.");
+    }
+
+    /** Whether the acting admin holds {@code role}, by either the explicit user_roles grant or
+     *  the legacy User.role column -- both are live grants, as revokeRole's own doc comment
+     *  records. A missing actor is treated as holding nothing rather than as an error: this backs
+     *  a self-escalation guard, and the caller is already authenticated by the time it runs. */
+    private boolean actorHoldsRole(UUID actingAdminId, Role role) {
+        return userRepository.findById(actingAdminId)
+                .map(actor -> role.getName().equals(actor.getRole())
+                        || actor.getRoles().stream().anyMatch(r -> r.getName().equals(role.getName())))
+                .orElse(false);
     }
 
     // --- Role & Permission CRUD (ROLE_MANAGE / PERMISSION_MANAGE) -- see RoleAdminController ---
@@ -214,6 +283,13 @@ public class RoleService {
     public RoleDto addPermissionToRole(UUID actingAdminId, UUID roleId, UUID permissionId) {
         Role role = requireRole(roleId);
         Permission permission = requirePermission(permissionId);
+        // Same escalation as assignRole by a different route: rather than granting yourself a
+        // stronger role, attach a stronger permission to a role you already hold. actingAdminId
+        // was audit-only here too.
+        if (actorHoldsRole(actingAdminId, role)) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "You cannot add a permission to a role your own account holds. Ask another administrator to do it.");
+        }
         if (role.getPermissions().add(permission)) {
             roleRepository.save(role);
             auditService.record(actingAdminId, "ROLE_PERMISSION_GRANTED", "Role", roleId,

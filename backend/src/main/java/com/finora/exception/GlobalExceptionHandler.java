@@ -18,6 +18,9 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.Arrays;
+import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import java.time.format.DateTimeParseException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -164,6 +167,53 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleMalformedRequestBody(HttpMessageNotReadableException ex) {
         return ResponseEntity.badRequest()
                 .body(ApiResponse.error("The request body is missing or malformed.", "MALFORMED_REQUEST_BODY"));
+    }
+
+    /**
+     * The query-parameter and path-variable channels, closing the same gap
+     * {@link #handleMalformedRequestBody} closed for the request-body channel.
+     *
+     * <p>Three entirely client-caused binding failures had no handler, so all three fell through
+     * to the catch-all below: a 500 with {@code errorCode: "INTERNAL_ERROR"}, logged via
+     * {@code log.error("Unhandled exception on {} {}")}. That is the defect this class's own
+     * comment already names for malformed bodies -- "entirely the caller's mistake, not this
+     * server failing, but it came back as an opaque 500 ... polluting error logs/alerting with
+     * ordinary bad input" -- fixed on one channel and not the others.
+     *
+     * <p>Worth being explicit about why Spring did not cover this by itself:
+     * {@code DefaultHandlerExceptionResolver} DOES map all three to 400 out of the box, but a
+     * {@code @ExceptionHandler(Exception.class)} in a {@code @RestControllerAdvice} is consulted
+     * first and matches everything, so the catch-all shadowed the framework's own correct
+     * behaviour. Registering them explicitly is what un-shadows it.
+     *
+     * <ul>
+     *   <li>{@code DateTimeParseException} -- {@code ReportService.forMonth} calls
+     *       {@code YearMonth.parse} on a completely unvalidated {@code @RequestParam String month}.
+     *       {@code AdminUserAnalyticsController.parseMonth} already guards the identical parse and
+     *       returns a 400 naming the format; the self-service report path never got it.</li>
+     *   <li>{@code MethodArgumentTypeMismatchException} -- any of the {@code @PathVariable UUID}
+     *       bindings given a non-UUID path segment.</li>
+     *   <li>{@code MissingServletRequestParameterException} -- a required parameter omitted.</li>
+     * </ul>
+     *
+     * <p>The messages name the parameter but never echo the submitted value. In non-prod profiles
+     * the catch-all appends {@code ex.getMessage()}, and for a DateTimeParseException that quotes
+     * the raw user-supplied string straight back into the response.
+     */
+    @ExceptionHandler({
+            DateTimeParseException.class,
+            MethodArgumentTypeMismatchException.class,
+            MissingServletRequestParameterException.class
+    })
+    public ResponseEntity<ApiResponse<Void>> handleBindingFailure(Exception ex) {
+        String message = switch (ex) {
+            case MissingServletRequestParameterException missing ->
+                    "Required parameter '" + missing.getParameterName() + "' is missing.";
+            case MethodArgumentTypeMismatchException mismatch ->
+                    "Parameter '" + mismatch.getName() + "' is not in the expected format.";
+            default -> "A date parameter is not in the expected format (use YYYY-MM-DD, or YYYY-MM for a month).";
+        };
+        return ResponseEntity.badRequest().body(ApiResponse.error(message, "INVALID_PARAMETER"));
     }
 
     /**

@@ -20,6 +20,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import com.finora.util.LikePatterns;
 
 /**
  * The first real RBAC-gated endpoint — everything else in the API only ever operates on the
@@ -79,7 +80,10 @@ public class AdminController {
         Sort.Direction direction = "asc".equalsIgnoreCase(sortDir) ? Sort.Direction.ASC : Sort.Direction.DESC;
         Pageable pageable = PageRequest.of(safePage, safeSize, Sort.by(direction, "createdAt"));
 
-        String trimmedQ = (q != null && !q.isBlank()) ? q.trim() : null;
+        // Escaped for LIKE -- see LikePatterns. The audit Activity Feed searches action and
+        // entityType, where an underscore is ordinary ("USER_LOGIN"), so an unescaped _ made
+        // every such search quietly over-match.
+        String trimmedQ = (q != null && !q.isBlank()) ? LikePatterns.escape(q.trim()) : null;
         Instant from = dateFrom != null ? dateFrom.atStartOfDay(ZoneOffset.UTC).toInstant() : null;
         Instant to = dateTo != null ? dateTo.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant() : null;
 

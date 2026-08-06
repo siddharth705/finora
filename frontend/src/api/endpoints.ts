@@ -1,4 +1,5 @@
 import { api, rawApi, type ApiEnvelope } from './client';
+import { downloadBlob } from '../lib/download';
 import type {
 
   Account, AccountStatementGroup, BankInfo, Budget, DashboardSummary, DetectedAccountInfo, Goal,
@@ -10,6 +11,30 @@ import type {
 // account under one email and one mobile number, so login and password reset have to say which
 // one they mean. Not an authorization signal -- what an account may do is decided by its roles.
 const PORTAL_SCOPE = 'USER';
+
+/**
+ * Re-reads a blob-typed error response as the JSON envelope it actually is, so the message
+ * survives.
+ *
+ * Any request sent with responseType: 'blob' gets that response type applied to error responses
+ * too. The backend's error body is a normal ApiResponse envelope, but axios hands it over as a
+ * Blob, so every consumer that looks for `.data.message` — including client.ts's own interceptor —
+ * finds nothing and the actionable text is discarded. Mutates the error in place so the shape
+ * callers already expect (`err.response.data.message`) is what they get.
+ */
+async function withBlobErrorMessage(err: unknown): Promise<unknown> {
+  const response = (err as { response?: { data?: unknown } })?.response;
+  if (!(response?.data instanceof Blob)) return err;
+  try {
+    const parsed = JSON.parse(await response.data.text());
+    response.data = { message: parsed?.message, errorCode: parsed?.errorCode };
+  } catch {
+    // Not JSON (a proxy's HTML error page, a truncated body). Leave a usable message rather than
+    // an unreadable Blob, which is what the caller had before this existed.
+    response.data = { message: 'The download failed and the server did not explain why.' };
+  }
+  return err;
+}
 
 
 // Mirrors the backend's AuthDtos.AuthResponse. maskedPhone (see PhoneMasking on the backend) lets
@@ -142,7 +167,9 @@ export const transactionsApi = {
   updateCategory: (id: string, category: string) =>
     api.patch<Transaction>(`/transactions/${id}/category`, { category }).then((r) => r.data),
   remove: (id: string) => api.delete(`/transactions/${id}`),
-  bulkDelete: (ids: string[]) => api.post('/transactions/bulk-delete', ids),
+  // { ids } rather than a bare array: the endpoint now takes a validated DTO that bounds the
+  // list (MAX_BULK_IDS). It previously accepted an unbounded List<UUID> straight off the body.
+  bulkDelete: (ids: string[]) => api.post('/transactions/bulk-delete', { ids }),
   bulkRecategorize: (ids: string[], category: string) =>
     api.post('/transactions/bulk-category', { ids, category }),
 };
@@ -305,13 +332,19 @@ export const statementImportsApi = {
   // A plain <a href> can't carry the Bearer token, so this goes through the same authenticated
   // axios instance as everything else and triggers the browser download client-side instead.
   downloadFile: async (id: string, fileName: string) => {
-    const res = await api.get(`/statement-imports/${id}/file`, { responseType: 'blob' });
-    const url = window.URL.createObjectURL(res.data as Blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    link.click();
-    window.URL.revokeObjectURL(url);
+    try {
+      const res = await api.get(`/statement-imports/${id}/file`, { responseType: 'blob' });
+      downloadBlob(res.data as Blob, fileName);
+    } catch (err) {
+      // responseType: 'blob' applies to ERROR responses too, so on a 4xx/5xx error.response.data
+      // is a Blob rather than the parsed {message, errorCode} envelope. client.ts's interceptor
+      // tests error.response?.data?.message, a Blob has no such property, the normalising branch
+      // is skipped, and the caller gets an error with no readable detail -- for a path whose
+      // backend failures are specific and actionable ("Statement ... is in object storage, but no
+      // storage provider is configured"). Reading the blob back as text restores the envelope the
+      // rest of the app expects.
+      throw await withBlobErrorMessage(err);
+    }
   },
   // `password` is only ever needed for a statement originally uploaded as a protected PDF: the
   // stored bytes are still encrypted, and the password used at upload is deliberately never

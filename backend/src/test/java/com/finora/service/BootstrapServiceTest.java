@@ -65,10 +65,16 @@ class BootstrapServiceTest {
 
         bootstrapService.run(null);
 
-        verify(userRepository, atLeastOnce()).save(argThat(u ->
+        // ONE write, carrying the role already. run() used to saveAndFlush the user and then
+        // save() it again with the role attached, which left a window where a bootstrap account
+        // existed without the role that makes it usable -- and the "already exists" early return
+        // means a restart would never repair it. Asserting on saveAndFlush specifically is what
+        // pins that: a second save() reappearing is the regression.
+        verify(userRepository).saveAndFlush(argThat(u ->
                 "BOOTSTRAP_ADMIN".equals(u.getEmail())
                         && u.isPhoneVerified() // bypasses PhoneVerificationFilter -- see doc comment
                         && u.getRoles().contains(bootstrapRole)));
+        verify(userRepository, never()).save(any());
         verify(auditService).record(any(), eq("BOOTSTRAP_CREATED"), eq("User"), any());
         // Dev default (no FINORA_SETUP_KEY configured): the generated key is written to the file,
         // never logged directly -- see announceSetupKey's own doc comment for why.
@@ -110,20 +116,33 @@ class BootstrapServiceTest {
      * ever exist -- but without this catch, the LOSING instance's constraint-violation exception
      * would propagate out of run() and, per Spring Boot's ApplicationRunner contract, abort that
      * instance's entire application startup rather than just skip a redundant bootstrap creation.
+     *
+     * <p><b>This test could not see the bug it was written for.</b> run() was @Transactional, so
+     * in production the constraint violation marked the transaction rollback-only and returning
+     * normally from the catch made Spring throw UnexpectedRollbackException at commit -- aborting
+     * startup anyway, exactly what the catch existed to prevent. A Mockito test never sees it,
+     * because there is no transaction to commit; the same blind spot RefreshTokenService.rotate's
+     * own comment describes. run() is no longer transactional, which is what actually makes this
+     * assertion mean something.
      */
     @Test
-    void doesNotCrashApplicationStartup_whenAnotherInstanceWinsTheRaceToCreateBootstrap() {
+    void doesNotCrashApplicationStartup_whenAnotherInstanceWinsTheRaceToCreateBootstrap() throws Exception {
         when(platformSettingsService.getEntity()).thenReturn(settingsWith(false));
         when(userRepository.findByEmailIgnoreCaseAndAccountScope("BOOTSTRAP_ADMIN", "ADMIN")).thenReturn(Optional.empty());
+        Role bootstrapRole = new Role();
+        ReflectionTestUtils.setField(bootstrapRole, "id", UUID.randomUUID());
+        bootstrapRole.setName("BOOTSTRAP_ADMIN");
+        when(roleRepository.findByName("BOOTSTRAP_ADMIN")).thenReturn(Optional.of(bootstrapRole));
         when(userRepository.saveAndFlush(any(User.class)))
                 .thenThrow(new DataIntegrityViolationException("duplicate key value violates unique constraint"));
 
         bootstrapService.run(null); // must not throw
 
-        // Lost the race -- must not proceed to assign the role or log a creation event, since
-        // this instance never actually created anything.
-        verifyNoInteractions(roleRepository);
+        // The role is now resolved BEFORE the insert, so that a winning save writes the user and
+        // its grant in one flush -- meaning roleRepository IS touched on this path, unlike before.
+        // What must still not happen is any claim that this instance created something.
         verifyNoInteractions(auditService);
+        verify(setupKeyFileWriter, never()).write(any());
     }
 
     @Test

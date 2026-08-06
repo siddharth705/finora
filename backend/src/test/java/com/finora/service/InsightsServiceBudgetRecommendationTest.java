@@ -4,6 +4,7 @@ import com.finora.entity.Budget;
 import com.finora.entity.Category;
 import com.finora.entity.Transaction;
 import com.finora.repository.BudgetRepository;
+import com.finora.repository.UserRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.TransactionRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,7 +39,7 @@ class InsightsServiceBudgetRecommendationTest {
         transactionRepository = mock(TransactionRepository.class);
         categoryRepository = mock(CategoryRepository.class);
         budgetRepository = mock(BudgetRepository.class);
-        insightsService = new InsightsService(transactionRepository, categoryRepository, budgetRepository);
+        insightsService = new InsightsService(transactionRepository, categoryRepository, budgetRepository, mock(UserRepository.class));
 
         dining = new Category();
         ReflectionTestUtils.setField(dining, "id", UUID.randomUUID());

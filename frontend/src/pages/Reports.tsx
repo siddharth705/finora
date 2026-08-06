@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { reportsApi, type ReportData } from '../api/endpoints';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
+import { downloadBlob, toCsv } from '../lib/download';
 
 function fmt(n: number) {
   // Negative amounts (e.g. a month where spend exceeded income) must render as "-₹500",
@@ -9,19 +10,13 @@ function fmt(n: number) {
 }
 
 function downloadCsv(report: ReportData) {
-  const rows = [['Category', 'Amount'], ...report.categories.map((c) => [c.category, String(c.amount)])];
-  const csv = rows.map((r) => r.map((v) => `"${v.replace(/"/g, '""')}"`).join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `finora-report-${report.month}.csv`;
-  a.click();
-  // Without this, each export leaks the blob's object URL for the lifetime of the page --
-  // small per-click, but it never gets reclaimed on a long-lived SPA session. endpoints.ts's
-  // statementImportsApi.downloadFile already follows this revoke pattern; this brings
-  // Reports.tsx's newer download path in line with it.
-  URL.revokeObjectURL(url);
+  // Category names are user-controlled and end up in the first column, so cells are escaped
+  // against spreadsheet formula interpretation as well as against CSV parsing -- see csvCell.
+  // The download itself goes through downloadBlob so the object URL isn't revoked out from under
+  // the browser's own read. Both used to be open-coded here and in endpoints.ts, identically
+  // wrong in both places.
+  const csv = toCsv([['Category', 'Amount'], ...report.categories.map((c) => [c.category, c.amount])]);
+  downloadBlob(new Blob([csv], { type: 'text/csv' }), `finora-report-${report.month}.csv`);
 }
 
 export default function Reports() {

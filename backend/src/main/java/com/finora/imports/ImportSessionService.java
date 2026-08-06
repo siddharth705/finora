@@ -11,6 +11,7 @@ import com.finora.entity.ImportSession;
 import com.finora.exception.ApiException;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.security.OwnershipGuard;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,6 +37,10 @@ public class ImportSessionService {
     // comfortably cover "I'll finish this tomorrow," not as a carefully measured number.
     private static final Duration SESSION_TTL = Duration.ofHours(48);
 
+    /** How many expired sessions one import may clean up. Bounds the cost this adds to a user's
+     *  own upload; a backlog drains over the next few imports instead of in one long delete. */
+    private static final int CLEANUP_BATCH_SIZE = 50;
+
     private final ImportSessionRepository importSessionRepository;
     private final ObjectMapper objectMapper;
     private final StatementContentService statementContentService;
@@ -45,6 +50,30 @@ public class ImportSessionService {
         this.importSessionRepository = importSessionRepository;
         this.objectMapper = objectMapper;
         this.statementContentService = statementContentService;
+    }
+
+    /**
+     * Deletes expired sessions -- anyone's -- a bounded batch at a time.
+     *
+     * <p>Opportunistic rather than a {@code @Scheduled} sweep, because this codebase has no
+     * background job infrastructure (see {@code ImportSession}'s own doc comment). What changed is
+     * the SCOPE. It used to delete only the acting user's expired rows, which meant an expired
+     * session was removed only when that same user started another import -- so a user who
+     * imported once and never returned left the row, and the raw statement bytes on it, in the
+     * database forever. That is the whole one-time and trial population: by definition they never
+     * make the second call that would have cleaned up the first. The stated 48-hour retention was
+     * not enforced for exactly the people it applied to, on bank statements, which is the most
+     * sensitive data this product holds.
+     *
+     * <p>The original comment justified user-scoping as avoiding "a full-table scan every time
+     * anyone imports anything", and that concern is preserved: the query is bounded to
+     * {@link #CLEANUP_BATCH_SIZE} rows and ordered by the indexed expiry, so it is a small
+     * index-ordered slice, not a scan. A backlog drains across subsequent imports rather than in
+     * one unbounded delete that could stall a user's upload.
+     */
+    private void deleteExpiredSessions() {
+        importSessionRepository.deleteAll(importSessionRepository.findByExpiresAtBeforeOrderByExpiresAtAsc(
+                Instant.now(), PageRequest.of(0, CLEANUP_BATCH_SIZE)));
     }
 
     @Transactional
@@ -62,13 +91,7 @@ public class ImportSessionService {
     public ImportSession createSession(UUID userId, String fileName, byte[] fileContent,
                                         List<StagedRow> rows, DetectedAccountInfo detectedAccount,
                                         DocumentContext documentContext) {
-        // Opportunistic cleanup: this user's own expired sessions get deleted the next time they
-        // start a new import, rather than via a platform-wide @Scheduled sweep -- this codebase
-        // has no background job infrastructure yet (see ImportSession's own doc comment). Scoped
-        // to just this user's rows (cheap, bounded by their own usage) rather than a full-table
-        // scan every time anyone imports anything.
-        importSessionRepository.deleteAll(
-                importSessionRepository.findByUserIdAndExpiresAtBefore(userId, Instant.now()));
+        deleteExpiredSessions();
 
         ImportSession session = new ImportSession();
         session.setUserId(userId);
@@ -100,8 +123,7 @@ public class ImportSessionService {
     @Transactional
     public ImportSession createMultiSection(UUID userId, String fileName, byte[] fileContent,
                                              List<StagedAccountSection> sections, DocumentContext documentContext) {
-        importSessionRepository.deleteAll(
-                importSessionRepository.findByUserIdAndExpiresAtBefore(userId, Instant.now()));
+        deleteExpiredSessions();
 
         ImportSession session = new ImportSession();
         session.setUserId(userId);

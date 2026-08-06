@@ -64,7 +64,9 @@ export default function App() {
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/setup" element={<Setup />} />
-              <Route path="/verify-phone" element={<ProtectedRoute><VerifyPhone /></ProtectedRoute>} />
+              {/* allowUnverified: the one protected route an unverified admin must still reach,
+                  or there is no way to ever become verified. */}
+              <Route path="/verify-phone" element={<ProtectedRoute allowUnverified><VerifyPhone /></ProtectedRoute>} />
               <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
               <Route path="/users" element={<ProtectedRoute><Users /></ProtectedRoute>} />
               <Route path="/users/:id" element={<ProtectedRoute><UserDetail /></ProtectedRoute>} />

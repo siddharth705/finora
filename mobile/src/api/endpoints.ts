@@ -117,7 +117,9 @@ export const transactionsApi = {
   updateCategory: (id: string, category: string) =>
     api.patch<Transaction>(`/transactions/${id}/category`, { category }).then((r) => r.data),
   remove: (id: string) => api.delete(`/transactions/${id}`),
-  bulkDelete: (ids: string[]) => api.post('/transactions/bulk-delete', ids),
+  // { ids } rather than a bare array: the endpoint now takes a validated DTO that bounds the
+  // list (MAX_BULK_IDS). It previously accepted an unbounded List<UUID> straight off the body.
+  bulkDelete: (ids: string[]) => api.post('/transactions/bulk-delete', { ids }),
   bulkRecategorize: (ids: string[], category: string) =>
     api.post('/transactions/bulk-category', { ids, category }),
 };

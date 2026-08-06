@@ -7,6 +7,7 @@ import com.finora.imports.ImportConcurrencyLimiter;
 import com.finora.imports.ImportSessionService;
 import com.finora.security.CurrentUser;
 import com.finora.imports.ImportService;
+import com.finora.imports.StatementUpload;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -41,6 +42,9 @@ public class ImportController {
     // controller.
     @PostMapping(value = "/csv/stage", consumes = "multipart/form-data")
     public ResponseEntity<ApiResponse<StagingSessionResponse>> stage(@RequestParam("file") MultipartFile file) throws Exception {
+        // Before the limiter, deliberately: rejecting an empty file or a PDF posted to the CSV
+        // endpoint should not consume one of the six permits the expensive work is queued behind.
+        StatementUpload.requireReadable(file, StatementUpload.Format.CSV);
         return ResponseEntity.ok(ApiResponse.ok(
                 concurrencyLimiter.runGated(() -> importService.parseAndStageWithSession(currentUser.id(), file))));
     }
@@ -65,6 +69,7 @@ public class ImportController {
     public ResponseEntity<ApiResponse<PdfStagingSessionResponse>> stagePdf(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "password", required = false) String password) throws Exception {
+        StatementUpload.requireReadable(file, StatementUpload.Format.PDF);
         return ResponseEntity.ok(ApiResponse.ok(
                 concurrencyLimiter.runGated(() -> importService.parseAndStagePdfWithSession(currentUser.id(), file, password))));
     }

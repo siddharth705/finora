@@ -15,6 +15,12 @@ import java.util.UUID;
 @Service
 public class UserSettingsService {
 
+    /** The theme values that actually exist -- see V9__theme_default_system.sql and the
+     *  frontend's ThemeContext. The frontend already normalizes anything unrecognized to
+     *  "system" defensively; that is a fallback, not a reason to store a value that means
+     *  nothing. */
+    private static final java.util.Set<String> ALLOWED_THEMES = java.util.Set.of("light", "dark", "system");
+
     private final UserRepository userRepository;
 
     public UserSettingsService(UserRepository userRepository) {
@@ -30,7 +36,17 @@ public class UserSettingsService {
     public UserSettingsDto update(UUID userId, UserSettingsDto.UpdateRequest req) {
         User u = userRepository.findById(userId).orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
         if (req.lowBalanceThreshold() != null) u.setLowBalanceThreshold(req.lowBalanceThreshold());
-        if (req.theme() != null) u.setTheme(req.theme());
+        if (req.theme() != null) {
+            // Checked against the real option list, next to the timezone check below and for the
+            // same reason: the DTO's @Size bounds the string's shape, and only this knows which
+            // values actually mean anything. Anything else used to be stored verbatim and handed
+            // back to the client as the account's theme.
+            if (!ALLOWED_THEMES.contains(req.theme())) {
+                throw new ApiException(HttpStatus.BAD_REQUEST,
+                        "'" + req.theme() + "' is not a theme option. Choose one of " + ALLOWED_THEMES + ".");
+            }
+            u.setTheme(req.theme());
+        }
         if (req.timezone() != null) {
             // Reject up front rather than silently accepting an unparseable value -- the only
             // consumer today (DashboardService's due-date notifications) falls back safely on a

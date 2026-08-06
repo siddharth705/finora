@@ -31,13 +31,26 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL
   ? normalizeApiBase(import.meta.env.VITE_API_BASE_URL)
   : '/api/v1';
 
-export const api = axios.create({ baseURL: BASE_URL });
+// withCredentials is what makes RefreshTokenCookie work at all. The backend issues the refresh
+// token as an HttpOnly, Secure, SameSite=Lax cookie scoped to /api/v1/auth, and CorsConfig sets
+// allowCredentials(true) specifically so a browser may send it cross-origin -- but axios defaults
+// withCredentials to false, so on the deployment this app is built for (static frontend on
+// Cloudflare, backend on Railway) the browser stored neither the Set-Cookie nor sent it back.
+// Every refresh fell through to RefreshTokenCookie.resolve()'s body-token branch and the whole
+// cookie mechanism was inert.
+//
+// This restores the cookie transport; it does NOT on its own deliver the XSS mitigation the
+// cookie exists for. AuthContext.persist still writes the same refresh token to localStorage,
+// where script can read it, and the backend still accepts a body token. Removing the
+// localStorage copy is the other half and is a change to how the session is held, not a
+// one-line fix -- see docs. Restoring the transport first is what makes that half possible.
+export const api = axios.create({ baseURL: BASE_URL, withCredentials: true });
 
 // A separate, interceptor-free instance specifically for the /auth/refresh call itself —
 // if the refresh call went through `api`'s own response interceptor and also got a 401
 // (expired/invalid refresh token), it would recursively trigger another refresh attempt.
 // Keeping it on a bare instance avoids that entirely.
-export const rawApi = axios.create({ baseURL: BASE_URL });
+export const rawApi = axios.create({ baseURL: BASE_URL, withCredentials: true });
 
 // Bug fix: `api` calls get response.data pre-unwrapped by unwrapEnvelope() below, so their
 // typed generics are always the INNER payload shape (e.g. api.post<{message: string}>(...)) --

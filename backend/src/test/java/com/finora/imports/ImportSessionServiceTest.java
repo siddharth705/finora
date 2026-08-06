@@ -22,6 +22,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
+import org.mockito.ArgumentCaptor;
+import org.springframework.data.domain.Pageable;
 
 /**
  * ADR-0002 -- covers the actual safety properties persisted import sessions exist to provide:
@@ -72,7 +74,7 @@ class ImportSessionServiceTest {
 
     @Test
     void createSession_persistsSerializedRowsAndDetectedAccount_andDeletesThisUsersOwnExpiredSessionsFirst() {
-        when(importSessionRepository.findByUserIdAndExpiresAtBefore(eq(userId), any())).thenReturn(List.of());
+        when(importSessionRepository.findByExpiresAtBeforeOrderByExpiresAtAsc(any(), any())).thenReturn(List.of());
 
         ImportSession created = service.createSession(userId, "statement.csv", new byte[]{1, 2, 3},
                 List.of(sampleRow()), sampleDetected());
@@ -82,20 +84,37 @@ class ImportSessionServiceTest {
         assertThat(created.getDetectedAccountJson()).contains("Test Bank");
         assertThat(created.getStatus()).isEqualTo(ImportSession.STATUS_STAGED);
         assertThat(created.getExpiresAt()).isAfter(Instant.now());
-        verify(importSessionRepository).findByUserIdAndExpiresAtBefore(eq(userId), any());
+        verify(importSessionRepository).findByExpiresAtBeforeOrderByExpiresAtAsc(any(), any());
     }
 
+    /**
+     * Cleanup is platform-wide now, not scoped to the acting user.
+     *
+     * <p>The previous assertion here was that another user's expired rows were deliberately NOT
+     * touched. That scoping is exactly what left them forever: an expired session was only ever
+     * deleted when THAT SAME user started another import, so anyone who imported once and did not
+     * come back kept their row -- and the raw statement bytes on it -- indefinitely, with nothing
+     * else ever removing them. The stated 48-hour retention did not hold for the population most
+     * likely to trigger it.
+     *
+     * <p>The original concern behind the scoping is still honoured and is what the second
+     * assertion pins: the query is bounded to a page, so this is a small index-ordered slice
+     * rather than the "full-table scan every time anyone imports anything" it was avoiding.
+     */
     @Test
-    void createSession_deletesOnlyThisUsersExpiredSessions_notAnyoneElses() {
-        ImportSession theirsExpired = sessionOwnedBy(userId, Instant.now().minusSeconds(60), ImportSession.STATUS_STAGED);
-        when(importSessionRepository.findByUserIdAndExpiresAtBefore(eq(userId), any())).thenReturn(List.of(theirsExpired));
+    void createSession_deletesExpiredSessions_regardlessOfWhoOwnsThem() {
+        ImportSession someoneElsesExpired =
+                sessionOwnedBy(otherUserId, Instant.now().minusSeconds(60), ImportSession.STATUS_STAGED);
+        when(importSessionRepository.findByExpiresAtBeforeOrderByExpiresAtAsc(any(), any()))
+                .thenReturn(List.of(someoneElsesExpired));
 
         service.createSession(userId, "statement.csv", new byte[0], List.of(), sampleDetected());
 
-        verify(importSessionRepository).deleteAll(List.of(theirsExpired));
-        // Never queried on behalf of any other user -- this is scoped per-user cleanup, not a
-        // platform-wide sweep.
-        verify(importSessionRepository, never()).findByUserIdAndExpiresAtBefore(eq(otherUserId), any());
+        verify(importSessionRepository).deleteAll(List.of(someoneElsesExpired));
+
+        ArgumentCaptor<Pageable> page = ArgumentCaptor.forClass(Pageable.class);
+        verify(importSessionRepository).findByExpiresAtBeforeOrderByExpiresAtAsc(any(), page.capture());
+        assertThat(page.getValue().getPageSize()).isLessThanOrEqualTo(100);
     }
 
     @Test

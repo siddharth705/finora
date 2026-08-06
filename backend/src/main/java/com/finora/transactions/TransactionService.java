@@ -99,7 +99,12 @@ public class TransactionService {
         var page = transactionRepository.search(
                 userId, f.accountId(), f.categoryId(),
                 com.finora.util.EnumParsing.parseIfPresent(Transaction.Type.class, f.type(), "type"),
-                f.dateFrom(), f.dateTo(), f.amountMin(), f.amountMax(), f.keyword(), bankIdsParam,
+                f.dateFrom(), f.dateTo(), f.amountMin(), f.amountMax(),
+                // Escaped for LIKE (see LikePatterns) -- transaction descriptions are full of
+                // literal percent signs ("2.5% CASHBACK"), and an unescaped one turned an exact
+                // search into a prefix search silently. Only the repository term is escaped:
+                // bankManagementService.search() above matches in memory with contains().
+                com.finora.util.LikePatterns.escape(f.keyword()), bankIdsParam,
                 PageRequest.of(safePage, safeSize, sort)
         );
         Map<UUID, String> namesById = categoryNamesById(userId);

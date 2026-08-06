@@ -15,6 +15,9 @@ import java.math.RoundingMode;
 import java.time.YearMonth;
 import java.util.*;
 import java.util.stream.Collectors;
+import com.finora.repository.UserRepository;
+import com.finora.util.UserZone;
+import java.util.Locale;
 
 /**
  * Statistical port of the browser prototype's buildInsights() — month-over-month category
@@ -31,12 +34,18 @@ public class InsightsService {
     private final TransactionRepository transactionRepository;
     private final CategoryRepository categoryRepository;
     private final BudgetRepository budgetRepository;
+    /** Only so "this month" can be resolved against the user's own calendar -- see build(). Every
+     *  other service that reports on a period already takes this dependency for the same reason
+     *  (DashboardService, BudgetService, GoalService, AnalyticsService, NetWorthService); this one
+     *  performed no calendar resolution at all. */
+    private final UserRepository userRepository;
 
     public InsightsService(TransactionRepository transactionRepository, CategoryRepository categoryRepository,
-                            BudgetRepository budgetRepository) {
+                            BudgetRepository budgetRepository, UserRepository userRepository) {
         this.transactionRepository = transactionRepository;
         this.categoryRepository = categoryRepository;
         this.budgetRepository = budgetRepository;
+        this.userRepository = userRepository;
     }
 
     @Transactional(readOnly = true)
@@ -53,7 +62,21 @@ public class InsightsService {
                 .collect(Collectors.toMap(Category::getId, c -> c));
 
         List<String> months = txns.stream().map(t -> YearMonth.from(t.getTxnDate()).toString()).distinct().sorted().toList();
+        // The newest month the user actually has data for. Still the right REPORTING period: an
+        // empty "this month" would be a worse answer than last month's real figures, and for
+        // someone importing statements in arrears -- the normal pattern for this product -- the
+        // newest data month is routinely not the current one.
+        //
+        // Bug fix: what was wrong was the LABEL, not the choice. Sentences below asserted "this
+        // month" over whichever month this happens to be, so a user who had not yet transacted in
+        // August read July's figures as August's, and the "versus your recent average" window
+        // silently shifted with it. reportingMonthIsCurrent resolves the real calendar month in
+        // the USER's timezone -- this service was the only one reporting on a period that never
+        // did -- and the wording follows it.
         String currentMonth = months.get(months.size() - 1);
+        boolean reportingMonthIsCurrent =
+                currentMonth.equals(YearMonth.now(UserZone.forUser(userRepository, userId)).toString());
+        String periodLabel = reportingMonthIsCurrent ? "this month" : "in " + currentMonth;
         List<String> priorMonths = months.size() > 1
                 ? months.subList(Math.max(0, months.size() - 4), months.size() - 1)
                 : List.of();
@@ -78,10 +101,18 @@ public class InsightsService {
 
         List<String> sentences = new ArrayList<>();
         BigDecimal total = currentByCat.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
-        sentences.add(String.format("In %s, total spend was \u20b9%,.0f across %d categories.", currentMonth, total, currentByCat.size()));
+        // Locale.ENGLISH on every String.format below. Without it, "%,.0f" groups and separates
+        // according to Locale.getDefault() on the SERVER, so a JVM defaulting to de_DE rendered
+        // the rupee figure 1,23,456 as 123.456 -- inconsistent with every other number in the app,
+        // and varying by deployment host rather than by anything about the user. CsvParser already
+        // pins Locale.ENGLISH on the parsing side with exactly this reasoning ("doesn't depend on
+        // the JVM's default locale"); it just was never applied to output.
+        sentences.add(String.format(Locale.ENGLISH, "In %s, total spend was \u20b9%,.0f across %d categories.",
+                currentMonth, total, currentByCat.size()));
 
         currentByCat.entrySet().stream().max(Map.Entry.comparingByValue())
-                .ifPresent(top -> sentences.add(String.format("%s was your biggest category at \u20b9%,.0f.", top.getKey(), top.getValue())));
+                .ifPresent(top -> sentences.add(String.format(Locale.ENGLISH,
+                        "%s was your biggest category at \u20b9%,.0f.", top.getKey(), top.getValue())));
 
         // The one real "recommendation" in this list: a category trending up with no budget set
         // for it yet is exactly the situation Budgets exists to help with, and it's grounded in
@@ -104,7 +135,8 @@ public class InsightsService {
 
         movers.stream().filter(m -> m.pctChange() != null && Math.abs(m.pctChange()) >= 15).limit(3).forEach(m -> {
             String dir = m.pctChange() > 0 ? "more" : "less";
-            sentences.add(String.format("%s spend was %.0f%% %s than your recent average (\u20b9%,.0f vs usual \u20b9%,.0f).",
+            sentences.add(String.format(Locale.ENGLISH,
+                    "%s spend was %.0f%% %s than your recent average (\u20b9%,.0f vs usual \u20b9%,.0f).",
                     m.category(), Math.abs(m.pctChange()), dir, m.current(), m.priorAverage()));
         });
 
@@ -121,7 +153,8 @@ public class InsightsService {
                                 .orElse("Unknown"),
                         Collectors.reducing(BigDecimal.ZERO, Transaction::getAmount, BigDecimal::add)));
         merchantTotals.entrySet().stream().max(Map.Entry.comparingByValue())
-                .ifPresent(top -> sentences.add(String.format("Your top merchant this month was \"%s\" at \u20b9%,.0f.", top.getKey(), top.getValue())));
+                .ifPresent(top -> sentences.add(String.format(Locale.ENGLISH,
+                        "Your top merchant %s was \"%s\" at \u20b9%,.0f.", periodLabel, top.getKey(), top.getValue())));
 
         return new InsightsDto(sentences, movers);
     }
