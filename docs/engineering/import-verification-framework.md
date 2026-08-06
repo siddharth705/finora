@@ -59,6 +59,38 @@ Each of these was raised, considered, and deferred for a stated reason — they 
 - **Separating `rule` from a richer `Diagnosis { code, evidence }`** — worth doing if one rule ever
   needs to report several diagnoses at once. None does yet.
 
+## The quality metric
+
+Success from here is not "another validator shipped" — it is the share of real statements Finora
+can verify without a human. That needs a definition before a corpus is run, not after, or a hundred
+results will not be comparable to each other.
+
+**A section counts as verified when every rule that could run did run, and none reported a warning
+or a failure.** `NOT_APPLICABLE` does not count against a statement: a document that prints no
+summary totals is not a parsing failure. But it is reported alongside, because a high verification
+rate built on rules that never ran is not the same achievement as one where they all did, and the
+number alone cannot tell those apart. `PdfPipelineDiagnostic` emits all three per section:
+
+```json
+{"verified": true, "rulesRun": 4, "rulesNotApplicable": 0}
+```
+
+**This is an offline measure, not a product verdict.** Nothing here is shown to a user, and it is
+not the aggregator this framework deliberately does not have. The distinction is what makes it safe
+to define now: a rollup used to compare parser versions carries none of the risk of a rollup that
+tells a person their import is fine. If a corpus ever shows a user-facing verdict is wanted, this
+is the data that would calibrate it — which is the calibration that was missing when the aggregator
+was deferred.
+
+**No threshold is set yet, on purpose.** A target of "95%" chosen before any measurement is a guess
+with an authoritative face — the same objection that deferred confidence scores. Run the corpus,
+get a baseline, then set a target the number can actually be held against.
+
+One proposed target cannot be measured as stated: *zero silent parser errors that escape
+verification*. If an error escapes verification, nothing in the pipeline knows it happened. It is
+only observable against statements someone has checked by hand, so it is a property of a small
+hand-verified subset, not of the corpus — worth keeping, worth costing honestly.
+
 ## Layout intelligence: what already exists
 
 Easy to mistake for missing, and worth stating plainly so it is not rebuilt:

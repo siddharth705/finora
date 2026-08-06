@@ -309,7 +309,25 @@ class PdfPipelineDiagnostic {
                         .append(finding.outcome()).append(cause == null ? "" : "/" + cause).append("\"");
                 }
             }
-            json.append("}}");
+            // The corpus rollup: one boolean per section, so a hundred runs aggregate into a rate.
+            // Stated rule, deliberately simple -- every rule that COULD run did, and passed.
+            // NOT_APPLICABLE does not count against a statement (a document that prints no summary
+            // is not a parsing failure), but it is reported separately so a high verification rate
+            // built on rules that never ran is visible as exactly that rather than as success.
+            //
+            // This is an OFFLINE measure, not a user-facing verdict. Nothing here is shown in the
+            // product, and it is not the aggregator this framework deliberately does not have --
+            // it is the data that would calibrate one, if a corpus ever shows it is needed.
+            long applicable = report == null ? 0 : report.findings().stream()
+                    .filter(f -> !"NOT_APPLICABLE".equals(f.outcome())).count();
+            boolean allApplicablePassed = report != null && applicable > 0
+                    && report.findings().stream()
+                        .noneMatch(f -> "FAILED".equals(f.outcome()) || "WARNING".equals(f.outcome()));
+            json.append("},\"verified\":").append(allApplicablePassed)
+                .append(",\"rulesRun\":").append(applicable)
+                .append(",\"rulesNotApplicable\":")
+                .append(report == null ? 0 : report.findings().size() - applicable)
+                .append("}");
         }
         json.append("]}");
 
