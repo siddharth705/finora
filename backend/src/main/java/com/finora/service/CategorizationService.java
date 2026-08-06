@@ -117,13 +117,25 @@ public class CategorizationService {
      *  confirmation against the merchant's distribution (with audit trail + undo support),
      *  not a flat overwrite of a single "last category" value.
      *
-     *  <p>Note this path does NOT yet satisfy spec Section 10 ("Learning update fails after a
-     *  transaction has been categorized" -- do NOT rollback the category). A failure inside
-     *  confirm() still propagates and still takes the caller's transaction with it; a try/catch
-     *  here would not change that, because a constraint violation has already marked the shared
-     *  transaction rollback-only by the time it could be caught. See
-     *  {@link MerchantLearningService#confirm}'s doc comment for why the obvious
-     *  {@code REQUIRES_NEW} fix is unavailable and what closing it actually takes. */
+     *  <p><b>Synchronous, and deliberately so — but no longer used by the import path.</b> This is
+     *  now reached only by single, interactive actions: a user correcting one transaction's
+     *  category, or an admin confirming a category for one merchant. There, applying the learning
+     *  inline is the right behaviour — the caller is waiting for the result, the blast radius of a
+     *  failure is the one change they just asked for, and an error they can see and retry beats a
+     *  silent queue entry.
+     *
+     *  <p>The import path used to come through here too, once per confirmed row inside one
+     *  transaction, and that was Bug 02: a single lost race against
+     *  {@code UNIQUE(user_id, merchant_id, category_id)} rolled back every transaction in a
+     *  statement the user had already reviewed. It now queues instead — see
+     *  {@code ImportService.confirm} and {@code MerchantLearningEventPublisher}. Spec Section 10
+     *  ("Learning update fails after a transaction has been categorized" — do NOT rollback the
+     *  category) is therefore satisfied where it actually mattered.
+     *
+     *  <p>The remaining exposure is bounded and known: {@code TransactionService.bulkRecategorize}
+     *  still calls this in a loop, so it has the import path's old shape at up to
+     *  {@code TransactionDto.MAX_BULK_IDS} rows. It is the obvious next candidate for the queue,
+     *  and is left out of WI1 only because WI1's scope is the import path. */
     public void learn(UUID userId, String description, UUID categoryId) {
         Merchant merchant = merchantNormalizationEngine.resolve(userId, description);
         merchantLearningService.confirm(userId, merchant.getId(), categoryId);

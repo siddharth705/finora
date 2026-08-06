@@ -193,8 +193,13 @@ public class MerchantLearningEventWorker {
      * <p>A worker that dies mid-apply releases its row lock but leaves the status at PROCESSING,
      * and no claim will ever see it again because claims only look at PENDING. Without this, one
      * crashed instance silently strands everything it had in flight.
+     *
+     * <p>Public and synchronous for the same reason {@link #drainOnce} is: {@link #poll} is gated
+     * by the enabled flag, so a test that switches the scheduler off to stay deterministic cannot
+     * reach recovery through it. Driving it directly is the only way to assert this behaviour
+     * without a live scheduler.
      */
-    private void recoverAbandoned() {
+    public void recoverAbandoned() {
         transactionTemplate.executeWithoutResult(status -> {
             Instant now = Instant.now();
             List<MerchantLearningEvent> stuck = repository.findStuckInProcessing(

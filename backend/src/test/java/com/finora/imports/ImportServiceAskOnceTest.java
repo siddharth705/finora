@@ -59,8 +59,11 @@ class ImportServiceAskOnceTest {
     private final UUID userId = UUID.randomUUID();
     private final UUID accountId = UUID.randomUUID();
 
+    private com.finora.service.MerchantLearningEventPublisher learningEventPublisher;
+
     @BeforeEach
     void setUp() {
+        learningEventPublisher = mock(com.finora.service.MerchantLearningEventPublisher.class);
         accountRepository = mock(AccountRepository.class);
         accountService = mock(AccountService.class);
         transactionRepository = mock(TransactionRepository.class);
@@ -87,7 +90,8 @@ class ImportServiceAskOnceTest {
                 recurringService, previewGenerator, duplicateDetector, ruleLearningService,
                 mock(ImportSessionService.class), mock(com.finora.imports.pdf.PdfPreviewGenerator.class),
                 new com.finora.imports.product.ProductIdentityResolver(accountRepository), new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), "", ""),
-                mock(com.finora.imports.analysis.StatementAnalysisRecorder.class));
+                mock(com.finora.imports.analysis.StatementAnalysisRecorder.class),
+                learningEventPublisher);
 
         Account account = new Account();
         ReflectionTestUtils.setField(account, "id", accountId);
@@ -99,6 +103,11 @@ class ImportServiceAskOnceTest {
         Category otherCategory = new Category();
         otherCategory.setUserId(userId);
         otherCategory.setName("Other");
+        // resolveMerchantId is a mock here, and an unstubbed mock returns null. ImportService
+        // skips queueing learning when it cannot resolve a merchant -- the event has a NOT NULL
+        // FK to merchants, so queueing without one would fail at insert. Stubbed so the
+        // Ask-Once-Learn-Forever tests below exercise the queueing path rather than that guard.
+        when(categorizationService.resolveMerchantId(any(), any())).thenReturn(UUID.randomUUID());
         when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Other"))).thenReturn(otherCategory);
 
         Category diningCategory = new Category();
@@ -139,7 +148,9 @@ class ImportServiceAskOnceTest {
 
         importService.confirm(userId, dummyFile(), requestWith(row));
 
-        verify(categorizationService, never()).learn(any(), any(), any());
+        // An unresolved guess still teaches nothing -- now asserted as "nothing was queued",
+        // which is where the decision lands after WI1.
+        verify(learningEventPublisher, never()).enqueue(any(), any(), any(), any());
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<Transaction>> captor = ArgumentCaptor.forClass(List.class);
@@ -154,7 +165,13 @@ class ImportServiceAskOnceTest {
 
         importService.confirm(userId, dummyFile(), requestWith(row));
 
-        verify(categorizationService).learn(eq(userId), eq("SWIGGY*ORDR9182 BLR"), any());
+        // WI1: the rule is unchanged -- a confident match still teaches the merchant map -- but the
+        // learning is QUEUED rather than applied inside this transaction. Asserting on the
+        // publisher rather than on learn() is the whole point: learn() being called here again
+        // would be Bug 02 restored, since it applies the confirmation inline and a lost race
+        // against UNIQUE(user_id, merchant_id, category_id) would roll the import back.
+        verify(learningEventPublisher).enqueue(eq(userId), any(), any(), any());
+        verify(categorizationService, never()).learn(any(), any(), any());
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<Transaction>> captor = ArgumentCaptor.forClass(List.class);
@@ -169,7 +186,9 @@ class ImportServiceAskOnceTest {
 
         importService.confirm(userId, dummyFile(), requestWith(row));
 
-        verify(categorizationService).learn(any(), any(), any());
+        // "Other" from a CONFIDENT rule match is a real decision and still teaches -- what changed
+        // is only that it teaches via the queue. See the sibling test above.
+        verify(learningEventPublisher).enqueue(any(), any(), any(), any());
     }
 
     @Test

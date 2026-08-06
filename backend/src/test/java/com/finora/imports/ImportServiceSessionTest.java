@@ -46,8 +46,11 @@ class ImportServiceSessionTest {
     private AccountRepository accountRepository;
     private com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator;
 
+    private com.finora.service.MerchantLearningEventPublisher learningEventPublisher;
+
     @BeforeEach
     void setUp() {
+        learningEventPublisher = mock(com.finora.service.MerchantLearningEventPublisher.class);
         accountRepository = mock(AccountRepository.class);
         AccountService accountService = mock(AccountService.class);
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
@@ -80,7 +83,8 @@ class ImportServiceSessionTest {
                 merchantRepository, statementImportRepository, categorizationService, reconciliationService,
                 recurringService, previewGenerator, duplicateDetector, ruleLearningService, importSessionService,
                 pdfPreviewGenerator, productIdentityResolver, new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), "", ""),
-                mock(com.finora.imports.analysis.StatementAnalysisRecorder.class));
+                mock(com.finora.imports.analysis.StatementAnalysisRecorder.class),
+                learningEventPublisher);
 
         Account account = new Account();
         ReflectionTestUtils.setField(account, "id", accountId);

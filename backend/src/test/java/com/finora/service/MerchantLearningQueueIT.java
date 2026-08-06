@@ -287,6 +287,79 @@ class MerchantLearningQueueIT extends AbstractIntegrationTest {
         assertThat(requeued.getFirstFailedAt()).isEqualTo(originalFirstFailure);
     }
 
+    /**
+     * Applying the same event twice must not confirm the merchant twice.
+     *
+     * <p>{@code MerchantLearningService.confirm} is not itself idempotent -- each call is a real
+     * confirmation and increments {@code confirmation_count}, which is correct. So the guarantee
+     * has to come from each EVENT being applied exactly once, and it does, structurally: the apply
+     * and the {@code COMPLETED} status write share one transaction. Either both commit or neither
+     * does, so there is no window where learning was applied but the event still looks claimable.
+     * A COMPLETED event is then invisible to every claim, which only selects PENDING.
+     *
+     * <p>Asserted by draining repeatedly, including concurrently -- the case a naive "check status,
+     * then apply" implementation would fail.
+     */
+    @Test
+    void applyingAnEventIsExactlyOnceEvenUnderRepeatedAndConcurrentDrains() throws Exception {
+        Fixture f = fixture();
+        publisher.enqueue(f.user().getId(), f.merchant().getId(), f.category().getId(), null);
+
+        ExecutorService threads = Executors.newFixedThreadPool(4);
+        try {
+            for (int i = 0; i < 4; i++) {
+                threads.submit(() -> worker.drainOnce());
+            }
+            threads.shutdown();
+            assertThat(threads.awaitTermination(30, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            threads.shutdownNow();
+        }
+        worker.drainOnce();
+        worker.drainOnce();
+
+        assertThat(learningRepository.findByUserIdAndMerchantId(f.user().getId(), f.merchant().getId()))
+                .singleElement()
+                .satisfies(pair -> assertThat(pair.getConfirmationCount())
+                        .as("one queued confirmation must mean exactly one increment")
+                        .isEqualTo(1));
+    }
+
+    /**
+     * A worker that dies mid-apply strands its events, and nothing else would ever free them.
+     *
+     * <p>The row lock dies with the transaction, but the status does not: the row reads PROCESSING
+     * forever and claims only look at PENDING. Simulated by writing the state a crashed worker
+     * leaves behind -- PROCESSING, last touched longer ago than the timeout -- because actually
+     * killing a worker mid-transaction is not something a test can do reliably.
+     */
+    @Test
+    void anEventAbandonedInProcessingIsReturnedToTheQueue() {
+        Fixture f = fixture();
+        publisher.enqueue(f.user().getId(), f.merchant().getId(), f.category().getId(), null);
+
+        MerchantLearningEvent stranded = eventsFor(f).get(0);
+        stranded.markProcessing(Instant.now());
+        ReflectionTestUtils.setField(stranded, "updatedAt", Instant.now().minus(1, ChronoUnit.HOURS));
+        eventRepository.save(stranded);
+
+        // Confirms the premise: while stranded, no amount of draining reaches it.
+        worker.drainOnce();
+        assertThat(eventsFor(f).get(0).getStatus()).isEqualTo(MerchantLearningEvent.Status.PROCESSING);
+
+        // poll() is gated by the enabled flag, which this class switches off for determinism, so
+        // recovery is driven directly -- the same reason drainOnce() is public.
+        worker.recoverAbandoned();
+
+        MerchantLearningEvent recovered = eventsFor(f).get(0);
+        assertThat(recovered.getStatus())
+                .as("recovery returns the stranded event to the queue")
+                .isEqualTo(MerchantLearningEvent.Status.PENDING);
+        assertThat(recovered.getAttemptCount())
+                .as("the abandonment counts as an attempt, so a repeatedly crashing apply still terminates")
+                .isPositive();
+    }
+
     // --- helpers ------------------------------------------------------------------------------
 
     private List<MerchantLearningEvent> eventsFor(Fixture f) {
