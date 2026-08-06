@@ -7,6 +7,7 @@ import com.finora.dto.ImportDto.StagedRow;
 import com.finora.dto.ImportDto.StagingResponse;
 import com.finora.dto.ImportDto.UnparseableRow;
 import com.finora.imports.CsvParser;
+import com.finora.imports.pdf.StatementSummaryExtractor.PrintedSummary;
 import com.finora.imports.DocumentContext;
 import com.finora.imports.TransactionNormalizer;
 import com.finora.imports.product.ProductAttributeExtractor;
@@ -130,6 +131,12 @@ public class PdfPreviewGenerator {
         DocumentContext ctx = new DocumentContext("PDF", "PdfPreviewGenerator");
         List<PositionedText> positioned = textExtractor.extract(fileBytes, password);
         PdfTableLocator.LocatedDocument doc = tableLocator.locateAll(positioned, ctx);
+        // Read from the positioned runs rather than from the located table: the summary grid has
+        // its own column layout, so bucketing it against the TRANSACTION table's anchors shreds it
+        // -- on a real HDFC statement it arrives as one unparseable row reading "Credit Amount
+        // 538.00 25,000.00 Credit Count 3 1". The geometry is intact right here; the table is
+        // where it stops being intact.
+        PrintedSummary printedSummary = StatementSummaryExtractor.extract(positioned, ctx);
 
         if (doc.sections().isEmpty()) {
             // "Never lose information" (see the engineering principles doc) applies at the
@@ -147,15 +154,20 @@ public class PdfPreviewGenerator {
             // reporting below, which is the one thing this branch exists to preserve.
             ProductDiscovery.DiscoveredProduct unknown = productDiscovery.discover(
                     new ProductEvidenceCollector.Section(List.of(), emptySection.auxiliaryText(), null, 0));
-            StagedAccountSection section = buildLedgerSection(userId, filename, emptySection, unknown, ctx);
+            StagedAccountSection section = buildLedgerSection(userId, filename, emptySection, unknown, ctx, PrintedSummary.NONE);
             return new PdfGenerationResult(List.of(surfaceUnrecognizedText(section, empty.preTableLines())), ctx);
         }
 
         List<StagedAccountSection> result = new ArrayList<>();
         List<UnparseableRow> unparseableAcrossDocument = new ArrayList<>();
         for (int i = 0; i < doc.sections().size(); i++) {
+            // A printed summary covers the whole document, so it can only be attributed to a
+            // section when there is exactly one. On a composite statement the totals belong to
+            // some section and we cannot tell which -- checking the wrong section's rows against
+            // them would manufacture a failure out of a correct import.
             List<StagedAccountSection> staged = buildSections(userId, filename, doc.sections().get(i),
-                    i, doc.sections().size(), ctx);
+                    i, doc.sections().size(), ctx,
+                    doc.sections().size() == 1 ? printedSummary : PrintedSummary.NONE);
             for (StagedAccountSection s : staged) unparseableAcrossDocument.addAll(s.unparseableRows());
             result.addAll(staged);
         }
@@ -184,7 +196,8 @@ public class PdfPreviewGenerator {
      */
     private List<StagedAccountSection> buildSections(UUID userId, String filename,
                                                       PdfTableLocator.LocatedSection section,
-                                                      int sectionIndex, int sectionCount, DocumentContext ctx) {
+                                                      int sectionIndex, int sectionCount, DocumentContext ctx,
+                                                      PrintedSummary printedSummary) {
         List<String> columns = section.rows().isEmpty() ? List.of() : List.copyOf(section.rows().get(0).keySet());
         ProductDiscovery.DiscoveredProduct product = productDiscovery.discover(
                 new ProductEvidenceCollector.Section(columns, section.auxiliaryText(), null,
@@ -202,7 +215,7 @@ public class PdfPreviewGenerator {
         if (product.validation().isValidated() && !product.type().hasTransactions()) {
             return buildProductSections(filename, section, product, ctx);
         }
-        return List.of(buildLedgerSection(userId, filename, section, product, ctx));
+        return List.of(buildLedgerSection(userId, filename, section, product, ctx, printedSummary));
     }
 
     /**
@@ -232,7 +245,7 @@ public class PdfPreviewGenerator {
     private StagedAccountSection buildLedgerSection(UUID userId, String filename,
                                                     PdfTableLocator.LocatedSection section,
                                                     ProductDiscovery.DiscoveredProduct product,
-                                                    DocumentContext ctx) {
+                                                    DocumentContext ctx, PrintedSummary printedSummary) {
         List<StagedRow> staged = new ArrayList<>();
         // "Never lose information" (see the engineering principles doc) -- a row that fails to
         // normalize is reported with WHY, not just silently absent from the row count. Real cost
@@ -276,7 +289,8 @@ public class PdfPreviewGenerator {
         // chains, and one can verify while another does not.
         var verification = importVerifier.verify(staged,
                 detected == null ? null : detected.openingBalance(),
-                detected == null ? null : detected.closingBalance());
+                detected == null ? null : detected.closingBalance(),
+                printedSummary);
         return new StagedAccountSection(detected, staged, staged.size(), dupCount, unparseable, verification);
     }
 

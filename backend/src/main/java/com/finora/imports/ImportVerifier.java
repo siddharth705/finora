@@ -2,6 +2,7 @@ package com.finora.imports;
 
 import com.finora.dto.ImportDto;
 import com.finora.dto.ImportDto.StagedRow;
+import com.finora.imports.pdf.StatementSummaryExtractor.PrintedSummary;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -31,11 +32,14 @@ public class ImportVerifier {
 
     private final BalanceChainValidator balanceChainValidator;
     private final StatementTotalsValidator statementTotalsValidator;
+    private final SummaryTotalsValidator summaryTotalsValidator;
 
     public ImportVerifier(BalanceChainValidator balanceChainValidator,
-                           StatementTotalsValidator statementTotalsValidator) {
+                           StatementTotalsValidator statementTotalsValidator,
+                           SummaryTotalsValidator summaryTotalsValidator) {
         this.balanceChainValidator = balanceChainValidator;
         this.statementTotalsValidator = statementTotalsValidator;
+        this.summaryTotalsValidator = summaryTotalsValidator;
     }
 
     /**
@@ -47,9 +51,24 @@ public class ImportVerifier {
      */
     public ImportDto.VerificationReport verify(List<StagedRow> rows, BigDecimal openingBalance,
                                                 BigDecimal closingBalance) {
+        return verify(rows, openingBalance, closingBalance, PrintedSummary.NONE);
+    }
+
+    /**
+     * Adds the totals the statement printed about itself, when it printed any.
+     *
+     * <p>Kept as a separate parameter rather than folded into the balances because it is evidence
+     * of a different kind: the balances are fields we read off the document, while the printed
+     * counts came from the bank's ledger and can therefore contradict a reading of the document
+     * that is otherwise entirely self-consistent. {@link PrintedSummary#NONE} is the honest value
+     * for a statement that printed nothing — the rule then reports that it could not run.
+     */
+    public ImportDto.VerificationReport verify(List<StagedRow> rows, BigDecimal openingBalance,
+                                                BigDecimal closingBalance, PrintedSummary printedSummary) {
         List<ImportDto.VerificationFinding> findings = new ArrayList<>();
         findings.addAll(balanceChainValidator.report(rows, openingBalance).findings());
         findings.add(statementTotalsValidator.check(rows, openingBalance, closingBalance));
+        findings.add(summaryTotalsValidator.check(rows, printedSummary));
         return new ImportDto.VerificationReport(List.copyOf(findings));
     }
 }

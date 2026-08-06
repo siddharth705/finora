@@ -112,7 +112,7 @@ class DepositIdentityPerDepositTest {
                 new PdfTableLocator(), new PdfMetadataExtractor(),
                 new TransactionNormalizer(categorizationService, new DuplicateDetector(mock(TransactionRepository.class))),
                 com.finora.imports.product.ProductDiscovery.standard(),
-                new com.finora.imports.product.ProductAttributeExtractor(), new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(), new com.finora.imports.StatementTotalsValidator()))
+                new com.finora.imports.product.ProductAttributeExtractor(), new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(), new com.finora.imports.StatementTotalsValidator(), new com.finora.imports.SummaryTotalsValidator()))
                 .generateSections(UUID.randomUUID(), "combined.pdf",
                         PdfFixtureBuilder.buildCompositeMultiProductStatementSample());
 
