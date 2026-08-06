@@ -124,4 +124,27 @@ describe('VerificationPanel', () => {
     expect(screen.getByText(/Couldn't be checked/)).toBeInTheDocument();
     expect(screen.queryByText(/verified/i)).not.toBeInTheDocument();
   });
+  it("shows the bank's own totals beside ours, and only what the bank printed", async () => {
+    // The value of this rule is that its evidence is external, so the panel shows both sides. Only
+    // the fields the statement actually printed appear -- here it gave counts but no totals, and a
+    // row of dashes for the totals would read as a comparison that was made and passed.
+    const user = userEvent.setup();
+    render(<VerificationPanel verification={{
+      findings: [{
+        rule: 'SUMMARY_TOTALS', outcome: 'FAILED',
+        details: {
+          printedCreditCount: 1, parsedCreditCount: 0,
+          printedDebitCount: 3, parsedDebitCount: 4,
+          suspectedCause: 'DIRECTION',
+          explanation: 'At least one is being read as money moving the wrong way.',
+        },
+      }],
+    }} />);
+
+    await user.click(screen.getByRole('button', { name: /Statement verification/ }));
+
+    expect(screen.getByText(/The bank's own totals/)).toBeInTheDocument();
+    expect(screen.getByText(/wrong way/)).toBeInTheDocument();
+    expect(screen.queryByText(/Money in/)).not.toBeInTheDocument();
+  });
 });

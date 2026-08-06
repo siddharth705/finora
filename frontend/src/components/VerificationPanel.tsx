@@ -183,6 +183,65 @@ const RULE_RENDERERS: Record<string, { label: string; render: (f: VerificationFi
       );
     },
   },
+  SUMMARY_TOTALS: {
+    label: "The bank's own totals",
+    render: (finding) => {
+      const d = finding.details as {
+        reason?: string; explanation?: string;
+        printedDebitTotal?: number; parsedDebitTotal?: number;
+        printedCreditTotal?: number; parsedCreditTotal?: number;
+        printedDebitCount?: number; parsedDebitCount?: number;
+        printedCreditCount?: number; parsedCreditCount?: number;
+      };
+      if (d?.reason) return <p className="text-xs text-muted">{d.reason}</p>;
+
+      // Only rows the statement actually printed. A row of dashes against our own figure would
+      // read as a comparison that was made, when in fact there was nothing to compare against.
+      const rows: { label: string; printed?: number; parsed?: number; money: boolean }[] = [
+        { label: 'Money in', printed: d?.printedCreditTotal, parsed: d?.parsedCreditTotal, money: true },
+        { label: 'Money out', printed: d?.printedDebitTotal, parsed: d?.parsedDebitTotal, money: true },
+        { label: 'Credits', printed: d?.printedCreditCount, parsed: d?.parsedCreditCount, money: false },
+        { label: 'Debits', printed: d?.printedDebitCount, parsed: d?.parsedDebitCount, money: false },
+      ].filter((r) => r.printed !== undefined);
+
+      return (
+        <>
+          <p className="text-xs text-muted mb-2">
+            Compared against the totals printed on the statement itself.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="text-xs w-full">
+              <thead>
+                <tr className="text-muted text-left">
+                  <th className="pr-3 font-medium py-1"></th>
+                  <th className="pr-3 font-medium py-1">Statement says</th>
+                  <th className="font-medium py-1">Imported</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const agrees = r.printed === r.parsed;
+                  return (
+                    <tr key={r.label} className="text-ink border-t border-border">
+                      <td className="pr-3 py-1 text-muted">{r.label}</td>
+                      <td className="pr-3 py-1">{r.money ? money(r.printed) : r.printed}</td>
+                      <td className={`py-1 ${agrees ? '' : 'text-warning'}`}>
+                        {r.money ? money(r.parsed) : r.parsed}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {/* What KIND of mistake, not just that there was one -- a count that disagrees while the
+              money matches means something very different from the reverse, and sends the reader
+              somewhere different. */}
+          {d?.explanation && <p className="text-xs text-warning mt-2">{d.explanation}</p>}
+        </>
+      );
+    },
+  },
 };
 
 function money(n: number | null | undefined) {
