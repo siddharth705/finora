@@ -33,13 +33,16 @@ public class ImportVerifier {
     private final BalanceChainValidator balanceChainValidator;
     private final StatementTotalsValidator statementTotalsValidator;
     private final SummaryTotalsValidator summaryTotalsValidator;
+    private final ColumnAmbiguityValidator columnAmbiguityValidator;
 
     public ImportVerifier(BalanceChainValidator balanceChainValidator,
                            StatementTotalsValidator statementTotalsValidator,
-                           SummaryTotalsValidator summaryTotalsValidator) {
+                           SummaryTotalsValidator summaryTotalsValidator,
+                           ColumnAmbiguityValidator columnAmbiguityValidator) {
         this.balanceChainValidator = balanceChainValidator;
         this.statementTotalsValidator = statementTotalsValidator;
         this.summaryTotalsValidator = summaryTotalsValidator;
+        this.columnAmbiguityValidator = columnAmbiguityValidator;
     }
 
     /**
@@ -51,7 +54,7 @@ public class ImportVerifier {
      */
     public ImportDto.VerificationReport verify(List<StagedRow> rows, BigDecimal openingBalance,
                                                 BigDecimal closingBalance) {
-        return verify(rows, openingBalance, closingBalance, PrintedSummary.NONE);
+        return verify(rows, openingBalance, closingBalance, PrintedSummary.NONE, List.of());
     }
 
     /**
@@ -64,11 +67,15 @@ public class ImportVerifier {
      * for a statement that printed nothing — the rule then reports that it could not run.
      */
     public ImportDto.VerificationReport verify(List<StagedRow> rows, BigDecimal openingBalance,
-                                                BigDecimal closingBalance, PrintedSummary printedSummary) {
+                                                BigDecimal closingBalance, PrintedSummary printedSummary,
+                                                List<java.util.Map<String, String>> rawRows) {
         List<ImportDto.VerificationFinding> findings = new ArrayList<>();
         findings.addAll(balanceChainValidator.report(rows, openingBalance).findings());
         findings.add(statementTotalsValidator.check(rows, openingBalance, closingBalance));
         findings.add(summaryTotalsValidator.check(rows, printedSummary));
+        // The rows BEFORE normalization, which is the only point at which an ambiguous cell is
+        // still ambiguous -- every other rule here sees values whose reading is already settled.
+        findings.add(columnAmbiguityValidator.check(rawRows));
         return new ImportDto.VerificationReport(List.copyOf(findings));
     }
 }

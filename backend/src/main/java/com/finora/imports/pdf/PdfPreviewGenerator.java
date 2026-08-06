@@ -290,7 +290,7 @@ public class PdfPreviewGenerator {
         var verification = importVerifier.verify(staged,
                 detected == null ? null : detected.openingBalance(),
                 detected == null ? null : detected.closingBalance(),
-                printedSummary);
+                printedSummary, section.rows());
         return new StagedAccountSection(detected, staged, staged.size(), dupCount, unparseable, verification);
     }
 
