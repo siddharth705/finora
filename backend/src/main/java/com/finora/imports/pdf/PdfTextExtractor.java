@@ -58,10 +58,17 @@ public class PdfTextExtractor {
                 protected void writeString(String string, List<TextPosition> textPositions) throws IOException {
                     if (string == null || string.isBlank() || textPositions.isEmpty()) return;
                     TextPosition first = textPositions.get(0);
+                    // The run's right edge, from its LAST glyph rather than a sum of widths --
+                    // glyph advances include kerning and inter-character spacing that summing
+                    // would drop, and the whole point of this measurement is that it be exact
+                    // enough to separate two adjacent right-aligned amount columns.
+                    TextPosition last = textPositions.get(textPositions.size() - 1);
+                    float width = Math.max(0f, (last.getXDirAdj() + last.getWidthDirAdj()) - first.getXDirAdj());
                     // getCurrentPageNo() is 1-based and reflects whichever page the stripper is
                     // currently walking -- correct even for a multi-page statement, since this
                     // override fires once per text run as PDFBox processes pages in order.
-                    result.add(new PositionedText(string, first.getXDirAdj(), first.getYDirAdj(), getCurrentPageNo() - 1));
+                    result.add(new PositionedText(string, first.getXDirAdj(), first.getYDirAdj(),
+                            getCurrentPageNo() - 1, width));
                 }
             };
             stripper.setSortByPosition(true);

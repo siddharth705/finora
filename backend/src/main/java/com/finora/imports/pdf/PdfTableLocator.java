@@ -217,6 +217,10 @@ public class PdfTableLocator {
         List<Map<String, String>> currentRows = null;
         List<String> headerNames = null;
         List<Float> headerAnchors = null;
+        // Parallel to headerAnchors: the header labels' RIGHT edges, for placing right-aligned
+        // numeric values -- see bucketRow's RIGHT_ALIGNED_AMOUNTS block for why a left edge alone
+        // cannot separate two adjacent amount columns.
+        List<Float> headerEnds = null;
         Set<String> currentHeaderSignature = null;
         // Account number named by the SECTION_MARKER banner that opened the active section, so a
         // later banner naming the SAME account is recognized as a repeated page header rather than
@@ -265,6 +269,7 @@ public class PdfTableLocator {
                 currentRows = null;
                 headerNames = null;
                 headerAnchors = null;
+                headerEnds = null;
                 currentHeaderSignature = null;
                 currentSectionAccountId = markerAccountId;
                 lastRowPage = null;
@@ -290,9 +295,11 @@ public class PdfTableLocator {
                 }
                 headerNames = new ArrayList<>();
                 headerAnchors = new ArrayList<>();
+                headerEnds = new ArrayList<>();
                 for (PositionedText t : row) {
                     headerNames.add(t.text().trim());
                     headerAnchors.add(t.x());
+                    headerEnds.add(t.endX());
                 }
                 if (ctx != null) ctx.recordHeaders(headerNames);
                 currentHeaderSignature = signature;
@@ -309,7 +316,7 @@ public class PdfTableLocator {
                 if (ctx != null) ctx.record("PAGE_BOUNDARY_ISOLATION");
                 continue; // a page-number line or closing marker is never a transaction or a continuation of one
             } else {
-                Map<String, String> bucketed = bucketRow(row, headerNames, headerAnchors, ctx);
+                Map<String, String> bucketed = bucketRow(row, headerNames, headerAnchors, headerEnds, ctx);
                 if (bucketed.isEmpty()) continue;
 
                 // Bug fix: a description that wraps onto a second visual row (HDFC's layout --
@@ -693,10 +700,42 @@ public class PdfTableLocator {
     }
 
     private Map<String, String> bucketRow(List<PositionedText> row, List<String> headerNames, List<Float> headerAnchors,
-                                           DocumentContext ctx) {
+                                           List<Float> headerEnds, DocumentContext ctx) {
         Map<String, String> result = new LinkedHashMap<>();
         for (PositionedText t : row) {
             int nearest = nearestColumn(t.x(), headerAnchors);
+            // RIGHT_ALIGNED_AMOUNTS. Every rule below places a run by its LEFT edge, which is the
+            // right question for left-aligned text and the wrong one for a number. Financial
+            // documents right-align amount columns, so within one column the right edge is fixed
+            // and the left edge slides with the value's length -- meaning a SHORT number sits
+            // further right than a long one in the same column, and can cross the midpoint into
+            // the next column purely because it has fewer digits.
+            //
+            // That is not hypothetical. On a real HDFC statement the withdrawals column's values
+            // all end at x=357.89, but their left edges run 333.43 ("436.00"), 337.87 ("20.00"),
+            // 342.32 ("0.00") -- and the midpoint to the deposits anchor is 340.88. The three
+            // longer values bucketed correctly and "0.00" alone landed in Deposits, merging that
+            // row into "0.00 25,000.00" with no Withdrawals value at all. Downstream that made a
+            // 25,000 deposit an expense, which in turn made the opening balance 50,000 instead of
+            // 0.00, because opening balance is derived by backing the first row's amount out of
+            // its running balance. One point-and-a-half of text width, three wrong numbers.
+            //
+            // Measured by right edge instead, that value is 14.94 from Withdrawals and 61.81 from
+            // Deposits -- the margin goes from a 1.44-point miss to a 4x win, and every other
+            // amount in the document still lands where it did.
+            //
+            // Deliberately only ever moves a number INTO an amount column: a run whose right edge
+            // points at a description or reference column is left where the left edge put it,
+            // since those are left-aligned and the right edge means nothing there. Requires a real
+            // measured width, so hand-built fixtures and traces recorded before widths existed
+            // (width 0, endX == x) keep exactly their previous behaviour.
+            if (t.width() > 0 && headerEnds != null && CsvParser.parseNumeric(t.text().trim()) != null) {
+                int byRightEdge = nearestColumn(t.endX(), headerEnds);
+                if (byRightEdge != nearest && isAmountColumn(headerNames.get(byRightEdge))) {
+                    nearest = byRightEdge;
+                    if (ctx != null) ctx.record("RIGHT_ALIGNED_AMOUNTS");
+                }
+            }
             String columnName = headerNames.get(nearest);
             String existing = result.get(columnName);
             // Bug fix, found against a real Axis Bank credit-card statement: a date cell holds
