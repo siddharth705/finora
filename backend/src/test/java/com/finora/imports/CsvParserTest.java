@@ -59,6 +59,37 @@ class CsvParserTest {
         assertThat(CsvParser.parseDate("25 Dec 2026")).isEqualTo(java.time.LocalDate.of(2026, 12, 25));
     }
 
+    @Test
+    void parseDate_recognizesTwoDigitYears() {
+        // Every pattern required four digits, so the single most common rendering in Indian bank
+        // statements did not parse at all. Measured on a real 39-page statement: it produced 2
+        // transactions out of 2541 lines, because no row could anchor on a date the parser refused
+        // to read. With these formats it produces 569.
+        assertThat(CsvParser.parseDate("01/07/26")).isEqualTo(java.time.LocalDate.of(2026, 7, 1));
+        assertThat(CsvParser.parseDate("31-12-26")).isEqualTo(java.time.LocalDate.of(2026, 12, 31));
+        assertThat(CsvParser.parseDate("01 Jul 26")).isEqualTo(java.time.LocalDate.of(2026, 7, 1));
+        assertThat(CsvParser.parseDate("01-JUL-26")).isEqualTo(java.time.LocalDate.of(2026, 7, 1));
+        assertThat(CsvParser.parseDate("01-Jul-2026")).isEqualTo(java.time.LocalDate.of(2026, 7, 1));
+    }
+
+    @Test
+    void parseDate_readsTwoDigitYearsAsThisCentury() {
+        // "26" is 2026, never 1926. Java resolves yy against a base of 2000, which is the right
+        // answer for a bank statement and is asserted rather than assumed -- the alternative
+        // reading would file transactions a century before the product existed, and would do it
+        // silently.
+        assertThat(CsvParser.parseDate("01/07/26").getYear()).isEqualTo(2026);
+        assertThat(CsvParser.parseDate("01/07/99").getYear()).isEqualTo(2099);
+    }
+
+    @Test
+    void parseDate_stillPrefersFourDigitYearsWhereBothCouldMatch() {
+        // The two-digit patterns are listed after the four-digit ones. This guards the ordering:
+        // a four-digit year must never be truncated into a two-digit reading.
+        assertThat(CsvParser.parseDate("01/07/2026")).isEqualTo(java.time.LocalDate.of(2026, 7, 1));
+        assertThat(CsvParser.parseDate("01 Jul 2026")).isEqualTo(java.time.LocalDate.of(2026, 7, 1));
+    }
+
     // --- header detection: abbreviated column names -------------------------------------------
     //
     // AMOUNT_HEADER_HINTS deliberately lists the abbreviated forms "withdrawal amt" and "deposit

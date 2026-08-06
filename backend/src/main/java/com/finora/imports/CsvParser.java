@@ -38,8 +38,46 @@ public class CsvParser {
             // day-month(abbreviated name)-year format none of the above patterns match. Locale.ENGLISH
             // pinned explicitly so parsing this format doesn't depend on the JVM's default locale
             // (which may not even use Latin month abbreviations on a different machine).
-            DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH)
+            DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH),
+
+            // TWO-DIGIT YEARS. Every pattern above requires four, so "01/07/26" -- the single most
+            // common date rendering in Indian bank statements -- did not parse at all. Measured on
+            // a real 39-page statement: 157 rows whose date cell was shaped "99/99/99 XXX-XXXXXX",
+            // none of which could anchor, because parseDate rejected the year before anything else
+            // was even considered.
+            //
+            // Listed AFTER the four-digit forms deliberately. LocalDate.parse must consume the
+            // whole string, so "01/07/2026" cannot match "dd/MM/yy" -- but ordering makes that
+            // independent of the resolver's strictness rather than reliant on it.
+            //
+            // Java resolves "yy" against a base of 2000, so 26 is 2026 and never 1926. That is the
+            // right answer here and not a coincidence worth leaving implicit: a bank statement is
+            // a recent document, and the alternative reading would place transactions a century
+            // before the product existed.
+            DateTimeFormatter.ofPattern("dd/MM/yy"),
+            DateTimeFormatter.ofPattern("dd-MM-yy"),
+            caseInsensitive("dd MMM yy"),
+            caseInsensitive("dd-MMM-yy"),
+            caseInsensitive("dd-MMM-yyyy"),
+            // The four-digit space-separated form, case-insensitively. "dd MMM yyyy" above is
+            // case-SENSITIVE, so it reads "01 Jul 2026" and rejects "01 JUL 2026" -- and statements
+            // print month abbreviations in caps at least as often as in title case.
+            caseInsensitive("dd MMM yyyy")
     );
+
+    /**
+     * A month-name pattern that accepts any capitalisation.
+     *
+     * <p>{@code DateTimeFormatter.ofPattern} matches month names case-sensitively, so a formatter
+     * built for {@code MMM} accepts "Jul" and rejects "JUL". Bank statements use both, frequently
+     * in caps, and the rejection is silent -- the row simply never anchors.
+     */
+    private static DateTimeFormatter caseInsensitive(String pattern) {
+        return new java.time.format.DateTimeFormatterBuilder()
+                .parseCaseInsensitive()
+                .appendPattern(pattern)
+                .toFormatter(Locale.ENGLISH);
+    }
 
     // Column-name hints used to locate the real header row, wherever it falls in the file. Real
     // bank/card exports (see PNB ONE's CSV, which motivated this) routinely prepend a dozen-plus
