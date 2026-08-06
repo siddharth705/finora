@@ -113,11 +113,11 @@ public class AuthDtos {
 
     public record ResolveResetPasswordPhoneResponse(String phoneNumber) {}
 
-    public record RefreshRequest(@NotBlank String refreshToken) {}
+    public record RefreshRequest(String refreshToken) {}
 
     public record RefreshResponse(String token, String refreshToken) {}
 
-    public record LogoutRequest(@NotBlank String refreshToken) {}
+    public record LogoutRequest(String refreshToken) {}
 
     public record LogoutResponse(String message) {}
 
