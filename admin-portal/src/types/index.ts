@@ -612,3 +612,45 @@ export interface StatementAnalysisSummaryDto {
   unanchoredRowsInWindow: number;
   unanchoredReasons: UnanchoredReasons;
 }
+
+/**
+ * One row of the merchant learning queue (WI2).
+ *
+ * Mirrors the backend's LearningQueueDto. The name/id pairs are deliberate: an operator must be
+ * able to answer "who was affected" and "which statement produced this" without leaving the page,
+ * and an id alone sends them to a database client -- the exact outcome this surface exists to
+ * prevent. Names are nullable because the row they came from may since have been deleted, and an
+ * event whose merchant is gone is precisely the kind most likely to be stuck.
+ */
+export interface LearningQueueEvent {
+  id: string;
+  status: 'PENDING' | 'PROCESSING' | 'FAILED' | 'COMPLETED' | 'RESOLVED';
+  attemptCount: number;
+  maxAttempts: number;
+  /** Computed server-side, so the UI cannot drift from the backend's state machine and offer a
+   *  Retry the API would then refuse. */
+  retryable: boolean;
+  nextAttemptAt: string | null;
+  lastError: string | null;
+  firstFailedAt: string | null;
+  lastRetryAt: string | null;
+  createdAt: string;
+  userId: string;
+  userEmail: string | null;
+  merchantId: string;
+  merchantName: string | null;
+  categoryId: string;
+  categoryName: string | null;
+  statementImportId: string | null;
+  statementFileName: string | null;
+  /** Null when the import never had a staging session -- never a placeholder. */
+  importSessionId: string | null;
+}
+
+export interface LearningQueueSummary {
+  pending: number;
+  processing: number;
+  failed: number;
+  completed: number;
+  resolved: number;
+}

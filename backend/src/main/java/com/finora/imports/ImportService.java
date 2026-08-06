@@ -637,8 +637,12 @@ public class ImportService {
         // Only the APPLYING is deferred: MerchantLearningEventPublisher registers an afterCommit
         // hook, and the worker runs once this transaction is durable. A learning failure then
         // cannot touch these transactions, because by the time it can happen they are committed.
+        // request.sessionId() is null on the direct-file confirm path and populated on the
+        // session path -- passed through as-is, never substituted, so the admin queue can tell
+        // "this import had no session" from "the session is unknown".
         pendingLearning.forEach(pending -> learningEventPublisher.enqueue(
-                userId, pending.merchantId(), pending.categoryId(), savedImport.getId()));
+                userId, pending.merchantId(), pending.categoryId(),
+                savedImport.getId(), request.sessionId()));
 
         List<Transaction> saved = transactionRepository.saveAll(toInsert);
         int imported = saved.size();

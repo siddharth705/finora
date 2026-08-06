@@ -32,6 +32,9 @@ export const ADMIN_PORTAL_PERMISSIONS = [
   // Layout Studio's upload. Separate from PLATFORM_DIAGNOSTICS_VIEW, which reads the reports:
   // running the engine on a document is an action, and V61 made the two separately grantable.
   'ENGINE_ANALYSIS_RUN',
+  // The merchant learning queue's operator surface. Its own permission rather than a reuse: V63
+  // records why retrying an event is an action, not a diagnostics view.
+  'LEARNING_QUEUE_MANAGE',
 ];
 
 export interface AdminAuthState {

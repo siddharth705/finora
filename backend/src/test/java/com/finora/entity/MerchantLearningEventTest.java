@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class MerchantLearningEventTest {
 
     private static MerchantLearningEvent anEvent() {
-        return MerchantLearningEvent.pending(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), null);
+        return MerchantLearningEvent.pending(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), null, null);
     }
 
     @Test

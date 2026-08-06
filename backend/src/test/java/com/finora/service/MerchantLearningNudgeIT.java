@@ -73,7 +73,7 @@ class MerchantLearningNudgeIT extends AbstractIntegrationTest {
         // Inside a transaction that COMMITS -- so the afterCommit hook is what fires, which is the
         // path a real import takes.
         transactionTemplate.executeWithoutResult(status ->
-                publisher.enqueue(savedUser.getId(), savedMerchant.getId(), savedCategory.getId(), null));
+                publisher.enqueue(savedUser.getId(), savedMerchant.getId(), savedCategory.getId(), null, null));
 
         assertThat(learningAppliedWithin(TIMEOUT, savedUser.getId(), savedMerchant.getId()))
                 .as("the afterCommit nudge should have applied the learning without an explicit drain")

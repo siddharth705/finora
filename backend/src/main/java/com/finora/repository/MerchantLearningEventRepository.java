@@ -1,6 +1,7 @@
 package com.finora.repository;
 
 import com.finora.entity.MerchantLearningEvent;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -8,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface MerchantLearningEventRepository extends JpaRepository<MerchantLearningEvent, UUID> {
@@ -67,10 +69,103 @@ public interface MerchantLearningEventRepository extends JpaRepository<MerchantL
     List<MerchantLearningEvent> findStuckInProcessing(@Param("staleBefore") Instant staleBefore,
                                                        Pageable limit);
 
-    /** Backs the admin queue page (WI2). Newest failure first — an admin opening this page is
-     *  looking at what just broke, not at the backlog's oldest resident. */
-    List<MerchantLearningEvent> findByStatusOrderByLastRetryAtDesc(MerchantLearningEvent.Status status,
-                                                                    Pageable pageable);
+    /**
+     * One page of the admin queue, with every field an operator needs already joined in.
+     *
+     * <p>The requirement this exists for is that an operator can answer "what failed, why, for which
+     * user, from which statement and session, how many times, and when does it retry" without
+     * opening a database client. A query returning bare ids would satisfy the endpoint and fail the
+     * requirement: the page would render four UUIDs and the operator would go to the database
+     * anyway.
+     *
+     * <p>So the names are resolved here, in one query, rather than by the service looping over rows
+     * fetching each merchant, category and user. That loop is the N+1 this codebase repeatedly
+     * documents avoiding elsewhere ({@code AnalyticsService.categoryConfidence},
+     * {@code WorkspaceDashboardService.summarize}) — and a queue page is precisely where a backlog
+     * makes N large.
+     *
+     * <p>LEFT joins throughout, because every one of these can legitimately be absent: a merchant or
+     * category deleted after the event was queued, an import session past its 48-hour TTL. A failed
+     * event whose merchant is gone is still a row an operator needs to see and dismiss, and an
+     * inner join would hide exactly the rows most likely to be stuck.
+     *
+     * @param status null means "every status"
+     */
+    @Query("""
+           SELECT e.id AS id, e.status AS status, e.attemptCount AS attemptCount,
+                  e.nextAttemptAt AS nextAttemptAt, e.lastError AS lastError,
+                  e.firstFailedAt AS firstFailedAt, e.lastRetryAt AS lastRetryAt,
+                  e.createdAt AS createdAt,
+                  e.userId AS userId, u.email AS userEmail,
+                  e.merchantId AS merchantId, m.canonicalName AS merchantName,
+                  e.categoryId AS categoryId, c.name AS categoryName,
+                  e.sourceStatementImportId AS statementImportId, si.fileName AS statementFileName,
+                  e.sourceImportSessionId AS importSessionId
+             FROM MerchantLearningEvent e
+             LEFT JOIN User u ON u.id = e.userId
+             LEFT JOIN Merchant m ON m.id = e.merchantId
+             LEFT JOIN Category c ON c.id = e.categoryId
+             LEFT JOIN StatementImport si ON si.id = e.sourceStatementImportId
+            WHERE (:status IS NULL OR e.status = :status)
+           """)
+    Page<LearningQueueRow> findQueueRows(@Param("status") MerchantLearningEvent.Status status,
+                                          Pageable pageable);
+
+    /** The projection {@link #findQueueRows} returns. An interface projection rather than a
+     *  constructor expression, so an alias and its accessor cannot drift apart silently — a
+     *  renamed alias fails at startup rather than returning nulls at runtime. */
+    interface LearningQueueRow {
+        UUID getId();
+        MerchantLearningEvent.Status getStatus();
+        int getAttemptCount();
+        Instant getNextAttemptAt();
+        String getLastError();
+        Instant getFirstFailedAt();
+        Instant getLastRetryAt();
+        Instant getCreatedAt();
+        UUID getUserId();
+        String getUserEmail();
+        UUID getMerchantId();
+        String getMerchantName();
+        UUID getCategoryId();
+        String getCategoryName();
+        UUID getStatementImportId();
+        String getStatementFileName();
+        UUID getImportSessionId();
+    }
+
+    /**
+     * The same projection for a single event, backing the detail view and every action's response.
+     *
+     * <p>The JPQL is duplicated from {@link #findQueueRows} rather than shared, which is worth a
+     * word: Spring Data has no way to compose a projection query from a fragment, and the
+     * alternative — filtering a page in the service — is what the first version of this did and it
+     * was wrong, because it could only ever find events on the page it happened to fetch. A
+     * duplicated SELECT that is correct beats a clever one that silently 404s past page one. The
+     * interface projection is what keeps the two honest: a renamed alias in either fails at
+     * startup.
+     */
+    @Query("""
+           SELECT e.id AS id, e.status AS status, e.attemptCount AS attemptCount,
+                  e.nextAttemptAt AS nextAttemptAt, e.lastError AS lastError,
+                  e.firstFailedAt AS firstFailedAt, e.lastRetryAt AS lastRetryAt,
+                  e.createdAt AS createdAt,
+                  e.userId AS userId, u.email AS userEmail,
+                  e.merchantId AS merchantId, m.canonicalName AS merchantName,
+                  e.categoryId AS categoryId, c.name AS categoryName,
+                  e.sourceStatementImportId AS statementImportId, si.fileName AS statementFileName,
+                  e.sourceImportSessionId AS importSessionId
+             FROM MerchantLearningEvent e
+             LEFT JOIN User u ON u.id = e.userId
+             LEFT JOIN Merchant m ON m.id = e.merchantId
+             LEFT JOIN Category c ON c.id = e.categoryId
+             LEFT JOIN StatementImport si ON si.id = e.sourceStatementImportId
+            WHERE e.id = :id
+           """)
+    Optional<LearningQueueRow> findQueueRowById(@Param("id") UUID id);
+
+    /** Backs Retry All. Paged so the caller bounds how many events one click can requeue. */
+    List<MerchantLearningEvent> findByStatus(MerchantLearningEvent.Status status, Pageable pageable);
 
     long countByStatus(MerchantLearningEvent.Status status);
 }

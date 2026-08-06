@@ -17,6 +17,7 @@ import type {
   StatementAnalysisDto,
   StatementAnalysisDetailDto,
   StatementAnalysisSummaryDto,
+  LearningQueueEvent, LearningQueueSummary,
 } from '../types';
 
 // Which portal this account belongs to. The same person may hold a USER account and an ADMIN
@@ -238,6 +239,23 @@ export const adminSystemApi = {
 // backend doc comment. Shares the SYSTEM_SETTINGS gate with adminSystemApi above.
 export const adminDiagnosticsApi = {
   overview: () => api.get<PlatformDiagnosticsDto>('/admin/diagnostics').then((r) => r.data),
+};
+
+/** The merchant learning queue (WI2). Every list row already carries the correlation an operator
+ *  needs -- user email, merchant and category names, statement file, session id -- so the page
+ *  never has to fan out a second set of calls to render a row. */
+export const adminLearningQueueApi = {
+  list: (params: { status?: string; page?: number; size?: number; sortField?: string; sortDir?: string }) =>
+    api.get<PagedResponse<LearningQueueEvent>>('/admin/learning-queue', { params }).then((r) => r.data),
+  summary: () => api.get<LearningQueueSummary>('/admin/learning-queue/summary').then((r) => r.data),
+  get: (eventId: string) =>
+    api.get<LearningQueueEvent>(`/admin/learning-queue/${eventId}`).then((r) => r.data),
+  retry: (eventId: string) =>
+    api.post<LearningQueueEvent>(`/admin/learning-queue/${eventId}/retry`).then((r) => r.data),
+  retryAll: () =>
+    api.post<{ retried: number }>('/admin/learning-queue/retry-all').then((r) => r.data),
+  resolve: (eventId: string, reason?: string) =>
+    api.post<LearningQueueEvent>(`/admin/learning-queue/${eventId}/resolve`, { reason }).then((r) => r.data),
 };
 
 export const adminMerchantsApi = {

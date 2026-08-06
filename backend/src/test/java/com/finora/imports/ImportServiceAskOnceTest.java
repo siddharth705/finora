@@ -150,7 +150,7 @@ class ImportServiceAskOnceTest {
 
         // An unresolved guess still teaches nothing -- now asserted as "nothing was queued",
         // which is where the decision lands after WI1.
-        verify(learningEventPublisher, never()).enqueue(any(), any(), any(), any());
+        verify(learningEventPublisher, never()).enqueue(any(), any(), any(), any(), any());
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<Transaction>> captor = ArgumentCaptor.forClass(List.class);
@@ -170,7 +170,7 @@ class ImportServiceAskOnceTest {
         // publisher rather than on learn() is the whole point: learn() being called here again
         // would be Bug 02 restored, since it applies the confirmation inline and a lost race
         // against UNIQUE(user_id, merchant_id, category_id) would roll the import back.
-        verify(learningEventPublisher).enqueue(eq(userId), any(), any(), any());
+        verify(learningEventPublisher).enqueue(eq(userId), any(), any(), any(), any());
         verify(categorizationService, never()).learn(any(), any(), any());
 
         @SuppressWarnings("unchecked")
@@ -188,7 +188,7 @@ class ImportServiceAskOnceTest {
 
         // "Other" from a CONFIDENT rule match is a real decision and still teaches -- what changed
         // is only that it teaches via the queue. See the sibling test above.
-        verify(learningEventPublisher).enqueue(any(), any(), any(), any());
+        verify(learningEventPublisher).enqueue(any(), any(), any(), any(), any());
     }
 
     @Test

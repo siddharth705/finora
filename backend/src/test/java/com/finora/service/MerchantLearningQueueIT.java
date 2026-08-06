@@ -108,7 +108,7 @@ class MerchantLearningQueueIT extends AbstractIntegrationTest {
     @Test
     void aQueuedEventIsAppliedToTheLearningDistribution() {
         Fixture f = fixture();
-        publisher.enqueue(f.user().getId(), f.merchant().getId(), f.category().getId(), null);
+        publisher.enqueue(f.user().getId(), f.merchant().getId(), f.category().getId(), null, null);
 
         worker.drainOnce();
 
@@ -134,7 +134,7 @@ class MerchantLearningQueueIT extends AbstractIntegrationTest {
 
         try {
             transactionTemplate.executeWithoutResult(status -> {
-                publisher.enqueue(f.user().getId(), f.merchant().getId(), f.category().getId(), null);
+                publisher.enqueue(f.user().getId(), f.merchant().getId(), f.category().getId(), null, null);
                 throw new IllegalStateException("import failed after queueing learning");
             });
         } catch (IllegalStateException expected) {
@@ -168,7 +168,7 @@ class MerchantLearningQueueIT extends AbstractIntegrationTest {
     @Test
     void twoConcurrentClaimsNeverReturnTheSameEvent() throws Exception {
         Fixture f = fixture();
-        publisher.enqueue(f.user().getId(), f.merchant().getId(), f.category().getId(), null);
+        publisher.enqueue(f.user().getId(), f.merchant().getId(), f.category().getId(), null, null);
 
         CountDownLatch firstHasClaimed = new CountDownLatch(1);
         CountDownLatch secondHasFinished = new CountDownLatch(1);
@@ -219,7 +219,7 @@ class MerchantLearningQueueIT extends AbstractIntegrationTest {
     @Test
     void aFailedApplyIsRecordedAndScheduledForRetry() {
         Fixture f = fixture();
-        publisher.enqueue(f.user().getId(), f.merchant().getId(), f.category().getId(), null);
+        publisher.enqueue(f.user().getId(), f.merchant().getId(), f.category().getId(), null, null);
 
         doThrow(new DataIntegrityViolationException("duplicate key value violates unique constraint"))
                 .when(learningService).confirm(any(), any(), any());
@@ -248,7 +248,7 @@ class MerchantLearningQueueIT extends AbstractIntegrationTest {
     @Test
     void anEventGivesUpAfterTheAttemptCapAndBecomesVisibleToAdmins() {
         Fixture f = fixture();
-        publisher.enqueue(f.user().getId(), f.merchant().getId(), f.category().getId(), null);
+        publisher.enqueue(f.user().getId(), f.merchant().getId(), f.category().getId(), null, null);
         doThrow(new DataIntegrityViolationException("permanently broken"))
                 .when(learningService).confirm(any(), any(), any());
 
@@ -272,7 +272,7 @@ class MerchantLearningQueueIT extends AbstractIntegrationTest {
     @Test
     void anAdminRetryResetsTheBudgetWithoutErasingTheFailureHistory() {
         Fixture f = fixture();
-        publisher.enqueue(f.user().getId(), f.merchant().getId(), f.category().getId(), null);
+        publisher.enqueue(f.user().getId(), f.merchant().getId(), f.category().getId(), null, null);
         doThrow(new DataIntegrityViolationException("boom")).when(learningService).confirm(any(), any(), any());
         worker.drainOnce();
 
@@ -303,7 +303,7 @@ class MerchantLearningQueueIT extends AbstractIntegrationTest {
     @Test
     void applyingAnEventIsExactlyOnceEvenUnderRepeatedAndConcurrentDrains() throws Exception {
         Fixture f = fixture();
-        publisher.enqueue(f.user().getId(), f.merchant().getId(), f.category().getId(), null);
+        publisher.enqueue(f.user().getId(), f.merchant().getId(), f.category().getId(), null, null);
 
         ExecutorService threads = Executors.newFixedThreadPool(4);
         try {
@@ -336,7 +336,7 @@ class MerchantLearningQueueIT extends AbstractIntegrationTest {
     @Test
     void anEventAbandonedInProcessingIsReturnedToTheQueue() {
         Fixture f = fixture();
-        publisher.enqueue(f.user().getId(), f.merchant().getId(), f.category().getId(), null);
+        publisher.enqueue(f.user().getId(), f.merchant().getId(), f.category().getId(), null, null);
 
         MerchantLearningEvent stranded = eventsFor(f).get(0);
         stranded.markProcessing(Instant.now());

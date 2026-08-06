@@ -57,12 +57,17 @@ public class MerchantLearningEventPublisher {
      * outside a transaction still work: the save commits on its own and the nudge fires
      * immediately, since there is no commit to wait for.
      *
-     * @param sourceStatementImportId nullable; present only so an admin looking at a failed event
-     *                                can see which import produced it
+     * @param sourceStatementImportId the confirmed import this came from; present for every
+     *                                import, and what the admin queue links back to
+     * @param sourceImportSessionId    the staging/review session, when there was one. Null for the
+     *                                 direct-file confirm path, which never has one — pass null
+     *                                 rather than inventing an id, or an operator following the
+     *                                 link lands on a session that never existed
      */
-    public void enqueue(UUID userId, UUID merchantId, UUID categoryId, UUID sourceStatementImportId) {
-        MerchantLearningEvent event = repository.save(
-                MerchantLearningEvent.pending(userId, merchantId, categoryId, sourceStatementImportId));
+    public void enqueue(UUID userId, UUID merchantId, UUID categoryId,
+                         UUID sourceStatementImportId, UUID sourceImportSessionId) {
+        MerchantLearningEvent event = repository.save(MerchantLearningEvent.pending(
+                userId, merchantId, categoryId, sourceStatementImportId, sourceImportSessionId));
         nudgeAfterCommit(event.getId());
     }
 

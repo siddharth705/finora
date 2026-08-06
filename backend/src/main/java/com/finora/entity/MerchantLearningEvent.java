@@ -53,7 +53,18 @@ public class MerchantLearningEvent {
         PROCESSING,
         COMPLETED,
         /** Terminal: {@link #MAX_ATTEMPTS} attempts all failed. Surfaces in the admin queue. */
-        FAILED
+        FAILED,
+        /**
+         * Terminal by human decision: an operator looked at a FAILED event and decided no action
+         * is needed.
+         *
+         * <p>Distinct from COMPLETED, and the distinction matters. COMPLETED means the learning was
+         * applied; RESOLVED means it never will be and that is fine. Collapsing them would make
+         * the queue's own history lie about what the engine learned. Without this state a FAILED
+         * row has no way off the queue at all, and the page accumulates permanent noise that
+         * trains operators to ignore it.
+         */
+        RESOLVED
     }
 
     @Id
@@ -73,6 +84,13 @@ public class MerchantLearningEvent {
      *  if that import is deleted — the event stays processable either way. */
     @Column(name = "source_statement_import_id")
     private UUID sourceStatementImportId;
+
+    /** The staging/review session this came from, when there was one. Null for direct-file
+     *  imports, which never have a session — never a synthetic placeholder, because an operator
+     *  following a link to a session that never existed would reasonably conclude the row is
+     *  corrupt. */
+    @Column(name = "source_import_session_id")
+    private UUID sourceImportSessionId;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -104,18 +122,20 @@ public class MerchantLearningEvent {
     }
 
     private MerchantLearningEvent(UUID userId, UUID merchantId, UUID categoryId,
-                                   UUID sourceStatementImportId) {
+                                   UUID sourceStatementImportId, UUID sourceImportSessionId) {
         this.userId = userId;
         this.merchantId = merchantId;
         this.categoryId = categoryId;
         this.sourceStatementImportId = sourceStatementImportId;
+        this.sourceImportSessionId = sourceImportSessionId;
     }
 
     /** A freshly enqueued event, immediately due. The nudge normally picks it up within
      *  milliseconds; the poller is the backstop if the nudge is lost. */
     public static MerchantLearningEvent pending(UUID userId, UUID merchantId, UUID categoryId,
-                                                 UUID sourceStatementImportId) {
-        return new MerchantLearningEvent(userId, merchantId, categoryId, sourceStatementImportId);
+                                                 UUID sourceStatementImportId, UUID sourceImportSessionId) {
+        return new MerchantLearningEvent(userId, merchantId, categoryId,
+                sourceStatementImportId, sourceImportSessionId);
     }
 
     /**
@@ -178,6 +198,14 @@ public class MerchantLearningEvent {
         this.updatedAt = now;
     }
 
+    /** An operator's decision that this event will never succeed and should stop being shown.
+     *  Only meaningful from FAILED; the caller enforces that so the reason for refusing can name
+     *  the actual state. */
+    public void markResolved(Instant now) {
+        this.status = Status.RESOLVED;
+        this.updatedAt = now;
+    }
+
     public void markProcessing(Instant now) {
         this.status = Status.PROCESSING;
         this.updatedAt = now;
@@ -193,6 +221,7 @@ public class MerchantLearningEvent {
     public UUID getMerchantId() { return merchantId; }
     public UUID getCategoryId() { return categoryId; }
     public UUID getSourceStatementImportId() { return sourceStatementImportId; }
+    public UUID getSourceImportSessionId() { return sourceImportSessionId; }
     public Status getStatus() { return status; }
     public int getAttemptCount() { return attemptCount; }
     public Instant getNextAttemptAt() { return nextAttemptAt; }
