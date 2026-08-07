@@ -331,9 +331,21 @@ public class ImportDto {
      *  rather than requiring the multipart upload a second time.
      *
      *  statementOpeningBalance/statementClosingBalance are echoed from staging's detection
-     *  regardless of which account this goes into — they're purely for the Statement History
-     *  record (StatementImport), not the live account balance, which is only ever set at
-     *  account-creation time from newAccount.openingBalance(). */
+     *  regardless of which account this goes into. They are recorded on the Statement History row
+     *  (StatementImport), and the closing balance ALSO decides the live account balance -- but only
+     *  once corroborated.
+     *
+     *  This comment used to end "not the live account balance, which is only ever set at
+     *  account-creation time from newAccount.openingBalance()", and that was an accurate
+     *  description of two bugs sitting next to each other. Bug 17: a confirmed statement inserted
+     *  its rows with saveAll and never moved the balance, so an account's balance ignored every
+     *  transaction ever imported into it. Bug 02: where the balance WAS written, it was assigned
+     *  straight from this field with no check that it had anything to do with those rows.
+     *
+     *  Both are closed. ClosingBalanceGuard decides whether this figure is corroborated by the rows
+     *  actually being written; if it is, it wins outright, and if it is not, the balance moves by
+     *  those rows' net effect instead (AccountBalanceConvention.netDelta). Neither of these is a
+     *  field a client can use to set a balance directly. */
     public record ConfirmRequest(
             UUID sessionId,
             List<ConfirmedRow> rows, UUID existingAccountId, NewAccountRequest newAccount,

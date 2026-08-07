@@ -4,28 +4,30 @@
 
 **Mode:** bug hunt only. No code was modified, no fixes were applied, no refactors were made, no pull requests were opened. Every finding below cites the file, the symbol, and the code path that demonstrates it.
 
-**Result:** 58 findings, of which **52 are live in the current tree and 6 are closed** (see Validation status below). **All three Criticals are now fixed.**
+**Result:** 58 findings, of which **50 are live in the current tree and 8 are closed** (see Validation status below). **All three Criticals are fixed, and 2 of the 10 Highs.**
 
 | Severity | Total | Live | Fixed |
 |---|---|---|---|
 | Critical | 3 | 0 | 3 |
-| High | 10 | 9 | 1 |
+| High | 10 | 7 | 3 |
 | Medium | 20 | 19 | 1 |
 | Low | 25 | 24 | 1 |
-| **Total** | **58** | **52** | **6** |
+| **Total** | **58** | **50** | **8** |
 
 ## Validation status
 
 The working tree moved underneath this review — concurrent work landed in `backend/` partway through, so the snapshot the findings were originally written against is not the snapshot that exists now. **Every one of the 58 findings was subsequently re-checked against the current tree**, by grepping for the specific code signature each finding cites.
 
-**Closed — do not action these six:**
+**Closed — do not action these eight:**
 
 | Bug | Title | What changed |
 |---|---|---|
 | 01 | Merchant-learning queue unreachable | Fixed by concurrent work. `ImportService` now calls `learningEventPublisher.enqueue(...)`. |
 | 02 | Unvalidated closing balance overwrites the account balance | **Fixed by this review.** New `imports/ClosingBalanceGuard`; `ImportService.confirm` refuses an uncorroborated balance and warns. |
 | 03 | UPI/NEFT/IMPS payees collapse into one merchant | **Fixed by this review.** New `util/PaymentRailTokens`; `MerchantNormalizationEngine` skips rails and tokenises both sides through `extractMerchant`. |
+| 12 | `ImportSession.fileContent` eagerly fetched | **Fixed by this review.** `@Basic(fetch = LAZY)` added; new Guardian rule **FG-030** fails the build on any persistent `byte[]` without it. |
 | 13 | Lockout re-locks on the next wrong password | Fixed by concurrent work. `AuthService` resets `failedLoginAttempts` once `lockedUntil` has elapsed. |
+| 17 | Imports never adjust the account balance | **Fixed by this review.** `AccountBalanceConvention.balanceDelta`/`netDelta` now own the rule; `ImportService.confirm` applies it and `StatementImportService.delete` reverses it. |
 | 20 | Retry leaves the old error message | Fixed by concurrent work. `requeueForRetry` now clears `lastError`. |
 | 21 | JPQL `$`-form enum literal | Fixed by concurrent work. Rewritten to the source dotted form. |
 
@@ -480,7 +482,15 @@ High
 
 ---
 
-# Bug 12
+# Bug 12 — [FIXED]
+
+> **Fixed by this review.** `ImportSession.fileContent` now carries
+> `@Basic(fetch = FetchType.LAZY)`, matching `StatementImport`. Both readers of these bytes are
+> inside `@Transactional` methods, which is what makes lazy safe. The reusable half is Guardian rule
+> **FG-030** (`LazyBinaryColumnTest`): every persistent `byte[]` on an `@Entity` must declare a LAZY
+> fetch strategy, so the next entity cannot repeat the omission. Its `ruleIsNotVacuous` self-test
+> caught the rule scanning zero fields on its first run — ArchUnit reports `byte[]` under the JVM
+> binary name `[B`, not `"byte[]"`.
 
 ## Title
 `ImportSession.fileContent` is eagerly fetched — every session query loads up to 10 MB of raw file bytes
@@ -682,7 +692,20 @@ High
 
 ---
 
-# Bug 17
+# Bug 17 — [FIXED]
+
+> **Fixed by this review.** `Account.balance` now moves with the transactions Finora holds:
+> a corroborated closing balance wins outright (Bug 02's guard), and with no such statement the
+> balance moves by the imported rows' net effect. The rule left `TransactionService`'s private
+> `balanceDelta` and became `AccountBalanceConvention.balanceDelta`/`netDelta` — that privacy is
+> precisely why the import path could not reuse it and shipped this bug.
+>
+> **`StatementImportService.delete` was fixed in the same change, and had to be.** It removed a
+> statement's transactions without touching the balance, so applying a delta on import without
+> reversing it on delete would have left the balance permanently overstated after any
+> import/delete cycle — a new bug in place of the old one. Regression coverage:
+> `ImportAccountBalanceIT` (6 end-to-end cases against a real database, including the credit-card
+> inversion and the round trip) plus `AccountBalanceConventionTest`.
 
 ## Title
 Imports never adjust the account balance when the statement has no closing balance

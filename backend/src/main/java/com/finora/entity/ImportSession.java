@@ -46,6 +46,21 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
     @Column(name = "file_name", nullable = false)
     private String fileName;
 
+    /**
+     * The staged file's original bytes.
+     *
+     * <p><b>LAZY, matching {@code StatementImport.fileContent}.</b> Without this, JPA's default for
+     * a basic {@code byte[]} applies — EAGER — so every query that touched an {@code ImportSession}
+     * dragged the whole upload with it, bounded only by the 10 MB multipart cap. The worst case was
+     * {@code ImportSessionService.cleanupExpired}, which loads a batch of expired sessions purely
+     * to delete them and was therefore materialising other users' complete statement files into the
+     * heap of whichever user happened to trigger the sweep.
+     *
+     * <p>Every read of these bytes goes through {@code StatementContentService.read} from inside a
+     * transaction ({@code ImportService.confirmSession} / {@code confirmMultiSection}), which is
+     * what makes lazy safe here — the same precondition {@code StatementImport} already relies on.
+     */
+    @Basic(fetch = FetchType.LAZY)
     @Column(name = "file_content", nullable = false)
     private byte[] fileContent;
 

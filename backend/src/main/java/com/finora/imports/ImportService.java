@@ -3,6 +3,7 @@ package com.finora.imports;
 import com.finora.imports.analysis.ParseDiagnostics;
 import com.finora.imports.analysis.StatementAnalysisSession;
 import com.finora.imports.analysis.StatementAnalysisRecorder;
+import com.finora.accounts.AccountBalanceConvention;
 import com.finora.accounts.AccountDto;
 import com.finora.dto.ImportDto.*;
 import com.finora.entity.Account;
@@ -32,6 +33,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -677,21 +679,47 @@ public class ImportService {
         // actually being written; an uncorroborated claim is refused and surfaced as a warning
         // rather than applied. See that class for why refusing (rather than deriving a better
         // balance) is the correct scope for a fix here.
+        //
+        // Bug 17 is the other half, and the two have to be decided together or they double-count.
+        // The rule the account balance now follows: it moves with the transactions Finora holds.
+        // A corroborated closing balance is a stronger, ABSOLUTE statement of where the account
+        // ended, so it wins outright; with no such statement, the imported rows are still real
+        // ledger entries and the balance must move by their net effect. Previously neither
+        // happened without a closing balance -- 300 imported transactions left the balance frozen
+        // at whatever the account was created with, and every derived figure with it.
+        //
+        // The two agree wherever both are available: for a new account, opening + net == closing
+        // exactly when the guard says CORROBORATED, since that is the arithmetic it checks.
         ClosingBalanceGuard.Decision balanceDecision = ClosingBalanceGuard.assess(
                 request.statementOpeningBalance(), request.statementClosingBalance(),
                 totalCredits, totalDebits, toInsert.size(), skipped);
-        if (balanceDecision.mayOverwriteAccountBalance()
-                && isMostRecentStatementForAccount(userId, accountId, maxDate, savedImport.getId())) {
+        boolean closingBalanceIsAuthoritative = balanceDecision.mayOverwriteAccountBalance()
+                && isMostRecentStatementForAccount(userId, accountId, maxDate, savedImport.getId());
+        if (closingBalanceIsAuthoritative) {
             accountRepository.findById(accountId).ifPresent(account -> {
                 account.setBalance(request.statementClosingBalance());
                 accountRepository.save(account);
             });
-        } else if (balanceDecision.verdict() == ClosingBalanceGuard.Verdict.UNCORROBORATED) {
-            // warn, not error: this is a statement Finora read imperfectly or a review the user
-            // changed, both of which are ordinary. It is logged because a sustained rise in these
-            // means the parser is misreading a layout, which is worth being able to see.
-            log.warn("Not applying the stated closing balance to account {}: {} details={}",
-                    accountId, balanceDecision.reason(), balanceDecision.details());
+        } else if (!toInsert.isEmpty()) {
+            accountRepository.findById(accountId).ifPresent(account -> {
+                // AccountBalanceConvention, not a local loop: the credit-card inversion (a purchase
+                // INCREASES what is owed) is a property of the account type, and re-deriving it
+                // here is exactly the duplication that produced this bug. StatementImportService
+                // .delete reverses this with netDelta(...).negate() so an import/delete cycle
+                // returns the balance to where it started.
+                BigDecimal net = AccountBalanceConvention.netDelta(account.getAccountType(), toInsert);
+                if (net.signum() != 0) {
+                    account.setBalance(account.getBalance().add(net));
+                    accountRepository.save(account);
+                }
+            });
+            if (balanceDecision.verdict() == ClosingBalanceGuard.Verdict.UNCORROBORATED) {
+                // warn, not error: this is a statement Finora read imperfectly or a review the user
+                // changed, both of which are ordinary. It is logged because a sustained rise in
+                // these means the parser is misreading a layout, which is worth being able to see.
+                log.warn("Not applying the stated closing balance to account {}: {} details={}",
+                        accountId, balanceDecision.reason(), balanceDecision.details());
+            }
         }
 
         // Bug fix (v7->v8): this path never ran reconciliation, so imported transactions never
@@ -719,11 +747,14 @@ public class ImportService {
             warnings.add(skipped + " row(s) were left unchecked during review and were not imported.");
         }
         // Silence here was the actual harm in Bug 02: the balance was written whether or not it
-        // agreed with the transactions, so there was never anything to notice. Now that an
-        // uncorroborated balance is refused, saying so is what stops the refusal being its own
-        // silent surprise -- the user's account balance did not move and they are told why.
-        if (balanceDecision.verdict() == ClosingBalanceGuard.Verdict.UNCORROBORATED) {
-            warnings.add("This account's balance was left unchanged: " + balanceDecision.reason());
+        // agreed with the transactions, so there was never anything to notice. The wording says
+        // what actually happened now that Bug 17 is fixed too -- the balance was not left frozen,
+        // it moved by what these transactions do; it just was not set to the figure printed on the
+        // statement, and the user should know which of the two they are looking at.
+        if (!closingBalanceIsAuthoritative
+                && balanceDecision.verdict() == ClosingBalanceGuard.Verdict.UNCORROBORATED) {
+            warnings.add("This account's balance was updated from the imported transactions rather "
+                    + "than from the statement's stated closing balance: " + balanceDecision.reason());
         }
 
         // Re-fetched (not the pre-import in-memory copy) so the summary reflects the balance

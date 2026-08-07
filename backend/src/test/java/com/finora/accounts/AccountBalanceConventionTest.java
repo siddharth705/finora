@@ -1,9 +1,11 @@
 package com.finora.accounts;
 
 import com.finora.entity.Account;
+import com.finora.entity.Transaction;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -52,6 +54,72 @@ class AccountBalanceConventionTest {
                     .as(type + " holds money rather than owing it")
                     .isFalse();
         }
+    }
+
+    @Test
+    void balanceDeltaFollowsTheTypeNotTheAmountSign() {
+        // Bug 17's core rule, now shared rather than private to TransactionService. An asset
+        // account gains on INCOME and loses on EXPENSE.
+        assertThat(AccountBalanceConvention.balanceDelta(
+                Account.Type.SAVINGS, Transaction.Type.INCOME, new BigDecimal("500")))
+                .isEqualByComparingTo("500");
+        assertThat(AccountBalanceConvention.balanceDelta(
+                Account.Type.SAVINGS, Transaction.Type.EXPENSE, new BigDecimal("500")))
+                .isEqualByComparingTo("-500");
+    }
+
+    @Test
+    void aCardPurchaseIncreasesWhatIsOwedAndAPaymentReducesIt() {
+        // The inversion that must never be re-derived by hand: getting it backwards on the import
+        // path would corrupt a card's balance by twice the statement total, silently.
+        assertThat(AccountBalanceConvention.balanceDelta(
+                Account.Type.CREDIT_CARD, Transaction.Type.EXPENSE, new BigDecimal("300")))
+                .isEqualByComparingTo("300");
+        assertThat(AccountBalanceConvention.balanceDelta(
+                Account.Type.CREDIT_CARD, Transaction.Type.INCOME, new BigDecimal("300")))
+                .isEqualByComparingTo("-300");
+    }
+
+    @Test
+    void aNegativelySignedAmountCannotDoubleInvertTheConvention() {
+        // Direction is carried by the transaction TYPE alone. An amount that arrives signed must
+        // not flip it a second time -- that is how an EXPENSE of -500 would ADD 500 to a balance.
+        assertThat(AccountBalanceConvention.balanceDelta(
+                Account.Type.SAVINGS, Transaction.Type.EXPENSE, new BigDecimal("-500")))
+                .isEqualByComparingTo("-500");
+    }
+
+    @Test
+    void netDeltaSumsABatchAndIsExactlyReversibleByNegation() {
+        Transaction fare = new Transaction();
+        fare.setTxnType(Transaction.Type.EXPENSE);
+        fare.setAmount(new BigDecimal("45.00"));
+        Transaction salary = new Transaction();
+        salary.setTxnType(Transaction.Type.INCOME);
+        salary.setAmount(new BigDecimal("500.00"));
+
+        BigDecimal net = AccountBalanceConvention.netDelta(Account.Type.SAVINGS, List.of(fare, salary));
+
+        assertThat(net).isEqualByComparingTo("455.00");
+        // The property StatementImportService.delete depends on: applying then reversing a batch
+        // returns to the starting point, so an import/delete cycle cannot drift.
+        assertThat(net.add(net.negate())).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void netDeltaOfNothingIsZeroRatherThanNull() {
+        assertThat(AccountBalanceConvention.netDelta(Account.Type.SAVINGS, List.of()))
+                .isEqualByComparingTo("0");
+        assertThat(AccountBalanceConvention.netDelta(Account.Type.SAVINGS, null))
+                .isEqualByComparingTo("0");
+    }
+
+    @Test
+    void aNullAmountOrTypeContributesNothingRatherThanThrowing() {
+        assertThat(AccountBalanceConvention.balanceDelta(
+                Account.Type.SAVINGS, Transaction.Type.EXPENSE, null)).isEqualByComparingTo("0");
+        assertThat(AccountBalanceConvention.balanceDelta(
+                Account.Type.SAVINGS, null, new BigDecimal("10"))).isEqualByComparingTo("0");
     }
 
     @Test

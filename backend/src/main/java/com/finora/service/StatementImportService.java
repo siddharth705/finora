@@ -12,6 +12,7 @@ import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
+import com.finora.accounts.AccountBalanceConvention;
 import com.finora.accounts.AccountDto;
 import com.finora.imports.ImportService;
 import com.finora.security.OwnershipGuard;
@@ -19,6 +20,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -254,6 +256,28 @@ public class StatementImportService {
                 t.setReconciliationStatus(Transaction.ReconciliationStatus.OK);
                 transactionRepository.save(t);
             }
+        }
+
+        // Bug 17, the half that stops the fix drifting. Once confirm() moves the account balance by
+        // the net effect of the rows it inserts, deleting those rows has to move it back by exactly
+        // the same amount, or an import/delete cycle leaves the balance permanently overstated. The
+        // same negate-the-delta reversal TransactionService.delete already performs per row, done
+        // once for the batch through the shared convention so the two cannot disagree about the
+        // credit-card inversion.
+        //
+        // Deliberately reverses even when the import had originally set the balance from a stated
+        // closing figure: whichever way it was written, these transactions are what the balance is
+        // now standing on, and removing them without moving it leaves the column describing a
+        // ledger that no longer exists.
+        if (!toRemove.isEmpty()) {
+            accountRepository.findById(statementImport.getAccountId()).ifPresent(account -> {
+                BigDecimal reversal = AccountBalanceConvention
+                        .netDelta(account.getAccountType(), toRemove).negate();
+                if (reversal.signum() != 0) {
+                    account.setBalance(account.getBalance().add(reversal));
+                    accountRepository.save(account);
+                }
+            });
         }
 
         transactionRepository.deleteAll(toRemove);

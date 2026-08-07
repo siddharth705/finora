@@ -133,10 +133,12 @@ public class TransactionService {
      * (EXPENSE) increases what's owed and a payment/credit (INCOME) reduces it.
      */
     private BigDecimal balanceDelta(Account account, Transaction.Type type, BigDecimal amount) {
-        boolean increases = account.getAccountType() == Account.Type.CREDIT_CARD
-                ? type == Transaction.Type.EXPENSE
-                : type == Transaction.Type.INCOME;
-        return increases ? amount : amount.negate();
+        // Delegates to AccountBalanceConvention, which now owns this rule. It used to live here as
+        // a private method, which is precisely why ImportService could not reuse it and shipped
+        // Bug 17 -- a confirmed statement inserted its rows and never moved the balance. Same
+        // arithmetic, one owner.
+        return com.finora.accounts.AccountBalanceConvention.balanceDelta(
+                account.getAccountType(), type, amount);
     }
 
     private void adjustAccountBalance(UUID accountId, BigDecimal delta) {

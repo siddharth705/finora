@@ -1,8 +1,10 @@
 package com.finora.accounts;
 
 import com.finora.entity.Account;
+import com.finora.entity.Transaction;
 
 import java.math.BigDecimal;
+import java.util.Collection;
 
 /**
  * What the sign of {@link Account#getBalance()} means, per account type -- in one place.
@@ -80,5 +82,51 @@ public final class AccountBalanceConvention {
      */
     public static boolean looksLikeASignError(Account.Type type, BigDecimal balance) {
         return isLiability(type) && balance != null && balance.signum() < 0;
+    }
+
+    /**
+     * How much one transaction moves its own account's balance.
+     *
+     * <p>The fourth copy of this rule, now the only one. {@code TransactionService.balanceDelta}
+     * owned it privately, which meant the import path — the single largest writer of transactions
+     * in the product — structurally could not reuse it, and did not: a confirmed statement inserted
+     * its rows with {@code saveAll} and never moved the balance at all. That is Bug 17, and it is
+     * the same shape as the duplication this class was created to end.
+     *
+     * <p>The liability inversion is the part that must not be re-derived by hand. For a credit
+     * card, {@code balance} is money OWED, so a purchase (EXPENSE) INCREASES it and a payment
+     * (INCOME) reduces it — the opposite of every other type. Getting that backwards on the import
+     * path would corrupt a card's balance by twice its statement total, silently.
+     */
+    public static BigDecimal balanceDelta(Account.Type type, Transaction.Type txnType, BigDecimal amount) {
+        if (amount == null || txnType == null) return BigDecimal.ZERO;
+        boolean increases = isLiability(type)
+                ? txnType == Transaction.Type.EXPENSE
+                : txnType == Transaction.Type.INCOME;
+        // abs() so a defensively-signed amount cannot double-invert the convention. Direction is
+        // carried by txnType alone -- TransactionService.requirePositiveAmount enforces that on the
+        // manual path, and the import path normalises to an absolute value in TransactionNormalizer.
+        BigDecimal magnitude = amount.abs();
+        return increases ? magnitude : magnitude.negate();
+    }
+
+    /**
+     * The net movement a whole batch of transactions applies to one account.
+     *
+     * <p>Exists so the import path states its intent once rather than folding a loop at the call
+     * site, and so the {@code delete} path can express "reverse exactly what the import applied" as
+     * {@code netDelta(...).negate()} instead of a second loop that has to be kept in step with the
+     * first. Those two not being symmetric is how a balance drifts across an import/delete cycle.
+     *
+     * @param transactions may be empty; every element must belong to the account whose {@code type}
+     *                     is passed, since the inversion is a property of the ACCOUNT, not the row
+     */
+    public static BigDecimal netDelta(Account.Type type, Collection<Transaction> transactions) {
+        if (transactions == null || transactions.isEmpty()) return BigDecimal.ZERO;
+        BigDecimal total = BigDecimal.ZERO;
+        for (Transaction t : transactions) {
+            total = total.add(balanceDelta(type, t.getTxnType(), t.getAmount()));
+        }
+        return total;
     }
 }
