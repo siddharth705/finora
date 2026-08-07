@@ -42,8 +42,30 @@ public record TraceMetadata(int traceVersion, int redactorVersion, String allowl
                             String capturedAt, String generatedFrom, List<String> capabilities,
                             List<String> regressions, String motivation, List<String> requiredHeaders) {
 
-    /** The format version written by the current capture path. */
-    public static final int CURRENT_TRACE_VERSION = 2;
+    /**
+     * The format version written by the current capture path.
+     *
+     * <p><b>v3 — run width.</b> Rows are {@code page, x, y, width, text}. v1 and v2 wrote
+     * {@code page, x, y, text}, so every run parsed out of them has width 0 and
+     * {@code endX() == x}.
+     *
+     * <p>That was not a cosmetic omission. {@code PdfTableLocator}'s right-edge correction — the one
+     * that stops a short amount like "0.00" bucketing into the wrong column, which on a real HDFC
+     * statement turned a Rs 25,000 deposit into an expense and the opening balance into Rs 50,000 —
+     * is guarded on {@code width() > 0}. With no width in the format, no trace at any earlier
+     * version could reach it. The three committed traces hold 421 numeric amount runs between them
+     * and could not exercise the code that decides which column those amounts belong to.
+     *
+     * <p>Bumped rather than adding a fifth column under v2, on the same discipline as
+     * {@code LAYOUT_FINGERPRINT_VERSION}: never silently change what a version number means. A
+     * reader can tell from the magic line alone whether a trace carries widths.
+     *
+     * <p>Reading stays backward compatible — {@link PdfTrace#parse} accepts 4- or 5-field rows — so
+     * existing traces keep working and keep behaving exactly as before. What they cannot do is
+     * cover a width-dependent capability, and that stays true until they are recaptured from their
+     * source documents.
+     */
+    public static final int CURRENT_TRACE_VERSION = 3;
 
     /**
      * What a v1 trace reports.
@@ -60,6 +82,14 @@ public record TraceMetadata(int traceVersion, int redactorVersion, String allowl
     }
 
     public boolean isLegacy() { return traceVersion < CURRENT_TRACE_VERSION; }
+
+    /** True when this trace predates metadata entirely — a different and worse problem than being
+     *  merely out of date, since nothing about its provenance can be established. */
+    public boolean hasNoProvenance() { return traceVersion < 2; }
+
+    /** True when the rows carry no measured width, so any capability guarded on {@code width() > 0}
+     *  is unreachable on this trace however good its content is. */
+    public boolean hasNoWidths() { return traceVersion < 3; }
 
     /** True when this trace was captured under a different allowlist than the one in force now, so
      *  its redaction may have removed evidence the current allowlist would preserve. */

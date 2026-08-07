@@ -45,6 +45,10 @@ public final class PdfTrace {
      *  metadata line is a comment, which the v1 parser already skipped. */
     static final String MAGIC_V2 = "# finora-pdf-trace v2";
 
+    /** v3 adds a width column to every run. See {@link TraceMetadata#CURRENT_TRACE_VERSION} for why
+     *  a version bump rather than an extra column under v2. */
+    static final String MAGIC_V3 = "# finora-pdf-trace v3";
+
     /** Backward-compatible: writes a v1 trace with no provenance. Retained only so existing
      *  round-trip tests keep exercising the parser; {@link #format(List, TraceMetadata)} is what
      *  the capture path uses. */
@@ -66,9 +70,9 @@ public final class PdfTrace {
     /** A v2 trace: the same run data, preceded by the provenance block that says which redactor and
      *  allowlist produced it and which capability it exists to protect. */
     public static String format(List<PositionedText> runs, TraceMetadata metadata) {
-        return MAGIC_V2 + '\n'
+        return MAGIC_V3 + '\n'
                 + metadata.toHeaderLines()
-                + "# page\tx\ty\ttext\n"
+                + "# page\tx\ty\twidth\ttext\n"
                 + formatRuns(runs);
     }
 
@@ -79,6 +83,7 @@ public final class PdfTrace {
             sb.append(run.pageIndex()).append('\t')
                     .append(String.format(Locale.ROOT, "%.2f", run.x())).append('\t')
                     .append(String.format(Locale.ROOT, "%.2f", run.y())).append('\t')
+                    .append(String.format(Locale.ROOT, "%.2f", run.width())).append('\t')
                     .append(text).append('\n');
         }
         return sb.toString();
@@ -90,20 +95,56 @@ public final class PdfTrace {
         return TraceMetadata.parse(read(traceName));
     }
 
+    /**
+     * Reads either row shape.
+     *
+     * <p>v3 rows are {@code page, x, y, width, text}; v1 and v2 rows are {@code page, x, y, text}.
+     * Decided per line by field count rather than by the magic line, so a hand-edited file with a
+     * mixed body still parses to something rather than throwing at an unrelated place.
+     *
+     * <p>A 4-field row yields width 0, which is exactly what it meant before — those runs keep
+     * their previous bucketing, and any capability guarded on a measured width stays unreachable
+     * on them. That is a real limitation of the older traces, not a defect in this parser, and
+     * {@link TraceMetadata#hasNoWidths()} is how a caller asks about it.
+     */
     public static List<PositionedText> parse(String content) {
         List<PositionedText> runs = new ArrayList<>();
         for (String line : content.split("\n", -1)) {
             if (line.isBlank() || line.startsWith("#")) continue;
-            // Limit 4 so a text field containing tabs (see format()) can never shift the columns.
+            // Split limit is one past the last coordinate, so a text field containing tabs (see
+            // format()) can never shift the columns.
+            String[] wide = line.split("\t", 5);
+            boolean hasWidth = wide.length == 5 && isNumeric(wide[3]);
+            if (hasWidth) {
+                runs.add(new PositionedText(stripTrailingCarriageReturn(wide[4]),
+                        Float.parseFloat(wide[1]), Float.parseFloat(wide[2]),
+                        Integer.parseInt(wide[0]), Float.parseFloat(wide[3])));
+                continue;
+            }
+
             String[] parts = line.split("\t", 4);
             if (parts.length < 4) {
-                throw new IllegalArgumentException("Malformed trace line, expected 4 tab-separated "
-                        + "fields (page/x/y/text) but got " + parts.length + ": " + line);
+                throw new IllegalArgumentException("Malformed trace line, expected page/x/y/text or "
+                        + "page/x/y/width/text but got " + parts.length + " field(s): " + line);
             }
             runs.add(new PositionedText(stripTrailingCarriageReturn(parts[3]),
                     Float.parseFloat(parts[1]), Float.parseFloat(parts[2]), Integer.parseInt(parts[0])));
         }
         return runs;
+    }
+
+    /** Whether a field is a bare number, which is what separates a v3 width column from the first
+     *  tab-delimited chunk of a v1/v2 text field. A text run that happens to be entirely numeric is
+     *  the ambiguous case, and it is resolved by the field COUNT: a 5-field v1 row would need three
+     *  tabs inside its text, which format() strips on the way out. */
+    private static boolean isNumeric(String field) {
+        if (field.isEmpty()) return false;
+        try {
+            Float.parseFloat(field);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 
     /** Loads a committed trace from {@code src/test/resources/traces/}. */

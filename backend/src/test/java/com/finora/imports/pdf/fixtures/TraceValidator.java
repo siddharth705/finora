@@ -112,10 +112,21 @@ public final class TraceValidator {
             }
         }
 
-        if (metadata.isLegacy()) {
+        if (metadata.hasNoProvenance()) {
             findings.add(new Finding(Finding.Severity.REVIEW, "provenance",
                     "no metadata block -- redaction provenance cannot be established, so this trace "
                             + "cannot be shown to still contain its evidence"));
+        }
+
+        if (metadata.hasNoWidths()) {
+            // Separate from provenance on purpose: a trace can have impeccable provenance and still
+            // be unable to exercise width-dependent bucketing, and reporting both as "legacy" hides
+            // which of the two problems a recapture would fix.
+            findings.add(new Finding(Finding.Severity.REVIEW, "widths",
+                    "rows carry no width, so every run has endX == x. Any capability guarded on a "
+                            + "measured width -- RIGHT_ALIGNED_AMOUNTS, and the column bucketing it "
+                            + "corrects -- cannot activate on this trace however good its content "
+                            + "is. Recapture at trace v3 to fix."));
         }
 
         return new Result(traceName, metadata, findings, doc.sections().size(), doc.sections().size(),
