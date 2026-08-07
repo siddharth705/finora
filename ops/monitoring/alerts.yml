@@ -1,0 +1,160 @@
+# Finora operational alerts.
+#
+# ALERT PHILOSOPHY
+# ----------------
+# Every rule below fires on a SUSTAINED CONDITION, never on a single event. That is the same
+# decision the worker framework makes in code -- a retry is counted but not reported, because a
+# transient failure the next attempt resolves is normal operation and paging on it is how alerting
+# gets muted.
+#
+# Concretely, that means every rule has a `for:` clause. A rule without one fires on a scrape blip.
+#
+# Thresholds here are STARTING POINTS, not measurements. Finora has no production traffic history
+# yet, so anything claiming to be a tuned threshold would be invented. They are deliberately set
+# where a human would want to look rather than where a human would want to be woken, and should be
+# revised once there is a baseline. `oldest_pending_age` is the exception: it maps to a real product
+# promise (a confirmed categorisation takes effect promptly) rather than to a rate nobody has
+# measured.
+#
+# Severity means: critical = work is not getting done or data is at risk, act now.
+#                 warning  = a trend that will become critical if ignored, look today.
+
+groups:
+  - name: finora-workers
+    rules:
+
+      # ------------------------------------------------------------------ critical
+
+      - alert: WorkerDeadLettersRising
+        # ANY sustained dead-lettering is abnormal. A dead letter means retries were exhausted and
+        # a user's action silently did not take effect -- it does not resolve itself.
+        expr: sum by (worker, jobKind) (rate(finora_worker_dead_letters_total[15m])) > 0
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.worker }} is dead-lettering {{ $labels.jobKind }} jobs"
+          description: >-
+            Retries exhausted; this work will not run again without a human. Each event is in
+            Sentry tagged outcome=dead-letter with a jobId. See the runbook section
+            "An event arrives tagged outcome=dead-letter" in docs/engineering/observability.md.
+
+      - alert: QueueAgeExceedsSla
+        # The best single alert on this platform: it is the user-visible symptom. Depth says how
+        # much work is waiting; age says how long someone has been waiting, and only age maps to a
+        # promise. 15m is well beyond the 30s poll interval, so this cannot fire on normal load.
+        expr: max by (worker, jobKind) (finora_worker_oldest_pending_age_seconds) > 900
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Oldest {{ $labels.jobKind }} job has waited over 15 minutes"
+          description: >-
+            The queue is not draining. Check whether the worker is running at all
+            (finora_worker_executions_total should be increasing) before assuming it is slow.
+
+      - alert: QueueGrowingWithoutProgress
+        # The distinction that separates "stuck" from "loaded", expressed as a rule: depth rising
+        # while completions are flat. Either condition alone is normal.
+        expr: >-
+          deriv(finora_worker_queue_depth[30m]) > 0
+          and sum by (worker, jobKind) (rate(finora_worker_completed_total[30m])) == 0
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.worker }} queue is growing and nothing is completing"
+          description: >-
+            A stall, not load. Suspect a stuck worker, an exhausted connection pool, or a poison
+            job being reclaimed repeatedly.
+
+      - alert: WorkerStrandingRows
+        # failures without dead_letters means recording a failure itself failed -- a double fault
+        # that leaves rows mid-flight. Per the runbook, suspect the database rather than the worker.
+        expr: >-
+          sum by (worker, jobKind) (rate(finora_worker_failures_total[15m]))
+          > sum by (worker, jobKind) (rate(finora_worker_dead_letters_total[15m]))
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.worker }} is failing to record failures"
+          description: >-
+            Rows are being stranded mid-flight. Recording a failure is a small write that should
+            not fail; check database health and connection pool saturation first.
+
+      - alert: BackendDown
+        expr: up{job="finora-backend"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backend is not scrapeable"
+          description: >-
+            Either the service is down or the scrape credential has expired. Check /actuator/health
+            by hand before assuming an outage -- an expired token looks identical here.
+
+      # ------------------------------------------------------------------ warning
+
+      - alert: WorkerRecoveringAbandonedJobs
+        # Recovery means a worker process died mid-apply. One row is a blip; a sustained rate means
+        # something is killing workers -- OOM, a restart loop, a deploy cycling repeatedly.
+        expr: sum by (worker, jobKind) (rate(finora_worker_recovered_total[30m])) > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.worker }} is repeatedly recovering abandoned jobs"
+          description: >-
+            Workers are dying mid-apply. Correlate with deploys, container restarts and memory.
+
+      - alert: WorkerRetryRateStepChange
+        # Phrased as a change against the last day rather than an absolute: the healthy retry rate
+        # is workload-specific and inventing a number would produce an alert nobody trusts.
+        expr: >-
+          sum by (worker, jobKind) (rate(finora_worker_retries_total[30m]))
+          > 3 * sum by (worker, jobKind) (rate(finora_worker_retries_total[24h]))
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.worker }} retry rate is well above its own baseline"
+          description: >-
+            Retrying is expected; a step change is not. Usually a dependency degrading before it
+            fails outright.
+
+      - alert: WorkerExecutionSlow
+        expr: >-
+          histogram_quantile(0.95,
+            sum by (le, worker, jobKind) (rate(finora_worker_duration_seconds_bucket[30m]))) > 30
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.worker }} p95 pass duration is above 30s"
+          description: >-
+            p95 rather than the mean, because the mean hides the stalls that matter.
+
+      - alert: ConnectionPoolSaturated
+        # HikariCP is capped at 10 by default (DB_POOL_MAX_SIZE) and is shared with request threads,
+        # so worker slowness and request slowness have a common cause worth alerting on directly.
+        expr: >-
+          hikaricp_connections_active / hikaricp_connections_max > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database connection pool is over 90% utilised"
+          description: >-
+            Workers and request threads share this pool. Expect both to slow together.
+
+      - alert: JvmHeapPressure
+        expr: >-
+          sum(jvm_memory_used_bytes{area="heap"}) / sum(jvm_memory_max_bytes{area="heap"}) > 0.9
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "JVM heap is over 90% used"
+          description: >-
+            Sustained heap pressure precedes the OOM kills that show up later as recovered jobs.

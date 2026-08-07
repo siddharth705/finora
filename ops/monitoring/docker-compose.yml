@@ -1,0 +1,67 @@
+# Local observability stack: Prometheus + Grafana against a locally running backend.
+#
+# WHY THIS EXISTS
+# ---------------
+# Dashboards and alert rules are code, and code that has never run is a guess. This stack is how a
+# dashboard panel or an alert expression gets validated against real worker activity before anyone
+# relies on it in production -- the difference between "the query is plausible" and "the query
+# returns a series".
+#
+# It is NOT a production deployment. Production Prometheus/Grafana are infrastructure decisions
+# (private network, retention, HA, auth) and belong outside this repository.
+#
+# USAGE
+#   1. Run the backend locally (mvn spring-boot:run, or docker-compose up from the repo root).
+#   2. Mint a token for an account you control and write it, with no trailing newline, to
+#      ops/monitoring/scrape-token -- gitignored, so it cannot be committed.
+#   3. docker compose -f ops/monitoring/docker-compose.yml up
+#   4. Prometheus http://localhost:9090  ·  Grafana http://localhost:3001 (admin/admin)
+#   5. Generate worker activity: confirm a merchant category in the app, or POST to the learning
+#      queue endpoints, then watch finora_worker_* move.
+#
+# The dashboards and datasource are provisioned from files, so what you validate here is byte-for-
+# byte what a production Grafana would import.
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: finora-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+      # The token file. Absent on a fresh clone, which makes the scrape fail loudly with 401 rather
+      # than appearing to work -- see the README.
+      - ./scrape-token:/etc/prometheus/scrape-token:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      # Short retention: this is a validation stack, not a system of record.
+      - --storage.tsdb.retention.time=24h
+      - --web.enable-lifecycle
+    extra_hosts:
+      # Lets the container reach a backend running on the host. Native on Docker Desktop; declared
+      # explicitly so it also works on Linux.
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: finora-grafana
+    # 3001 because 3000 is commonly taken by a dev server, and a port clash here reads as a broken
+    # stack rather than as a port clash.
+    ports:
+      - "3001:3000"
+    environment:
+      # Local validation only. This stack is not reachable from anywhere else and holds no data
+      # worth protecting -- production Grafana auth is an infrastructure decision.
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Anonymous viewing keeps the loop tight when checking whether a panel renders.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus

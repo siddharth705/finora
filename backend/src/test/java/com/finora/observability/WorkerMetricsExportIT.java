@@ -119,6 +119,14 @@ class WorkerMetricsExportIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void oldestPendingAgeIsExportedUnderTheNameTheDashboardQueries() {
+        // baseUnit("seconds") becomes part of the exported name -- the exact translation
+        // check-dashboard-metrics.py exists to police. Asserted against a real scrape so the
+        // dashboard query and the emitted series are proven to match rather than assumed to.
+        assertThat(scrape()).contains("finora_worker_oldest_pending_age_seconds");
+    }
+
+    @Test
     void everyMeterIsStampedWithTheEnvironment_soOnePrometheusCanHoldMoreThanOneDeployment() {
         try (WorkerExecution execution = observability.begin("env-worker", "env-job")) {
             execution.completed(UUID.randomUUID());

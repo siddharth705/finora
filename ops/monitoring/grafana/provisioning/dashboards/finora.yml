@@ -1,0 +1,14 @@
+# Dashboards are files in this repository, not objects edited in a UI. A panel edited in Grafana and
+# not committed is lost on the next container restart, and a query nobody reviewed is how a
+# dashboard ends up quietly showing the wrong series.
+apiVersion: 1
+providers:
+  - name: finora
+    orgId: 1
+    folder: Finora
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

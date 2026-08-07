@@ -99,6 +99,11 @@ public class MerchantLearningEventWorker {
         // rate is a stall. countByStatus is indexed on status, so the scrape stays cheap.
         observability.publishQueueDepth(WORKER, JOB_KIND,
                 () -> repository.countByStatus(MerchantLearningEvent.Status.PENDING));
+        // Depth says how much work is outstanding; age says how long someone has been waiting for
+        // their categorisation to take effect. Only the second maps to an SLA, which is why it is
+        // the better alert of the two.
+        observability.publishOldestPendingAge(WORKER, JOB_KIND,
+                () -> repository.findOldestPendingQueuedAt(Instant.now()));
     }
 
     /**

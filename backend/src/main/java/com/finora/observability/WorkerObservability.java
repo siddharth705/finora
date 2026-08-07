@@ -7,6 +7,9 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Optional;
 import java.util.function.Supplier;
 
 /**
@@ -93,6 +96,33 @@ public class WorkerObservability {
                 .tag("worker", worker)
                 .tag("jobKind", jobKind)
                 .description("Jobs waiting to be claimed")
+                .register(meters.registry());
+    }
+
+    /**
+     * Publishes how long the oldest waiting job has been waiting, in seconds.
+     *
+     * <p>Depth and age answer different questions and only one of them maps to an SLA. Depth says
+     * how much work is outstanding; age says how long someone has been waiting for their
+     * categorisation to take effect. A deep queue draining quickly is healthy; a shallow queue with
+     * one row stuck for an hour is not, and depth alone cannot tell those apart.
+     *
+     * <p>Empty means the queue is drained, which is published as {@code 0} rather than left absent:
+     * a gauge that disappears is indistinguishable from a scrape failure on a dashboard.
+     *
+     * <p>Same constraints as {@link #publishQueueDepth} -- the supplier runs on the scrape path, so
+     * it must be cheap and must not throw.
+     */
+    public void publishOldestPendingAge(String worker, String jobKind, Supplier<Optional<Instant>> oldest) {
+        Gauge.builder("finora.worker.oldest_pending_age", () -> {
+                    Optional<Instant> queuedAt = oldest.get();
+                    return queuedAt.map(at -> (double) Math.max(0, Duration.between(at, Instant.now()).toSeconds()))
+                            .orElse(0.0);
+                })
+                .tag("worker", worker)
+                .tag("jobKind", jobKind)
+                .baseUnit("seconds")
+                .description("How long the oldest waiting job has been waiting")
                 .register(meters.registry());
     }
 

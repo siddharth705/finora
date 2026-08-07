@@ -246,6 +246,25 @@ class WorkerObservabilityTest {
         assertThat(meters.find("finora.worker.queue_depth").gauge().value()).isEqualTo(11.0);
     }
 
+    @Test
+    void oldestPendingAgeIsPublishedInSeconds() {
+        // The user-visible symptom, and the metric QueueAgeExceedsSla alerts on.
+        Instant queued = Instant.now().minus(90, ChronoUnit.SECONDS);
+        observability.publishOldestPendingAge(WORKER, KIND, () -> java.util.Optional.of(queued));
+
+        assertThat(meters.find("finora.worker.oldest_pending_age").gauge().value())
+                .isGreaterThanOrEqualTo(90.0).isLessThan(120.0);
+    }
+
+    @Test
+    void aDrainedQueuePublishesZeroRatherThanDisappearing() {
+        // A gauge that vanishes is indistinguishable from a scrape failure on a dashboard, which
+        // would make an empty queue look like an outage.
+        observability.publishOldestPendingAge(WORKER, KIND, java.util.Optional::empty);
+
+        assertThat(meters.find("finora.worker.oldest_pending_age").gauge().value()).isEqualTo(0.0);
+    }
+
     // ---------------------------------------------------------------- naming contract
 
     @Test

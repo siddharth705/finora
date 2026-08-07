@@ -168,4 +168,23 @@ public interface MerchantLearningEventRepository extends JpaRepository<MerchantL
     List<MerchantLearningEvent> findByStatus(MerchantLearningEvent.Status status, Pageable pageable);
 
     long countByStatus(MerchantLearningEvent.Status status);
+
+    /**
+     * When the oldest still-unclaimed event was queued, or empty when the queue is drained.
+     *
+     * <p>Backs the {@code finora.worker.oldest_pending_age} gauge, which is the queue's
+     * user-visible symptom and the best single alert: depth answers "how much work is waiting",
+     * this answers "how long has someone been waiting", and only the second maps to an SLA.
+     *
+     * <p>Scoped to PENDING with a due {@code next_attempt_at} deliberately -- a row backing off
+     * between retries is waiting by design and would otherwise make a healthy queue look aged.
+     * Matches the predicate {@code claimDueEvents} uses, so the gauge measures the same set the
+     * worker would actually pick up.
+     */
+    @Query("""
+           SELECT MIN(e.createdAt) FROM MerchantLearningEvent e
+            WHERE e.status = com.finora.entity.MerchantLearningEvent.Status.PENDING
+              AND e.nextAttemptAt <= :now
+           """)
+    Optional<Instant> findOldestPendingQueuedAt(@Param("now") Instant now);
 }

@@ -82,6 +82,13 @@ jobs:
       - name: Executable bits
         run: python scripts/check-executable-bits.py
 
+      # A Grafana panel querying a metric that does not exist renders an empty graph, and an alert
+      # on a non-existent series never fires -- both indistinguishable from a healthy system. The
+      # translation is easy to get wrong because Micrometer renames on the way out: dots become
+      # underscores, counters gain _total, timers expand into _seconds_bucket/_count/_sum.
+      - name: Dashboard metrics
+        run: python scripts/check-dashboard-metrics.py
+
       # Also before setup-java, and for the same reason: it names the file and the type, where
       # javac names a symbol at a line in whatever compiled first. Cheap enough (~0.4s over 476
       # files) that running it ahead of a 5-minute build is free.

@@ -197,3 +197,9 @@ reports/
 *.swp
 *.swo
 *~
+
+# Prometheus scrape credential for the local observability stack. /actuator/prometheus is
+# authenticated by design (SecurityConfig permits only /actuator/health), so validating dashboards
+# locally needs a real token -- which must never be committed. Ignored rather than documented-and-
+# hoped-for: check-fixture-hygiene.sh scans staged content, but a JWT is not a shape it recognises.
+ops/monitoring/scrape-token

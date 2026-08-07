@@ -35,6 +35,13 @@ if echo "$staged" | grep -qE '^(frontend|admin-portal|mobile)/src/'; then
   python scripts/check-contact-addresses.py || exit 1
 fi
 
+# Keyed off both sides of the contract: renaming a meter in the framework breaks a dashboard just as
+# surely as mistyping the query does, and the person renaming the meter is the one least likely to
+# think about Grafana.
+if echo "$staged" | grep -qE '^(ops/monitoring/|backend/src/main/java/com/finora/observability/)'; then
+  python scripts/check-dashboard-metrics.py || exit 1
+fi
+
 if echo "$staged" | grep -qE '^(frontend|admin-portal|mobile)/'; then
   if echo "$staged" | grep -q '^frontend/'; then
     (cd frontend && npx eslint --fix $(echo "$staged" | grep '^frontend/' | sed 's#^frontend/##') 2>/dev/null || true)

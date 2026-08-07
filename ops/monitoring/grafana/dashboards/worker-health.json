@@ -1,0 +1,235 @@
+{
+  "uid": "finora-worker-health",
+  "title": "Finora — Worker Health",
+  "description": "Every background worker, one dashboard. Queries are written against the framework's fixed metric names, so a new worker appears here automatically the moment it uses WorkerObservability — that is the point of fixing the names in code rather than letting each worker choose.",
+  "tags": ["finora", "workers"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "worker",
+        "label": "Worker",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(finora_worker_executions_total, worker)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Is work getting done?",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "type": "stat",
+      "title": "Dead letters (1h)",
+      "description": "Any non-zero value means a user's action silently did not take effect. This is the number to look at first.",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(increase(finora_worker_dead_letters_total{worker=~\"$worker\"}[1h]))",
+          "legendFormat": "dead letters"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Success rate (1h)",
+      "description": "Completed as a share of completed + failures. Retries are excluded deliberately — a job that retried and then succeeded is a success, and counting it as a failure would make a healthy queue look broken.",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(increase(finora_worker_completed_total{worker=~\"$worker\"}[1h])) / clamp_min(sum(increase(finora_worker_completed_total{worker=~\"$worker\"}[1h])) + sum(increase(finora_worker_failures_total{worker=~\"$worker\"}[1h])), 1)",
+          "legendFormat": "success rate"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.95 },
+              { "color": "green", "value": 0.99 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Oldest waiting job",
+      "description": "The user-visible symptom, and the best single number on this dashboard. Depth says how much work is waiting; this says how long someone has been waiting.",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "max(finora_worker_oldest_pending_age_seconds{worker=~\"$worker\"})",
+          "legendFormat": "oldest"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 300 },
+              { "color": "red", "value": 900 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Recovered (1h)",
+      "description": "Rows returned to the queue after a worker died mid-apply. One is a blip; a batch means a process died holding a full claim.",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(increase(finora_worker_recovered_total{worker=~\"$worker\"}[1h]))",
+          "legendFormat": "recovered"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "row",
+      "title": "Throughput and outcomes",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Outcome rate by worker",
+      "description": "Completed, retries, dead letters and failures side by side. Retries rising while completions hold is a degrading dependency; completions falling to zero with depth rising is a stall.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (worker) (rate(finora_worker_completed_total{worker=~\"$worker\"}[5m]))", "legendFormat": "completed — {{worker}}" },
+        { "expr": "sum by (worker) (rate(finora_worker_retries_total{worker=~\"$worker\"}[5m]))", "legendFormat": "retries — {{worker}}" },
+        { "expr": "sum by (worker) (rate(finora_worker_dead_letters_total{worker=~\"$worker\"}[5m]))", "legendFormat": "dead letters — {{worker}}" },
+        { "expr": "sum by (worker) (rate(finora_worker_failures_total{worker=~\"$worker\"}[5m]))", "legendFormat": "failures — {{worker}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "fillOpacity": 10 } }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Pass duration (p50 / p95)",
+      "description": "p95 is the number that matters; the mean hides the stalls. A widening gap between the two means some passes are getting stuck while most stay fast.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (le, worker) (rate(finora_worker_duration_seconds_bucket{worker=~\"$worker\"}[5m])))", "legendFormat": "p50 — {{worker}}" },
+        { "expr": "histogram_quantile(0.95, sum by (le, worker) (rate(finora_worker_duration_seconds_bucket{worker=~\"$worker\"}[5m])))", "legendFormat": "p95 — {{worker}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "type": "row",
+      "title": "Queue health",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Queue depth vs completion rate",
+      "description": "The pair that separates loaded from stuck. Depth rising with a healthy completion rate is load; depth rising with a flat completion rate is a stall, and that combination is what the QueueGrowingWithoutProgress alert fires on.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (worker) (finora_worker_queue_depth{worker=~\"$worker\"})", "legendFormat": "depth — {{worker}}" },
+        { "expr": "sum by (worker) (rate(finora_worker_completed_total{worker=~\"$worker\"}[5m])) * 60", "legendFormat": "completed/min — {{worker}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Queue wait (p95) and oldest waiting job",
+      "description": "Queue wait is what already-processed jobs experienced; oldest-pending is what someone is experiencing right now. The second leads the first, so it is the earlier warning.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (le, worker) (rate(finora_worker_queue_wait_time_seconds_bucket{worker=~\"$worker\"}[5m])))", "legendFormat": "queue wait p95 — {{worker}}" },
+        { "expr": "max by (worker) (finora_worker_oldest_pending_age_seconds{worker=~\"$worker\"})", "legendFormat": "oldest pending — {{worker}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "type": "row",
+      "title": "Infrastructure",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 }
+    },
+    {
+      "type": "timeseries",
+      "title": "HikariCP connection pool",
+      "description": "Capped at 10 by default and shared with request threads, so worker slowness and API slowness have a common cause worth watching here.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "hikaricp_connections_active", "legendFormat": "active" },
+        { "expr": "hikaricp_connections_idle", "legendFormat": "idle" },
+        { "expr": "hikaricp_connections_pending", "legendFormat": "pending" },
+        { "expr": "hikaricp_connections_max", "legendFormat": "max" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "JVM heap",
+      "description": "Sustained heap pressure precedes the OOM kills that show up later as recovered jobs.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(jvm_memory_used_bytes{area=\"heap\"})", "legendFormat": "used" },
+        { "expr": "sum(jvm_memory_max_bytes{area=\"heap\"})", "legendFormat": "max" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] }
+    }
+  ]
+}

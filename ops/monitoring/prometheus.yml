@@ -1,0 +1,54 @@
+# Prometheus scrape configuration for Finora.
+#
+# THE CREDENTIAL IS THE WHOLE POINT OF THIS FILE
+# ----------------------------------------------
+# /actuator/prometheus is authenticated. SecurityConfig permits /actuator/health and nothing else,
+# so this scrape carries a bearer token. That is deliberate: the scrape exposes queue depths, error
+# rates and JVM internals -- no customer data, but useful reconnaissance -- and
+# WorkerMetricsExportIT asserts that anonymous access fails precisely so nobody "fixes" scraping by
+# adding /actuator/** to permitAll.
+#
+# DO NOT put a token in this file. It reads one from a file that is gitignored, so a working local
+# setup can never become a committed credential.
+#
+# For production, prefer the deployment models in that order:
+#   1. Private network scraping  -- Prometheus reaches the backend on Railway's internal network and
+#      the endpoint is never routable publicly. Best posture; no long-lived token to rotate.
+#   2. Internal service authentication -- a dedicated scrape principal with only the metrics scope.
+#   3. Infrastructure access control -- IP allowlist or mTLS in front of the endpoint.
+#
+# A user token minted by hand is fine for LOCAL validation and is not acceptable in production: it
+# carries a real user's authorities and expires on that user's schedule.
+
+global:
+  # 15s matches the resolution the dashboards assume. Going finer costs storage without helping:
+  # the worker poll interval is 30s by default, so a faster scrape samples the same value twice.
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    # Set per deployment so one Prometheus can hold more than one environment. Deliberately the
+    # same value the backend stamps on every meter (management.metrics.tags.environment) and the
+    # same one Sentry reports -- an alert and an error should agree about which deploy they mean.
+    environment: local
+
+rule_files:
+  - alerts.yml
+
+scrape_configs:
+  - job_name: finora-backend
+    metrics_path: /actuator/prometheus
+    scheme: http
+
+    # Read from a file so the token never enters git. Create it with:
+    #   echo -n "<token>" > ops/monitoring/scrape-token
+    # ops/monitoring/scrape-token is gitignored.
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/scrape-token
+
+    static_configs:
+      # host.docker.internal reaches a backend running on the host from inside the compose network.
+      # Replace with the internal service address in a real deployment.
+      - targets: ['host.docker.internal:8080']
+        labels:
+          service: backend
