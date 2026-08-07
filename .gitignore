@@ -116,6 +116,20 @@ scratch-*/
 tmp/
 temp/
 
+# Working directories people actually create, as opposed to the ones this file predicted. Added
+# after a "Bank statement/" directory of real statements -- several named after the customer, one
+# with an account number in the filename -- was found untracked and unignored at the repository
+# root, which is one `git add -A` away from repeating
+# docs/engineering/incidents/2026-08-03-customer-pii-in-git-history.md.
+#
+# Patterns rather than the one directory: the next person will pick a different name, and
+# scripts/trace-capture.sh refuses a source path inside the repo precisely because this keeps
+# happening. A statement belongs outside the working tree; this is the backstop for when it isn't.
+[Bb]ank [Ss]tatement*/
+[Ss]tatements/
+*.pdf.local
+
+
 # ============================================================================================
 # Local Databases
 # ============================================================================================
