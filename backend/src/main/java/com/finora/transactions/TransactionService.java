@@ -495,6 +495,26 @@ public class TransactionService {
         }
     }
 
+    /**
+     * WI1A — the last synchronous batch learning path, moved onto the queue WI1 built.
+     *
+     * <p>This used to call {@code categorizationService.learn} inline, once per id, up to
+     * {@code TransactionDto.MAX_BULK_IDS} (500) times inside this one transaction. That is the
+     * import path's exact pre-WI1 shape and it carried the same defect: {@code
+     * MerchantLearningService.confirm} does a check-then-act against
+     * {@code UNIQUE(user_id, merchant_id, category_id)}, so one lost race threw a constraint
+     * violation that poisoned this transaction and rolled back every one of the 500
+     * recategorizations the user had just asked for — including the 499 that had nothing to do with
+     * the merchant that lost.
+     *
+     * <p>{@code queueLearning} writes the event row in THIS transaction, so a bulk action that
+     * fails for any other reason takes its queued learning with it, and defers only the applying.
+     * See {@code CategorizationService.queueLearning} for why the boundary is drawn there and not
+     * one line either side of it.
+     *
+     * <p>Single, interactive recategorization ({@link #updateCategory}, {@link #confirmMerchantCategory},
+     * {@link #create}) deliberately stays synchronous — see {@code CategorizationService.learn}.
+     */
     @Transactional
     public void bulkRecategorize(UUID userId, List<UUID> ids, String categoryName) {
         Category category = categorizationService.resolveOrCreateCategory(userId, categoryName);
@@ -505,7 +525,7 @@ public class TransactionService {
             t.setCategoryManuallySet(true);
             t.setDecisionSource(Transaction.DecisionSource.MANUAL);
             t.setDecisionRuleId(null);
-            categorizationService.learn(userId, t.getDescription(), category.getId());
+            categorizationService.queueLearning(userId, t.getDescription(), category.getId());
             transactionRepository.save(t);
         }
         auditService.record(userId, "TRANSACTION_BULK_RECATEGORIZED", "Transaction", null,

@@ -28,6 +28,7 @@ class CategorizationServiceTest {
 
     private MerchantNormalizationEngine merchantNormalizationEngine;
     private MerchantLearningService merchantLearningService;
+    private MerchantLearningEventPublisher learningEventPublisher;
     private MerchantCategoryLearningRepository learningRepository;
     private CategoryRepository categoryRepository;
     private RuleEngineService ruleEngineService;
@@ -38,6 +39,11 @@ class CategorizationServiceTest {
     void setUp() {
         merchantNormalizationEngine = mock(MerchantNormalizationEngine.class);
         merchantLearningService = mock(MerchantLearningService.class);
+        // Mocked here because this class is about which collaborator learn()/queueLearning()
+        // delegate to, not about whether the queue works -- the queue's own behaviour needs a real
+        // transaction and a real Postgres to mean anything, which is what MerchantLearningQueueIT
+        // and BulkRecategorizeLearningIT are for.
+        learningEventPublisher = mock(MerchantLearningEventPublisher.class);
         learningRepository = mock(MerchantCategoryLearningRepository.class);
         categoryRepository = mock(CategoryRepository.class);
         // Unstubbed -- Mockito's default answer returns Optional.empty() for Optional-returning
@@ -45,7 +51,8 @@ class CategorizationServiceTest {
         // RuleEngineServiceTest) falls straight through to the learned/keyword logic being tested.
         ruleEngineService = mock(RuleEngineService.class);
         categorizationService = new CategorizationService(
-                merchantNormalizationEngine, merchantLearningService, learningRepository,
+                merchantNormalizationEngine, merchantLearningService, learningEventPublisher,
+                learningRepository,
                 new ConfidenceEngine(), categoryRepository, ruleEngineService); // ConfidenceEngine is pure logic — real instance is fine
     }
 
@@ -117,6 +124,29 @@ class CategorizationServiceTest {
         categorizationService.learn(userId, "SWIGGY*ORDR9182 BLR", categoryId);
 
         verify(merchantLearningService).confirm(userId, merchantId, categoryId);
+        // The synchronous path must not ALSO queue -- a single interactive action that both applied
+        // the learning and left an event behind would confirm the merchant twice.
+        verifyNoInteractions(learningEventPublisher);
+    }
+
+    // --- WI1A: the batch counterpart ------------------------------------------------------------
+
+    @Test
+    void queueLearning_resolvesTheMerchantItselfAndQueuesTheConfirmationInsteadOfApplyingIt() {
+        UUID merchantId = UUID.randomUUID();
+        UUID categoryId = UUID.randomUUID();
+        when(merchantNormalizationEngine.resolve(eq(userId), anyString())).thenReturn(merchantWithId(merchantId));
+
+        categorizationService.queueLearning(userId, "SWIGGY*ORDR9182 BLR", categoryId);
+
+        // The merchant is still resolved HERE, in the caller's transaction: the worker is handed an
+        // id, never a description, so it never has to create a merchant of its own after the fact.
+        verify(merchantNormalizationEngine).resolve(userId, "SWIGGY*ORDR9182 BLR");
+        // Null source ids because a bulk recategorization is not an import and had no staging
+        // session -- see queueLearning's doc comment for why that is stated rather than invented.
+        verify(learningEventPublisher).enqueue(userId, merchantId, categoryId, null, null);
+        // And nothing is applied inline, which is the entire point of WI1A.
+        verify(merchantLearningService, never()).confirm(any(), any(), any());
     }
 
     @Test
