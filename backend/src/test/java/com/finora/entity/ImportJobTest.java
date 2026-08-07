@@ -62,6 +62,30 @@ class ImportJobTest {
                 .hasMessageContaining("would leave imported transactions");
     }
 
+    /**
+     * The race the worker's stage-boundary checks cannot close on their own.
+     *
+     * <p>A cancel arriving between the worker's last check and its call to {@code complete} would
+     * otherwise flip a stopped job to COMPLETED and hand the user the staged session they had just
+     * asked not to have. Held here rather than in the worker because the next caller of
+     * {@code complete} would have to remember the same rule, and the one after that.
+     */
+    @Test
+    void completingCannotOverwriteACancellation() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+        job.cancel(Instant.now());
+
+        assertThatThrownBy(() -> job.complete(UUID.randomUUID(), Instant.now()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("asked to stop");
+
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.CANCELLED);
+        assertThat(job.getImportSessionId())
+                .as("a refused completion must not leave the session id behind either")
+                .isNull();
+    }
+
     @Test
     void backoffGrowsAndThenStops() {
         // Exponential so a job whose dependency is down stops hammering it; capped so a job that

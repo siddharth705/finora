@@ -15,6 +15,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -55,6 +56,9 @@ public class ImportJobService {
     private final Optional<StatementStorage> storage;
     private final ImportJobWorker worker;
 
+    @org.springframework.beans.factory.annotation.Value("${app.import.queue.enabled:false}")
+    private boolean queueEnabled;
+
     public ImportJobService(ImportJobStore jobStore,
                              ImportJobRepository repository,
                              Optional<StatementStorage> storage,
@@ -87,6 +91,15 @@ public class ImportJobService {
      */
     @Transactional
     public ImportJob accept(UUID userId, MultipartFile file) throws IOException {
+        // Storage is a hard gate; the queue flag deliberately is not.
+        //
+        // Without storage the job could never run anywhere: it holds a content address and there is
+        // nothing to resolve it against. Without THIS instance's queue flag it may still run
+        // perfectly well -- phase 6 of the design splits the API and the workers into separate
+        // services, and in that topology the API has the flag off precisely because it should not
+        // run workers. Refusing here would break the deployment the roadmap is heading for, to
+        // protect against a single-instance misconfiguration that {@link #availability} already
+        // reports and that no client following it will hit.
         StatementStorage active = storage.orElseThrow(() -> new ApiException(
                 HttpStatus.SERVICE_UNAVAILABLE,
                 "Asynchronous import needs object storage, which is not configured on this "
@@ -114,6 +127,25 @@ public class ImportJobService {
     }
 
     /**
+     * Whether a client should send uploads here at all.
+     *
+     * <p>Exists because the alternative is worse. Without it a client either hardcodes an assumption
+     * about a per-deployment setting, or discovers the answer by uploading and reading the 503 —
+     * and by then the whole file has crossed the network, so falling back to the synchronous
+     * endpoint would send every byte a second time. One cheap GET before the upload replaces that.
+     *
+     * <p>Stricter than {@link #accept}, on purpose. Accept refuses only what could never run
+     * anywhere (no storage); this also reports false when <em>this instance</em> runs no workers,
+     * because a single-service deployment with the queue off would take the upload and leave it
+     * QUEUED forever behind a progress endpoint that never changes. In the split API/worker topology
+     * phase 6 describes, this instance is the wrong one to ask — which is a reason to revisit the
+     * signal then, not a reason to let a single-instance deployment silently swallow uploads now.
+     */
+    public ImportJobDto.Availability availability() {
+        return new ImportJobDto.Availability(queueEnabled && storage.isPresent());
+    }
+
+    /**
      * Progress for one job, scoped to its owner.
      *
      * <p>Scoped by user rather than checked afterwards: a job id alone must never be enough to read
@@ -129,5 +161,49 @@ public class ImportJobService {
     public List<ImportJobDto.Progress> recent(UUID userId, int limit) {
         return repository.findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(0, Math.min(limit, 50)))
                 .stream().map(ImportJobDto.Progress::of).toList();
+    }
+
+    /**
+     * Stops a job its owner no longer wants.
+     *
+     * <p>Someone who uploaded the wrong file should not have to wait for it, and before this the
+     * only options were to wait or to let it complete and discard the session afterwards.
+     *
+     * <p><b>What cancelling actually guarantees.</b> A {@code QUEUED} job never starts: claims only
+     * look at {@code QUEUED}, so flipping the status is enough. A job a worker is already holding
+     * stops at its next stage boundary — the parse in flight runs to the end of its current stage,
+     * because interrupting PDFBox mid-document needs cooperative cancellation the parser does not
+     * have. Either way no session is created and nothing reaches the user's ledger, which is the
+     * promise the button makes.
+     *
+     * <p>409 rather than a silent no-op on a job that is past {@link ImportJob#isCancellable()}:
+     * "your import was already finishing" is a different outcome from "cancelled", and a UI that
+     * cannot tell them apart will claim the wrong one. The message names the state, because the
+     * honest answer to "why couldn't you stop it" is where it had got to.
+     */
+    @Transactional
+    public ImportJobDto.Progress cancel(UUID userId, UUID jobId) {
+        ImportJob job = repository.findByIdAndUserId(jobId, userId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Import job not found."));
+
+        if (job.getStatus() == ImportJob.Status.CANCELLED) {
+            // Idempotent on purpose: a double-click, or a retry of a request whose response was
+            // lost, should report the state the user asked for rather than an error about it.
+            return ImportJobDto.Progress.of(job);
+        }
+        if (!job.isCancellable()) {
+            throw new ApiException(HttpStatus.CONFLICT, switch (job.getStatus()) {
+                case COMPLETED -> "This import already finished. Discard the staged import instead "
+                        + "if you don't want it.";
+                case FAILED -> "This import already failed, so there is nothing left to cancel.";
+                // IMPORTING and later: transactions exist, and removing them is the ledger's job,
+                // not the queue's.
+                default -> "This import is already writing to your accounts and can no longer be "
+                        + "cancelled. Delete the statement import if you want it reversed.";
+            });
+        }
+
+        job.cancel(Instant.now());
+        return ImportJobDto.Progress.of(repository.save(job));
     }
 }

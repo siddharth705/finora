@@ -232,6 +232,134 @@ class ImportJobEndpointIT extends AbstractIntegrationTest {
         assertThat(data).hasSize(1);
     }
 
+    /**
+     * The handoff the whole progress endpoint exists to enable.
+     *
+     * <p>The worker used to call {@code parseAndStageAnyFormat}, which persists nothing, and then
+     * complete with a null session id. So a job reached COMPLETED carrying a row count, every staged
+     * row was discarded with the response object, and a client that polled to COMPLETED had nowhere
+     * to send the user. The rows are asserted through the public session endpoint rather than the
+     * repository, because "the client can now reach them" is the actual claim.
+     */
+    @Test
+    void aCompletedJobPointsAtStagedRowsTheUserCanReview() {
+        User user = user();
+        ResponseEntity<String> accepted = restTemplate.exchange(
+                "/api/v1/import/jobs", HttpMethod.POST, upload(user, "statement.csv", CSV), String.class);
+        UUID jobId = UUID.fromString(read(accepted).get("data").get("jobId").asText());
+
+        worker.drainOnce();
+
+        ResponseEntity<String> progress = restTemplate.exchange(
+                "/api/v1/import/jobs/" + jobId, HttpMethod.GET,
+                new HttpEntity<>(bearerFor(user)), String.class);
+        JsonNode data = read(progress).get("data");
+        assertThat(data.get("status").asText()).isEqualTo("COMPLETED");
+        assertThat(data.get("importSessionId").isNull())
+                .as("a completed import with no session is a progress bar that ends nowhere")
+                .isFalse();
+
+        String sessionId = data.get("importSessionId").asText();
+        ResponseEntity<String> session = restTemplate.exchange(
+                "/api/v1/import/sessions/" + sessionId, HttpMethod.GET,
+                new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(session.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(read(session).get("data").get("staging").get("rows"))
+                .as("the rows the worker staged, reachable by the client that polled the job")
+                .hasSize(2);
+    }
+
+    /**
+     * Cancelling is only worth having if it actually stops the work. Asserted by cancelling and then
+     * running the worker: claims only look at QUEUED, so a cancelled job is invisible to them, and
+     * the drain must leave the row exactly as the user left it.
+     */
+    @Test
+    void aCancelledJobNeverRuns() {
+        User user = user();
+        ResponseEntity<String> accepted = restTemplate.exchange(
+                "/api/v1/import/jobs", HttpMethod.POST, upload(user, "statement.csv", CSV), String.class);
+        UUID jobId = UUID.fromString(read(accepted).get("data").get("jobId").asText());
+
+        ResponseEntity<String> cancelled = restTemplate.exchange(
+                "/api/v1/import/jobs/" + jobId + "/cancel", HttpMethod.POST,
+                new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(cancelled.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(read(cancelled).get("data").get("status").asText())
+                .as("returned rather than 204, so the client renders from this instead of racing its own next poll")
+                .isEqualTo("CANCELLED");
+
+        worker.drainOnce();
+
+        ImportJob job = jobRepository.findById(jobId).orElseThrow();
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.CANCELLED);
+        assertThat(job.getImportSessionId())
+                .as("a cancelled import must not leave staged rows waiting to be reviewed")
+                .isNull();
+    }
+
+    /** A double-click, or a retry of a request whose response was lost, reports the state the user
+     *  asked for rather than an error about having asked twice. */
+    @Test
+    void cancellingTwiceIsNotAnError() {
+        User user = user();
+        ResponseEntity<String> accepted = restTemplate.exchange(
+                "/api/v1/import/jobs", HttpMethod.POST, upload(user, "statement.csv", CSV), String.class);
+        String jobId = read(accepted).get("data").get("jobId").asText();
+        String url = "/api/v1/import/jobs/" + jobId + "/cancel";
+
+        restTemplate.exchange(url, HttpMethod.POST, new HttpEntity<>(bearerFor(user)), String.class);
+        ResponseEntity<String> again = restTemplate.exchange(
+                url, HttpMethod.POST, new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(again.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(read(again).get("data").get("status").asText()).isEqualTo("CANCELLED");
+    }
+
+    /**
+     * "Already finished" and "cancelled" are different outcomes, and a UI that cannot tell them
+     * apart will claim the wrong one to the user. 409 with a message naming the state, rather than a
+     * silent no-op that reports success for something that did not happen.
+     */
+    @Test
+    void aFinishedImportCannotBeCancelled() {
+        User user = user();
+        ResponseEntity<String> accepted = restTemplate.exchange(
+                "/api/v1/import/jobs", HttpMethod.POST, upload(user, "statement.csv", CSV), String.class);
+        UUID jobId = UUID.fromString(read(accepted).get("data").get("jobId").asText());
+        worker.drainOnce();
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/import/jobs/" + jobId + "/cancel", HttpMethod.POST,
+                new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(jobRepository.findById(jobId).orElseThrow().getStatus())
+                .as("a refused cancel must leave the job alone, not half-cancel it")
+                .isEqualTo(ImportJob.Status.COMPLETED);
+    }
+
+    /** Same ownership rule as reading: a job id alone must never be enough to act on someone else's
+     *  import, and 404 rather than 403 so the response does not confirm the id exists. */
+    @Test
+    void anotherUsersJobCannotBeCancelled() {
+        User owner = user();
+        User stranger = user();
+        ResponseEntity<String> accepted = restTemplate.exchange(
+                "/api/v1/import/jobs", HttpMethod.POST, upload(owner, "statement.csv", CSV), String.class);
+        UUID jobId = UUID.fromString(read(accepted).get("data").get("jobId").asText());
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/import/jobs/" + jobId + "/cancel", HttpMethod.POST,
+                new HttpEntity<>(bearerFor(stranger)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(jobRepository.findById(jobId).orElseThrow().getStatus())
+                .isEqualTo(ImportJob.Status.QUEUED);
+    }
+
     private JsonNode read(ResponseEntity<String> response) {
         try {
             return mapper.readTree(response.getBody());

@@ -2,6 +2,7 @@ package com.finora.imports.jobs;
 
 import com.finora.entity.ImportJob;
 import com.finora.imports.ImportService;
+import com.finora.imports.StatementUpload;
 import com.finora.imports.storage.ContentAddress;
 import com.finora.imports.storage.StatementStorage;
 import com.finora.observability.WorkerExecution;
@@ -43,18 +44,33 @@ import java.util.UUID;
  * every question it was built for, and the recorder writes rows nothing in it was ever going to
  * hold.
  *
- * <h2>What this class does NOT do yet</h2>
+ * <h2>Where this worker stops, and what that means for replay</h2>
  *
- * <p><b>Nothing enqueues jobs.</b> The upload endpoint still imports inline; switching it to return
- * 202 with a job id is the next commit, deliberately separate so the queue can be proven correct
- * before it is on a user path. Until then this worker polls an empty queue, which is exactly what
- * its metrics will show.
+ * <p><b>It stages; it does not confirm.</b> {@code POST /api/v1/import/jobs} enqueues, and a claimed
+ * job runs {@code PARSING} then {@code ANALYZING} and completes there — see
+ * {@link #LAST_STAGE_THIS_WORKER_RUNS}, with everything beyond it recorded {@code SKIPPED} rather
+ * than left absent. The user still reviews the staged session and confirms it on a synchronous
+ * request. So no job this worker runs has ever written a user-visible transaction row.
  *
- * <p>Retry after {@code IMPORTING} is <b>not yet idempotent</b> -- that is Phase 2's idempotency key
- * and unique constraint, and it is why {@link ImportJobStore#IN_FLIGHT_TIMEOUT} is deliberately
- * long. A job that fails after user-visible rows exist will currently retry and could duplicate
- * them. This is safe today only because nothing enqueues; it <b>blocks any multi-worker deploy</b>,
- * as the design's phase ordering says.
+ * <p><b>Replay is safe.</b> Phase 2 landed in {@code V67}: {@code statement_imports.import_job_id}
+ * is UNIQUE, so a job returned to the queue after confirming cannot import the same statement
+ * twice, and {@code transactions (statement_import_id, row_ordinal)} is UNIQUE, so a retry inside a
+ * single confirm cannot insert a row twice. Both are database constraints rather than worker-side
+ * checks, because a check is a read followed by a write and two workers can both read "not present"
+ * before either writes. {@code ImportIdempotencyIT} asserts the rejected write against real
+ * Postgres.
+ *
+ * <p>The first of those two is <b>armed but not yet exercised</b>, and that is worth stating rather
+ * than leaving to be discovered: nothing in production sets {@code import_job_id}, because the path
+ * that would — a worker that carries a job through {@code IMPORTING} — is the scope above and does
+ * not exist. The constraint is in place ahead of the code that needs it, which is the ordering the
+ * design asked for; it means a multi-worker deploy is no longer blocked on idempotency, not that
+ * the guarantee has been observed doing anything yet. The second constraint is live for every
+ * import: {@code ImportService} assigns {@code rowOrdinal} on both paths.
+ *
+ * <p>{@link ImportJobStore#IN_FLIGHT_TIMEOUT} stays deliberately long regardless. Its own doc gives
+ * the reason that outlives Phase 2: recovering early and recovering late do not cost the same
+ * amount, so it waits far longer than any real import should take.
  */
 @Component
 public class ImportJobWorker {
@@ -90,7 +106,6 @@ public class ImportJobWorker {
     private final Optional<StatementStorage> storage;
     private final WorkerObservability observability;
     private final ImportStageRecorder stageRecorder;
-    private final com.finora.imports.analysis.ImportVerificationRecorder verificationRecorder;
 
     @Value("${app.import.queue.enabled:false}")
     private boolean enabled;
@@ -99,14 +114,12 @@ public class ImportJobWorker {
                             ImportService importService,
                             Optional<StatementStorage> storage,
                             WorkerObservability observability,
-                            ImportStageRecorder stageRecorder,
-                            com.finora.imports.analysis.ImportVerificationRecorder verificationRecorder) {
+                            ImportStageRecorder stageRecorder) {
         this.jobStore = jobStore;
         this.importService = importService;
         this.storage = storage;
         this.observability = observability;
         this.stageRecorder = stageRecorder;
-        this.verificationRecorder = verificationRecorder;
 
         observability.publishQueueDepth(WORKER, JOB_KIND, jobStore::queueDepth);
         observability.publishOldestPendingAge(WORKER, JOB_KIND, jobStore::oldestQueuedAt);
@@ -189,30 +202,48 @@ public class ImportJobWorker {
             byte[] content = readContent(job);
             stageRecorder.completed(jobId, attempt, ImportJob.Status.PARSING);
 
+            // Between stages, so a cancel that lands during a long parse takes effect at the next
+            // boundary rather than at the end. Cancelling cannot interrupt PDFBox mid-document --
+            // that needs cooperative cancellation plumbed through the parser -- so what this
+            // guarantees is the part the user cares about: a cancelled job never produces a staged
+            // session, and never turns up as something waiting to be reviewed.
+            abortIfCancelled(jobId);
+
             jobStore.update(jobId, j -> j.advanceTo(ImportJob.Status.ANALYZING));
             stageRecorder.entered(jobId, attempt, ImportJob.Status.ANALYZING);
-            var staged = importService.parseAndStageAnyFormat(
-                    job.getUserId(), ImportJobService.formatOf(job.getFileName()).name(),
-                    job.getFileName(), content, null);
+            // The session-creating staging path, NOT parseAndStageAnyFormat. That one returns a
+            // response and persists nothing, so a job used to complete with a row count and no
+            // session: the progress endpoint had nowhere to send the user and every staged row was
+            // discarded. Recording verification belongs to that path too now, against the analysis
+            // row it writes -- and ImportTraceService reads the analysis anchor in preference to the
+            // job one, so recording here as well would write rows nothing ever reads.
+            StagedForJob staged = stage(job, content);
             stageRecorder.completed(jobId, attempt, ImportJob.Status.ANALYZING);
 
-            // The verification rules have already run inside the preview generator. Without this
-            // they reach a StagingResponse nobody is holding -- the async path has no user looking
-            // at a review screen -- and are discarded before anyone could have read them.
-            verificationRecorder.recordForJob(jobId,
-                    java.util.Collections.singletonList(staged.verification()));
+            // Checked again before completing, because complete() sets COMPLETED unconditionally and
+            // would otherwise overwrite a cancel that arrived while the parse was running.
+            abortIfCancelled(jobId);
 
             jobStore.update(jobId, j -> {
-                // totalParsed rather than rows().size(): rows() is what staged successfully, and
-                // reporting that as the total would make a statement with unparseable rows look
-                // like it had fewer rows than it did.
-                j.recordProgress(staged.totalParsed(), staged.rows() == null ? 0 : staged.rows().size());
-                j.complete(null, Instant.now());
+                // totalParsed rather than the staged row count: the latter is what staged
+                // successfully, and reporting it as the total would make a statement with
+                // unparseable rows look like it had fewer rows than it did.
+                j.recordProgress(staged.totalParsed(), staged.stagedRows());
+                j.complete(staged.sessionId(), Instant.now());
             });
             // Only on the success path. A job that failed in PARSING did not skip IMPORTING, it
             // never reached it, and recording that as SKIPPED would turn an honest absence into a
             // false claim.
             stageRecorder.skipped(jobId, attempt, STAGES_THIS_WORKER_PASSES_OVER);
+            execution.completed(jobId);
+
+        } catch (ImportJobCancelledException e) {
+            // Not a failure, and deliberately ahead of the catch below: recordFailure would put the
+            // job back to QUEUED for a retry, so falling through to it would resurrect the very work
+            // the user asked to stop. The row is already CANCELLED -- the endpoint set it -- so
+            // there is nothing to write here except closing the stage this pass was in.
+            stageRecorder.failedWhereverItWas(jobId, attempt);
+            log.info("Import job {} abandoned mid-pass: cancelled by its owner.", jobId);
             execution.completed(jobId);
 
         } catch (Exception e) {
@@ -223,6 +254,36 @@ public class ImportJobWorker {
             stageRecorder.failedWhereverItWas(jobId, attempt);
             recordFailure(execution, jobId, e);
         }
+    }
+
+    /**
+     * Stages the document, by the same two paths the synchronous endpoints use.
+     *
+     * <p>Chosen by filename via {@link ImportJobService#formatOf}, which is also what the upload
+     * endpoint validated against — so the parser that runs here is the one the file was accepted
+     * for. PDF gets a null password: a protected document cannot be queued, because there is nobody
+     * to ask for the password minutes later.
+     */
+    private StagedForJob stage(ImportJob job, byte[] content) throws java.io.IOException {
+        return ImportJobService.formatOf(job.getFileName()) == StatementUpload.Format.PDF
+                ? StagedForJob.of(importService.parseAndStagePdfWithSession(
+                        job.getUserId(), job.getFileName(), content, null))
+                : StagedForJob.of(importService.parseAndStageWithSession(
+                        job.getUserId(), job.getFileName(), content));
+    }
+
+    /**
+     * Ends this pass if the job's owner cancelled it while the worker held it.
+     *
+     * <p>A re-read rather than a flag on the entity this method already has: the cancel happened on
+     * another thread, in another transaction, after that entity was loaded. One extra query per
+     * stage boundary, not per row.
+     */
+    private void abortIfCancelled(UUID jobId) {
+        boolean cancelled = jobStore.find(jobId)
+                .map(j -> j.getStatus() == ImportJob.Status.CANCELLED)
+                .orElse(false);
+        if (cancelled) throw new ImportJobCancelledException(jobId);
     }
 
     /** Reads the uploaded bytes back from storage. A job carries an address, never the bytes -- the

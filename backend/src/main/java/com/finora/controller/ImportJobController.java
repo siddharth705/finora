@@ -40,8 +40,17 @@ import java.util.UUID;
  * nothing to read but a content address. With no provider it returns 503 with a message naming the
  * missing configuration, rather than accepting an upload that is certain to fail.
  *
- * <p><b>Retry after {@code IMPORTING} is not yet idempotent</b> (phase 2). That is safe on a single
- * instance and blocks a multi-worker deploy, which is why this is opt-in rather than the default.
+ * <p>Two settings gate it and both default to off. {@code app.import.queue.enabled} decides whether
+ * the worker runs at all, and {@code app.statement-storage.provider} decides whether it has anything
+ * to read. {@code ProductionConfigValidator} refuses to start a deployment that sets the first
+ * without the second, rather than letting every upload here fail with 503 at runtime.
+ *
+ * <p><b>Replay safety is no longer what holds this back.</b> Phase 2 landed in {@code V67} as two
+ * partial unique indexes — {@code statement_imports.import_job_id} and
+ * {@code transactions (statement_import_id, row_ordinal)} — so a replayed job is a rejected write
+ * rather than a statement imported twice. What remains is scope rather than correctness:
+ * {@code ImportJobWorker} takes a job as far as {@code ANALYZING} and stops there, so the review and
+ * the confirm are still synchronous requests the user makes against the staged session.
  */
 @RestController
 @RequestMapping("/api/v1/import/jobs")
@@ -77,6 +86,22 @@ public class ImportJobController {
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(ApiResponse.ok(accepted));
     }
 
+    /**
+     * Whether this deployment takes queued uploads, asked before one is sent.
+     *
+     * <p>Mapped above {@code /{jobId}} and matched ahead of it because a literal path beats a
+     * variable one — but the ordering here is for the reader, not for Spring.
+     *
+     * <p>The alternative was for the client to try the upload and read the 503, which cannot work:
+     * the multipart body is consumed before the handler runs, so the whole file would cross the
+     * network before being told to send it somewhere else, and then cross it again. A client that
+     * asks first pays one small GET instead.
+     */
+    @GetMapping("/availability")
+    public ApiResponse<ImportJobDto.Availability> availability() {
+        return ApiResponse.ok(importJobService.availability());
+    }
+
     /** Progress. Poll at 1-2s; the flow is measured in seconds, so this is cheaper than the
      *  WebSockets or SSE it would otherwise take. */
     @GetMapping("/{jobId}")
@@ -90,5 +115,20 @@ public class ImportJobController {
     public ApiResponse<List<ImportJobDto.Progress>> recent(
             @RequestParam(value = "limit", defaultValue = "20") int limit) {
         return ApiResponse.ok(importJobService.recent(currentUser.id(), limit));
+    }
+
+    /**
+     * Stops an import the user no longer wants.
+     *
+     * <p>{@code POST} rather than {@code DELETE}: this ends the work and keeps the row, because a
+     * cancelled import is part of the user's history and part of the queue's. {@code DELETE} on this
+     * path would reasonably be read as removing the record.
+     *
+     * <p>Returns the job's new state rather than 204, so the client that just cancelled renders from
+     * the response instead of racing its own next poll.
+     */
+    @PostMapping("/{jobId}/cancel")
+    public ApiResponse<ImportJobDto.Progress> cancel(@PathVariable UUID jobId) {
+        return ApiResponse.ok(importJobService.cancel(currentUser.id(), jobId), "Import cancelled");
     }
 }

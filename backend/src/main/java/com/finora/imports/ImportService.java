@@ -146,8 +146,20 @@ public class ImportService {
      * of only living in this HTTP response and whatever the frontend holds in memory afterward.
      */
     public StagingSessionResponse parseAndStageWithSession(UUID userId, MultipartFile file) throws IOException {
-        byte[] fileContent = file.getBytes();
-        String fileName = StatementUpload.safeFileName(file, "statement.csv");
+        return parseAndStageWithSession(userId, StatementUpload.safeFileName(file, "statement.csv"), file.getBytes());
+    }
+
+    /**
+     * Filename + raw bytes rather than MultipartFile, so the asynchronous worker can drive this from
+     * a content address without fabricating a MultipartFile just to satisfy the type — the same
+     * split, for the same reason, as {@link #confirm(UUID, String, byte[], ConfirmRequest)}.
+     *
+     * <p>The worker needs <b>this</b> method rather than {@code parseAndStageAnyFormat} because only
+     * this one persists a session. A job that staged into a response nobody held completed with a
+     * row count and nothing to review.
+     */
+    public StagingSessionResponse parseAndStageWithSession(UUID userId, String fileName, byte[] fileContent)
+            throws IOException {
         long startedAtMs = System.currentTimeMillis();
         // Captured inside the try so the catch can still record it: a document that parsed far
         // enough to be characterised and THEN failed is the most useful failure there is, because
@@ -210,8 +222,13 @@ public class ImportService {
      * a single ConfirmRequest/DetectedAccountInfo genuinely can't represent N accounts at once.
      */
     public PdfStagingSessionResponse parseAndStagePdfWithSession(UUID userId, MultipartFile file, String password) throws IOException {
-        byte[] fileContent = file.getBytes();
-        String fileName = StatementUpload.safeFileName(file, "statement.pdf");
+        return parseAndStagePdfWithSession(
+                userId, StatementUpload.safeFileName(file, "statement.pdf"), file.getBytes(), password);
+    }
+
+    /** Filename + raw bytes, for the asynchronous worker — see the CSV counterpart above. */
+    public PdfStagingSessionResponse parseAndStagePdfWithSession(UUID userId, String fileName, byte[] fileContent,
+                                                                  String password) throws IOException {
         long startedAtMs = System.currentTimeMillis();
         String fingerprint = null;
         ParseDiagnostics diagnostics = ParseDiagnostics.NONE;

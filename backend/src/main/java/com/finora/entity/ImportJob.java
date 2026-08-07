@@ -159,7 +159,22 @@ public class ImportJob {
         this.rowsProcessed = rowsProcessed;
     }
 
+    /**
+     * Marks the work done.
+     *
+     * <p><b>Refuses to overwrite a cancellation.</b> The worker checks for one at each stage
+     * boundary, but a cancel landing between that last check and this call would otherwise complete
+     * a job the user had already stopped — handing them a staged session they asked not to have. The
+     * window is small and closing it in the worker would mean closing it again in the next caller,
+     * so the state machine refuses instead. {@code ImportJobWorker} treats this as the cancellation
+     * it is rather than as a failure; anything else genuinely is a bug in the caller.
+     */
     public void complete(UUID importSessionId, Instant now) {
+        if (this.status == Status.CANCELLED) {
+            throw new IllegalStateException(
+                    "Import job " + id + " was cancelled; completing it would hand the user a "
+                            + "staged import they asked to stop.");
+        }
         this.status = Status.COMPLETED;
         this.importSessionId = importSessionId;
         this.finishedAt = now;

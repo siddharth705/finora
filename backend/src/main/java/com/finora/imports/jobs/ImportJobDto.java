@@ -23,6 +23,15 @@ public final class ImportJobDto {
     }
 
     /**
+     * Whether this deployment can take queued uploads.
+     *
+     * <p>A record rather than a bare boolean so a second capability can be added without changing
+     * the response type out from under every client — the same reason {@code Accepted} carries a
+     * {@code statusUrl} rather than leaving the client to build one.
+     */
+    public record Availability(boolean asyncImportAvailable) {}
+
+    /**
      * Progress, for polling at 1-2s.
      *
      * <p>{@code rowsTotal} is deliberately nullable rather than defaulted to zero: null means

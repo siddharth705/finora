@@ -234,6 +234,45 @@ What that leaves:
 - **When async applies.** Every import, or only above a threshold? A 3-row CSV routed through a
   queue is a worse experience than a synchronous one. Measure before choosing.
 
+**As built.** The first two are done; the third is measured but deliberately not decided.
+
+The queue had a hole underneath the user-facing work, and it is worth recording because nothing in
+the charter predicted it: **the worker staged into a response and threw it away.** It called
+`parseAndStageAnyFormat`, which persists nothing, then completed with a null `import_session_id`. A
+job reached COMPLETED carrying an accurate row count and no rows — so a progress bar built on it
+would have filled up and led nowhere. The worker now uses the session-creating staging path (given
+byte-based overloads, the same split `confirm` already had for re-import), and `complete()` records
+the session. Verification recording moved with it: the staging path anchors findings to the analysis
+row, which `ImportTraceService` already prefers, so the worker's own `recordForJob` call was writing
+rows nothing read.
+
+**Cancellation** is `POST /api/v1/import/jobs/{id}/cancel`. `ImportJob` already had `CANCELLED` and
+`isCancellable()`, so this is mostly wiring — with one real subtlety: a cancel landing while a worker
+holds the job must not be resurrected by that worker's own completion. The worker checks at each
+stage boundary and treats cancellation as a distinct outcome rather than a failure (a failure would
+return the job to `QUEUED` and run it again, which is the opposite of what was asked). The window
+between the last check and `complete()` is closed by `complete()` itself refusing to overwrite a
+cancellation, because the next caller would otherwise have to remember the same rule.
+
+**Client behaviour is honest about what cancelling can do.** A `QUEUED` job never starts. A job a
+worker already holds stops at its next stage boundary — interrupting PDFBox mid-document needs
+cooperative cancellation the parser does not have. Either way no session is created, which is the
+promise the button actually makes.
+
+**The threshold, measured:** [`performance/queue-overhead-2026-08-08.md`](performance/queue-overhead-2026-08-08.md).
+The queue's server-side overhead is a constant ~20 ms and is unmeasurable past ~50 rows. The client's
+1500 ms poll interval is ~98% of the penalty for queueing a small statement, so **the lever is the
+poll interval, not a row-count threshold** — and a threshold would need the row count, which needs
+the parse, which is the work being deferred. The recommendation is to poll immediately and then back
+off, re-measure, and only then decide whether any threshold is still wanted. Left open deliberately:
+the charter asked for evidence before a choice, and the evidence says the choice was aimed at the
+wrong variable.
+
+Still open: **a protected PDF cannot be queued.** The job carries a content address and no password,
+and the worker opens the document minutes later with nobody to ask, so the client routes those to the
+synchronous path. Also still open: nothing yet offers to resume a queued import from a *different*
+session — `GET /import/sessions` has existed since ADR-0002 and still has no screen.
+
 ### 6. Unified Import Observability
 
 **Most of this already exists, scattered.** What the three existing tables already answer:
