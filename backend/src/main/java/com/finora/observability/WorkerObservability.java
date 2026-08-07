@@ -2,155 +2,139 @@ package com.finora.observability;
 
 import com.finora.config.CorrelationIdFilter;
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
-import io.sentry.Sentry;
-import io.sentry.SentryLevel;
-import org.slf4j.MDC;
+import io.micrometer.core.instrument.Timer;
 import org.springframework.stereotype.Component;
 
-import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
- * Makes background work visible.
+ * The observability contract every background worker implements.
  *
- * <p>The Sentry starter reports what fails on a request thread. Nothing reported what failed on a
- * scheduler or an async executor, and that is where the work that matters most happens: the
- * merchant-learning queue applies a user's confirmed categorisation, retries it with backoff, and
- * gives up into a dead-letter state that only surfaces if someone opens the admin queue. A worker
- * that died mid-apply left rows stranded in PROCESSING and said so in a log line nobody tails.
+ * <p>Workers do not instrument themselves. They obtain a {@link WorkerExecution} from here and
+ * report lifecycle events against it, so correlation, metrics, breadcrumbs, exception capture, MDC
+ * management, timing and cleanup are inherited rather than reimplemented. A new worker adds
+ * instrumentation by using this class, not by writing any.
  *
- * <h2>Correlation, and why it reuses the HTTP key</h2>
+ * <h2>The standard lifecycle</h2>
  *
- * <p>{@link CorrelationIdFilter} sets {@code requestId} in MDC for HTTP requests, and
- * {@code AuditService} stamps every audit row with whatever it finds there. Background work had
- * none, so a queue-driven audit row carried a null request id and could not be tied to anything.
+ * <pre>
+ *   queued -&gt; claimed -&gt; started -&gt; completed
+ *                          |
+ *                          +-&gt; retry scheduled -&gt; (back to claimed)
+ *                          +-&gt; dead letter
+ *                          +-&gt; failure recording failed
+ *                          +-&gt; recovered (a worker died mid-flight)
+ * </pre>
  *
- * <p>Setting the <em>same</em> MDC key here means three things line up for free, with no change to
- * either class: the worker's log lines, the audit rows it writes, and the Sentry events it reports
- * all carry one id. The value is prefixed {@code worker-} so its origin stays obvious in a log
- * search.
+ * <p>These names are the operational vocabulary: they are the metric names, the Sentry
+ * {@code outcome} tags and the runbook headings, deliberately identical in all three so that an
+ * alert, a dashboard panel and a document all say the same word.
  *
- * <h2>What is reported, and what deliberately is not</h2>
+ * <h2>Correlation convention</h2>
  *
- * <p>A retryable failure is <b>not</b> reported as an error. A transient constraint violation that
- * the next attempt resolves is normal operation, and paging on it is how alerting gets muted. It is
- * recorded as a breadcrumb and counted, so the rate is visible without being noisy.
+ * <p>Every execution path generates an id under the same MDC key {@link CorrelationIdFilter} uses,
+ * distinguished by prefix:
  *
- * <p>Three things ARE reported, because each means something is wrong and nobody is watching:
- * a dead-lettered job (retries exhausted, work silently not done), a failure while recording a
- * failure (the row is now stranded), and recovery of abandoned rows (a worker process died).
+ * <ul>
+ *   <li>{@code request-} — an HTTP request, set by {@link CorrelationIdFilter}</li>
+ *   <li>{@code worker-} — an async or on-demand worker pass</li>
+ *   <li>{@code scheduler-} — a pass initiated by a scheduled trigger</li>
+ * </ul>
+ *
+ * <p>One key, not three, is what makes this work: {@code AuditService} stamps every audit row with
+ * whatever it finds there, so a queue-driven write is correlated with no change to that class. The
+ * prefix preserves origin without needing a second lookup.
+ *
+ * @see WorkerExecution
+ * @see <a href="file:../../../../../../../docs/engineering/observability.md">observability.md</a>
  */
 @Component
 public class WorkerObservability {
 
-    /** Deliberately the same key {@link CorrelationIdFilter} uses -- see the class comment. */
-    private static final String MDC_KEY = CorrelationIdFilter.MDC_KEY;
+    /** Deliberately the same key {@link CorrelationIdFilter} uses -- see the correlation section. */
+    static final String MDC_KEY = CorrelationIdFilter.MDC_KEY;
 
-    private final MeterRegistry meters;
+    /** Prefixes for the correlation convention. */
+    public static final String WORKER_PREFIX = "worker";
+    public static final String SCHEDULER_PREFIX = "scheduler";
 
-    public WorkerObservability(MeterRegistry meters) {
-        this.meters = meters;
+    private final Meters meters;
+
+    public WorkerObservability(MeterRegistry registry) {
+        this.meters = new Meters(registry);
+    }
+
+    /** Begins a worker-initiated pass. Use with try-with-resources. */
+    public WorkerExecution begin(String worker, String jobKind) {
+        return new WorkerExecution(meters, worker, jobKind, WORKER_PREFIX);
+    }
+
+    /** Begins a pass initiated by a scheduled trigger, so the correlation id records that origin. */
+    public WorkerExecution beginScheduled(String worker, String jobKind) {
+        return new WorkerExecution(meters, worker, jobKind, SCHEDULER_PREFIX);
     }
 
     /**
-     * Runs a unit of background work under a fresh correlation id and Sentry scope.
+     * Publishes queue depth for a worker.
      *
-     * <p>The scope is popped and MDC restored in a finally block: these threads are pooled and
-     * long-lived, so a leaked tag or MDC entry would attach itself to every later job the thread
-     * picked up, which is worse than having none -- it would attribute one job's failure to
-     * another's id.
+     * <p>A gauge rather than a counter because depth is a level, not an event, and it is the one
+     * signal that distinguishes "slow" from "stuck": a rising depth with a healthy completion rate
+     * is load, a rising depth with a flat completion rate is a stall. Call once at startup; the
+     * supplier is polled by the registry.
      *
-     * <p>Any previous MDC value is restored rather than cleared, so a worker invoked from a
-     * request thread (the async nudge) does not destroy the request's own correlation id.
+     * <p>The supplier must be cheap and must not throw -- it runs on the metrics scrape path, not
+     * on the worker's own thread. A {@code SELECT count(*)} against an indexed status column is the
+     * intended shape.
      */
-    public void run(String worker, String jobKind, Runnable body) {
-        String previous = MDC.get(MDC_KEY);
-        String correlationId = "worker-" + UUID.randomUUID();
-        MDC.put(MDC_KEY, correlationId);
-        Sentry.pushScope();
-        try {
-            Sentry.configureScope(scope -> {
-                scope.setTag("worker", worker);
-                scope.setTag("jobKind", jobKind);
-                scope.setTag("correlationId", correlationId);
-            });
-            body.run();
-        } finally {
-            Sentry.popScope();
-            if (previous == null) MDC.remove(MDC_KEY); else MDC.put(MDC_KEY, previous);
+    public void publishQueueDepth(String worker, String jobKind, Supplier<Number> depth) {
+        Gauge.builder("finora.worker.queue_depth", depth)
+                .tag("worker", worker)
+                .tag("jobKind", jobKind)
+                .description("Jobs waiting to be claimed")
+                .register(meters.registry());
+    }
+
+    /**
+     * The standard metric set, so every worker reports the same names with the same tags.
+     *
+     * <p>Names are fixed here rather than passed in by callers on purpose: a dashboard querying
+     * {@code finora.worker.dead_letters} must match every worker, and a worker that invented its
+     * own name would be invisible on it.
+     */
+    private record Meters(MeterRegistry registry) implements WorkerExecution.WorkerMeters {
+
+        @Override public Counter executions(String w, String k) { return counter("executions", w, k, "Worker passes started"); }
+        @Override public Counter completed(String w, String k)  { return counter("completed", w, k, "Jobs that succeeded"); }
+        @Override public Counter retries(String w, String k)    { return counter("retries", w, k, "Jobs scheduled for another attempt"); }
+        @Override public Counter deadLetters(String w, String k){ return counter("dead_letters", w, k, "Jobs that exhausted their retries"); }
+        @Override public Counter recovered(String w, String k)  { return counter("recovered", w, k, "Jobs returned to the queue after a worker died"); }
+        @Override public Counter failures(String w, String k)   { return counter("failures", w, k, "Job failures that were not retried away"); }
+
+        @Override public Timer duration(String w, String k) {
+            return Timer.builder("finora.worker.duration")
+                    .tag("worker", w).tag("jobKind", k)
+                    .description("How long one worker pass took")
+                    .publishPercentiles(0.5, 0.95)   // p95 is the dashboard number; the mean hides stalls
+                    .register(registry);
         }
-    }
 
-    /**
-     * A job failed but will be retried. Recorded, counted, not reported as an error.
-     *
-     * <p>Deliberately a breadcrumb: if a later attempt of the same job dead-letters, this is the
-     * history an operator wants attached to that event. On its own it is not worth waking anyone.
-     */
-    public void retryScheduled(String worker, String jobKind, UUID jobId, int attempt) {
-        counter("finora.worker.retry", worker, jobKind).increment();
-        io.sentry.Breadcrumb crumb = new io.sentry.Breadcrumb();
-        crumb.setCategory("worker");
-        crumb.setLevel(SentryLevel.WARNING);
-        crumb.setMessage("retry scheduled for " + jobKind + " attempt " + attempt);
-        Sentry.addBreadcrumb(crumb);
-    }
+        @Override public Timer queueWait(String w, String k) {
+            return Timer.builder("finora.worker.queue_wait_time")
+                    .tag("worker", w).tag("jobKind", k)
+                    .description("How long a job waited between being queued and being started")
+                    .publishPercentiles(0.5, 0.95)
+                    .register(registry);
+        }
 
-    /**
-     * Retries are exhausted and the job will not run again without a human.
-     *
-     * <p>The one worker outcome that always deserves an event: the user's action silently did not
-     * take effect, and the only existing signal was a log line plus a row in an admin screen
-     * somebody has to think to open.
-     */
-    public void deadLettered(String worker, String jobKind, UUID jobId, int attempts, Throwable cause) {
-        counter("finora.worker.dead_letter", worker, jobKind).increment();
-        capture(worker, jobKind, jobId, "apply", "dead-letter", cause);
-    }
+        @Override public MeterRegistry registry() { return registry; }
 
-    /**
-     * Recording a failure itself failed, so the row is stranded in PROCESSING until recovery
-     * sweeps it up. A double fault, and invisible without this.
-     */
-    public void failureNotRecorded(String worker, String jobKind, UUID jobId, Throwable cause) {
-        counter("finora.worker.failure_not_recorded", worker, jobKind).increment();
-        capture(worker, jobKind, jobId, "record-failure", "stranded", cause);
-    }
-
-    /**
-     * Rows were found abandoned in PROCESSING and returned to the queue, which means a worker
-     * process died mid-apply. Reported without a throwable -- there is no exception here, only
-     * evidence that one happened somewhere nobody saw.
-     */
-    public void recoveredAbandoned(String worker, String jobKind, int count) {
-        counter("finora.worker.recovered", worker, jobKind).increment(count);
-        Sentry.withScope(scope -> {
-            scope.setTag("worker", worker);
-            scope.setTag("jobKind", jobKind);
-            scope.setTag("phase", "recover");
-            scope.setTag("outcome", "recovered");
-            scope.setLevel(SentryLevel.WARNING);
-            Sentry.captureMessage(
-                    "Returned " + count + " abandoned " + jobKind + " job(s) to the queue; "
-                            + "a worker most likely died mid-apply");
-        });
-    }
-
-    private void capture(String worker, String jobKind, UUID jobId,
-                         String phase, String outcome, Throwable cause) {
-        Sentry.withScope(scope -> {
-            scope.setTag("worker", worker);
-            scope.setTag("jobKind", jobKind);
-            scope.setTag("phase", phase);
-            scope.setTag("outcome", outcome);
-            // Safe under SentryScrubber's tag allowlist: a queue row's own id identifies a row in
-            // our database and nothing about the person it belongs to.
-            if (jobId != null) scope.setTag("jobId", jobId.toString());
-            Sentry.captureException(cause);
-        });
-    }
-
-    private Counter counter(String name, String worker, String jobKind) {
-        return Counter.builder(name).tag("worker", worker).tag("jobKind", jobKind).register(meters);
+        private Counter counter(String name, String worker, String jobKind, String description) {
+            return Counter.builder("finora.worker." + name)
+                    .tag("worker", worker).tag("jobKind", jobKind)
+                    .description(description)
+                    .register(registry);
+        }
     }
 }

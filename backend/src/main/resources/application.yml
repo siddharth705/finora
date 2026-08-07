@@ -296,11 +296,36 @@ sentry:
 management:
   endpoints:
     web:
+      # prometheus joins health so worker metrics can be scraped. Note what is NOT here: env,
+      # configprops, heapdump, threaddump, loggers, beans. The scrape endpoint publishes counters,
+      # timers and gauges -- names and numbers, no request data and no customer data -- which is a
+      # different risk class from the endpoints that dump configuration or memory.
       exposure:
-        include: health
+        include: health,prometheus
   endpoint:
     health:
       show-details: never   # never leak DB/disk details on a publicly-reachable health endpoint
+  metrics:
+    tags:
+      # Stamped on every meter so one Prometheus can hold more than one environment without the
+      # series colliding. Matches sentry.environment deliberately: an alert and an error should
+      # agree about which deployment they came from.
+      environment: ${SENTRY_ENVIRONMENT:development}
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+
+# /actuator/prometheus is NOT publicly reachable, and that is already handled: SecurityConfig
+# permits /actuator/health and nothing else, so the scrape requires a token. Right posture -- the
+# scrape carries queue depths, error rates and JVM internals, which is useful reconnaissance even
+# though it holds no customer data. WorkerMetricsExportIT asserts both halves: anonymous access
+# fails, authenticated access returns the meters.
+#
+# The consequence, and the remaining deployment decision: a scraper needs either a credential or a
+# private network path to Railway. Resolving that by adding /actuator/** to permitAll would make
+# Prometheus work and publish the same data to the internet in one move -- which is exactly why the
+# IT asserts the anonymous case. See docs/engineering/observability.md, "Known gaps".
 
 springdoc:
   swagger-ui:

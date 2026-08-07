@@ -1,6 +1,7 @@
 package com.finora.service;
 
 import com.finora.entity.MerchantLearningEvent;
+import com.finora.observability.WorkerExecution;
 import com.finora.observability.WorkerObservability;
 import com.finora.repository.MerchantLearningEventRepository;
 import org.slf4j.Logger;
@@ -91,6 +92,13 @@ public class MerchantLearningEventWorker {
         this.learningService = learningService;
         this.transactionTemplate = transactionTemplate;
         this.observability = observability;
+
+        // Queue depth is a level, not an event, so it is a gauge polled by the registry rather
+        // than something this worker pushes. It is the signal that separates "slow" from "stuck":
+        // rising depth with a healthy completion rate is load; rising depth with a flat completion
+        // rate is a stall. countByStatus is indexed on status, so the scrape stays cheap.
+        observability.publishQueueDepth(WORKER, JOB_KIND,
+                () -> repository.countByStatus(MerchantLearningEvent.Status.PENDING));
     }
 
     /**
@@ -131,15 +139,14 @@ public class MerchantLearningEventWorker {
     public int drainOnce() {
         // One correlation id per pass, not per event: a pass is the unit an operator reasons about,
         // and every audit row MerchantLearningService writes during it inherits the id through MDC.
-        int[] processed = {0};
-        observability.run(WORKER, JOB_KIND, () -> {
+        try (WorkerExecution execution = observability.begin(WORKER, JOB_KIND)) {
             List<UUID> claimed = claimBatch();
+            execution.claimed(claimed.size());
             for (UUID eventId : claimed) {
-                applyOne(eventId);
+                applyOne(execution, eventId);
             }
-            processed[0] = claimed.size();
-        });
-        return processed[0];
+            return claimed.size();
+        }
     }
 
     /** Phase 1. Holds the row lock only for the length of this transaction; the PROCESSING status
@@ -158,7 +165,7 @@ public class MerchantLearningEventWorker {
     /** Phases 2 and 3. The catch is outside the transaction template on purpose — by the time it
      *  runs, the apply transaction has already rolled back, so {@link #recordFailure} gets a clean
      *  one to write into. */
-    private void applyOne(UUID eventId) {
+    private void applyOne(WorkerExecution execution, UUID eventId) {
         try {
             transactionTemplate.executeWithoutResult(status -> {
                 MerchantLearningEvent event = repository.findById(eventId).orElse(null);
@@ -167,16 +174,20 @@ public class MerchantLearningEventWorker {
                     // CASCADE took the event with it. Nothing to do and nothing wrong.
                     return;
                 }
+                // Queue wait is measured from when the row was enqueued, which is what separates
+                // "the queue is slow" from "the work is slow" -- different problems, different fixes.
+                execution.started(eventId, event.getCreatedAt());
                 learningService.confirm(event.getUserId(), event.getMerchantId(), event.getCategoryId());
                 event.markCompleted(Instant.now());
                 repository.save(event);
+                execution.completed(eventId);
             });
         } catch (RuntimeException e) {
-            recordFailure(eventId, e);
+            recordFailure(execution, eventId, e);
         }
     }
 
-    private void recordFailure(UUID eventId, RuntimeException cause) {
+    private void recordFailure(WorkerExecution execution, UUID eventId, RuntimeException cause) {
         try {
             transactionTemplate.executeWithoutResult(status -> {
                 MerchantLearningEvent event = repository.findById(eventId).orElse(null);
@@ -190,13 +201,13 @@ public class MerchantLearningEventWorker {
                             event.getCategoryId(), cause);
                     // The user's confirmation silently did not take effect. Previously this was a
                     // log line plus a row in a screen somebody has to think to open.
-                    observability.deadLettered(WORKER, JOB_KIND, eventId, event.getAttemptCount(), cause);
+                    execution.deadLettered(eventId, event.getAttemptCount(), cause);
                 } else {
                     log.warn("Merchant learning event {} failed (attempt {}), retrying at {}",
                             eventId, event.getAttemptCount(), event.getNextAttemptAt());
                     // Counted and breadcrumbed, NOT reported: a transient failure the next attempt
                     // resolves is normal operation, and paging on it is how alerting gets muted.
-                    observability.retryScheduled(WORKER, JOB_KIND, eventId, event.getAttemptCount());
+                    execution.retryScheduled(eventId, event.getAttemptCount());
                 }
             });
         } catch (RuntimeException e) {
@@ -204,7 +215,7 @@ public class MerchantLearningEventWorker {
             // will return it to the queue. Logged rather than rethrown: this runs on a scheduler or
             // an async nudge, and there is nobody to hand an exception to.
             log.error("Could not record the failure of merchant learning event {}", eventId, e);
-            observability.failureNotRecorded(WORKER, JOB_KIND, eventId, e);
+            execution.failureNotRecorded(eventId, e);
         }
     }
 
@@ -221,6 +232,12 @@ public class MerchantLearningEventWorker {
      * without a live scheduler.
      */
     public void recoverAbandoned() {
+        try (WorkerExecution execution = observability.beginScheduled(WORKER, JOB_KIND)) {
+            recoverAbandoned(execution);
+        }
+    }
+
+    private void recoverAbandoned(WorkerExecution execution) {
         transactionTemplate.executeWithoutResult(status -> {
             Instant now = Instant.now();
             List<MerchantLearningEvent> stuck = repository.findStuckInProcessing(
@@ -229,7 +246,7 @@ public class MerchantLearningEventWorker {
             log.warn("Returning {} merchant learning event(s) to the queue after {} in PROCESSING "
                     + "-- a worker most likely died mid-apply.", stuck.size(), PROCESSING_TIMEOUT);
             // Evidence that a process died somewhere nobody saw. No throwable exists to attach.
-            observability.recoveredAbandoned(WORKER, JOB_KIND, stuck.size());
+            execution.recovered(stuck.size());
             stuck.forEach(event -> event.recordFailure(
                     "Abandoned in PROCESSING for longer than " + PROCESSING_TIMEOUT, now));
             repository.saveAll(stuck);

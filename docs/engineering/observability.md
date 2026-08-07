@@ -147,45 +147,141 @@ Non-negotiable, and enforced by review:
 
 ---
 
-## 7. Background work
+## 7. Background work: the worker contract
 
-The Sentry starter reports what fails on a request thread. Background work needed explicit
-reporting, and `WorkerObservability` provides it.
+**Workers do not instrument themselves.** They obtain a `WorkerExecution` from `WorkerObservability`
+and report lifecycle events against it. Correlation, metrics, breadcrumbs, exception capture, MDC
+management, timing and cleanup are inherited. A new worker adds instrumentation by *using* this, not
+by writing any.
 
-### Correlation
+### The standard lifecycle
 
-`CorrelationIdFilter` puts `requestId` in MDC for HTTP requests, and `AuditService` stamps every
-audit row with whatever it finds there. Background work had none — a queue-driven audit row carried
-a null request id and could not be tied to anything.
+```
+queued -> claimed -> started -> completed
+                        |
+                        +-> retry scheduled -> (back to claimed)
+                        +-> dead letter
+                        +-> failure recording failed
+                        +-> recovered   (a worker died mid-flight)
+```
 
-`WorkerObservability.run()` sets **the same MDC key**, prefixed `worker-`. Three things then line
-up for free, with no change to either class: the worker's log lines, the audit rows it writes, and
-its Sentry events all share one id.
+These names are the operational vocabulary: they are the metric names, the Sentry `outcome` tags and
+the runbook headings, deliberately identical in all three so an alert, a dashboard panel and this
+document all say the same word.
 
-The previous MDC value is *restored*, not cleared — the async nudge runs from a request thread that
-has its own id, and clearing would detach the rest of that request's logs. Restoration happens in a
-`finally`, because these threads are pooled: a leaked id would attribute one job's failure to
-another's.
+### How to instrument a new worker
+
+```java
+private static final String WORKER = "import";          // low-cardinality
+private static final String JOB_KIND = "import-job";
+
+// Once, in the constructor. A level, not an event -- the registry polls it.
+observability.publishQueueDepth(WORKER, JOB_KIND,
+        () -> repository.countByStatus(Status.PENDING));
+
+public int drainOnce() {
+    try (WorkerExecution execution = observability.begin(WORKER, JOB_KIND)) {
+        List<UUID> claimed = claimBatch();
+        execution.claimed(claimed.size());
+        for (UUID id : claimed) {
+            try {
+                execution.started(id, row.getCreatedAt());   // queuedAt enables queue-wait timing
+                doWork(id);
+                execution.completed(id);
+            } catch (RuntimeException e) {
+                if (exhausted) execution.deadLettered(id, attempts, e);
+                else           execution.retryScheduled(id, attempts);
+            }
+        }
+        return claimed.size();
+    }
+}
+```
+
+`MerchantLearningEventWorker` is the reference implementation.
+
+**Use `beginScheduled()`** when a scheduled trigger starts the pass, so the correlation id records
+that origin.
+
+**Use try-with-resources.** `close()` records duration, pops the Sentry scope and restores MDC — all
+three must happen even when the body throws. Worker threads are pooled, so a leaked MDC entry or tag
+attaches itself to every later job the thread picks up, attributing one job's failure to another's
+id. That is why cleanup is a language construct rather than a convention.
+
+### Required metrics
+
+Provided automatically; names are fixed by the framework so one dashboard query covers every worker.
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `finora.worker.executions` | counter | Passes started |
+| `finora.worker.completed` | counter | Jobs that succeeded |
+| `finora.worker.retries` | counter | Jobs scheduled for another attempt |
+| `finora.worker.dead_letters` | counter | Jobs that exhausted retries |
+| `finora.worker.recovered` | counter | Rows returned after a worker died |
+| `finora.worker.failures` | counter | Failures not retried away |
+| `finora.worker.duration` | timer (p50/p95) | How long one pass took |
+| `finora.worker.queue_wait_time` | timer (p50/p95) | Queued → started |
+| `finora.worker.queue_depth` | gauge | Jobs waiting — **you must register this** |
+
+A dead letter increments **both** `dead_letters` and `failures`; a retry increments **neither**.
+Two questions, two counters: "how often do we give up" and "how often does work not get done".
+
+### Required tags
+
+Every meter carries `worker` and `jobKind`, plus a global `environment`. Keep both low-cardinality —
+a logical name, not a row id.
+
+Sentry events carry `worker`, `jobKind`, `correlationId`, and where relevant `phase`, `outcome` and
+`jobId`. These are the *only* tag keys that survive scrubbing (§5).
+
+### Required correlation
+
+Automatic. Prefix convention:
+
+| Prefix | Origin |
+|---|---|
+| `request-` | HTTP request (`CorrelationIdFilter`) |
+| `worker-` | async or on-demand worker pass |
+| `scheduler-` | pass from a scheduled trigger |
+
+One MDC key, not three — `AuditService` stamps every row with whatever it finds there, so a
+queue-driven write correlates with no change to that class. The prefix preserves origin without a
+second lookup.
+
+### Required tests
+
+A worker is not production-ready without:
+
+- **Correlation is restored, including when the body throws.** The pooled-thread leak above.
+- **A retry is not a dead letter.** Assert the counters separately; this is what keeps alerting
+  meaningful.
+- **Reporting never throws.** It runs in the failure path; throwing there replaces a recorded
+  failure with an unrecorded one.
+- **The queue-depth supplier does not throw.** It runs on the scrape path, not the worker's thread.
+- **Metrics reach the scrape.** `WorkerMetricsExportIT` — a meter in a registry nothing exports is
+  as useful as no meter, and looks identical in a unit test.
 
 ### What is reported, and what deliberately is not
 
 | Event | Reported? | Why |
 |---|---|---|
-| Retry scheduled | **No** — breadcrumb + counter | A transient failure the next attempt resolves is normal operation. Paging on it is how alerting gets muted. |
-| Dead-lettered | **Yes** | The user's action silently did not take effect. Previously only a log line plus a screen someone must think to open. |
-| Failure not recorded | **Yes** | Double fault — the row is stranded in `PROCESSING`. |
-| Abandoned rows recovered | **Yes** | A worker process died. Reported as a message; there is no exception to attach. |
+| Retry scheduled | **No** — breadcrumb + counter | A transient failure the next attempt resolves is normal. Paging on it is how alerting gets muted. Alert on the *rate*. |
+| Dead-lettered | **Yes** | The user's action silently did not take effect. |
+| Failure not recorded | **Yes** | Double fault — the row is stranded. |
+| Abandoned rows recovered | **Yes** | A worker process died. |
 
-### Metrics
+### Alert thresholds
 
-`finora.worker.retry`, `.dead_letter`, `.failure_not_recorded`, `.recovered`, tagged by `worker` and
-`jobKind`. Micrometer is already present via Actuator, so these cost no new dependency.
+Alert on rates and levels, never on individual retry events:
 
-**They are collected but not yet exported** — only `health` is exposed on the actuator endpoint. A
-Prometheus registry and endpoint is the next milestone; until then these are visible in tests and in
-a debugger, not on a dashboard.
-
----
+| Signal | Shape |
+|---|---|
+| Dead-letter rate | Any sustained non-zero rate. Work is silently not being done. |
+| Retry rate | A step change, not an absolute — the healthy rate is workload-specific. |
+| Queue depth | Rising *with a flat completion rate* is a stall; rising with a healthy one is load. |
+| Queue age (`queue_wait_time` p95) | The user-visible symptom, and the best single alert. |
+| `failures` without `dead_letters` | Stranded rows — suspect the database, not the worker. |
 
 ## 8. Deployment configuration
 
@@ -244,10 +340,18 @@ milestone follows immediately.
 
 ## 10. Known gaps
 
-- **Metrics are collected but not exported.** Next milestone.
-- **No alerting.** Thresholds for queue growth, retry rate and worker crashes are a design task.
-- **Import pipeline workers are not yet instrumented.** `MerchantLearningEventWorker` is the only
-  durable queue today; the import path runs inline on the request thread and is covered by the
-  starter.
+- **The scrape needs a credential or a private network path.** `/actuator/prometheus` is
+  authenticated (`SecurityConfig` permits only `/actuator/health`), which is the right posture — the
+  scrape carries queue depths, error rates and JVM internals. But it means Prometheus cannot scrape
+  anonymously. **Resolving this by adding `/actuator/**` to `permitAll` would make Prometheus work
+  and publish the same data to the internet in one move** — `WorkerMetricsExportIT` asserts the
+  anonymous case specifically to catch that. The real options are a scrape credential or Railway's
+  private network; that is a deployment decision, not a code one.
+- **No dashboards yet.** The metrics are exported and labelled; Grafana panels and their queries are
+  the next piece, and cannot be built or validated from the repository alone.
+- **No alerting configured.** Thresholds are proposed in §7 but nothing evaluates them.
+- **Import pipeline is not instrumented,** because it still runs inline on the request thread and is
+  covered by the starter. **When import moves to a durable queue it must reuse this framework rather
+  than redesign one** — that is a design requirement of the async import milestone, not a follow-up.
 - **No distributed tracing.** `tracesSampleRate` is deliberately `0` — spans are keyed by URL, which
   would reintroduce the identifiers §4 strips. Revisit only with a scrubbing strategy for span names.

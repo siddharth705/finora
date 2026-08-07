@@ -7,21 +7,28 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The correlation and counting behaviour, which is what makes background failures findable.
+ * The platform contract every worker inherits.
  *
- * <p>The Sentry calls themselves are no-ops without a DSN, which is deliberate and is what lets
- * this run in the suite with no network. What is asserted here is everything that must hold
- * regardless of whether Sentry is configured: the correlation id is set and, crucially, restored;
- * and the counters move.
+ * <p>These assertions hold whether or not Sentry is configured -- the Sentry calls are no-ops
+ * without a DSN, which is what lets this run in the suite with no network. What is asserted is
+ * everything a worker depends on regardless: correlation is set and, crucially, restored; the
+ * standard metric names exist; and the lifecycle distinctions that keep alerting meaningful are
+ * real rather than cosmetic.
  */
 class WorkerObservabilityTest {
+
+    private static final String WORKER = "merchant-learning";
+    private static final String KIND = "merchant-learning-event";
 
     private MeterRegistry meters;
     private WorkerObservability observability;
@@ -37,111 +44,236 @@ class WorkerObservabilityTest {
         MDC.clear();
     }
 
+    // ---------------------------------------------------------------- correlation
+
     @Test
-    void aCorrelationIdIsVisibleToTheBodyAndMarkedAsComingFromAWorker() {
-        // The prefix is what makes the origin obvious in a log search, and what distinguishes a
-        // queue-driven audit row from a request-driven one.
+    void aWorkerPassIsCorrelatedAndMarkedAsComingFromAWorker() {
         AtomicReference<String> seen = new AtomicReference<>();
 
-        observability.run("merchant-learning", "event", () -> seen.set(MDC.get("requestId")));
+        try (WorkerExecution execution = observability.begin(WORKER, KIND)) {
+            seen.set(MDC.get("requestId"));
+            assertThat(execution.correlationId()).isEqualTo(seen.get());
+        }
 
         assertThat(seen.get()).isNotNull().startsWith("worker-");
     }
 
     @Test
-    void itUsesTheSameMdcKeyAsHttpRequests_soAuditRowsAreCorrelatedWithNoChangeToAuditService() {
-        // AuditService stamps every row with MDC.get("requestId"). Background work previously had
-        // none, so queue-driven audit rows carried null and could not be tied to anything.
+    void aScheduledPassRecordsThatOriginInThePrefix() {
+        // request- / worker- / scheduler- is the documented convention. The prefix is what tells an
+        // operator reading a log line whether a poll or a user action started the work.
         AtomicReference<String> seen = new AtomicReference<>();
 
-        observability.run("merchant-learning", "event", () -> seen.set(MDC.get("requestId")));
+        try (WorkerExecution ignored = observability.beginScheduled(WORKER, KIND)) {
+            seen.set(MDC.get("requestId"));
+        }
 
-        assertThat(seen.get()).isEqualTo(seen.get());
-        assertThat(MDC.get("requestId")).as("must not leak after the body finishes").isNull();
+        assertThat(seen.get()).startsWith("scheduler-");
     }
 
     @Test
-    void aPreviousCorrelationIdIsRestored_notDestroyed() {
-        // The async nudge is invoked from a request thread that already has its own id. Clearing
-        // rather than restoring would silently detach the rest of that request's logs.
-        MDC.put("requestId", "http-abc123");
-
-        observability.run("merchant-learning", "event", () -> {});
-
-        assertThat(MDC.get("requestId")).isEqualTo("http-abc123");
+    void itUsesTheSameMdcKeyAsHttpRequests_soAuditRowsCorrelateWithNoChangeToAuditService() {
+        // AuditService stamps every row with MDC.get("requestId"). Background work previously had
+        // none, so queue-driven audit rows carried null and could not be tied to anything.
+        try (WorkerExecution ignored = observability.begin(WORKER, KIND)) {
+            assertThat(MDC.get("requestId")).isNotNull();
+        }
+        assertThat(MDC.get("requestId")).as("must not leak past the pass").isNull();
     }
 
     @Test
-    void theCorrelationIdIsRestoredEvenWhenTheBodyThrows() {
-        // These threads are pooled and long-lived. A leaked id would attach itself to every later
-        // job the thread picked up, attributing one job's failure to another's id.
-        MDC.put("requestId", "http-abc123");
+    void aParentCorrelationIdIsRestored_notDestroyed() {
+        // The async nudge runs from a request thread that already has its own id. Clearing rather
+        // than restoring would silently detach the rest of that request's logs.
+        MDC.put("requestId", "request-abc123");
 
-        assertThatThrownBy(() -> observability.run("merchant-learning", "event", () -> {
-            throw new IllegalStateException("apply failed");
-        })).isInstanceOf(IllegalStateException.class);
+        try (WorkerExecution ignored = observability.begin(WORKER, KIND)) {
+            assertThat(MDC.get("requestId")).startsWith("worker-");
+        }
 
-        assertThat(MDC.get("requestId")).isEqualTo("http-abc123");
+        assertThat(MDC.get("requestId")).isEqualTo("request-abc123");
+    }
+
+    @Test
+    void correlationIsRestoredEvenWhenTheBodyThrows() {
+        // Worker threads are pooled. A leaked id would attach to every later job the thread picked
+        // up, attributing one job's failure to another's id.
+        MDC.put("requestId", "request-abc123");
+
+        assertThatThrownBy(() -> {
+            try (WorkerExecution ignored = observability.begin(WORKER, KIND)) {
+                throw new IllegalStateException("apply failed");
+            }
+        }).isInstanceOf(IllegalStateException.class);
+
+        assertThat(MDC.get("requestId")).isEqualTo("request-abc123");
+    }
+
+    @Test
+    void closeIsIdempotent_soADoubleCloseCannotStripAnotherPassesTags() {
+        MDC.put("requestId", "request-abc123");
+        WorkerExecution execution = observability.begin(WORKER, KIND);
+
+        execution.close();
+        execution.close();
+
+        assertThat(MDC.get("requestId")).isEqualTo("request-abc123");
     }
 
     @Test
     void eachPassGetsItsOwnCorrelationId() {
-        AtomicReference<String> first = new AtomicReference<>();
-        AtomicReference<String> second = new AtomicReference<>();
+        String first;
+        String second;
+        try (WorkerExecution e = observability.begin(WORKER, KIND)) { first = e.correlationId(); }
+        try (WorkerExecution e = observability.begin(WORKER, KIND)) { second = e.correlationId(); }
 
-        observability.run("merchant-learning", "event", () -> first.set(MDC.get("requestId")));
-        observability.run("merchant-learning", "event", () -> second.set(MDC.get("requestId")));
+        assertThat(first).isNotEqualTo(second);
+    }
 
-        assertThat(first.get()).isNotEqualTo(second.get());
+    // ---------------------------------------------------------------- lifecycle + metrics
+
+    @Test
+    void everyPassIsCountedAndTimed_soAnIdlePollStillProvesThePollerIsAlive() {
+        try (WorkerExecution execution = observability.begin(WORKER, KIND)) {
+            execution.claimed(0);
+        }
+
+        assertThat(counter("finora.worker.executions")).isEqualTo(1.0);
+        assertThat(meters.find("finora.worker.duration").timer().count()).isEqualTo(1L);
     }
 
     @Test
-    void deadLetteringIsCounted() {
-        observability.deadLettered("merchant-learning", "event", UUID.randomUUID(), 5,
-                new IllegalStateException("gave up"));
+    void aCompletedJobIsCounted() {
+        try (WorkerExecution execution = observability.begin(WORKER, KIND)) {
+            execution.completed(UUID.randomUUID());
+        }
 
-        assertThat(counter("finora.worker.dead_letter")).isEqualTo(1.0);
+        assertThat(counter("finora.worker.completed")).isEqualTo(1.0);
     }
 
     @Test
-    void aScheduledRetryIsCountedButIsNotADeadLetter() {
-        // The distinction that keeps alerting usable: retries are normal, dead letters are not.
-        observability.retryScheduled("merchant-learning", "event", UUID.randomUUID(), 2);
+    void queueWaitIsRecordedWhenTheQueuedTimeIsKnown() {
+        // The metric that separates "the queue is slow" from "the work is slow".
+        try (WorkerExecution execution = observability.begin(WORKER, KIND)) {
+            execution.started(UUID.randomUUID(), Instant.now().minus(3, ChronoUnit.SECONDS));
+        }
 
-        assertThat(counter("finora.worker.retry")).isEqualTo(1.0);
-        assertThat(counter("finora.worker.dead_letter")).isEqualTo(0.0);
+        var timer = meters.find("finora.worker.queue_wait_time").timer();
+        assertThat(timer.count()).isEqualTo(1L);
+        assertThat(timer.totalTime(java.util.concurrent.TimeUnit.SECONDS)).isGreaterThanOrEqualTo(3.0);
     }
 
     @Test
-    void aFailureThatCouldNotBeRecordedIsCountedSeparately() {
-        // A double fault leaves the row stranded in PROCESSING; it is not the same event as the
-        // failure that triggered it and should not be filed as one.
-        observability.failureNotRecorded("merchant-learning", "event", UUID.randomUUID(),
-                new IllegalStateException("could not write failure"));
+    void anUnknownQueuedTimeIsSkippedRatherThanRecordedAsZero() {
+        // A zero would be indistinguishable from a genuinely instant claim and would drag the
+        // percentile down, making a real queue backlog look healthy.
+        try (WorkerExecution execution = observability.begin(WORKER, KIND)) {
+            execution.started(UUID.randomUUID(), null);
+        }
 
-        assertThat(counter("finora.worker.failure_not_recorded")).isEqualTo(1.0);
+        assertThat(meters.find("finora.worker.queue_wait_time").timer()).isNull();
     }
 
     @Test
-    void recoveryCountsEveryRowReturnedToTheQueue_notJustTheSweep() {
-        // The number is the signal: one row recovered is a blip, fifty means a worker died holding
-        // a full batch.
-        observability.recoveredAbandoned("merchant-learning", "event", 7);
+    void aRetryIsCountedButIsNeitherAFailureNorADeadLetter() {
+        // The distinction that keeps alerting usable: retrying is expected behaviour, so it must
+        // not inflate the counters an alert fires on.
+        try (WorkerExecution execution = observability.begin(WORKER, KIND)) {
+            execution.retryScheduled(UUID.randomUUID(), 2);
+        }
+
+        assertThat(counter("finora.worker.retries")).isEqualTo(1.0);
+        assertThat(counter("finora.worker.dead_letters")).isEqualTo(0.0);
+        assertThat(counter("finora.worker.failures")).isEqualTo(0.0);
+    }
+
+    @Test
+    void aDeadLetterCountsAsBothADeadLetterAndAFailure() {
+        // Two questions, two counters: "how often do we give up" and "how often does work not get
+        // done". A dead letter is both.
+        try (WorkerExecution execution = observability.begin(WORKER, KIND)) {
+            execution.deadLettered(UUID.randomUUID(), 5, new IllegalStateException("gave up"));
+        }
+
+        assertThat(counter("finora.worker.dead_letters")).isEqualTo(1.0);
+        assertThat(counter("finora.worker.failures")).isEqualTo(1.0);
+    }
+
+    @Test
+    void aFailureThatCouldNotBeRecordedCountsAsAFailureButNotADeadLetter() {
+        // The row is stranded, not abandoned-by-policy. Filing it as a dead letter would overstate
+        // how often retries are genuinely exhausted.
+        try (WorkerExecution execution = observability.begin(WORKER, KIND)) {
+            execution.failureNotRecorded(UUID.randomUUID(), new IllegalStateException("write failed"));
+        }
+
+        assertThat(counter("finora.worker.failures")).isEqualTo(1.0);
+        assertThat(counter("finora.worker.dead_letters")).isEqualTo(0.0);
+    }
+
+    @Test
+    void recoveryCountsEveryRowReturned_notJustTheSweep() {
+        // The number is the signal: one row is a blip, fifty means a process died holding a claim.
+        try (WorkerExecution execution = observability.begin(WORKER, KIND)) {
+            execution.recovered(7);
+        }
 
         assertThat(counter("finora.worker.recovered")).isEqualTo(7.0);
     }
 
     @Test
-    void reportingNeverThrows_evenWithNoSentryConfigured() {
-        // This code runs in the failure path of a scheduler. If it threw, it would replace a
-        // recorded failure with an unrecorded one.
-        UUID id = UUID.randomUUID();
+    void aRecoveryOfNothingIsNotAnEvent() {
+        // recoverAbandoned runs on every poll and usually finds nothing. Counting or reporting
+        // those would bury the passes that found something.
+        try (WorkerExecution execution = observability.begin(WORKER, KIND)) {
+            execution.recovered(0);
+        }
 
-        observability.deadLettered("w", "k", id, 3, new IllegalStateException("x"));
-        observability.failureNotRecorded("w", "k", id, new IllegalStateException("x"));
-        observability.retryScheduled("w", "k", id, 1);
-        observability.recoveredAbandoned("w", "k", 1);
-        observability.deadLettered("w", "k", null, 3, new IllegalStateException("no id"));
+        assertThat(counter("finora.worker.recovered")).isEqualTo(0.0);
+    }
+
+    // ---------------------------------------------------------------- queue depth
+
+    @Test
+    void queueDepthIsPublishedAsAGaugeThatTracksItsSupplier() {
+        // A level, not an event: the registry polls it, so it reflects the queue now rather than
+        // when the worker last ran.
+        AtomicInteger depth = new AtomicInteger(3);
+        observability.publishQueueDepth(WORKER, KIND, depth::get);
+
+        assertThat(meters.find("finora.worker.queue_depth").gauge().value()).isEqualTo(3.0);
+        depth.set(11);
+        assertThat(meters.find("finora.worker.queue_depth").gauge().value()).isEqualTo(11.0);
+    }
+
+    // ---------------------------------------------------------------- naming contract
+
+    @Test
+    void everyMeterCarriesWorkerAndJobKindTags_soOneDashboardQueryCoversAllWorkers() {
+        // Names are fixed by the framework rather than passed in by callers precisely so this
+        // holds: a worker that invented its own name would be invisible on the shared dashboard.
+        try (WorkerExecution execution = observability.begin(WORKER, KIND)) {
+            execution.completed(UUID.randomUUID());
+        }
+
+        assertThat(meters.find("finora.worker.completed").tag("worker", WORKER).tag("jobKind", KIND).counter())
+                .isNotNull();
+    }
+
+    @Test
+    void reportingNeverThrows_evenWithNoSentryConfigured() {
+        // This runs in the failure path of a scheduler. If it threw, it would replace a recorded
+        // failure with an unrecorded one.
+        UUID id = UUID.randomUUID();
+        try (WorkerExecution execution = observability.begin(WORKER, KIND)) {
+            execution.claimed(1);
+            execution.started(id, null);
+            execution.retryScheduled(id, 1);
+            execution.deadLettered(id, 3, new IllegalStateException("x"));
+            execution.failureNotRecorded(id, new IllegalStateException("x"));
+            execution.deadLettered(null, 3, new IllegalStateException("no id"));
+            execution.recovered(1);
+        }
     }
 
     private double counter(String name) {

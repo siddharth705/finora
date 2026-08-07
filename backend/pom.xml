@@ -254,6 +254,16 @@
       <version>7.14.0</version>
     </dependency>
 
+    <!-- Metrics export. Micrometer core already arrives with spring-boot-starter-actuator; this
+         adds only the Prometheus scrape format, so worker counters, timers and queue-depth gauges
+         become dashboard-able instead of visible only in a debugger.
+
+         Version is managed by spring-boot-starter-parent, so it is not pinned here. -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
+
   </dependencies>
 
   <build>
