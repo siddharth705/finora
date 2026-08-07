@@ -12,6 +12,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Resolves a raw transaction description to a single canonical Merchant, grouping variants
@@ -25,49 +30,52 @@ import java.util.UUID;
  * token with the brand it processes for) — those are exactly what the manual "merge merchants"
  * feature exists to fix by hand, rather than trying to make the heuristic itself smarter.
  *
- * <h2>Known cost, measured and deliberately left alone</h2>
+ * <h2>The N+1 that used to be here, and why the decision to keep it was reversed (Bug 35)</h2>
  *
- * Any description whose exact spelling has not been seen before falls through to
- * {@code merchantRepository.findByUserId(userId)} — the user's whole merchant table, loaded as
- * managed entities and filtered in Java. Measured in {@link MerchantNormalizationEngineTest}:
+ * Any description whose exact spelling has not been seen before falls through to a match against
+ * the user's whole merchant table. That load used to happen once per ROW — real bank descriptions
+ * carry a per-transaction reference ("SWIGGY ORDER 4471"), so nearly every row is a new alias even
+ * when it is the same few merchants repeatedly, and the cost scaled with rows × the user's
+ * lifetime merchant count. Measured in {@link MerchantNormalizationEngineTest}: a 500-row
+ * statement with 50 distinct merchants performed <b>500 full merchant-table loads</b>.
  *
- * <pre>
- *   500-row statement, 50 distinct merchants  ->  500 full merchant-table loads
- * </pre>
- *
- * One per ROW, not per merchant, because real bank descriptions carry a per-transaction reference
- * ("SWIGGY ORDER 4471"), so nearly every row is a new alias even when it is the same few merchants
- * repeatedly. Cost scales with rows × the user's lifetime merchant count, so it grows as an account
- * ages. A re-import of the same statement costs nothing extra — every alias is known by then.
- *
- * <p><b>Four fixes were considered. All were rejected; the reasoning is recorded so it does not
- * have to be rediscovered.</b>
+ * <p>This class previously recorded four candidate fixes, all rejected, and the reasoning is worth
+ * keeping because three of those rejections still stand:
  *
  * <ol>
- *   <li><b>Snapshot the merchant list once per import.</b> Two lines, and <i>wrong</i>.
- *       {@code resolve()} creates merchants as it goes, so row 3 would not see the merchant row 1
- *       created and would make its own. Three "Swiggy" rows instead of one, splitting the user's
- *       spend and splitting what the learning engine is taught — a silent data-quality bug, far
- *       worse than the latency it saves. Guarded by
- *       {@code differentSpellingsOfANewMerchantCollapseOntoOne}.</li>
+ *   <li><b>Snapshot the merchant list once per import.</b> Still wrong, and the trap the
+ *       implementation below has to avoid. {@code resolve()} CREATES merchants as it goes, so row
+ *       3 would not see the merchant row 1 created and would make its own — three "Swiggy" rows
+ *       instead of one, splitting the user's spend and splitting what the learning engine is
+ *       taught. That is a silent data-quality bug, far worse than the latency it saves. Guarded by
+ *       {@code differentSpellingsOfANewMerchantCollapseOntoOne} and
+ *       {@code aMerchantCreatedMidTransactionIsSeenByLaterRows}.</li>
  *
- *   <li><b>Transaction-scoped cache</b> (TransactionSynchronizationManager, or a context object
- *       threaded through {@code resolve()}). Correct, and would cut 500 scans to ~50. Rejected as
- *       disproportionate: it introduces caching machinery this codebase has nowhere else, and
- *       changes the signature every caller uses, to fix a sub-second cost.</li>
+ *   <li><b>Transaction-scoped cache.</b> <b>This is now what the code does</b> — see
+ *       {@link #merchantsByFirstToken}. It was rejected on two grounds and both have since failed:
+ *       <ul>
+ *         <li>"changes the signature every caller uses" — it does not have to. The memo lives
+ *             inside this class, keyed on the transaction, so no caller signature changed and the
+ *             dry-run-flag objection that rules out threading a context object does not apply.</li>
+ *         <li>"to fix a sub-second cost" — that premise was wrong. End-to-end measurement found
+ *             realistic statement sizes taking <i>minutes</i>, with permitted 10 MB uploads never
+ *             completing at all. The cost was never sub-second on a real account; it was
+ *             sub-second on a test fixture with almost no merchant history.</li>
+ *       </ul>
+ *       500 loads became 1, with no behavioural change: same rows, same comparison, same first
+ *       winner.</li>
  *
- *   <li><b>Persist the normalised first token as an indexed column</b> and match in SQL. The
- *       principled fix, and the only one that removes the N+1 rather than shrinking it. Rejected
- *       for now because it is a schema migration plus a standing obligation: the token has to be
- *       recomputed wherever a canonical name changes, which today includes the admin
- *       rename-merchant and merge-merchant paths. Getting that wrong breaks matching silently.
- *       This is the one to revisit if import latency becomes a real complaint.</li>
+ *   <li><b>Persist the normalised first token as an indexed column.</b> Still the most principled
+ *       fix and still not done, for the reason recorded before: the token is computed by
+ *       {@code CategoryRules.normalize} + {@code firstSignificantToken} in Java, so the column
+ *       needs a backfill reproducing that logic in SQL exactly, plus a standing obligation to
+ *       recompute it wherever a canonical name changes (admin rename and merge). A backfill that
+ *       is subtly different silently stops matching merchants that used to match. Revisit if one
+ *       load per import per user ever becomes the bottleneck; it is not today.</li>
  *
- *   <li><b>Read a two-column projection</b> instead of full entities, keeping the same Java
- *       matching. Built and measured, then reverted: it leaves the query count unchanged and
- *       <i>adds</i> a {@code findById} per token match — measured at <b>+450 lookups on a 500-row
- *       import</b>, taking it from 500 repository calls to 950. It trades round trips for
- *       hydration, and there was no measurement showing that trade comes out ahead.</li>
+ *   <li><b>Read a two-column projection.</b> Still rejected. Built and measured once, then
+ *       reverted: it leaves the query count unchanged and <i>adds</i> a {@code findById} per token
+ *       match — measured at +450 lookups on a 500-row import. Moot now that the count is 1.</li>
  * </ol>
  *
  * What was fixed, because it was an outright waste rather than a trade-off:
@@ -93,6 +101,9 @@ public class MerchantNormalizationEngine {
      * can hold (V7). Both are {@code VARCHAR(255)}, and both are written from parser output.
      */
     private static final int MAX_STORED_LENGTH = 255;
+
+    /** Transaction-scoped key for the per-user merchant memo -- see merchantsByFirstToken. */
+    private static final String MEMO_KEY = MerchantNormalizationEngine.class.getName() + ".merchantMemo";
 
     @Transactional
     public Merchant resolve(UUID userId, String description) {
@@ -135,16 +146,96 @@ public class MerchantNormalizationEngine {
 
         String firstToken = firstSignificantToken(normalizedAlias);
         if (firstToken != null) {
-            var candidate = merchantRepository.findByUserId(userId).stream()
-                    .filter(m -> firstToken.equals(firstSignificantToken(CategoryRules.normalize(m.getCanonicalName()))))
-                    .findFirst();
-            if (candidate.isPresent()) {
-                addAlias(candidate.get().getId(), userId, normalizedAlias);
-                return candidate.get();
+            var candidate = merchantsByFirstToken(userId).get(firstToken);
+            if (candidate != null) {
+                addAlias(candidate.getId(), userId, normalizedAlias);
+                return candidate;
             }
         }
 
-        return createMerchantAndAlias(userId, description, normalizedAlias);
+        Merchant created = createMerchantAndAlias(userId, description, normalizedAlias);
+        // Keep the memo consistent with what this transaction has now written. Without this, two
+        // rows in the same statement naming the same new merchant would each miss the memo, each
+        // create a merchant, and the second would collide on the alias index -- turning the fix
+        // into a new source of the exact failure addAlias() exists to survive.
+        rememberInMemo(userId, created);
+        return created;
+    }
+
+    /**
+     * The user's merchants indexed by first significant token, loaded at most once per transaction.
+     *
+     * <p><b>Bug 35.</b> This lookup used to be
+     * {@code merchantRepository.findByUserId(userId).stream().filter(...)} — a full load of every
+     * merchant the user owns, executed inside a per-ROW call. {@code resolve} runs once per staged
+     * row and this branch is taken on every alias miss, which is the common case on a first import
+     * rather than an edge case. A 300-row statement therefore performed up to 300 full merchant
+     * loads, and the cost grew with the user's history rather than with the size of the import.
+     * The end-to-end symptom was measured independently: realistic statement sizes taking minutes,
+     * and permitted 10 MB uploads never completing.
+     *
+     * <p>Memoized per transaction rather than indexed by a stored column. An indexed lookup would
+     * be faster still, but the token is computed by {@code CategoryRules.normalize} +
+     * {@link #firstSignificantToken} in Java, so a column would need a backfill that reproduces
+     * that logic in SQL exactly — and a backfill that is subtly different silently stops matching
+     * merchants that used to match. Memoizing changes no behaviour at all: the same rows, the same
+     * comparison, the same first winner. It only stops asking the database the identical question
+     * once per row.
+     *
+     * <p>Scoped to the transaction, not to the bean, deliberately. A longer-lived cache would go
+     * stale against other users' writes and would need invalidation this class has no way to
+     * observe; a transaction is exactly the window in which the answer cannot change underneath us
+     * except by our own writes, which {@link #rememberInMemo} accounts for. Outside a transaction
+     * the memo is skipped entirely and the old behaviour stands, so nothing depends on callers
+     * being transactional.
+     *
+     * <p>First match wins, matching the previous {@code findFirst()} on an unordered query. The
+     * memo therefore keeps the FIRST merchant seen for a token rather than the last.
+     */
+    private Map<String, Merchant> merchantsByFirstToken(UUID userId) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            return indexByFirstToken(merchantRepository.findByUserId(userId));
+        }
+
+        @SuppressWarnings("unchecked")
+        Map<UUID, Map<String, Merchant>> perUser =
+                (Map<UUID, Map<String, Merchant>>) TransactionSynchronizationManager.getResource(MEMO_KEY);
+        if (perUser == null) {
+            perUser = new HashMap<>();
+            TransactionSynchronizationManager.bindResource(MEMO_KEY, perUser);
+            // Unbind when the transaction ends, or the resource leaks onto whatever this thread
+            // serves next -- which for a request thread is another user's request.
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCompletion(int status) {
+                    TransactionSynchronizationManager.unbindResourceIfPossible(MEMO_KEY);
+                }
+            });
+        }
+        return perUser.computeIfAbsent(userId,
+                id -> indexByFirstToken(merchantRepository.findByUserId(id)));
+    }
+
+    private Map<String, Merchant> indexByFirstToken(List<Merchant> merchants) {
+        Map<String, Merchant> byToken = new HashMap<>();
+        for (Merchant merchant : merchants) {
+            String token = firstSignificantToken(CategoryRules.normalize(merchant.getCanonicalName()));
+            // putIfAbsent: first match wins, which is what findFirst() did.
+            if (token != null) byToken.putIfAbsent(token, merchant);
+        }
+        return byToken;
+    }
+
+    private void rememberInMemo(UUID userId, Merchant created) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) return;
+        @SuppressWarnings("unchecked")
+        Map<UUID, Map<String, Merchant>> perUser =
+                (Map<UUID, Map<String, Merchant>>) TransactionSynchronizationManager.getResource(MEMO_KEY);
+        if (perUser == null) return;
+        Map<String, Merchant> byToken = perUser.get(userId);
+        if (byToken == null) return;
+        String token = firstSignificantToken(CategoryRules.normalize(created.getCanonicalName()));
+        if (token != null) byToken.putIfAbsent(token, created);
     }
 
     private Merchant createMerchantAndAlias(UUID userId, String description, String normalizedAlias) {

@@ -19,6 +19,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * MerchantNormalizationEngine had no test of its own; it was only exercised indirectly through
@@ -190,7 +191,10 @@ class MerchantNormalizationEngineTest {
      * The shape that actually matters, and the reason the alias cache does not save the import:
      * real bank descriptions carry a per-transaction reference ("SWIGGY ORDER 4471"), so almost
      * every row is a distinct alias even when it is the same handful of merchants over and over.
-     * Every one of those rows falls through to a full load of the user's merchant table.
+     *
+     * <p><b>This measures the NO-TRANSACTION path</b>, where the memo is deliberately skipped —
+     * see realisticStatementInsideATransactionLoadsOnce for the same statement inside a
+     * transaction, which is what every real caller does and what Bug 35 was about.
      */
     @Test
     @DisplayName("cost: a realistic statement loads the merchant table once per ROW, not per merchant")
@@ -210,6 +214,65 @@ class MerchantNormalizationEngineTest {
                 .isEqualTo(rows);
         System.out.println("MEASURE realistic-500row scans=" + merchantScanCalls
                 + " findById=" + findByIdCalls + " merchants=" + merchants.size());
+    }
+
+    /**
+     * The fix, measured: inside a transaction, the whole statement costs ONE load.
+     *
+     * <p>The two measurements above are of the path with no active transaction, which is why they
+     * still show one scan per row — the memo is deliberately skipped there, so nothing depends on
+     * a caller being transactional. Every real caller IS: {@code resolve} is {@code @Transactional}
+     * and the import runs inside {@code ImportService.confirm}'s transaction. This drives that path
+     * by starting a synchronization the way Spring's transaction manager does.
+     *
+     * <p>500 rows, 50 distinct merchants: 500 full merchant-table loads become 1.
+     */
+    @Test
+    @DisplayName("cost: inside a transaction the same statement loads the merchant table once")
+    void realisticStatementInsideATransactionLoadsOnce() {
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            int rows = 500;
+            int distinctMerchants = 50;
+            for (int i = 0; i < rows; i++) {
+                engine.resolve(userId, "MERCHANT" + (i % distinctMerchants) + " REF " + i);
+            }
+
+            assertThat(merchants)
+                    .as("collapsing is unchanged -- the memo holds the same rows the query returned")
+                    .hasSize(distinctMerchants);
+            assertThat(merchantScanCalls)
+                    .as("one load for the whole statement, not one per row")
+                    .isEqualTo(1);
+            System.out.println("MEASURE in-transaction-500row scans=" + merchantScanCalls
+                    + " merchants=" + merchants.size());
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    /**
+     * The correctness property the memo must not break, and the reason a plain snapshot was
+     * rejected: {@code resolve} CREATES merchants as it goes, so a cache populated once at the
+     * start would not contain the merchant an earlier row just created. Three spellings of a new
+     * merchant would then become three merchants, splitting the user's spend and splitting what
+     * the learning engine is taught.
+     */
+    @Test
+    @DisplayName("a merchant created mid-transaction is visible to later rows in the same transaction")
+    void aMerchantCreatedMidTransactionIsSeenByLaterRows() {
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            engine.resolve(userId, "SWIGGY BANGALORE");
+            engine.resolve(userId, "SWIGGY ORDER 4471");
+            engine.resolve(userId, "SWIGGY*BLR 9982");
+
+            assertThat(merchants)
+                    .as("all three collapse onto the merchant the first row created")
+                    .hasSize(1);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     /** The same statement re-imported costs nothing extra: every alias is known by then. */
