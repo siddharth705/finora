@@ -133,6 +133,61 @@ how a system starts lying quietly:
 | checked, not applicable | ran, but the document carried no evidence to check against |
 | verified | a rule executed and the data agreed with the statement |
 
+## The Evidence Rule
+
+> **Every capability added to the import engine must leave behind evidence that it worked, failed,
+> or was skipped. A capability that runs silently is a capability nobody can trust, improve, or
+> retire.**
+
+The three outcomes are the rule; "worked or failed" alone is the version that quietly fails. What
+goes missing in practice is the third one. A rule that never ran, a merchant never resolved, a
+verification with nothing to check against — these produce no row, no log line and no complaint, so
+the system looks like it did its job and there is no way to tell the difference between *clean* and
+*never examined*.
+
+This is not a new instruction. It is a description of what the codebase already does when it is at
+its best, written down so it stops depending on whoever happens to be reviewing:
+
+- Verification reports `VERIFIED` / `WARNING` / `FAILED` / `NOT_APPLICABLE`, and the fourth state
+  exists precisely so "we did not check" cannot be read as "we checked and it was fine".
+- `ParseDiagnostics.NONE` carries the comment *"Nothing measured. Distinct from 'measured, and the
+  answer was zero'."*
+- An import that categorises a row it could not resolve records `needsCategoryReview` and queues no
+  learning, because learning a guess would make one bad inference permanent and silent.
+- A duplicate the user chose to import carries `not_duplicate_confirmed_at`, so reconciliation can
+  tell a human decision from an engine one.
+- Analysis sessions record the layout fingerprint, failure code, row count and unanchored reasons
+  for a document the engine was only *asked about* — a run that imported nothing still leaves a
+  trace.
+
+**Why this became a rule.** Milestone 1's most expensive defect was not a crash. Reconciliation
+re-marked transactions a user had explicitly confirmed, removing them from every spend total: the
+ledger held ₹1,618.50 and the dashboard reported ₹1,528.50. Every stage succeeded. Nothing logged
+anything. It was found by driving a real browser against a real database and comparing two numbers
+that should have matched — and it existed for exactly as long as it did because the decision left
+no evidence for the next stage to read.
+
+**What this rule is not.** It is not a licence to add counters. That is the opposite failure, and
+the [Capability Rule](#the-capability-rule) still governs: a diagnostic earns its place by being
+able to prove a proposed capability *unnecessary*, and a number that only ever goes up proves
+nothing.
+
+The distinction that keeps both rules true at once:
+
+| | |
+|---|---|
+| **Evidence** is *recorded* | a row, a status, a timestamp, a reason. Cheap, permanent, usually one column. Required. |
+| **A diagnostic** is *surfaced* | a screen, a chart, an endpoint someone reads. Costs design and maintenance. Earned. |
+
+Evidence is what makes a diagnostic possible later without a migration and a backfill. It is not
+the diagnostic. Most capabilities should leave evidence and surface nothing.
+
+**The test to apply at review.** For any new capability, ask: *six months from now, can someone
+tell whether this ran on a given import — and if it did not, why not?* If the honest answer is "you
+would have to reproduce it", the capability is not finished.
+
+---
+
 ## Financial Document, not PDF
 
 The pipeline is described below in PDF-specific class names (`PdfTextExtractor`,

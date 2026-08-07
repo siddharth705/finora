@@ -11,6 +11,35 @@ implied.
 
 ---
 
+## Where this sits
+
+```
+v1.0          Build the engine.        Finora can reliably ingest financial data.
+Milestone 2   Operate the engine.      That ingestion works at production scale, and can be
+                                       watched, diagnosed and improved without an engineer.
+Milestone 3   Use the engine.          Trusted financial data becomes intelligent financial
+                                       decisions for the user.
+```
+
+The shift this milestone asks for is one of framing, and it is worth saying out loud because it
+changes which work looks important:
+
+> **Stop thinking in terms of fixing parser bugs. Start thinking in terms of building an import
+> platform.**
+
+A parser project asks *why doesn't HSBC import?* An import platform asks *how does Finora
+continuously become better at importing every layout it encounters?* The first question produces a
+fix; the second produces a corpus, a registry, and a loop an operator can turn without an engineer.
+Both are in this charter, and only the second is the milestone.
+
+Milestone 3 will be harder than this one, and it is worth knowing that now. Once ingestion is
+stable, the difficulty moves from correctness to judgement: a parser has ground truth printed inside
+the document, and a cash-flow forecast or a spending insight does not. There is no balance line to
+check an insight against. Which is exactly why the investment here pays there — the only thing that
+makes an unfalsifiable feature defensible is that everything underneath it is traceable.
+
+---
+
 ## Why this theme
 
 Milestone 1 made the import path *correct*: learning cannot cost an import, staging writes nothing,
