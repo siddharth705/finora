@@ -169,6 +169,26 @@ rather than a second copy of the component, which is why Milestone 1 declined to
 The last correctness gap in the import experience, and the reason to finish it before adding parser
 capability.
 
+**As built.** The restructuring is `frontend/src/lib/importReview.ts`: the include flags and the
+duplicate decisions are one value, and `beginReview()` is the only way to make one. A path that
+unticks a row therefore also produces the unresolved decision that blocks the import until the user
+answers it — so success criterion 3's *"no path silently unticks a row"* is a property of the type
+rather than a convention the next screen to stage rows has to remember. Both paths delegate to it:
+the single-account screen's two pieces of state collapse into one, and each detected section holds
+its own. `toConfirmedRows()` is shared for the same reason — the multi-account path hand-rolled its
+own confirm payload and omitted `confirmedNotDuplicate`, so a review screen alone would have left
+the user's "import anyway" honoured in the ledger and reversed by reconciliation (`55f2db0`'s defect,
+one path over).
+
+No backend change and no migration: `SectionConfirm.rows()` was already `List<ConfirmedRow>`, and
+`confirmMultiSection` passes it through untouched. The gap was entirely in the client.
+
+**Not covered, deliberately.** Two adjacent findings, neither of which is a silent untick, both
+recorded rather than folded in: the multi-account `newAccount` payload still drops
+`detectedProduct`/`productIdentityHash` and the seven deposit attributes, so a composite statement's
+fixed-deposit section is created as an empty savings account; and mobile's `initialInclusion()` still
+unticks on `likelyDuplicate` with no review screen behind it, which the mobile initiative owns.
+
 ### 5. Asynchronous imports — completing what started
 
 `ImportJob`, `ImportJobWorker` and `V66__import_jobs.sql` landed in `eb91c02`. The row already
