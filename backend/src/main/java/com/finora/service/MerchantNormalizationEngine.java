@@ -5,6 +5,7 @@ import com.finora.entity.MerchantAlias;
 import com.finora.repository.MerchantAliasRepository;
 import com.finora.repository.MerchantRepository;
 import com.finora.util.CategoryRules;
+import com.finora.util.PaymentRailTokens;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -144,7 +145,10 @@ public class MerchantNormalizationEngine {
                     .orElseGet(() -> createMerchantAndAlias(userId, description, normalizedAlias));
         }
 
-        String firstToken = firstSignificantToken(normalizedAlias);
+        // extractMerchant, not the raw normalised alias -- see firstSignificantToken for why the
+        // two sides of this comparison must be reduced by the same rule, and what breaks when
+        // they are not.
+        String firstToken = firstSignificantToken(CategoryRules.extractMerchant(description));
         if (firstToken != null) {
             var candidate = merchantsByFirstToken(userId).get(firstToken);
             if (candidate != null) {
@@ -267,7 +271,10 @@ public class MerchantNormalizationEngine {
             if (byAlias.isPresent()) return byAlias;
         }
 
-        String firstToken = firstSignificantToken(normalizedAlias);
+        // Identical reduction to resolve()'s, deliberately. This method exists so a staged preview
+        // shows the merchant a confirm would actually pick; tokenising different text here than
+        // resolve() does would break exactly that guarantee.
+        String firstToken = firstSignificantToken(CategoryRules.extractMerchant(description));
         if (firstToken == null) return java.util.Optional.empty();
         // The same memo resolve() uses, so a staged statement costs one merchant load rather than
         // one per row -- Bug 35's fix applies to the preview too, which is where a user is
@@ -353,13 +360,51 @@ public class MerchantNormalizationEngine {
         }
     }
 
+    /**
+     * The token this description or canonical name is grouped by — the first word that names a
+     * COUNTERPARTY rather than a payment rail or a reference number.
+     *
+     * <h2>Two things had to change together, and only together</h2>
+     *
+     * <p><b>1. Skip payment rails ({@link PaymentRailTokens}).</b> This used to accept any token
+     * longer than two characters. Indian narrations are shaped
+     * {@code <rail>/<reference>/<counterparty>}, and every rail name is longer than two characters,
+     * so the grouping key for "UPI/9182736/SWIGGY" was {@code upi}. So was the key for
+     * "UPI/5647382/ZOMATO", and for every other UPI row on the statement — they all matched
+     * whichever UPI payee was seen first and aliased onto it. On a real Indian bank statement that
+     * is close to every transaction collapsing into one merchant, which then teaches
+     * {@code ConfidenceEngine.topCategory} a category drawn from hundreds of unrelated payees.
+     *
+     * <p><b>2. Tokenise the SAME text on both sides.</b> Skipping the rail alone would have made
+     * this worse, not better. The incoming side used to tokenise the raw normalised alias, which
+     * still contains the reference number — so "upi 9182736 swiggy" would have skipped {@code upi}
+     * and grouped on {@code 9182736}, a value unique to that one transaction. Every row would have
+     * become its own merchant: under-grouping as total as the over-grouping it replaced.
+     *
+     * <p>Callers therefore pass {@code CategoryRules.extractMerchant(description)} rather than
+     * {@code CategoryRules.normalize(description)}. {@code extractMerchant} already strips
+     * reference tokens, and it is also what {@code createMerchantAndAlias} builds the canonical
+     * name from — so the incoming description and the stored merchant are reduced by the identical
+     * rule before they are compared, which is what makes the match symmetric by construction
+     * rather than by two lists that have to be kept in step.
+     *
+     * <p>Returning null when nothing survives is deliberate: a description that is nothing but
+     * rail and reference ("UPI 12345") has no counterparty to group by, and inventing one would be
+     * the original bug in miniature. A null key means "create this merchant on its own" — a
+     * duplicate the user can merge, which is the failure direction this class can afford.
+     */
     private String firstSignificantToken(String normalized) {
         if (normalized == null || normalized.isBlank()) return null;
         String[] tokens = normalized.split(" ");
         for (String t : tokens) {
-            if (t.length() > 2) return t;
+            if (t.length() > 2 && !PaymentRailTokens.isRailToken(t)) return t;
         }
-        return tokens.length > 0 ? tokens[0] : null;
+        // Preserves the pre-existing short-token fallback (a merchant genuinely named "HP" still
+        // groups) while keeping rails excluded, so this only ever narrows what may become a key.
+        for (String t : tokens) {
+            if (!t.isBlank() && !PaymentRailTokens.isRailToken(t)) return t;
+        }
+        return null;
     }
 
     private String toDisplayName(String extractedMerchant) {

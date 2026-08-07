@@ -27,6 +27,8 @@ import com.finora.util.CategoryRules;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -68,6 +70,8 @@ import java.util.UUID;
  */
 @Service
 public class ImportService {
+
+    private static final Logger log = LoggerFactory.getLogger(ImportService.class);
 
     /** One merchant-learning confirmation a confirmed row earned, held until the statement import
      *  row exists to attribute it to. Both ids are already resolved by the row loop, so queueing
@@ -663,11 +667,31 @@ public class ImportService {
         // only when this statement is the most recent one on file for the account (by period
         // end), so importing an old/forgotten statement after a newer one is already on the books
         // can't regress the balance backwards.
-        if (request.statementClosingBalance() != null && isMostRecentStatementForAccount(userId, accountId, maxDate, savedImport.getId())) {
+        //
+        // Bug 02: the closing balance is a field off the REQUEST BODY, and it used to be assigned
+        // to Account.balance with no check that it had anything to do with the transactions being
+        // imported alongside it. Net worth, the dashboard tiles, the health score and the
+        // low-balance threshold all read that column, and nothing ever recomputes it, so a value
+        // that disagreed with the ledger stayed wrong permanently and silently.
+        // ClosingBalanceGuard applies StatementTotalsValidator's own arithmetic to the rows
+        // actually being written; an uncorroborated claim is refused and surfaced as a warning
+        // rather than applied. See that class for why refusing (rather than deriving a better
+        // balance) is the correct scope for a fix here.
+        ClosingBalanceGuard.Decision balanceDecision = ClosingBalanceGuard.assess(
+                request.statementOpeningBalance(), request.statementClosingBalance(),
+                totalCredits, totalDebits, toInsert.size(), skipped);
+        if (balanceDecision.mayOverwriteAccountBalance()
+                && isMostRecentStatementForAccount(userId, accountId, maxDate, savedImport.getId())) {
             accountRepository.findById(accountId).ifPresent(account -> {
                 account.setBalance(request.statementClosingBalance());
                 accountRepository.save(account);
             });
+        } else if (balanceDecision.verdict() == ClosingBalanceGuard.Verdict.UNCORROBORATED) {
+            // warn, not error: this is a statement Finora read imperfectly or a review the user
+            // changed, both of which are ordinary. It is logged because a sustained rise in these
+            // means the parser is misreading a layout, which is worth being able to see.
+            log.warn("Not applying the stated closing balance to account {}: {} details={}",
+                    accountId, balanceDecision.reason(), balanceDecision.details());
         }
 
         // Bug fix (v7->v8): this path never ran reconciliation, so imported transactions never
@@ -693,6 +717,13 @@ public class ImportService {
         List<String> warnings = new ArrayList<>();
         if (skipped > 0) {
             warnings.add(skipped + " row(s) were left unchecked during review and were not imported.");
+        }
+        // Silence here was the actual harm in Bug 02: the balance was written whether or not it
+        // agreed with the transactions, so there was never anything to notice. Now that an
+        // uncorroborated balance is refused, saying so is what stops the refusal being its own
+        // silent surprise -- the user's account balance did not move and they are told why.
+        if (balanceDecision.verdict() == ClosingBalanceGuard.Verdict.UNCORROBORATED) {
+            warnings.add("This account's balance was left unchanged: " + balanceDecision.reason());
         }
 
         // Re-fetched (not the pre-import in-memory copy) so the summary reflects the balance

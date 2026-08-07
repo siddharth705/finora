@@ -147,6 +147,91 @@ class MerchantNormalizationEngineTest {
         assertThat(merchants).hasSize(3);
     }
 
+    // ---- Bug 03: payment-rail prefixes must not become the grouping key ----
+
+    /**
+     * The reported Critical, in the shape a real Indian bank statement produces it.
+     *
+     * <p>Grouping used to key on the first token longer than two characters. Every rail name is
+     * longer than two characters, so the key for every one of these rows was {@code upi}, and all
+     * four aliased onto whichever payee happened to be resolved first. UPI is the dominant rail in
+     * this product's market, so this was close to "every transaction is one merchant" — and a
+     * merchant's confirmation counts are what ConfidenceEngine.topCategory reads to pick the
+     * auto-applied category, so the damage lands in the learning engine, not just the merchant list.
+     */
+    @Test
+    @DisplayName("BUG 03: UPI payees are four merchants, not one")
+    void upiPayeesDoNotCollapseOntoOneMerchant() {
+        engine.resolve(userId, "UPI/9182736/SWIGGY");
+        engine.resolve(userId, "UPI/5647382/ZOMATO");
+        engine.resolve(userId, "UPI/1122334/AMAZON");
+        engine.resolve(userId, "UPI/9988776/UBER");
+
+        assertThat(merchants)
+                .as("the rail names how the money moved, not who it moved to -- keying on it "
+                        + "makes every UPI payee the same merchant")
+                .hasSize(4);
+    }
+
+    @Test
+    @DisplayName("every rail behaves the same way, not just UPI")
+    void otherRailsDoNotCollapseEither() {
+        // Bank prefix kept, branch code masked -- the Synthetic Fixture Policy's own placeholder
+        // shape. The prefix is the part that carries meaning for a layout; the branch code is not.
+        engine.resolve(userId, "NEFT-HDFC0XXXXXX-ACME LTD");
+        engine.resolve(userId, "IMPS/P2A/512345/BIGBASKET");
+        engine.resolve(userId, "POS 4471 DECATHLON");
+        engine.resolve(userId, "ATM WDL 8891 AXIS");
+
+        assertThat(merchants).hasSize(4);
+    }
+
+    /**
+     * The half of this fix that is easy to miss. Skipping the rail alone would have moved the key
+     * onto the REFERENCE — "upi 9182736 swiggy" would group on {@code 9182736}, which is unique per
+     * transaction — turning total over-grouping into total under-grouping. Both sides of the
+     * comparison are reduced by CategoryRules.extractMerchant, which strips reference tokens, so
+     * the same payee still collapses onto one merchant across differing references.
+     */
+    @Test
+    @DisplayName("one payee across differing references is still ONE merchant")
+    void sameUpiPayeeAcrossDifferentReferencesStillCollapses() {
+        Merchant a = engine.resolve(userId, "UPI/9182736/SWIGGY");
+        Merchant b = engine.resolve(userId, "UPI/5647382/SWIGGY");
+        Merchant c = engine.resolve(userId, "SWIGGY ORDER 4471");
+
+        assertThat(merchants)
+                .as("stripping the rail must not promote the per-transaction reference into the key")
+                .hasSize(1);
+        assertThat(b.getId()).isEqualTo(a.getId());
+        assertThat(c.getId()).isEqualTo(a.getId());
+    }
+
+    @Test
+    @DisplayName("a description that is only rail and reference gets its own merchant, never a match")
+    void railOnlyDescriptionDoesNotMatchAnything() {
+        engine.resolve(userId, "SWIGGY BANGALORE");
+        engine.resolve(userId, "UPI 12345");
+
+        assertThat(merchants)
+                .as("with no counterparty to group by, creating a separate merchant is the "
+                        + "recoverable failure; matching an unrelated one is not")
+                .hasSize(2);
+    }
+
+    @Test
+    @DisplayName("staging previews the same merchant the confirm would create")
+    void readOnlyResolutionAgreesWithResolve() {
+        Merchant confirmed = engine.resolve(userId, "UPI/9182736/SWIGGY");
+
+        // A different reference for the same payee, as a later row would carry.
+        assertThat(engine.resolveReadOnly(userId, "UPI/5647382/SWIGGY"))
+                .as("resolve() and resolveReadOnly() must reduce the description identically, or a "
+                        + "staged preview shows a merchant the confirm will not pick")
+                .contains(confirmed);
+        assertThat(engine.resolveReadOnly(userId, "UPI/1122334/ZOMATO")).isEmpty();
+    }
+
     @Test
     @DisplayName("an alias recorded earlier short-circuits to its merchant")
     void knownAliasSkipsTheScan() {

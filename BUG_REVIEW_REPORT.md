@@ -4,28 +4,30 @@
 
 **Mode:** bug hunt only. No code was modified, no fixes were applied, no refactors were made, no pull requests were opened. Every finding below cites the file, the symbol, and the code path that demonstrates it.
 
-**Result:** 58 findings, of which **54 are live in the current tree and 4 were fixed while this review was in progress** (see Validation status below).
+**Result:** 58 findings, of which **52 are live in the current tree and 6 are closed** (see Validation status below). **All three Criticals are now fixed.**
 
-| Severity | Total | Live | Already fixed |
+| Severity | Total | Live | Fixed |
 |---|---|---|---|
-| Critical | 3 | 2 | 1 |
+| Critical | 3 | 0 | 3 |
 | High | 10 | 9 | 1 |
 | Medium | 20 | 19 | 1 |
 | Low | 25 | 24 | 1 |
-| **Total** | **58** | **54** | **4** |
+| **Total** | **58** | **52** | **6** |
 
 ## Validation status
 
 The working tree moved underneath this review — concurrent work landed in `backend/` partway through, so the snapshot the findings were originally written against is not the snapshot that exists now. **Every one of the 58 findings was subsequently re-checked against the current tree**, by grepping for the specific code signature each finding cites.
 
-**Fixed in the current tree — do not action these four:**
+**Closed — do not action these six:**
 
 | Bug | Title | What changed |
 |---|---|---|
-| 01 | Merchant-learning queue unreachable | `ImportService.java:650` now calls `learningEventPublisher.enqueue(...)`. The queue is wired. |
-| 13 | Lockout re-locks on the next wrong password | `AuthService.java:320–324` now resets `failedLoginAttempts` once `lockedUntil` has elapsed. |
-| 20 | Retry leaves the old error message | `MerchantLearningEvent.requeueForRetry` now sets `lastError = null` (line 195). |
-| 21 | JPQL `$`-form enum literal | Rewritten to the source form `MerchantLearningEvent.Status.PROCESSING` (line 66). |
+| 01 | Merchant-learning queue unreachable | Fixed by concurrent work. `ImportService` now calls `learningEventPublisher.enqueue(...)`. |
+| 02 | Unvalidated closing balance overwrites the account balance | **Fixed by this review.** New `imports/ClosingBalanceGuard`; `ImportService.confirm` refuses an uncorroborated balance and warns. |
+| 03 | UPI/NEFT/IMPS payees collapse into one merchant | **Fixed by this review.** New `util/PaymentRailTokens`; `MerchantNormalizationEngine` skips rails and tokenises both sides through `extractMerchant`. |
+| 13 | Lockout re-locks on the next wrong password | Fixed by concurrent work. `AuthService` resets `failedLoginAttempts` once `lockedUntil` has elapsed. |
+| 20 | Retry leaves the old error message | Fixed by concurrent work. `requeueForRetry` now clears `lastError`. |
+| 21 | JPQL `$`-form enum literal | Fixed by concurrent work. Rewritten to the source dotted form. |
 
 Their entries are retained below, marked **[FIXED]**, because the reasoning is still the record of what was wrong.
 
@@ -79,7 +81,13 @@ High
 
 ---
 
-# Bug 02
+# Bug 02 — [FIXED]
+
+> **Fixed by this review.** `imports/ClosingBalanceGuard` now decides whether a claimed closing
+> balance may be written, using `StatementTotalsValidator`'s own arithmetic against the rows
+> actually imported. `ImportService.confirm` applies the balance only on a `CORROBORATED` verdict;
+> otherwise it leaves the balance untouched, logs at warn, and returns a warning in the import
+> summary. Regression tests: `ClosingBalanceGuardTest`.
 
 ## Title
 Import writes a client-supplied number directly into the account balance with no validation
@@ -119,7 +127,18 @@ High
 
 ---
 
-# Bug 03
+# Bug 03 — [FIXED]
+
+> **Fixed by this review.** `util/PaymentRailTokens` names the tokens that identify a payment rail
+> rather than a counterparty, and `MerchantNormalizationEngine.firstSignificantToken` skips them.
+> Both sides of the comparison are now reduced through `CategoryRules.extractMerchant`, so
+> stripping the rail cannot promote the per-transaction reference into the grouping key. Regression
+> tests: five cases in `MerchantNormalizationEngineTest`, verified to fail when the fix is
+> neutralised.
+>
+> **Not migrated:** merchants already collapsed by the old heuristic stay collapsed. Repairing them
+> is a data migration plus a split/merge decision per merchant, which is a separate piece of work
+> from stopping the corruption.
 
 ## Title
 Every UPI / NEFT / IMPS / ATM transaction collapses into a single merchant
