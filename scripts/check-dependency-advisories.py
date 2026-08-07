@@ -50,20 +50,19 @@ class Accepted:
 # Every entry needs a reason that could turn out to be WRONG, and a named trigger for re-checking.
 # "Low risk" is not a reason; "requires a feature this app does not use" is.
 ACCEPTED = [
-    Accepted(
-        ghsa="GHSA-qwww-vcr4-c8h2",
-        apps={"frontend", "admin-portal"},
-        summary="react-router: RSC Mode CSRF bypass",
-        why=(
-            "Requires React Server Components. Both apps are client-rendered SPAs mounted with\n"
-            "      BrowserRouter and have no server runtime, so the affected code path does not exist\n"
-            "      in either build. There is also no version that clears it: the advisory's fix\n"
-            "      boundary is 8.3.0 and no 8.x has been published. npm's suggested remediation\n"
-            "      (downgrade to 7.11.0) would REINTRODUCE the open redirect fixed in 1ea5d13, which\n"
-            "      does apply -- so taking npm's advice here would make the apps less safe, not more."
-        ),
-        revisit="When react-router 8.3.0 or later is published, upgrade and delete this entry.",
-    ),
+    # GHSA-qwww-vcr4-c8h2 (react-router: RSC Mode CSRF bypass) was here for frontend and
+    # admin-portal, and was removed on 2026-08-08 because npm audit stopped reporting it for either.
+    #
+    # Worth recording that it did NOT go away for the reason the entry predicted. Its revisit
+    # trigger was "when react-router 8.3.0 or later is published, upgrade and delete this entry",
+    # and that has not happened: both apps are still on 7.18.2. The advisory was withdrawn or its
+    # affected range amended upstream, which is a thing that happens and which this checker
+    # deliberately notices -- it failed the build the first time the entry went stale rather than
+    # letting a dead exception sit here shadowing the next real advisory in react-router.
+    #
+    # The reasoning is not lost if it comes back: it is in this file's history, and the finding
+    # that npm's suggested remediation (downgrade to 7.11.0) would reintroduce the open redirect
+    # fixed in 1ea5d13 is the part worth re-reading before anyone acts on that advice again.
     Accepted(
         ghsa="GHSA-w5hq-g745-h8pq",
         apps={"mobile"},
