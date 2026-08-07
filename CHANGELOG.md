@@ -8,6 +8,21 @@ All notable changes to this project are documented in this file. Format loosely 
 
 A toolchain and infrastructure release. No product behaviour changes.
 
+### Infrastructure
+
+The short version, for anyone scanning. Each line is expanded under Changed or Fixed below.
+
+- CI migrated from GitHub-hosted runners to a self-hosted macOS (Apple Silicon) runner, after an
+  account billing block stopped hosted runners from starting at all.
+- Development and CI standardised on **Java 25**, which required moving Spring Boot 3.3.2 → 3.5.16
+  and springdoc 2.6.0 → 2.9.0 with it.
+- `python` → `python3` in both places the repository had the same portability bug: the CI workflow
+  and the pre-commit hook. On a current macOS or Ubuntu the bare command does not exist.
+- The backend jar is no longer referenced by a pinned, version-coupled filename.
+- Test suites made to run on Node 22 and later, which they previously could not.
+- New: [`docs/infrastructure/self-hosted-runner.md`](docs/infrastructure/self-hosted-runner.md),
+  covering host requirements, a health-check sequence, and rebuilding on a new machine.
+
 ### Changed
 - **Backend runs on Java 25** (was 21). This needed more than the compiler target: Spring Framework
   6.1's bundled ASM cannot parse class file 69, so component scanning failed in all 57
