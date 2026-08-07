@@ -105,3 +105,15 @@ updates:
         update-types: [minor, patch]
     commit-message:
       prefix: "ci(deps)"
+
+  # backend/Dockerfile's base image. This watches the TAG only -- it tells us a newer base exists,
+  # not whether the current one has known CVEs. Those are different questions and this answers the
+  # cheaper one; Trivy image scanning (roadmap phase 2) answers the other, which is why the roadmap
+  # keeps both rather than treating this as sufficient.
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore(deps)"

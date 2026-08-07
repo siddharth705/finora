@@ -1,255 +1,343 @@
 # Testing & Quality Tooling Review
 
-Evaluation of the 15 proposed tools against what Finora actually has today, at `7dfd997`.
+Evaluation of the proposed engineering ecosystem against what Finora actually runs today.
+Companion document: [`ENGINEERING_TOOLING_ROADMAP.md`](ENGINEERING_TOOLING_ROADMAP.md).
 
-**Recommendation in one line: adopt 2 now, revisit 3 later, decline 10 — and the single highest-value
-action on the list is not installing anything, it is wiring the Playwright suite we already own into
-CI.**
-
----
-
-## First, what already exists
-
-The proposal reads as though we are starting from a bare repository. We are not, and four of the
-fifteen items are already running:
-
-| Proposed tool | Actual status |
-|---|---|
-| **1. Playwright** | **Installed and written.** `e2e/` has 9 spec files across user-portal, admin-portal and cross-app workflow — including authenticated journeys, duplicate review, merchant lifecycle and learning-queue — plus 8 configured projects (Chromium, Firefox, Edge, tablet, mobile viewports) with its own dev-server orchestration. **Not wired into CI** — so none of it runs automatically. |
-| **2. JUnit** | In use. Well over 1200 tests across 160+ classes, including 30 Testcontainers `*IT` integration classes. Runs in CI with a published unit/IT breakdown on the run page. (Counts move daily; the run page is the live number.) |
-| **3. Vitest** | In use. Frontend (160 tests) and admin portal, both gated in CI. Mobile uses Jest (256 tests) — same role, different runner, because Expo ships jest-expo. |
-| **12. JaCoCo** | Installed (0.8.12), runs on every `mvn test`. **Deliberately a report, not a gate** — see below. |
-
-Beyond the list, we already run a security and structure layer that overlaps several proposals:
-
-- **ArchUnit** structural rules, each with a self-test proving it can fail, now being formalised into
-  a Guardian registry with IDs and ownership.
-- **Seven custom static checks** in CI and pre-commit: customer-PII hygiene, client auth-policy
-  drift, import cross-reference, XML comment validity, executable bits, contact addresses, and
-  dependency advisories.
-- **`check-dependency-advisories.py`**, which runs `npm audit --omit=dev` across all three JS apps
-  and fails unless every advisory is either fixed or explicitly allowlisted with a reason.
-
-That last one matters for judging items 5 and 6, and it covers **npm only — not Maven**.
+**Headline: six of the proposed tools are already implemented. The three highest-value actions on
+this list involve installing almost nothing —** wire the Playwright suite we own into CI, put Sentry
+on the backend where it is missing, and stop CI jobs from being able to hang for six hours.
 
 ---
 
-## The principle this review applies
+## 1. What already exists
 
-Finora's recurring quality failure is not too few tools. It is **tools whose output nobody reads.**
-This is documented, repeatedly, in our own history:
+| Proposed | Status | Correctly integrated? | In CI? |
+|---|---|---|---|
+| Playwright | **Implemented** — 9 specs, 8 browser/viewport projects, own dev-server orchestration | Yes | **No** |
+| JUnit | **Implemented** — 1200+ tests, 166 classes, 30 Testcontainers `*IT` | Yes | Yes, with published unit/IT breakdown |
+| Vitest | **Implemented** — frontend + admin portal (mobile uses Jest) | Yes | Yes, gated |
+| JaCoCo | **Implemented** — 0.8.12, report-only **by design** | Yes | Runs; deliberately no gate |
+| Dependabot | **Implemented this week** — maven, npm ×4, github-actions | Yes | N/A (opens PRs) |
+| **Sentry** | **Implemented on frontend, admin portal and mobile** — `monitoring.ts` per app, PII-scrubbed, DSN-gated no-op | Yes | N/A |
+| PostHog | Not present | — | — |
+| Firebase | Phone auth only (web + admin + backend verification) | Yes | — |
+| ZAP / Snyk / SpotBugs / PMD / Checkstyle / Semgrep / Trivy / k6 / SonarQube / OpenRewrite | Not present | — | — |
 
-- `check-xml-comments.py` existed for months, was wired to nothing, and always exited 0 — the exact
-  shape that let the original `pom.xml` incident happen.
-- `backend/mvnw` was committed non-executable, so **the backend test suite never ran in CI at all**
-  from the workflow's creation until 2026-08-05. Three green jobs beside one red one read as flaky.
+Beyond the list, we run a structural and security layer that overlaps several proposals:
+
+- **ArchUnit** rules — each with a self-test proving it can fail — now formalised into a Guardian
+  registry with IDs and ownership.
+- **Seven custom static checks** in CI and pre-commit: customer-PII hygiene, client auth-policy drift,
+  import cross-reference, XML comment validity, executable bits, contact addresses, dependency
+  advisories.
+- **Spring Boot Actuator**, exposing `health` only, with `show-details: never`.
+
+---
+
+## 2. The principle this review applies
+
+Finora's recurring failure is not too few tools. It is **tools whose output nobody reads**, and our
+own history documents it four times over:
+
+- `check-xml-comments.py` existed for months, wired to nothing, always exiting 0 — the exact shape
+  that let the original `pom.xml` incident happen.
+- `backend/mvnw` was committed non-executable, so **the backend suite never ran in CI at all** from
+  the workflow's creation until 2026-08-05. Three green jobs beside one red one read as flake.
 - 29 `*IT` classes never executed for months because surefire's includes did not match `*IT.java`.
-  The suite was green at 941 tests the whole time, with `com.finora.controller` at 0% coverage.
+  The suite was green at 941 tests while `com.finora.controller` sat at 0% coverage.
 - `npm audit` reports 18 advisories, all already judged not to apply. A command whose output is
-  always non-empty is one people learn to skip — and a genuine open redirect sat in that noise.
+  always non-empty is one people learn to skip — and a real open redirect sat in that noise.
 
-Every one of those is a **signal-to-noise failure, not a coverage failure.** Adding thirteen tools
-that each emit findings would reproduce it at scale. So the bar applied below is: *does this tool
-produce a signal someone will act on, that we do not already get?*
-
----
-
-## Summary table
-
-| # | Tool | Recommended | Phase | Install effort | Maintenance | Value to Finora |
-|---|---|---|---|---|---|---|
-| 1 | Playwright | **Already owned — wire to CI** | **Now** | S (CI job only) | Low–Med | **High** |
-| 2 | JUnit | Yes — in use | — | — | Low | High |
-| 3 | Vitest | Yes — in use | — | — | Low | High |
-| 4 | OWASP ZAP | Later | 3 | L | High | Medium |
-| 5 | Dependabot | **Yes** | **Now** | **S** | **Very low** | **High (Java gap)** |
-| 6 | Snyk | No | — | M | Med | Low (overlap) |
-| 7 | SpotBugs | Later | 2 | M | Med | Medium |
-| 8 | PMD | No | — | M | High | Low |
-| 9 | Checkstyle | No | — | M | High | Low |
-| 10 | Trivy | Later | 2 | S–M | Low | Medium |
-| 11 | Grafana k6 | No (not yet) | — | L | Med | Low *today* |
-| 12 | JaCoCo | Yes — in use, keep ungated | — | — | Low | Medium |
-| 13 | SonarQube/Cloud | No | — | L | High | Low–Med (overlap + cost) |
-| 14 | OpenRewrite | No — use as a tool, do not adopt | — | S per use | None | Medium, episodic |
-| 15 | Semgrep | Later | 2 | M | Med | Medium–High |
+Every one is a signal-to-noise failure. Adding a dozen finding-emitting tools reproduces it at scale.
+**The bar applied below: does this produce a signal someone will act on that we do not already get?**
 
 ---
 
-## Adopt now
+## 3. Per-tool evaluation
 
-### 5. Dependabot — **yes, and it closes a real gap**
+### 3.1 End-to-end — Playwright
 
-**Why.** Our dependency scanning covers npm and *not Maven*. `check-dependency-advisories.py` runs
-`npm audit` over `frontend`, `admin-portal` and `mobile`. Nothing watches Spring Boot, Jackson,
-PostgreSQL driver, Firebase Admin, or any other Java dependency for CVEs — on a financial backend
-handling bank statements. That is the largest genuine hole on this list.
+**Already implemented; the gap is enforcement, not capability.**
 
-**Where.** `.github/dependabot.yml`, covering four ecosystems: `maven` (backend), `npm` × 4
-(frontend, admin-portal, mobile, e2e), and `github-actions` — the last of which would have flagged
-the `actions/setup-java@v4` deprecation currently warning on every run.
+Coverage today: 9 specs — user-portal smoke and authenticated journey; admin-portal smoke,
+merchant-review and learning-queue; cross-app workflow specs for dashboard consistency, duplicate
+review, tenant isolation and merchant lifecycle. Eight projects cover Chromium, Firefox, Edge, plus
+tablet and mobile viewport emulation.
 
-**Overlap.** Partial with the npm script, and the two are complementary rather than redundant: the
-script *gates the build* on shipped-code advisories with a maintained allowlist; Dependabot *opens
-PRs* to fix them. Neither replaces the other.
+**Against the requested scope:** authentication ✅, admin portal ✅, user portal ✅, merchant
+learning ✅, queue management ✅, duplicate review ✅, cross-application workflows ✅.
+**Statement upload and the import pipeline are the notable gaps** — the highest-risk flow in the
+product has no E2E coverage, and that is a more valuable next test than any new tool.
+Reports and Settings are also uncovered.
 
-**Risks.** PR volume. Mitigated by grouping updates and limiting open PRs — configured below.
-Security updates are separate from version bumps, so the noisy half can be tuned without muting the
-half that matters.
+**The problem: none of it runs automatically.** Nine specs that execute only when someone remembers
+is the `check-xml-comments.py` shape again — real work, zero enforcement — and the suite keeps
+growing, so the gap widens rather than closes.
 
-**Effort.** ~30 minutes. **Maintenance:** near zero; it is a config file.
+**Recommendation: wire it into CI as a fifth job. Highest priority on this list.** Chromium-only per
+push (~2–3 min); Firefox/Edge/responsive nightly, because cross-browser is where E2E cost and flake
+concentrate. Effort ~2h. Maintenance: medium and ongoing — that is the honest price of E2E.
 
-### 1. Playwright — **already owned; the gap is CI, not installation**
+**Risk:** flake is what kills E2E suites. Mitigate by starting Chromium-only, requiring deterministic
+fixtures, and treating a flaky spec as broken rather than as a retry candidate.
 
-**Why this is the top item.** We have 9 spec files, 8 browser/viewport projects, authenticated
-cross-app workflow tests, and dev-server orchestration — and **none of it runs unless someone
-remembers to run it locally.** That is precisely the `check-xml-comments.py` shape: real work, zero
-enforcement. The suite is also still growing (two admin-portal specs were added while this review
-was being written), which makes the gap widen rather than close: writing more E2E tests before
-wiring the existing ones in compounds the problem.
+### 3.2 Backend — JUnit
 
-**Where.** A fifth CI job, after the frontend/admin-portal jobs succeed. Chromium-only on every
-push (~2–3 min); the Firefox/Edge/responsive projects nightly or on a label, because cross-browser
-runs are where E2E cost and flake concentrate.
+Strong. 1200+ tests including 30 Testcontainers integration classes running against real Postgres,
+plus ArchUnit structural rules and a published unit/IT split on every run.
 
-**Not done in this pass, deliberately.** Another engineer is mid-change in `e2e/` right now —
-`playwright.config.ts` and `package.json` are modified and `e2e/tests/workflow/` is brand-new and
-untracked. Wiring CI against a config that is actively moving would break their work and mine.
-**This needs a five-minute handoff with whoever owns that branch, then it is a small job.**
+Against the requested list: unit ✅, integration ✅, transaction ✅, import pipeline ✅, security ✅
+(`AdminEndpointAuthorizationTest`, `AuditActorAttributionTest`, `ValidatedRequestBodyTest`).
+**Concurrency, worker, retry and idempotency tests are thinner** and worth targeted work — the
+import pipeline moved to async workers and queues, and those are exactly the paths where a missing
+test is expensive. That is test-writing, not tooling.
 
-**Risks.** Flake is the real cost of E2E, and it is what makes teams disable the suite. Mitigate by
-starting Chromium-only, requiring deterministic fixtures, and treating a flaky spec as a broken
-test rather than a retry candidate.
+**Recommendation: no new tool. Invest in worker/retry/idempotency coverage.**
 
-**Effort.** ~2 hours once `e2e/` settles. **Maintenance:** medium and ongoing — this is the honest
-cost of E2E, and it is worth paying for auth, import, and duplicate-review journeys.
+### 3.3 Frontend — Vitest
 
----
+In use and gated, `--max-warnings 0`. Component, hook and utility coverage exist across frontend and
+admin portal. Mobile uses Jest because Expo ships `jest-expo`; same role, and consolidating them
+would buy nothing.
 
-## Revisit next (phase 2), in priority order
+**Recommendation: no change.**
 
-### 15. Semgrep — best of the remaining security tools
+### 3.4 Security testing — OWASP ZAP
 
-Catches what our guards do not: hardcoded secrets, unsafe API usage, injection patterns, OWASP Top
-10 shapes. Genuinely complementary to ArchUnit (structure) and our PII checks (data hygiene). The
-reason it is not "now": it needs a tuned ruleset and a triage pass before it can gate, or it becomes
-the next `npm audit`. Adopt with `--severity ERROR` only, as a gate from day one, with any
+**Later, and specifically after Playwright is in CI.** DAST needs a running app with authenticated
+sessions — the same stack orchestration the Playwright job will provide. Building it twice is waste.
+
+Also note part of the requested scope is already covered statically and more cheaply:
+`AdminEndpointAuthorizationTest` fails the build on an unguarded admin endpoint (broken access
+control), and `SafeHttpUrl` plus the admin-portal render guards cover the URL-injection class.
+
+**Can it be automated in CI?** Yes — ZAP baseline scan against the E2E stack, as a nightly job, not
+per-push. A full active scan takes far too long for push feedback.
+
+Effort ~L. Maintenance high (auth scripting, false-positive triage).
+
+### 3.5 Dependency security — Dependabot ✅ / Snyk ❌
+
+**Dependabot is now configured** for maven, npm ×4 and github-actions. The Maven side was the real
+hole: Spring Boot, Jackson, the Postgres driver and Firebase Admin had **no CVE monitoring at all**
+in a backend that parses bank statements.
+
+**Docker: added in this change.** Dependabot now watches `backend/Dockerfile`'s base images (it is
+multi-stage — both `maven:3.9-eclipse-temurin-21` and `eclipse-temurin:21-jre-alpine`). Note this
+watches the *tag*, telling us a newer base exists — not whether the current one has known CVEs.
+Trivy (§3.9) answers that second question, which is why the roadmap keeps both.
+
+**Snyk: no.** It overlaps Dependabot (dependencies) and Semgrep (SAST) almost entirely. Its
+differentiators — reachability analysis, licence compliance, container scanning — are either covered
+by Trivy or are not problems we have. A third scanner reporting the same findings is how alert
+fatigue starts. Revisit only if Dependabot proves insufficient in practice.
+
+### 3.6 Static analysis
+
+| Tool | Detects | False positives | Maintenance | Verdict |
+|---|---|---|---|---|
+| **Semgrep** | Hardcoded secrets, unsafe APIs, injection shapes, OWASP Top 10 | Low–med with a tuned ruleset | Medium | **Adopt, phase 2** |
+| **SpotBugs** | Null deref, concurrency bugs, resource leaks | Medium; large first run | Medium | **Adopt with a baseline, phase 2** |
+| **PMD** | Complexity, duplication, unused code | High on an existing codebase | High | **Decline** |
+| **Checkstyle** | Formatting, naming | Very high without an agreed style | High | **Decline** |
+
+**Semgrep** is the best of the four: it catches classes our guards do not, and complements ArchUnit
+(structure) and the PII checks (data hygiene). Adopt gating on `ERROR` severity only, with every
 exclusion carrying a written reason — the same discipline as `check-dependency-advisories.py`.
 
-**Effort** ~4h including triage. **Maintenance** medium.
+**SpotBugs** finds real defects (null-deref, concurrency) that tests and ArchUnit miss. The catch is
+the first run on a 1200-test codebase: a large list, mostly low-value. **Only worth adopting with a
+baseline file** that accepts today's findings and gates on new ones. Without that it is muted within
+a week.
 
-### 10. Trivy — worth it for the container, not for the dependencies
+**PMD and Checkstyle enforce style and maintainability heuristics, and we have no agreed style
+document to enforce.** Retrofitting either produces thousands of findings that must be bulk-suppressed
+(making the tool meaningless) or bulk-fixed (a large diff, no behaviour change, real review cost).
+Neither has caught a class of bug we have actually hit. `CODING_STANDARDS.md` plus review is doing
+this adequately.
 
-`backend/Dockerfile` exists and the backend deploys as a container on Railway. Trivy's unique value
-here is **base-image OS CVEs**, which nothing else covers. Its dependency scanning would overlap
-Dependabot. Scope it to image scanning only, in the deploy path.
+### 3.7 Performance — Grafana k6
 
-**Effort** ~2h. **Maintenance** low.
+**Right tool, premature.** Load testing with no measured problem and no scaling trigger fired is
+speculative infrastructure, and our standing rule is to measure before optimising.
+`docs/engineering/scaling-triggers.md` already records the thresholds that *would* justify it.
 
-### 7. SpotBugs — real value, real noise; needs a baseline
+**The correct sequence is: export metrics (§3.11) → watch for a trigger → load-test the specific
+thing the trigger names.** Adopting k6 before metrics exist means load-testing without being able to
+observe the result, which produces numbers nobody can act on.
 
-Finds null-dereference and concurrency mistakes that our tests and ArchUnit rules do not. The
-catch on an existing 1200-test codebase is the first run: expect a large findings list, most of it
-low-value. Only worth adopting **with a baseline file** that accepts today's findings and gates on
-new ones. Without that it will be muted within a week.
+**When it becomes worth it:** the import pipeline and its workers/queues are the right first target,
+because that is where concurrency actually lives.
 
-**Effort** ~4h with baselining. **Maintenance** medium.
+### 3.8 Coverage — JaCoCo
+
+Installed, running, report-only. **I recommend explicitly against converting it into a gate.**
+
+The reasoning is already recorded in `backend/pom.xml`: the rate-limit bypass we shipped had five
+dedicated tests that all passed. Coverage measures whether a line executed, not whether it was
+verified. A percentage gate converts a diagnostic into a target, and the cheapest way to hit a target
+is low-value tests.
+
+Its current job — **finding blind spots** — is the valuable one, and it has already done it once,
+exposing `com.finora.controller` at 0% and revealing that 29 IT classes had never run.
+
+**Recommendation: keep informational. Publish the report as a CI artifact so trends are visible
+without being enforced.**
+
+### 3.9 Container security — Trivy
+
+**Adopt, phase 2, scoped to image scanning only.** `backend/Dockerfile` ships as a container on
+Railway, and base-image OS CVEs are covered by nothing else we run. Its dependency scanning would
+duplicate Dependabot — scope it narrowly to avoid that.
+
+Effort ~2h. Maintenance low. CI: a step in the backend job or a nightly scan.
+
+### 3.10 Code quality platform — SonarQube / SonarCloud
+
+**Decline both, for now.**
+
+| | SonarCloud | SonarQube CE |
+|---|---|---|
+| Cost | **Free only for public repos** — ours is private, so paid | Free licence, but you operate the server |
+| Effort | Low | High (host, upgrade, back up) |
+| Overlap | ~SpotBugs + Semgrep + JaCoCo combined | Same |
+
+The quality-gate concept is genuinely good. The packaging is not worth it at our size when the
+constituent tools can be adopted individually and tuned per-tool. Revisit when team size makes a
+central dashboard more valuable than per-tool control.
+
+### 3.11 Error monitoring & observability — Sentry
+
+**Already implemented on frontend, admin portal and mobile.** Each has `monitoring.ts` with tests,
+PII scrubbing appropriate to a financial app, and a DSN-gated no-op default so absent config
+degrades cleanly rather than half-working.
+
+**The backend has none.** `backend/pom.xml` contains no Sentry dependency. So the tier that runs the
+import pipeline, the async workers, the queues and every financial mutation is the one tier with **no
+error monitoring at all**, while all three clients have it. The message asks specifically about
+worker failures, queue failures and import failures — every one of those is invisible today beyond
+whatever reaches application logs.
+
+**This is the highest-value new integration on the entire list.** Effort ~4h, mostly because the PII
+scrubbing rules must match the standard `mobile/src/lib/monitoring.ts` already sets — a stack trace
+from the import pipeline can carry statement contents, and that must never leave the building.
+
+**Metrics are a separate and also-missing half.** Actuator is present but exposes `health` only, and
+there is no Micrometer/Prometheus registry, so nothing emits request rates, error rates, latencies,
+queue depth or worker throughput. Sentry tells you *something broke*; metrics tell you *something is
+degrading*. The k6 work in §3.7 is not meaningfully actionable until this exists.
+
+**Recommendation: backend Sentry now; Micrometer + Prometheus endpoint next; dashboards after.**
+
+### 3.12 Product analytics — PostHog
+
+**Decline the platform; the useful parts are already covered or actively unwanted.**
+
+- **Feature flags — already built.** `FeatureFlagService` plus the `V32__feature_flags.sql` migration
+  give us server-side flags with an admin UI. PostHog would duplicate this, and splitting flags
+  across two systems is worse than either alone.
+- **Session replay and heatmaps — recommend against, on a financial product.** Replay on our screens
+  records account balances, transaction narrations and statement contents. Even with masking, the
+  default posture of a replay tool is "capture everything", which is the opposite of the posture the
+  rest of this codebase takes (see the PII scrubbing in every `monitoring.ts` and
+  `check-fixture-hygiene.sh`). The compliance and trust cost outweighs the UX insight.
+- **Funnels and feature usage — genuinely useful,** and the listed questions (registration
+  completion, import completion, subscription conversion) are real product questions.
+
+**Recommendation: defer PostHog. If product analytics become a priority, adopt event tracking only —
+explicitly disabling replay and heatmaps — and keep feature flags where they are.** Note this is a
+product decision with privacy implications, not an engineering one, and it should be made
+deliberately rather than by installing an SDK.
+
+### 3.13 Firebase scope
+
+**Your instinct is right, and I would keep the boundary exactly where you have drawn it.**
+
+Current usage is narrow and appropriate: phone verification via `FirebaseConfig`, `PhoneController`
+and the two web apps' `phoneAuth.ts`. Financial data and business logic have no Firebase dependency.
+
+**Keep to:** phone auth, push notifications (future), and mobile-support services (crash-free
+sessions if ever wanted — though Sentry already covers that).
+
+**Avoid:** Firestore or Realtime Database for anything transactional. We have Postgres with Flyway
+migrations, referential integrity and a real transaction model; the import pipeline depends on all
+three. Firebase Auth as the primary identity store would also be a mistake — our RBAC, roles and
+permissions are relational and admin-managed.
+
+**The one thing worth watching:** Firebase is a hard dependency of the login path for phone
+verification. That is an availability coupling on a critical flow. Worth confirming the fallback
+behaviour if Firebase is unreachable — but that is a resilience question, not a tooling one.
+
+### 3.14 Automated refactoring — OpenRewrite
+
+**Not a pipeline member — a power tool.** OpenRewrite is something you *run* during a migration, not
+something you *adopt* continuously. It has no place in CI.
+
+When we upgrade past Spring Boot 3.3.2 or move Java versions, running the relevant recipe is the
+right call and takes an afternoon. **Nothing to install today.**
 
 ---
 
-## Decline, with reasons
+## 4. CI/CD pipeline review
 
-### 4. OWASP ZAP — right idea, wrong sequence
+Current state: one workflow, four jobs (backend, frontend, admin-portal, mobile), running in parallel
+with no `needs:` chain. Dependency caching is configured per app. Concurrency cancels superseded runs
+on branches but never on `main`. The backend job runs its cheap static guards *before* `setup-java`,
+so a policy violation fails in seconds rather than after a 2m30s test run — that ordering is good and
+should be preserved.
 
-DAST is valuable, but it needs a running app with authenticated sessions, which means it depends on
-the same stack orchestration Playwright already has. Doing ZAP *before* Playwright is in CI means
-building that infrastructure twice. Revisit once the E2E job exists and can be reused. Also worth
-noting our threat surface is already covered in part: `AdminEndpointAuthorizationTest` fails the
-build on an unguarded admin endpoint, which is the access-control class ZAP would report.
+**Findings, highest value first:**
 
-### 6. Snyk — declines on overlap, not quality
+| # | Finding | Why it matters | Effort |
+|---|---|---|---|
+| 1 | ~~No `timeout-minutes` on any job~~ **— DONE in this change** | A hung Testcontainers job ran to GitHub's **6-hour** default, burning the runner allowance and blocking the serialized `main` queue behind it. Now 20 min (backend) / 15 min (JS jobs) — hang detectors, not performance budgets | done |
+| 2 | **Playwright not executed** | 9 specs, zero enforcement | ~2h |
+| 3 | **No nightly / scheduled jobs** | Cross-browser E2E, ZAP baseline and Trivy scans all want a nightly slot rather than per-push | ~1h |
+| 4 | **No artifact retention except surefire-on-failure** | JaCoCo HTML and the Playwright HTML report are the two worth publishing | ~30 min |
+| 5 | Every push runs all four jobs, including docs-only commits | Wasted minutes — but `paths-ignore` is a footgun that can make required checks never run on a PR. Recommend **only** if branch protection is configured to tolerate it | ~30 min, with care |
 
-Overlaps Dependabot (dependencies) and Semgrep (SAST) almost entirely. Its differentiators —
-reachability analysis, licence compliance, container scanning — are either covered by Trivy or not
-problems we have. Adding a third scanner for the same findings is how alert fatigue starts. Revisit
-only if Dependabot proves insufficient in practice.
+**Parallelism and caching are already correct** and need no change. Feedback time is ~2m40s wall
+clock, which is healthy; the backend job dominates and is dominated in turn by Testcontainers
+startup.
 
-### 8. PMD and 9. Checkstyle — high noise, low signal here
-
-These enforce *style and maintainability heuristics*, and we have no agreed style document to
-enforce. Retrofitting either onto an existing codebase produces thousands of findings that must be
-either bulk-suppressed (making the tool meaningless) or bulk-fixed (a large diff with no behaviour
-change and real review cost). Neither has caught a class of bug we have actually hit. `CODING_STANDARDS.md`
-plus review is currently doing this job adequately. Revisit if the team grows past the point where
-review can carry it.
-
-### 11. Grafana k6 — no evidence yet, and we have a policy about that
-
-Load testing without a measured performance problem or a scaling trigger is speculative
-infrastructure, and our own standing rule is to measure before optimising. We have
-`docs/engineering/scaling-triggers.md` recording the thresholds that *would* justify this work.
-**The right sequence is: instrument production, watch for a trigger, then load-test the specific
-thing the trigger names.** k6 is the correct tool when that day comes — the objection is to the
-timing, not the choice.
-
-### 13. SonarQube / SonarCloud — cost and overlap
-
-SonarCloud is free only for public repositories; ours is private, so this is a paid line item. What
-it provides — code smells, bugs, vulnerabilities, duplication, coverage — is largely the union of
-SpotBugs + Semgrep + JaCoCo, which we can adopt individually and tune per-tool. Self-hosting the
-Community Edition adds a service to operate. The quality-gate concept is genuinely good; the
-packaging is not worth it at our size.
-
-### 14. OpenRewrite — a power tool, not a pipeline member
-
-OpenRewrite is not something you *adopt*; it is something you *run* when doing a migration. It has
-no continuous role, so it does not belong in CI. When we upgrade Spring Boot past 3.3.2 or move Java
-versions, running the relevant recipe is the right call and takes an afternoon. Nothing to install
-today.
-
-### 12. JaCoCo — keep it, keep it ungated
-
-Already installed and producing reports. The proposal implies adding coverage enforcement; **I
-recommend against it**, and the reasoning is already recorded in `backend/pom.xml`: the rate-limit
-bypass we shipped had five dedicated tests that all passed. Coverage measures whether a line
-executed, not whether it was verified. A percentage gate converts a useful diagnostic into a target,
-and the cheapest way to hit a target is low-value tests. Its current job — *finding blind spots*, as
-it did when it exposed `com.finora.controller` at 0% — is the job worth keeping.
+**Recommendation: do #1 immediately** — it is a five-minute change guarding against a six-hour
+failure mode, and the cheapest item in this entire document.
 
 ---
 
-## Proposed roadmap
+## 5. Summary table
 
-Adjusted from the suggested phasing, mainly to put the free win first and to defer anything
-requiring a running app until the E2E job exists.
-
-**Phase 1 — close the real gaps (this week)**
-1. Dependabot for Maven, npm ×4, GitHub Actions. *Done in this change.*
-2. Wire the existing Playwright suite into CI, Chromium-only. *Blocked on `e2e/` settling.*
-
-**Phase 2 — security depth (next)**
-3. Semgrep, gating on ERROR only.
-4. Trivy, image scanning only.
-5. SpotBugs, with an accepted baseline.
-
-**Phase 3 — dynamic security (after Phase 1.2)**
-6. OWASP ZAP, reusing the Playwright stack orchestration.
-
-**Phase 4 — on evidence, not on schedule**
-7. k6, when a scaling trigger fires.
-
-**Not scheduled:** Snyk, PMD, Checkstyle, SonarQube. OpenRewrite as a one-off when a migration
-needs it.
+| Tool | Implemented? | Recommended? | CI/CD | Effort | Maintenance | Priority |
+|---|---|---|---|---|---|---|
+| Playwright | Yes | **Wire to CI** | New job | S–M | Med | **P0** |
+| Sentry (backend) | **No** | **Yes** | N/A | M | Low | **P0** |
+| CI job timeouts | **Yes (this change)** | Done | ci.yml | XS | None | ✅ |
+| JUnit | Yes | Deepen worker/retry tests | Yes | — | Low | P1 |
+| Metrics (Micrometer) | No | Yes | Scrape endpoint | M | Med | P1 |
+| Vitest | Yes | Keep | Yes | — | Low | — |
+| Dependabot | **Yes, incl. `docker`** | Done | N/A | XS | V.low | ✅ |
+| Semgrep | No | Yes | Gate on ERROR | M | Med | P2 |
+| Trivy | No | Yes, image-only | Nightly | S–M | Low | P2 |
+| SpotBugs | No | Yes, with baseline | Backend job | M | Med | P2 |
+| JaCoCo | Yes | Keep **ungated** | Artifact | XS | Low | P2 |
+| OWASP ZAP | No | Later | Nightly | L | High | P3 |
+| PostHog | No | Events only, if ever | N/A | M | Med | P4 |
+| k6 | No | On trigger only | Nightly | L | Med | P4 |
+| Snyk | No | **No** | — | — | — | — |
+| PMD | No | **No** | — | — | — | — |
+| Checkstyle | No | **No** | — | — | — | — |
+| SonarQube/Cloud | No | **No** | — | — | — | — |
+| OpenRewrite | No | Use per migration | Never | S | None | — |
 
 ---
 
-## The trade-off worth stating plainly
+## 6. The trade-off, stated plainly
 
-Adopting all fifteen would give Finora more findings and less signal. We have concrete, documented
-evidence that this team's failure mode is guards nobody reads — a suite that never ran for weeks, a
-script that always exited 0, an audit stream trained to be ignored. Every tool added to CI spends
-some of a finite budget: the team's willingness to believe a red build.
+Adopting everything proposed would give Finora more findings and less signal. We have concrete,
+documented evidence that this team's failure mode is guards nobody reads — a suite that never ran for
+weeks, a script that always exited 0, an audit stream trained to be ignored.
 
-The two recommended now are chosen because they spend almost none of it. Dependabot opens PRs
-rather than failing builds, and Playwright's tests are already written and already trusted — they
-simply are not running.
+Every tool added to CI spends a finite budget: **the team's willingness to believe a red build.**
+
+The three P0 items spend almost none of it. One is a config line. One runs tests that are already
+written and already trusted. One puts error reporting on the only tier that lacks it.

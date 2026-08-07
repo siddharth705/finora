@@ -23,6 +23,15 @@ jobs:
     # it does. The job reports its own real count in the run output.
     name: Backend (Java 21)
     runs-on: ubuntu-latest
+    # Without this a job runs to GitHub's 6-hour default. The realistic way to hit that is not a
+    # slow test but a stuck one: this job starts Testcontainers, and a container that never becomes
+    # healthy leaves the suite waiting rather than failing. Six hours of runner allowance is the
+    # smaller cost -- `concurrency` deliberately does not cancel runs on main, so every later push
+    # queues behind the hung one and main stops reporting at all.
+    #
+    # 20 is roughly 8x the current 2m37s, so it is a hang detector, not a performance budget: it
+    # should never fire because the suite got slower.
+    timeout-minutes: 20
     steps:
       # fetch-depth: 0 because the PII check diffs a commit RANGE here rather than the index (see
       # its --range flag). A shallow checkout would not have the base commit, and the script would
@@ -144,6 +153,8 @@ jobs:
   frontend:
     name: User frontend
     runs-on: ubuntu-latest
+    # See the backend job for why. Shorter budget: no containers here, ~1m40s today.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -197,6 +208,8 @@ jobs:
   admin-portal:
     name: Admin portal
     runs-on: ubuntu-latest
+    # See the backend job for why. Shorter budget: no containers here, ~1m40s today.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -230,6 +243,8 @@ jobs:
   mobile:
     name: Mobile (Expo)
     runs-on: ubuntu-latest
+    # See the backend job for why. Shorter budget: no containers here, ~1m40s today.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
