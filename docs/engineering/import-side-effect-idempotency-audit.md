@@ -4,14 +4,25 @@
 duplicate `StatementImport` or duplicate transaction rows, what *else* happens during a confirm, and
 which of those things tolerate being done twice?
 
-**Answer: two of nine do not, and both corrupt a financial figure rather than merely wasting work.**
+**Answer: seven of nine are replay-safe on their own. Two are not — and both corrupt a financial
+figure rather than merely wasting work. Today both are held safe by something else: confirm is a
+single transaction, so a replay is rejected by V67 and rolls the whole thing back. That protection
+is exactly what an execution model with checkpoints would remove.**
 
 This is an audit, not a change. No behaviour was modified. It exists because checkpoint boundaries in
 the forthcoming execution model belong exactly where side effects are *not* idempotent, and placing
 them before knowing that would be guessing.
 
-**Scope note:** none of these are live defects today. The worker stages but does not confirm, so no
-replay currently reaches any of them. They are blockers on moving confirmation into the worker.
+**Scope note, corrected after review:** none of these are live defects, and the reason is stronger
+than "the worker does not confirm yet". `ImportService.confirm()` is `@Transactional`, and inside it
+the `StatementImport` insert (line 644) happens *before* the learning enqueue (664) and the
+transaction inserts (668). A replay therefore violates V67's `UNIQUE(import_job_id)` and **the entire
+transaction rolls back** — no duplicate learning event, no second balance delta.
+
+**These two become real defects only when the execution model splits confirm into separately
+committed steps.** That is precisely what checkpointing does. So this audit does not describe bugs to
+fix now; it describes *constraints the execution model must not violate*, which is a more useful
+result and a stricter one — the risk is created by the design, not inherited by it.
 
 ---
 
@@ -23,15 +34,15 @@ replay currently reaches any of them. They are blockers on moving confirmation i
 | 2 | Transaction inserts | ✅ | `UNIQUE(statement_import_id, row_ordinal)` — V67 |
 | 3 | Merchant + alias creation | ✅ | `UNIQUE(user_id, normalized_alias)` — V7 |
 | 4 | Account balance — **closing-balance branch** | ✅ | Absolute assignment |
-| 5 | Account balance — **net-delta branch** | ❌ | **Relative mutation** |
-| 6 | Merchant learning enqueue → `confirmation_count` | ❌ | **Counter increment** |
+| 5 | Account balance — **net-delta branch** | ❌ alone · ✅ today | **Relative mutation**, held by confirm's atomicity |
+| 6 | Merchant learning enqueue → `confirmation_count` | ❌ alone · ✅ today | **Counter increment**, held by confirm's atomicity |
 | 7 | Reconciliation pass | ✅ | Absolute recompute |
 | 8 | Recurring detection pass | ✅ | Absolute recompute |
 | 9 | Audit rows | ⚠️ | Duplicated, but no corruption |
 
 ---
 
-## The two that fail
+## The two that fail on their own
 
 ### 5. Account balance, net-delta branch
 
@@ -92,14 +103,31 @@ the worker processes it normally.
 count changes which category is auto-applied to *future* transactions for that merchant. The user
 sees miscategorised transactions with no connection to an import that succeeded weeks earlier.
 
-**Options:**
+### What a "confirmation" actually means — and why the obvious fix is wrong
 
-1. **A dedup key on the event** — `UNIQUE(source_statement_import_id, merchant_id, category_id)`.
-   Directly analogous to V67, and makes the replayed enqueue a rejected write.
-2. **Checkpoint before enqueue**, as with balance.
+The tempting constraint is `UNIQUE(source_statement_import_id, merchant_id, category_id)`, by
+analogy with V67. **It would be a bug.**
 
-Option 1 is stronger: it holds regardless of how the job is retried, and it is the same
-database-decides pattern rather than a second application-level guard.
+`pendingLearning.add(...)` sits inside the per-row loop with no dedup, so a statement containing four
+Amazon rows the user corrected to Shopping enqueues four events and adds four to the count. That is
+not an accident. `docs/financial-intelligence-engine-spec.md` defines the semantics:
+
+> `confirmation_count` is the real evidence; `confidence` is that row's cached % share of the
+> merchant's **total confirmations**
+
+The count is an **evidence weight**, not a press-count — and confidence is a *share* across the
+categories for that merchant. So a user who corrects four Amazon rows to Shopping and one to
+Groceries in the same statement means Shopping four times as strongly. A per-statement key would
+record 1 and 1, erasing the signal the distribution exists to capture. The example in that spec
+shows counts of 147, which only makes sense per-row.
+
+**So the unique key, if one is ever needed, must distinguish rows rather than statements** — the
+natural candidate being the transaction the confirmation came from, or `(statement_import_id,
+row_ordinal)` mirroring V67.
+
+**But per the corrected scope note above, no key is needed at all while confirm stays atomic.** The
+right answer today is to preserve that atomicity, not to add a constraint whose semantics would be
+wrong.
 
 ---
 
@@ -139,6 +167,15 @@ mostly ceremony; these two are load-bearing.
 The resume rule follows from the same evidence: a job resuming after `CONFIRMING` must not reapply
 the balance, and a job resuming after `LEARNING` must not re-enqueue learning — everything else can
 simply re-run.
+
+**The strongest option is to not split them at all.** Confirm is atomic today, and that atomicity is
+what makes both unsafe operations safe. An execution model that keeps `CONFIRMING` and `LEARNING`
+inside one transaction needs no checkpoint between them and no new constraint — it needs only a
+checkpoint *before* the pair, recording that the pair has run. Splitting them buys finer-grained
+resume and costs the guarantee that currently holds for free.
+
+If they are split, both guards become mandatory rather than optional, and the learning one must key
+on rows, not statements.
 
 ---
 
