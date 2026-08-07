@@ -26,45 +26,100 @@ either a coincidence or the strongest available evidence about what the codebase
 
 ## Success criteria
 
-1. A large import runs asynchronously with progress the user can watch, and survives a restart.
-2. A multi-account statement gets the same review experience as a single-account one — including
-   duplicate review, which it does not have today.
-3. Parser quality is measured against a corpus on every change, not asserted.
-4. An administrator can answer "what happened to this import" without reading a log or asking an
-   engineer.
-5. The production-readiness security work is done — alongside, not as this milestone's subject.
+"At scale" is a direction until it is a number. These are the conditions for calling the milestone
+done, and each is checkable rather than arguable.
+
+1. **A statement of 1,000+ transactions imports without blocking the interface.** The user gets
+   progress they can watch and a browser they can close; the import survives a backend restart.
+2. **Import execution is asynchronous end to end** — queued, resumable, cancellable, with retry and
+   recovery from a worker that died mid-job.
+3. **Multi-account statements get the same review workflow as single-account ones**, duplicate
+   review included. No path silently unticks a row.
+4. **Every layout Finora claims to support is represented in the redacted corpus**, and the corpus
+   runs in regression on every parser change. "Claims to support" is itself a list that has to
+   exist.
+5. **A parser change that breaks a supported layout fails the build**, not a customer's import.
+6. **An administrator can trace one import from upload through parsing, verification, learning and
+   completion in a single view**, without a log or an engineer.
+7. **A layout encountered in production can be identified, named, approved and tracked over time**
+   — so coverage is a number that moves rather than an impression.
 
 ---
 
 ## Scope
 
-### 1. Asynchronous imports — *started*
+Numbered in dependency order, which is the only ordering that is not a preference.
+
+### 1. A corpus of redacted traces — *the gate*
+
+Parser quality is currently asserted, not measured. Every layout improvement risks a silent
+regression in one nobody re-tested.
+
+The corpus does not exist, and by the import engine's own rules a real statement is never committed.
+The path is redacted extraction traces (`scripts/trace-capture.sh`,
+`docs/engineering/trace-lifecycle.md`) — reviewable, scannable, safe.
+
+**A gate, not a deliverable.** If it slips, everything downstream slips with it and the pressure
+will be to ship parser changes on assertion instead — the thing this milestone exists to stop. The
+gate: *every layout we claim to support has a trace, and the list of layouts we claim to support
+exists in writing.*
+
+### 2. Layout registry — the persistence model
+
+**There is no layout registry.** `layout_fingerprint` is a computed string stamped onto
+`import_sessions`, `statement_imports` and `statement_analysis_sessions`, and nothing else. A
+fingerprint is not a row anywhere: it cannot be named, approved, associated with a parser, or
+counted over time.
+
+Which means fingerprints are *already* accumulating with nowhere to go, and every item below this
+one produces more of them. That is why it moves early — not because it is more important, but
+because everything after it wants to write into it.
+
+Scoped to the **persistence model only**: a table where a fingerprint is a first-class row with a
+name, a status, the parser that handles it, and first/last-seen. Small, few dependencies, and it
+turns "coverage" from an impression into a number that moves.
+
+The curation screen is item 7. Splitting them is the whole point of moving this: the table is
+foundational, the screen is a finishing feature, and conflating them is what would have pushed both
+to the end.
+
+### 3. WI1A — the last synchronous batch learning path
+
+`TransactionService.bulkRecategorize` still calls `CategorizationService.learn` synchronously, in a
+loop, up to 500 times inside one transaction — the import path's exact pre-WI1 shape. One lost race
+against `UNIQUE(user_id, merchant_id, category_id)` rolls back all 500.
+
+Not an enhancement: technical debt inside a subsystem already redesigned once, and leaving it means
+maintaining two learning paths forever. Small and known, which is exactly why it stops being "later"
+only if it goes early. Do it alongside the one-line security fixes.
+
+### 4. Multi-account statements reach parity
+
+The multi-section path still auto-unticks flagged duplicate rows — the silent-filter behaviour WI5
+removed everywhere else. Its review state is per detected account, so this is a restructuring job
+rather than a second copy of the component, which is why Milestone 1 declined to rush it.
+
+The last correctness gap in the import experience, and the reason to finish it before adding parser
+capability.
+
+### 5. Asynchronous imports — completing what started
 
 `ImportJob`, `ImportJobWorker` and `V66__import_jobs.sql` landed in `eb91c02`. The row already
 carries `rows_total`, `rows_processed`, `attempt_count`, `next_attempt_at`, `last_error`,
-`correlation_id`, `import_session_id`, `started_at` and `finished_at` — so progress, retry and
+`correlation_id`, `import_session_id`, `started_at` and `finished_at` — progress, retry and
 correlation are in place at the data layer.
 
 What that leaves:
 
-- **The user-facing half.** Progress the person who uploaded can see, and a resumable review when
+- **The user-facing half.** Progress the person who uploaded can watch, and a resumable review when
   they close the tab.
-- **Cancellation.** A user who uploaded the wrong file should not have to wait for it.
-- **The decision about when async applies.** Every import, or only above a threshold? A 3-row CSV
-  routed through a queue is a worse experience than a synchronous one. Measure before choosing.
+- **Cancellation.** Someone who uploaded the wrong file should not have to wait for it.
+- **When async applies.** Every import, or only above a threshold? A 3-row CSV routed through a
+  queue is a worse experience than a synchronous one. Measure before choosing.
 
-### 2. Multi-account statements reach parity
+### 6. Unified Import Observability
 
-The multi-section path still auto-unticks flagged duplicate rows — the silent-filter behaviour WI5
-removed everywhere else. Its review state is per detected account, so this is a restructuring job
-rather than a second copy of the component, which is exactly why Milestone 1 declined to rush it.
-
-This is the one item here that closes a known correctness gap rather than adding capability.
-
-### 3. Import observability
-
-**Most of this already exists, scattered.** Scoping it as new work would mean building it twice, so
-here is what the three existing tables already answer:
+**Most of this already exists, scattered.** What the three existing tables already answer:
 
 | Question | Where it lives today |
 |---|---|
@@ -79,43 +134,41 @@ here is what the three existing tables already answer:
 
 The genuine gaps:
 
-- **Per-stage timing and status.** "How long has each stage taken" is unanswerable today; only the
-  total is recorded.
-- **Verification outcomes are not persisted.** The findings reach the staging response and are then
-  gone. An operator cannot ask which rules ran on an import that happened last week.
-- **No single view.** Three tables share correlation IDs and nothing joins them, so answering one
-  support question means three queries and knowing all three exist.
+- **Per-stage timing and status.** "How long has each stage taken" is unanswerable; only the total
+  is recorded.
+- **Verification outcomes are not persisted.** Findings reach the staging response and are then
+  gone. Nobody can ask which rules ran on an import that happened last week.
+- **No single view.** Three tables share correlation IDs and nothing joins them, so one support
+  question means three queries and knowing all three exist.
 
-That is the work: close two gaps and build one view over what is already recorded. Not a new
-diagnostics subsystem.
+The name matters: **completing** observability, not building it. Close two gaps and build one view
+over what is already recorded. Anything scoped as a new diagnostics subsystem would be building
+two-thirds of it twice.
 
 > The [diagnostics rule](../../CLAUDE.md) applies here as everywhere: a diagnostic earns its place
 > by being able to prove a proposed capability *unnecessary*. Per-stage timing qualifies — it can
 > show that a stage everyone assumed was slow is not, and stop an optimisation being built. A
 > counter that only ever goes up does not.
 
-### 4. Corpus-driven parser regression
-
-Parser quality is currently asserted, not measured. Every layout improvement risks a silent
-regression in one nobody re-tested.
-
-**This has a dependency that will decide whether the milestone succeeds:** the corpus does not
-exist, and by the import engine's own rules a real statement is never committed. The path is
-redacted extraction traces (`scripts/trace-capture.sh`, `docs/engineering/trace-lifecycle.md`) —
-reviewable, scannable, and safe.
-
-Build the corpus **first**. If it slips, everything that depends on it slips with it, and the
-temptation will be to ship parser changes on assertion instead. Treat "we have 20 redacted traces
-covering the layouts we claim to support" as an early milestone gate, not a late deliverable.
-
-### 5. Layout registry evolution and Layout Studio
+### 7. Layout curation — closing the Layout Studio loop
 
 Layout Studio and analysis sessions already let an operator run the engine on a document without
-importing anything. This milestone makes that loop closed rather than diagnostic: an operator who
-finds a layout the engine mishandles should be able to do something about it without an engineer.
+importing anything. With the registry table (item 2) behind it, that loop closes: an operator who
+finds a layout the engine mishandles can name it, approve it and watch its coverage rather than
+filing a ticket.
 
-Scope this **after** the corpus exists. Otherwise there is no way to tell whether a registry change
+Last on purpose. It needs both the registry to write into and the corpus to tell whether a change
 improved coverage or moved the failure somewhere nobody is looking.
+
+### 8. PDFBox and the import engine's dependencies
+
+Bug 30, scoped to what this theme owns. PDFBox is roughly two years behind with no CVE scan, and it
+parses attacker-supplied files as a core product feature reachable by an authenticated low-privilege
+user.
+
+Inside the milestone rather than alongside it, because the parser *is* the subject — the same reason
+you would upgrade PostgreSQL before doing database performance work. The rest of the dependency
+backlog stays in the maintenance track.
 
 ---
 
@@ -145,9 +198,9 @@ during this milestone, not defining it:
   exists for is not delivered (Bug 03, partial).
 - Account scope is absent from the JWT and unread at authorization time (Bug 18, partial).
 - Login reveals account existence for suspended accounts before authentication (finding #4).
-- **Bug 30 — dependencies roughly two years behind, no CVE scan.** PDFBox first: it parses
-  attacker-supplied files as a core product feature, reachable by an authenticated low-privilege
-  user. This one arguably belongs *inside* the theme, since the parser is the subject.
+- The rest of Bug 30's dependency backlog. PDFBox moved *into* the milestone as item 8 — the parser
+  is the subject of the theme, so updating it supports the theme directly rather than running beside
+  it. Everything else in that backlog stays here.
 
 **Consumer product work** continues incrementally and is not tracked here.
 
@@ -155,22 +208,34 @@ during this milestone, not defining it:
 
 ## Carried over from the Milestone 1 backlog
 
-- **WI1A** — `bulkRecategorize` still learns synchronously in a loop of up to 500 inside one
-  transaction. The last synchronous batch learning path, and the only backlog item that is arguably
-  a latent defect rather than an enhancement. Small; do it early.
 - Cross-browser and responsive Playwright projects, configured and never run to green.
 - One `test.fixme` in `e2e/tests/admin-portal/merchant-review.spec.ts`.
 
 ---
 
-## Suggested order
+## Dependency order
 
-Not a schedule — a dependency order, which is the only ordering that is not a preference.
+Each item unlocks the next rather than competing with it.
 
-1. **Corpus of redacted traces.** Everything about parser quality waits on it.
-2. **WI1A**, and the security items that are one-line fixes. Small, known, and they stop being
-   "later" the moment something else fills the calendar.
-3. **Multi-account duplicate review.** Closes a correctness gap rather than adding capability.
-4. **Async import completion** — user-facing progress, cancellation, the threshold decision.
-5. **Observability** — per-stage timing, persisted verification outcomes, one joined view.
-6. **Layout registry evolution**, once the corpus can tell whether a change helped.
+```
+Corpus of redacted traces        the gate; parser quality is not measurable without it
+        v
+Layout registry (persistence)    everything below writes fingerprints into it
+        v
+WI1A + one-line security fixes   small and known, so they only happen if they go early
+        v
+Multi-account duplicate review   the last correctness gap in the import experience
+        v
+Async import completion          progress, cancellation, the threshold decision
+        v
+Unified observability            per-stage timing, persisted verification, one joined view
+        v
+Layout curation UI               needs both the registry and the corpus to be worth building
+```
+
+PDFBox runs wherever it fits; it blocks nothing and nothing blocks it.
+
+The registry is split deliberately. The **table** is foundational — few dependencies, and every item
+below it produces fingerprints that today have nowhere to go. The **screen** is a finishing feature.
+Treating them as one work item is what would have pushed both to the end, and left the milestone
+accumulating layout data it could not name.
