@@ -8,6 +8,7 @@ import { BankLogo } from '../components/BankLogo';
 import { MaskedAccountNumber } from '../components/MaskedAccountNumber';
 import { VerificationPanel } from '../components/VerificationPanel';
 import { matchExistingAccount } from '../lib/accountMatch';
+import { DuplicateReview, unresolvedCount, type DuplicateDecision } from '../components/DuplicateReview';
 import type { Account, DetectedAccountInfo, VerificationReport, ImportSummary, ReimportResult, StagedAccountSection, StagedRow, UnparseableRow } from '../types';
 import { formatDate } from '../utils/date';
 
@@ -129,6 +130,9 @@ export default function Import() {
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [multiSummary, setMultiSummary] = useState<ImportSummary[] | null>(null);
   const [confirming, setConfirming] = useState(false);
+  // One entry per staged row. Only rows carrying duplicateMatch are ever 'unresolved'; everything
+  // else is 'import' from the start, so unresolvedCount only ever counts flagged rows.
+  const [dupDecisions, setDupDecisions] = useState<DuplicateDecision[]>([]);
 
   // Set only for a multi-account PDF upload (see SectionState above) -- null the rest of the
   // time, and the single flat rows/detectedAccount/etc. state above is what's used instead.
@@ -167,6 +171,7 @@ export default function Import() {
     if (reimportState) {
       setRows(reimportState.staging.rows);
       setIncluded(reimportState.staging.rows.map((r) => !r.likelyDuplicate));
+      setDupDecisions(reimportState.staging.rows.map((r) => (r.duplicateMatch ? 'unresolved' : 'import')));
       setChosenCategory(reimportState.staging.rows.map((r) => r.suggestedCategory));
       setDetectedAccount(reimportState.staging.detectedAccount);
       setVerification(reimportState.staging.verification ?? null);
@@ -231,7 +236,12 @@ export default function Import() {
 
       const staging = res.staging!; // guaranteed non-null whenever multiAccount is false/absent
       setRows(staging.rows);
+      // A flagged row starts EXCLUDED but UNRESOLVED -- not silently unticked. The confirm button
+      // is blocked until every one has an explicit answer, so "I didn't mean to skip that" stops
+      // being possible. Before WI5 this line was the whole duplicate handling: the row vanished
+      // from the import unless the user noticed a checkbox they had never touched.
       setIncluded(staging.rows.map((r) => !r.likelyDuplicate));
+      setDupDecisions(staging.rows.map((r) => (r.duplicateMatch ? 'unresolved' : 'import')));
       setChosenCategory(staging.rows.map((r) => r.suggestedCategory));
       setDetectedAccount(staging.detectedAccount);
       setVerification(staging.verification ?? null);
@@ -295,6 +305,37 @@ export default function Import() {
     } finally {
       setUploadProgress(null);
     }
+  }
+
+  /** Records a decision and syncs the row's include flag, so the confirm payload stays the single
+   *  source of truth about what actually gets imported. */
+  function decideDuplicate(index: number, decision: DuplicateDecision) {
+    setDupDecisions((arr) => arr.map((v, j) => (j === index ? decision : v)));
+    setIncluded((arr) => arr.map((v, j) => (j === index ? decision === 'import' : v)));
+  }
+
+  /** Applies one row's decision to every OTHER duplicate with the same description that is still
+   *  unresolved. Bounded to unresolved rows deliberately: a bulk action must never overwrite a
+   *  choice the user already made by hand. */
+  function applyDuplicateDecisionToSimilar(index: number) {
+    const decision = dupDecisions[index];
+    if (decision === 'unresolved') return;
+    const description = rows[index].description;
+    setDupDecisions((arr) =>
+      arr.map((v, j) =>
+        j !== index && v === 'unresolved' && rows[j]?.duplicateMatch && rows[j].description === description
+          ? decision
+          : v
+      )
+    );
+    setIncluded((arr) =>
+      arr.map((v, j) =>
+        j !== index && dupDecisions[j] === 'unresolved' && rows[j]?.duplicateMatch
+          && rows[j].description === description
+          ? decision === 'import'
+          : v
+      )
+    );
   }
 
   async function confirmImport() {
@@ -785,12 +826,23 @@ export default function Import() {
 
             <UnparseableRowsPanel rows={unparseableRows} />
 
+            <DuplicateReview
+              rows={rows}
+              decisions={dupDecisions}
+              onDecide={decideDuplicate}
+              onApplyToSimilar={applyDuplicateDecisionToSimilar}
+            />
+
             <button
               onClick={confirmImport}
               disabled={
                 confirming ||
                 (!reimportState && !sessionId) ||
-                (!reimportState && accountChoice === 'existing' && !selectedAccountId)
+                (!reimportState && accountChoice === 'existing' && !selectedAccountId) ||
+                // The gate. Every flagged row must have an explicit answer before anything is
+                // written to the ledger -- which is what stops a duplicate being resolved by
+                // inattention rather than by a decision.
+                unresolvedCount(rows, dupDecisions) > 0
               }
               className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50 mt-4"
             >

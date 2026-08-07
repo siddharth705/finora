@@ -134,6 +134,37 @@ statement id alone cannot distinguish that from a genuine second re-import of th
 
 ---
 
+## Duplicate review
+
+A staged row that looks like something already on the books does **not** get quietly dropped. It
+arrives carrying `duplicateMatch` — the existing transaction's id, date, description, amount, when
+it was imported, how many existing transactions match, and the reason — and the user decides.
+
+The gate: `Confirm Import` stays disabled while any flagged row is still unresolved. That is the
+whole point. Duplicate detection used to be a filter, which was wrong in both directions — a genuine
+re-import got skipped without anyone confirming it should be, and two identical coffees bought on
+the same day got skipped too. Neither outcome was ever a decision anyone made.
+
+Three things the shape of the data enforces:
+
+- **`confidence` is always `EXACT`, and is not rendered as a score.** The detector matches on date
+  **and** amount **and** description being identical. A percentage would imply a spectrum it cannot
+  produce.
+- **`matchCount > 1` argues *for* importing, not against.** Several identical existing transactions
+  usually means the user genuinely transacts this repeatedly — a daily fare, a split bill — which is
+  exactly the case where skipping is wrong. The review screen says so.
+- **The reason comes from the detector, not the UI**, so the explanation shown is the one the system
+  actually used.
+
+`apply to similar` is bounded to rows still unresolved: a bulk action must never overwrite a choice
+already made by hand.
+
+**Not yet wired for multi-account PDFs** — that path still auto-unticks flagged rows, because its
+per-section state needs restructuring first rather than a second copy of the component. Recorded in
+[import-reliability-milestone-design.md](import-reliability-milestone-design.md) §7.
+
+---
+
 ## Multi-account PDFs
 
 One file can describe more than one account — a composite statement bundling a savings account and

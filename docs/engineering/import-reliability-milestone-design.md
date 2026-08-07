@@ -300,6 +300,18 @@ so the explanation shown to the user is the one the system actually used.
 
 Update [import-flow.md](import-flow.md) as the closing step.
 
+**As built.** `DuplicateDetector.findMatch` returns the matched transaction as evidence; the flag
+is now derived from it rather than the other way round. `confidence` is hardcoded `"EXACT"` because
+the detector matches on date **and** amount **and** description — there is no spectrum to score, and
+rendering one would invent precision. `matchCount` is reported because more than one existing match
+is a signal in the *opposite* direction from what a filter would infer: it usually means the user
+genuinely transacts this repeatedly, which is exactly the case where skipping is wrong.
+
+The gate is `unresolvedCount(rows, decisions) > 0` on the Confirm Import button. Flagged rows start
+unticked (safe by default) *and* unresolved, so the untick can never take effect without a decision.
+`apply to similar` is bounded to still-unresolved rows so a bulk action cannot overwrite a hand-made
+choice. Multi-account PDFs are not covered — see §7.
+
 ---
 
 ## 5. Sequencing
@@ -388,7 +400,38 @@ Tracked deliberately so this milestone's completion is not mistaken for an empty
   (`updateCategory`, `confirmMerchantCategory`, `create`) stay synchronous by design; see
   `CategorizationService.learn`'s doc comment for why.
 
+- **WI4A — Merchant Intelligence Workbench (Admin Portal).** WI4 gave operators a Merchant Review
+  Center that is *sufficient*: it lists temporary merchants, shows transaction counts, and supports
+  approve / rename / merge / delete. It is not yet *productive*. An operator working through a
+  backlog is currently the similarity engine — they read two names, decide the names mean the same
+  business, and type one into the other's merge field. The workbench turns that judgement into
+  something the system proposes and the operator confirms:
+
+  - **Similarity scoring between merchants**, with the evidence behind the score, so a suggested
+    merge is auditable rather than a number.
+  - **Rich side-by-side comparison** — aliases, sample narrations, learning history, spend totals —
+    because "are these the same business?" is not answerable from two name strings.
+  - **Alias graph visualisation**, so an operator can see what a merge would actually absorb before
+    committing to it.
+  - **Bulk merge and apply-to-similar**, the operator-side equivalent of what WI5 gave the user.
+
+  Explicitly *not* part of this milestone. WI4's scope was the lifecycle — giving unknown merchants
+  somewhere to go so WI3 could make staging read-only — and it delivers that. This is a productivity
+  layer on top of a working lifecycle, and the sequencing is deliberate: what the workbench should
+  suggest is a question best answered by watching real operators work a real backlog, not by
+  guessing ahead of one. Scoped for the next milestone.
+
 **Deferred by product decision:**
 
 - **Cross-user merchant intelligence** — the canonical registry, cross-user suggestions and
   platform-wide merge, per decision 1.2. Its own milestone.
+
+**Known gap left open by WI5:**
+
+- **Multi-account (multi-section) PDF imports do not get the duplicate review screen.** That path
+  still auto-unticks flagged rows (`section.rows.map((r) => !r.likelyDuplicate)` in `Import.tsx`) —
+  the exact silent-filter behaviour WI5 removed from the single-account path. It was left alone
+  deliberately: the review UI is per-session state and the multi-section path holds one independent
+  state object per detected account, so wiring it correctly means restructuring that state rather
+  than repeating the component. Doing it carelessly would make the path worse, not better. The
+  single-account path is where the overwhelming majority of imports land; this is the follow-up.
