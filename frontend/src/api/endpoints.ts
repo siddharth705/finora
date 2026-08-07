@@ -198,6 +198,20 @@ export interface ConfirmedRowPayload {
   confirmedNotDuplicate?: boolean;
 }
 
+/**
+ * What `ImportDto.NewAccountRequest` accepts — all nineteen fields, not the ten this used to name.
+ *
+ * The nine below were absent from this type while the single-account path sent them anyway: the
+ * payload was built into a `const` first, so TypeScript's excess-property check (which only fires on
+ * a fresh object literal assigned straight to a typed target) never saw them. The type could
+ * therefore describe two thirds of the request and still typecheck both call sites — including the
+ * multi-account one, which omitted all nine and created a composite statement's fixed-deposit
+ * section as an empty savings account.
+ *
+ * Declaring them is what makes that omission a type error rather than a silent difference between
+ * two hand-rolled payloads. `toNewAccountPayload` in `lib/newAccountPayload.ts` is the only
+ * supported way to build one, for the same reason `beginReview` is the only way to start a review.
+ */
 export interface NewAccountPayload {
   name: string;
   accountType: 'SAVINGS' | 'CREDIT_CARD' | 'WALLET' | 'INVESTMENT';
@@ -209,6 +223,24 @@ export interface NewAccountPayload {
   bankId?: string | null;
   branchName?: string | null;
   ifscCode?: string | null;
+
+  // What the section IS, so the server can route it — a term deposit becomes an Investment rather
+  // than an empty savings account. Null when the engine was unsure: the type the user picked on the
+  // form is then the answer, and re-asserting a guess here would override their correction.
+  detectedProduct?: string | null;
+  // Opaque; lets a re-import recognise a product already held instead of duplicating it.
+  productIdentityHash?: string | null;
+
+  // Server-detected, displayed read-only, echoed back unchanged — what makes a deposit a deposit
+  // rather than a name and a balance. All seven nullable: a field irrelevant to the product's type
+  // is simply never populated.
+  principalAmount?: number | null;
+  interestRate?: number | null;
+  maturityDate?: string | null;
+  maturityAmount?: number | null;
+  installmentAmount?: number | null;
+  installmentsPaid?: number | null;
+  installmentsTotal?: number | null;
 }
 
 export interface ConfirmPayload {
@@ -243,7 +275,7 @@ export interface ImportSessionSummary {
   expiresAt: string;
 }
 
-interface StagingResult {
+export interface StagingResult {
   rows: StagedRow[];
   totalParsed: number;
   flaggedDuplicates: number;
@@ -335,6 +367,63 @@ export const importApi = {
   getSession: (id: string) =>
     api.get<{ sessionId: string; staging: StagingResult }>(`/import/sessions/${id}`).then((r) => r.data),
   discardSession: (id: string) => api.delete(`/import/sessions/${id}`),
+};
+
+/**
+ * The asynchronous upload path: hand the file over, watch it, review it when it lands.
+ *
+ * Runs beside `importApi.stageCsv`/`stagePdf` rather than replacing them. Those return
+ * `200 {sessionId, staging}` and both this app and the mobile app read those fields, so changing
+ * them would be two entries on the breaking list in `docs/engineering/api-compatibility-policy.md`.
+ * Adding endpoints is explicitly non-breaking, which is why there are two paths to the same review
+ * screen and only one of them is new.
+ *
+ * `availability` is asked BEFORE the upload, not discovered from it. The queue is opt-in per
+ * deployment, and the multipart body is consumed before the handler runs — so an upload sent to a
+ * deployment without the queue would cross the network in full, come back 503, and have to cross it
+ * again on the synchronous path. One small GET replaces that.
+ */
+export interface ImportJobProgress {
+  jobId: string;
+  status: 'QUEUED' | 'PARSING' | 'ANALYZING' | 'DEDUPING' | 'IMPORTING' | 'LEARNING'
+    | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  // Null while the statement is still being read — deliberately not 0, which would be
+  // indistinguishable from an empty file and would render as a stuck "0 of 0".
+  rowsTotal: number | null;
+  rowsProcessed: number;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  // Where the staged rows ended up. Populated on COMPLETED; this is what the review screen loads.
+  importSessionId: string | null;
+  // Only once the job has actually FAILED. A job that failed once and is retrying is the system
+  // working, so a transient error is deliberately not surfaced mid-flight.
+  error: string | null;
+  correlationId: string | null;
+}
+
+export const importJobsApi = {
+  availability: () =>
+    api.get<{ asyncImportAvailable: boolean }>('/import/jobs/availability').then((r) => r.data),
+  submit: (file: File, onProgress?: ProgressCallback) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api
+      .post<{ jobId: string; statusUrl: string }>('/import/jobs', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        ...toUploadProgressConfig(onProgress),
+      })
+      .then((r) => r.data);
+  },
+  progress: (jobId: string) =>
+    api.get<ImportJobProgress>(`/import/jobs/${jobId}`).then((r) => r.data),
+  recent: (limit = 20) =>
+    api.get<ImportJobProgress[]>(`/import/jobs?limit=${limit}`).then((r) => r.data),
+  // POST, not DELETE: this ends the work and keeps the row, because a cancelled import is part of
+  // the user's history. Returns the job's new state so the caller renders from the response instead
+  // of racing its own next poll.
+  cancel: (jobId: string) =>
+    api.post<ImportJobProgress>(`/import/jobs/${jobId}/cancel`).then((r) => r.data),
 };
 
 export const statementImportsApi = {

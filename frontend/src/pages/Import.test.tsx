@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Import from './Import';
-import { importApi, categoriesApi, accountsApi } from '../api/endpoints';
+import { importApi, importJobsApi, categoriesApi, accountsApi, type ImportJobProgress } from '../api/endpoints';
 import type { StagedAccountSection } from '../types';
 import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID } from '../api/errorCodes';
 import type { DetectedAccountInfo } from '../types';
@@ -31,6 +31,17 @@ vi.mock('../api/endpoints', () => ({
   },
   accountsApi: {
     list: vi.fn(),
+  },
+  // The asynchronous path. Availability defaults to false for the suites below, which are all about
+  // the synchronous flow -- so they keep exercising it rather than silently becoming tests of the
+  // queue. The queue's own behaviour is asserted in "Import — queued imports" at the bottom, which
+  // turns it on for itself.
+  importJobsApi: {
+    availability: vi.fn(),
+    submit: vi.fn(),
+    progress: vi.fn(),
+    recent: vi.fn(),
+    cancel: vi.fn(),
   },
 }));
 
@@ -84,6 +95,21 @@ function stagingResultWith(overrides: Partial<{ sessionId: string }> = {}) {
     staging: { rows: [], totalParsed: 0, flaggedDuplicates: 0, detectedAccount, unparseableRows: [] },
   };
 }
+
+/**
+ * File-scope, so every suite below starts from a deployment WITHOUT the queue.
+ *
+ * The page asks about availability on mount, and an unmocked answer would make the very first
+ * render of every test throw. Defaulting it to false also keeps the intent honest: the suites in
+ * this file are about the synchronous flow, and if the queue silently became the default they would
+ * carry on passing while testing a path they were never written for.
+ */
+beforeEach(() => {
+  vi.mocked(importJobsApi.availability).mockReset().mockResolvedValue({ asyncImportAvailable: false });
+  vi.mocked(importJobsApi.submit).mockReset();
+  vi.mocked(importJobsApi.progress).mockReset();
+  vi.mocked(importJobsApi.cancel).mockReset();
+});
 
 function renderImport() {
   const queryClient = new QueryClient();
@@ -644,9 +670,13 @@ describe('Import — multi-account statements get the same duplicate review', ()
     };
   }
 
-  function section(name: string, rows: ReturnType<typeof stagedRow>[]): StagedAccountSection {
+  function section(
+    name: string,
+    rows: ReturnType<typeof stagedRow>[],
+    detectedOverrides: Partial<DetectedAccountInfo> = {},
+  ): StagedAccountSection {
     return {
-      detectedAccount: { ...detectedAccount, suggestedName: name },
+      detectedAccount: { ...detectedAccount, suggestedName: name, ...detectedOverrides },
       rows,
       totalParsed: rows.length,
       flaggedDuplicates: rows.filter((r) => r.likelyDuplicate).length,
@@ -778,6 +808,90 @@ describe('Import — multi-account statements get the same duplicate review', ()
   });
 
   /**
+   * A composite statement's whole point is that one file holds two different KINDS of thing. A
+   * savings section and a fixed-deposit section are not two accounts of the same shape, and the
+   * fields that say so — `detectedProduct`, `productIdentityHash` and the seven deposit attributes —
+   * were dropped between this screen and the request. The section was shown to the user as a fixed
+   * deposit carrying a principal, a rate and a maturity date, and created as an empty savings
+   * account.
+   *
+   * Asserted against the payload rather than the rendered card, because the screen was never the
+   * broken half — it displayed every one of these correctly the whole time, which is exactly why
+   * nobody saw it. The single-account path sent them from the beginning; only this one did not.
+   */
+  it('creates a deposit section as a deposit, carrying the numbers the screen showed', async () => {
+    stageSections([
+      section('HSBC Savings', [stagedRow('BLINKIT GROCERIES 9982', false)]),
+      section('HSBC Fixed Deposit', [stagedRow('INTEREST CREDIT', false)], {
+        suggestedAccountType: 'INVESTMENT',
+        detectedProduct: 'FIXED_DEPOSIT',
+        productNeedsReview: false,
+        productIdentityHash: 'f1d2d2f924e986ac86fdf7b36c94bcdf32beec15',
+        principalAmount: 250000,
+        interestRate: 7.1,
+        maturityDate: '2027-06-30',
+        maturityAmount: 268400,
+      }),
+    ]);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await screen.findByText(/this statement covers 2 accounts/i);
+    await user.click(confirmAll());
+
+    await waitFor(() => expect(importApi.confirmMulti).toHaveBeenCalled());
+    const payload = vi.mocked(importApi.confirmMulti).mock.calls[0][0];
+
+    // The savings section stays a savings account, and claims none of the deposit's numbers.
+    expect(payload.sections[0].newAccount).toMatchObject({
+      accountType: 'SAVINGS',
+      detectedProduct: 'SAVINGS',
+      principalAmount: null,
+      maturityDate: null,
+    });
+
+    // The deposit section arrives as a deposit, with what makes it one.
+    expect(payload.sections[1].newAccount).toMatchObject({
+      accountType: 'INVESTMENT',
+      detectedProduct: 'FIXED_DEPOSIT',
+      productIdentityHash: 'f1d2d2f924e986ac86fdf7b36c94bcdf32beec15',
+      principalAmount: 250000,
+      interestRate: 7.1,
+      maturityDate: '2027-06-30',
+      maturityAmount: 268400,
+    });
+  });
+
+  /**
+   * The other half of the same rule, and the reason the fix is a shared builder rather than nine
+   * more lines at this call site: a product the engine could not prove is the user's to name, and
+   * the type they picked on the form is the answer. Echoing the guess back alongside their
+   * correction would let the server prefer the guess.
+   */
+  it('does not assert a product the engine was unsure about', async () => {
+    stageSections([
+      section('HSBC Savings', [stagedRow('BLINKIT GROCERIES 9982', false)]),
+      section('Unidentified section', [stagedRow('INTEREST CREDIT', false)], {
+        detectedProduct: 'UNKNOWN',
+        productNeedsReview: true,
+        productConfidence: 0.2,
+      }),
+    ]);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await screen.findByText(/this statement covers 2 accounts/i);
+    await user.click(confirmAll());
+
+    await waitFor(() => expect(importApi.confirmMulti).toHaveBeenCalled());
+    const payload = vi.mocked(importApi.confirmMulti).mock.calls[0][0];
+
+    expect(payload.sections[1].newAccount?.detectedProduct).toBeNull();
+  });
+
+  /**
    * "Apply to similar" is scoped to the section it was clicked in. Two accounts on one statement
    * routinely share a description (a card payment appears on both sides of a composite statement),
    * and each is a separate question against a separate ledger — resolving one from the other would
@@ -811,5 +925,144 @@ describe('Import — multi-account statements get the same duplicate review', ()
     };
     expect(payload.sections[0].rows.map((r) => r.include)).toEqual([true, true]);
     expect(payload.sections[1].rows.map((r) => r.include)).toEqual([false]);
+  });
+});
+
+/**
+ * The queued path, from upload to review.
+ *
+ * <b>What this is really guarding.</b> The synchronous upload returns the staged rows in its own
+ * response; the queued one returns a job id and nothing else, and the rows have to be fetched back
+ * from the session the worker persisted. That handoff — job → session → review — is the whole
+ * user-facing half of the durable queue, and every step of it is new. A worker that completed
+ * without a session (which is what it used to do) would leave the user watching a bar that fills
+ * and then goes nowhere.
+ */
+describe('Import — queued imports', () => {
+  const queuedJob = (over: Partial<ImportJobProgress> = {}): ImportJobProgress => ({
+    jobId: 'job-1',
+    status: 'QUEUED',
+    rowsTotal: null,
+    rowsProcessed: 0,
+    createdAt: '2026-08-08T09:00:00Z',
+    startedAt: null,
+    finishedAt: null,
+    importSessionId: null,
+    error: null,
+    correlationId: null,
+    ...over,
+  });
+
+  beforeEach(() => {
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(importApi.stageCsv).mockReset().mockResolvedValue(stagingResultWith());
+    vi.mocked(importApi.getSession).mockReset();
+    vi.mocked(importJobsApi.availability).mockReset().mockResolvedValue({ asyncImportAvailable: true });
+    vi.mocked(importJobsApi.submit).mockReset().mockResolvedValue({
+      jobId: 'job-1',
+      statusUrl: '/api/v1/import/jobs/job-1',
+    });
+  });
+
+  it('queues the upload instead of holding the request open', async () => {
+    vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({ status: 'PARSING' }));
+    const user = userEvent.setup();
+    renderImport();
+    await waitFor(() => expect(importJobsApi.availability).toHaveBeenCalled());
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+
+    await waitFor(() => expect(importJobsApi.submit).toHaveBeenCalled());
+    // Exactly one of the two paths runs. Both would upload the same file twice and stage it twice.
+    expect(importApi.stageCsv).not.toHaveBeenCalled();
+    expect(await screen.findByTestId('import-progress')).toBeInTheDocument();
+    expect(await screen.findByText('Reading your statement')).toBeInTheDocument();
+  });
+
+  it('falls back to the synchronous upload where the queue is not available', async () => {
+    // The queue is opt-in per deployment. Asked before the upload, so the file crosses the network
+    // once rather than being sent, refused with a 503, and sent again.
+    vi.mocked(importJobsApi.availability).mockResolvedValue({ asyncImportAvailable: false });
+    const user = userEvent.setup();
+    renderImport();
+    await waitFor(() => expect(importJobsApi.availability).toHaveBeenCalled());
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+
+    await waitFor(() => expect(importApi.stageCsv).toHaveBeenCalled());
+    expect(importJobsApi.submit).not.toHaveBeenCalled();
+  });
+
+  it('loads what the worker staged once the job completes', async () => {
+    vi.mocked(importJobsApi.progress)
+      .mockResolvedValueOnce(queuedJob({ status: 'ANALYZING', rowsTotal: 2, rowsProcessed: 1 }))
+      .mockResolvedValue(queuedJob({
+        status: 'COMPLETED', rowsTotal: 2, rowsProcessed: 2, importSessionId: 'session-9',
+      }));
+    vi.mocked(importApi.getSession).mockResolvedValue({
+      sessionId: 'session-9',
+      staging: { rows: [], totalParsed: 2, flaggedDuplicates: 0, detectedAccount, unparseableRows: [] },
+    });
+    const user = userEvent.setup();
+    renderImport();
+    await waitFor(() => expect(importJobsApi.availability).toHaveBeenCalled());
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+
+    // The handoff: the session the JOB named, fetched and opened for review.
+    await waitFor(() => expect(importApi.getSession).toHaveBeenCalledWith('session-9'), { timeout: 4000 });
+    // The progress panel gives way to the review step -- the same one the synchronous path reaches,
+    // which is the point of the worker persisting a session rather than staging into a response.
+    await waitFor(() => expect(screen.queryByTestId('import-progress')).not.toBeInTheDocument());
+    expect(screen.getByText(/detected a/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('statement-file-input')).not.toBeInTheDocument();
+  });
+
+  it('stops an import the user changed their mind about', async () => {
+    vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({ status: 'PARSING' }));
+    vi.mocked(importJobsApi.cancel).mockResolvedValue(queuedJob({ status: 'CANCELLED' }));
+    const user = userEvent.setup();
+    renderImport();
+    await waitFor(() => expect(importJobsApi.availability).toHaveBeenCalled());
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+    await screen.findByTestId('import-progress');
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(importJobsApi.cancel).toHaveBeenCalledWith('job-1'));
+    // Back to the dropzone, with no error: a cancel is the user's own decision and needs no
+    // explanation shouted back at them.
+    await waitFor(() => expect(screen.queryByTestId('import-progress')).not.toBeInTheDocument());
+    expect(screen.getByTestId('statement-file-input')).toBeInTheDocument();
+  });
+
+  it('does not offer to cancel an import that is already writing to the ledger', async () => {
+    // Mirrors the server's own boundary. A button the server would refuse reads as a bug.
+    vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({ status: 'IMPORTING', rowsTotal: 9 }));
+    const user = userEvent.setup();
+    renderImport();
+    await waitFor(() => expect(importJobsApi.availability).toHaveBeenCalled());
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+    await screen.findByTestId('import-progress');
+
+    expect(await screen.findByText('Adding them to your account')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+  });
+
+  it('surfaces the server’s reason when an import fails for good', async () => {
+    vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({
+      status: 'FAILED', error: 'No transactions could be read from this statement.',
+    }));
+    const user = userEvent.setup();
+    renderImport();
+    await waitFor(() => expect(importJobsApi.availability).toHaveBeenCalled());
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+
+    expect(await screen.findByText('No transactions could be read from this statement.'))
+      .toBeInTheDocument();
   });
 });

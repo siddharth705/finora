@@ -2,13 +2,14 @@ import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { CheckCircle2, UploadCloud, AlertTriangle, Clock, FileText, FileSpreadsheet } from 'lucide-react';
-import { importApi, statementImportsApi, categoriesApi, accountsApi } from '../api/endpoints';
+import { importApi, importJobsApi, statementImportsApi, categoriesApi, accountsApi, type StagingResult } from '../api/endpoints';
 import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID } from '../api/errorCodes';
 import { BankLogo } from '../components/BankLogo';
 import { MaskedAccountNumber } from '../components/MaskedAccountNumber';
 import { VerificationPanel } from '../components/VerificationPanel';
 import { matchExistingAccount } from '../lib/accountMatch';
 import { DuplicateReview } from '../components/DuplicateReview';
+import { ImportProgress } from '../components/ImportProgress';
 import {
   EMPTY_REVIEW,
   applyDecisionToSimilar,
@@ -20,6 +21,7 @@ import {
   type DuplicateDecision,
   type RowReview,
 } from '../lib/importReview';
+import { toNewAccountPayload } from '../lib/newAccountPayload';
 import type { Account, DetectedAccountInfo, VerificationReport, ImportSummary, ReimportResult, StagedAccountSection, StagedRow, UnparseableRow } from '../types';
 import { formatDate } from '../utils/date';
 
@@ -128,6 +130,14 @@ export default function Import() {
   const [step, setStep] = useState<Step>('upload');
   const [error, setError] = useState<string | null>(null);
 
+  // The queued import currently being watched, if this deployment queues them at all.
+  //
+  // `asyncAvailable` is asked once on mount rather than assumed: the queue is opt-in per
+  // deployment, and the alternative — send the upload and read the 503 — would push the whole file
+  // across the network before finding out, then push it again on the synchronous path.
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [asyncAvailable, setAsyncAvailable] = useState(false);
+
   // Staged rows. `review` holds the include flags and the duplicate decisions as one value --
   // see lib/importReview.ts for why they are not two pieces of state.
   const [rows, setRows] = useState<StagedRow[]>([]);
@@ -186,6 +196,11 @@ export default function Import() {
     // with an empty category list / existing-account list, just with fewer detected defaults.
     categoriesApi.list().then((cats) => setCategories(cats.map((c) => c.name))).catch((e) => console.error('Failed to load categories', e));
     accountsApi.list().then(setExistingAccounts).catch((e) => console.error('Failed to load accounts', e));
+    // Failing closed on purpose: if this call fails we simply use the synchronous path, which is
+    // what every deployment supports. An import that works slowly beats one that does not start.
+    importJobsApi.availability()
+      .then((a) => setAsyncAvailable(a.asyncImportAvailable))
+      .catch(() => setAsyncAvailable(false));
 
     if (reimportState) {
       setRows(reimportState.staging.rows);
@@ -228,10 +243,94 @@ export default function Import() {
     void upload(file, false, undefined);
   }
 
+  /**
+   * Loads one staged statement into the review step.
+   *
+   * Shared because there are now three ways to arrive here — a synchronous upload, a queued job the
+   * user watched, and a re-import — and each one setting eight pieces of state by hand is how the
+   * confirm payload came to differ between two paths (see lib/newAccountPayload.ts). One of these
+   * per arrival route is one too many.
+   */
+  function hydrateReviewFrom(staging: StagingResult) {
+    setRows(staging.rows);
+    // A flagged row starts EXCLUDED but UNRESOLVED -- not silently unticked. The confirm button
+    // is blocked until every one has an explicit answer, so "I didn't mean to skip that" stops
+    // being possible. Before WI5 the untick alone was the whole duplicate handling: the row
+    // vanished from the import unless the user noticed a checkbox they had never touched.
+    setReview(beginReview(staging.rows));
+    setChosenCategory(staging.rows.map((r) => r.suggestedCategory));
+    setDetectedAccount(staging.detectedAccount);
+    setVerification(staging.verification ?? null);
+    setUnparseableRows(staging.unparseableRows ?? []);
+
+    // Pre-fill the new-account form from whatever the statement told us — every field here
+    // is editable before anything is created, since detection is best-effort by design.
+    setNewName(staging.detectedAccount.suggestedName);
+    setNewType(staging.detectedAccount.suggestedAccountType);
+    setNewOpeningBalance(staging.detectedAccount.openingBalance != null ? String(staging.detectedAccount.openingBalance) : '');
+    setNewCreditLimit(staging.detectedAccount.creditLimit != null ? String(staging.detectedAccount.creditLimit) : '');
+    setNewDueDate(staging.detectedAccount.paymentDueDate ?? '');
+
+    // Default to the account this statement actually matches, and to "new account" when it
+    // matches none.
+    //
+    // Bug fix: this used to preselect existingAccounts[0] whenever ANY account existed, while
+    // the comment above it claimed to pick "the account the file's own signals most plausibly
+    // matches". No signal was consulted. Whoever imported a Kotak statement first was then shown
+    // "use an existing account: Kotak" for every later statement from any bank, and had to
+    // notice and override it.
+    //
+    // Defaulting wrong in the two directions is not equally bad, which is why matchExistingAccount
+    // returns null unless it is confident: preselecting the wrong EXISTING account merges one
+    // institution's transactions into another's -- wrong balances, wrong net worth, reconciliation
+    // running across two unrelated ledgers -- whereas preselecting NEW at worst creates a
+    // duplicate account, which is visible and deletable.
+    const match = matchExistingAccount(staging.detectedAccount, existingAccounts);
+    if (match) {
+      setAccountChoice('existing');
+      setSelectedAccountId(match.id);
+    } else {
+      setAccountChoice('new');
+    }
+  }
+
+  /**
+   * A queued import finished. Load what it staged and hand over to the same review step the
+   * synchronous path uses — the whole point of the worker persisting a session.
+   */
+  async function openReviewedJob(sessionId: string) {
+    try {
+      const session = await importApi.getSession(sessionId);
+      setSessionId(session.sessionId);
+      hydrateReviewFrom(session.staging);
+      setJobId(null);
+      setStep('review');
+    } catch {
+      setJobId(null);
+      setError('Your statement was imported, but the review could not be loaded. Open it from your unfinished imports.');
+    }
+  }
+
   async function upload(file: File, isPdf: boolean, password: string | undefined) {
     setError(null);
     setUploadProgress(0);
     try {
+      // The queue, when this deployment has one and the file does not need a password.
+      //
+      // A protected PDF is deliberately excluded rather than made to work: the job carries a
+      // content address and no password, and the worker opens the document minutes later with
+      // nobody to ask. Sending it synchronously keeps the one flow where the person who knows the
+      // password is still on the screen.
+      if (asyncAvailable && !password) {
+        const accepted = await importJobsApi.submit(file, setUploadProgress);
+        setFileFormat(isPdf ? 'PDF' : 'CSV');
+        setPendingPdf(null);
+        setPdfPassword('');
+        setPasswordState(null);
+        setJobId(accepted.jobId);
+        return;
+      }
+
       const res = isPdf
         ? await importApi.stagePdf(file, setUploadProgress, password)
         : await importApi.stageCsv(file, setUploadProgress);
@@ -253,47 +352,7 @@ export default function Import() {
       }
 
       const staging = res.staging!; // guaranteed non-null whenever multiAccount is false/absent
-      setRows(staging.rows);
-      // A flagged row starts EXCLUDED but UNRESOLVED -- not silently unticked. The confirm button
-      // is blocked until every one has an explicit answer, so "I didn't mean to skip that" stops
-      // being possible. Before WI5 the untick alone was the whole duplicate handling: the row
-      // vanished from the import unless the user noticed a checkbox they had never touched.
-      setReview(beginReview(staging.rows));
-      setChosenCategory(staging.rows.map((r) => r.suggestedCategory));
-      setDetectedAccount(staging.detectedAccount);
-      setVerification(staging.verification ?? null);
-      setUnparseableRows(staging.unparseableRows);
-
-      // Pre-fill the new-account form from whatever the statement told us — every field here
-      // is editable before anything is created, since detection is best-effort by design.
-      setNewName(staging.detectedAccount.suggestedName);
-      setNewType(staging.detectedAccount.suggestedAccountType);
-      setNewOpeningBalance(staging.detectedAccount.openingBalance != null ? String(staging.detectedAccount.openingBalance) : '');
-      setNewCreditLimit(staging.detectedAccount.creditLimit != null ? String(staging.detectedAccount.creditLimit) : '');
-      setNewDueDate(staging.detectedAccount.paymentDueDate ?? '');
-
-      // Default to the account this statement actually matches, and to "new account" when it
-      // matches none.
-      //
-      // Bug fix: this used to preselect existingAccounts[0] whenever ANY account existed, while
-      // the comment above it claimed to pick "the account the file's own signals most plausibly
-      // matches". No signal was consulted. Whoever imported a Kotak statement first was then shown
-      // "use an existing account: Kotak" for every later statement from any bank, and had to
-      // notice and override it.
-      //
-      // Defaulting wrong in the two directions is not equally bad, which is why matchExistingAccount
-      // returns null unless it is confident: preselecting the wrong EXISTING account merges one
-      // institution's transactions into another's -- wrong balances, wrong net worth, reconciliation
-      // running across two unrelated ledgers -- whereas preselecting NEW at worst creates a
-      // duplicate account, which is visible and deletable.
-      const match = matchExistingAccount(staging.detectedAccount, existingAccounts);
-      if (match) {
-        setAccountChoice('existing');
-        setSelectedAccountId(match.id);
-      } else {
-        setAccountChoice('new');
-      }
-
+      hydrateReviewFrom(staging);
       setStep('review');
     } catch (e: any) {
       // e.response is only ever populated when the server actually answered the request --
@@ -344,44 +403,15 @@ export default function Import() {
       const rowPayload = toConfirmedRows(rows, review, chosenCategory);
 
       const existingAccountId = accountChoice === 'existing' ? selectedAccountId : null;
+      // See lib/newAccountPayload.ts for why this is not an object literal here. The multi-account
+      // path below builds its payload with the same function, which is the only thing that stops
+      // the two drifting the way they already did once.
       const newAccount =
         accountChoice === 'new'
-          ? {
-              name: newName.trim() || 'Imported Account',
-              accountType: newType,
-              openingBalance: newOpeningBalance ? parseFloat(newOpeningBalance) : null,
-              creditLimit: newType === 'CREDIT_CARD' && newCreditLimit ? parseFloat(newCreditLimit) : null,
-              dueDate: newType === 'CREDIT_CARD' && newDueDate ? newDueDate : null,
-              // These two were already detected into `detectedAccount` and shown (disabled) in
-              // the review step below, but never actually made it into this payload — the
-              // account got created without them even when the statement clearly carried both.
-              accountHolderName: detectedAccount?.accountHolderName ?? null,
-              accountNumberMasked: detectedAccount?.accountNumberMasked ?? null,
-              // Detected bank identifier -- lets the new account's logo/color render correctly
-              // even if the user renames the account away from the bank's official name below.
-              bankId: detectedAccount?.bank.id ?? null,
-              branchName: detectedAccount?.branchName ?? null,
-              ifscCode: detectedAccount?.ifscCode ?? null,
-              // Echoed back so the server can route the product where it belongs -- a term deposit
-              // becomes an Investment rather than an empty savings account. Deliberately dropped
-              // when the engine wasn't sure: in that case the type the user just picked above is
-              // the answer, and re-asserting a guess here would override their correction.
-              detectedProduct:
-                detectedAccount && !detectedAccount.productNeedsReview
-                  ? detectedAccount.detectedProduct
-                  : null,
-              // Opaque; lets a re-import recognise a product already held instead of duplicating it.
-              productIdentityHash: detectedAccount?.productIdentityHash ?? null,
-              // Server-detected and displayed read-only -- echoed back unchanged so a deposit is
-              // persisted with the values that make it a deposit, not just a name and a balance.
-              principalAmount: detectedAccount?.principalAmount ?? null,
-              interestRate: detectedAccount?.interestRate ?? null,
-              maturityDate: detectedAccount?.maturityDate ?? null,
-              maturityAmount: detectedAccount?.maturityAmount ?? null,
-              installmentAmount: detectedAccount?.installmentAmount ?? null,
-              installmentsPaid: detectedAccount?.installmentsPaid ?? null,
-              installmentsTotal: detectedAccount?.installmentsTotal ?? null,
-            }
+          ? toNewAccountPayload(
+              { newName, newType, newOpeningBalance, newCreditLimit, newDueDate },
+              detectedAccount,
+            )
           : null;
 
       const result = reimportState
@@ -425,21 +455,13 @@ export default function Import() {
         // reconciliation -- the exact defect 55f2db0 fixed for the single-account path.
         const rowPayload = toConfirmedRows(s.rows, s.review, s.chosenCategory);
         const existingAccountId = s.accountChoice === 'existing' ? s.selectedAccountId : null;
+        // The same builder the single-account confirm uses. This section used to hand-roll its own
+        // and stopped at ifscCode, dropping detectedProduct, productIdentityHash and all seven
+        // deposit attributes -- so a composite statement's fixed-deposit section was created as an
+        // empty savings account, losing the principal and maturity the review screen had just shown
+        // the user. SectionState satisfies NewAccountForm structurally, so it passes straight in.
         const newAccount =
-          s.accountChoice === 'new'
-            ? {
-                name: s.newName.trim() || 'Imported Account',
-                accountType: s.newType,
-                openingBalance: s.newOpeningBalance ? parseFloat(s.newOpeningBalance) : null,
-                creditLimit: s.newType === 'CREDIT_CARD' && s.newCreditLimit ? parseFloat(s.newCreditLimit) : null,
-                dueDate: s.newType === 'CREDIT_CARD' && s.newDueDate ? s.newDueDate : null,
-                accountHolderName: s.detectedAccount.accountHolderName ?? null,
-                accountNumberMasked: s.detectedAccount.accountNumberMasked ?? null,
-                bankId: s.detectedAccount.bank.id ?? null,
-                branchName: s.detectedAccount.branchName ?? null,
-                ifscCode: s.detectedAccount.ifscCode ?? null,
-              }
-            : null;
+          s.accountChoice === 'new' ? toNewAccountPayload(s, s.detectedAccount) : null;
         return {
           rows: rowPayload,
           existingAccountId,
@@ -497,7 +519,27 @@ export default function Import() {
 
   return (
     <div className="space-y-4">
-      {step === 'upload' && pendingPdf && (
+      {/* A queued import replaces the dropzone while it runs -- there is nothing useful to do on
+          this page until it lands, and offering a second upload alongside it would start a race
+          the user did not ask for. */}
+      {step === 'upload' && jobId && (
+        <ImportProgress
+          jobId={jobId}
+          onReady={(sessionId) => void openReviewedJob(sessionId)}
+          onGaveUp={(job) => {
+            // Back to the dropzone either way. A cancel is the user's own decision and needs no
+            // explanation; a failure gets the server's, which is the only account of what went
+            // wrong that is worth anything.
+            setJobId(null);
+            setUploadProgress(null);
+            if (job.status === 'FAILED') {
+              setError(job.error ?? 'That import could not be completed.');
+            }
+          }}
+        />
+      )}
+
+      {step === 'upload' && !jobId && pendingPdf && (
         <form
           data-testid="pdf-password-panel"
           className="bg-card rounded p-6 shadow border border-border space-y-4"
@@ -577,7 +619,7 @@ export default function Import() {
         </form>
       )}
 
-      {step === 'upload' && !pendingPdf && (
+      {step === 'upload' && !jobId && !pendingPdf && (
         <div
           data-testid="statement-dropzone"
           role="button"
