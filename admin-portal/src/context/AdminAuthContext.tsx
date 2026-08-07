@@ -35,6 +35,9 @@ export const ADMIN_PORTAL_PERMISSIONS = [
   // The merchant learning queue's operator surface. Its own permission rather than a reuse: V63
   // records why retrying an event is an action, not a diagnostics view.
   'LEARNING_QUEUE_MANAGE',
+  // The Merchant Review Center. Separate from MERCHANT_MANAGE (curating one user's merchants while
+  // helping them) because this is working a cross-user queue of the engine's own guesses -- V64.
+  'MERCHANT_REVIEW',
 ];
 
 export interface AdminAuthState {

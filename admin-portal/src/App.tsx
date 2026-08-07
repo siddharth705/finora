@@ -26,6 +26,7 @@ const MerchantIntelligence = lazy(() => import('./pages/MerchantIntelligence'));
 const GlobalRules = lazy(() => import('./pages/GlobalRules'));
 const LearningEngine = lazy(() => import('./pages/LearningEngine'));
 const LearningQueue = lazy(() => import('./pages/LearningQueue'));
+const MerchantReview = lazy(() => import('./pages/MerchantReview'));
 const ReconciliationMonitor = lazy(() => import('./pages/ReconciliationMonitor'));
 const PlatformAnalytics = lazy(() => import('./pages/PlatformAnalytics'));
 const AuditLog = lazy(() => import('./pages/AuditLog'));
@@ -76,6 +77,7 @@ export default function App() {
               <Route path="/merchants" element={<ProtectedRoute><MerchantIntelligence /></ProtectedRoute>} />
               <Route path="/rules" element={<ProtectedRoute><GlobalRules /></ProtectedRoute>} />
               <Route path="/learning" element={<ProtectedRoute><LearningEngine /></ProtectedRoute>} />
+              <Route path="/merchant-review" element={<ProtectedRoute><MerchantReview /></ProtectedRoute>} />
               <Route path="/learning-queue" element={<ProtectedRoute><LearningQueue /></ProtectedRoute>} />
               <Route path="/reconciliation" element={<ProtectedRoute><ReconciliationMonitor /></ProtectedRoute>} />
               <Route path="/analytics" element={<ProtectedRoute><PlatformAnalytics /></ProtectedRoute>} />

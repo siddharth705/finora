@@ -18,6 +18,7 @@ import type {
   StatementAnalysisDetailDto,
   StatementAnalysisSummaryDto,
   LearningQueueEvent, LearningQueueSummary,
+  MerchantReviewItem,
 } from '../types';
 
 // Which portal this account belongs to. The same person may hold a USER account and an ADMIN
@@ -256,6 +257,31 @@ export const adminLearningQueueApi = {
     api.post<{ retried: number }>('/admin/learning-queue/retry-all').then((r) => r.data),
   resolve: (eventId: string, reason?: string) =>
     api.post<LearningQueueEvent>(`/admin/learning-queue/${eventId}/resolve`, { reason }).then((r) => r.data),
+};
+
+/** The Merchant Review Center (WI4). Listing crosses users; every action is scoped to the owner,
+ *  which the URL shape enforces rather than merely documents -- there is no canonical merchant
+ *  registry, so a cross-user merge is not expressible. */
+export const adminMerchantReviewApi = {
+  queue: (params: { page?: number; size?: number }) =>
+    api.get<PagedResponse<MerchantReviewItem>>('/admin/merchant-review', { params }).then((r) => r.data),
+  count: () => api.get<{ outstanding: number }>('/admin/merchant-review/count').then((r) => r.data),
+  mergeCandidates: (userId: string, merchantId: string) =>
+    api.get<MerchantReviewItem[]>(
+      `/admin/merchant-review/users/${userId}/merchants/${merchantId}/merge-candidates`).then((r) => r.data),
+  approve: (userId: string, merchantId: string) =>
+    api.post<MerchantReviewItem>(
+      `/admin/merchant-review/users/${userId}/merchants/${merchantId}/approve`).then((r) => r.data),
+  approveAll: (userId: string) =>
+    api.post<{ approved: number }>(`/admin/merchant-review/users/${userId}/approve-all`).then((r) => r.data),
+  rename: (userId: string, merchantId: string, canonicalName: string) =>
+    api.post<MerchantReviewItem>(
+      `/admin/merchant-review/users/${userId}/merchants/${merchantId}/rename`, { canonicalName }).then((r) => r.data),
+  merge: (userId: string, merchantId: string, survivingMerchantId: string) =>
+    api.post<MerchantReviewItem>(
+      `/admin/merchant-review/users/${userId}/merchants/${merchantId}/merge`, { survivingMerchantId }).then((r) => r.data),
+  discard: (userId: string, merchantId: string) =>
+    api.delete(`/admin/merchant-review/users/${userId}/merchants/${merchantId}`),
 };
 
 export const adminMerchantsApi = {

@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, ShieldCheck, ScrollText, HeartPulse, LogOut, Landmark, Settings,
-  ListFilter, Store, Sparkles, GitMerge, BarChart3, Stethoscope, FileSearch, ListRestart } from 'lucide-react';
+  ListFilter, Store, Sparkles, GitMerge, BarChart3, Stethoscope, FileSearch, ListRestart , BadgeCheck } from 'lucide-react';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import logoMark from '../assets/logo-mark.png';
 
@@ -16,6 +16,7 @@ const links = [
   { to: '/merchants', label: 'Merchant Intelligence', icon: Store, end: false, permission: 'MERCHANT_MANAGE' },
   { to: '/rules', label: 'Global Rules', icon: ListFilter, end: false, permission: 'RULE_MANAGE' },
   { to: '/learning', label: 'Learning Engine', icon: Sparkles, end: false, permission: 'MERCHANT_MANAGE' },
+  { to: '/merchant-review', label: 'Merchant Review', icon: BadgeCheck, end: false, permission: 'MERCHANT_REVIEW' },
   { to: '/learning-queue', label: 'Learning Queue', icon: ListRestart, end: false, permission: 'LEARNING_QUEUE_MANAGE' },
   { to: '/reconciliation', label: 'Reconciliation Monitor', icon: GitMerge, end: false, permission: 'RECONCILIATION_VIEW' },
   { to: '/analytics', label: 'Platform Analytics', icon: BarChart3, end: false, permission: 'PLATFORM_ANALYTICS_VIEW' },

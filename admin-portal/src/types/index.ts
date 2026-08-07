@@ -654,3 +654,22 @@ export interface LearningQueueSummary {
   completed: number;
   resolved: number;
 }
+
+
+/**
+ * A merchant the normalization engine invented, awaiting a human decision (WI4).
+ *
+ * No cross-user fields by design: merchants.user_id is NOT NULL, so a merchant belongs to exactly
+ * one person and this milestone introduces no canonical registry. `transactionCount` is the field
+ * that decides the action -- 0 means the guess was never real and can be discarded, anything above
+ * means it is on the user's ledger and must be merged instead.
+ */
+export interface MerchantReviewItem {
+  id: string;
+  userId: string;
+  userEmail: string | null;
+  canonicalName: string;
+  lifecycleStatus: 'TEMPORARY' | 'UNDER_REVIEW' | 'APPROVED';
+  transactionCount: number;
+  createdAt: string;
+}
