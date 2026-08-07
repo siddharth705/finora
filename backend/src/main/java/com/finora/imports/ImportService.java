@@ -642,7 +642,15 @@ public class ImportService {
         // one insert -- consistent across every row, which is what matters for comparing layouts.
         statementImport.setImportDurationMs(System.currentTimeMillis() - startedAtMs);
         StatementImport savedImport = statementImportRepository.save(statementImport);
-        toInsert.forEach(t -> t.setStatementImportId(savedImport.getId()));
+        // Ordinal assigned here, from position in the list being inserted. Without it the V67
+        // unique index on (statement_import_id, row_ordinal) covers nothing -- a NULL ordinal is
+        // excluded by the index predicate, so every row would opt itself out of the guarantee it
+        // exists to provide.
+        for (int i = 0; i < toInsert.size(); i++) {
+            Transaction row = toInsert.get(i);
+            row.setStatementImportId(savedImport.getId());
+            row.setRowOrdinal(i);
+        }
 
         // WI1. The event rows go in HERE, inside this transaction, so an import that rolls back
         // takes its queued learning with it -- otherwise a worker would later apply confirmations

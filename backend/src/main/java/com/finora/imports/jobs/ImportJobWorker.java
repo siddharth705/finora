@@ -64,7 +64,7 @@ public class ImportJobWorker {
     private final Optional<StatementStorage> storage;
     private final WorkerObservability observability;
 
-    @Value("${app.import.queue.enabled:true}")
+    @Value("${app.import.queue.enabled:false}")
     private boolean enabled;
 
     public ImportJobWorker(ImportJobStore jobStore,

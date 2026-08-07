@@ -117,6 +117,19 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     @Column(name = "object_key", length = 512)
     private String objectKey;
 
+    /**
+     * The async job that produced this import, or null for the synchronous path.
+     *
+     * <p>UNIQUE in the database (V67). That constraint is what makes a replayed job safe: a worker
+     * that died after confirming and before completing gets its job returned to the queue, and the
+     * second attempt's insert is rejected rather than importing the same statement twice.
+     *
+     * <p>Enforced by the database rather than by a check in the worker, because a check is a read
+     * followed by a write and two workers can both read "not present" before either writes.
+     */
+    @Column(name = "import_job_id")
+    private UUID importJobId;
+
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
     public UUID getAccountId() { return accountId; }
@@ -141,6 +154,9 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     public void setContentHash(String contentHash) { this.contentHash = contentHash; }
     @Override public String getObjectKey() { return objectKey; }
     public void setObjectKey(String objectKey) { this.objectKey = objectKey; }
+
+    public UUID getImportJobId() { return importJobId; }
+    public void setImportJobId(UUID importJobId) { this.importJobId = importJobId; }
     @Override public byte[] getFileContent() { return fileContent; }
     public void setFileContent(byte[] fileContent) { this.fileContent = fileContent; }
     public LocalDate getStatementPeriodStart() { return statementPeriodStart; }

@@ -121,6 +121,17 @@ public class Transaction extends BaseEntity {
     @Column(name = "statement_import_id")
     private UUID statementImportId;
 
+    /**
+     * Position within its statement import, 0-based; null for a manually created transaction.
+     *
+     * <p>With {@link #statementImportId} this is the natural key V67 makes UNIQUE, so a replayed
+     * insert is rejected by the database rather than by application logic. It guards a different
+     * failure from {@code StatementImport.importJobId}: that one stops a job importing twice, this
+     * one stops a single import inserting a row twice.
+     */
+    @Column(name = "row_ordinal")
+    private Integer rowOrdinal;
+
     // See DecisionSource above. Defaults to MERCHANT_DEFAULT (matches the V17 column default) so
     // any write path that doesn't explicitly set this fails safe to the least-specific label
     // rather than silently claiming a rule/learning match that didn't happen.
@@ -205,6 +216,9 @@ public class Transaction extends BaseEntity {
     public boolean isCategoryManuallySet() { return categoryManuallySet; }
     public void setCategoryManuallySet(boolean categoryManuallySet) { this.categoryManuallySet = categoryManuallySet; }
     public UUID getStatementImportId() { return statementImportId; }
+    public Integer getRowOrdinal() { return rowOrdinal; }
+    public void setRowOrdinal(Integer rowOrdinal) { this.rowOrdinal = rowOrdinal; }
+
     public void setStatementImportId(UUID statementImportId) { this.statementImportId = statementImportId; }
     public DecisionSource getDecisionSource() { return decisionSource; }
     public void setDecisionSource(DecisionSource decisionSource) { this.decisionSource = decisionSource; }

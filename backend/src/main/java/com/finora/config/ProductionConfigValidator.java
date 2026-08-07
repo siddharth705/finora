@@ -108,6 +108,32 @@ public class ProductionConfigValidator implements ApplicationRunner {
             problems.append("- JWT_SECRET is set but shorter than the 32 characters HS256 requires.\n");
         }
 
+        // The async import path needs object storage: the worker runs later, in another thread and
+        // possibly another process, with nothing to read but a content address. ImportJobService
+        // already refuses uploads with 503 when it is missing, which is the right runtime
+        // behaviour -- but discovering it from a user's failed upload is worse than discovering it
+        // at startup, and a deployment that accepts no imports at all should not report healthy.
+        //
+        // Checked only when the queue is enabled, and the queue defaults to OFF. Async import is
+        // opt-in: an existing deployment upgrading to this version starts unchanged, and enabling
+        // the queue is the deliberate act that makes storage mandatory. Defaulting the queue ON
+        // would have turned this validator into a hard startup failure for every deployment that
+        // upgraded without also configuring storage -- refusing to start over a feature nobody had
+        // asked for yet.
+        // Read as a String and parsed, not via getProperty(name, Boolean.class, default). This
+        // class's own test uses a bare mock(Environment.class), where an unstubbed typed lookup
+        // returns null rather than the supplied default and NPEs on unboxing -- a trap the test
+        // file already documents, and one this check walked into on its first draft. Boolean
+        // .parseBoolean(null) is false, which is also the intended default.
+        boolean asyncImportEnabled = Boolean.parseBoolean(environment.getProperty("app.import.queue.enabled"));
+        String storageProvider = environment.getProperty("app.statement-storage.provider");
+        if (asyncImportEnabled && (storageProvider == null || storageProvider.isBlank())) {
+            problems.append("- app.import.queue.enabled is true but app.statement-storage.provider ")
+                    .append("is unset. The async import worker has nothing to read: every upload to ")
+                    .append("/api/v1/import/jobs would be refused with 503. Configure storage, or ")
+                    .append("set app.import.queue.enabled=false to run the synchronous path only.\n");
+        }
+
         String dbPassword = environment.getProperty("spring.datasource.password");
         if (DEFAULT_DB_PASSWORD.equals(dbPassword)) {
             problems.append("- DB_PASSWORD is unset or still the local-dev default (\"finora\"). ")
