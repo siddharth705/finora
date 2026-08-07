@@ -238,6 +238,22 @@
       <version>1.3.0</version>
       <scope>test</scope>
     </dependency>
+    <!-- Backend error monitoring. The three client apps have had Sentry since their own
+         monitoring.ts landed; the tier that runs the import pipeline, the async workers and the
+         queues had none, so a production exception there was visible only in application logs.
+
+         The jakarta starter is the Spring Boot 3 variant (javax to jakarta namespace). Version is
+         pinned rather than inherited: spring-boot-starter-parent does not manage Sentry, so an
+         unpinned range would move on its own.
+
+         Disabled unless SENTRY_DSN is set; see MonitoringConfig and application.yml. Absent
+         config degrades to a no-op, matching every other external integration here. -->
+    <dependency>
+      <groupId>io.sentry</groupId>
+      <artifactId>sentry-spring-boot-starter-jakarta</artifactId>
+      <version>7.14.0</version>
+    </dependency>
+
   </dependencies>
 
   <build>
