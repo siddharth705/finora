@@ -427,7 +427,11 @@ public class PdfTableLocator {
                         // still document text, it is simply not a transaction, and keeping it
                         // visible is what lets a human see what the extractor could not anchor.
                         if (ctx != null) {
-                            ctx.record("UNANCHORED_ROWS_ABANDONED");
+                            // A diagnostic, not a capability: it describes what the parser could
+                            // NOT do. Recorded through the capability channel, it made the coverage
+                            // figure rise as the engine got worse -- more rows abandoned, more
+                            // "capabilities" activated. See DocumentContext.recordDiagnostic.
+                            ctx.recordDiagnostic("UNANCHORED_ROWS_ABANDONED");
                             // Counted, not merely flagged. The capability set answers "did this
                             // happen"; only the histogram answers "which fault dominates", and
                             // only that points at a subsystem. Measured with set semantics first,

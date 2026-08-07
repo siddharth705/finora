@@ -74,28 +74,23 @@ class CapabilityCorpusCoverageTest {
                     + "belongs in the registry once someone confirms the name is the one we want.",
             "RIGHT_ALIGNED_AMOUNTS",
             "recorded by PdfTableLocator's column geometry. Genuinely a capability, and one of the "
-                    + "most commonly exercised — its absence from the registry means the map has "
-                    + "never reported on the thing it most often does.",
-            "UNANCHORED_ROWS_ABANDONED",
-            "a failure signal, not a capability. Probably should stop being recorded through the "
-                    + "capability channel rather than being added to the registry — counting it "
-                    + "would let coverage improve by parsing worse."));
+                    + "most commonly exercised -- its absence from the registry means the map has "
+                    + "never reported on the thing it most often does."));
 
     /**
-     * Declared in the registry, recorded nowhere — so they can only ever report as never-activated.
+     * Declared in the registry, recorded nowhere.
      *
-     * <p>This is the more damaging direction. The coverage map's stated purpose is to distinguish
-     * "the engine can do this and no document has needed it" from "the engine cannot do this". For
-     * these two it reports the first while the truth is unknowable, because no code path would emit
-     * them even on a document that exercised them.
+     * <p>Empty, and that is the point of leaving it here rather than deleting the field: this was
+     * the more damaging of the two drifts. A capability nothing records reports as never-activated
+     * forever, which is indistinguishable from "no document has needed it" -- and never-activated is
+     * the one signal the coverage map exists to produce.
+     *
+     * <p>Both original entries turned out to be Case A, live capabilities. LEADING_PLUS_CREDIT
+     * always recorded and the scan missed it; LEADING_NAME_LINE had always implemented the
+     * behaviour and was simply never wired. Neither was obsolete, which is the outcome worth
+     * noting: the registry was right and the evidence was missing.
      */
-    private static final Map<String, String> DECLARED_BUT_UNRECORDED = new LinkedHashMap<>(Map.of(
-            "LEADING_PLUS_CREDIT",
-            "no .record() call anywhere. Either the detection was never wired to the capability "
-                    + "channel, or the capability was renamed and the registry kept the old name.",
-            "LEADING_NAME_LINE",
-            "same shape as LEADING_PLUS_CREDIT. Both are worth resolving before the corpus grows, "
-                    + "because a trace cannot be shown to cover a capability nothing emits."));
+    private static final Map<String, String> DECLARED_BUT_UNRECORDED = Map.of();
 
     /**
      * Declared capabilities that no committed trace exercises yet.
@@ -128,8 +123,25 @@ class CapabilityCorpusCoverageTest {
                 "no trace, and nothing records it -- same as LEADING_PLUS_CREDIT.");
     }
 
-    /** {@code ctx.record("NAME")} — how a capability activation reaches the document context. */
-    private static final Pattern RECORD_CALL = Pattern.compile("\\.record\\(\"([A-Z_]+)\"\\)");
+    /**
+     * {@code ctx.record(...)} — the capability channel, capturing the whole argument expression so
+     * every SCREAMING_SNAKE literal inside it is seen, not only a bare string argument.
+     *
+     * <p>The first version matched {@code .record("NAME")} exactly and missed
+     * {@code ctx.record(x.startsWith("+") ? "LEADING_PLUS_CREDIT" : "DR_CR_SUFFIX")}, which made a
+     * live capability look unwired and sent me hunting for a fix that was not needed. A scan that
+     * under-reports is the worse failure of the two directions this test checks: it can also miss a
+     * capability recorded through a ternary and never registered, which is exactly the drift the
+     * test exists to catch.
+     *
+     * <p>Scoped to a {@code ctx.} receiver deliberately. {@code auditService.record(...)} is an
+     * unrelated method whose second argument is a SCREAMING_SNAKE audit action.
+     */
+    private static final Pattern RECORD_CALL = Pattern.compile("\\bctx\\.record\\(([^;]*?)\\)\\s*;");
+
+    /** A capability name inside that call. Four characters minimum, so a stray "PDF" or "OK" in the
+     *  same expression is not mistaken for one. */
+    private static final Pattern CAPABILITY_LITERAL = Pattern.compile("\"([A-Z][A-Z_]{3,})\"");
 
     @Test
     void everyCapabilityTheEngineRecordsIsInTheRegistry() {
@@ -287,8 +299,11 @@ class CapabilityCorpusCoverageTest {
         try (Stream<Path> sources = Files.walk(Path.of("src", "main", "java"))) {
             sources.filter(p -> p.toString().endsWith(".java")).forEach(p -> {
                 try {
-                    Matcher m = RECORD_CALL.matcher(Files.readString(p));
-                    while (m.find()) recorded.add(m.group(1));
+                    Matcher call = RECORD_CALL.matcher(Files.readString(p));
+                    while (call.find()) {
+                        Matcher literal = CAPABILITY_LITERAL.matcher(call.group(1));
+                        while (literal.find()) recorded.add(literal.group(1));
+                    }
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }

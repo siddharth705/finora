@@ -32,6 +32,7 @@ public class DocumentContext {
     private final String parser;
     private final List<String> headers = new ArrayList<>();
     private final List<CapabilityActivation> capabilities = new ArrayList<>();
+    private final List<String> diagnostics = new java.util.ArrayList<>();
     private int pages;
     private int tables;
     // What failed to parse, as a reason/shape histogram -- a fact of this parse run exactly like
@@ -95,6 +96,36 @@ public class DocumentContext {
 
     public List<CapabilityActivation> capabilities() {
         return List.copyOf(capabilities);
+    }
+
+    /**
+     * Records a diagnostic -- something observed about parse QUALITY, as opposed to a capability,
+     * which is something the engine successfully DID.
+     *
+     * <p>A separate channel because collapsing the two makes the coverage figure measure the wrong
+     * thing. {@code UNANCHORED_ROWS_ABANDONED} was recorded as a capability, and a capability count
+     * that rises when the parser abandons more rows is a metric that improves as the engine gets
+     * worse. The distinction, stated once so it stays stable:
+     *
+     * <ul>
+     *   <li><b>Capability</b> -- a parser behaviour that improves extraction. RIGHT_ALIGNED_AMOUNTS,
+     *       REPEATED_HEADER, PRINTED_SUMMARY_TOTALS.</li>
+     *   <li><b>Diagnostic</b> -- a measurement explaining parse quality, good or bad.
+     *       UNANCHORED_ROWS_ABANDONED.</li>
+     * </ul>
+     *
+     * <p>Neither feeds the layout fingerprint -- see LAYOUT_FINGERPRINT_VERSION's spec, which hashes
+     * the header set and nothing about the rows -- so this separation changes no stored fingerprint.
+     *
+     * <p>Same set semantics as {@link #record}: the fact being kept is "did this happen", not how
+     * often. {@link #unanchoredReasons} is what answers "which fault dominates".
+     */
+    public void recordDiagnostic(String diagnosticName) {
+        if (!diagnostics.contains(diagnosticName)) diagnostics.add(diagnosticName);
+    }
+
+    public List<String> diagnostics() {
+        return List.copyOf(diagnostics);
     }
 
     /** Counts one row that could not be anchored, by reason. See {@link #unanchoredReasons}. */

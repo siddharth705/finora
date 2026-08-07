@@ -327,6 +327,11 @@ public class PdfMetadataExtractor {
                     && containsNoLeadingTitleWord(line)
                     && BankRegistry.UNKNOWN_ID.equals(BankRegistry.detect("", List.of(line)).id())) {
                 accountHolderName = line.trim();
+                // Wired late. The registry declared LEADING_NAME_LINE and this branch has always
+                // implemented it, but nothing recorded it -- so it reported as never-activated
+                // forever, which is indistinguishable from "no document has needed it". That is the
+                // one signal the coverage map exists to produce.
+                if (ctx != null) ctx.record("LEADING_NAME_LINE");
                 if (ctx != null) ctx.record("GRID_METADATA_TRAILING_LABEL");
                 continue;
             }

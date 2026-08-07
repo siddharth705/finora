@@ -133,6 +133,33 @@ how a system starts lying quietly:
 | checked, not applicable | ran, but the document carried no evidence to check against |
 | verified | a rule executed and the data agreed with the statement |
 
+## The five things, named
+
+These accumulate, and once two of them blur the measurements stop meaning anything. Stated once so
+they stay distinct:
+
+| | What it is | Example |
+|---|---|---|
+| **Capability** | a parser behaviour that improves extraction | `RIGHT_ALIGNED_AMOUNTS` |
+| **Diagnostic** | a measurement explaining parse quality, good or bad | `UNANCHORED_ROWS_ABANDONED` |
+| **Verification rule** | an independent correctness check against the document's own evidence | `BALANCE_CHAIN` |
+| **Evidence** | what one import left behind | layout fingerprint, row count, reason histogram |
+| **Corpus** | a committed regression document that exercises capabilities | `hdfc-txn-date-narration-header.trace` |
+
+**Capability and diagnostic are the pair that actually blurred**, and the cost was concrete:
+`UNANCHORED_ROWS_ABANDONED` — rows the parser could not confidently attach — was recorded through
+the capability channel. A capability count that rises as the engine abandons more rows is a metric
+that improves when quality drops. They now have separate channels on `DocumentContext`
+(`record` and `recordDiagnostic`), which is a distinction in the code rather than a convention
+someone has to remember.
+
+The other pair worth keeping apart is **evidence and diagnostic**. Evidence is what an import left
+behind; a diagnostic is a reading taken from it. Evidence is required by the rule below. A
+diagnostic is a thing someone decided to compute, and the Capability Rule governs whether it earned
+its place.
+
+---
+
 ## The Evidence Rule
 
 > **Every capability added to the import engine must leave behind evidence that it worked, failed,
