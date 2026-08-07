@@ -32,6 +32,7 @@ const PlatformAnalytics = lazy(() => import('./pages/PlatformAnalytics'));
 const AuditLog = lazy(() => import('./pages/AuditLog'));
 const SystemHealth = lazy(() => import('./pages/SystemHealth'));
 const Diagnostics = lazy(() => import('./pages/Diagnostics'));
+const LayoutIntelligence = lazy(() => import('./pages/LayoutIntelligence'));
 const LayoutStudio = lazy(() => import('./pages/LayoutStudio'));
 const Settings = lazy(() => import('./pages/Settings'));
 
@@ -84,6 +85,7 @@ export default function App() {
               <Route path="/audit" element={<ProtectedRoute><AuditLog /></ProtectedRoute>} />
               <Route path="/health" element={<ProtectedRoute><SystemHealth /></ProtectedRoute>} />
               <Route path="/diagnostics" element={<ProtectedRoute><Diagnostics /></ProtectedRoute>} />
+              <Route path="/layout-intelligence" element={<ProtectedRoute><LayoutIntelligence /></ProtectedRoute>} />
               <Route path="/layout-studio" element={<ProtectedRoute><LayoutStudio /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
 

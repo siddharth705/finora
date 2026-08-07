@@ -19,6 +19,10 @@ import type {
   StatementAnalysisSummaryDto,
   LearningQueueEvent, LearningQueueSummary,
   MerchantReviewItem,
+  LayoutSummary,
+  UnknownHeaderSummary,
+  LayoutTimelinePoint,
+  LayoutEvidenceReport,
 } from '../types';
 
 // Which portal this account belongs to. The same person may hold a USER account and an ADMIN
@@ -398,7 +402,7 @@ export const setupApi = {
 };
 
 /** Layout Studio -- the read side of the analysis evidence table. Same PLATFORM_DIAGNOSTICS_VIEW
- *  gate as adminLayoutsApi, different source: every upload attempt rather than only the confirmed
+ *  gate as adminLayoutsApi (below), different source: every upload attempt rather than only the confirmed
  *  imports, which is where the failures are. */
 export const adminStatementAnalysisApi = {
   recent: (limit = 50) =>
@@ -421,4 +425,40 @@ export const adminAnalysisRunApi = {
       .post<StatementAnalysisDetailDto>('/admin/imports/analyses', form)
       .then((r) => r.data);
   },
+};
+
+
+/**
+ * Layout Intelligence — the read side of the layout fingerprint recorded on every import since V39.
+ *
+ * The backend for all five of these has existed and been unreachable: no client referenced
+ * `/admin/imports/layouts` at all, so the fingerprint data went from "a column nothing reads" to
+ * "a service nothing calls". That is the exact gap
+ * docs/engineering/layout-intelligence-proposal.md was written to close, one layer up — and the
+ * comment above this block already referred to `adminLayoutsApi` as though it existed.
+ *
+ * Reads only. Nothing here changes parsing, and none of it feeds a decision the engine makes; it
+ * exists so the evidence report can be read by a human, which is precondition 3 of the proposal's
+ * §11 for ever building structural learning.
+ */
+export const adminLayoutsApi = {
+  /** Every layout, most-used first, with its stable/unstable capability split. */
+  overview: () =>
+    api.get<LayoutSummary[]>('/admin/imports/layouts').then((r) => r.data),
+  /** Layouts whose latest import diverges structurally from the pattern before it. */
+  drifting: () =>
+    api.get<LayoutSummary[]>('/admin/imports/layouts/drifting').then((r) => r.data),
+  /** Headers no hint list recognises, widest-spread first — a ranked list of where the parser
+   *  should improve, rather than a guess. */
+  unknownHeaders: () =>
+    api.get<UnknownHeaderSummary[]>('/admin/imports/layouts/unknown-headers').then((r) => r.data),
+  /** One layout's imports, oldest first, flagging each point where its structure changed. */
+  timeline: (fingerprint: string) =>
+    api
+      .get<LayoutTimelinePoint[]>(`/admin/imports/layouts/${encodeURIComponent(fingerprint)}/timeline`)
+      .then((r) => r.data),
+  /** First encounters versus recurrences, with a written verdict. The report that decides whether
+   *  layout reuse is ever worth building — including when the answer is no. */
+  evidence: () =>
+    api.get<LayoutEvidenceReport>('/admin/imports/layouts/evidence').then((r) => r.data),
 };

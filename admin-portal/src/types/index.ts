@@ -673,3 +673,79 @@ export interface MerchantReviewItem {
   transactionCount: number;
   createdAt: string;
 }
+
+/**
+ * Layout Intelligence — the read side of the layout fingerprint every import has been recording
+ * since V39 (docs/engineering/layout-intelligence-proposal.md).
+ *
+ * Anonymised by construction. Every type below is keyed by fingerprint and carries counts,
+ * durations and header names only — no user, account, transaction, bank, file name or balance
+ * reaches these shapes. That is what makes platform-wide aggregation operational telemetry rather
+ * than cross-user learning, and it is a property of the records themselves, so a new field cannot
+ * quietly reintroduce a customer identifier.
+ */
+export interface LayoutSummary {
+  fingerprint: string;
+  sourceFormat: string;
+  columns: number;
+  usageCount: number;
+  firstSeen: string;
+  lastSeen: string;
+  /** Fired on EVERY import of this layout — the stable core. */
+  stableCapabilities: string[];
+  /** Fired on some imports but not others. Either the documents genuinely differ or the layout is
+   *  drifting; this is the set worth looking at. */
+  unstableCapabilities: string[];
+  unknownHeaders: string[];
+  /** Null when no import of this layout has a recorded duration (everything before V53). */
+  medianDurationMs: number | null;
+  totalRowsImported: number;
+  totalRowsSkipped: number;
+}
+
+export interface UnknownHeaderSummary {
+  header: string;
+  importCount: number;
+  /** Distinct layouts containing it. Greater than one is the strong signal: a header spanning
+   *  several layouts is a gap in the parser's hint lists, not one bank's quirk. */
+  layoutCount: number;
+  fingerprints: string[];
+  firstSeen: string;
+  lastSeen: string;
+}
+
+export interface LayoutTimelinePoint {
+  importedAt: string;
+  capabilities: string[];
+  unknownHeaders: string[];
+  durationMs: number | null;
+  rowsImported: number;
+  rowsSkipped: number;
+  /** This import's capability or unknown-header set differs from the one before it. Says something
+   *  changed; says nothing about whether it is bad. */
+  changedFromPrevious: boolean;
+}
+
+/**
+ * The report that decides whether layout reuse is ever worth building.
+ *
+ * Every numeric field is nullable by absence: when there is not enough data to answer, the answer
+ * is omitted rather than defaulted to zero. Rendering a missing measurement as "0 ms" would close
+ * the question with a number nobody earned, so the UI must show these as "not measured" rather
+ * than falling back with `?? 0`.
+ */
+export interface LayoutEvidenceReport {
+  totalImportsAnalysed: number;
+  distinctLayouts: number;
+  recurringLayouts: number;
+  importsOnRecurringLayouts: number;
+  medianDurationFirstEncounter: number | null;
+  medianDurationRecurring: number | null;
+  avgUnknownHeadersFirstEncounter: number | null;
+  avgUnknownHeadersRecurring: number | null;
+  avgSkippedRowsFirstEncounter: number | null;
+  avgSkippedRowsRecurring: number | null;
+  /** Plain-language statement of what the numbers do and do not support — including, and most
+   *  often, "no evidence for reuse", which is a successful outcome rather than a gap. */
+  verdict: string;
+}

@@ -307,6 +307,28 @@ Revisit structural learning only once all three hold:
 2. A real confidence-scoring framework exists,
 3. Evidence shows recurring layouts would benefit from reuse.
 
+### Status of the three preconditions — 2026-08-07
+
+| # | Precondition | State |
+|---|---|---|
+| 1 | Layout intelligence exists | **Met.** §7's scope is built: aggregation, drift detection, unknown-header rollups, timelines and `evidenceReport()`. |
+| 2 | A real confidence-scoring framework exists | **Not met.** `Confidence` as a live metric is still gated behind Phase 3 of the principles doc — unchanged since §8 recorded it. |
+| 3 | Evidence shows recurring layouts would benefit | **Now answerable, not yet answered.** |
+
+Precondition 3 was not merely unmet, it was *unreadable*. `LayoutIntelligenceService` and all five
+`/admin/imports/layouts` endpoints shipped complete and **no client ever called them** — a
+repository-wide search for `layout-intelligence` in `admin-portal/src` returned nothing, and
+`endpoints.ts` carried a comment referring to an `adminLayoutsApi` that had never been written.
+
+That is this document's own §1 finding, one layer up: the fingerprint column was write-only, and
+the service built to read it became a service nothing called. The admin Layout Intelligence page
+(`admin-portal/src/pages/LayoutIntelligence.tsx`) closes that, leading with the verdict rather than
+the table.
+
+**The gate now rests on data, not on plumbing.** Read the verdict on a deployment with real import
+history before any structural-learning work begins. "No measurable benefit" remains a successful
+outcome, and §10 already commits to recording it here when it is known.
+
 At that point layout history becomes one more source of evidence contributing to confidence — never
 replacing validation, never bypassing the parsing pipeline.
 
