@@ -341,7 +341,10 @@ public class TransactionNormalizer {
             ruleId = suggestion.ruleId();
         }
 
-        boolean likelyDuplicate = duplicateDetector.isLikelyDuplicate(userId, date, amount, description);
+        // findMatch, not isLikelyDuplicate: one query either way, but it carries the evidence the
+        // review screen needs to let the user decide rather than just flagging the row (WI5).
+        var duplicateMatch = duplicateDetector.findMatch(userId, date, amount, description).orElse(null);
+        boolean likelyDuplicate = duplicateMatch != null;
 
         String referenceNumber = CsvParser.firstNonBlank(row, REFERENCE_HINTS);
         String balanceRaw = firstParseableAmount(row, BALANCE_HINTS);
@@ -352,6 +355,6 @@ public class TransactionNormalizer {
         }
 
         return new StagedRow(date, description, amount, type, suggestedCategory, source, ruleId,
-                likelyDuplicate, referenceNumber, balanceAfter);
+                likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch);
     }
 }

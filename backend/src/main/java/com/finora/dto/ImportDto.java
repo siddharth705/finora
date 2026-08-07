@@ -42,7 +42,68 @@ public class ImportDto {
             UUID ruleId,             // set only when categorySource is "user_rule" or "global_rule"
             boolean likelyDuplicate,
             String referenceNumber,  // best-effort, null when the source had no recognizable reference/cheque column
-            BigDecimal balanceAfter  // best-effort, null when the source had no recognizable running-balance column
+            BigDecimal balanceAfter, // best-effort, null when the source had no recognizable running-balance column
+            /**
+             * The evidence behind {@code likelyDuplicate}, or null when nothing matched (WI5).
+             *
+             * <p>{@code likelyDuplicate} is kept alongside it rather than replaced: it is the same
+             * fact, and every existing client already reads it. This adds WHY, which is what turns
+             * a filter into a decision the user can actually make.
+             */
+            DuplicateMatch duplicateMatch
+    ) {
+        /**
+         * The shape every caller used before WI5 added {@code duplicateMatch}.
+         *
+         * <p>A secondary constructor rather than making every existing construction pass an
+         * explicit null. Six test files and any future caller that does not care about duplicate
+         * evidence keep working unchanged, and — more to the point — the alternative was
+         * mechanically appending an argument to multi-line constructor calls, which is exactly the
+         * kind of edit that silently lands inside a nested {@code LocalDate.parse(...)} instead.
+         *
+         * <p>Null means "no duplicate evidence", which is the same thing the field means when the
+         * detector found nothing, so the two are not distinguishable and do not need to be.
+         */
+        public StagedRow(LocalDate date, String description, BigDecimal amount, String type,
+                          String suggestedCategory, String categorySource, UUID ruleId,
+                          boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter) {
+            this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, null);
+        }
+    }
+
+    /**
+     * What an existing transaction looked like, when a staged row appears to repeat it (WI5).
+     *
+     * <p>Duplicate detection stops being an automatic filter and becomes decision support. The
+     * system says what it found and why; the user decides. That inverts the old failure mode,
+     * where a row flagged as a duplicate could be dropped without the person ever seeing what it
+     * was supposedly a duplicate OF.
+     *
+     * <p>{@code confidence} has exactly one level today, and saying so is more useful than
+     * inventing a spectrum. {@code findPotentialDuplicatesByUser} matches on date AND amount AND
+     * description being identical, so every match is an exact one — there is no weaker tier to
+     * report. A fuzzier tier (same amount, date within a few days) would create a real spectrum,
+     * but that changes WHICH rows get flagged, which is a detection change rather than a
+     * presentation one, and does not belong in the work item that builds the review UI.
+     *
+     * @param existingTransactionId the transaction already in the ledger, so the client can link
+     *                              straight to it rather than making the user search
+     * @param matchCount            how many existing transactions matched. More than one usually
+     *                              means the user genuinely transacts this amount on this day
+     *                              repeatedly, which is exactly when "skip it" is the wrong default
+     */
+    public record DuplicateMatch(
+            UUID existingTransactionId,
+            UUID existingAccountId,
+            LocalDate existingDate,
+            String existingDescription,
+            BigDecimal existingAmount,
+            String existingType,
+            java.time.Instant existingImportedAt,
+            int matchCount,
+            String confidence,
+            String reason
     ) {}
 
     /**
