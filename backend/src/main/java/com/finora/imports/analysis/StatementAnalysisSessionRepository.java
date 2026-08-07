@@ -23,6 +23,16 @@ public interface StatementAnalysisSessionRepository extends JpaRepository<Statem
 
     Optional<StatementAnalysisSession> findByReference(String reference);
 
+    /**
+     * The evidence row for a staging session, when one was recorded.
+     *
+     * <p>A list rather than an {@code Optional}: there is no unique constraint on the column and
+     * inventing one would turn a duplicated telemetry write -- a measurement problem -- into a
+     * rejected upload. Ordered newest first so a trace shows the most recent observation if a
+     * session ever does acquire two.
+     */
+    List<StatementAnalysisSession> findByImportSessionIdOrderByCreatedAtDesc(UUID importSessionId);
+
     /** Newest first — what an admin opening the diagnostics view wants to see. */
     List<StatementAnalysisSession> findAllByOrderByCreatedAtDesc(Pageable pageable);
 

@@ -14,6 +14,16 @@ import java.util.UUID;
 public interface StatementImportRepository extends JpaRepository<StatementImport, UUID> {
     List<StatementImport> findByUserIdOrderByImportedAtDesc(UUID userId);
 
+    /**
+     * The import an asynchronous job produced, if it produced one.
+     *
+     * <p>{@code Optional} rather than a list because V67's partial unique index makes it one: a
+     * replayed job cannot import twice. Used by the unified import trace to answer "did this job
+     * actually land transactions", which the job row itself cannot say -- it reaches COMPLETED when
+     * staging finishes, and confirming is still the user's decision.
+     */
+    Optional<StatementImport> findByImportJobId(UUID importJobId);
+
     // Admin Portal, Operational Dashboard + Statement Import health provider -- imports.status
     // never actually leaves "COMPLETED" anywhere in this codebase today (CsvImportService/
     // StatementImportService both throw synchronously on a parse failure rather than persisting

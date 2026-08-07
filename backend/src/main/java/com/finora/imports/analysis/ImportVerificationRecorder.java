@@ -5,8 +5,9 @@ import com.finora.dto.ImportDto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -22,8 +23,18 @@ import java.util.UUID;
  *
  * <p>Same discipline as {@link StatementAnalysisRecorder}, for the same two reasons: the findings
  * worth keeping are often attached to an upload that then fails, and a telemetry insert must never
- * be able to fail a customer's import. {@code REQUIRES_NEW} keeps the write out of any transaction a
- * caller may later mark rollback-only; the catch keeps a failed write to a logged measurement gap.
+ * be able to fail a customer's import. A {@code REQUIRES_NEW} unit of work keeps the write out of
+ * any transaction a caller may later mark rollback-only; the catch keeps a failed write to a logged
+ * measurement gap.
+ *
+ * <h2>Why a TransactionTemplate and not {@code @Transactional(REQUIRES_NEW)}</h2>
+ *
+ * <p><b>Because the catch has to enclose the commit.</b> Under the annotation the proxy commits
+ * after the method body returns, so a constraint violation leaves the transaction rollback-only and
+ * arrives as an {@code UnexpectedRollbackException} at commit time — after the in-method catch has
+ * already reported success — and reaches the caller. For this class the caller is a customer's
+ * upload. {@code ImportStageRecorder} documents the same reasoning and the integration test that
+ * caught it.
  *
  * <h2>The allowlist, and why it is not a filter</h2>
  *
@@ -78,13 +89,17 @@ public class ImportVerificationRecorder {
     private final ImportVerificationFindingRepository repository;
     private final StatementAnalysisSessionRepository analysisRepository;
     private final ObjectMapper objectMapper;
+    private final TransactionTemplate transactions;
 
     public ImportVerificationRecorder(ImportVerificationFindingRepository repository,
                                       StatementAnalysisSessionRepository analysisRepository,
-                                      ObjectMapper objectMapper) {
+                                      ObjectMapper objectMapper,
+                                      PlatformTransactionManager transactionManager) {
         this.repository = repository;
         this.analysisRepository = analysisRepository;
         this.objectMapper = objectMapper;
+        this.transactions = new TransactionTemplate(transactionManager);
+        this.transactions.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     /**
@@ -99,17 +114,18 @@ public class ImportVerificationRecorder {
      * @param bySection one report per staged section, in section order; nulls are tolerated because
      *                  the CSV path can stage without verifying
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public int recordForAnalysis(String analysisReference, List<ImportDto.VerificationReport> bySection) {
         if (analysisReference == null || bySection == null || bySection.isEmpty()) return 0;
         try {
-            UUID sessionId = analysisRepository.findByReference(analysisReference)
-                    .map(StatementAnalysisSession::getId)
-                    .orElse(null);
-            if (sessionId == null) return 0;
-            return save(bySection, (sectionIndex, finding) -> ImportVerificationFinding.forAnalysis(
-                    sessionId, sectionIndex, finding.rule(), finding.outcome(),
-                    writeDetails(finding, analysisReference)));
+            return inOwnTransaction(() -> {
+                UUID sessionId = analysisRepository.findByReference(analysisReference)
+                        .map(StatementAnalysisSession::getId)
+                        .orElse(null);
+                if (sessionId == null) return 0;
+                return save(bySection, (sectionIndex, finding) -> ImportVerificationFinding.forAnalysis(
+                        sessionId, sectionIndex, finding.rule(), finding.outcome(),
+                        writeDetails(finding, analysisReference)));
+            });
         } catch (RuntimeException e) {
             log.error("Could not record verification findings for analysis {} -- which rules ran on "
                     + "this import is now unanswerable", analysisReference, e);
@@ -118,18 +134,25 @@ public class ImportVerificationRecorder {
     }
 
     /** The same, for the asynchronous worker, which has an import job and no analysis session. */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public int recordForJob(UUID importJobId, List<ImportDto.VerificationReport> bySection) {
         if (importJobId == null || bySection == null || bySection.isEmpty()) return 0;
         try {
-            return save(bySection, (sectionIndex, finding) -> ImportVerificationFinding.forJob(
-                    importJobId, sectionIndex, finding.rule(), finding.outcome(),
-                    writeDetails(finding, importJobId.toString())));
+            return inOwnTransaction(() -> save(bySection,
+                    (sectionIndex, finding) -> ImportVerificationFinding.forJob(
+                            importJobId, sectionIndex, finding.rule(), finding.outcome(),
+                            writeDetails(finding, importJobId.toString()))));
         } catch (RuntimeException e) {
             log.error("Could not record verification findings for import job {} -- which rules ran "
                     + "on this import is now unanswerable", importJobId, e);
             return 0;
         }
+    }
+
+    /** One unit of recording, committed before this method returns so the caller's catch can see a
+     *  failure. Returns 0 rather than null when the template hands back nothing. */
+    private int inOwnTransaction(java.util.function.Supplier<Integer> work) {
+        Integer written = transactions.execute(status -> work.get());
+        return written == null ? 0 : written;
     }
 
     private interface FindingFactory {
