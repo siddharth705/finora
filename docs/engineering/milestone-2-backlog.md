@@ -1,15 +1,28 @@
-# Milestone 2 — backlog
+# Deferred work backlog
 
-Everything the Import Reliability milestone deliberately did not do, moved here so that milestone
-can close with an empty scope rather than a permanent "still open" section.
+Everything the Import Reliability milestone deliberately did not do. It was written as a
+"Milestone 2 backlog", which was wrong in one important way: a backlog is a list of leftovers, and
+leftovers make an incoherent release. A milestone should represent one business outcome.
 
-Nothing on this list is a completion criterion for Milestone 1. Each was either scoped out at design
-time with a recorded reason, or opened by work that milestone did and left deliberately unfinished.
-The distinction that matters: **none of these is a defect.** They are enhancements to something that
-works.
+**Milestone 2 is now defined as [Import at Scale](milestone-2-import-at-scale.md)** — make Finora
+capable of processing large, complex and varied statements reliably, with full visibility into the
+import lifecycle. That charter pulls what it needs from this list and names what it deliberately
+leaves behind. This file is the pool it draws from, not the plan.
 
-Ordered by what the evidence says, not by appeal. Several of these are speculative until real usage
-tells us otherwise, and saying so here is cheaper than discovering it after they are built.
+Where each item went:
+
+| Item | Now |
+|---|---|
+| Multi-account duplicate review | **Milestone 2** — closes a correctness gap |
+| WI1A — bulk recategorization | **Milestone 2** — carried over, do it early |
+| Corpus-driven regression | **Milestone 2** — and its first dependency |
+| Cross-browser Playwright projects | **Milestone 2** — carried over |
+| Merchant Intelligence Workbench (WI4A) | **Milestone 3** — higher leverage on top of reliable imports |
+| Cross-user merchant intelligence | Its own milestone; changes what a merchant *is* |
+| Security follow-ups, Bug 30 | Release-blocking work running **alongside** Milestone 2, not defining it |
+
+Nothing here is a defect except where it says so. The detail below is kept because the reasoning
+behind each deferral is worth more than the list of names.
 
 ---
 
