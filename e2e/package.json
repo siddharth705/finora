@@ -1,7 +1,7 @@
 {
   "name": "finora-e2e",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Cross-app end-to-end tests. Standalone, like frontend/ and admin-portal/ and mobile/ -- the repo has no npm workspaces, each app installs its own dependencies.",
   "scripts": {
     "report": "playwright show-report",

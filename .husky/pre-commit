@@ -3,6 +3,15 @@
 # when frontend/ or admin-portal/ files are staged; backend compile check only runs when
 # backend/ files are staged. Full test suites stay in CI (see .github/workflows/ci.yml) rather
 # than here, since a pre-commit hook that takes minutes gets bypassed with --no-verify in practice.
+#
+# Every checker below is invoked as `python3`, never `python`. This is not style. macOS removed the
+# bare `python` command in 12.3 and Ubuntu has not shipped it since 20.04, so on a current machine
+# `python` is simply absent -- and because each call is `|| exit 1`, the first one turns into
+# "python: command not found" and blocks EVERY commit, including the ones the guards would have
+# passed. The failure arrives the moment someone runs `npm install` at the repo root to install
+# these hooks, which makes it look like installing the hooks broke the repository.
+#
+# .github/workflows/ci.yml calls the same scripts the same way, for the same reason.
 
 staged=$(git diff --cached --name-only)
 
@@ -17,14 +26,14 @@ sh scripts/check-fixture-hygiene.sh || exit 1
 # staged, and this one cost the backend job every CI run it ever had. Catching it here matters
 # more than the CI copy, because core.fileMode is false on Windows -- the bit cannot be restored
 # by chmod, so a developer who "fixes" it locally and commits changes nothing at all.
-python scripts/check-executable-bits.py || exit 1
+python3 scripts/check-executable-bits.py || exit 1
 
 # Only when an API client is actually being touched -- this is the exact moment drift happens: one
 # client gets fixed and the other two don't. That is how a 401-handling fix landed on web, missed
 # mobile, and shipped a bug where a mistyped password revoked every session on every device. See
 # the script's docstring, which also records why this is a check rather than a shared module.
 if echo "$staged" | grep -qE '^(frontend|admin-portal|mobile)/src/api/client\.ts$'; then
-  python scripts/check-client-auth-policy.py || exit 1
+  python3 scripts/check-client-auth-policy.py || exit 1
 fi
 
 # Any staged app source can introduce a hardcoded mailbox, so this keys off src/ broadly rather
@@ -32,17 +41,17 @@ fi
 # dead mailto on a live marketing page, and the address is easiest to fix while it is still being
 # typed. Runs whole-repo, so it also catches a copy staged in a different app than this one.
 if echo "$staged" | grep -qE '^(frontend|admin-portal|mobile)/src/'; then
-  python scripts/check-contact-addresses.py || exit 1
+  python3 scripts/check-contact-addresses.py || exit 1
   # Same trigger, same reason: a dashboard label that names the wrong month is easiest to fix while
   # it is still being typed, and this is exactly the kind of change that lands in one client only.
-  python scripts/check-reporting-period-labels.py || exit 1
+  python3 scripts/check-reporting-period-labels.py || exit 1
 fi
 
 # Keyed off both sides of the contract: renaming a meter in the framework breaks a dashboard just as
 # surely as mistyping the query does, and the person renaming the meter is the one least likely to
 # think about Grafana.
 if echo "$staged" | grep -qE '^(ops/monitoring/|backend/src/main/java/com/finora/observability/)'; then
-  python scripts/check-dashboard-metrics.py || exit 1
+  python3 scripts/check-dashboard-metrics.py || exit 1
 fi
 
 if echo "$staged" | grep -qE '^(frontend|admin-portal|mobile)/'; then
@@ -70,7 +79,7 @@ if echo "$staged" | grep -q '^backend/'; then
   # Whole-repo rather than staged-files-only, and deliberately: this catches the case where
   # MOVING type A breaks unrelated file B that relied on them sharing a package. B is not staged,
   # which is exactly why the bug survives review.
-  python scripts/check-imports.py || exit 1
+  python3 scripts/check-imports.py || exit 1
 
   (cd backend && ./mvnw -q -o compile) || {
     echo "Backend fails to compile — commit blocked. Run 'cd backend && ./mvnw compile' for details." >&2

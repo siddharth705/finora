@@ -13,18 +13,30 @@
  *   node scripts/stack.mjs reset   destroy the database and start again, empty
  *   node scripts/stack.mjs down    stop everything
  *
- * The backend runs from `backend/target/finora-backend-0.1.0.jar`, so it is whatever was last
+ * The backend runs from the jar in `backend/target/`, so it is whatever was last
  * built. That is on purpose: a test run should exercise the code you built, and "did you rebuild"
  * is a question you want to be able to answer, not one a script hides from you.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..');
-const JAR = resolve(REPO, 'backend', 'target', 'finora-backend-0.1.0.jar');
+// Found by pattern, not pinned by name. The jar is named from backend/pom.xml's <version>, so a
+// hardcoded filename means every release has to bump a string here, in e2e/README.md and in
+// .github/workflows/ci.yml -- and whichever one gets missed fails with "Unable to access jarfile",
+// which says nothing about versions and sends you looking at the wrong thing.
+// The `.jar$` anchor matters: `mvn package` also leaves a `finora-backend-<version>.jar.original`
+// next to it, which is the pre-repackage artifact and will not boot.
+const TARGET_DIR = resolve(REPO, 'backend', 'target');
+const JAR = resolve(
+  TARGET_DIR,
+  (existsSync(TARGET_DIR) ? readdirSync(TARGET_DIR) : []).find((f) =>
+    /^finora-backend-.*\.jar$/.test(f),
+  ) ?? 'finora-backend.jar',
+);
 
 const CONTAINER = 'finora-e2e-db';
 const DB_PORT = process.env.FINORA_E2E_DB_PORT ?? '5433';
@@ -144,7 +156,7 @@ async function up() {
       `The backend never reported healthy at ${HEALTH}.\n` +
         `It runs detached, so check for a port clash on ${API_PORT} or a migration failure by\n` +
         `starting it in the foreground:\n` +
-        `  cd backend && SERVER_PORT=${API_PORT} DB_PORT=${DB_PORT} java -jar target/finora-backend-0.1.0.jar`
+        `  cd backend && SERVER_PORT=${API_PORT} DB_PORT=${DB_PORT} java -jar target/finora-backend-*.jar`
     );
   }
 
