@@ -1,5 +1,16 @@
 # Import Pipeline Profile — 2026-08-07
 
+> **Status update (same day).** Recommendation 1 — caching `category_rules` per import — **landed in
+> `b7aab9d`, thirty-nine minutes after this profile was committed.** The 2.00 queries/row figure
+> below is therefore historical, not current.
+>
+> **Re-measured after that fix: 3.00 statements/row** (was ~6.0–6.6). Recommendations 2 and 3
+> remain outstanding.
+>
+> Do not re-derive these numbers by parsing logs. `ImportQueryCountIT` measures marginal cost per
+> row on every CI run, prints it, and fails if it rises — precisely because this document went stale
+> in under an hour and a measurement that is expensive to repeat is one that gets repeated never.
+
 Measurement, not a proposal. No code was changed. This supplies the evidence that
 `docs/engineering/import-pipeline-scaling-design.md` §8 flagged as missing: whether the ~16ms
 per-row import cost is N+1 database access, and if so, where.
