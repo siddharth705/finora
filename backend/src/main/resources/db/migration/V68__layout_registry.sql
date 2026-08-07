@@ -126,7 +126,7 @@ CREATE TABLE layout_registry (
 -- until then is honest.
 --
 -- GROUP BY is what guarantees one row per fingerprint; no ON CONFLICT clause is needed because the
--- table was created empty four statements ago.
+-- table was created empty by the statement above.
 INSERT INTO layout_registry (
     id, fingerprint, source_format, status, first_seen, last_seen, observation_count,
     created_at, updated_at)
