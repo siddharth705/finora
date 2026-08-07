@@ -106,24 +106,26 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Pins the interpreter the guard scripts run under, and installs what they import.
+      # check-dashboard-metrics.py imports PyYAML and nothing ever installed it. That worked by
+      # accident twice over -- the ubuntu-latest image ships PyYAML, and this Mac's SYSTEM python3
+      # happened to have a user-installed copy -- until an unrelated `brew install` pulled in a
+      # newer Python that took first place on PATH, and the guard started failing with
+      # ModuleNotFoundError on a commit that had not touched it. A hosted runner hides that by
+      # rebuilding its image every run; a machine that persists does not.
       #
-      # Both halves are load-bearing, and both were learned the hard way on the self-hosted runner.
+      # A venv rather than actions/setup-python, which was tried first and FAILS on this runner:
+      # setup-python resolves a version from the runner tool cache or downloads one, and there is
+      # no macOS/arm64 build for it to use -- _work/_tool/ has Java and node in it and no Python at
+      # all. A venv needs nothing but the python3 already on the box.
       #
-      # The pin, because `python3` used to mean whatever was first on the runner's PATH. Installing
-      # an unrelated Homebrew formula pulled in a newer Python that took first place, and the guard
-      # below started failing with ModuleNotFoundError on a commit that had not touched it. A hosted
-      # runner hides this by rebuilding the image; a machine that persists does not.
-      #
-      # The install, because check-dashboard-metrics.py imports PyYAML and nothing ever installed
-      # it. It worked by accident twice over: the ubuntu-latest image ships PyYAML, and this Mac's
-      # SYSTEM python3 happened to have a user-installed copy. Neither is a guarantee.
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
+      # This pins the PACKAGES, not the interpreter version, and the packages were the actual
+      # problem. GITHUB_PATH puts the venv first for every later step, so `python3 scripts/...`
+      # below resolves here rather than to whatever PATH happens to offer.
       - name: Python guard-script dependencies
-        run: pip install -r scripts/requirements.txt
+        run: |
+          python3 -m venv "$RUNNER_TEMP/guard-venv"
+          "$RUNNER_TEMP/guard-venv/bin/pip" install -q -r scripts/requirements.txt
+          echo "$RUNNER_TEMP/guard-venv/bin" >> "$GITHUB_PATH"
 
       # scripts/check-xml-comments.py exists because exactly this broke backend/pom.xml once --
       # an internal "--" inside an XML comment, which Maven's POM parser rejects outright with an
@@ -254,12 +256,6 @@ jobs:
       - uses: actions/checkout@v4
 
 
-      # Same reason as the backend job: pin the interpreter rather than inherit whatever the runner
-      # has on PATH. No requirements install here -- the scripts these jobs run are stdlib-only.
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
       - uses: actions/setup-node@v4
         with:
           # Matches the engines field in frontend/package.json (">=20.19.0").
@@ -324,12 +320,6 @@ jobs:
       - uses: actions/checkout@v4
 
 
-      # Same reason as the backend job: pin the interpreter rather than inherit whatever the runner
-      # has on PATH. No requirements install here -- the scripts these jobs run are stdlib-only.
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -365,12 +355,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-
-      # Same reason as the backend job: pin the interpreter rather than inherit whatever the runner
-      # has on PATH. No requirements install here -- the scripts these jobs run are stdlib-only.
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
 
       - uses: actions/setup-node@v4
         with:
