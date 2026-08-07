@@ -16,13 +16,64 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+# Every job below runs on a SELF-HOSTED macOS (Apple Silicon) runner rather than ubuntu-latest.
+#
+# Why: GitHub-hosted runners stopped starting entirely ("The job was not started because recent
+# account payments have failed or your spending limit needs to be increased"), which is not a
+# failure any workflow change can fix and which blocked every push and PR. Self-hosting removes CI
+# from that dependency.
+#
+# macOS because that is the runner that exists. A Linux runner would have been the smaller diff,
+# since it keeps the two things below working untouched, but it needs a Linux host and there isn't
+# one. Two porting changes were required to leave ubuntu-latest, and both are noted at their call
+# sites so they are not mistaken for style:
+#
+#   * The `smoke` job's Postgres. It was a `services:` container, and service containers are a
+#     Linux-container feature that does not run on a macOS runner at all. It is now an explicit
+#     `docker run` with its own readiness wait and an always-run teardown.
+#   * `playwright install --with-deps`. The --with-deps flag shells out to apt-get and has no macOS
+#     path, so it is dropped; browser dependencies come from the OS instead.
+#
+# The label list is [self-hosted, macOS, ARM64] rather than bare `self-hosted`, which would match
+# ANY self-hosted runner: the day a second one joins on a different OS or architecture it could
+# otherwise silently claim these jobs and fail in ways that look like product breakage.
+#
+# WHAT THE RUNNER HOST MUST PROVIDE. These are assumptions ubuntu-latest satisfied for free, and a
+# self-hosted Mac does not:
+#
+#   * Docker Desktop, RUNNING. Needed twice over: Testcontainers in the `backend` job, and the
+#     Postgres container in `smoke`. This is the one that will bite, because it is a desktop app
+#     rather than a daemon: a reboot, a logout, or a laptop that slept through the night leaves
+#     Docker down, and both jobs then fail at container startup rather than on an assertion.
+#   * python3, for the thirteen guard scripts. macOS has shipped it for years, but note those steps
+#     invoke `python3` and NOT `python`: macOS removed the bare `python` command in 12.3, and a
+#     bare Ubuntu has not had it since 20.04 either, so `python3` is the only spelling that works
+#     on the hosted image, this Mac, and any future Linux runner alike.
+#   * Enough disk for a full checkout plus ~/.m2 and node_modules across five jobs.
+#
+# Java and Node are NOT in that list: actions/setup-java and actions/setup-node install them per
+# job, exactly as on a hosted runner, and Temurin publishes ARM64 macOS builds.
+#
+# OPERATIONAL NOTES, worth knowing before the first run.
+#
+#   * A single runner executes ONE job at a time, so these five jobs stop being parallel and
+#     serialise instead. Nothing fails, but wall-clock for a full run becomes roughly the sum
+#     rather than the slowest, and `timeout-minutes` counts only a job's own execution, not time
+#     spent queued. Register more runners if that matters.
+#   * The workspace is REUSED between runs rather than being a fresh VM. actions/checkout cleans it
+#     (`git clean -ffdx`) so tracked state is fine, but anything living outside the workspace --
+#     ~/.m2, Docker containers, stray processes on the app ports -- survives. That is why the
+#     Postgres step force-removes any container left by a previous run before starting a new one.
+#
+# If the billing block is lifted and hosted runners are wanted back, the revert is these five
+# `runs-on` values plus restoring the `services:` block; keep the python3 spelling either way.
 jobs:
   backend:
     # No test count in the name: it was "934" while the suite was already at 936, because a
     # hardcoded total goes stale on the very next commit that adds a test and nothing fails when
     # it does. The job reports its own real count in the run output.
     name: Backend (Java 21)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, ARM64]
     # Without this a job runs to GitHub's 6-hour default. The realistic way to hit that is not a
     # slow test but a stuck one: this job starts Testcontainers, and a container that never becomes
     # healthy leaves the suite waiting rather than failing. Six hours of runner allowance is the
@@ -70,24 +121,24 @@ jobs:
       # mistyped password revoked every session on every device" -- and a guard against a bug that
       # already shipped once should not be skippable.
       - name: Client auth policy
-        run: python scripts/check-client-auth-policy.py
+        run: python3 scripts/check-client-auth-policy.py
 
       - name: XML comment check
-        run: python scripts/check-xml-comments.py
+        run: python3 scripts/check-xml-comments.py
 
       # Runs before setup-java so the diagnosis arrives before the step that would fail on it.
       # ./mvnw was committed non-executable and every backend run died here with a bare
       # "Permission denied" / exit 126 -- accurate, but it names a temp shell script rather than
       # the committed mode, which is why it went unread for the workflow's whole life.
       - name: Executable bits
-        run: python scripts/check-executable-bits.py
+        run: python3 scripts/check-executable-bits.py
 
       # A Grafana panel querying a metric that does not exist renders an empty graph, and an alert
       # on a non-existent series never fires -- both indistinguishable from a healthy system. The
       # translation is easy to get wrong because Micrometer renames on the way out: dots become
       # underscores, counters gain _total, timers expand into _seconds_bucket/_count/_sum.
       - name: Dashboard metrics
-        run: python scripts/check-dashboard-metrics.py
+        run: python3 scripts/check-dashboard-metrics.py
 
       # Also before setup-java, and for the same reason: it names the file and the type, where
       # javac names a symbol at a line in whatever compiled first. Cheap enough (~0.4s over 476
@@ -98,10 +149,10 @@ jobs:
       # it still detects a genuinely missing import, and still does NOT fire on the four patterns
       # that produced its historical false positives.
       - name: Import cross-reference (self-test)
-        run: python scripts/check-imports.py --self-test
+        run: python3 scripts/check-imports.py --self-test
 
       - name: Import cross-reference
-        run: python scripts/check-imports.py
+        run: python3 scripts/check-imports.py
 
       - uses: actions/setup-java@v4
         with:
@@ -111,7 +162,10 @@ jobs:
           cache: 'maven'
 
       # No explicit Docker setup step: the suite's Testcontainers integration tests need a Docker
-      # daemon, and ubuntu-latest runners already have one running.
+      # daemon. On ubuntu-latest one was always running; on the self-hosted runner this is now a
+      # provisioning requirement on the host rather than something the image guarantees, which is
+      # why it is listed at the top of this file. If it is missing, every *IT class fails at
+      # container startup rather than on an assertion.
       #
       # This claim used to be false. The 29 *IT classes never ran: surefire's default includes
       # don't match *IT.java (that's maven-failsafe's convention) and failsafe was never
@@ -131,7 +185,7 @@ jobs:
       # only adds a failure of its own for a hollow result (no reports, 0 tests, or 0 *IT).
       - name: Test summary
         if: always()
-        run: python scripts/summarize-surefire.py
+        run: python3 scripts/summarize-surefire.py
 
       # guardian-report.py was the last checker referenced only in documentation -- never in CI,
       # a hook, or a package script. That is precisely the anti-pattern the XML-comment step above
@@ -145,7 +199,7 @@ jobs:
       # being generated is a failure rather than silence.
       - name: Repository Guardian report
         if: always()
-        run: python scripts/guardian-report.py
+        run: python3 scripts/guardian-report.py
 
       # The XML behind the summary, for reading a stack trace without re-running the suite.
       # Failures only: on a green run nobody opens it, and it is ~2MB of XML per run.
@@ -159,7 +213,7 @@ jobs:
 
   frontend:
     name: User frontend
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, ARM64]
     # See the backend job for why. Shorter budget: no containers here, ~1m40s today.
     timeout-minutes: 15
     steps:
@@ -191,7 +245,7 @@ jobs:
       # address is equally broken in admin-portal or mobile, and the whole point is that no copy of
       # it escapes. Cheap and dependency-free, so it sits with lint rather than behind the tests.
       - name: Contact addresses
-        run: python scripts/check-contact-addresses.py
+        run: python3 scripts/check-contact-addresses.py
 
       # Runs from the repo root and scans web AND mobile: the dashboard's monthly figures are the
       # newest month with DATA, not necessarily the current one, and a client that labels them
@@ -199,7 +253,7 @@ jobs:
       # the web client and mobile kept three hardcoded claims -- the same web-fixed/mobile-missed
       # drift check-client-auth-policy.py exists for, one layer up.
       - name: Reporting period labels
-        run: python scripts/check-reporting-period-labels.py
+        run: python3 scripts/check-reporting-period-labels.py
 
       # `npm audit` in this repo has never been empty -- 18 vulnerability entries across the three
       # JS apps, every one already judged not to apply. That is exactly how a real advisory gets
@@ -209,7 +263,7 @@ jobs:
       # for re-checking, or it fails here. It also fails if an accepted entry stops being reported,
       # so stale exceptions cannot pile up and hide the next real one.
       - name: Dependency advisories
-        run: python scripts/check-dependency-advisories.py frontend
+        run: python3 scripts/check-dependency-advisories.py frontend
 
       - name: Test
         working-directory: frontend
@@ -222,7 +276,7 @@ jobs:
 
   admin-portal:
     name: Admin portal
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, ARM64]
     # See the backend job for why. Shorter budget: no containers here, ~1m40s today.
     timeout-minutes: 15
     steps:
@@ -245,7 +299,7 @@ jobs:
 
       # See the user frontend's step for why this exists.
       - name: Dependency advisories
-        run: python scripts/check-dependency-advisories.py admin-portal
+        run: python3 scripts/check-dependency-advisories.py admin-portal
 
       - name: Test
         working-directory: admin-portal
@@ -257,7 +311,7 @@ jobs:
 
   mobile:
     name: Mobile (Expo)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, ARM64]
     # See the backend job for why. Shorter budget: no containers here, ~1m40s today.
     timeout-minutes: 15
     steps:
@@ -282,7 +336,7 @@ jobs:
 
       # See the user frontend's step for why this exists.
       - name: Dependency advisories
-        run: python scripts/check-dependency-advisories.py mobile
+        run: python3 scripts/check-dependency-advisories.py mobile
 
       - name: Type-check
         working-directory: mobile
@@ -321,7 +375,7 @@ jobs:
   # minutes on a pull request.
   smoke:
     name: End-to-end smoke (Chromium)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, ARM64]
 
     # Blocking, because it has passed on an isolated checkout: fresh clone, fresh database, fresh
     # backend, 9 specs in 34s. That run was worth doing rather than assuming -- it caught two
@@ -339,25 +393,44 @@ jobs:
     # assertion is what catches it getting slower.
     timeout-minutes: 25
 
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: finora
-          POSTGRES_USER: finora
-          POSTGRES_PASSWORD: finora
-        ports:
-          - 5433:5432
-        # Without this the backend starts against a Postgres that has not finished initialising and
-        # fails its first migration, which reads as a product failure and is not one.
-        options: >-
-          --health-cmd "pg_isready -U finora -d finora"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
     steps:
       - uses: actions/checkout@v4
+
+      # This was a `services:` container on ubuntu-latest. Service containers are a Linux-container
+      # feature and do not run on a macOS runner at all, so the same container is started by hand.
+      #
+      # Three things the `services:` block gave us for free that have to be written out here:
+      #
+      #   * The readiness gate. Without it the backend starts against a Postgres that has not
+      #     finished initialising and dies on its first migration, which reads as a product failure
+      #     and is not one. This is the `pg_isready` loop, matching the old health-cmd.
+      #   * Teardown. `if: always()` so a failed or cancelled run does not leave the container (and
+      #     port 5433) held against the next one.
+      #   * A clean slate. A self-hosted workspace is REUSED, so unlike a fresh hosted VM a
+      #     container from a previous run may still be up. `rm -f` first, unconditionally.
+      #
+      # 5433:5432 preserved exactly: the port is what e2e/ and the backend step below are
+      # configured against, and it is deliberately not 5432 so a developer's local Postgres and a
+      # CI run on the same machine cannot fight over the port.
+      - name: Start Postgres
+        run: |
+          docker rm -f finora-ci-postgres >/dev/null 2>&1 || true
+          docker run -d --name finora-ci-postgres \
+            -e POSTGRES_DB=finora \
+            -e POSTGRES_USER=finora \
+            -e POSTGRES_PASSWORD=finora \
+            -p 5433:5432 \
+            postgres:16-alpine
+          for i in $(seq 1 30); do
+            if docker exec finora-ci-postgres pg_isready -U finora -d finora >/dev/null 2>&1; then
+              echo "postgres ready after ${i} attempt(s)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "postgres did not become ready within 60s"
+          docker logs finora-ci-postgres
+          exit 1
 
       - uses: actions/setup-java@v4
         with:
@@ -384,9 +457,15 @@ jobs:
       # Chromium only. The Firefox and Edge projects exist (npm run test:browsers) and are a
       # pre-release check -- engine-specific rendering changes far less often than business logic,
       # and tripling this job's runtime to find out would not be a good trade on every PR.
+      #
+      # No --with-deps, which it carried on ubuntu-latest. That flag installs the browser's system
+      # libraries via apt-get and is Debian/Ubuntu-only; on macOS Playwright has no equivalent to
+      # run, because the frameworks Chromium links against ship with the OS. Passing it here is at
+      # best a no-op and at worst an error, and it would come back the moment this returns to a
+      # Linux runner.
       - name: Install Chromium
         working-directory: e2e
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       # Started here rather than by the suite's own stack script, which is built for a developer's
       # machine: it manages a Docker container (CI provides Postgres as a service) and detaches the
@@ -440,3 +519,21 @@ jobs:
           name: smoke-backend-log
           path: ${{ runner.temp }}/backend.log
           retention-days: 7
+
+      # Teardown, which ubuntu-latest did not need. The hosted VM was destroyed after the job and
+      # took both of these with it; a self-hosted machine keeps running, so anything left here is
+      # still holding its port when the next run starts. That failure is particularly nasty to
+      # diagnose because it lands on the NEXT commit: Postgres finds 5433 taken, or the backend
+      # finds 8081 taken, and the run fails for a reason that has nothing to do with the change
+      # that triggered it.
+      #
+      # The backend needs an explicit kill because it is started with `&`. Backgrounding detaches it
+      # from the step's shell, so it outlives the step, the job, and the workflow.
+      #
+      # `if: always()` because a failed or cancelled run is exactly when this matters most, and
+      # `|| true` on each so a teardown that finds nothing left to clean is not itself a failure.
+      - name: Tear down Postgres and the backend
+        if: always()
+        run: |
+          docker rm -f finora-ci-postgres >/dev/null 2>&1 || true
+          pkill -f 'finora-backend-0.1.0.jar' >/dev/null 2>&1 || true
