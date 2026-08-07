@@ -21,7 +21,7 @@ jobs:
     # No test count in the name: it was "934" while the suite was already at 936, because a
     # hardcoded total goes stale on the very next commit that adds a test and nothing fails when
     # it does. The job reports its own real count in the run output.
-    name: Backend (Java 21)
+    name: Backend (Java 25)
     runs-on: ubuntu-latest
     # Without this a job runs to GitHub's 6-hour default. The realistic way to hit that is not a
     # slow test but a stuck one: this job starts Testcontainers, and a container that never becomes
@@ -105,7 +105,7 @@ jobs:
 
       - uses: actions/setup-java@v4
         with:
-          java-version: '21'
+          java-version: '25'
           distribution: 'temurin'
           # Keys off pom.xml, so a dependency change busts it and nothing else does.
           cache: 'maven'
@@ -359,9 +359,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Must track backend/pom.xml's java.version, not just the backend job's: this job runs
+      # `./mvnw package` itself (see "Build the backend" below), so a JDK older than the compiler
+      # release target fails here with "release version N not supported" even though nothing about
+      # the smoke tests changed. Raise both together.
       - uses: actions/setup-java@v4
         with:
-          java-version: '21'
+          java-version: '25'
           distribution: temurin
           cache: maven
 
