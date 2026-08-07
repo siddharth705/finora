@@ -2,8 +2,10 @@ package com.finora.observability;
 
 import com.finora.AbstractIntegrationTest;
 import com.finora.entity.User;
+import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
+import com.finora.testsupport.TestSessions;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -41,6 +43,7 @@ class WorkerMetricsExportIT extends AbstractIntegrationTest {
     @Autowired private WorkerObservability observability;
     @Autowired private UserRepository userRepository;
     @Autowired private JwtService jwtService;
+    @Autowired private RefreshTokenRepository refreshTokens;
 
     private HttpHeaders adminBearer() {
         User user = new User();
@@ -52,7 +55,7 @@ class WorkerMetricsExportIT extends AbstractIntegrationTest {
         user = userRepository.save(user);
 
         HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(jwtService.generateToken(user.getId(), user.getEmail(), UUID.randomUUID()));
+        headers.setBearerAuth(TestSessions.accessTokenFor(jwtService, refreshTokens, user));
         return headers;
     }
 

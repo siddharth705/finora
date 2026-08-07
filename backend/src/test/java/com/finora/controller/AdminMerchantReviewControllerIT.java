@@ -7,9 +7,11 @@ import com.finora.entity.Merchant;
 import com.finora.entity.Transaction;
 import com.finora.entity.User;
 import com.finora.repository.MerchantRepository;
+import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
+import com.finora.testsupport.TestSessions;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -38,6 +40,7 @@ class AdminMerchantReviewControllerIT extends AbstractIntegrationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private com.finora.repository.AccountRepository accountRepository;
     @Autowired private JwtService jwtService;
+    @Autowired private RefreshTokenRepository refreshTokens;
     private final ObjectMapper mapper = new ObjectMapper();
 
     private User createUser(String role) {
@@ -53,7 +56,7 @@ class AdminMerchantReviewControllerIT extends AbstractIntegrationTest {
 
     private HttpHeaders bearerFor(User user) {
         HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(jwtService.generateToken(user.getId(), user.getEmail(), UUID.randomUUID()));
+        headers.setBearerAuth(TestSessions.accessTokenFor(jwtService, refreshTokens, user));
         headers.setContentType(MediaType.APPLICATION_JSON);
         return headers;
     }

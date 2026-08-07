@@ -6,8 +6,10 @@ import com.finora.AbstractIntegrationTest;
 import com.finora.entity.PlatformSettings;
 import com.finora.entity.User;
 import com.finora.repository.PlatformSettingsRepository;
+import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
+import com.finora.testsupport.TestSessions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,6 +41,7 @@ class PlatformSettingsControllerIT extends AbstractIntegrationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private PlatformSettingsRepository platformSettingsRepository;
     @Autowired private JwtService jwtService;
+    @Autowired private RefreshTokenRepository refreshTokens;
     private final ObjectMapper mapper = new ObjectMapper();
 
     @AfterEach
@@ -63,7 +66,7 @@ class PlatformSettingsControllerIT extends AbstractIntegrationTest {
 
     private HttpHeaders bearerFor(User user) {
         HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(jwtService.generateToken(user.getId(), user.getEmail(), java.util.UUID.randomUUID()));
+        headers.setBearerAuth(TestSessions.accessTokenFor(jwtService, refreshTokens, user));
         headers.setContentType(MediaType.APPLICATION_JSON);
         return headers;
     }

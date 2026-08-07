@@ -9,9 +9,11 @@ import com.finora.entity.Transaction;
 import com.finora.entity.User;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.FeatureFlagRepository;
+import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
+import com.finora.testsupport.TestSessions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,6 +46,7 @@ class AdminFeatureFlagControllerIT extends AbstractIntegrationTest {
     @Autowired private TransactionRepository transactionRepository;
     @Autowired private FeatureFlagRepository featureFlagRepository;
     @Autowired private JwtService jwtService;
+    @Autowired private RefreshTokenRepository refreshTokens;
     private final ObjectMapper mapper = new ObjectMapper();
 
     @AfterEach
@@ -91,7 +94,7 @@ class AdminFeatureFlagControllerIT extends AbstractIntegrationTest {
 
     private HttpHeaders bearerFor(User user) {
         HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(jwtService.generateToken(user.getId(), user.getEmail(), java.util.UUID.randomUUID()));
+        headers.setBearerAuth(TestSessions.accessTokenFor(jwtService, refreshTokens, user));
         headers.setContentType(MediaType.APPLICATION_JSON);
         return headers;
     }

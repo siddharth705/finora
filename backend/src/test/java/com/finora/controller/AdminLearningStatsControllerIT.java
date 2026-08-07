@@ -8,12 +8,14 @@ import com.finora.entity.Merchant;
 import com.finora.entity.MerchantCategoryLearning;
 import com.finora.entity.MerchantLearningAudit;
 import com.finora.entity.User;
+import com.finora.repository.CategoryRepository;
 import com.finora.repository.MerchantCategoryLearningRepository;
 import com.finora.repository.MerchantLearningAuditRepository;
-import com.finora.repository.CategoryRepository;
 import com.finora.repository.MerchantRepository;
+import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
+import com.finora.testsupport.TestSessions;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -35,6 +37,7 @@ class AdminLearningStatsControllerIT extends AbstractIntegrationTest {
     @Autowired private MerchantRepository merchantRepository;
     @Autowired private CategoryRepository categoryRepository;
     @Autowired private JwtService jwtService;
+    @Autowired private RefreshTokenRepository refreshTokens;
     private final ObjectMapper mapper = new ObjectMapper();
 
     private User createUser(String role) {
@@ -49,7 +52,7 @@ class AdminLearningStatsControllerIT extends AbstractIntegrationTest {
 
     private HttpHeaders bearerFor(User user) {
         HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(jwtService.generateToken(user.getId(), user.getEmail(), java.util.UUID.randomUUID()));
+        headers.setBearerAuth(TestSessions.accessTokenFor(jwtService, refreshTokens, user));
         headers.setContentType(MediaType.APPLICATION_JSON);
         return headers;
     }

@@ -3,8 +3,10 @@ package com.finora.imports.jobs;
 import com.finora.AbstractIntegrationTest;
 import com.finora.entity.User;
 import com.finora.repository.ImportJobRepository;
+import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
+import com.finora.testsupport.TestSessions;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -49,6 +51,7 @@ class ImportJobStorageRequiredIT extends AbstractIntegrationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private ImportJobRepository jobRepository;
     @Autowired private JwtService jwtService;
+    @Autowired private RefreshTokenRepository refreshTokens;
 
     private User user() {
         User user = new User();
@@ -61,7 +64,7 @@ class ImportJobStorageRequiredIT extends AbstractIntegrationTest {
 
     private ResponseEntity<String> upload(User user) {
         HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(jwtService.generateToken(user.getId(), user.getEmail(), UUID.randomUUID()));
+        headers.setBearerAuth(TestSessions.accessTokenFor(jwtService, refreshTokens, user));
         headers.setContentType(MediaType.MULTIPART_FORM_DATA);
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
         body.add("file", new ByteArrayResource(
@@ -101,7 +104,7 @@ class ImportJobStorageRequiredIT extends AbstractIntegrationTest {
         // keeps working exactly as it did, on a deployment where the new one cannot.
         HttpHeaders headers = new HttpHeaders();
         User user = user();
-        headers.setBearerAuth(jwtService.generateToken(user.getId(), user.getEmail(), UUID.randomUUID()));
+        headers.setBearerAuth(TestSessions.accessTokenFor(jwtService, refreshTokens, user));
         headers.setContentType(MediaType.MULTIPART_FORM_DATA);
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
         body.add("file", new ByteArrayResource(
