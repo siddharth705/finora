@@ -40,8 +40,9 @@ public class PdfTextExtractor {
      * @param password the document open password, or null/blank when none was supplied.
      *
      * <p>Passing a password to a document that is NOT encrypted is harmless -- PDFBox ignores it
-     * and opens normally (verified against PDFBox 3.0.3), so callers never have to work out
-     * whether a file needs one before deciding what to send.
+     * and opens normally, so callers never have to work out whether a file needs one before
+     * deciding what to send. Asserted rather than assumed, so it cannot quietly stop being true
+     * across a library upgrade: see PasswordProtectedPdfTest#passwordOnAnUnencryptedDocumentIsHarmless.
      *
      * <p>This is the only place that learns a document is encrypted, so it is where the two
      * outcomes are told apart. PDFBox cannot distinguish them itself: opening an encrypted PDF

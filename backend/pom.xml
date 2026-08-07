@@ -132,14 +132,35 @@
          (TextPosition x/y coordinates), not the library's default plain-text stripper; see
          PdfTextExtractor's own doc comment for why: naive text extraction discards which column
          a piece of text belongs to, which is exactly what distinguishes a debit from a credit
-         amount in a real bank statement table. Version unverified against Maven Central in this
-         sandbox (no network here); if this specific patch version doesn't resolve, bump to the
-         latest 3.0.x; the position-aware API (TextPosition, PDFTextStripper.writeString override)
-         has been stable across that whole line. -->
+         amount in a real bank statement table. The position-aware API (TextPosition,
+         PDFTextStripper.writeString override) has been stable across the whole 3.0.x line.
+
+         3.0.3 (Apr 2024) to 3.0.8 (Jun 2026). NOT a CVE fix, and it is worth being exact about
+         that because the obvious assumption is wrong: the only advisories on the 3.0.x line
+         (CVE-2026-23907 and CVE-2026-33929, both path traversal in ExtractEmbeddedFiles) are
+         against org.apache.pdfbox:pdfbox-examples, which this project does not depend on. No
+         published CVE affected the core artifact at 3.0.3.
+
+         The reason to move is the unglamorous half of the same problem. This library parses
+         attacker-supplied files as a core product feature, reachable by any authenticated user,
+         and 3.0.4 through 3.0.8 are largely hardening against malformed input: stack overflows in
+         BaseParser, PDFStreamParser and PDPageTree (PDFBOX-6038/6040/6041), OOM in XrefStreamParser,
+         Type1Lexer and PfbParser (PDFBOX-6037/6043/6044), OOM during text extraction
+         (PDFBOX-6146), and an infinite loop in CMapParser (PDFBOX-5972). Each of those is a
+         crash-or-hang an uploaded file can reach; none carried a CVE number.
+
+         Extraction parity was verified rather than assumed before this bump; see
+         PdfTextExtractorSnapshotTest, which exists because of it. Three changes in 3.0.4+ land
+         directly on this project's code path: removeContainedSpaces (PDFBOX-5487) runs only in
+         the sortByPosition branch, which PdfTextExtractor enables; /ActualText marked content now
+         rewrites a TextPosition's unicode; and font-change detection switched from instance
+         identity to font name, feeding the heuristic that decides where one writeString run ends
+         and the next begins. Output was byte-identical across all 17 committed PDF fixtures
+         anyway, but none of that was predictable from the changelog. -->
     <dependency>
       <groupId>org.apache.pdfbox</groupId>
       <artifactId>pdfbox</artifactId>
-      <version>3.0.3</version>
+      <version>3.0.8</version>
     </dependency>
 
     <!-- Cloudflare R2 speaks the S3 API, so the official AWS SDK is the client; there is no
