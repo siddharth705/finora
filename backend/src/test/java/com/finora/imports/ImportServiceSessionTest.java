@@ -84,6 +84,7 @@ class ImportServiceSessionTest {
                 recurringService, previewGenerator, duplicateDetector, ruleLearningService, importSessionService,
                 pdfPreviewGenerator, productIdentityResolver, new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), "", ""),
                 mock(com.finora.imports.analysis.StatementAnalysisRecorder.class),
+                mock(com.finora.imports.analysis.ImportVerificationRecorder.class),
                 learningEventPublisher, mock(LayoutRegistryService.class));
 
         Account account = new Account();

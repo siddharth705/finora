@@ -172,6 +172,18 @@ public class StatementAnalysisReportService {
                 byCountDescending(combined));
     }
 
+    /**
+     * The same view, from a row the caller already has.
+     *
+     * <p>Public so the unified import trace can embed this shape rather than assembling a second
+     * one beside it. That is the reasoning {@code AdminStatementAnalysisController} already applies
+     * when it reads an analysis back instead of building the response inline: one shape, one code
+     * path, no chance of two surfaces drifting into disagreeing about the same row.
+     */
+    public AnalysisView viewOf(StatementAnalysisSession session) {
+        return toView(session);
+    }
+
     private AnalysisView toView(StatementAnalysisSession session) {
         Map<String, Integer> reasons = readHistogram(session);
         int unanchored = 0;

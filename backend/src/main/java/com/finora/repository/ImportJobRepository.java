@@ -83,4 +83,16 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, UUID> {
               AND j.nextAttemptAt <= :now
            """)
     Optional<Instant> findOldestQueuedAt(@Param("now") Instant now);
+
+    /**
+     * The job that produced a staging session, if a job produced it.
+     *
+     * <p>The reverse of the lookup the trace already does from a job, so a trace looks the same
+     * whichever handle the operator happens to hold -- an analysis reference from a support ticket
+     * or a job id from the progress endpoint.
+     *
+     * <p><b>Never call this with null.</b> A derived query matches {@code IS NULL} and would return
+     * every job that never recorded a session, which today is all of them.
+     */
+    List<ImportJob> findByImportSessionId(UUID importSessionId);
 }

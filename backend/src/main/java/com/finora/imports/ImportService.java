@@ -95,6 +95,9 @@ public class ImportService {
     private final com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator;
     private final ProductIdentityResolver productIdentityResolver;
     private final StatementAnalysisRecorder analysisRecorder;
+    /** Keeps the verification rules' findings, which until now reached the staging response and
+     *  were then discarded -- see ImportVerificationRecorder and milestone-2 item 6. */
+    private final com.finora.imports.analysis.ImportVerificationRecorder verificationRecorder;
     private final com.finora.imports.storage.StatementContentService statementContentService;
     private final com.finora.service.MerchantLearningEventPublisher learningEventPublisher;
     private final LayoutRegistryService layoutRegistryService;
@@ -113,10 +116,12 @@ public class ImportService {
                           ProductIdentityResolver productIdentityResolver,
                           com.finora.imports.storage.StatementContentService statementContentService,
                           StatementAnalysisRecorder analysisRecorder,
+                          com.finora.imports.analysis.ImportVerificationRecorder verificationRecorder,
                           com.finora.service.MerchantLearningEventPublisher learningEventPublisher,
                           LayoutRegistryService layoutRegistryService) {
         this.layoutRegistryService = layoutRegistryService;
         this.analysisRecorder = analysisRecorder;
+        this.verificationRecorder = verificationRecorder;
         this.productIdentityResolver = productIdentityResolver;
         this.statementContentService = statementContentService;
         this.accountRepository = accountRepository;
@@ -162,9 +167,17 @@ public class ImportService {
             rejectIfNothingWasExtracted(staged, result.documentContext());
             var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount(),
                     result.documentContext());
-            analysisRecorder.recordParsed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
+            String reference = analysisRecorder.recordParsed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
                     "CSV", fileContent.length, fingerprint, 1, System.currentTimeMillis() - startedAtMs,
-                    diagnostics);
+                    diagnostics, session.getId());
+            // The four verification rules have already run inside the preview generator; without
+            // this line their findings live only in the response the user is about to see and are
+            // then gone. One section, so index 0. See ImportVerificationRecorder for why the
+            // details are rebuilt from an allowlist rather than persisted as they stand.
+            // singletonList, not List.of: verification is nullable on StagingResponse ("not
+            // checked", distinct from a report saying NOT_APPLICABLE) and List.of would throw on it.
+            verificationRecorder.recordForAnalysis(reference,
+                    java.util.Collections.singletonList(staged.verification()));
             return new StagingSessionResponse(session.getId(), staged);
         } catch (ApiException e) {
             analysisRecorder.recordFailed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
@@ -225,12 +238,19 @@ public class ImportService {
                 rejectIfNothingWasExtracted(staged, result.documentContext());
                 var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount(),
                         result.documentContext());
-                recordPdfParsed(userId, fileName, fileContent.length, fingerprint, sections.size(), startedAtMs, diagnostics);
+                recordPdfParsed(userId, fileName, fileContent.length, fingerprint, sections.size(), startedAtMs,
+                        diagnostics, session.getId(),
+                        java.util.Collections.singletonList(staged.verification()));
                 return new PdfStagingSessionResponse(session.getId(), false, staged, null);
             }
 
             var session = importSessionService.createMultiSection(userId, fileName, fileContent, sections, result.documentContext());
-            recordPdfParsed(userId, fileName, fileContent.length, fingerprint, sections.size(), startedAtMs, diagnostics);
+            // Per section, in section order, because a composite statement's sections have separate
+            // balance chains and one can verify while another does not -- collapsing them into one
+            // report would lose exactly the distinction the verification framework computes.
+            recordPdfParsed(userId, fileName, fileContent.length, fingerprint, sections.size(), startedAtMs,
+                    diagnostics, session.getId(),
+                    sections.stream().map(StagedAccountSection::verification).toList());
             return new PdfStagingSessionResponse(session.getId(), true, null, sections);
         } catch (ApiException e) {
             // The whole point of the evidence table. A password failure carries no fingerprint --
@@ -244,10 +264,13 @@ public class ImportService {
     }
 
     private void recordPdfParsed(UUID userId, String fileName, long byteSize, String fingerprint,
-                                  int sectionCount, long startedAtMs, ParseDiagnostics diagnostics) {
-        analysisRecorder.recordParsed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
+                                  int sectionCount, long startedAtMs, ParseDiagnostics diagnostics,
+                                  UUID importSessionId,
+                                  List<VerificationReport> verificationBySection) {
+        String reference = analysisRecorder.recordParsed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
                 "PDF", byteSize, fingerprint, sectionCount, System.currentTimeMillis() - startedAtMs,
-                diagnostics);
+                diagnostics, importSessionId);
+        verificationRecorder.recordForAnalysis(reference, verificationBySection);
     }
 
     /**

@@ -187,4 +187,19 @@ public interface MerchantLearningEventRepository extends JpaRepository<MerchantL
               AND e.nextAttemptAt <= :now
            """)
     Optional<Instant> findOldestPendingQueuedAt(@Param("now") Instant now);
+
+    /**
+     * Everything one import taught the system, oldest first.
+     *
+     * <p>The staging session is the key rather than the statement import because it is the one both
+     * halves of the trace can reach: {@code statement_analysis_sessions.import_session_id} (V72)
+     * names it from the upload side, and {@code source_import_session_id} (V63) names it from the
+     * learning side. Nulls are never passed -- an import with no session has nothing to match, and
+     * a null-matching query would return every direct-file import ever made.
+     */
+    List<MerchantLearningEvent> findBySourceImportSessionIdOrderByCreatedAtAsc(UUID sourceImportSessionId);
+
+    /** The same, for a trace anchored on a job whose statement import is known but whose session is
+     *  not -- the asynchronous path, which stages without one. */
+    List<MerchantLearningEvent> findBySourceStatementImportIdOrderByCreatedAtAsc(UUID sourceStatementImportId);
 }

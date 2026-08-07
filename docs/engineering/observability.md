@@ -271,6 +271,55 @@ A worker is not production-ready without:
 | Failure not recorded | **Yes** | Double fault — the row is stranded. |
 | Abandoned rows recovered | **Yes** | A worker process died. |
 
+### Per-import evidence, and where metrics stop
+
+Metrics answer questions about a *population*: how slow is parsing across every job, how often does
+the queue stall. They cannot answer "what happened to **that** import", because the answer has a
+cardinality of one and a dashboard label may not.
+
+That question is answered by rows, not meters, and by one endpoint rather than three queries:
+
+```
+GET /api/v1/admin/imports/traces/by-analysis/{reference}    e.g. SA-20260806-0145
+GET /api/v1/admin/imports/traces/by-job/{jobId}
+```
+
+Both return the same shape — upload, parsing, per-stage timing, verification, learning, completion —
+gated on `PLATFORM_DIAGNOSTICS_VIEW`, carrying no file name, no user id and no statement content.
+
+| Block | Table | Added by |
+|---|---|---|
+| Upload and parsing | `statement_analysis_sessions` | V59/V60 |
+| Per-stage timing and status | `import_job_stages` | V72 |
+| Verification outcomes | `import_verification_findings` | V72 |
+| Learning | `merchant_learning_events` | V62/V63 |
+| Queue progress | `import_jobs` | V66 |
+
+**The join key is the staging session.** `merchant_learning_events.source_import_session_id` has
+existed since V63; V72 is what lets the analysis row name the same session, plus a `correlation_id`
+so a trace leads to its log lines. Before that the three tables each recorded their part and were
+keyed on things that never met.
+
+**Two rules this surface is held to**, both of which it would be easy to lose:
+
+- **A stage row can say a stage did not run.** `SKIPPED` is recorded, and carries no timing rather
+  than a zero. That is what lets someone prove an optimisation unnecessary — the falsifying property
+  the diagnostics rule asks for, which a counter cannot have. A zero duration would enter every
+  average and claim a stage that never ran was instantaneous.
+- **Verification details are rebuilt from an allowlist**, never stripped of the monetary fields. The
+  in-memory findings carry balances, totals and the raw ambiguous cell; a denylist would have to be
+  right every time a rule adds a field. Same direction as §4, for the same reason, with the
+  destination being our own database rather than a third party — which makes it easier to justify
+  one more field each time and harder to walk back.
+
+**Recording never breaks an import, and the boundary is subtler than it looks.** Both recorders run
+their write through a `TransactionTemplate` with `REQUIRES_NEW` rather than under
+`@Transactional(REQUIRES_NEW)`. With the annotation the proxy commits *after* the method body, so a
+constraint violation leaves the transaction rollback-only and arrives as an
+`UnexpectedRollbackException` at commit time — after the in-method `catch` has already reported
+success — and reaches the caller. The caller is a customer's import. The catch has to enclose the
+commit, and only an explicit template puts it there.
+
 ### Alert thresholds
 
 Alert on rates and levels, never on individual retry events:
@@ -543,8 +592,21 @@ identical.
 - **No dashboards yet.** The metrics are exported and labelled; Grafana panels and their queries are
   the next piece, and cannot be built or validated from the repository alone.
 - **No alerting configured.** Thresholds are proposed in §7 but nothing evaluates them.
-- **Import pipeline is not instrumented,** because it still runs inline on the request thread and is
-  covered by the starter. **When import moves to a durable queue it must reuse this framework rather
-  than redesign one** — that is a design requirement of the async import milestone, not a follow-up.
+- **Import pipeline instrumentation is done at the queue and thin on the synchronous path.**
+  `ImportJobWorker` reuses this framework and adds none of its own, as required, and per-import
+  evidence is covered above. What is still missing is on the *synchronous* upload: it records a total
+  duration and no per-stage breakdown, because it has no job row to hang stages off. Closing that
+  means either routing every upload through the queue (item 5's threshold decision) or giving the
+  synchronous path a stage owner of its own — a design choice, not a follow-up task.
+- **The asynchronous path records no analysis session.** The worker stages through
+  `parseAndStageAnyFormat`, which returns a `StagingResponse` and no `DocumentContext`, so there is
+  no fingerprint or reason histogram to record and a job-anchored trace has no `analysis` block.
+  V59's promise that *every upload leaves a record* therefore does not hold on this path yet. Fixing
+  it is a change to the staging API's return shape, and it is the honest reason the trace leaves that
+  field null rather than writing a thin row.
+- **A synchronous confirm records no link back to its staging session,** so a trace reaches the
+  resulting `statement_imports` row only through the learning events that carry both ids. An import
+  that taught the system nothing therefore reports no statement import even though one exists.
+  Closing it means a column on `statement_imports`, which the confirm path owns.
 - **No distributed tracing.** `tracesSampleRate` is deliberately `0` — spans are keyed by URL, which
   would reintroduce the identifiers §4 strips. Revisit only with a scrubbing strategy for span names.
