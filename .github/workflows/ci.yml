@@ -193,6 +193,14 @@ jobs:
       - name: Contact addresses
         run: python scripts/check-contact-addresses.py
 
+      # Runs from the repo root and scans web AND mobile: the dashboard's monthly figures are the
+      # newest month with DATA, not necessarily the current one, and a client that labels them
+      # "this month" makes the number wrong silently. The server-side half of that fix landed with
+      # the web client and mobile kept three hardcoded claims -- the same web-fixed/mobile-missed
+      # drift check-client-auth-policy.py exists for, one layer up.
+      - name: Reporting period labels
+        run: python scripts/check-reporting-period-labels.py
+
       # `npm audit` in this repo has never been empty -- 18 vulnerability entries across the three
       # JS apps, every one already judged not to apply. That is exactly how a real advisory gets
       # missed: a command whose output is always non-empty is one people learn to skip, and the

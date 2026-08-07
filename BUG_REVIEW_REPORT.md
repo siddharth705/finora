@@ -223,13 +223,23 @@ High
 
 # Bug 05 — [FIXED]
 
-> **Fixed by this review.** The rule moved into `util/ReportingPeriod`, shared with the service
+> **Fixed by this review** (web, mobile and a drift guard). The rule moved into
+> `util/ReportingPeriod`, shared with the service
 > that already got it right (`InsightsService`), so the two cannot drift again. Reporting on the
 > newest month with data is *kept* — an empty "this month" is a worse answer for a product built
 > around importing in arrears — but `DashboardSummaryDto` now carries `reportingMonth` and
 > `reportingMonthIsCurrent`, and `Dashboard.tsx` renders the period instead of asserting one. The
 > prior month is now a CALENDAR step, so a user with a gap in their history no longer sees two
 > non-adjacent months compared as "vs last month".
+>
+> **A consumer audit found two more sites after the first pass**, which is why the guard exists:
+> the web dashboard still asserted "this month" in its cash-flow sentence, and `mobile/`'s
+> `DashboardScreen` had three hardcoded claims (visible label, accessibility label, empty state)
+> and had never been given the new fields at all. `ReportingPeriod`'s javadoc now states the
+> invariants and maps every feature to the month it must use, and
+> `scripts/check-reporting-period-labels.py` fails the build if any client asserts a period
+> unconditionally — the reporting-layer instance of the web-fixed/mobile-missed drift
+> `check-client-auth-policy.py` already guards in the auth layer.
 
 ## Title
 Dashboard "this month" is the newest month with data, not the current calendar month

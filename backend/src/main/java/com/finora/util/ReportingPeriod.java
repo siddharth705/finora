@@ -31,6 +31,54 @@ import java.util.List;
  * <p><b>Reporting on the newest month with data is not the bug. Claiming it is "this month" is.</b>
  * That is why this type carries {@link #isCurrent()} rather than forcing every caller onto the
  * calendar month — a summary is allowed to report on July, it just has to say July.
+ *
+ * <h2>Invariants</h2>
+ * <pre>
+ *   reporting month  = the newest month containing transaction data     ({@link #month()})
+ *                      null only when the account has no transactions at all
+ *   calendar month   = the month it is NOW, in the USER's timezone      ({@link #calendarMonth()})
+ *                      never null
+ *   isCurrent        = reporting month == calendar month                ({@link #isCurrent()})
+ *                      true when there is no data, since there is then nothing stale to warn about
+ *   prior month      = reporting month minus one CALENDAR month         ({@link #priorMonth()})
+ *                      never "the next month down the list that happens to have data"
+ * </pre>
+ *
+ * <h2>Which month a feature should use</h2>
+ *
+ * <p>The test is <b>what does this number mean if the user has not imported this month yet?</b>
+ * If the honest answer is "nothing", it is a REPORTING figure. If the honest answer is "zero", it
+ * is measured against a calendar period and must use the calendar month.
+ *
+ * <table border="1">
+ *   <caption>Feature to month mapping</caption>
+ *   <tr><th>Feature</th><th>Month</th><th>Why</th></tr>
+ *   <tr><td>Dashboard KPIs — income, expense, net, savings rate</td><td>Reporting</td>
+ *       <td>An empty "this month" is a worse answer than last month's real figures.</td></tr>
+ *   <tr><td>Dashboard spend-by-category donut</td><td>Reporting</td>
+ *       <td>Same set the KPIs describe; splitting them would be incoherent.</td></tr>
+ *   <tr><td>Dashboard month-over-month deltas</td><td>Reporting, vs {@link #priorMonth()}</td>
+ *       <td>Compared against the calendar-previous month so a gap in history is visible as no
+ *           comparison rather than a wrong one.</td></tr>
+ *   <tr><td><b>Budget-exceeded notifications</b></td><td><b>Calendar</b></td>
+ *       <td>A monthly allowance resets on a calendar boundary regardless of when the user last
+ *           imported. This is Bug 06, and it is the one figure on the dashboard response that does
+ *           NOT follow the reporting month.</td></tr>
+ *   <tr><td>{@code BudgetService.listForUser}</td><td>Calendar</td>
+ *       <td>Same reason; it has always done this, which is what the dashboard now agrees with.</td></tr>
+ *   <tr><td>{@code InsightsService} sentences and movers</td><td>Reporting</td>
+ *       <td>Resolves its own, over an EXPENSE-only set — so it can legitimately pick a different
+ *           month than the dashboard for an account whose newest month holds only income. Do not
+ *           label one with the other's period.</td></tr>
+ *   <tr><td>Goal / net-worth snapshot dates</td><td>Calendar</td>
+ *       <td>A dated record of "now" is not a report on a period.</td></tr>
+ * </table>
+ *
+ * <p><b>Clients must never re-derive either month.</b> A client that hardcodes "this month" over a
+ * reporting figure reintroduces Bug 05 no matter what the server computed — which is why
+ * {@code DashboardSummaryDto} carries {@code reportingMonth} and {@code reportingMonthIsCurrent},
+ * and why {@code scripts/check-reporting-period-labels.py} fails the build if any client asserts a
+ * month next to a dashboard figure instead of rendering the one it was given.
  */
 public record ReportingPeriod(String month, boolean isCurrent, String calendarMonth) {
 

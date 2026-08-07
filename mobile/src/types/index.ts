@@ -108,6 +108,15 @@ export interface DashboardSummary {
   healthBreakdown: Record<string, number>;
   spendByCategory: Record<string, number>;
   notifications: string[];
+  /**
+   * Which month the monthly figures above describe ("2026-07"), or null for an account with no
+   * transactions. This is the newest month with DATA, not necessarily the current calendar month —
+   * see reportingMonthIsCurrent. Mirrors frontend/src/types/index.ts; the two clients must agree,
+   * because a label that asserts "this month" over another month is Bug 05 by whichever client
+   * renders it.
+   */
+  reportingMonth: string | null;
+  reportingMonthIsCurrent: boolean;
 }
 
 export interface Budget {

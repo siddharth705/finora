@@ -107,6 +107,21 @@ export function DashboardScreen() {
     );
   }
 
+  // Bug 05, mobile side. These KPIs are the newest month the account has DATA for, which for a
+  // product built around importing statements in arrears is routinely not the current calendar
+  // month. This screen asserted "vs last month" over whichever month that happened to be, exactly
+  // as the web dashboard did. The backend now says which month it is reporting on; both clients
+  // read it rather than guessing, which is the drift check-client-auth-policy.py exists to catch
+  // in the auth layer and which this is the reporting-layer instance of.
+  const periodIsCurrent = summary.reportingMonthIsCurrent || !summary.reportingMonth;
+  const periodLabel = periodIsCurrent ? 'this month' : monthLabel(summary.reportingMonth!);
+  const deltaLabel = periodIsCurrent
+    ? 'vs last month'
+    : `vs the month before ${monthLabel(summary.reportingMonth!)}`;
+  const deltaSpokenLabel = periodIsCurrent
+    ? 'versus last month'
+    : `versus the month before ${monthLabel(summary.reportingMonth!)}`;
+
   const kpis = [
     { label: 'Total Balance', value: fmtCurrency(summary.currentBalance), delta: null as number | null, invert: false },
     { label: 'Income', value: fmtCurrency(summary.monthlyIncome), delta: summary.incomeDeltaPct, invert: false },
@@ -127,6 +142,7 @@ export function DashboardScreen() {
       </Text>
       <Text style={[styles.subGreeting, { color: c.muted }]}>
         Here's what's happening with your finances.
+        {!periodIsCurrent && ` Your latest figures are from ${periodLabel}.`}
       </Text>
 
       <View style={styles.kpiGrid}>
@@ -139,7 +155,7 @@ export function DashboardScreen() {
               accessible
               accessibilityLabel={
                 k.delta !== null && k.delta !== undefined
-                  ? `${k.label}: ${k.value}, ${k.delta >= 0 ? 'up' : 'down'} ${Math.abs(k.delta).toFixed(1)} percent versus last month`
+                  ? `${k.label}: ${k.value}, ${k.delta >= 0 ? 'up' : 'down'} ${Math.abs(k.delta).toFixed(1)} percent ${deltaSpokenLabel}`
                   : `${k.label}: ${k.value}`
               }
             >
@@ -154,7 +170,7 @@ export function DashboardScreen() {
                     { color: (k.invert ? k.delta < 0 : k.delta >= 0) ? c.success : c.danger },
                   ]}
                 >
-                  {k.delta >= 0 ? '▲' : '▼'} {Math.abs(k.delta).toFixed(1)}% vs last month
+                  {k.delta >= 0 ? '▲' : '▼'} {Math.abs(k.delta).toFixed(1)}% {deltaLabel}
                 </Text>
               ) : (
                 <Text style={styles.kpiDelta} />
@@ -190,7 +206,7 @@ export function DashboardScreen() {
       <Card style={styles.section}>
         <SectionHeading title="Spending by Category" />
         {donutSlices.length === 0 ? (
-          <EmptyState message="No spending recorded this month yet." />
+          <EmptyState message={`No spending recorded ${periodLabel} yet.`} />
         ) : (
           <DonutChart
             slices={donutSlices}

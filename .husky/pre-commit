@@ -33,6 +33,9 @@ fi
 # typed. Runs whole-repo, so it also catches a copy staged in a different app than this one.
 if echo "$staged" | grep -qE '^(frontend|admin-portal|mobile)/src/'; then
   python scripts/check-contact-addresses.py || exit 1
+  # Same trigger, same reason: a dashboard label that names the wrong month is easiest to fix while
+  # it is still being typed, and this is exactly the kind of change that lands in one client only.
+  python scripts/check-reporting-period-labels.py || exit 1
 fi
 
 # Keyed off both sides of the contract: renaming a meter in the framework breaks a dashboard just as

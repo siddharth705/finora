@@ -196,7 +196,7 @@ export default function Dashboard() {
             </select>
           </div>
           <p className="text-sm text-muted mb-4">
-            You've earned {fmt(summary.monthlyIncome)} and spent {fmt(summary.monthlyExpense)} this month.
+            You've earned {fmt(summary.monthlyIncome)} and spent {fmt(summary.monthlyExpense)} {periodLabel}.
           </p>
           <div className="h-64">
             {cashFlowLoading ? (
@@ -393,7 +393,15 @@ export default function Dashboard() {
             )}
             {movers.length > 0 && (
               <div className="space-y-2">
-                <p className="text-[11px] uppercase tracking-wide text-muted mb-1">Biggest movers this month</p>
+                {/* Deliberately no period in this heading. These movers come from the INSIGHTS
+                    query, which resolves its own reporting month over a differently-filtered set
+                    (expenses only, where the dashboard also counts income), so the two can pick
+                    different months for an account whose newest month holds only income.
+                    `periodLabel` describes the dashboard's month and would be asserting a period
+                    this list does not necessarily belong to -- the same class of claim as Bug 05.
+                    The insight sentences rendered above already carry their own period wording,
+                    built server-side by InsightsService. */}
+                <p className="text-[11px] uppercase tracking-wide text-muted mb-1">Biggest movers</p>
                 {movers.map((m) => (
                   <div key={m.category} className="flex items-center justify-between text-sm">
                     <span className="text-ink">{m.category}</span>
