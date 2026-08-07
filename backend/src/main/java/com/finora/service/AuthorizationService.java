@@ -34,14 +34,61 @@ import java.util.Set;
  * alone would grant on its own -- this can only add authorities relative to the legacy behavior,
  * never silently remove one, so there is no scenario where wiring this in locks an existing user
  * out of something they could do before.
+ *
+ * <h2>Account scope, and where it enters authorization</h2>
+ * V52 introduced {@code account_scope} and its own comment stated the model as "login
+ * disambiguates on it; authorization does not". That left the separation between the consumer app
+ * and the admin portal resting on one thing: {@code RoleService.requireScopeCanHold} refusing to
+ * ATTACH a permission-bearing role to a USER-scope account. That method's javadoc says plainly what
+ * it is not -- "it closes the door that leads to the room", and "is not a substitute for a scope
+ * claim carried in the token and checked at authorization time, which is the real fix".
+ *
+ * <p>This is that fix. Scope is now read where authorization happens rather than only where a grant
+ * is made, so a USER-scope account that holds admin permissions <em>by any means</em> -- a row
+ * predating the guard, a future code path that does not call it, a direct database edit -- exercises
+ * none of them. A guard at the granting path can only ever be as good as the completeness of the
+ * set of granting paths, which is not a property anything checks.
+ *
+ * <p><b>Permissions are the whole admin surface</b>, which is what makes this exact rather than a
+ * heuristic: every {@code @PreAuthorize} in the application is {@code hasAuthority('<PERMISSION>')},
+ * every seeded permission gates an {@code /api/v1/admin/**} or setup endpoint, and no user-facing
+ * endpoint carries a {@code @PreAuthorize} of any kind. So withholding permission authorities from
+ * a non-admin-portal account removes exactly the admin surface and nothing else.
+ *
+ * <p>{@code ROLE_*} authorities are deliberately still granted in full. Nothing in the application
+ * authorizes on them, so they cost nothing, and keeping them preserves this class's additive-only
+ * promise on the axis where it matters -- as well as making the state legible: {@code /users/me/access}
+ * reports the role the account genuinely holds alongside the empty permission set its scope allows,
+ * which reads as the anomaly it is instead of as the role having silently vanished.
  */
 @Service
 public class AuthorizationService {
+
+    /**
+     * Prefix for the authority naming which portal an account belongs to: {@code PORTAL_ADMIN} or
+     * {@code PORTAL_USER}.
+     *
+     * <p>Deliberately not {@code SCOPE_}, which Spring Security reserves by convention for OAuth2
+     * scopes ({@code JwtGrantedAuthoritiesConverter} emits exactly that prefix). Colliding with it
+     * would make any future resource-server configuration silently ambiguous about whether
+     * {@code SCOPE_ADMIN} came from a token's OAuth scope or from this method.
+     */
+    public static final String PORTAL_AUTHORITY_PREFIX = "PORTAL_";
 
     private final RoleRepository roleRepository;
 
     public AuthorizationService(RoleRepository roleRepository) {
         this.roleRepository = roleRepository;
+    }
+
+    /** The authority naming the portal an account of this scope belongs to. */
+    public static String portalAuthority(String accountScope) {
+        return PORTAL_AUTHORITY_PREFIX
+                + (User.SCOPE_ADMIN.equalsIgnoreCase(accountScope) ? User.SCOPE_ADMIN : User.SCOPE_USER);
+    }
+
+    private static boolean isAdminPortalAccount(User user) {
+        return User.SCOPE_ADMIN.equalsIgnoreCase(user.getAccountScope());
     }
 
     public Set<GrantedAuthority> effectiveAuthorities(User user) {
@@ -51,14 +98,25 @@ public class AuthorizationService {
         // stays the floor no user can end up below.
         authorities.add(new SimpleGrantedAuthority("ROLE_" + user.getRole()));
 
-        roleRepository.findByName(user.getRole()).ifPresent(role -> addRole(authorities, role));
-        user.getRoles().forEach(role -> addRole(authorities, role));
+        // The scope, now present in the authority set every authorization decision already reads.
+        // This is what "read at authorization time" means concretely: it is available to any
+        // @PreAuthorize without a second query, and JwtAuthFilter compares the access token's own
+        // scope claim against it so the two can never silently diverge.
+        authorities.add(new SimpleGrantedAuthority(portalAuthority(user.getAccountScope())));
+
+        boolean adminPortal = isAdminPortalAccount(user);
+        roleRepository.findByName(user.getRole()).ifPresent(role -> addRole(authorities, role, adminPortal));
+        user.getRoles().forEach(role -> addRole(authorities, role, adminPortal));
 
         return authorities;
     }
 
-    private void addRole(Set<GrantedAuthority> authorities, Role role) {
+    private void addRole(Set<GrantedAuthority> authorities, Role role, boolean adminPortal) {
         authorities.add(new SimpleGrantedAuthority("ROLE_" + role.getName()));
+        if (!adminPortal) {
+            // A consumer-app account holds no admin surface, whatever its role rows say.
+            return;
+        }
         for (Permission permission : role.getPermissions()) {
             authorities.add(new SimpleGrantedAuthority(permission.getName()));
         }
@@ -76,14 +134,26 @@ public class AuthorizationService {
 
         // Legacy role string -- always present, mirrors the floor effectiveAuthorities() grants.
         roleNames.add(user.getRole());
-        roleRepository.findByName(user.getRole()).ifPresent(role -> collect(role, roleNames, permissionNames));
-        user.getRoles().forEach(role -> collect(role, roleNames, permissionNames));
+        boolean adminPortal = isAdminPortalAccount(user);
+        roleRepository.findByName(user.getRole())
+                .ifPresent(role -> collect(role, roleNames, permissionNames, adminPortal));
+        user.getRoles().forEach(role -> collect(role, roleNames, permissionNames, adminPortal));
 
         return new MeAccessDto(List.copyOf(roleNames), List.copyOf(permissionNames));
     }
 
-    private void collect(Role role, Set<String> roleNames, Set<String> permissionNames) {
+    /**
+     * Withholds permissions on the same rule {@link #effectiveAuthorities} applies, and has to.
+     * This response is what the admin portal's own gate reads to decide whether to render the admin
+     * shell; if it advertised permissions the server would then refuse, the portal would let an
+     * account in and 403 every section inside it -- which is precisely the confusing state
+     * {@code 0205e8b} fixed for unverified phone numbers, arrived at from a different direction.
+     */
+    private void collect(Role role, Set<String> roleNames, Set<String> permissionNames, boolean adminPortal) {
         roleNames.add(role.getName());
+        if (!adminPortal) {
+            return;
+        }
         for (Permission permission : role.getPermissions()) {
             permissionNames.add(permission.getName());
         }

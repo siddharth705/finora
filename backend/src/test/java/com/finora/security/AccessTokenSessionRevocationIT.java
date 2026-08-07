@@ -72,7 +72,8 @@ class AccessTokenSessionRevocationIT extends AbstractIntegrationTest {
     private SignedIn signIn(User user) {
         RefreshTokenService.IssuedToken issued = refreshTokenService.issue(user.getId());
         return new SignedIn(
-                jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId()),
+                jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId(),
+                        user.getAccountScope()),
                 issued.rawToken());
     }
 
@@ -202,7 +203,8 @@ class AccessTokenSessionRevocationIT extends AbstractIntegrationTest {
 
         // Signed, unexpired, real user, syntactically perfect sid -- for a session nothing ever
         // created. Before the check existed this authenticated exactly like any other token.
-        String inventedSession = jwtService.generateToken(user.getId(), user.getEmail(), UUID.randomUUID());
+        String inventedSession = jwtService.generateToken(user.getId(), user.getEmail(), UUID.randomUUID(),
+                user.getAccountScope());
 
         assertStillUnexpiredAndSigned(inventedSession);
         assertThat(callProtectedWith(inventedSession)).isEqualTo(HttpStatus.UNAUTHORIZED);

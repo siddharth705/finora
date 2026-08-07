@@ -28,7 +28,14 @@ public class JwtService {
         this.signingKey = Keys.hmacShaKeyFor(jwtProperties.getSecret().getBytes(StandardCharsets.UTF_8));
     }
 
-    public String generateToken(UUID userId, String email, UUID sessionId) {
+    /**
+     * @param accountScope which portal this account belongs to ({@link com.finora.entity.User#SCOPE_USER}
+     *        or {@code SCOPE_ADMIN}). Carried as a claim so the token says which portal it was
+     *        minted for instead of that being derivable only by reloading the row. Additive to the
+     *        wire format and therefore safe for an installed mobile build: no client parses the
+     *        access token, and an unknown claim is ignored by every JWT library regardless.
+     */
+    public String generateToken(UUID userId, String email, UUID sessionId, String accountScope) {
         Date now = new Date();
         Date expiry = new Date(now.getTime() + jwtProperties.getExpirationMs());
         return Jwts.builder()
@@ -38,6 +45,7 @@ public class JwtService {
                 // "which session is this request from" without the client storing or sending
                 // anything extra, and without a second identifier to keep in sync.
                 .claim("sid", sessionId.toString())
+                .claim("scope", accountScope)
                 .issuedAt(now)
                 .expiration(expiry)
                 .signWith(signingKey)
@@ -60,6 +68,20 @@ public class JwtService {
 
     public String extractEmail(String token) {
         return extractClaim(token, c -> c.get("email", String.class));
+    }
+
+    /**
+     * The portal this token was minted for, or null for a token issued before the claim existed.
+     *
+     * <p>Null is safe here in a way a null {@code sid} is not, and the difference is worth stating
+     * because the two claims are treated differently a few lines apart in {@link JwtAuthFilter}. A
+     * missing {@code sid} makes the revocation check impossible to perform, so it has to fail
+     * closed. A missing {@code scope} costs nothing: the account's row is the authority on its own
+     * scope and is loaded on every request anyway, so the filter simply falls back to it. The claim
+     * exists to be cross-checked against that row, not to replace it.
+     */
+    public String extractAccountScope(String token) {
+        return extractClaim(token, c -> c.get("scope", String.class));
     }
 
     public boolean isTokenValid(String token) {

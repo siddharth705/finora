@@ -113,7 +113,8 @@ public class AuthService {
         // Refresh token first: it is what mints the session, and the access token has to carry
         // that session's id in its sid claim.
         var issued = refreshTokenService.issue(user.getId());
-        String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId());
+        String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId(),
+                user.getAccountScope());
         String refreshToken = issued.rawToken();
         return new AuthResponse(accessToken, refreshToken, user.getEmail(), user.getFullName(),
                 user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()));
@@ -388,7 +389,8 @@ public class AuthService {
         // Refresh token first: it is what mints the session, and the access token has to carry
         // that session's id in its sid claim.
         var issued = refreshTokenService.issue(user.getId());
-        String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId());
+        String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId(),
+                user.getAccountScope());
         String refreshToken = issued.rawToken();
         return new AuthResponse(accessToken, refreshToken, user.getEmail(), user.getFullName(), user.isPhoneVerified(),
                 PhoneMasking.mask(user.getPhoneNumber()));
@@ -433,7 +435,7 @@ public class AuthService {
         }
 
         String newAccessToken = jwtService.generateToken(user.getId(), user.getEmail(),
-                rotation.newToken().sessionId());
+                rotation.newToken().sessionId(), user.getAccountScope());
         return new RefreshResponse(newAccessToken, rotation.newToken().rawToken());
     }
 

@@ -1,5 +1,7 @@
 package com.finora.security;
 
+import com.finora.service.AuthorizationService;
+
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -98,16 +100,37 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                     UserDetails userDetails = userDetailsService.loadUserByUsername(
                             jwtService.extractUserId(token).toString());
 
-                    var authToken = new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
-                    authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                    SecurityContextHolder.getContext().setAuthentication(authToken);
+                    // The token's own account scope, checked against the scope the account actually
+                    // has. AuthorizationService puts that in the authority set (PORTAL_ADMIN /
+                    // PORTAL_USER), so this costs a set lookup rather than a second query.
+                    //
+                    // Absent claim = pre-existing token: fall through to the account's row, which is
+                    // authoritative and already loaded. Unlike a missing sid -- where absence makes
+                    // the revocation check impossible and so has to fail closed -- a missing scope
+                    // loses nothing, because the thing being cross-checked against is the same row
+                    // the claim was copied from.
+                    String tokenScope = jwtService.extractAccountScope(token);
 
-                    // Published for the handful of endpoints that need to tell "this device" from
-                    // the others. A request attribute rather than the Authentication's details,
-                    // which already carries WebAuthenticationDetails and is read by Spring Security
-                    // itself -- overloading it would couple an application concern to framework
-                    // state. Never null by the time it is set: a null sid is not a live session.
-                    request.setAttribute(SESSION_ID_ATTRIBUTE, sessionId);
+                    // Same shape as the session check above, and for the same reason: an else, never
+                    // an early `doFilter(...); return;` from inside this try.
+                    if (tokenScope != null && !isInPortal(userDetails, tokenScope)) {
+                        log.warn("Rejecting an access token minted for portal scope {} on an account "
+                                + "that is not in it. This should be unreachable -- account_scope is "
+                                + "not writable through any application path -- so treat it as either "
+                                + "a forged token or a direct database edit.", tokenScope);
+                    } else {
+                        var authToken = new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
+                        authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                        SecurityContextHolder.getContext().setAuthentication(authToken);
+
+                        // Published for the handful of endpoints that need to tell "this device"
+                        // from the others. A request attribute rather than the Authentication's
+                        // details, which already carries WebAuthenticationDetails and is read by
+                        // Spring Security itself -- overloading it would couple an application
+                        // concern to framework state. Never null by the time it is set: a null sid
+                        // is not a live session.
+                        request.setAttribute(SESSION_ID_ATTRIBUTE, sessionId);
+                    }
                 } else {
                     log.debug("Rejecting an access token for a session that is no longer live on a "
                             + "{} request", request.getMethod());
@@ -149,5 +172,20 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    /**
+     * Whether the account this request resolved to belongs to the portal the token claims.
+     *
+     * <p>Read off the authority set {@code AuthorizationService} already computed for the request,
+     * rather than reloading the row for one column. Comparison is on the derived authority name, not
+     * on the raw claim string, so an unrecognised or oddly-cased claim value resolves the same way
+     * {@code portalAuthority} resolves it everywhere else and cannot mean one thing here and another
+     * at the point the account's own authorities were built.
+     */
+    private static boolean isInPortal(UserDetails userDetails, String tokenScope) {
+        String expected = AuthorizationService.portalAuthority(tokenScope);
+        return userDetails.getAuthorities().stream()
+                .anyMatch(a -> expected.equals(a.getAuthority()));
     }
 }

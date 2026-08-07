@@ -57,7 +57,8 @@ public final class TestSessions {
         // sessionId, sessionStartedAt and createdAt come from the entity's own defaults, so this
         // fixture cannot drift from how a real sign-in initialises them.
         RefreshToken saved = refreshTokens.save(rt);
-        return jwtService.generateToken(user.getId(), user.getEmail(), saved.getSessionId());
+        return jwtService.generateToken(user.getId(), user.getEmail(), saved.getSessionId(),
+                user.getAccountScope());
     }
 
     /** The same token, wrapped in the {@code Authorization} header most callers want. */

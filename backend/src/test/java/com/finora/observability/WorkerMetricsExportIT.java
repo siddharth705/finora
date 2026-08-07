@@ -51,6 +51,11 @@ class WorkerMetricsExportIT extends AbstractIntegrationTest {
         user.setPasswordHash("irrelevant-for-this-test");
         user.setFullName("Metrics Export IT User");
         user.setRole("ADMIN");
+        // An admin is an ADMIN-PORTAL account. Since V52 the scope is what decides whether a
+        // role's permissions are granted at all (AuthorizationService), so a fixture setting
+        // only the role builds a state the application refuses to create -- RoleService
+        // .requireScopeCanHold rejects attaching a permission-bearing role to a USER-scope row.
+        user.setAccountScope(User.SCOPE_ADMIN);
         user.setPhoneVerified(true);
         user = userRepository.save(user);
 

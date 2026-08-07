@@ -49,6 +49,11 @@ class RoleAdminControllerIT extends AbstractIntegrationTest {
         user.setPasswordHash("irrelevant-for-this-test");
         user.setFullName("RBAC Management Test User");
         user.setRole(role);
+        // An admin is an ADMIN-PORTAL account. Since V52 the scope is what decides whether a
+        // role's permissions are granted at all (AuthorizationService), so a fixture setting
+        // only the role builds a state the application refuses to create -- RoleService
+        // .requireScopeCanHold rejects attaching a permission-bearing role to a USER-scope row.
+        user.setAccountScope("USER".equals(role) ? User.SCOPE_USER : User.SCOPE_ADMIN);
         user.setAccountScope(accountScope);
         user.setPhoneVerified(true); // see AdminRbacIT for why this must be set
         return userRepository.save(user);
