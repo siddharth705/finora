@@ -307,6 +307,21 @@ public class AuthService {
             throw new ApiException(HttpStatus.LOCKED,
                     "This account is temporarily locked due to repeated failed login attempts. Try again later.");
         }
+        // An EXPIRED lockout clears the counter that produced it. Serving the lockout is the
+        // penalty; carrying the count past it turns every subsequent typo into an instant re-lock.
+        //
+        // This was latent until per-account lockout started working. registerFailedLogin never
+        // reset failedLoginAttempts, and only a SUCCESSFUL login did -- but while the counter was
+        // being discarded by rollback (the noRollbackFor fix) it never reached the threshold, so
+        // the second lock could not happen either. Making lockout function exposed it: an account
+        // that served a 15-minute lockout came back with the counter still at the maximum, so one
+        // wrong password re-locked it for another 15 minutes, indefinitely, with no way out except
+        // remembering the password first time.
+        if (user != null && user.getLockedUntil() != null && !user.getLockedUntil().isAfter(Instant.now())) {
+            user.setFailedLoginAttempts(0);
+            user.setLockedUntil(null);
+            userRepository.save(user);
+        }
         // Checked before authenticate() (like the lockout check above), not after -- a suspended
         // account shouldn't get a "correct password" signal at all, just a uniform rejection.
         // See User.status / V23__user_account_status.sql and AdminUserService.suspend.

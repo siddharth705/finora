@@ -140,6 +140,14 @@ export interface StagedRow {
   // on Transaction.decisionRuleId (see Import.tsx's confirmImport).
   ruleId: string | null;
   likelyDuplicate: boolean;
+  /**
+   * The evidence behind `likelyDuplicate`, or null when nothing matched (WI5).
+   *
+   * `likelyDuplicate` alone was enough to filter a row out and not enough for anyone to decide.
+   * This is what the row appears to repeat, so the person can look at both and choose — which is
+   * the whole point of duplicate detection being decision support rather than a filter.
+   */
+  duplicateMatch: DuplicateMatch | null;
   // Phase 1 "capture facts" (docs/engineering/financial-document-intelligence-principles.md):
   // best-effort, nullable, never guessed -- only set when the source statement actually carried
   // a recognizable reference/cheque/instrument-ID column or running-balance column. No UI
@@ -343,4 +351,29 @@ export interface ReimportResult {
 export interface WorkspaceSettings {
   autoApplyConfidenceThreshold: number;
   updatedAt: string | null;
+}
+
+
+/**
+ * An existing transaction that a staged row appears to repeat (WI5).
+ *
+ * `confidence` has one level, 'EXACT', because the backend matches on date AND amount AND
+ * description being identical — there is no weaker tier to report, and inventing a spectrum the
+ * detector cannot produce would be worse than saying so.
+ *
+ * `matchCount` above 1 is a signal, and the opposite of the one a filter would draw: several
+ * identical existing transactions usually means the user genuinely transacts this repeatedly (a
+ * daily fare, a split bill), which is precisely when skipping the row is wrong.
+ */
+export interface DuplicateMatch {
+  existingTransactionId: string;
+  existingAccountId: string | null;
+  existingDate: string;
+  existingDescription: string;
+  existingAmount: number;
+  existingType: 'INCOME' | 'EXPENSE' | null;
+  existingImportedAt: string;
+  matchCount: number;
+  confidence: 'EXACT';
+  reason: string;
 }

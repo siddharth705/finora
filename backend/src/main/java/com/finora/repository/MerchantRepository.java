@@ -1,6 +1,7 @@
 package com.finora.repository;
 
 import com.finora.entity.Merchant;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -12,6 +13,29 @@ import java.util.UUID;
 
 public interface MerchantRepository extends JpaRepository<Merchant, UUID> {
     List<Merchant> findByUserId(UUID userId);
+
+    /**
+     * The Review Center's queue: merchants the engine created and nobody has confirmed, across
+     * every user.
+     *
+     * <p>Cross-user LISTING with user-scoped ACTIONS is the shape decision 1.2 settled on. There
+     * is no canonical merchant registry -- every merchant row is one user's private record -- so
+     * an operator cannot merge across users and the page does not pretend they can. What they can
+     * do is see all outstanding review work in one place instead of guessing which user to open,
+     * and this is a read-only aggregate over per-user rows, exactly like
+     * {@code platformMerchantCounts} and {@code searchDistinctCanonicalNames} already are.
+     *
+     * <p>Oldest first: a merchant that has been sitting unreviewed for a week matters more than
+     * one created a minute ago, and a newest-first queue buries the former forever.
+     */
+    Page<Merchant> findByLifecycleStatusInOrderByCreatedAtAsc(
+            java.util.Collection<Merchant.Lifecycle> statuses, Pageable pageable);
+
+    /** One user's outstanding review work, for the per-user view and for bulk approve. */
+    List<Merchant> findByUserIdAndLifecycleStatusIn(
+            UUID userId, java.util.Collection<Merchant.Lifecycle> statuses);
+
+    long countByLifecycleStatusIn(java.util.Collection<Merchant.Lifecycle> statuses);
 
     /** ImportService needs only the SIZE of the merchant table before and after an import, to
      *  report how many were newly learned. It was calling findByUserId(userId).size(), which loads

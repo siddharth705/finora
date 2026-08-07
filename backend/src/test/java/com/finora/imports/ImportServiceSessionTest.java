@@ -46,8 +46,11 @@ class ImportServiceSessionTest {
     private AccountRepository accountRepository;
     private com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator;
 
+    private com.finora.service.MerchantLearningEventPublisher learningEventPublisher;
+
     @BeforeEach
     void setUp() {
+        learningEventPublisher = mock(com.finora.service.MerchantLearningEventPublisher.class);
         accountRepository = mock(AccountRepository.class);
         AccountService accountService = mock(AccountService.class);
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
@@ -69,9 +72,9 @@ class ImportServiceSessionTest {
             return txns;
         });
         CsvParser csvParser = new CsvParser();
-        TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector);
+        TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector, com.finora.imports.TestRuleEngines.empty());
         StatementValidator statementValidator = new StatementValidator(com.finora.imports.product.ProductDiscovery.standard());
-        PreviewGenerator previewGenerator = new PreviewGenerator(csvParser, transactionNormalizer, statementValidator, new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(), new com.finora.imports.StatementTotalsValidator(), new com.finora.imports.SummaryTotalsValidator(), new com.finora.imports.ColumnAmbiguityValidator()));
+        PreviewGenerator previewGenerator = new PreviewGenerator(csvParser, transactionNormalizer, statementValidator, new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(), new com.finora.imports.StatementTotalsValidator(), new com.finora.imports.SummaryTotalsValidator(), new com.finora.imports.ColumnAmbiguityValidator()), com.finora.imports.TestRuleEngines.empty());
         ImportRuleLearningService ruleLearningService = new ImportRuleLearningService(categorizationService);
 
         pdfPreviewGenerator = mock(com.finora.imports.pdf.PdfPreviewGenerator.class);
@@ -80,7 +83,8 @@ class ImportServiceSessionTest {
                 merchantRepository, statementImportRepository, categorizationService, reconciliationService,
                 recurringService, previewGenerator, duplicateDetector, ruleLearningService, importSessionService,
                 pdfPreviewGenerator, productIdentityResolver, new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), "", ""),
-                mock(com.finora.imports.analysis.StatementAnalysisRecorder.class));
+                mock(com.finora.imports.analysis.StatementAnalysisRecorder.class),
+                learningEventPublisher);
 
         Account account = new Account();
         ReflectionTestUtils.setField(account, "id", accountId);

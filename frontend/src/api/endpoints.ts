@@ -183,7 +183,19 @@ export interface ConfirmedRowPayload {
   include: boolean;
   categorySource: string;
   ruleId: string | null;
+  /** What the engine guessed. */
   likelyDuplicate: boolean;
+  /**
+   * What the USER answered on the duplicate review screen — true only for a flagged row they
+   * looked at and chose "Import anyway".
+   *
+   * Separate from `likelyDuplicate` because nothing on the server can reconstruct it: reconciliation
+   * sees two rows with the same date, amount and description and cannot tell "the same statement
+   * uploaded twice" from "two metro fares on one day". Untold, it marks the row a duplicate and
+   * every spend total drops it. Optional so the multi-account path, which has no review screen yet,
+   * keeps its existing shape.
+   */
+  confirmedNotDuplicate?: boolean;
 }
 
 export interface NewAccountPayload {

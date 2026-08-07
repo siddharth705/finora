@@ -118,8 +118,8 @@ public class RecurringService {
         // two repository queries, and both result sets are identical on every iteration -- the
         // same user and the same global scope -- so this loop was 2N queries for N transactions,
         // on every transaction create, edit and delete. Same N+1 the comment above says it avoided
-        // for merchants, two lines further down and missed. See sideEffectRuleSet.
-        List<CategoryRule> sideEffectRules = ruleEngineService.sideEffectRuleSet(userId);
+        // for merchants, two lines further down and missed. See ruleSet.
+        List<CategoryRule> sideEffectRules = ruleEngineService.ruleSet(userId);
         for (Transaction t : active) {
             if (t.isRecurring()) continue;
             boolean subscriptionRuleMatch = ruleEngineService.evaluateSideEffectRules(

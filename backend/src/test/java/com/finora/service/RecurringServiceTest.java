@@ -172,7 +172,7 @@ class RecurringServiceTest {
         // unstubbed empty-list default, and the "did a MARK_SUBSCRIPTION rule match" check always
         // saw zero matches regardless of what was configured above -- the test was asserting on
         // behavior it wasn't actually exercising.
-        when(ruleEngineService.sideEffectRuleSet(userId)).thenReturn(List.of(markSubscriptionRule()));
+        when(ruleEngineService.ruleSet(userId)).thenReturn(List.of(markSubscriptionRule()));
         // The service now hoists the two rule queries out of the per-transaction loop and
         // evaluates against the pre-fetched set, so this stubs the List<CategoryRule> overload.
         when(ruleEngineService.evaluateSideEffectRules(anyList(), any(), any(), any(), any()))

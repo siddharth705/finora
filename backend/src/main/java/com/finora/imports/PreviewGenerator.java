@@ -2,6 +2,7 @@ package com.finora.imports;
 
 import com.finora.dto.ImportDto.DetectedAccountInfo;
 import com.finora.dto.ImportDto.StagedRow;
+import com.finora.entity.CategoryRule;
 import com.finora.dto.ImportDto.StagingResponse;
 import com.finora.dto.ImportDto.UnparseableRow;
 import org.springframework.stereotype.Component;
@@ -28,14 +29,17 @@ public class PreviewGenerator {
     private final StatementValidator statementValidator;
 
     private final ImportVerifier importVerifier;
+    private final com.finora.service.RuleEngineService ruleEngineService;
 
     public PreviewGenerator(CsvParser csvParser, TransactionNormalizer transactionNormalizer,
                              StatementValidator statementValidator,
-                             ImportVerifier importVerifier) {
+                             ImportVerifier importVerifier,
+                             com.finora.service.RuleEngineService ruleEngineService) {
         this.csvParser = csvParser;
         this.transactionNormalizer = transactionNormalizer;
         this.statementValidator = statementValidator;
         this.importVerifier = importVerifier;
+        this.ruleEngineService = ruleEngineService;
     }
 
     public StagingResponse generate(UUID userId, String filename, InputStream contentStream) throws IOException {
@@ -86,13 +90,19 @@ public class PreviewGenerator {
         ctx.recordTables(1);
         ctx.recordHeaders(List.of(headerRow));
 
+        // Loaded once for the whole statement, not once per row. The per-row overload re-queried
+        // category_rules twice for every row, always returning the same two result sets -- 2.00
+        // queries/row measured, the largest single N+1 in this pipeline. A user's rules cannot
+        // change partway through parsing one file, so hoisting is equivalent by construction.
+        List<CategoryRule> rules = ruleEngineService.ruleSet(userId);
+
         for (int i = headerIdx + 1; i < allRows.size(); i++) {
             String[] cells = allRows.get(i);
             if (csvParser.isBlankRow(cells)) continue;
 
             Map<String, String> row = csvParser.zipRow(headerRow, cells);
 
-            StagedRow parsed = transactionNormalizer.normalize(userId, row, ctx);
+            StagedRow parsed = transactionNormalizer.normalize(userId, row, ctx, rules);
             if (parsed != null) {
                 staged.add(parsed);
             } else {

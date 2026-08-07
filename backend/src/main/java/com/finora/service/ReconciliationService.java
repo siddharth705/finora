@@ -118,6 +118,18 @@ public class ReconciliationService {
             Transaction earliest = group.stream().min(Comparator.comparing(Transaction::getCreatedAt)).orElseThrow();
             for (Transaction t : group) {
                 if (t == earliest || t.getIsDuplicateOf() != null) continue;
+                // A human already ruled on this row and said it is a real, separate transaction.
+                // Nothing this pass can observe outranks that: it sees identical date, amount and
+                // description and cannot distinguish "the same statement uploaded twice" from "two
+                // metro fares on one day", which is why it needs to be told rather than left to
+                // infer. Marking it anyway is what made the ledger and the dashboard disagree by
+                // exactly the rows the user had asked for -- see V65.
+                //
+                // Checked here, inside the marking loop, rather than by excluding these rows from
+                // the grouping above: a confirmed row still belongs in its group so it can serve as
+                // `earliest`, and so a THIRD, genuinely accidental copy still gets flagged against
+                // it. Skipping the mark is the whole of the change; skipping the row is not.
+                if (t.getNotDuplicateConfirmedAt() != null) continue;
                 t.setIsDuplicateOf(earliest.getId());
                 t.setReconciliationStatus(Transaction.ReconciliationStatus.DUPLICATE);
                 t.setReconciliationExplanation(ReconciliationExplanation.duplicate(earliest.getId()));

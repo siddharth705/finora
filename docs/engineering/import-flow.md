@@ -134,6 +134,53 @@ statement id alone cannot distinguish that from a genuine second re-import of th
 
 ---
 
+## Duplicate review
+
+A staged row that looks like something already on the books does **not** get quietly dropped. It
+arrives carrying `duplicateMatch` — the existing transaction's id, date, description, amount, when
+it was imported, how many existing transactions match, and the reason — and the user decides.
+
+The gate: `Confirm Import` stays disabled while any flagged row is still unresolved. That is the
+whole point. Duplicate detection used to be a filter, which was wrong in both directions — a genuine
+re-import got skipped without anyone confirming it should be, and two identical coffees bought on
+the same day got skipped too. Neither outcome was ever a decision anyone made.
+
+Three things the shape of the data enforces:
+
+- **`confidence` is always `EXACT`, and is not rendered as a score.** The detector matches on date
+  **and** amount **and** description being identical. A percentage would imply a spectrum it cannot
+  produce.
+- **`matchCount > 1` argues *for* importing, not against.** Several identical existing transactions
+  usually means the user genuinely transacts this repeatedly — a daily fare, a split bill — which is
+  exactly the case where skipping is wrong. The review screen says so.
+- **The reason comes from the detector, not the UI**, so the explanation shown is the one the system
+  actually used.
+
+`apply to similar` is bounded to rows still unresolved: a bulk action must never overwrite a choice
+already made by hand.
+
+**The decision travels with the row.** `ConfirmedRow.confirmedNotDuplicate` carries the user's
+*answer* alongside `likelyDuplicate`, which is only the engine's *guess*, and confirming an
+"Import anyway" row stamps `transactions.not_duplicate_confirmed_at`. `ReconciliationService`'s
+duplicate pass skips rows carrying that stamp.
+
+This is not belt-and-braces. Without it the milestone gate measured a ledger holding ₹1,618.50 while
+the dashboard reported ₹1,528.50 — the ₹90 difference being exactly the two fares the user had
+explicitly asked to import. Reconciliation runs after every import, create, edit *and* delete, and
+it cannot tell "the same statement uploaded twice" from "two metro fares on one day" without being
+told; every spend calculation filters `is_duplicate_of IS NULL`, so the decision was honoured in the
+ledger and reversed in the numbers. The stamp is persisted rather than applied once so the ruling
+survives the user's next unrelated action too.
+
+A client that sends no decision — the mobile app, which has no duplicate review screen — behaves
+exactly as before.
+
+**Not yet wired for multi-account PDFs** — that path still auto-unticks flagged rows, because its
+per-section state needs restructuring first rather than a second copy of the component. Recorded in
+[import-reliability-milestone-design.md](import-reliability-milestone-design.md) §7.
+
+---
+
 ## Multi-account PDFs
 
 One file can describe more than one account — a composite statement bundling a savings account and

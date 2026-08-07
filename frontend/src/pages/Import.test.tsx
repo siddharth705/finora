@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -398,5 +398,202 @@ describe('Import — Financial Product Discovery on the review screen', () => {
 
     expect(screen.getByText(/MATURITY_FIELD/)).toBeInTheDocument();
     expect(why).toHaveAttribute('aria-expanded', 'true');
+  });
+});
+
+/**
+ * The gate (WI5). These are page-level on purpose: the component tests prove the review screen
+ * renders and reports decisions, but the thing that actually protects the ledger is the Confirm
+ * Import button refusing to fire, and that only exists once the two are wired together.
+ */
+describe('Import — duplicate review gates the import', () => {
+  const duplicateMatch = {
+    existingTransactionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    existingAccountId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+    existingDate: '2026-07-10',
+    existingDescription: 'SWIGGY ORDER 4471',
+    existingAmount: 486,
+    existingType: 'EXPENSE' as const,
+    existingImportedAt: '2026-07-11T09:00:00Z',
+    matchCount: 1,
+    confidence: 'EXACT' as const,
+    reason: 'Same date, amount and description as a transaction already in your ledger.',
+  };
+
+  function stagedRow(description: string, duplicate: boolean) {
+    return {
+      date: '2026-07-10',
+      description,
+      amount: 486,
+      type: 'EXPENSE' as const,
+      suggestedCategory: 'Dining',
+      categorySource: 'rule' as const,
+      ruleId: null,
+      likelyDuplicate: duplicate,
+      referenceNumber: null,
+      balanceAfter: null,
+      duplicateMatch: duplicate ? { ...duplicateMatch, existingDescription: description } : null,
+    };
+  }
+
+  function stageRows(rows: ReturnType<typeof stagedRow>[]) {
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'session-1',
+      multiAccount: false,
+      sections: null,
+      staging: {
+        rows,
+        totalParsed: rows.length,
+        flaggedDuplicates: rows.filter((r) => r.likelyDuplicate).length,
+        detectedAccount,
+        unparseableRows: [],
+      },
+    } as never);
+  }
+
+  beforeEach(() => {
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(importApi.confirm).mockReset().mockResolvedValue({
+      imported: 1, skipped: 1, duplicatesDetected: 1, transfersIdentified: 0, newMerchantsLearned: 0,
+      accountsCreated: [], productsCreated: {}, categoriesAssigned: {}, warnings: [], account: null,
+      totalCredits: 0, totalDebits: 486, statementOpeningBalance: null, statementClosingBalance: null,
+      statementPeriodStart: null, statementPeriodEnd: null, importDurationMs: 12, source: 'PDF',
+    } as never);
+  });
+
+  const confirmButton = () => screen.getByRole('button', { name: /confirm import/i });
+
+  it('leaves the import blocked while a duplicate is undecided', async () => {
+    stageRows([stagedRow('SWIGGY ORDER 4471', true)]);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+
+    expect(await screen.findByTestId('duplicate-review')).toBeInTheDocument();
+    expect(confirmButton()).toBeDisabled();
+  });
+
+  it('releases the import once every duplicate has an answer', async () => {
+    stageRows([stagedRow('SWIGGY ORDER 4471', true), stagedRow('UBER TRIP 8891', true)]);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await screen.findByTestId('duplicate-review');
+
+    await user.click(screen.getAllByRole('button', { name: 'Import anyway' })[0]);
+    expect(confirmButton()).toBeDisabled();
+
+    await user.click(screen.getAllByRole('button', { name: 'Skip this row' })[1]);
+    expect(confirmButton()).toBeEnabled();
+  });
+
+  /** A statement with nothing suspicious in it must not pay for this feature. */
+  it('does not gate an import with no duplicates in it', async () => {
+    stageRows([stagedRow('BLINKIT GROCERIES 9982', false)]);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
+    expect(screen.queryByTestId('duplicate-review')).not.toBeInTheDocument();
+  });
+
+  /**
+   * The decision has to reach the payload, not just the button. "Skip" that still imports the row
+   * would be worse than the silent filter it replaced, because the user was told it was handled.
+   */
+  it('sends only the rows the user chose to import', async () => {
+    stageRows([stagedRow('SWIGGY ORDER 4471', true), stagedRow('UBER TRIP 8891', true)]);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await screen.findByTestId('duplicate-review');
+
+    await user.click(screen.getAllByRole('button', { name: 'Import anyway' })[0]);
+    await user.click(screen.getAllByRole('button', { name: 'Skip this row' })[1]);
+    await user.click(confirmButton());
+
+    await waitFor(() => expect(importApi.confirm).toHaveBeenCalled());
+    // The payload carries every parsed row with an include flag -- the backend is what filters --
+    // so the decision is visible here as include, not as a shorter list.
+    const payload = vi.mocked(importApi.confirm).mock.calls[0][0] as {
+      rows: { description: string; include: boolean }[];
+    };
+    expect(payload.rows.map((r) => [r.description, r.include])).toEqual([
+      ['SWIGGY ORDER 4471', true],
+      ['UBER TRIP 8891', false],
+    ]);
+  });
+
+  /**
+   * The decision has to reach the SERVER, not just the payload's include flag. Reconciliation runs
+   * straight after the import, sees two rows with the same date, amount and description, and — told
+   * nothing — marks the later one as a duplicate, which strips it from every spend total. The user's
+   * answer would show in the ledger and vanish from the numbers.
+   */
+  it('tells the server which duplicates the user personally cleared', async () => {
+    stageRows([
+      stagedRow('METRO FARE', true),
+      stagedRow('SWIGGY ORDER 4471', true),
+      stagedRow('BLINKIT GROCERIES 9982', false),
+    ]);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await screen.findByTestId('duplicate-review');
+
+    await user.click(screen.getAllByRole('button', { name: 'Import anyway' })[0]);
+    await user.click(screen.getAllByRole('button', { name: 'Skip this row' })[1]);
+    await user.click(confirmButton());
+
+    await waitFor(() => expect(importApi.confirm).toHaveBeenCalled());
+    const payload = vi.mocked(importApi.confirm).mock.calls[0][0] as {
+      rows: { description: string; confirmedNotDuplicate?: boolean }[];
+    };
+    expect(payload.rows.map((r) => [r.description, r.confirmedNotDuplicate === true])).toEqual([
+      ['METRO FARE', true],
+      ['SWIGGY ORDER 4471', false],
+      // Never flagged, so there was no question to answer -- asserting "not a duplicate" about a
+      // row nothing questioned would be claiming a decision the user was never asked to make.
+      ['BLINKIT GROCERIES 9982', false],
+    ]);
+  });
+
+  /** Bulk resolution is the difference between reviewing 3 duplicates and abandoning 40 of them,
+   *  but it must never overwrite a row the user already answered by hand. */
+  it('applies one decision to identical duplicates without touching answered ones', async () => {
+    stageRows([
+      stagedRow('METRO FARE', true),
+      stagedRow('METRO FARE', true),
+      stagedRow('METRO FARE', true),
+    ]);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await screen.findByTestId('duplicate-review');
+
+    // Answer the last one by hand first, then bulk-resolve from the first.
+    await user.click(screen.getAllByRole('button', { name: 'Skip this row' })[2]);
+    await user.click(screen.getAllByRole('button', { name: 'Import anyway' })[0]);
+    // Scoped to the first row: row 2 also offers a bulk action now, and clicking the wrong one
+    // would prove nothing about which decision propagated.
+    await user.click(
+      within(screen.getByTestId('duplicate-0')).getByRole('button', { name: /Apply to 1 similar/ })
+    );
+
+    expect(confirmButton()).toBeEnabled();
+    await user.click(confirmButton());
+
+    await waitFor(() => expect(importApi.confirm).toHaveBeenCalled());
+    // Rows 0 and 1 import (one by hand, one in bulk); row 2's earlier hand-made Skip survives.
+    const payload = vi.mocked(importApi.confirm).mock.calls[0][0] as { rows: { include: boolean }[] };
+    expect(payload.rows.map((r) => r.include)).toEqual([true, true, false]);
   });
 });

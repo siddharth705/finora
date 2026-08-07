@@ -6,6 +6,7 @@ import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.dto.ImportDto.StagedRow;
 import com.finora.dto.ImportDto.StagingResponse;
 import com.finora.dto.ImportDto.UnparseableRow;
+import com.finora.entity.CategoryRule;
 import com.finora.imports.CsvParser;
 import com.finora.imports.pdf.StatementSummaryExtractor.PrintedSummary;
 import com.finora.imports.DocumentContext;
@@ -62,11 +63,13 @@ public class PdfPreviewGenerator {
     private final ProductAttributeExtractor attributeExtractor;
 
     private final com.finora.imports.ImportVerifier importVerifier;
+    private final com.finora.service.RuleEngineService ruleEngineService;
 
     public PdfPreviewGenerator(PdfTextExtractor textExtractor, PdfTableLocator tableLocator,
                                 PdfMetadataExtractor metadataExtractor, TransactionNormalizer transactionNormalizer,
                                 ProductDiscovery productDiscovery, ProductAttributeExtractor attributeExtractor,
-                                com.finora.imports.ImportVerifier importVerifier) {
+                                com.finora.imports.ImportVerifier importVerifier,
+                                com.finora.service.RuleEngineService ruleEngineService) {
         this.textExtractor = textExtractor;
         this.tableLocator = tableLocator;
         this.metadataExtractor = metadataExtractor;
@@ -74,6 +77,7 @@ public class PdfPreviewGenerator {
         this.productDiscovery = productDiscovery;
         this.attributeExtractor = attributeExtractor;
         this.importVerifier = importVerifier;
+        this.ruleEngineService = ruleEngineService;
     }
 
     /** Single-account convenience wrapper over {@link #generateSections} -- returns the FIRST
@@ -260,8 +264,12 @@ public class PdfPreviewGenerator {
         // date -> balance-as-reported, purely to derive opening/closing balance below -- not
         // persisted anywhere, discarded once this method returns.
         List<BalancePoint> balancePoints = new ArrayList<>();
+        // Hoisted for the same reason as PreviewGenerator's CSV loop -- see its comment. A
+        // multi-account PDF calls this once per section, so the rule set is loaded once per
+        // section rather than once per row.
+        List<CategoryRule> rules = ruleEngineService.ruleSet(userId);
         for (Map<String, String> row : section.rows()) {
-            StagedRow parsed = transactionNormalizer.normalize(userId, row, ctx);
+            StagedRow parsed = transactionNormalizer.normalize(userId, row, ctx, rules);
             if (parsed == null) {
                 unparseable.add(new UnparseableRow(row, transactionNormalizer.explainFailure(row)));
                 continue;

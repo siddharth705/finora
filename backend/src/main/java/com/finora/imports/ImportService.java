@@ -69,6 +69,11 @@ import java.util.UUID;
 @Service
 public class ImportService {
 
+    /** One merchant-learning confirmation a confirmed row earned, held until the statement import
+     *  row exists to attribute it to. Both ids are already resolved by the row loop, so queueing
+     *  costs no extra lookups. */
+    private record PendingLearning(UUID merchantId, UUID categoryId) {}
+
     private final AccountRepository accountRepository;
     private final AccountService accountService;
     private final TransactionRepository transactionRepository;
@@ -85,6 +90,7 @@ public class ImportService {
     private final ProductIdentityResolver productIdentityResolver;
     private final StatementAnalysisRecorder analysisRecorder;
     private final com.finora.imports.storage.StatementContentService statementContentService;
+    private final com.finora.service.MerchantLearningEventPublisher learningEventPublisher;
 
     public ImportService(AccountRepository accountRepository, AccountService accountService,
                           TransactionRepository transactionRepository, MerchantRepository merchantRepository,
@@ -99,7 +105,8 @@ public class ImportService {
                           com.finora.imports.pdf.PdfPreviewGenerator pdfPreviewGenerator,
                           ProductIdentityResolver productIdentityResolver,
                           com.finora.imports.storage.StatementContentService statementContentService,
-                          StatementAnalysisRecorder analysisRecorder) {
+                          StatementAnalysisRecorder analysisRecorder,
+                          com.finora.service.MerchantLearningEventPublisher learningEventPublisher) {
         this.analysisRecorder = analysisRecorder;
         this.productIdentityResolver = productIdentityResolver;
         this.statementContentService = statementContentService;
@@ -116,6 +123,7 @@ public class ImportService {
         this.ruleLearningService = ruleLearningService;
         this.importSessionService = importSessionService;
         this.pdfPreviewGenerator = pdfPreviewGenerator;
+        this.learningEventPublisher = learningEventPublisher;
     }
 
     /**
@@ -504,6 +512,9 @@ public class ImportService {
         int skipped = 0;
         Map<String, Integer> categoryTally = new LinkedHashMap<>();
         List<Transaction> toInsert = new ArrayList<>();
+        // Merchant-learning confirmations this import earned, queued after savedImport below so
+        // each one can be attributed to the statement it came from.
+        List<PendingLearning> pendingLearning = new ArrayList<>();
         LocalDate minDate = null;
         LocalDate maxDate = null;
         // Summed only over rows actually imported (skipped/unchecked rows never reach this loop's
@@ -519,13 +530,25 @@ public class ImportService {
             }
 
             Category category = categorizationService.resolveOrCreateCategory(userId, row.category());
-            boolean isUnresolvedGuess = ruleLearningService.recordDecision(userId, row, category);
+            var decision = ruleLearningService.recordDecision(userId, row, category);
+            boolean isUnresolvedGuess = decision.unresolvedGuess();
 
             Transaction t = new Transaction();
             t.setUserId(userId);
             t.setAccountId(accountId);
             t.setCategoryId(category.getId());
-            t.setMerchantId(categorizationService.resolveMerchantId(userId, row.description()));
+            UUID merchantId = categorizationService.resolveMerchantId(userId, row.description());
+            t.setMerchantId(merchantId);
+            // Collected, not applied. Applying merchant learning here is what Bug 02 was: one
+            // confirmation per row, inside this transaction, where a single lost race against
+            // UNIQUE(user_id, merchant_id, category_id) rolled back every transaction in a
+            // statement the user had already reviewed and approved. These are queued below, once
+            // the statement import row exists to attribute them to, and applied by a worker after
+            // this transaction commits. merchantId is reused rather than re-resolved -- the row
+            // above already paid for it.
+            if (decision.worthLearning() && merchantId != null) {
+                pendingLearning.add(new PendingLearning(merchantId, category.getId()));
+            }
             t.setTxnDate(row.date());
             t.setDescription(row.description());
             t.setMerchant(CategoryRules.extractMerchant(row.description()));
@@ -535,6 +558,13 @@ public class ImportService {
             t.setReferenceNumber(row.referenceNumber());
             t.setBalanceAfter(row.balanceAfter());
             t.setNeedsCategoryReview(isUnresolvedGuess);
+            // The user's answer on the duplicate review screen, recorded on the row itself so
+            // reconciliation cannot later overrule it. Only meaningful when the engine actually
+            // flagged the row -- a client asserting "not a duplicate" about a row nothing
+            // questioned would be claiming a decision the user was never asked to make.
+            if (row.likelyDuplicate() && row.confirmedNotDuplicate()) {
+                t.setNotDuplicateConfirmedAt(java.time.Instant.now());
+            }
             // See CategorizationService.decisionSourceFor -- categorySource/ruleId are carried
             // through from staging (StagedRow -> ConfirmedRow) unchanged by review, same as
             // category itself; a user changing the category during review doesn't currently
@@ -607,6 +637,19 @@ public class ImportService {
         statementImport.setImportDurationMs(System.currentTimeMillis() - startedAtMs);
         StatementImport savedImport = statementImportRepository.save(statementImport);
         toInsert.forEach(t -> t.setStatementImportId(savedImport.getId()));
+
+        // WI1. The event rows go in HERE, inside this transaction, so an import that rolls back
+        // takes its queued learning with it -- otherwise a worker would later apply confirmations
+        // for transactions that do not exist, which is a worse failure than the one this replaces.
+        // Only the APPLYING is deferred: MerchantLearningEventPublisher registers an afterCommit
+        // hook, and the worker runs once this transaction is durable. A learning failure then
+        // cannot touch these transactions, because by the time it can happen they are committed.
+        // request.sessionId() is null on the direct-file confirm path and populated on the
+        // session path -- passed through as-is, never substituted, so the admin queue can tell
+        // "this import had no session" from "the session is unknown".
+        pendingLearning.forEach(pending -> learningEventPublisher.enqueue(
+                userId, pending.merchantId(), pending.categoryId(),
+                savedImport.getId(), request.sessionId()));
 
         List<Transaction> saved = transactionRepository.saveAll(toInsert);
         int imported = saved.size();

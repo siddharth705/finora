@@ -8,3 +8,13 @@ logging:
   level:
     root: WARN
     com.finora: INFO
+
+# The merchant-learning queue's scheduler and async nudge are off by default under test, so the
+# suite is deterministic: an event enqueued by one test must not be drained by a background thread
+# while another test is asserting on it. Tests that exercise the queue drive it explicitly through
+# MerchantLearningEventWorker.drainOnce(), which deliberately does not consult this flag.
+# MerchantLearningNudgeIT turns it back on for the one case that has to prove the async path works.
+app:
+  learning:
+    queue:
+      enabled: false
