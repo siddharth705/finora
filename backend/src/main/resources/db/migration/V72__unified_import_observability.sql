@@ -1,5 +1,18 @@
 -- Item 6 of docs/engineering/milestone-2-import-at-scale.md: COMPLETING import observability.
 --
+-- NUMBERED V72, AFTER A GAP, AND THE GAP IS DELIBERATE
+-- ---------------------------------------------------
+-- V69 and V70 were reserved for two Milestone 2 work items that turned out to need no migration at
+-- all (WI1A and multi-account review parity). V68 (layout registry) and V71 (live session lookup
+-- index) exist. This file was written as V69 and renumbered before landing, because a migration
+-- that lands with a LOWER version than one already applied is out of order, and Flyway refuses
+-- those by default rather than running them.
+--
+-- Worth stating because of how that failure presents: a fresh test database applies every migration
+-- in version order and never notices, so the whole suite passes and the first real deployment is
+-- where it breaks. Flyway does not require contiguous versions -- V59 already skipped V58 for the
+-- same class of reason -- so leaving the gap costs nothing and closing it would cost the ordering.
+--
 -- Two thirds of the questions worth asking are already answerable. import_jobs carries status,
 -- progress, attempts, last_error and correlation_id; statement_analysis_sessions carries the
 -- layout fingerprint, the outcome, the failure code, the row count and the unanchored-reason

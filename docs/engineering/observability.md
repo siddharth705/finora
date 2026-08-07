@@ -290,13 +290,13 @@ gated on `PLATFORM_DIAGNOSTICS_VIEW`, carrying no file name, no user id and no s
 | Block | Table | Added by |
 |---|---|---|
 | Upload and parsing | `statement_analysis_sessions` | V59/V60 |
-| Per-stage timing and status | `import_job_stages` | V69 |
-| Verification outcomes | `import_verification_findings` | V69 |
+| Per-stage timing and status | `import_job_stages` | V72 |
+| Verification outcomes | `import_verification_findings` | V72 |
 | Learning | `merchant_learning_events` | V62/V63 |
 | Queue progress | `import_jobs` | V66 |
 
 **The join key is the staging session.** `merchant_learning_events.source_import_session_id` has
-existed since V63; V69 is what lets the analysis row name the same session, plus a `correlation_id`
+existed since V63; V72 is what lets the analysis row name the same session, plus a `correlation_id`
 so a trace leads to its log lines. Before that the three tables each recorded their part and were
 keyed on things that never met.
 

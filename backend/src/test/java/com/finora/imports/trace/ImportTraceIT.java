@@ -205,7 +205,7 @@ class ImportTraceIT extends AbstractIntegrationTest {
 
     @Test
     void theStagingSessionIsWhatTiesLearningBackToTheUpload() {
-        // The join V69 adds. merchant_learning_events has carried source_import_session_id since
+        // The join V72 adds. merchant_learning_events has carried source_import_session_id since
         // V63 and the analysis row had no way to name it, so "which merchants did this import
         // teach" was a question about timing rather than a join. Removing the id from the analysis
         // row is what this test would catch.
