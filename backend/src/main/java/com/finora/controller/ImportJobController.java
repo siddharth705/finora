@@ -1,0 +1,94 @@
+package com.finora.controller;
+
+import com.finora.dto.ApiResponse;
+import com.finora.imports.StatementUpload;
+import com.finora.imports.jobs.ImportJobDto;
+import com.finora.imports.jobs.ImportJobService;
+import com.finora.security.CurrentUser;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * The asynchronous import path: accept an upload, return immediately, work later.
+ *
+ * <h2>Why this is a new endpoint rather than a change to the existing one</h2>
+ *
+ * <p>{@code POST /import/csv/stage} returns {@code 200 {sessionId, staging}} and both the web app
+ * and the mobile app read those fields. Changing it to {@code 202 {jobId}} removes every field a
+ * client reads and changes the response type — two entries on the breaking list in
+ * {@code docs/engineering/api-compatibility-policy.md}, which requires {@code /api/v2} for either.
+ * The mobile support window obliges the backend to keep the last two released app versions working,
+ * and an installed app cannot be updated in step with a deploy.
+ *
+ * <p>Adding an endpoint is explicitly non-breaking in the same document. So the synchronous path
+ * stays exactly as it is and this runs beside it, until the frontend adopts polling (phase 3 of
+ * {@code enterprise-scale-milestone-design.md}) and the old route can be deprecated properly.
+ *
+ * <h2>This path is opt-in per environment</h2>
+ *
+ * <p>It needs object storage configured, because the worker runs later in another thread and has
+ * nothing to read but a content address. With no provider it returns 503 with a message naming the
+ * missing configuration, rather than accepting an upload that is certain to fail.
+ *
+ * <p><b>Retry after {@code IMPORTING} is not yet idempotent</b> (phase 2). That is safe on a single
+ * instance and blocks a multi-worker deploy, which is why this is opt-in rather than the default.
+ */
+@RestController
+@RequestMapping("/api/v1/import/jobs")
+public class ImportJobController {
+
+    private final ImportJobService importJobService;
+    private final CurrentUser currentUser;
+
+    public ImportJobController(ImportJobService importJobService, CurrentUser currentUser) {
+        this.importJobService = importJobService;
+        this.currentUser = currentUser;
+    }
+
+    /**
+     * Accepts a statement and returns 202 with somewhere to poll.
+     *
+     * <p>Deliberately NOT gated through {@code ImportConcurrencyLimiter}. That limiter exists to
+     * bound the expensive parsing work under a burst; here the request does no parsing at all, and
+     * queueing an upload behind a permit would reintroduce exactly the waiting this endpoint exists
+     * to remove. The bound now lives where the work does — the worker's batch size.
+     */
+    @PostMapping(consumes = "multipart/form-data")
+    public ResponseEntity<ApiResponse<ImportJobDto.Accepted>> submit(
+            @RequestParam("file") MultipartFile file) throws Exception {
+        // Validated here rather than in the worker: a file the parser will certainly reject should
+        // fail while the user is still looking at the upload dialog, not minutes later in a job
+        // status they have to go and check. Against ImportJobService.formatOf specifically, so the
+        // format this validates is the format the worker will actually parse with.
+        StatementUpload.requireReadable(file, ImportJobService.formatOf(file.getOriginalFilename()));
+
+        var accepted = ImportJobDto.Accepted.of(
+                importJobService.accept(currentUser.id(), file));
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(ApiResponse.ok(accepted));
+    }
+
+    /** Progress. Poll at 1-2s; the flow is measured in seconds, so this is cheaper than the
+     *  WebSockets or SSE it would otherwise take. */
+    @GetMapping("/{jobId}")
+    public ApiResponse<ImportJobDto.Progress> progress(@PathVariable UUID jobId) {
+        return ApiResponse.ok(importJobService.progress(currentUser.id(), jobId));
+    }
+
+    /** The caller's recent imports, for a "your uploads" view and for finding a job whose id the
+     *  client lost — a page refresh mid-import should not orphan the work. */
+    @GetMapping
+    public ApiResponse<List<ImportJobDto.Progress>> recent(
+            @RequestParam(value = "limit", defaultValue = "20") int limit) {
+        return ApiResponse.ok(importJobService.recent(currentUser.id(), limit));
+    }
+}

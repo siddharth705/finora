@@ -144,7 +144,8 @@ public class ImportJobWorker {
 
             jobStore.update(jobId, j -> j.advanceTo(ImportJob.Status.ANALYZING));
             var staged = importService.parseAndStageAnyFormat(
-                    job.getUserId(), formatOf(job.getFileName()), job.getFileName(), content, null);
+                    job.getUserId(), ImportJobService.formatOf(job.getFileName()).name(),
+                    job.getFileName(), content, null);
 
             jobStore.update(jobId, j -> {
                 // totalParsed rather than rows().size(): rows() is what staged successfully, and
@@ -173,10 +174,6 @@ public class ImportJobWorker {
                         "Import job " + job.getId() + " references object storage, but no provider "
                                 + "is configured."))
                 .retrieve(new ContentAddress(job.getContentHash(), job.getObjectKey()));
-    }
-
-    private static String formatOf(String fileName) {
-        return fileName != null && fileName.toLowerCase().endsWith(".pdf") ? "PDF" : "CSV";
     }
 
     private void recordFailure(WorkerExecution execution, UUID jobId, Exception cause) {
