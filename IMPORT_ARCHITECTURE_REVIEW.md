@@ -2,6 +2,24 @@
 
 **Date:** 2026-08-07 · **Branch:** `feat/merchant-learning-queue` · **Reviewer:** architecture
 
+> **Status update — this review's Phase 1 landed the same day it was written, and its Phase 3 was
+> profiled shortly after.** The findings below are preserved as the reasoning that produced the work,
+> not as a description of the codebase. Read this banner first; §2's status table in particular now
+> misreports.
+>
+> | This review said | Since |
+> |---|---|
+> | §2 #1, #6, #8 — imports synchronous, no progress, no fault tolerance | **Built.** `import_jobs` (`V66`), `ImportJobWorker`, and `POST`/`GET /api/v1/import/jobs` — 202 plus a pollable status — landed in `eb91c02` and `4fa49d1`. Opt-in per environment: `app.import.queue.enabled` defaults to false and requires object storage |
+> | §3 item 1–3 — `ImportJob`, a worker, `202 Accepted` | **Built**, as the review recommended: cloned from `MerchantLearningEventWorker`, Postgres `SKIP LOCKED`, no broker |
+> | §5 — "crash mid-import loses the user's work"; replay could duplicate | **Closed** by `V67`'s two partial unique indexes (`acecdcd`), which the scaling design tracked as Phase 2. See `ImportIdempotencyIT` |
+> | §6 — "16ms/row, per-row merchant resolution is the leading hypothesis, **not** a confirmed root cause" | **Confirmed by profiling** on the same day: five distinct per-row query patterns, scaling exactly linearly. Caching `category_rules` (`b7aab9d`) took ~6.0–6.6 queries/row to **3.00**. See [`docs/engineering/performance/import-pipeline-profile-2026-08-07.md`](docs/engineering/performance/import-pipeline-profile-2026-08-07.md), and `ImportQueryCountIT`, which now fails the build if the figure rises |
+> | §3 item 4–5 — job status endpoint, frontend progress UI | Endpoint **built**; the **frontend still does not poll it**. Both clients use the synchronous `/csv/stage` and `/pdf/stage` routes, which is deliberate — the API compatibility policy makes adding an endpoint non-breaking and changing one breaking |
+> | §3 item 6–8 — storage on by default, worker profile, queue metrics | **Still open.** Queue depth and oldest-pending age are published by the worker; the rest is unchanged |
+> | §9 — "no profiling, no load testing, no changes made" | The first is now done. Load testing is still not |
+>
+> One correction the update does not make: nothing here has been load-tested, so §4's 50,000-upload
+> arithmetic remains arithmetic.
+
 ---
 
 ## Answer to the question asked

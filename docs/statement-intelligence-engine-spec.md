@@ -1,6 +1,9 @@
 # Finora Statement Intelligence Engine — Technical Specification
 
-**Status:** Design review draft. Nothing in this document is built yet — no implementation should proceed against it until it's reviewed and approved, and until the specific legal/compliance checkpoint in §10.2 has been addressed.
+**Status:** **Largely superseded by what was built.** This was written as a design review draft, and most of what it specifies now exists — but arrived by a different route than §1 and §2 describe, which is the part that matters when reading this document. The outcome the spec asked for was reached; the architecture it proposed for reaching it was not adopted. §0's table below is maintained and current; treat every section after it as the reasoning of the time, not a description of the code. The one genuinely unbuilt component, AI-fallback extraction, remains gated on §10.2.
+
+**The substitution, in one line:** the spec proposed *one rule-based parser per bank, chosen by a bank classifier, with an AI fallback for the rest.* What was built is *one generic positional extractor plus a layout registry* — layouts are fingerprinted, recorded as rows and curated, so an unfamiliar statement widens a shared parser rather than waiting for a parser of its own. See [`docs/engineering/layout-intelligence-proposal.md`](engineering/layout-intelligence-proposal.md) and [`docs/engineering/milestone-2-import-at-scale.md`](engineering/milestone-2-import-at-scale.md).
+
 **Scope:** Statement ingestion (PDF + CSV), bank/account-type detection, hybrid extraction, validation, and account matching/creation — the pipeline that turns an uploaded statement into a fully populated, correct account and transaction set with no manual data entry.
 
 ---
@@ -14,18 +17,22 @@ This is a companion document to `financial-intelligence-engine-spec.md`, not a r
   - The AI-powered financial insight engine and redesigned dashboard (net worth tracking, spending forecasts, personalized recommendations) — a real feature, but a read/analytics-layer concern, not a statement-ingestion concern. Bundling it into this document would repeat the mistake this project has already corrected for once (see the Financial Intelligence Engine spec's own §8 principle 6: defer complexity until a real need justifies it).
   - Gmail integration — explicitly named in the product vision as a later phase. Nothing in the CASA-review argument raised earlier in this project's history has changed; that stays a separate, later decision.
   - EMI detection, UPI recognition, subscription identification, salary recognition, and refund classification — these are **categorization/recurring-detection refinements**, not statement-processing concerns. They hook into `CategorizationService` and `RecurringService` (already specified) once transactions exist. This document notes where the hooks are (§4, step 7) but does not re-architect those services here.
-- **Currently implemented, for real, today:** nothing. `CsvImportService` explicitly documents PDF as out of scope in its class-level comment ("bank PDF layouts vary too much for a generic parser to handle reliably without per-bank templates"). This document is the design that changes that — but it changes it deliberately, not by quietly overriding a decision that was made for a real reason.
+- **What is implemented, as of 2026-08-08:** most of it. The line this bullet used to carry — *"currently implemented, for real, today: nothing"* — was true when written and stopped being true almost immediately. `CsvImportService` no longer exists under that name; the pipeline lives in `com.finora.imports`, orchestrated by `ImportService`, and PDF is no longer out of scope. Its class comment's objection ("bank PDF layouts vary too much for a generic parser to handle reliably without per-bank templates") was answered by making layout variation *observable and curatable* rather than by writing per-bank templates.
+
+The table below is the current one. It is kept accurate because it is the thing people read this document for; everything after §0 is not.
 
 | Component | Status |
 |---|---|
-| CSV statement import (manual account selection, no auto-create) | ✅ Implemented (`CsvImportService`) |
-| Bank/statement-type detection | 🔲 Spec only |
-| Rule-based PDF parsers (per bank) | 🔲 Spec only |
-| AI-fallback extraction | 🔲 Spec only — also gated on §10.2 |
-| Validation framework (arithmetic/period/duplicate checks) | 🔲 Spec only |
-| Account matching / auto-create / auto-update | 🔲 Spec only |
-| Credit-card-specific fields on `Account` | 🔲 Spec only (schema gap — see §3.2) |
-| Statement Review UI | 🔲 Spec only |
+| CSV statement import | ✅ Implemented — `ImportService` + `CsvParser` |
+| PDF statement import | ✅ Implemented — `com.finora.imports.pdf`, positional extraction via `PdfTextExtractor` / `PdfTableLocator`. Not in the original table, because the spec assumed it could only arrive per-bank |
+| Statement/product-type detection | ✅ Implemented, **differently** — `FinancialProductClassifier`, `ProductDiscovery`, `ProductValidator`. Evidence-based classification into `FinancialProductType`, not the routing classifier §2 describes |
+| Bank/issuer detection | ⚠️ **Not built as specified, and deliberately not.** No `StatementClassificationService` names the issuing bank. Layout fingerprinting took its place — `DocumentContext.buildFingerprint()` into `layout_registry` (`V68`), read by `LayoutIntelligenceService`. A layout is identified and curated; the bank behind it is not the key |
+| Rule-based PDF parsers (per bank) | ❌ **Not built, and superseded.** One generic extractor plus the registry above. Capability coverage is measured by `CapabilityCorpusCoverageTest` against a committed trace corpus |
+| AI-fallback extraction | 🔲 **Spec only** — still gated on §10.2, and the backend carries no AI dependency. The only component in this table that remains genuinely unbuilt |
+| Validation framework (arithmetic/period/duplicate checks) | ✅ Implemented — `ImportVerifier` fans out to `BalanceChainValidator`, `StatementTotalsValidator`, `SummaryTotalsValidator` and `ColumnAmbiguityValidator`; both staging paths run the same rules. Outcomes are persisted (`V72`), not just returned. Duplicate detection is separate: `DuplicateDetector`, and a flagged row is the user's decision, never a silent filter |
+| Account matching / auto-create / auto-update | ✅ Implemented — `ProductIdentityResolver` + `Account.productIdentityHash`, surfaced as `DetectedAccountInfo` and reviewed client-side in `frontend/src/lib/accountMatch.ts`. Ambiguity is surfaced, as §4.4 required |
+| Credit-card-specific fields on `Account` | ⚠️ **Partly.** `productType`, `productIdentityHash`, `accountHolderName`, `accountNumberMasked`, `bankId`, `branchName` and the seven deposit attributes exist; `creditLimit` and `dueDate` were already there. Still absent: `available_balance`, `outstanding_balance`, `minimum_amount_due`, `reward_points`, `last_statement_id`. Note the naming differs from §3.2 — `account_number_masked`, not `masked_account_number`; `bank_id`, not `bank_name` |
+| Statement Review UI | ✅ Implemented — `frontend/src/pages/Import.tsx` with `VerificationPanel` and `DuplicateReview`, single- and multi-account paths sharing `importReview.ts` |
 
 ---
 
