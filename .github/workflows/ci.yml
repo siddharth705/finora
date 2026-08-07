@@ -314,6 +314,19 @@ jobs:
   smoke:
     name: End-to-end smoke (Chromium)
     runs-on: ubuntu-latest
+
+    # Blocking, because it has passed on an isolated checkout: fresh clone, fresh database, fresh
+    # backend, 9 specs in 34s. That run was worth doing rather than assuming -- it caught two
+    # defects a working-tree run could not, because a working tree already has node_modules and
+    # already has dev servers running:
+    #
+    #   * e2e/package-lock.json was out of sync with package.json, so `npm ci` failed outright.
+    #     This job would have died at the install step every time.
+    #   * The suite navigated the admin page with a relative path. This spec lives in
+    #     tests/workflow/, whose project baseURL is the USER app, so the operator steps were
+    #     asserting against the marketing site.
+    #
+    # Both are the kind of thing only a first composed run in a clean environment finds.
     # ~8x the local runtime. A hang detector, not a performance budget -- the suite's own budget
     # assertion is what catches it getting slower.
     timeout-minutes: 25

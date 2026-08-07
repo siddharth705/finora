@@ -4,7 +4,7 @@ import { waitForLearningToSettle } from '../../fixtures/api';
 import {
   countedExpense, ledgerExpense, learningEventsFor, merchantsFor, transactionsFor, query,
 } from '../../fixtures/db';
-import { ADMIN_APP, USER_APP } from '../../fixtures/config';
+import { ADMIN_APP } from '../../fixtures/config';
 
 /**
  * The build-confidence suite: one pass through the whole product, under five minutes, for every PR.
@@ -112,7 +112,11 @@ test.describe('@smoke — the product works end to end', () => {
       await api.importStatement(STATEMENT, { accountName: 'Smoke' });
       await waitForLearningToSettle(user.id, learningEventsFor);
 
-      await adminPage.goto('/learning-queue');
+      // Absolute, not relative. This spec lives in tests/workflow/, whose project baseURL is the
+      // USER app -- so a relative goto on the admin page lands on the marketing site and every
+      // assertion then fails describing a page nobody was looking for. The admin-portal specs get
+      // away with relative paths because their project's baseURL is the admin app; this one cannot.
+      await adminPage.goto(`${ADMIN_APP}/learning-queue`);
       await expect(adminPage.getByRole('heading', { name: /learning queue/i })).toBeVisible({ timeout: 60_000 });
       // Either reassurance or rows -- what must not happen is neither, which is a screen that failed
       // to load and said nothing.
@@ -126,7 +130,7 @@ test.describe('@smoke — the product works end to end', () => {
       // Backdated so the seeded account sorts to page one -- the list is oldest-first and has no
       // search. See reviewRowFor in the merchant-review spec for the full reasoning.
       await query(`update merchants set created_at = now() - interval '10 years' where user_id = $1`, [user.id]);
-      await adminPage.goto('/merchant-review');
+      await adminPage.goto(`${ADMIN_APP}/merchant-review`);
       await expect(adminPage.getByRole('row').filter({ hasText: user.email }).first())
         .toBeVisible({ timeout: 20_000 });
 

@@ -129,11 +129,16 @@ and reads as a broken queue when it is a working one.
 after `page.goto()` can sample the DOM before React has rendered, yielding zero and quietly making
 any loop over that count assert nothing. Wait for something visible first, then count.
 
-## Not wired into CI
+## In CI
 
-Deliberately. An E2E job needs a backend, Postgres and a built jar, and it materially increases CI
-runtime — that is its own decision rather than a side effect of installing the harness.
-`.github/workflows/ci.yml` is unchanged.
+The **smoke** suite runs on every push and pull request (`smoke` job in
+`.github/workflows/ci.yml`): Postgres as a service, the backend started in the job's process tree so
+a crash fails the step rather than hanging it, Chromium only. Report, traces and the backend log
+upload on failure — without them a failed E2E run is a one-line assertion message nobody can act on.
+
+The **full** suite is not wired in. It needs the same infrastructure and several minutes of browser
+time, and putting it on every PR would make people wait on it and then learn to ignore it. Run it
+nightly, or before a release.
 
 ## Known gaps
 
@@ -143,3 +148,14 @@ runtime — that is its own decision rather than a side effect of installing the
   have never been run to green.
 - Phase 14 of the milestone test brief — regression against previously-working statements — needs a
   sanitized corpus that does not exist yet.
+
+## A note on running this alongside another agent
+
+Two Maven builds sharing one `backend/target/` will delete and rewrite each other's class files
+mid-run. Locally that presents as an intermittently red build with a different failing set each
+time: ArchUnit scans returning empty, `NoClassDefFoundError` for classes that plainly exist, Mockito
+failing to mock a class whose file was mid-write, Spring contexts failing across every `*IT`. All of
+it passes in isolation, which is the tell.
+
+If you see that shape, check for another build before reaching for the test code. CI is unaffected —
+it gets its own checkout.
