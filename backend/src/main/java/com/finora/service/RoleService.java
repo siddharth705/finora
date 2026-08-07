@@ -160,17 +160,22 @@ public class RoleService {
      *
      * <p>V52 introduced {@code account_scope} so one person can hold a USER-portal and an
      * ADMIN-portal account under the same email, and states that scope "is what login
-     * disambiguates on". It disambiguates login and nothing else: {@code JwtService} mints no
-     * scope claim, and {@code AuthorizationService.effectiveAuthorities}/{@code meAccess} compute
-     * authorities from roles alone without ever reading it. So an access token issued to a
-     * USER-scope account is indistinguishable from an ADMIN-scope one at every {@code
-     * @PreAuthorize} check, and the separation between the two portals rested entirely on nobody
-     * ever granting an admin role to a USER-scope account -- a convention of the V16 seed, not an
-     * invariant anything enforced.
+     * disambiguates on". When this guard was written that was all it did: {@code JwtService} minted
+     * no scope claim and {@code AuthorizationService} computed authorities from roles alone, so an
+     * access token issued to a USER-scope account was indistinguishable from an ADMIN-scope one at
+     * every {@code @PreAuthorize} check, and the separation between the two portals rested entirely
+     * on nobody ever granting an admin role to a USER-scope account -- a convention of the V16 seed,
+     * not an invariant anything enforced.
      *
-     * <p>This enforces it at the one place that can create that state. It is not a substitute for
-     * a scope claim carried in the token and checked at authorization time, which is the real
-     * fix; it closes the door that leads to the room.
+     * <p><b>That is no longer the case, and this method is no longer the only thing holding the
+     * line.</b> {@code AuthorizationService.effectiveAuthorities}/{@code meAccess} now withhold
+     * permission authorities from any account that is not an admin-portal account, and the token
+     * carries a {@code scope} claim that {@code JwtAuthFilter} cross-checks. So a USER-scope account
+     * that acquires an admin role by some route this method does not sit on -- a row predating it, a
+     * future code path that forgets it, a direct database edit -- can no longer exercise the
+     * permissions. This guard is kept because failing the grant with a clear message is a much
+     * better outcome than silently creating a row whose permissions do nothing, and because a
+     * defence at the point of writing and a defence at the point of reading fail in different ways.
      *
      * <p>"Admin-surface" is decided by evidence rather than by a hardcoded list: a role qualifies
      * if it carries any permission at all. That is exact here -- every permission the schema

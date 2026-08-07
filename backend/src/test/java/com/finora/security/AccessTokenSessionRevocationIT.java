@@ -86,15 +86,35 @@ class AccessTokenSessionRevocationIT extends AbstractIntegrationTest {
     }
 
     /**
-     * The token is unexpired and correctly signed — i.e. everything the old implementation checked
-     * still passes. Asserting this next to a 401 is what distinguishes "revocation took effect"
-     * from "the token ran out".
+     * The token is correctly signed and has most of its life left — i.e. everything the old
+     * implementation checked still passes, and passes comfortably. Asserting this next to a 401 is
+     * what distinguishes "revocation took effect" from "the token ran out".
+     *
+     * <p>The remaining-lifetime bound is the half that makes the claim literal. Without it this
+     * suite would keep passing if someone set the access-token lifetime to zero — every rejection
+     * would still be a rejection, and the property under test (a revocation reaches a token that is
+     * still perfectly good) would have quietly stopped being exercised.
      */
     private void assertStillUnexpiredAndSigned(String accessToken) {
         assertThat(jwtService.isTokenValid(accessToken))
                 .as("the token must still be signed and unexpired, or the 401 proves nothing about "
                         + "revocation")
                 .isTrue();
+
+        Date expiry = Jwts.parser()
+                .verifyWith(Keys.hmacShaKeyFor(jwtProperties.getSecret().getBytes(StandardCharsets.UTF_8)))
+                .build()
+                .parseSignedClaims(accessToken)
+                .getPayload()
+                .getExpiration();
+        long remainingMs = expiry.getTime() - System.currentTimeMillis();
+
+        assertThat(remainingMs)
+                .as("the token must be rejected with most of its configured %d ms lifetime still to "
+                        + "run -- that is the whole finding: a stolen token stayed usable for up to "
+                        + "fifteen minutes after the platform concluded it was stolen",
+                        jwtProperties.getExpirationMs())
+                .isGreaterThan(jwtProperties.getExpirationMs() / 2);
     }
 
     @Test
