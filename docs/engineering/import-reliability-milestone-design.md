@@ -384,74 +384,31 @@ against a real transactional context:
 
 ---
 
-## 7. Out of scope, and still open
+## 7. Out of scope
 
-Tracked deliberately so this milestone's completion is not mistaken for an empty backlog.
+Everything this milestone deliberately did not do has moved to
+[milestone-2-backlog.md](milestone-2-backlog.md): the Merchant Intelligence Workbench (WI4A),
+cross-user merchant intelligence, duplicate review for multi-account PDFs, bulk recategorization on
+the async pipeline (WI1A), the unrun cross-browser Playwright projects, and the corpus-driven
+regression pass.
 
-**Separate maintenance initiative:**
+They were listed here while the milestone was open, which was right then and wrong now. A milestone
+that closes with a "still open" section has not closed — the section outlives it, gets appended to,
+and eventually nobody can say what the milestone actually delivered. The backlog is where work that
+is not this milestone's belongs.
+
+**Separate maintenance initiative, unchanged:**
 
 - **Bug 30** — dependencies roughly two years behind (`spring-boot-starter-parent` 3.3.2, PDFBox
   3.0.3, jjwt 0.12.5); no CVE scan run. PDFBox is the one to prioritise: it parses attacker-supplied
   files as a core product feature, reachable by an authenticated low-privilege user.
 
-**Follow-up work after this milestone:**
+**Security follow-ups opened by the hardening phase, unchanged:**
 
 - **Bug 03 (partial)** — the refresh-token cookie transport works, but the token is still written to
-  `localStorage`, so the XSS mitigation the cookie exists for is not delivered. Completing it means
-  changing how the session is held in both clients.
+  `localStorage`, so the XSS mitigation the cookie exists for is not delivered.
 - **Bug 18 (partial)** — granting an admin role to a USER-scope account is blocked, but scope is
-  still absent from the JWT and unread at authorization time. The real fix is a scope claim checked
-  during authorization.
+  still absent from the JWT and unread at authorization time.
 - **New finding #4** — login reveals account existence for suspended accounts before authentication.
-  Needs the lockout/suspension checks reordered relative to `authenticate()`.
 - **New finding #5** — access tokens survive every session revocation, so a token stays valid up to
-  15 minutes after the platform has concluded it was stolen. `JwtAuthFilter` already extracts the
-  `sid` claim on every request; closing this means validating it.
-
-**Follow-up work items opened by this milestone:**
-
-- **WI1A — move bulk recategorization onto the asynchronous learning pipeline.**
-  `TransactionService.bulkRecategorize` still calls `CategorizationService.learn` synchronously, in
-  a loop, up to `TransactionDto.MAX_BULK_IDS` (500) times inside one transaction. That is the
-  import path's exact pre-WI1 shape: one lost race against
-  `UNIQUE(user_id, merchant_id, category_id)` rolls back all 500 recategorizations. WI1 left it
-  alone deliberately — its scope was the import path — but the objective is to remove the last
-  synchronous BATCH learning path, not to leave one behind. Single interactive actions
-  (`updateCategory`, `confirmMerchantCategory`, `create`) stay synchronous by design; see
-  `CategorizationService.learn`'s doc comment for why.
-
-- **WI4A — Merchant Intelligence Workbench (Admin Portal).** WI4 gave operators a Merchant Review
-  Center that is *sufficient*: it lists temporary merchants, shows transaction counts, and supports
-  approve / rename / merge / delete. It is not yet *productive*. An operator working through a
-  backlog is currently the similarity engine — they read two names, decide the names mean the same
-  business, and type one into the other's merge field. The workbench turns that judgement into
-  something the system proposes and the operator confirms:
-
-  - **Similarity scoring between merchants**, with the evidence behind the score, so a suggested
-    merge is auditable rather than a number.
-  - **Rich side-by-side comparison** — aliases, sample narrations, learning history, spend totals —
-    because "are these the same business?" is not answerable from two name strings.
-  - **Alias graph visualisation**, so an operator can see what a merge would actually absorb before
-    committing to it.
-  - **Bulk merge and apply-to-similar**, the operator-side equivalent of what WI5 gave the user.
-
-  Explicitly *not* part of this milestone. WI4's scope was the lifecycle — giving unknown merchants
-  somewhere to go so WI3 could make staging read-only — and it delivers that. This is a productivity
-  layer on top of a working lifecycle, and the sequencing is deliberate: what the workbench should
-  suggest is a question best answered by watching real operators work a real backlog, not by
-  guessing ahead of one. Scoped for the next milestone.
-
-**Deferred by product decision:**
-
-- **Cross-user merchant intelligence** — the canonical registry, cross-user suggestions and
-  platform-wide merge, per decision 1.2. Its own milestone.
-
-**Known gap left open by WI5:**
-
-- **Multi-account (multi-section) PDF imports do not get the duplicate review screen.** That path
-  still auto-unticks flagged rows (`section.rows.map((r) => !r.likelyDuplicate)` in `Import.tsx`) —
-  the exact silent-filter behaviour WI5 removed from the single-account path. It was left alone
-  deliberately: the review UI is per-session state and the multi-section path holds one independent
-  state object per detected account, so wiring it correctly means restructuring that state rather
-  than repeating the component. Doing it carelessly would make the path worse, not better. The
-  single-account path is where the overwhelming majority of imports land; this is the follow-up.
+  15 minutes after the platform has concluded it was stolen.

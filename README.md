@@ -24,6 +24,19 @@ rather than an earlier internal prototype look.
 - CSV and PDF statement import: auto-detects column name variants, opens password-protected PDFs,
   stages rows for review, commits on confirm — see
   [docs/engineering/import-flow.md](docs/engineering/import-flow.md)
+- **Merchant learning as an independent subsystem** — an import never blocks on learning and a
+  learning failure never costs an import. Confirmations are queued to a durable table and applied
+  after commit by a worker that claims with `FOR UPDATE SKIP LOCKED`, backs off exponentially, and
+  recovers rows abandoned by a dead process. Failures land in an operator queue rather than
+  disappearing. See
+  [import-reliability-milestone-design.md](docs/engineering/import-reliability-milestone-design.md)
+- **Duplicate review** — a row that looks like something already on the books is not silently
+  dropped. It arrives with the transaction it appears to repeat, and the import stays blocked until
+  every one has an explicit answer. The decision travels with the row so reconciliation cannot
+  later overrule it — see the "Duplicate review" section of
+  [import-flow.md](docs/engineering/import-flow.md)
+- **Read-only staging** — previewing a statement writes nothing: no merchant, no alias, no learning,
+  no transaction. Asserted by counting rows before and after, not by verifying a mock went uncalled
 - Self-learning categorization: keyword rules + a per-user learned-mapping table that improves as you correct categories
 - Reconciliation: duplicate detection + internal-transfer matching between your own accounts
 - Budgets (per-category monthly limits, spend tracking)
@@ -122,6 +135,27 @@ Per the team's product-vision discussion: before any external connector (Gmail, 
 | Settings | Profile is real (read-only); low-balance threshold and theme persist to your account; Security and Subscription sections are honestly disabled, not faked |
 | Forgot/Reset Password | Real token issuance and password update; email delivery is stubbed (see Known Gaps) |
 
+## Testing
+
+Four suites, each answering a different question:
+
+| Suite | Where | What it answers |
+|---|---|---|
+| Backend | `backend` — `./mvnw verify` | Does the logic hold, including transaction boundaries against real Postgres via Testcontainers |
+| Frontend / Admin | `frontend`, `admin-portal` — `npx vitest run` | Do components behave, in jsdom with the network mocked |
+| **Smoke (E2E)** | `e2e` — `npm run test:smoke` | Does the product work end to end, in a real browser against a real backend and database. Runs on every PR |
+| **Full (E2E)** | `e2e` — `npm test` | Edge cases, error paths, isolation, data integrity, behaviour at size. Nightly or pre-release |
+
+The end-to-end suites need a stack of their own (`npm run stack:up` in `e2e/` — a throwaway Postgres
+and backend on their own ports, deliberately not the pair you already have running). They assert
+business outcomes rather than renderings: the question is not "did the screen show something" but
+"did the user's decision survive the whole system". See [e2e/README.md](e2e/README.md).
+
+**One hazard worth knowing:** two Maven builds sharing one `backend/target/` will delete and rewrite
+each other's class files mid-run. Locally that looks like an intermittently red build with a
+different failing set each time, and it passes in isolation. If you see that shape, check for
+another build before suspecting the tests.
+
 ## Running it locally
 
 ```bash
@@ -177,6 +211,16 @@ What's in it today:
   now, more later" approach as the rest of this project (see Known Gaps below).
 - **Audit Log** — the platform-wide activity feed, paginated, plus a per-user drill-down from
   each user's detail page.
+- **Learning Queue** — merchant-learning confirmations that could not be applied. It exists because
+  learning moved out of the import transaction: something that fails quietly in the background has
+  to be visible to somebody. Every row carries the statement, the import session and the affected
+  user, so a failure is diagnosable rather than merely visible, and the screen leads with the fact
+  that nothing here ever blocked an import. Retry per row or in bulk.
+- **Merchant Review** — merchants the import engine guessed and has not had confirmed. Approve
+  confirms the guess, rename corrects it, merge folds it into one the account already has
+  (repointing transactions, aliases and learning history — nothing is lost). Discarding a merchant
+  with transactions attributed to it is refused outright, with the reason stated where the action
+  would have been rather than as an error after the fact.
 - **System Health** — built on a `HealthProvider` extensibility interface
   (`backend/src/main/java/com/finora/health/`): `AdminHealthRegistryService` auto-collects every
   Spring bean implementing it (`List<HealthProvider>`, zero manual registration) into one
