@@ -7,6 +7,9 @@
 > **Re-measured after that fix: 3.00 statements/row** (was ~6.0–6.6). Recommendations 2 and 3
 > remain outstanding.
 >
+> The method that produced this document, and the lessons from it going stale, are written up in
+> [`methodology.md`](methodology.md) — read that before starting the next optimization.
+>
 > Do not re-derive these numbers by parsing logs. `ImportQueryCountIT` measures marginal cost per
 > row on every CI run, prints it, and fails if it rises — precisely because this document went stale
 > in under an hour and a measurement that is expensive to repeat is one that gets repeated never.
