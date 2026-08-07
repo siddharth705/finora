@@ -66,18 +66,26 @@ exists in writing.*
 
 ### 2. Layout registry — the persistence model
 
-**There is no layout registry.** `layout_fingerprint` is a computed string stamped onto
-`import_sessions`, `statement_imports` and `statement_analysis_sessions`, and nothing else. A
-fingerprint is not a row anywhere: it cannot be named, approved, associated with a parser, or
-counted over time.
+Layouts today are **observable but not curatable**, and that distinction is the whole work item.
 
-Which means fingerprints are *already* accumulating with nowhere to go, and every item below this
-one produces more of them. That is why it moves early — not because it is more important, but
-because everything after it wants to write into it.
+What exists: `layout_fingerprint` has been persisted on `statement_imports` since V39,
+`DocumentContext.buildFingerprint()` computes it, and `LayoutIntelligenceService` +
+`AdminLayoutIntelligenceController` give operators an overview, unknown headers, a usage timeline
+and drift detection.
+
+What does not: `LayoutIntelligenceService` holds no repository of its own — it aggregates over
+`StatementImportRepository`, deriving everything from a string column. **A layout is not a row
+anywhere.** It cannot be named, given a status, approved, associated with a parser, or carry a
+first/last-seen of its own. An operator can watch a layout appear and cannot do anything about it.
+
+So fingerprints are *already* accumulating with nowhere to go, and every item below this one
+produces more of them. That is why this moves early — not because it is more important, but because
+everything after it wants to write into it, and because "coverage" cannot be a number that moves
+while it is only ever re-derived from history.
 
 Scoped to the **persistence model only**: a table where a fingerprint is a first-class row with a
-name, a status, the parser that handles it, and first/last-seen. Small, few dependencies, and it
-turns "coverage" from an impression into a number that moves.
+name, a status, the parser that handles it, and first/last-seen. Small, few dependencies. The
+existing intelligence layer then reads from something curated rather than inferring from aggregates.
 
 The curation screen is item 7. Splitting them is the whole point of moving this: the table is
 foundational, the screen is a finishing feature, and conflating them is what would have pushed both
