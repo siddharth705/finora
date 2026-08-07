@@ -6,6 +6,8 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.MediaType;
@@ -68,9 +70,28 @@ import java.util.List;
 @Order(Ordered.HIGHEST_PRECEDENCE + 1) // right after CorrelationIdFilter, before Spring Security
 public class RateLimitFilter extends OncePerRequestFilter {
 
-    private final RateLimiter loginLimiter = new RateLimiter(10, 60);           // 10 attempts / min / IP
-    private final RateLimiter registerLimiter = new RateLimiter(5, 300);        // 5 registrations / 5 min / IP
-    private final RateLimiter forgotPasswordLimiter = new RateLimiter(5, 300);  // 5 requests / 5 min / IP
+    /**
+     * Every ceiling below is a property, and every default is the value that was hardcoded here
+     * before -- so an untouched deployment behaves exactly as it did.
+     *
+     * <p>Two reasons they became configurable. The first is operational: these are per-IP, and a
+     * whole office or a school behind one NAT shares a bucket. Five registrations per five minutes
+     * is right for an open internet and wrong for a corporate customer onboarding a team, and the
+     * only remedy was a redeploy.
+     *
+     * <p>The second is that the product could not be end-to-end tested at any useful volume. The
+     * e2e suite registers an account per test for isolation and stages a statement in most of them,
+     * so it hit {@code registerLimiter} at test six and {@code importStageLimiter} at test eleven --
+     * every run, regardless of whether the product worked. A limit that cannot be raised for a test
+     * stack does not make the system safer; it makes the system unverifiable, and an unverified
+     * import engine is the larger risk. The test stack raises these and nothing else.
+     *
+     * <p>Rate limiting itself stays covered: the e2e suite's negative phase asserts a limit still
+     * trips, against the configured ceiling rather than a hardcoded one.
+     */
+    private final RateLimiter loginLimiter;
+    private final RateLimiter registerLimiter;
+    private final RateLimiter forgotPasswordLimiter;
     // Staging used to be memory-only (parse, return the response, nothing persisted) -- as of
     // ADR-0002 (persisted import sessions), every call writes a real row to import_sessions
     // INCLUDING the raw file bytes, bounded only by a 48h TTL and cleanup that only runs on that
@@ -78,13 +99,13 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // table indefinitely within the TTL window just by hammering it in a loop -- 10/10min is
     // generous for legitimate use (re-staging after fixing a file, trying a few statements) while
     // still bounding that.
-    private final RateLimiter importStageLimiter = new RateLimiter(10, 600);
+    private final RateLimiter importStageLimiter;
     // Shared across all three password-change steps rather than one limiter each -- a caller
     // working through the flow normally touches all three anyway, so bucketing them together is
     // both simpler and doesn't require guessing a separate reasonable ceiling for each individual
     // step. 15/10min is generous for a legitimate user (including a few genuine retries after a
     // wrong current password or a mistyped code) while still bounding repeated abuse.
-    private final RateLimiter passwordChangeLimiter = new RateLimiter(15, 600);
+    private final RateLimiter passwordChangeLimiter;
     // Bug fix: /auth/reset-password performs bcrypt work per call (hashing the new password, plus
     // the password-history comparison) and sat outside every limiter -- while this class's own
     // comment on passwordChangeLimiter names "a real bcrypt comparison" as "exactly the kind of
@@ -92,7 +113,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // simply had not been applied. Deliberately narrow rather than urgent: both a valid reset
     // token AND a Firebase-verified phone gate the expensive work, so this was never an anonymous
     // DoS -- which is why the ceiling is generous. It bounds a token holder retrying in a loop.
-    private final RateLimiter resetPasswordLimiter = new RateLimiter(10, 600);
+    private final RateLimiter resetPasswordLimiter;
     // Bug fix: this used to be `new ObjectMapper()` -- a second, freshly-constructed mapper with
     // none of the auto-configuration Spring Boot's own JacksonAutoConfiguration applies to its
     // managed ObjectMapper bean (in particular, no JavaTimeModule). ApiResponse.timestamp is a
@@ -128,9 +149,74 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private final List<LimitedEndpoint> limitedEndpoints;
 
-    public RateLimitFilter(ObjectMapper objectMapper, ClientIpResolver clientIpResolver) {
+    /**
+     * The shipped ceilings, as constants rather than as literals inside the {@code @Value}
+     * defaults.
+     *
+     * There is exactly one copy of each number, referenced by both the property default and the
+     * test constructor below. Written as literals in two places they would drift, and the direction
+     * they drift in is "the tests assert a limit the application does not have" -- which is the one
+     * failure mode a rate-limiting test exists to prevent.
+     */
+    static final int DEFAULT_LOGIN_MAX = 10, DEFAULT_LOGIN_WINDOW = 60;
+    static final int DEFAULT_REGISTER_MAX = 5, DEFAULT_REGISTER_WINDOW = 300;
+    static final int DEFAULT_FORGOT_MAX = 5, DEFAULT_FORGOT_WINDOW = 300;
+    static final int DEFAULT_IMPORT_STAGE_MAX = 10, DEFAULT_IMPORT_STAGE_WINDOW = 600;
+    static final int DEFAULT_PASSWORD_CHANGE_MAX = 15, DEFAULT_PASSWORD_CHANGE_WINDOW = 600;
+    static final int DEFAULT_RESET_PASSWORD_MAX = 10, DEFAULT_RESET_PASSWORD_WINDOW = 600;
+
+    /**
+     * The shipped configuration, for tests.
+     *
+     * Twelve positional ints is a poor thing to ask a caller to get right -- transposing a max and
+     * a window silently weakens a security control and nothing would fail -- so the only caller
+     * that types them out is Spring, from named properties. Everything else goes through here.
+     */
+    RateLimitFilter(ObjectMapper objectMapper, ClientIpResolver clientIpResolver) {
+        this(objectMapper, clientIpResolver,
+                DEFAULT_LOGIN_MAX, DEFAULT_LOGIN_WINDOW,
+                DEFAULT_REGISTER_MAX, DEFAULT_REGISTER_WINDOW,
+                DEFAULT_FORGOT_MAX, DEFAULT_FORGOT_WINDOW,
+                DEFAULT_IMPORT_STAGE_MAX, DEFAULT_IMPORT_STAGE_WINDOW,
+                DEFAULT_PASSWORD_CHANGE_MAX, DEFAULT_PASSWORD_CHANGE_WINDOW,
+                DEFAULT_RESET_PASSWORD_MAX, DEFAULT_RESET_PASSWORD_WINDOW);
+    }
+
+    /**
+     * Ceilings arrive as constructor parameters rather than field {@code @Value} injection because
+     * {@code limitedEndpoints} is built here and needs the limiters to already exist. Field
+     * injection would leave them null at construction time, which is the sort of thing that fails
+     * as a NullPointerException on the first rate-limited request rather than at startup.
+     *
+     * <p>{@code @Autowired} is required, not decorative: a class with more than one constructor
+     * gives Spring nothing to choose by, and it falls back to looking for a no-arg one. Without
+     * this the application starts as far as Tomcat and then fails with
+     * "No default constructor found", which names the symptom and not the cause.
+     */
+    @Autowired
+    public RateLimitFilter(
+            ObjectMapper objectMapper,
+            ClientIpResolver clientIpResolver,
+            @Value("${app.rate-limit.login.max:10}") int loginMax,
+            @Value("${app.rate-limit.login.window-seconds:60}") int loginWindow,
+            @Value("${app.rate-limit.register.max:5}") int registerMax,
+            @Value("${app.rate-limit.register.window-seconds:300}") int registerWindow,
+            @Value("${app.rate-limit.forgot-password.max:5}") int forgotMax,
+            @Value("${app.rate-limit.forgot-password.window-seconds:300}") int forgotWindow,
+            @Value("${app.rate-limit.import-stage.max:10}") int importStageMax,
+            @Value("${app.rate-limit.import-stage.window-seconds:600}") int importStageWindow,
+            @Value("${app.rate-limit.password-change.max:15}") int passwordChangeMax,
+            @Value("${app.rate-limit.password-change.window-seconds:600}") int passwordChangeWindow,
+            @Value("${app.rate-limit.reset-password.max:10}") int resetPasswordMax,
+            @Value("${app.rate-limit.reset-password.window-seconds:600}") int resetPasswordWindow) {
         this.objectMapper = objectMapper;
         this.clientIpResolver = clientIpResolver;
+        this.loginLimiter = new RateLimiter(loginMax, loginWindow);
+        this.registerLimiter = new RateLimiter(registerMax, registerWindow);
+        this.forgotPasswordLimiter = new RateLimiter(forgotMax, forgotWindow);
+        this.importStageLimiter = new RateLimiter(importStageMax, importStageWindow);
+        this.passwordChangeLimiter = new RateLimiter(passwordChangeMax, passwordChangeWindow);
+        this.resetPasswordLimiter = new RateLimiter(resetPasswordMax, resetPasswordWindow);
         this.limitedEndpoints = List.of(
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/login"), loginLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/register"), registerLimiter),

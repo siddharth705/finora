@@ -204,6 +204,37 @@ app:
     # isExpired() check starts rejecting verify-otp/complete calls against it. A property rather
     # than a hardcoded constant so it can be tuned per-deployment without a code change.
     password-change-session-expiry-minutes: ${PASSWORD_CHANGE_SESSION_EXPIRY_MINUTES:15}
+  # Per-IP ceilings for the endpoints RateLimitFilter guards. Every default below is the value that
+  # used to be hardcoded in that class, so leaving this block alone changes nothing.
+  #
+  # Made configurable for two reasons, both in RateLimitFilter's own doc comment. Operationally,
+  # these buckets are per-IP and an office behind one NAT shares one: five registrations per five
+  # minutes is right for the open internet and wrong for a customer onboarding a team, and the only
+  # remedy was a redeploy. And the e2e suite could not run at all -- it registers an account per test
+  # for isolation and stages a statement in most of them, so it tripped register at test six and
+  # import-stage at test eleven, every run, regardless of whether the product worked.
+  #
+  # Raise these ONLY for a test stack. They are the app's defence against credential stuffing, spam
+  # registration, email enumeration, and unbounded growth of import_sessions.
+  rate-limit:
+    login:
+      max: ${RATE_LIMIT_LOGIN_MAX:10}
+      window-seconds: ${RATE_LIMIT_LOGIN_WINDOW_SECONDS:60}
+    register:
+      max: ${RATE_LIMIT_REGISTER_MAX:5}
+      window-seconds: ${RATE_LIMIT_REGISTER_WINDOW_SECONDS:300}
+    forgot-password:
+      max: ${RATE_LIMIT_FORGOT_PASSWORD_MAX:5}
+      window-seconds: ${RATE_LIMIT_FORGOT_PASSWORD_WINDOW_SECONDS:300}
+    import-stage:
+      max: ${RATE_LIMIT_IMPORT_STAGE_MAX:10}
+      window-seconds: ${RATE_LIMIT_IMPORT_STAGE_WINDOW_SECONDS:600}
+    password-change:
+      max: ${RATE_LIMIT_PASSWORD_CHANGE_MAX:15}
+      window-seconds: ${RATE_LIMIT_PASSWORD_CHANGE_WINDOW_SECONDS:600}
+    reset-password:
+      max: ${RATE_LIMIT_RESET_PASSWORD_MAX:10}
+      window-seconds: ${RATE_LIMIT_RESET_PASSWORD_WINDOW_SECONDS:600}
   import:
     # See ImportConcurrencyLimiter's own doc comment for the full reasoning. 6 is deliberately
     # conservative relative to DB_POOL_MAX_SIZE (10, see the datasource config above) -- leaves

@@ -7,6 +7,9 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.encryption.InvalidPasswordException;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.pdfbox.text.TextPosition;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -25,6 +28,8 @@ import java.util.List;
  */
 @Component
 public class PdfTextExtractor {
+
+    private static final Logger log = LoggerFactory.getLogger(PdfTextExtractor.class);
 
     /** Unprotected documents, and every caller that predates password support. */
     public List<PositionedText> extract(byte[] fileBytes) throws IOException {
@@ -87,6 +92,28 @@ public class PdfTextExtractor {
             throw new ApiException(passwordSupplied
                     ? ErrorCode.IMPORT_PDF_PASSWORD_INVALID
                     : ErrorCode.IMPORT_PDF_PASSWORD_REQUIRED);
+        } catch (IOException e) {
+            // A structurally broken PDF -- truncated by a failed download, corrupted in transit,
+            // or saved by something that produced not-quite-valid output.
+            //
+            // Found by the e2e suite, which uploaded a deliberately corrupted file and got back
+            // INTERNAL_ERROR carrying "Unexpected error: Missing root object specification in
+            // trailer." Two things wrong with that, and the same two the sibling branches above
+            // already get right.
+            //
+            // It is a 500 for a problem the server did not have. A malformed upload is the user's
+            // to fix, exactly as a locked file is -- which is why IMPORT_008/009 are 422s. Reporting
+            // it as a server fault sends the user to support rather than back to their bank's
+            // download page, and buries it in whatever alerting watches 5xx rates.
+            //
+            // And it hands the user a PDFBox internal. "Missing root object specification in
+            // trailer" is not something a person can act on, and library internals should not cross
+            // this boundary at all. The cause is logged and kept out of the response.
+            log.warn("Could not read an uploaded PDF -- treating as a damaged file rather than a "
+                    + "server fault. PDFBox said: {}", e.getMessage());
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "This PDF could not be read -- the file appears to be damaged or incomplete. "
+                            + "Downloading it again from your bank usually fixes this.");
         }
     }
 }
