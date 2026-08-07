@@ -1,0 +1,107 @@
+# Dependency update monitoring.
+#
+# WHY THIS EXISTS
+# ---------------
+# scripts/check-dependency-advisories.py already gates the build on npm advisories in shipped code,
+# with a maintained allowlist. It covers frontend, admin-portal and mobile -- and nothing else.
+#
+# Nothing watches the Java side. Spring Boot, Jackson, the PostgreSQL driver, Firebase Admin and
+# every other Maven dependency in a backend that parses customer bank statements had no CVE
+# monitoring at all. That is the gap this closes; the npm ecosystems below are secondary and
+# complementary (the script fails a build, Dependabot opens the PR that fixes it).
+#
+# github-actions is included because it is free to watch and we are already paying for the omission:
+# every CI run currently warns that actions/setup-java@v4 is deprecated and that Node 20 actions are
+# being force-run on Node 24.
+#
+# ON GROUPING AND LIMITS
+# ----------------------
+# Deliberately conservative. A dependency bot that opens twenty PRs a week is one whose PRs stop
+# being read, which is the same signal-to-noise failure documented in check-dependency-advisories.py
+# and TESTING_AND_QUALITY_TOOLING_REVIEW.md. Minor and patch updates are grouped into a single PR
+# per ecosystem so routine churn is one review, not twenty. Majors stay separate because they carry
+# breaking changes and deserve their own discussion.
+#
+# Security updates ignore `schedule` and `open-pull-requests-limit` by design -- GitHub raises those
+# immediately regardless of the settings below, which is the intended behaviour: the noisy half is
+# throttled, the half that matters is not.
+version: 2
+
+updates:
+  # The gap this file was actually written for.
+  - package-ecosystem: maven
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      maven-minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: npm
+    directory: /admin-portal
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Expo pins a large, tightly-coupled dependency set and upgrades are expected to move together
+  # with the SDK rather than individually -- so the limit here is lower on purpose. An unsolicited
+  # bump of a single Expo-managed package is usually noise, not an upgrade.
+  - package-ecosystem: npm
+    directory: /mobile
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 2
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Test-only tooling, so advisories here are not shipped-code risk. Watched anyway because a stale
+  # Playwright drifts from the browsers it drives, which shows up as flake rather than as a warning.
+  - package-ecosystem: npm
+    directory: /e2e
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Would already have flagged the setup-java@v4 deprecation and the Node 20 runtime warnings that
+  # appear on every run today.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: "ci(deps)"
