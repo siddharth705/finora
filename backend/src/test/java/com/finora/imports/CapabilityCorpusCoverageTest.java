@@ -30,6 +30,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@link CapabilityCoverageService#KNOWN_CAPABILITIES}, hand-maintained on purpose. Nothing
  * connected it to the second half, so "coverage" was an impression rather than a number.
  *
+ * <p><b>What the number is, precisely.</b> How many declared capabilities have at least one
+ * committed trace that exercises them — a statement about the corpus, not about the parser. A
+ * capability with no trace may work perfectly; what it lacks is anything that would notice if it
+ * stopped. Reading it as "9 of 16 are broken" is the misreading this test is most likely to cause,
+ * so the console output says so explicitly on every run.
+ *
  * <p>Two things are held here, and they fail in opposite directions on purpose.
  *
  * <p><b>The registry matches the engine.</b> A capability the engine records but the registry does
@@ -228,15 +234,22 @@ class CapabilityCorpusCoverageTest {
         Set<String> declaredAndCovered = new TreeSet<>(declared);
         declaredAndCovered.retainAll(covered);
 
+        // Worded carefully, because this line is what gets quoted. "7 of 16 covered" reads as "9 do
+        // not work", and that is not what was measured -- a capability can be correct and simply
+        // have no committed trace. What this number says is how much of the engine a parser change
+        // cannot silently break, which is a statement about the CORPUS, not about the parser.
         System.out.printf(
-                "%n[corpus] %d/%d declared capabilities exercised by %d committed trace(s) — %.0f%%%n",
+                "%n[corpus] %d of %d declared capabilities have at least one regression trace "
+                        + "exercising them (%.0f%%), from %d committed trace(s).%n"
+                        + "[corpus] This measures evidence, not correctness: an unexercised "
+                        + "capability may work perfectly and simply lack a trace.%n",
                 declaredAndCovered.size(), declared.size(),
-                PdfTrace.committedTraceNames().size(),
-                100.0 * declaredAndCovered.size() / declared.size());
-        System.out.println("[corpus] covered:   " + String.join(", ", declaredAndCovered));
+                100.0 * declaredAndCovered.size() / declared.size(),
+                PdfTrace.committedTraceNames().size());
+        System.out.println("[corpus] exercised by a trace: " + String.join(", ", declaredAndCovered));
         Set<String> remaining = new TreeSet<>(declared);
         remaining.removeAll(declaredAndCovered);
-        System.out.println("[corpus] uncovered: " + String.join(", ", remaining));
+        System.out.println("[corpus] no trace yet:        " + String.join(", ", remaining));
 
         assertThat(PdfTrace.committedTraceNames())
                 .as("the corpus is empty -- every claim about parser coverage is unevidenced")

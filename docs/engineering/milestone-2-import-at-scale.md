@@ -93,6 +93,36 @@ will be to ship parser changes on assertion instead — the thing this milestone
 gate: *every layout we claim to support has a trace, and the list of layouts we claim to support
 exists in writing.*
 
+**Where it stands.** `CapabilityCorpusCoverageTest` holds the gate. Today: 7 of 16 declared
+capabilities have at least one committed trace exercising them, from 3 traces. Measured by running
+the locator over each trace and reading what fired, not by the trace's own metadata claim — a corpus
+that grades itself on what it says it covers is not a gate, and every committed trace is v1 with no
+metadata, so a claim-based measure would have reported perfect coverage of nothing.
+
+That number is about the **corpus, not the parser**. A capability with no trace may work perfectly;
+what it lacks is anything that would notice if it stopped. The console output says so on every run,
+because "7 of 16" reads as "9 are broken" to anyone quoting it out of context.
+
+The gate also surfaced two drifts between the registry and the engine, held as named accept-lists
+because each needs a decision rather than a patch: `PRINTED_SUMMARY_TOTALS` and
+`RIGHT_ALIGNED_AMOUNTS` are recorded but unregistered (invisible to the coverage map);
+`UNANCHORED_ROWS_ABANDONED` is a failure signal wearing a capability's clothes; `LEADING_PLUS_CREDIT`
+and `LEADING_NAME_LINE` are registered but recorded nowhere, so they report as never-activated
+forever — and cannot be covered by a trace until something emits them.
+
+**Two refinements, deliberately later.** Both make the number better and neither is worth having
+before the corpus is big enough for them to say anything:
+
+- **Capability × layout.** "`RIGHT_ALIGNED_AMOUNTS`: covered" is weaker than "covered on HDFC and
+  SBI, not on HSBC or PNB". A capability exercised once is not well covered, and the current gate
+  cannot tell the difference. Needs enough traces to have a second axis at all.
+- **Activation frequency.** A capability observed 18,000 times and one observed 4 times deserve
+  different amounts of test attention, and the coverage map already counts activations per import —
+  the data exists, nothing reads it for prioritisation. This is the cheaper of the two and the one
+  that would tell us which traces to capture first.
+
+---
+
 ### 2. Layout registry — the persistence model
 
 Layouts today are **observable but not curatable**, and that distinction is the whole work item.
