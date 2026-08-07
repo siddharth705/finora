@@ -74,9 +74,9 @@ class ImportServiceAskOnceTest {
         recurringService = mock(RecurringService.class);
         DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
         CsvParser csvParser = new CsvParser();
-        TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector);
+        TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector, com.finora.imports.TestRuleEngines.empty());
         StatementValidator statementValidator = new StatementValidator(com.finora.imports.product.ProductDiscovery.standard());
-        PreviewGenerator previewGenerator = new PreviewGenerator(csvParser, transactionNormalizer, statementValidator, new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(), new com.finora.imports.StatementTotalsValidator(), new com.finora.imports.SummaryTotalsValidator(), new com.finora.imports.ColumnAmbiguityValidator()));
+        PreviewGenerator previewGenerator = new PreviewGenerator(csvParser, transactionNormalizer, statementValidator, new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(), new com.finora.imports.StatementTotalsValidator(), new com.finora.imports.SummaryTotalsValidator(), new com.finora.imports.ColumnAmbiguityValidator()), com.finora.imports.TestRuleEngines.empty());
         ImportRuleLearningService ruleLearningService = new ImportRuleLearningService(categorizationService);
 
         // Wired the same way Spring would assemble it — see the v56 modularization pass, which
@@ -482,7 +482,7 @@ class ImportServiceAskOnceTest {
      */
     @Test
     void parseAndStage_classifiesDebitCreditRowAsExpense_whenCreditColumnIsBlank() throws Exception {
-        when(categorizationService.suggest(eq(userId), anyString(), any(), any()))
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Dining", "rule", UUID.randomUUID(), Transaction.DecisionSource.KEYWORD_MATCH, null));
 
         String csv = "Date,Description,Debit,Credit\n2026-07-10,SWIGGY ORDER,486.00,\n";
@@ -498,11 +498,11 @@ class ImportServiceAskOnceTest {
     @Test
     void parseAndStage_classifiesDebitCreditRowAsIncome_whenCreditColumnIsPopulated() throws Exception {
         // Bug fix: missing from this test (unlike its sibling immediately above), so
-        // categorizationService.suggest() returned null (a plain record, not a collection --
+        // categorizationService.suggestReadOnly() returned null (a plain record, not a collection --
         // Mockito's smart-null defaults don't cover it) and TransactionNormalizer.normalize's
         // suggestion.category() call NPE'd before this test's actual assertion (row type) was
         // ever reached.
-        when(categorizationService.suggest(eq(userId), anyString(), any(), any()))
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Salary", "rule", UUID.randomUUID(), Transaction.DecisionSource.KEYWORD_MATCH, null));
 
         String csv = "Date,Description,Debit,Credit\n2026-07-10,SALARY,,50000.00\n";
@@ -521,7 +521,7 @@ class ImportServiceAskOnceTest {
      */
     @Test
     void parseAndStage_derivesOpeningAndClosingBalance_fromARunningBalanceColumn() throws Exception {
-        when(categorizationService.suggest(eq(userId), anyString(), any(), any()))
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Dining", "rule", UUID.randomUUID(), Transaction.DecisionSource.KEYWORD_MATCH, null));
 
         // Opening balance 10000 -> -486 (debit) -> 9514 -> +2000 (credit) -> 11514
@@ -543,8 +543,8 @@ class ImportServiceAskOnceTest {
     void parseAndStage_suggestsAccountNameFromFilename() throws Exception {
         // Bug fix: same missing stub as parseAndStage_classifiesDebitCreditRowAsIncome above --
         // this test's assertion is only about the detected account name, but parseRow() still
-        // calls categorizationService.suggest() for every row on the way there.
-        when(categorizationService.suggest(eq(userId), anyString(), any(), any()))
+        // calls categorizationService.suggestReadOnly() for every row on the way there.
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Salary", "rule", UUID.randomUUID(), Transaction.DecisionSource.KEYWORD_MATCH, null));
 
         String csv = "Date,Description,Amount\n2026-07-10,SALARY,50000.00\n";
@@ -574,7 +574,7 @@ class ImportServiceAskOnceTest {
      */
     @Test
     void parseAndStage_handlesRealBankExport_withMetadataPreambleRaggedRowsAndCrSuffixedBalance() throws Exception {
-        when(categorizationService.suggest(eq(userId), anyString(), any(), any()))
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
 
         String csv = String.join("\n",
@@ -616,7 +616,7 @@ class ImportServiceAskOnceTest {
      */
     @Test
     void parseAndStage_detectsAccountHolderName_fromAccountHolderColumn() throws Exception {
-        when(categorizationService.suggest(eq(userId), anyString(), any(), any()))
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
 
         String csv = String.join("\n",
@@ -668,13 +668,13 @@ class ImportServiceAskOnceTest {
      * friend UPI repayments (e.g. "UPI/CR/656007770610/TANISHQ/ICIC/tanishqmehta98-/U") landing
      * under Salary with full confidence. parseRow() used to special-case isIncome straight to
      * "Salary"/"default" without ever calling the suggestion engine — this verifies income rows
-     * now go through categorizationService.suggest() exactly like expense rows do, so a
+     * now go through categorizationService.suggestReadOnly() exactly like expense rows do, so a
      * non-salary credit gets a real (possibly low-confidence, review-flagged) suggestion instead
      * of a wrong one asserted with full confidence.
      */
     @Test
     void parseAndStage_asksTheSuggestionEngine_forIncomeRowsToo_insteadOfHardcodingSalary() throws Exception {
-        when(categorizationService.suggest(eq(userId), anyString(), any(), any()))
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
 
         String description = "UPI/CR/656007770610/TANISHQ/ICIC/tanishqmehta98-/U";
@@ -688,7 +688,10 @@ class ImportServiceAskOnceTest {
         assertThat(response.rows().get(0).type()).isEqualTo("INCOME");
         assertThat(response.rows().get(0).suggestedCategory()).isEqualTo("Other");
         assertThat(response.rows().get(0).categorySource()).isEqualTo("default");
-        verify(categorizationService).suggest(eq(userId), eq(description), any(), any());
+        // suggestReadOnly, and the rules-carrying overload: staging asks the engine for income rows
+        // exactly like expense rows, and does so WITHOUT writing (WI3) against a rule set the
+        // preview generator fetched once (Bug 35's sibling fix).
+        verify(categorizationService).suggestReadOnly(anyList(), eq(userId), eq(description), any(), any());
     }
 
     /**
@@ -702,7 +705,7 @@ class ImportServiceAskOnceTest {
      */
     @Test
     void parseAndStage_recognizesCurrencySuffixedHeaders_andSkipsOpeningClosingBalanceRows() throws Exception {
-        when(categorizationService.suggest(eq(userId), anyString(), any(), any()))
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
 
         String csv = String.join("\n",

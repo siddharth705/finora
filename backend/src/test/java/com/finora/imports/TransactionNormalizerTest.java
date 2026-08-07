@@ -34,12 +34,16 @@ class TransactionNormalizerTest {
     @BeforeEach
     void setUp() {
         CategorizationService categorizationService = mock(CategorizationService.class);
-        when(categorizationService.suggest(any(), any(), any(), any()))
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
+        // Staging calls the rule-set overload (rules hoisted out of the per-row loop);
+        // stubbed alongside the loading one so either path returns a real suggestion.
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, null, null));
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
         when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
         DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
-        normalizer = new TransactionNormalizer(categorizationService, duplicateDetector);
+        normalizer = new TransactionNormalizer(categorizationService, duplicateDetector, com.finora.imports.TestRuleEngines.empty());
     }
 
     private Map<String, String> rowOf(String... headerThenValuePairs) {

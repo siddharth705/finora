@@ -64,11 +64,29 @@ public class RuleEngineService {
      *  since only one of them decides this transaction's category. */
     public Optional<RuleMatch> evaluateCategoryRule(UUID userId, String description, BigDecimal amount,
                                                        String merchantName, String accountType) {
-        for (CategoryRule rule : categoryRuleRepository.findByUserIdAndEnabledTrueOrderByPriorityAsc(userId)) {
-            if (rule.getActionType() == CategoryRule.ActionType.ASSIGN_CATEGORY
-                    && matches(rule, description, amount, merchantName, accountType)) return Optional.of(new RuleMatch(rule));
-        }
-        for (CategoryRule rule : categoryRuleRepository.findByScopeAndEnabledTrueOrderByPriorityAsc(CategoryRule.Scope.GLOBAL)) {
+        return evaluateCategoryRule(ruleSet(userId), description, amount, merchantName, accountType);
+    }
+
+    /**
+     * As {@link #evaluateCategoryRule(UUID, String, BigDecimal, String, String)}, against a rule set
+     * the caller already holds -- the same hoist {@link #evaluateSideEffectRules(List, String,
+     * BigDecimal, String, String)} offers, which category evaluation lacked.
+     *
+     * <p>Profiling the import pipeline on 2026-08-07 measured {@code select category_rules} at
+     * exactly 2.00 queries per imported row (400 queries for 200 rows, 800 for 400 -- see
+     * {@code docs/engineering/performance/import-pipeline-profile-2026-08-07.md}). Both result sets
+     * are identical on every iteration: same user, same GLOBAL scope, and a user's rules cannot
+     * change midway through an import. JPA's first-level cache does not help, for the reason
+     * {@link #ruleSet} already records -- it caches entities, not query results.
+     *
+     * <p>Same USER-then-GLOBAL precedence as the loading overload, because {@link #ruleSet} builds
+     * the list in that order and this iterates it in order. Callers that hold a rule set must
+     * obtain it from {@link #ruleSet}; an arbitrarily ordered list would silently change which rule
+     * wins.
+     */
+    public Optional<RuleMatch> evaluateCategoryRule(List<CategoryRule> rules, String description, BigDecimal amount,
+                                                       String merchantName, String accountType) {
+        for (CategoryRule rule : rules) {
             if (rule.getActionType() == CategoryRule.ActionType.ASSIGN_CATEGORY
                     && matches(rule, description, amount, merchantName, accountType)) return Optional.of(new RuleMatch(rule));
         }
@@ -84,11 +102,17 @@ public class RuleEngineService {
      *  first -- see CategorizationService.applySideEffectRules for how each is actually applied. */
     public List<RuleMatch> evaluateSideEffectRules(UUID userId, String description, BigDecimal amount,
                                                      String merchantName, String accountType) {
-        return evaluateSideEffectRules(sideEffectRuleSet(userId), description, amount, merchantName, accountType);
+        return evaluateSideEffectRules(ruleSet(userId), description, amount, merchantName, accountType);
     }
 
     /**
-     * The USER-then-GLOBAL rule set this user's side-effect evaluation runs against, fetched once.
+     * The USER-then-GLOBAL rule set this user's evaluation runs against, fetched once.
+     *
+     * <p>Named {@code sideEffectRuleSet} originally, because side-effect evaluation was its only
+     * caller. It never filtered by action type -- that happens in the evaluate methods -- so the
+     * narrow name hid the fact that the identical hoist was available to category evaluation,
+     * which was issuing the same 2N queries in the import path. Renamed when that second caller
+     * arrived; see {@link #evaluateCategoryRule(List, String, BigDecimal, String, String)}.
      *
      * <p>Exists so a caller evaluating MANY transactions can hoist the two queries out of its
      * loop. {@code RecurringService.detectForUser} could not: it calls
@@ -107,7 +131,7 @@ public class RuleEngineService {
      * one would be a real N+1 against the merchant/alias tables for no benefit"). The merchant
      * N+1 was avoided; the rule N+1 two lines below it was not.
      */
-    public List<CategoryRule> sideEffectRuleSet(UUID userId) {
+    public List<CategoryRule> ruleSet(UUID userId) {
         List<CategoryRule> rules = new ArrayList<>(
                 categoryRuleRepository.findByUserIdAndEnabledTrueOrderByPriorityAsc(userId));
         rules.addAll(categoryRuleRepository.findByScopeAndEnabledTrueOrderByPriorityAsc(CategoryRule.Scope.GLOBAL));
@@ -116,7 +140,7 @@ public class RuleEngineService {
 
     /** As {@link #evaluateSideEffectRules(UUID, String, BigDecimal, String, String)}, against a
      *  rule set the caller already holds. Same USER-then-GLOBAL precedence, because
-     *  {@link #sideEffectRuleSet} builds the list in that order. */
+     *  {@link #ruleSet} builds the list in that order. */
     public List<RuleMatch> evaluateSideEffectRules(List<CategoryRule> rules, String description, BigDecimal amount,
                                                      String merchantName, String accountType) {
         List<RuleMatch> matches = new ArrayList<>();

@@ -124,15 +124,20 @@ class PasswordProtectedPdfTest {
 
     private PdfPreviewGenerator realGenerator() {
         CategorizationService categorizationService = mock(CategorizationService.class);
-        when(categorizationService.suggest(any(), any(), any(), any()))
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
+        // Staging calls the rule-set overload (rules hoisted out of the per-row loop);
+        // stubbed alongside the loading one so either path returns a real suggestion.
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
         when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
         TransactionNormalizer normalizer =
-                new TransactionNormalizer(categorizationService, new DuplicateDetector(transactionRepository));
+                new TransactionNormalizer(categorizationService, new DuplicateDetector(transactionRepository), com.finora.imports.TestRuleEngines.empty());
 
         return new PdfPreviewGenerator(new PdfTextExtractor(), new PdfTableLocator(), new PdfMetadataExtractor(),
-                normalizer, ProductDiscovery.standard(), new ProductAttributeExtractor(), new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(), new com.finora.imports.StatementTotalsValidator(), new com.finora.imports.SummaryTotalsValidator(), new com.finora.imports.ColumnAmbiguityValidator()));
+                normalizer, ProductDiscovery.standard(), new ProductAttributeExtractor(), new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(), new com.finora.imports.StatementTotalsValidator(), new com.finora.imports.SummaryTotalsValidator(), new com.finora.imports.ColumnAmbiguityValidator()),
+                com.finora.imports.TestRuleEngines.empty());
     }
 
     @Test

@@ -24,13 +24,17 @@ class PreviewGeneratorTest {
 
     private PreviewGenerator realGenerator() {
         CategorizationService categorizationService = mock(CategorizationService.class);
-        when(categorizationService.suggest(any(), any(), any(), any()))
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
+        // Staging calls the rule-set overload (rules hoisted out of the per-row loop);
+        // stubbed alongside the loading one so either path returns a real suggestion.
+        when(categorizationService.suggestReadOnly(any(), any(), any(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
         when(transactionRepository.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
         DuplicateDetector duplicateDetector = new DuplicateDetector(transactionRepository);
-        TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector);
-        return new PreviewGenerator(new CsvParser(), transactionNormalizer, new StatementValidator(com.finora.imports.product.ProductDiscovery.standard()), new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(), new com.finora.imports.StatementTotalsValidator(), new com.finora.imports.SummaryTotalsValidator(), new com.finora.imports.ColumnAmbiguityValidator()));
+        TransactionNormalizer transactionNormalizer = new TransactionNormalizer(categorizationService, duplicateDetector, com.finora.imports.TestRuleEngines.empty());
+        return new PreviewGenerator(new CsvParser(), transactionNormalizer, new StatementValidator(com.finora.imports.product.ProductDiscovery.standard()), new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(), new com.finora.imports.StatementTotalsValidator(), new com.finora.imports.SummaryTotalsValidator(), new com.finora.imports.ColumnAmbiguityValidator()), com.finora.imports.TestRuleEngines.empty());
     }
 
     @Test

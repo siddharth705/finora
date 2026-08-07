@@ -1,12 +1,15 @@
 package com.finora.imports;
 
 import com.finora.dto.ImportDto.StagedRow;
+import com.finora.entity.CategoryRule;
 import com.finora.service.CategorizationService;
+import com.finora.service.RuleEngineService;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -24,6 +27,7 @@ public class TransactionNormalizer {
 
     private final CategorizationService categorizationService;
     private final DuplicateDetector duplicateDetector;
+    private final RuleEngineService ruleEngineService;
 
     // Single source of truth for every column name this class recognizes -- shared by normalize(),
     // explainFailure(), and recognizedColumnNames() so the three can never drift out of sync (they
@@ -97,9 +101,11 @@ public class TransactionNormalizer {
     // an ordinary transaction row's running balance AFTER that transaction, not its amount.
     private static final String[] BALANCE_HINTS = {"balance", "running balance", "closing balance"};
 
-    public TransactionNormalizer(CategorizationService categorizationService, DuplicateDetector duplicateDetector) {
+    public TransactionNormalizer(CategorizationService categorizationService, DuplicateDetector duplicateDetector,
+                                  RuleEngineService ruleEngineService) {
         this.categorizationService = categorizationService;
         this.duplicateDetector = duplicateDetector;
+        this.ruleEngineService = ruleEngineService;
     }
 
     /**
@@ -214,6 +220,24 @@ public class TransactionNormalizer {
      *  {@code ctx} as they fire. {@code ctx} is nullable -- callers that don't have a
      *  DocumentContext in scope (or don't care) get exactly the old behavior. */
     public StagedRow normalize(UUID userId, Map<String, String> row, DocumentContext ctx) {
+        return normalize(userId, row, ctx, ruleEngineService.ruleSet(userId));
+    }
+
+    /**
+     * Same as {@link #normalize(UUID, Map, DocumentContext)}, against a rule set the caller loaded
+     * once for the whole statement.
+     *
+     * <p>Both staging loops (PreviewGenerator, PdfPreviewGenerator) call this once per row, and the
+     * loading overload above re-queried {@code category_rules} twice per row -- measured at exactly
+     * 2.00 queries/row, the largest single N+1 in the import pipeline. A user's rules cannot change
+     * partway through parsing one statement, so loading them once per statement is equivalent by
+     * construction, not merely close enough.
+     *
+     * <p>The rule set must come from {@code RuleEngineService.ruleSet(userId)}: it returns USER
+     * rules before GLOBAL, and that order is what decides which rule wins.
+     */
+    public StagedRow normalize(UUID userId, Map<String, String> row, DocumentContext ctx,
+                                List<CategoryRule> rules) {
         String dateRaw = CsvParser.firstNonBlank(row, DATE_HINTS);
         String amountRaw = firstNonZeroAmount(row, AMOUNT_HINTS);
         // Falls back so a genuinely zero-amount row still normalizes exactly as before -- the
@@ -306,7 +330,12 @@ public class TransactionNormalizer {
             // amount is passed as rule-evaluation context (e.g. an AMOUNT-field category_rules
             // row) — accountType isn't known yet at staging time (the account is chosen/created
             // at confirm time), so that context stays null here.
-            var suggestion = categorizationService.suggest(userId, description, amount, null);
+            // suggestReadOnly, not suggest: normalize() runs ONLY at staging time (its two
+            // callers are PreviewGenerator and PdfPreviewGenerator -- confirm has an entirely
+            // separate path), and staging is a preview the user may abandon. suggest() would
+            // create a merchant and an alias for every distinct description in a file that is
+            // never imported, which is Bug 36. Same matching, same order, no writes.
+            var suggestion = categorizationService.suggestReadOnly(rules, userId, description, amount, null);
             suggestedCategory = suggestion.category();
             source = suggestion.source();
             ruleId = suggestion.ruleId();

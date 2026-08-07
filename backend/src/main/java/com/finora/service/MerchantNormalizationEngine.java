@@ -238,6 +238,43 @@ public class MerchantNormalizationEngine {
         if (token != null) byToken.putIfAbsent(token, created);
     }
 
+    /**
+     * Resolves a description to an existing merchant WITHOUT creating or writing anything (WI3).
+     *
+     * <p>Same matching as {@link #resolve} — exact alias first, then first-significant-token — and
+     * deliberately the same order, so a staged preview shows the merchant a confirm would actually
+     * pick. What it does not do is the three writes {@code resolve} performs on a miss: no
+     * {@code Merchant} row, no {@code MerchantAlias} row, no alias added to a token match.
+     *
+     * <p>This is what makes staging read-only, and it closes Bug 36. Staging is a PREVIEW the user
+     * may abandon, and it used to leave a permanent merchant behind for every distinct description
+     * in a file that was never imported — visible in their Merchants page, in
+     * {@code WorkspaceDashboardService}'s totals and in the admin's platform-wide counts, all
+     * derived from transactions that do not exist.
+     *
+     * <p>Returning empty on a miss is correct rather than a limitation: at staging time there IS no
+     * merchant yet, and {@code StagedRow} carries no merchant field, so nothing downstream needs
+     * one. The merchant is created at confirm time, by the path that also creates the transaction
+     * it belongs to.
+     */
+    @Transactional(readOnly = true)
+    public java.util.Optional<Merchant> resolveReadOnly(UUID userId, String description) {
+        String normalizedAlias = fitToColumn(CategoryRules.normalize(description));
+
+        var existingAlias = merchantAliasRepository.findByUserIdAndNormalizedAlias(userId, normalizedAlias);
+        if (existingAlias.isPresent()) {
+            var byAlias = merchantRepository.findByIdAndUserId(existingAlias.get().getMerchantId(), userId);
+            if (byAlias.isPresent()) return byAlias;
+        }
+
+        String firstToken = firstSignificantToken(normalizedAlias);
+        if (firstToken == null) return java.util.Optional.empty();
+        // The same memo resolve() uses, so a staged statement costs one merchant load rather than
+        // one per row -- Bug 35's fix applies to the preview too, which is where a user is
+        // actually waiting on the response.
+        return java.util.Optional.ofNullable(merchantsByFirstToken(userId).get(firstToken));
+    }
+
     private Merchant createMerchantAndAlias(UUID userId, String description, String normalizedAlias) {
         Merchant merchant = new Merchant();
         merchant.setUserId(userId);

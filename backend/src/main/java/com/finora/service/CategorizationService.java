@@ -66,6 +66,12 @@ public class CategorizationService {
         return suggest(userId, description, null, null);
     }
 
+    /** The read-only counterpart of {@link #suggest(UUID, String)}, for the same description-only
+     *  callers -- same matching, same precedence, no merchant/alias writes. */
+    public Suggestion suggestReadOnly(UUID userId, String description) {
+        return suggestReadOnly(userId, description, null, null);
+    }
+
     /** amount/accountType are optional rule-evaluation context a caller may not have yet (e.g. a
      *  bare description-only preview) -- null is handled safely by RuleEngineService (a rule
      *  whose field it can't be given simply never matches). */
@@ -94,6 +100,75 @@ public class CategorizationService {
         String ruleCat = CategoryRules.suggestCategory(description);
         boolean matchedKeyword = !ruleCat.equals("Other");
         return new Suggestion(ruleCat, matchedKeyword ? "rule" : "default", merchant.getId(),
+                matchedKeyword ? Transaction.DecisionSource.KEYWORD_MATCH : Transaction.DecisionSource.MERCHANT_DEFAULT, null);
+    }
+
+    /**
+     * The suggestion a PREVIEW gets: identical logic, zero writes (WI3).
+     *
+     * <p>{@link #suggest} resolves the merchant through
+     * {@code MerchantNormalizationEngine.resolve}, which CREATES a merchant and an alias on a miss.
+     * That is right at confirm time and wrong at staging time, where the user may never import the
+     * file at all — and it is Bug 36: uploading a statement, seeing the parse is wrong and
+     * abandoning it still left a merchant row for every distinct description in it.
+     *
+     * <p>Everything else is deliberately the same, in the same order: user rules, then global
+     * rules, then the learned distribution, then keywords, then Other. A preview that used
+     * different logic from the confirm behind it would show the user a category they are not going
+     * to get, which is a worse failure than the writes this removes.
+     *
+     * <p>merchantId comes back null when no merchant exists yet. Nothing downstream needs it —
+     * {@code StagedRow} carries no merchant field, because the merchant is created at confirm time
+     * alongside the transaction it belongs to.
+     */
+    public Suggestion suggestReadOnly(UUID userId, String description, BigDecimal amount, String accountType) {
+        return suggestReadOnly(ruleEngineService.ruleSet(userId), userId, description, amount, accountType);
+    }
+
+    /**
+     * As {@link #suggestReadOnly(UUID, String, BigDecimal, String)}, against a rule set the caller
+     * already loaded once.
+     *
+     * <p>Exists for the import staging loop, which calls this once per row: the loading overload
+     * re-queried {@code category_rules} twice for every row of the statement, always with the same
+     * two results. The rule set must come from {@code RuleEngineService.ruleSet(userId)} so
+     * USER-before-GLOBAL precedence is preserved.
+     *
+     * <p>Only the rule lookup is hoisted. Merchant resolution and the learned-category
+     * distribution below still run per row -- they genuinely depend on the row's description, and
+     * batching them is a separate, larger change with its own design review.
+     */
+    public Suggestion suggestReadOnly(List<CategoryRule> rules, UUID userId, String description,
+                                       BigDecimal amount, String accountType) {
+        var merchant = merchantNormalizationEngine.resolveReadOnly(userId, description);
+        String merchantName = merchant.map(Merchant::getCanonicalName).orElse(null);
+        UUID merchantId = merchant.map(Merchant::getId).orElse(null);
+
+        var ruleMatch = ruleEngineService.evaluateCategoryRule(rules, description, amount, merchantName, accountType);
+        if (ruleMatch.isPresent()) {
+            CategoryRule rule = ruleMatch.get().rule();
+            boolean isUserRule = ruleMatch.get().isUserScope();
+            return new Suggestion(rule.getActionValue(), isUserRule ? "user_rule" : "global_rule", merchantId,
+                    isUserRule ? Transaction.DecisionSource.USER_RULE : Transaction.DecisionSource.GLOBAL_RULE, rule.getId());
+        }
+
+        if (merchantId != null) {
+            List<MerchantCategoryLearning> distribution = learningRepository.findByUserIdAndMerchantId(userId, merchantId);
+            if (!distribution.isEmpty()) {
+                MerchantCategoryLearning top = confidenceEngine.topCategory(distribution);
+                if (top != null) {
+                    Category cat = categoryRepository.findById(top.getCategoryId()).orElse(null);
+                    if (cat != null) {
+                        return new Suggestion(cat.getName(), "learned", merchantId,
+                                Transaction.DecisionSource.LEARNED_PATTERN, null);
+                    }
+                }
+            }
+        }
+
+        String ruleCat = CategoryRules.suggestCategory(description);
+        boolean matchedKeyword = !ruleCat.equals("Other");
+        return new Suggestion(ruleCat, matchedKeyword ? "rule" : "default", merchantId,
                 matchedKeyword ? Transaction.DecisionSource.KEYWORD_MATCH : Transaction.DecisionSource.MERCHANT_DEFAULT, null);
     }
 
