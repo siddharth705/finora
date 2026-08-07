@@ -174,6 +174,36 @@ class BulkRecategorizeLearningIT extends AbstractIntegrationTest {
     // --- 2. One lost race no longer discards the whole batch -----------------------------------
 
     /**
+     * Bug 02's shape, reproduced against this path and shown to be gone.
+     *
+     * <p>Every other test here injects the failure AFTER the batch has committed, which measures
+     * the queue. This one injects it BEFORE, which measures the batch: {@code confirm} is armed to
+     * throw for every merchant, and then {@code bulkRecategorize} is called. Under the old shape
+     * that violation was raised from inside the batch's own transaction on the very first row, and
+     * the user's five recategorizations became zero. Now the batch never calls {@code confirm} at
+     * all — it queues — so an armed failure cannot reach it.
+     *
+     * <p>Asserted as an outcome rather than as {@code verify(never())}, deliberately. A
+     * "confirm was not called" assertion passes if the call is merely moved somewhere else that
+     * still shares the transaction; "the rows are all recategorized despite confirm being broken"
+     * only passes if the transaction boundary is genuinely where this work item put it.
+     */
+    @Test
+    void aLearningFailureArmedBeforeTheBatchCannotReachIt() {
+        Fixture f = fixture();
+        doThrow(new DataIntegrityViolationException("duplicate key value violates unique constraint"))
+                .when(learningService).confirm(any(), any(), any());
+
+        transactionService.bulkRecategorize(f.user().getId(), f.transactionIds(), TARGET_CATEGORY);
+
+        // Previously: an exception out of bulkRecategorize and zero rows changed.
+        assertThat(transactionsFor(f)).hasSize(DESCRIPTIONS.size())
+                .allSatisfy(t -> assertThat(t.getCategoryId()).isEqualTo(targetCategoryId(f)));
+        assertThat(eventsFor(f)).hasSize(DESCRIPTIONS.size()).allSatisfy(e ->
+                assertThat(e.getStatus()).isEqualTo(MerchantLearningEvent.Status.PENDING));
+    }
+
+    /**
      * The defect this work item exists to remove, in its most direct form.
      *
      * <p>Exactly one of the five merchants' confirmations fails, the way a single lost race against
