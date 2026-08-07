@@ -16,13 +16,56 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+# Every job below runs on a SELF-HOSTED Linux runner rather than ubuntu-latest.
+#
+# Why: GitHub-hosted runners stopped starting entirely ("The job was not started because recent
+# account payments have failed or your spending limit needs to be increased"), which is not a
+# failure any workflow change can fix and which blocked every push and PR. Self-hosting removes CI
+# from that dependency. If the billing block is lifted and you want the hosted runners back, the
+# revert is these five `runs-on` values and nothing else.
+#
+# Linux and not macOS on purpose. Two things in this file only work on a Linux runner, and both
+# would need rewriting to move to a Mac:
+#
+#   * The `smoke` job's `services:` block. Service containers are a Linux-container feature; on a
+#     macOS runner they do not run at all, so Postgres would have to be brought up by hand.
+#   * `playwright install --with-deps`, whose --with-deps shells out to apt-get. There is no macOS
+#     equivalent, so browser system dependencies would have to be handled separately.
+#
+# Staying on Linux keeps both working untouched and makes this a five-line change.
+#
+# WHAT THE RUNNER HOST MUST PROVIDE. These are assumptions ubuntu-latest satisfied for free, and
+# a self-hosted box does not:
+#
+#   * Docker, running, with the runner user in the docker group. Needed twice over: Testcontainers
+#     in the `backend` job, and the `services:` container in `smoke`.
+#   * Passwordless sudo for the runner user, or Playwright's browser dependencies pre-installed at
+#     provision time. `--with-deps` runs apt-get; without sudo that step fails. It is left in place
+#     because a clear failure there beats Chromium dying later on a missing shared library.
+#   * python3, for the thirteen guard scripts. Every Ubuntu ships it, so this is a check rather
+#     than an install. Note those steps invoke `python3` explicitly and not `python`: the hosted
+#     image provides a `python` shim, a bare Ubuntu has not since 20.04, and the difference is
+#     thirteen steps across four jobs dying on "python: command not found".
+#   * git, and enough disk for a full checkout plus ~/.m2 and node_modules across five jobs.
+#
+# Java and Node are NOT in that list: actions/setup-java and actions/setup-node install them per
+# job, exactly as on a hosted runner.
+#
+# OPERATIONAL NOTE, worth knowing before the first run. A single runner executes ONE job at a time,
+# so these five jobs stop being parallel and serialise instead. Nothing fails, but wall-clock for a
+# full run becomes roughly the sum rather than the slowest, and `timeout-minutes` on each job still
+# counts only its own execution, not time spent queued. Register more runners if that matters.
+#
+# The label list is deliberately [self-hosted, linux] rather than bare `self-hosted`: the bare form
+# matches ANY self-hosted runner, so the day a second one joins on a different OS it can silently
+# claim these jobs. Add `x64` or `arm64` too if the fleet ever spans architectures.
 jobs:
   backend:
     # No test count in the name: it was "934" while the suite was already at 936, because a
     # hardcoded total goes stale on the very next commit that adds a test and nothing fails when
     # it does. The job reports its own real count in the run output.
     name: Backend (Java 21)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     # Without this a job runs to GitHub's 6-hour default. The realistic way to hit that is not a
     # slow test but a stuck one: this job starts Testcontainers, and a container that never becomes
     # healthy leaves the suite waiting rather than failing. Six hours of runner allowance is the
@@ -70,24 +113,24 @@ jobs:
       # mistyped password revoked every session on every device" -- and a guard against a bug that
       # already shipped once should not be skippable.
       - name: Client auth policy
-        run: python scripts/check-client-auth-policy.py
+        run: python3 scripts/check-client-auth-policy.py
 
       - name: XML comment check
-        run: python scripts/check-xml-comments.py
+        run: python3 scripts/check-xml-comments.py
 
       # Runs before setup-java so the diagnosis arrives before the step that would fail on it.
       # ./mvnw was committed non-executable and every backend run died here with a bare
       # "Permission denied" / exit 126 -- accurate, but it names a temp shell script rather than
       # the committed mode, which is why it went unread for the workflow's whole life.
       - name: Executable bits
-        run: python scripts/check-executable-bits.py
+        run: python3 scripts/check-executable-bits.py
 
       # A Grafana panel querying a metric that does not exist renders an empty graph, and an alert
       # on a non-existent series never fires -- both indistinguishable from a healthy system. The
       # translation is easy to get wrong because Micrometer renames on the way out: dots become
       # underscores, counters gain _total, timers expand into _seconds_bucket/_count/_sum.
       - name: Dashboard metrics
-        run: python scripts/check-dashboard-metrics.py
+        run: python3 scripts/check-dashboard-metrics.py
 
       # Also before setup-java, and for the same reason: it names the file and the type, where
       # javac names a symbol at a line in whatever compiled first. Cheap enough (~0.4s over 476
@@ -98,10 +141,10 @@ jobs:
       # it still detects a genuinely missing import, and still does NOT fire on the four patterns
       # that produced its historical false positives.
       - name: Import cross-reference (self-test)
-        run: python scripts/check-imports.py --self-test
+        run: python3 scripts/check-imports.py --self-test
 
       - name: Import cross-reference
-        run: python scripts/check-imports.py
+        run: python3 scripts/check-imports.py
 
       - uses: actions/setup-java@v4
         with:
@@ -111,7 +154,10 @@ jobs:
           cache: 'maven'
 
       # No explicit Docker setup step: the suite's Testcontainers integration tests need a Docker
-      # daemon, and ubuntu-latest runners already have one running.
+      # daemon. On ubuntu-latest one was always running; on the self-hosted runner this is now a
+      # provisioning requirement on the host rather than something the image guarantees, which is
+      # why it is listed at the top of this file. If it is missing, every *IT class fails at
+      # container startup rather than on an assertion.
       #
       # This claim used to be false. The 29 *IT classes never ran: surefire's default includes
       # don't match *IT.java (that's maven-failsafe's convention) and failsafe was never
@@ -131,7 +177,7 @@ jobs:
       # only adds a failure of its own for a hollow result (no reports, 0 tests, or 0 *IT).
       - name: Test summary
         if: always()
-        run: python scripts/summarize-surefire.py
+        run: python3 scripts/summarize-surefire.py
 
       # guardian-report.py was the last checker referenced only in documentation -- never in CI,
       # a hook, or a package script. That is precisely the anti-pattern the XML-comment step above
@@ -145,7 +191,7 @@ jobs:
       # being generated is a failure rather than silence.
       - name: Repository Guardian report
         if: always()
-        run: python scripts/guardian-report.py
+        run: python3 scripts/guardian-report.py
 
       # The XML behind the summary, for reading a stack trace without re-running the suite.
       # Failures only: on a green run nobody opens it, and it is ~2MB of XML per run.
@@ -159,7 +205,7 @@ jobs:
 
   frontend:
     name: User frontend
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     # See the backend job for why. Shorter budget: no containers here, ~1m40s today.
     timeout-minutes: 15
     steps:
@@ -191,7 +237,7 @@ jobs:
       # address is equally broken in admin-portal or mobile, and the whole point is that no copy of
       # it escapes. Cheap and dependency-free, so it sits with lint rather than behind the tests.
       - name: Contact addresses
-        run: python scripts/check-contact-addresses.py
+        run: python3 scripts/check-contact-addresses.py
 
       # Runs from the repo root and scans web AND mobile: the dashboard's monthly figures are the
       # newest month with DATA, not necessarily the current one, and a client that labels them
@@ -199,7 +245,7 @@ jobs:
       # the web client and mobile kept three hardcoded claims -- the same web-fixed/mobile-missed
       # drift check-client-auth-policy.py exists for, one layer up.
       - name: Reporting period labels
-        run: python scripts/check-reporting-period-labels.py
+        run: python3 scripts/check-reporting-period-labels.py
 
       # `npm audit` in this repo has never been empty -- 18 vulnerability entries across the three
       # JS apps, every one already judged not to apply. That is exactly how a real advisory gets
@@ -209,7 +255,7 @@ jobs:
       # for re-checking, or it fails here. It also fails if an accepted entry stops being reported,
       # so stale exceptions cannot pile up and hide the next real one.
       - name: Dependency advisories
-        run: python scripts/check-dependency-advisories.py frontend
+        run: python3 scripts/check-dependency-advisories.py frontend
 
       - name: Test
         working-directory: frontend
@@ -222,7 +268,7 @@ jobs:
 
   admin-portal:
     name: Admin portal
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     # See the backend job for why. Shorter budget: no containers here, ~1m40s today.
     timeout-minutes: 15
     steps:
@@ -245,7 +291,7 @@ jobs:
 
       # See the user frontend's step for why this exists.
       - name: Dependency advisories
-        run: python scripts/check-dependency-advisories.py admin-portal
+        run: python3 scripts/check-dependency-advisories.py admin-portal
 
       - name: Test
         working-directory: admin-portal
@@ -257,7 +303,7 @@ jobs:
 
   mobile:
     name: Mobile (Expo)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     # See the backend job for why. Shorter budget: no containers here, ~1m40s today.
     timeout-minutes: 15
     steps:
@@ -282,7 +328,7 @@ jobs:
 
       # See the user frontend's step for why this exists.
       - name: Dependency advisories
-        run: python scripts/check-dependency-advisories.py mobile
+        run: python3 scripts/check-dependency-advisories.py mobile
 
       - name: Type-check
         working-directory: mobile
@@ -321,7 +367,7 @@ jobs:
   # minutes on a pull request.
   smoke:
     name: End-to-end smoke (Chromium)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
 
     # Blocking, because it has passed on an isolated checkout: fresh clone, fresh database, fresh
     # backend, 9 specs in 34s. That run was worth doing rather than assuming -- it caught two
