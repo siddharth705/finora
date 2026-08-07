@@ -1,6 +1,7 @@
 package com.finora.service;
 
 import com.finora.entity.MerchantLearningEvent;
+import com.finora.observability.WorkerObservability;
 import com.finora.repository.MerchantLearningEventRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -70,19 +71,26 @@ public class MerchantLearningEventWorker {
      */
     private static final Duration PROCESSING_TIMEOUT = Duration.ofMinutes(15);
 
+    /** Logical worker name and job kind, used as low-cardinality Sentry tags and metric tags. */
+    private static final String WORKER = "merchant-learning";
+    private static final String JOB_KIND = "merchant-learning-event";
+
     private final MerchantLearningEventRepository repository;
     private final MerchantLearningService learningService;
     private final TransactionTemplate transactionTemplate;
+    private final WorkerObservability observability;
 
     @Value("${app.learning.queue.enabled:true}")
     private boolean enabled;
 
     public MerchantLearningEventWorker(MerchantLearningEventRepository repository,
                                         MerchantLearningService learningService,
-                                        TransactionTemplate transactionTemplate) {
+                                        TransactionTemplate transactionTemplate,
+                                        WorkerObservability observability) {
         this.repository = repository;
         this.learningService = learningService;
         this.transactionTemplate = transactionTemplate;
+        this.observability = observability;
     }
 
     /**
@@ -121,11 +129,17 @@ public class MerchantLearningEventWorker {
      * on a scheduler.
      */
     public int drainOnce() {
-        List<UUID> claimed = claimBatch();
-        for (UUID eventId : claimed) {
-            applyOne(eventId);
-        }
-        return claimed.size();
+        // One correlation id per pass, not per event: a pass is the unit an operator reasons about,
+        // and every audit row MerchantLearningService writes during it inherits the id through MDC.
+        int[] processed = {0};
+        observability.run(WORKER, JOB_KIND, () -> {
+            List<UUID> claimed = claimBatch();
+            for (UUID eventId : claimed) {
+                applyOne(eventId);
+            }
+            processed[0] = claimed.size();
+        });
+        return processed[0];
     }
 
     /** Phase 1. Holds the row lock only for the length of this transaction; the PROCESSING status
@@ -174,9 +188,15 @@ public class MerchantLearningEventWorker {
                             + "automatically; it is now visible in the admin queue. merchant={} "
                             + "category={}", eventId, event.getAttemptCount(), event.getMerchantId(),
                             event.getCategoryId(), cause);
+                    // The user's confirmation silently did not take effect. Previously this was a
+                    // log line plus a row in a screen somebody has to think to open.
+                    observability.deadLettered(WORKER, JOB_KIND, eventId, event.getAttemptCount(), cause);
                 } else {
                     log.warn("Merchant learning event {} failed (attempt {}), retrying at {}",
                             eventId, event.getAttemptCount(), event.getNextAttemptAt());
+                    // Counted and breadcrumbed, NOT reported: a transient failure the next attempt
+                    // resolves is normal operation, and paging on it is how alerting gets muted.
+                    observability.retryScheduled(WORKER, JOB_KIND, eventId, event.getAttemptCount());
                 }
             });
         } catch (RuntimeException e) {
@@ -184,6 +204,7 @@ public class MerchantLearningEventWorker {
             // will return it to the queue. Logged rather than rethrown: this runs on a scheduler or
             // an async nudge, and there is nobody to hand an exception to.
             log.error("Could not record the failure of merchant learning event {}", eventId, e);
+            observability.failureNotRecorded(WORKER, JOB_KIND, eventId, e);
         }
     }
 
@@ -207,6 +228,8 @@ public class MerchantLearningEventWorker {
             if (stuck.isEmpty()) return;
             log.warn("Returning {} merchant learning event(s) to the queue after {} in PROCESSING "
                     + "-- a worker most likely died mid-apply.", stuck.size(), PROCESSING_TIMEOUT);
+            // Evidence that a process died somewhere nobody saw. No throwable exists to attach.
+            observability.recoveredAbandoned(WORKER, JOB_KIND, stuck.size());
             stuck.forEach(event -> event.recordFailure(
                     "Abandoned in PROCESSING for longer than " + PROCESSING_TIMEOUT, now));
             repository.saveAll(stuck);

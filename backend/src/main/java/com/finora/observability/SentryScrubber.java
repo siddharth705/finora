@@ -60,6 +60,33 @@ public final class SentryScrubber {
     private static final Pattern SINGLE_QUOTED = Pattern.compile("'[^']{0,200}'");
     private static final Pattern DOUBLE_QUOTED = Pattern.compile("\"[^\"]{0,200}\"");
 
+    /**
+     * The only tag keys allowed to leave the platform.
+     *
+     * <p>Tags exist because structured context is the one thing an operator genuinely needs and
+     * cannot get from a redacted message: which worker, which phase, which queue row. Extras are
+     * cleared wholesale (see {@link #scrubEvent}), so without this there would be no safe channel
+     * at all and the temptation would be to widen the message instead.
+     *
+     * <p>An allowlist rather than an open channel, for the same reason everything else here is:
+     * leaving it open invites a future caller to attach a merchant name or a narration "just for
+     * debugging". Adding a key is a deliberate, reviewable act.
+     *
+     * <p><b>Every value placed under these keys must be an internal identifier or a bounded
+     * enum -- never customer data.</b> {@code jobId} is a queue row's own UUID, which identifies a
+     * row in our database and nothing about the person it belongs to. Note the contrast with UUID
+     * redaction in messages and URLs: there a UUID arrives embedded in free text alongside data,
+     * and its provenance is unknown; here it is placed deliberately by code that knows what it is.
+     */
+    private static final java.util.Set<String> ALLOWED_TAG_KEYS = java.util.Set.of(
+            "worker",        // logical worker name, low cardinality
+            "phase",         // claim | apply | record-failure | recover, low cardinality
+            "outcome",       // retry | dead-letter | recovered, low cardinality
+            "jobKind",       // what type of queue row, low cardinality
+            "jobId",         // the queue row's own id -- internal, not customer data
+            "correlationId"  // ties an event to the log lines and audit rows of one worker run
+    );
+
     private static final Pattern EMAIL =
             Pattern.compile("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}");
 
@@ -208,6 +235,17 @@ public final class SentryScrubber {
         // the error path, where throwing is the one thing it must never do.
         if (event.getExtras() != null) {
             event.getExtras().clear();
+        }
+
+        // Tags: allowlisted rather than cleared, because structured context is the one thing an
+        // operator needs that a redacted message cannot carry. Removing by key on a copy of the
+        // key set, since removing while iterating the live map would throw.
+        if (event.getTags() != null) {
+            for (String key : new ArrayList<>(event.getTags().keySet())) {
+                if (!ALLOWED_TAG_KEYS.contains(key)) {
+                    event.removeTag(key);
+                }
+            }
         }
 
         if (event.getBreadcrumbs() != null) {

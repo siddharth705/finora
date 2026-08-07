@@ -170,6 +170,57 @@ class SentryScrubberTest {
                 .isNull();
     }
 
+    // ---------------------------------------------------------------- tags
+
+    @Test
+    void allowlistedTagsSurvive_theyAreTheOnlyStructuredContextAnOperatorGets() {
+        // Extras are cleared wholesale, so without these there would be no safe channel at all --
+        // and the temptation would be to widen the message instead, which is the riskier place.
+        SentryEvent event = new SentryEvent();
+        event.setTag("worker", "merchant-learning");
+        event.setTag("phase", "apply");
+        event.setTag("outcome", "dead-letter");
+        event.setTag("jobKind", "merchant-learning-event");
+        event.setTag("jobId", "3f2504e0-4f89-11d3-9a0c-0305e82c3301");
+        event.setTag("correlationId", "worker-abc");
+
+        SentryEvent scrubbed = SentryScrubber.scrubEvent(event);
+
+        assertThat(scrubbed.getTags()).containsKeys(
+                "worker", "phase", "outcome", "jobKind", "jobId", "correlationId");
+    }
+
+    @Test
+    void anyTagNotOnTheAllowlistIsDropped() {
+        // The failure this prevents: someone attaches a merchant name or a narration to a tag
+        // "just for debugging" and it ships. Adding a key must be a deliberate, reviewable act.
+        SentryEvent event = new SentryEvent();
+        event.setTag("worker", "merchant-learning");
+        event.setTag("merchantName", "ACME STORES");
+        event.setTag("narration", "UPI/ACME STORES/paid");
+        event.setTag("userEmail", "test.customer@example.com");
+
+        SentryEvent scrubbed = SentryScrubber.scrubEvent(event);
+
+        assertThat(scrubbed.getTags()).containsKey("worker");
+        assertThat(scrubbed.getTags())
+                .doesNotContainKeys("merchantName", "narration", "userEmail");
+        assertThat(scrubbed.getTags().values()).doesNotContain("ACME STORES");
+    }
+
+    @Test
+    void aJobIdTagIsKeptDeliberately_unlikeAUuidInsideAMessage() {
+        // Not a contradiction of the UUID redaction above. In a message a UUID arrives embedded in
+        // free text with unknown provenance; here it is placed by code that knows it is a queue
+        // row's own id -- which identifies a row in our database, not a person.
+        SentryEvent event = new SentryEvent();
+        event.setTag("jobId", "3f2504e0-4f89-11d3-9a0c-0305e82c3301");
+
+        SentryEvent scrubbed = SentryScrubber.scrubEvent(event);
+
+        assertThat(scrubbed.getTags().get("jobId")).isEqualTo("3f2504e0-4f89-11d3-9a0c-0305e82c3301");
+    }
+
     // ---------------------------------------------------------------- whole event
 
     /** Everything a realistic Finora crash could carry, in one event. */
