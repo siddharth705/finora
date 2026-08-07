@@ -67,6 +67,41 @@ public class BackgroundWorkConfig {
     }
 
     /**
+     * A separate pool for import-job nudges.
+     *
+     * <p>Separate from the learning pool rather than shared, because the two have opposite shapes.
+     * A learning apply is a handful of small writes; an import parses a whole statement and can run
+     * for seconds. Sharing one pool would let one large import block every learning nudge behind
+     * it, which is the starvation the learning pool's own comment says it exists to avoid.
+     *
+     * <p>Still small, and for the same reason: the work is database-bound against a pool capped at
+     * 10, so more threads here would only queue harder on connections while competing with the
+     * request threads serving users. Concurrency comes from running more instances (design phase
+     * 6), not from more threads in one.
+     *
+     * <p>{@code CallerRunsPolicy} matches the learning pool: when the pool and queue are both full
+     * the nudge runs on the calling thread, so the cost is a slower response rather than a lost
+     * trigger. Nothing is lost either way -- the job row is already committed and the poller is the
+     * backstop -- but a discarded nudge would silently delay an import to the next poll.
+     */
+    @Bean("importQueueExecutor")
+    public Executor importQueueExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(2);
+        executor.setQueueCapacity(50);
+        executor.setThreadNamePrefix("import-queue-");
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        // Let an in-flight import finish on shutdown rather than being killed mid-parse. Bounded so
+        // a wedged parse cannot hold a deploy open -- the job stays in flight and recoverAbandoned
+        // returns it to the queue.
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(20);
+        executor.initialize();
+        return executor;
+    }
+
+    /**
      * Explicit transaction boundaries, for code that needs more than one of them in a single
      * method.
      *
