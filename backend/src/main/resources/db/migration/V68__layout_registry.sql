@@ -65,7 +65,12 @@ CREATE TABLE layout_registry (
     -- of the v1 fingerprint spec's hash inputs, so every import of one fingerprint carries the same
     -- one -- but stored rather than decoded, because the fingerprint is a SHA-256 prefix and
     -- nothing can read the format back out of it.
-    source_format     VARCHAR(8),
+    --
+    -- VARCHAR(10) to match statement_imports.source_format (V36) exactly, not because "PDF" needs
+    -- the room. The backfill below copies that column straight across, and a narrower type here
+    -- would turn the first source format longer than this one into a migration that fails on
+    -- deploy -- for data that was already perfectly valid where it came from.
+    source_format     VARCHAR(10),
 
     -- Observed. The extractor that last produced this layout (FinancialDocumentMetadata.parser,
     -- e.g. "PdfPreviewGenerator"). Observed and not curated on purpose: which parser handles a

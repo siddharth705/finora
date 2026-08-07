@@ -96,7 +96,8 @@ public class RegisteredLayout {
     @Column(nullable = false, length = 16)
     private Status status = Status.OBSERVED;
 
-    @Column(name = "source_format", length = 8)
+    /** Width matched to {@code statement_imports.source_format}, which V68's backfill copies from. */
+    @Column(name = "source_format", length = 10)
     private String sourceFormat;
 
     @Column(length = 64)
