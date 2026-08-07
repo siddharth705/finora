@@ -62,7 +62,13 @@ public class CapabilityCoverageService {
             "PAGE_BOUNDARY_ISOLATION", "COMPOSITE_STATEMENT", "CREDIT_CARD_SUMMARY_SIGNAL",
             "OFFSET_COLUMN_ANCHORS", "GRID_METADATA_FALLBACK", "GRID_METADATA_TRAILING_LABEL",
             "LEADING_NAME_LINE", "LEADING_NARRATION_CONTINUATION",
-            "FINANCIAL_PRODUCT_CLASSIFICATION");
+            "FINANCIAL_PRODUCT_CLASSIFICATION",
+            // Added once CapabilityCorpusCoverageTest found the engine recording them with the
+            // registry unaware -- so they appeared in neither activations nor neverActivated, which
+            // is the one gap this map exists to report. RIGHT_ALIGNED_AMOUNTS is among the most
+            // frequently exercised capabilities there is, so the map had never reported on the
+            // thing it most often does.
+            "PRINTED_SUMMARY_TOTALS", "RIGHT_ALIGNED_AMOUNTS");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure

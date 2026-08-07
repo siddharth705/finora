@@ -59,23 +59,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 class CapabilityCorpusCoverageTest {
 
     /**
-     * Recorded by the engine, absent from the registry — so the coverage map cannot see them.
+     * Recorded by the engine, absent from the registry.
      *
-     * <p>Each needs a decision rather than an entry: is it a capability the map should report, or
-     * is it something else wearing a capability's clothes? {@code UNANCHORED_ROWS_ABANDONED} looks
-     * like the latter — a failure signal, not a layout the engine handles — and a registry that
-     * counts it would report a coverage figure improved by parsing badly.
+     * <p>Empty. Both original entries -- PRINTED_SUMMARY_TOTALS and RIGHT_ALIGNED_AMOUNTS -- were
+     * real capabilities and are now registered. The third, UNANCHORED_ROWS_ABANDONED, was not a
+     * capability at all and moved to the diagnostics channel.
      *
-     * <p>Nothing may be added here without that decision being made.
+     * <p>Kept as a field rather than deleted, because an empty accept-list is the assertion: a
+     * capability the engine records and the registry has never heard of appears in neither
+     * activations nor neverActivated, so the coverage map cannot report the one gap it exists for.
      */
-    private static final Map<String, String> RECORDED_BUT_UNDECLARED = new LinkedHashMap<>(Map.of(
-            "PRINTED_SUMMARY_TOTALS",
-            "recorded when a statement prints its own debit/credit totals. Genuinely a capability; "
-                    + "belongs in the registry once someone confirms the name is the one we want.",
-            "RIGHT_ALIGNED_AMOUNTS",
-            "recorded by PdfTableLocator's column geometry. Genuinely a capability, and one of the "
-                    + "most commonly exercised -- its absence from the registry means the map has "
-                    + "never reported on the thing it most often does."));
+    private static final Map<String, String> RECORDED_BUT_UNDECLARED = Map.of();
 
     /**
      * Declared in the registry, recorded nowhere.
@@ -95,11 +89,13 @@ class CapabilityCorpusCoverageTest {
     /**
      * Declared capabilities that no committed trace exercises yet.
      *
-     * <p>This is the corpus shortfall, named. Nine of sixteen today, from three traces — and the
-     * first run of this test corrected the list downward, because the traces exercise three
-     * capabilities nobody had recorded them as covering. That is what a measured gate buys over an
-     * assumed one: coverage was better than the corpus could say for itself, since every committed
-     * trace is v1 and declares nothing.
+     * <p>This is the corpus shortfall, named. Eleven of eighteen, from three traces.
+     *
+     * <p>It has corrected me twice, in both directions, which is the argument for measuring rather
+     * than listing. First run: three capabilities I had listed as uncovered were in fact exercised,
+     * because the traces are v1 and declare nothing, so the corpus covered more than it could say
+     * for itself. Then, on registering RIGHT_ALIGNED_AMOUNTS, the reverse — I had called it one of
+     * the most commonly exercised capabilities and no committed trace activates it at all.
      *
      * <p>Every line removed from here is a layout that stops being a claim and starts being
      * evidence.
@@ -116,6 +112,13 @@ class CapabilityCorpusCoverageTest {
         DECLARED_WITHOUT_A_TRACE.put("GRID_METADATA_FALLBACK", "no trace");
         DECLARED_WITHOUT_A_TRACE.put("GRID_METADATA_TRAILING_LABEL", "no trace");
         DECLARED_WITHOUT_A_TRACE.put("FINANCIAL_PRODUCT_CLASSIFICATION", "no trace");
+        DECLARED_WITHOUT_A_TRACE.put("PRINTED_SUMMARY_TOTALS", "no trace; newly registered");
+        DECLARED_WITHOUT_A_TRACE.put("RIGHT_ALIGNED_AMOUNTS",
+                "no trace; newly registered. Worth a second look rather than just a capture -- I "
+                        + "assumed this was among the most exercised capabilities and the gate says "
+                        + "no committed trace activates it at all. Either the three traces genuinely "
+                        + "avoid right-aligned amount columns, or the recording sits on a path they "
+                        + "do not take. Measure before capturing.");
         DECLARED_WITHOUT_A_TRACE.put("LEADING_PLUS_CREDIT",
                 "no trace, and nothing records it -- see DECLARED_BUT_UNRECORDED. A trace cannot "
                         + "cover a capability nothing emits, so this one is blocked on that first.");
