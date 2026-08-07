@@ -220,7 +220,7 @@ public class TransactionNormalizer {
      *  {@code ctx} as they fire. {@code ctx} is nullable -- callers that don't have a
      *  DocumentContext in scope (or don't care) get exactly the old behavior. */
     public StagedRow normalize(UUID userId, Map<String, String> row, DocumentContext ctx) {
-        return normalize(userId, row, ctx, ruleEngineService.ruleSet(userId));
+        return normalize(userId, row, ctx, ruleEngineService.ruleSet(userId), null);
     }
 
     /**
@@ -238,6 +238,30 @@ public class TransactionNormalizer {
      */
     public StagedRow normalize(UUID userId, Map<String, String> row, DocumentContext ctx,
                                 List<CategoryRule> rules) {
+        return normalize(userId, row, ctx, rules, null);
+    }
+
+    /**
+     * A duplicate index for one staging pass.
+     *
+     * <p>Exposed here rather than having each staging loop inject {@code DuplicateDetector}
+     * directly: this class already owns the detector, and the index is only ever useful as an
+     * argument to {@link #normalize}, so the two belong behind one collaborator.
+     */
+    public DuplicateIndex duplicateIndexFor(UUID userId) {
+        return duplicateDetector.indexFor(userId);
+    }
+
+    /**
+     * Same again, against a {@link DuplicateIndex} the caller built once for the whole statement.
+     *
+     * <p>The duplicate check was the last per-row query in this method after b7aab9d removed the
+     * rule lookup -- 1.00 statements/row, recommendation 2 of the import pipeline profile. A null
+     * index falls back to the per-row query, which keeps the three overloads above working
+     * unchanged for tests and the PDF diagnostic.
+     */
+    public StagedRow normalize(UUID userId, Map<String, String> row, DocumentContext ctx,
+                                List<CategoryRule> rules, DuplicateIndex duplicateIndex) {
         String dateRaw = CsvParser.firstNonBlank(row, DATE_HINTS);
         String amountRaw = firstNonZeroAmount(row, AMOUNT_HINTS);
         // Falls back so a genuinely zero-amount row still normalizes exactly as before -- the
@@ -343,7 +367,9 @@ public class TransactionNormalizer {
 
         // findMatch, not isLikelyDuplicate: one query either way, but it carries the evidence the
         // review screen needs to let the user decide rather than just flagging the row (WI5).
-        var duplicateMatch = duplicateDetector.findMatch(userId, date, amount, description).orElse(null);
+        var duplicateMatch = (duplicateIndex != null
+                ? duplicateDetector.findMatch(duplicateIndex, date, amount, description)
+                : duplicateDetector.findMatch(userId, date, amount, description)).orElse(null);
         boolean likelyDuplicate = duplicateMatch != null;
 
         String referenceNumber = CsvParser.firstNonBlank(row, REFERENCE_HINTS);

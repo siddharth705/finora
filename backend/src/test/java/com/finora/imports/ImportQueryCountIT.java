@@ -58,26 +58,30 @@ class ImportQueryCountIT extends AbstractIntegrationTest {
     /**
      * Marginal statements allowed per imported row.
      *
-     * <p><b>Measured at 3.00</b> after b7aab9d removed the 2.00/row {@code category_rules} lookups
-     * from the profile's original ~6.3. What remains is duplicate detection and merchant
-     * resolution -- recommendations 2 and 3 of the profile, both still outstanding.
+     * <p><b>Measured at 2.00.</b> The profile's original was ~6.3; b7aab9d removed the 2.00/row
+     * {@code category_rules} lookups and {@link DuplicateIndex} removed the 1.00/row duplicate
+     * query. What remains is merchant resolution -- recommendation 3, still outstanding.
      *
-     * <p>4.0 rather than a looser number for a specific reason. The regression this most needs to
-     * catch is the rule lookup returning to the row loop, which is worth +2.00/row on its own; a
-     * ceiling of 5.0 would sit exactly ON that regression and let it through. One point of headroom
-     * over the measured value absorbs ordinary variation -- a first-encounter merchant insert, a
-     * cache miss -- while still failing the moment the largest known pattern comes back.
+     * <p>2.5, not 3.0, and the half point matters. The cheapest regression available from here is
+     * duplicate detection returning to a query per row, worth +1.00; a ceiling of 3.0 would sit
+     * exactly ON that and let it through. This is the same trap an earlier revision of this file
+     * fell into at 5.0 against a 3.00 measurement, so the rule is now explicit: <b>the ceiling must
+     * be strictly below measured plus the smallest known regression</b>, not merely above the
+     * measurement.
+     *
+     * <p>Lower it again when recommendation 3 lands. Lowering it is the point at which an
+     * improvement stops being a number in a commit message and becomes something the build defends.
      */
-    private static final double MAX_MARGINAL_STATEMENTS_PER_ROW = 4.0;
+    private static final double MAX_MARGINAL_STATEMENTS_PER_ROW = 2.5;
 
     /**
      * Marginal JPQL/HQL query executions allowed per row.
      *
      * <p>Tracked alongside prepared statements because the two catch different regressions: a
      * repository method called in a loop moves this one, while a lazily-initialised association
-     * moves only the statement count.
+     * moves only the statement count. Measured at 2.00, same reasoning as above for the ceiling.
      */
-    private static final double MAX_MARGINAL_QUERIES_PER_ROW = 4.0;
+    private static final double MAX_MARGINAL_QUERIES_PER_ROW = 2.5;
 
     private static final int SMALL = 40;
     private static final int LARGE = 80;
@@ -153,9 +157,9 @@ class ImportQueryCountIT extends AbstractIntegrationTest {
                 .as("""
                         Import database work is scaling with statement size beyond the agreed
                         ceiling, which means an N+1 has been introduced or reintroduced. The
-                        ceiling is set to catch the largest known pattern returning: the
-                        category_rules lookup that commit b7aab9d moved out of the row loop was
-                        worth 2.00 statements/row on its own. See
+                        ceiling is set strictly below measured-plus-smallest-known-regression, so
+                        even duplicate detection returning to one query per row (+1.00) fails
+                        here. See
                         docs/engineering/performance/import-pipeline-profile-2026-08-07.md, and run
                         with org.hibernate.SQL at DEBUG to see which query is repeating.""")
                 .isLessThanOrEqualTo(MAX_MARGINAL_STATEMENTS_PER_ROW);

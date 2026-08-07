@@ -32,6 +32,17 @@ public class DuplicateDetector {
     }
 
     /**
+     * An index for one staging pass, replacing the per-row query with one query per distinct date.
+     *
+     * <p>Recommendation 2 of the import pipeline profile: findMatch below cost 1.00 statements per
+     * row, measured. A statement covers ~31 dates whatever its row count, so this is the difference
+     * between 5,000 queries and 31 for a large statement.
+     */
+    public DuplicateIndex indexFor(UUID userId) {
+        return new DuplicateIndex(transactionRepository, userId);
+    }
+
+    /**
      * Duplicate check at staging time can't be scoped to a target account yet — the account is
      * chosen/created after staging (see ImportDto.ConfirmRequest) — so this checks across all of
      * the user's transactions rather than one account. That's a feature, not a limitation: it
@@ -57,8 +68,25 @@ public class DuplicateDetector {
      */
     public Optional<ImportDto.DuplicateMatch> findMatch(UUID userId, LocalDate date,
                                                           BigDecimal amount, String description) {
-        List<Transaction> matches =
-                transactionRepository.findPotentialDuplicatesByUser(userId, date, amount, description);
+        return describe(transactionRepository.findPotentialDuplicatesByUser(userId, date, amount, description));
+    }
+
+    /**
+     * The same check against a {@link DuplicateIndex} the caller built once for the whole
+     * statement, instead of a query per row.
+     *
+     * <p>Both overloads end in {@link #describe}, deliberately. The evidence a review screen shows
+     * -- which transaction, which account, when it was imported, how many matches -- must not
+     * depend on which path found it, and the surest way to guarantee that is for there to be only
+     * one place that builds it.
+     */
+    public Optional<ImportDto.DuplicateMatch> findMatch(DuplicateIndex index, LocalDate date,
+                                                          BigDecimal amount, String description) {
+        return describe(index.matches(date, amount, description));
+    }
+
+    /** Turns matching rows into the evidence WI5 reports. One implementation for both paths. */
+    private Optional<ImportDto.DuplicateMatch> describe(List<Transaction> matches) {
         if (matches.isEmpty()) return Optional.empty();
 
         Transaction first = matches.get(0);

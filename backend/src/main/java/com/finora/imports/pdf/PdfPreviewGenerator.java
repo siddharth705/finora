@@ -1,5 +1,6 @@
 package com.finora.imports.pdf;
 
+import com.finora.imports.DuplicateIndex;
 import com.finora.accounts.AccountDto;
 import com.finora.dto.ImportDto.DetectedAccountInfo;
 import com.finora.dto.ImportDto.StagedAccountSection;
@@ -268,8 +269,11 @@ public class PdfPreviewGenerator {
         // multi-account PDF calls this once per section, so the rule set is loaded once per
         // section rather than once per row.
         List<CategoryRule> rules = ruleEngineService.ruleSet(userId);
+        // Built once per statement for the same reason the rule set is: a user's existing
+        // transactions cannot change partway through parsing one file.
+        DuplicateIndex duplicateIndex = transactionNormalizer.duplicateIndexFor(userId);
         for (Map<String, String> row : section.rows()) {
-            StagedRow parsed = transactionNormalizer.normalize(userId, row, ctx, rules);
+            StagedRow parsed = transactionNormalizer.normalize(userId, row, ctx, rules, duplicateIndex);
             if (parsed == null) {
                 unparseable.add(new UnparseableRow(row, transactionNormalizer.explainFailure(row)));
                 continue;
