@@ -245,6 +245,15 @@ public class MerchantNormalizationEngine {
         // so it carries the identical hazard. Guarding only the alias would have moved the
         // rollback one insert further down rather than removing it.
         merchant.setCanonicalName(fitToColumn(toDisplayName(CategoryRules.extractMerchant(description))));
+        // TEMPORARY, because this is a GUESS. Everything reaching this line is a description the
+        // engine has never seen, resolved by a first-significant-token heuristic its own class doc
+        // describes as "deliberately simple ... not fuzzy matching or NLP". Marking it says so, and
+        // is what lets the Merchant Review Center show an operator the engine's guesses without
+        // also showing them every merchant the user has genuinely transacted with.
+        //
+        // Never blocks the import. The merchant is created and returned exactly as before -- the
+        // only difference is that it now admits what it is.
+        merchant.setLifecycleStatus(Merchant.Lifecycle.TEMPORARY);
         merchant = merchantRepository.save(merchant);
         addAlias(merchant.getId(), userId, normalizedAlias);
         return merchant;

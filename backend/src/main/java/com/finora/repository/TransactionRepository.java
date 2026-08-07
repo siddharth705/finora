@@ -15,6 +15,24 @@ import java.util.UUID;
 
 public interface TransactionRepository extends JpaRepository<Transaction, UUID> {
 
+    /** How many transactions point at one merchant. Backs the Review Center's "discarding this
+     *  would strip the merchant from N ledger rows" guard. */
+    long countByMerchantId(UUID merchantId);
+
+    /**
+     * Transaction counts for many merchants at once, as (merchantId, count) pairs.
+     *
+     * <p>Exists so the Merchant Review Center's list does not call {@link #countByMerchantId} once
+     * per row. That is the N+1 this codebase documents avoiding in AnalyticsService and
+     * WorkspaceDashboardService, and a review queue is exactly where the row count is large.
+     */
+    @Query("""
+           SELECT t.merchantId, COUNT(t) FROM Transaction t
+            WHERE t.merchantId IN :merchantIds
+            GROUP BY t.merchantId
+           """)
+    List<Object[]> countByMerchantIdIn(@Param("merchantIds") java.util.Collection<UUID> merchantIds);
+
     // Admin Portal, Operational Dashboard KPI -- "Transactions processed today," same
     // countByCreatedAtAfter convention UserRepository already uses for "new users last N days."
     long countByCreatedAtAfter(Instant threshold);
