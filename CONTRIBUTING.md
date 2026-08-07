@@ -11,7 +11,7 @@ that doc for the *why*; this one is the *how*.
 | **JDK** | **25** | `backend/pom.xml` sets `<java.version>25</java.version>`. A JDK older than that fails with `release version 25 not supported`; see the comment on that property for why the Spring Boot version is coupled to it. |
 | **Node** | 20.19+ | What `engines` declares and what CI pins. The test suites work on 22 and later too — see `frontend/src/test/setup.ts` for the shim that makes that true — but 20 is the version CI verifies. |
 | **Docker** | any current | Required to run the backend suite: the integration tests start real Postgres containers through Testcontainers. Without it every `*IT` class fails at container startup. |
-| **Python** | 3.x | The guard scripts in `scripts/`. Invoked as `python3`, never `python` — see below. |
+| **Python** | 3.x + `scripts/requirements.txt` | The guard scripts in `scripts/`. Invoked as `python3`, never `python` — see below. One of them needs PyYAML; `pip install -r scripts/requirements.txt`. |
 
 Maven and Gradle are not prerequisites: use the committed `./mvnw` wrapper.
 
@@ -20,7 +20,8 @@ Maven and Gradle are not prerequisites: use the committed `./mvnw` wrapper.
 ```bash
 git clone <repo-url>
 cd finora
-npm install          # installs husky and commitlint at the repo root
+npm install                                  # installs husky and commitlint at the repo root
+pip install -r scripts/requirements.txt      # PyYAML, for the pre-commit guards
 ```
 
 `npm install` runs the root `prepare` script, which wires `.husky/` up as the active git hooks

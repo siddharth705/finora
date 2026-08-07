@@ -106,6 +106,25 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Pins the interpreter the guard scripts run under, and installs what they import.
+      #
+      # Both halves are load-bearing, and both were learned the hard way on the self-hosted runner.
+      #
+      # The pin, because `python3` used to mean whatever was first on the runner's PATH. Installing
+      # an unrelated Homebrew formula pulled in a newer Python that took first place, and the guard
+      # below started failing with ModuleNotFoundError on a commit that had not touched it. A hosted
+      # runner hides this by rebuilding the image; a machine that persists does not.
+      #
+      # The install, because check-dashboard-metrics.py imports PyYAML and nothing ever installed
+      # it. It worked by accident twice over: the ubuntu-latest image ships PyYAML, and this Mac's
+      # SYSTEM python3 happened to have a user-installed copy. Neither is a guarantee.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Python guard-script dependencies
+        run: pip install -r scripts/requirements.txt
+
       # scripts/check-xml-comments.py exists because exactly this broke backend/pom.xml once --
       # an internal "--" inside an XML comment, which Maven's POM parser rejects outright with an
       # error that doesn't obviously point at the comment. It used to be a script nobody ran
@@ -234,6 +253,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+
+      # Same reason as the backend job: pin the interpreter rather than inherit whatever the runner
+      # has on PATH. No requirements install here -- the scripts these jobs run are stdlib-only.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - uses: actions/setup-node@v4
         with:
           # Matches the engines field in frontend/package.json (">=20.19.0").
@@ -297,6 +323,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+
+      # Same reason as the backend job: pin the interpreter rather than inherit whatever the runner
+      # has on PATH. No requirements install here -- the scripts these jobs run are stdlib-only.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -331,6 +364,13 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
+
+      # Same reason as the backend job: pin the interpreter rather than inherit whatever the runner
+      # has on PATH. No requirements install here -- the scripts these jobs run are stdlib-only.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
       - uses: actions/setup-node@v4
         with:
@@ -456,6 +496,7 @@ jobs:
           java-version: '25'
           distribution: temurin
           cache: maven
+
 
       - uses: actions/setup-node@v4
         with:
