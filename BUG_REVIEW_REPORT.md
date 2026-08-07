@@ -4,27 +4,29 @@
 
 **Mode:** bug hunt only. No code was modified, no fixes were applied, no refactors were made, no pull requests were opened. Every finding below cites the file, the symbol, and the code path that demonstrates it.
 
-**Result:** 58 findings, of which **50 are live in the current tree and 8 are closed** (see Validation status below). **All three Criticals are fixed, and 2 of the 10 Highs.**
+**Result:** 58 findings, of which **47 are live in the current tree, 10 are closed, and 1 was overstated and has been corrected** (see Validation status below). **All three Criticals are fixed, and 4 of the 10 Highs.**
 
-| Severity | Total | Live | Fixed |
-|---|---|---|---|
-| Critical | 3 | 0 | 3 |
-| High | 10 | 7 | 3 |
-| Medium | 20 | 19 | 1 |
-| Low | 25 | 24 | 1 |
-| **Total** | **58** | **50** | **8** |
+| Severity | Total | Live | Fixed | Corrected |
+|---|---|---|---|---|
+| Critical | 3 | 0 | 3 | — |
+| High | 10 | 5 | 4 | 1 (Bug 11, → Medium) |
+| Medium | 20 | 18 | 2 | — |
+| Low | 25 | 24 | 1 | — |
+| **Total** | **58** | **47** | **10** | **1** |
 
 ## Validation status
 
 The working tree moved underneath this review — concurrent work landed in `backend/` partway through, so the snapshot the findings were originally written against is not the snapshot that exists now. **Every one of the 58 findings was subsequently re-checked against the current tree**, by grepping for the specific code signature each finding cites.
 
-**Closed — do not action these eight:**
+**Closed — do not action these ten:**
 
 | Bug | Title | What changed |
 |---|---|---|
 | 01 | Merchant-learning queue unreachable | Fixed by concurrent work. `ImportService` now calls `learningEventPublisher.enqueue(...)`. |
 | 02 | Unvalidated closing balance overwrites the account balance | **Fixed by this review.** New `imports/ClosingBalanceGuard`; `ImportService.confirm` refuses an uncorroborated balance and warns. |
 | 03 | UPI/NEFT/IMPS payees collapse into one merchant | **Fixed by this review.** New `util/PaymentRailTokens`; `MerchantNormalizationEngine` skips rails and tokenises both sides through `extractMerchant`. |
+| 05 | Dashboard "this month" is the newest month with data | **Fixed by this review.** New `util/ReportingPeriod`; the response now names the month its figures describe and the client labels it. |
+| 06 | Budget alerts fire against the wrong month | **Fixed by this review.** Budget notifications now use the calendar month, agreeing with `BudgetService`. |
 | 12 | `ImportSession.fileContent` eagerly fetched | **Fixed by this review.** `@Basic(fetch = LAZY)` added; new Guardian rule **FG-030** fails the build on any persistent `byte[]` without it. |
 | 13 | Lockout re-locks on the next wrong password | Fixed by concurrent work. `AuthService` resets `failedLoginAttempts` once `lockedUntil` has elapsed. |
 | 17 | Imports never adjust the account balance | **Fixed by this review.** `AccountBalanceConvention.balanceDelta`/`netDelta` now own the rule; `ImportService.confirm` applies it and `StatementImportService.delete` reverses it. |
@@ -219,7 +221,15 @@ High
 
 ---
 
-# Bug 05
+# Bug 05 — [FIXED]
+
+> **Fixed by this review.** The rule moved into `util/ReportingPeriod`, shared with the service
+> that already got it right (`InsightsService`), so the two cannot drift again. Reporting on the
+> newest month with data is *kept* — an empty "this month" is a worse answer for a product built
+> around importing in arrears — but `DashboardSummaryDto` now carries `reportingMonth` and
+> `reportingMonthIsCurrent`, and `Dashboard.tsx` renders the period instead of asserting one. The
+> prior month is now a CALENDAR step, so a user with a gap in their history no longer sees two
+> non-adjacent months compared as "vs last month".
 
 ## Title
 Dashboard "this month" is the newest month with data, not the current calendar month
@@ -257,7 +267,13 @@ High
 
 ---
 
-# Bug 06
+# Bug 06 — [FIXED]
+
+> **Fixed by this review.** Budget notifications are now filtered on `period.calendarMonth()`,
+> matching `BudgetService.listForUser`. A monthly allowance resets on a calendar boundary
+> regardless of when the user last imported, so it is the one figure on this response that must
+> not follow the reporting month. Regression test:
+> `summarize_doesNotFlagABudgetFromAPreviousMonthsSpend`.
 
 ## Title
 Dashboard budget alerts fire against the wrong month and disagree with the Budgets page
@@ -445,7 +461,34 @@ High
 
 ---
 
-# Bug 11
+# Bug 11 — [CORRECTED: overstated, downgraded to Medium, NOT fixed]
+
+> **This finding was half wrong, and the repository had already measured the half I got wrong.**
+>
+> I claimed two services each impose a full-history cost per write. `RecurringService.detectForUser`
+> does not. `docs/engineering/scaling-triggers.md` records it at **1 ms at every size**, with the
+> note *"the in-memory cost the audit attributed to it is not there"* — written about a previous
+> audit that made this exact mistake. I reproduced the benchmark
+> (`ReconciliationScalingBenchmark`) and confirm it: **3 ms at 1k, 2 ms at 10k, 1 ms at 50k.**
+> I repeated a documented error because I reasoned from the shape of the code instead of reading
+> the measurement that already existed.
+>
+> **What is real:** `reconcileForUser` is synchronous per write and costs, on this machine,
+> **292 ms at 1k / 803 ms at 10k / ~4.2 s at 50k**, writing ~21k rows at 50k. That is worth
+> knowing and is genuinely reachable by one account with a long import history.
+>
+> **Why nothing was changed here.** The repository has already taken this as far as evidence
+> supports: the date-windowing fix landed (52.8 s → single-digit seconds at 50k), account-bucketing
+> was prototyped, measured end-to-end and **rejected for no measurable improvement**, and the
+> service already logs a warning naming itself as synchronous request-thread work. The doc's
+> conclusion is explicit — *"What would actually help next is unknown, and the honest position is
+> that nobody should guess... a background worker is not it — that would do the same quadratic work
+> somewhere the user cannot see it."*
+>
+> Shipping an optimization here without a fresh end-to-end measurement would violate the rule this
+> repository already wrote down and already enforced against one prototype. **Downgraded to Medium
+> and left open deliberately, not overlooked.** The named next step is a DB-backed measurement of
+> the write-back and entity hydration, which `scaling-triggers.md` lists as *still unmeasured*.
 
 ## Title
 Every single-transaction write re-processes the user's entire transaction history, twice

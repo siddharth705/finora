@@ -97,6 +97,14 @@ export interface DashboardSummary {
   healthBreakdown: Record<string, number>;
   spendByCategory: Record<string, number>;
   notifications: string[];
+  /**
+   * Which month the monthly figures above describe ("2026-07"), or null for an account with no
+   * transactions. This is the newest month with DATA, not necessarily the current calendar month —
+   * see reportingMonthIsCurrent. The budget notifications deliberately use the calendar month
+   * instead, so they agree with the Budgets page.
+   */
+  reportingMonth: string | null;
+  reportingMonthIsCurrent: boolean;
 }
 
 export interface Budget {

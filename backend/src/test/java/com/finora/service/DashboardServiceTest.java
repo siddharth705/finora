@@ -12,6 +12,7 @@ import com.finora.repository.CategoryRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -147,6 +148,59 @@ class DashboardServiceTest {
     }
 
     @Test
+    @DisplayName("BUG 06: last month's overspend does not trigger this month's budget alert")
+    void summarize_doesNotFlagABudgetFromAPreviousMonthsSpend() {
+        UUID categoryId = UUID.randomUUID();
+        Category category = new Category();
+        ReflectionTestUtils.setField(category, "id", categoryId);
+        category.setUserId(userId);
+        category.setName("Dining");
+        when(categoryRepository.findByUserId(any())).thenReturn(List.of(category));
+
+        Budget budget = new Budget();
+        budget.setUserId(userId);
+        budget.setCategoryId(categoryId);
+        budget.setMonthlyLimit(new BigDecimal("5000.00"));
+        when(budgetRepository.findByUserId(any())).thenReturn(List.of(budget));
+
+        // Overspent LAST month, nothing this month. The dashboard used to evaluate the budget
+        // against "the newest month with data" and warn anyway -- while the Budgets page, which
+        // has always used the calendar month, correctly showed this month at 0%. Two screens in
+        // one app disagreeing about the same number.
+        LocalDate lastMonth = LocalDate.now(com.finora.util.UserZone.DEFAULT).minusMonths(1).withDayOfMonth(15);
+        Transaction dining = txn(new BigDecimal("6000.00"), Transaction.Type.EXPENSE, lastMonth, Transaction.ReconciliationStatus.OK);
+        dining.setCategoryId(categoryId);
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(dining));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.notifications())
+                .as("a monthly allowance resets on a calendar boundary regardless of when the user "
+                        + "last imported")
+                .noneMatch(n -> n.contains("reached your monthly budget"));
+    }
+
+    @Test
+    @DisplayName("BUG 05: the response names the month its figures describe")
+    void summarize_reportsWhichMonthTheFiguresAreFrom() {
+        LocalDate lastMonth = LocalDate.now(com.finora.util.UserZone.DEFAULT).minusMonths(1).withDayOfMonth(15);
+        Transaction spend = txn(new BigDecimal("900.00"), Transaction.Type.EXPENSE, lastMonth, Transaction.ReconciliationStatus.OK);
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(spend));
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.reportingMonth())
+                .as("reporting on the newest month with data is intended; saying nothing about "
+                        + "which month it is, so the client renders it as 'this month', is Bug 05")
+                .isEqualTo(java.time.YearMonth.from(lastMonth).toString());
+        assertThat(summary.reportingMonthIsCurrent()).isFalse();
+        assertThat(summary.monthlyExpense())
+                .as("the figures themselves still come from that month -- an empty 'this month' "
+                        + "would be a worse answer, which is why the label was the fix")
+                .isEqualByComparingTo("900.00");
+    }
+
+    @Test
     void summarize_flagsACategoryThatHasReachedItsMonthlyBudget() {
         UUID categoryId = UUID.randomUUID();
         Category category = new Category();
@@ -161,8 +215,14 @@ class DashboardServiceTest {
         budget.setMonthlyLimit(new BigDecimal("5000.00"));
         when(budgetRepository.findByUserId(any())).thenReturn(List.of(budget));
 
-        LocalDate july = LocalDate.of(2026, 7, 15);
-        Transaction dining = txn(new BigDecimal("6000.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK);
+        // Bug 06: this used to be a hardcoded LocalDate.of(2026, 7, 15) and passed only because
+        // the notification was evaluated against "the newest month with data" rather than the
+        // calendar month. A budget is a MONTHLY ALLOWANCE, so the spend that counts against it has
+        // to fall in the month the allowance belongs to -- which is what BudgetService has always
+        // done and what this now asserts. Dated inside the current month in the user's own zone,
+        // so the test states the rule rather than a date that happened to work when it was written.
+        LocalDate thisMonth = LocalDate.now(com.finora.util.UserZone.DEFAULT).withDayOfMonth(15);
+        Transaction dining = txn(new BigDecimal("6000.00"), Transaction.Type.EXPENSE, thisMonth, Transaction.ReconciliationStatus.OK);
         dining.setCategoryId(categoryId);
         when(transactionRepository.findByUserId(userId)).thenReturn(List.of(dining));
 

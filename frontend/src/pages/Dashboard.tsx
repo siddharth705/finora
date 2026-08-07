@@ -122,6 +122,18 @@ export default function Dashboard() {
   if (hasError || !summary) return <p className="text-muted">Couldn't load your dashboard — please try again later.</p>;
 
   const firstName = fullName?.split(' ')[0] ?? 'there';
+
+  // Bug 05: these KPIs are the newest month the account has DATA for, which for a product built
+  // around importing statements in arrears is routinely not the current calendar month. This page
+  // used to assert "this month" and "vs last month" over whichever month that happened to be, so a
+  // user who hadn't yet imported August read July's figures as August's. The backend now says which
+  // month it is reporting on; this stops guessing and renders it.
+  const periodLabel = summary.reportingMonthIsCurrent || !summary.reportingMonth
+    ? 'this month'
+    : monthLabel(summary.reportingMonth);
+  const deltaLabel = summary.reportingMonthIsCurrent || !summary.reportingMonth
+    ? 'vs last month'
+    : `vs the month before ${monthLabel(summary.reportingMonth)}`;
   const categoryEntries = Object.entries(summary.spendByCategory).sort((a, b) => b[1] - a[1]);
   const totalSpend = categoryEntries.reduce((s, [, v]) => s + v, 0);
   const donutColors = ['#3b82f6', '#16a34a', '#f59e0b', '#8b5cf6', '#ef4444', '#94a3b8'];
@@ -138,7 +150,14 @@ export default function Dashboard() {
     <div>
       <div className="mb-8">
         <h1 className="text-[26px] font-bold text-ink mb-1">{greeting(settingsQ.data?.timezone)}, {firstName}! 👋</h1>
-        <p className="text-muted text-sm">Here's what's happening with your finances today.</p>
+        <p className="text-muted text-sm">
+          Here's what's happening with your finances today.
+          {!summary.reportingMonthIsCurrent && summary.reportingMonth && (
+            // Not a warning -- reporting on the newest month with data is the intended behaviour.
+            // What was missing is that nothing said which month, so the figures read as current.
+            <> Your latest figures are from <span className="font-medium text-ink">{periodLabel}</span>.</>
+          )}
+        </p>
       </div>
 
       {/* KPI cards */}
@@ -154,7 +173,7 @@ export default function Dashboard() {
             <p className="text-2xl font-bold text-ink mb-1">{k.value}</p>
             {k.delta !== null && k.delta !== undefined && (
               <p className={`text-xs font-medium ${(k.invertDelta ? k.delta < 0 : k.delta >= 0) ? 'text-success' : 'text-danger'}`}>
-                {k.delta >= 0 ? '▲' : '▼'} {Math.abs(k.delta).toFixed(1)}% vs last month
+                {k.delta >= 0 ? '▲' : '▼'} {Math.abs(k.delta).toFixed(1)}% {deltaLabel}
               </p>
             )}
           </div>

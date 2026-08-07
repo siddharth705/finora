@@ -68,10 +68,25 @@ public class DashboardService {
         BigDecimal totalAssets = liquid.add(investments);
         BigDecimal netWorth = netWorthOf(accounts);
 
+        // Bug 05. `currentMonth` was the newest month the user had DATA for, and every figure
+        // derived from it was rendered as "this month" / "vs last month". A user who had not yet
+        // transacted in August therefore read July's income, expenses, savings rate and category
+        // breakdown as August's. InsightsService hit this and fixed it; this service -- the one
+        // that shows the answer as headline KPIs -- never did.
+        //
+        // Reporting on the newest month with data is still right (see ReportingPeriod: an empty
+        // "this month" is a worse answer for a product built around importing in arrears). What
+        // was wrong is that nothing said which month it was, so the response now carries it and
+        // the client labels the period instead of asserting one.
+        ZoneId zone = com.finora.util.UserZone.forUser(userRepository, userId);
         List<String> months = active.stream().map(t -> YearMonth.from(t.getTxnDate()).toString())
                 .distinct().sorted().toList();
-        String currentMonth = months.isEmpty() ? null : months.get(months.size() - 1);
-        String priorMonth = months.size() > 1 ? months.get(months.size() - 2) : null;
+        com.finora.util.ReportingPeriod period = com.finora.util.ReportingPeriod.resolve(months, zone);
+        String currentMonth = period.month();
+        // A CALENDAR step back, not "the next month down the list of months with data" -- a user
+        // with a gap in their history had two non-adjacent months compared and labelled
+        // "vs last month". See ReportingPeriod.priorMonth.
+        String priorMonth = period.priorMonth();
 
         BigDecimal incomeCur = sumForMonth(active, currentMonth, Transaction.Type.INCOME);
         BigDecimal expenseCur = sumForMonth(active, currentMonth, Transaction.Type.EXPENSE);
@@ -107,10 +122,22 @@ public class DashboardService {
         // match a budget anyway -- there's nothing to lose by excluding it from this particular map
         // (spendByCategory above, keyed by display name via unknownCategory(), still accounts for
         // it under "Uncategorized").
+        //
+        // Bug 06. This keys the budget-exceeded notifications below, and it used to be filtered on
+        // the REPORTING month -- the newest month with data. A monthly budget resets on a calendar
+        // boundary regardless of when the user last imported, so that made the dashboard warn
+        // "Groceries has reached your monthly budget" from LAST month's spend while the Budgets
+        // page, which has always used YearMonth.now(userZone), correctly showed this month at 0%.
+        // Two screens in one app disagreeing about the same number.
+        //
+        // period.calendarMonth(), deliberately, even though every other figure on this response
+        // uses the reporting month: an allowance is the one thing that must not be evaluated
+        // against a period it does not belong to. BudgetService.listForUser is the definition this
+        // now agrees with.
         Map<UUID, BigDecimal> spendByCategoryId = active.stream()
                 .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE
                         && t.getCategoryId() != null
-                        && Objects.equals(YearMonth.from(t.getTxnDate()).toString(), currentMonth))
+                        && Objects.equals(YearMonth.from(t.getTxnDate()).toString(), period.calendarMonth()))
                 .collect(Collectors.groupingBy(Transaction::getCategoryId,
                         Collectors.reducing(BigDecimal.ZERO, Transaction::getAmount, BigDecimal::add)));
         List<Budget> budgets = budgetRepository.findByUserId(userId);
@@ -122,8 +149,9 @@ public class DashboardService {
         // safeZoneId guards against a malformed value reaching here (timezone has no format
         // validation on the settings-update path) turning into an uncaught DateTimeException that
         // would 500 the whole dashboard for that one user.
-        ZoneId zone = safeZoneId(user.map(User::getTimezone).orElse(null));
-
+        // `zone` was resolved once already, above, to decide the reporting period -- reusing it
+        // rather than re-reading User.timezone keeps the due-date countdowns below on the same
+        // clock as the period this response reports on.
         List<String> notifications = buildNotifications(accounts, budgets, spendByCategoryId, categoriesById, lowBalanceThreshold, zone);
 
         return new DashboardSummaryDto(
@@ -131,7 +159,10 @@ public class DashboardService {
                 incomeCur, expenseCur, netCur, savingsRate,
                 pct(incomeCur, incomePrior), pct(expenseCur, expensePrior), pct(netCur, netPrior),
                 health.score(), health.label(), health.breakdown(),
-                spendByCategory, notifications
+                spendByCategory, notifications,
+                // Which month everything above actually describes. Without these the client had no
+                // choice but to guess, and it guessed "this month" -- see Bug 05.
+                period.month(), period.isCurrent()
         );
     }
 
