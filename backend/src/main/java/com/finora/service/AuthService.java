@@ -322,14 +322,6 @@ public class AuthService {
             user.setLockedUntil(null);
             userRepository.save(user);
         }
-        // Checked before authenticate() (like the lockout check above), not after -- a suspended
-        // account shouldn't get a "correct password" signal at all, just a uniform rejection.
-        // See User.status / V23__user_account_status.sql and AdminUserService.suspend.
-        if (user != null && user.isSuspended()) {
-            throw new ApiException(HttpStatus.FORBIDDEN,
-                    "This account has been suspended. Contact support for assistance.");
-        }
-
         try {
             // Authenticated by the resolved user's ID, not their email: the Spring Security
             // principal is the id (see CurrentUserDetailsService), and an email would be ambiguous
@@ -351,6 +343,40 @@ public class AuthService {
         }
 
         // user is guaranteed non-null here — authenticate() would have thrown otherwise.
+
+        // Suspension, checked AFTER the password. See User.status / V23__user_account_status.sql
+        // and AdminUserService.suspend.
+        //
+        // This used to sit above authenticate(), alongside the lockout check, on the reasoning that
+        // "a suspended account shouldn't get a 'correct password' signal at all". That reasoning is
+        // inverted, and it cost more than it bought: checking first meant ANY caller, supplying ANY
+        // password or none, could POST an email address and read back "This account has been
+        // suspended" where an unregistered address returned "Invalid credentials". That is an
+        // account-existence oracle on an unauthenticated, public endpoint -- exactly what
+        // resolveEmailForLogin, findUserByEmailIgnoreCaseSafely and the "no-such-account" principal
+        // below all go out of their way to avoid, and it is worse than the signal it was avoiding,
+        // because the person receiving it has proved nothing.
+        //
+        // Checked here, the message reaches only someone who already knows the password -- for whom
+        // the account's existence is not news, and who does need to be told why they cannot get in
+        // rather than being sent round the "forgot password" loop for a password that is correct.
+        //
+        // Deliberately before the counter reset below: a suspended account keeps accumulating
+        // failed attempts and can still be locked out, which is the right behaviour for an account
+        // under an administrator's sanction. Also before the USER_LOGIN audit entry -- no login
+        // happened, and recording one would put a successful-sign-in row in the trail of an account
+        // that cannot sign in.
+        //
+        // The lockout check above stays where it is. It cannot move: its whole purpose is to stop a
+        // locked account reaching password verification, so "check it after the password" is not a
+        // thing it can do. It leaks the same way and is reported rather than papered over here --
+        // closing it means synthesising lockout state for identifiers that do not exist, which is a
+        // design, not an edit.
+        if (user.isSuspended()) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "This account has been suspended. Contact support for assistance.");
+        }
+
         if (user.getFailedLoginAttempts() > 0 || user.getLockedUntil() != null) {
             user.setFailedLoginAttempts(0);
             user.setLockedUntil(null);
