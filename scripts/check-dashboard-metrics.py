@@ -89,6 +89,51 @@ def referenced():
     return found
 
 
+RUNBOOK = REPO_ROOT / "docs" / "engineering" / "observability.md"
+
+
+def check_runbooks():
+    """Every alert must have a runbook section, and every section must belong to an alert.
+
+    An alert that fires at 3am with no runbook is an alert someone has to reverse-engineer under
+    pressure. A runbook section for an alert that no longer exists is worse: it is confidently
+    wrong, and nothing about reading it reveals that.
+
+    Both directions are checked because they drift in both directions -- an alert gets added
+    without a section, or an alert gets renamed and the section is orphaned.
+    """
+    import yaml
+
+    alerts_file = OPS_DIR / "alerts.yml"
+    if not alerts_file.is_file() or not RUNBOOK.is_file():
+        return []
+
+    rules = []
+    for group in yaml.safe_load(alerts_file.read_text(encoding="utf-8")).get("groups", []):
+        rules.extend(group.get("rules", []))
+
+    runbook_text = RUNBOOK.read_text(encoding="utf-8")
+    # Sections are named exactly after the alert, which is what makes runbook_url anchors work.
+    sections = set(re.findall(r"^### (\w+)$", runbook_text, re.M))
+
+    problems = []
+    for rule in rules:
+        name = rule.get("alert")
+        if name not in sections:
+            problems.append(f"alert {name} has no '### {name}' section in observability.md")
+        url = rule.get("annotations", {}).get("runbook_url", "")
+        if not url:
+            problems.append(f"alert {name} has no runbook_url annotation")
+        elif not url.rstrip().endswith("#" + name.lower()):
+            problems.append(f"alert {name} runbook_url points at '{url}', not #{name.lower()}")
+
+    alert_names = {r.get("alert") for r in rules}
+    for section in sections - alert_names:
+        problems.append(f"runbook section '### {section}' names no alert -- renamed or removed?")
+
+    return problems
+
+
 def main():
     if not OPS_DIR.is_dir():
         print(f"No {OPS_DIR.relative_to(REPO_ROOT)} directory -- nothing to check.")
@@ -126,7 +171,20 @@ def main():
         )
         return 1
 
-    print("\nClean -- every referenced metric is one the framework emits.")
+    runbook_problems = check_runbooks()
+    if runbook_problems:
+        print("\nBLOCKED: alerts and their runbooks have drifted apart.\n")
+        for problem in runbook_problems:
+            print(f"  {problem}")
+        print(
+            "\nAn alert firing at 3am with no runbook is one somebody has to reverse-engineer under\n"
+            "pressure. A runbook section for an alert that no longer exists is worse: confidently\n"
+            "wrong, with nothing about reading it revealing that."
+        )
+        return 1
+
+    print("\nClean -- every referenced metric is one the framework emits,")
+    print("         and every alert has a runbook section it actually links to.")
     return 0
 
 

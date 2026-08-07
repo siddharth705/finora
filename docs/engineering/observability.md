@@ -302,41 +302,234 @@ narration appears) and `sentry.send-default-pii: false`.
 
 ## 9. Operational runbook
 
-### An event arrives tagged `outcome=dead-letter`
+One section per alert, named exactly after the alert so `runbook_url` can link straight to it.
+`scripts/check-dashboard-metrics.py` fails the build if an alert has no section here, or a section
+names no alert — the two must not drift apart.
 
-The user's merchant-category confirmation did not take effect and will not retry.
+Every section answers the same six questions in the same order, because at 3am the value of a
+runbook is that you do not have to read it to know where to look.
 
-1. Take `jobId` from the tags → find the row in `merchant_learning_events`.
-2. `attempt_count` and `last_error` on the row say what failed. The Sentry event's redacted message
-   and exception type say where.
-3. The row is visible in the admin Merchant Review Center. Resolve there.
-4. Use `correlationId` to find the worker pass's log lines and any audit rows it wrote.
+---
 
-### An event arrives tagged `outcome=stranded`
+### WorkerDeadLettersRising
 
-Recording a failure itself failed. The row is stuck in `PROCESSING` and `recoverAbandoned()` will
-return it to the queue after 15 minutes. **If these are frequent, the database is the suspect**, not
-the worker — recording a failure is a small write that should not fail.
+**What happened.** A background job exhausted its retries. For merchant learning that means a user
+confirmed a category and it silently did not take effect.
 
-### `Returned N abandoned job(s) to the queue`
+**Severity: critical.** This does not resolve itself. The work will not run again without a human.
 
-A worker process died mid-apply. One row is a blip; a batch means a process died holding a full
-claim — check for a deploy, an OOM, or a container restart at that timestamp.
+**Check first.** The Sentry event, tagged `outcome=dead-letter`. It carries `jobId`, `worker` and the
+redacted exception. The exception *type* is usually enough to classify it: a constraint violation and
+a missing merchant need different responses.
+
+**Metrics.** `finora_worker_dead_letters_total` by `worker` — one job or a pattern? Compare with
+`finora_worker_retries_total`: a spike in both suggests a dependency degraded, then failed outright.
+
+**Logs.** Take `correlationId` from the Sentry tags and search logs for it. That returns the whole
+worker pass, plus any audit rows it wrote — `AuditService` stamps the same id.
+
+**Recovery.** The row is in the admin Merchant Review Center with its `last_error`. Resolve the cause,
+then Retry All. If the cause is not resolvable the row stays `FAILED` deliberately: it is a record
+that the user's action did not take effect.
+
+---
+
+### QueueAgeExceedsSla
+
+**What happened.** The oldest waiting job has waited more than 15 minutes.
+
+**Severity: critical.** This is the user-visible symptom. Depth measures backlog; age measures how
+long a person has been waiting.
+
+**Check first.** Whether the worker is running at all. `finora_worker_executions_total` should rise
+every 30s (the poll interval). A flat line means the scheduler is not firing, which is a different
+problem from slow work and has a different fix.
+
+**Metrics.** `finora_worker_oldest_pending_age_seconds` with `finora_worker_queue_depth`: age high
+and depth low is one stuck row; both high is a genuine backlog.
+
+**Logs.** Search `scheduler-` correlation ids for recent passes. Their absence is itself the finding.
+
+**Recovery.** Scheduler not firing: restart the service. Firing but not draining: go to
+`QueueGrowingWithoutProgress` — same causes.
+
+---
+
+### QueueGrowingWithoutProgress
+
+**What happened.** Queue depth is rising while completions are flat. A stall, not load.
+
+**Severity: critical.** Nothing is being processed.
+
+**Check first.** The connection pool. `ConnectionPoolSaturated` may not have fired yet, but the pool
+is capped at 10 and shared with request threads, so exhaustion stalls workers first.
+
+**Metrics.** `hikaricp_connections_pending` (threads waiting), `finora_worker_duration_seconds` p95,
+and `finora_worker_recovered_total` — repeated recovery of the same rows suggests a poison job being
+reclaimed forever.
+
+**Logs.** Look for one `jobId` appearing across several `worker-` correlation ids. That is a poison
+job, not a slow one.
+
+**Recovery.** Poison job: mark it `FAILED` manually so the queue drains, then investigate in
+isolation. Pool exhaustion: find the query holding connections — raising `DB_POOL_MAX_SIZE` treats
+the symptom and may exhaust the database's own ceiling.
+
+---
+
+### WorkerStrandingRows
+
+**What happened.** Failures are being recorded faster than dead letters, meaning recording a failure
+itself failed. Rows are stranded mid-flight.
+
+**Severity: critical.** A double fault. Affected rows are invisible to the queue until recovery
+sweeps them after 15 minutes.
+
+**Check first.** Database health, not the worker. Recording a failure is a single small write; if
+that fails, the database or the pool is the suspect.
+
+**Metrics.** `hikaricp_connections_active` against `hikaricp_connections_max`, plus database
+availability.
+
+**Logs.** Search for `Could not record the failure of merchant learning event`. The Sentry event is
+tagged `outcome=stranded`.
+
+**Recovery.** `recoverAbandoned()` returns these rows automatically after the 15-minute
+`PROCESSING_TIMEOUT` — usually no action beyond fixing the database. Verify by watching
+`finora_worker_recovered_total` rise and depth fall.
+
+---
+
+### BackendDown
+
+**What happened.** Prometheus cannot scrape the backend.
+
+**Severity: critical**, with one important caveat below.
+
+**Check first.** **Whether the service is down, or the scrape token expired.** These are
+indistinguishable in Prometheus' target list. Open `/actuator/health` by hand; a 401 in the target's
+Error column means the credential, not an outage.
+
+**Metrics.** None — that is the point. Fall back to platform health checks and Sentry, which reports
+independently of this scrape.
+
+**Logs.** Platform logs (Railway), not application logs: if the app is down it is writing none.
+
+**Recovery.** Expired token: mint a new one. Genuine outage: platform restart, then check Sentry for
+what preceded it.
+
+---
+
+### WorkerRecoveringAbandonedJobs
+
+**What happened.** Rows are repeatedly returned to the queue, meaning worker processes are dying
+mid-apply.
+
+**Severity: warning.** No work is lost — recovery is working. But something is killing workers.
+
+**Check first.** Deploy timestamps. Railway restarts on every push to main, and a deploy during a
+worker pass produces exactly this signal. Correlate times before investigating further.
+
+**Metrics.** `jvm_memory_used_bytes` for OOM pressure, and the `finora_worker_recovered_total` rate:
+a trickle around deploys is benign, a rising rate between deploys is not.
+
+**Logs.** `Returning N merchant learning event(s) to the queue`. N matters — a full batch means a
+process died holding an entire claim.
+
+**Recovery.** Deploy-related: none needed. Otherwise treat as a crash investigation — heap, OOM
+killer, container limits.
+
+---
+
+### WorkerRetryRateStepChange
+
+**What happened.** The retry rate is well above this worker's own 24h baseline.
+
+**Severity: warning.** Retrying is expected; a step change usually means a dependency is degrading
+before it fails outright. This is the early warning for `WorkerDeadLettersRising`.
+
+**Check first.** Whether dead letters are also rising. If so, treat this as that alert. If not, the
+retries are still succeeding and there is time.
+
+**Metrics.** `finora_worker_retries_total` against its own history — the absolute number is
+workload-specific and meaningless alone.
+
+**Logs.** Breadcrumbs on any Sentry event from this worker carry the retry history, which is exactly
+why retries are breadcrumbed rather than reported.
+
+**Recovery.** Usually resolves when the dependency recovers. Watch rather than act, unless dead
+letters follow.
+
+---
+
+### WorkerExecutionSlow
+
+**What happened.** p95 pass duration is above 30s.
+
+**Severity: warning.** Slow, not stopped.
+
+**Check first.** Whether depth is also rising. Slow passes with a stable queue are tolerable; slow
+passes with a growing queue become `QueueAgeExceedsSla` shortly.
+
+**Metrics.** p50 against p95 — a widening gap means some passes stall while most stay fast, pointing
+at a subset of jobs rather than general slowness.
+
+**Logs.** Find a slow pass by `correlationId` and look at what it claimed. Batch size is capped at
+50, so an unusually slow pass is about the work, not the volume.
+
+**Recovery.** Usually connection-pool contention or a slow dependency. Confirm with
+`hikaricp_connections_pending` before changing anything.
+
+---
+
+### ConnectionPoolSaturated
+
+**What happened.** HikariCP is over 90% utilised.
+
+**Severity: warning.** Workers and request threads share this pool, so expect both to slow together.
+
+**Check first.** Whether an import is running. Statement imports are the heaviest database consumers,
+which is why `ImportConcurrencyLimiter` bounds them.
+
+**Metrics.** `hikaricp_connections_pending` is the one that matters — active at max with zero pending
+is a fully-used pool, which is fine. Pending above zero means threads are waiting.
+
+**Logs.** Correlate `request-` and `worker-` ids active during the window to see which side is
+consuming the pool.
+
+**Recovery.** Raising `DB_POOL_MAX_SIZE` is the obvious move and often the wrong one: the database
+has its own ceiling shared across replicas. Find the long-held connection first.
+
+---
+
+### JvmHeapPressure
+
+**What happened.** Heap is over 90% used for 15 minutes.
+
+**Severity: warning**, and a leading indicator — sustained pressure precedes the OOM kills that
+appear later as `WorkerRecoveringAbandonedJobs`.
+
+**Check first.** Whether a large import is in flight. Statement parsing holds the whole document in
+memory, so a large PDF is the most likely benign cause.
+
+**Metrics.** `jvm_memory_used_bytes{area="heap"}` trend and GC pause — rising pause with flat
+throughput means the heap is genuinely too small rather than momentarily full.
+
+**Logs.** Correlate with import activity by `requestId`.
+
+**Recovery.** Import-driven: none, it will fall. Sustained with no import activity: suspect a leak
+and capture a heap dump *out of band* — the actuator heapdump endpoint is deliberately not exposed.
+
+---
 
 ### Nothing is arriving at all
 
-Check `SENTRY_DSN` is set on the environment. With it unset the application logs
-`No SENTRY_DSN configured -- backend error monitoring is off` once at startup, and that is the
-intended, safe behaviour rather than a fault.
+Not an alert — the absence of one.
 
-### A retry rate that climbs without dead letters
-
-Retries are not reported as errors by design, so this is only visible as the
-`finora.worker.retry` counter. Until metrics are exported (§7) that means it is effectively
-invisible — **this is the largest remaining gap in worker observability** and the reason the metrics
-milestone follows immediately.
-
----
+Check `SENTRY_DSN` is set. Unset, the application logs `No SENTRY_DSN configured -- backend error
+monitoring is off` once at startup, and that is intended, safe behaviour rather than a fault. For
+metrics, check the Prometheus target list: a missing target and a healthy silent system look
+identical.
 
 ## 10. Known gaps
 

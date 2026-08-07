@@ -33,6 +33,7 @@ groups:
         labels:
           severity: critical
         annotations:
+          runbook_url: "https://github.com/siddharth705/finora/blob/main/docs/engineering/observability.md#workerdeadlettersrising"
           summary: "{{ $labels.worker }} is dead-lettering {{ $labels.jobKind }} jobs"
           description: >-
             Retries exhausted; this work will not run again without a human. Each event is in
@@ -48,6 +49,7 @@ groups:
         labels:
           severity: critical
         annotations:
+          runbook_url: "https://github.com/siddharth705/finora/blob/main/docs/engineering/observability.md#queueageexceedssla"
           summary: "Oldest {{ $labels.jobKind }} job has waited over 15 minutes"
           description: >-
             The queue is not draining. Check whether the worker is running at all
@@ -63,6 +65,7 @@ groups:
         labels:
           severity: critical
         annotations:
+          runbook_url: "https://github.com/siddharth705/finora/blob/main/docs/engineering/observability.md#queuegrowingwithoutprogress"
           summary: "{{ $labels.worker }} queue is growing and nothing is completing"
           description: >-
             A stall, not load. Suspect a stuck worker, an exhausted connection pool, or a poison
@@ -78,6 +81,7 @@ groups:
         labels:
           severity: critical
         annotations:
+          runbook_url: "https://github.com/siddharth705/finora/blob/main/docs/engineering/observability.md#workerstrandingrows"
           summary: "{{ $labels.worker }} is failing to record failures"
           description: >-
             Rows are being stranded mid-flight. Recording a failure is a small write that should
@@ -89,6 +93,7 @@ groups:
         labels:
           severity: critical
         annotations:
+          runbook_url: "https://github.com/siddharth705/finora/blob/main/docs/engineering/observability.md#backenddown"
           summary: "Backend is not scrapeable"
           description: >-
             Either the service is down or the scrape credential has expired. Check /actuator/health
@@ -104,6 +109,7 @@ groups:
         labels:
           severity: warning
         annotations:
+          runbook_url: "https://github.com/siddharth705/finora/blob/main/docs/engineering/observability.md#workerrecoveringabandonedjobs"
           summary: "{{ $labels.worker }} is repeatedly recovering abandoned jobs"
           description: >-
             Workers are dying mid-apply. Correlate with deploys, container restarts and memory.
@@ -118,6 +124,7 @@ groups:
         labels:
           severity: warning
         annotations:
+          runbook_url: "https://github.com/siddharth705/finora/blob/main/docs/engineering/observability.md#workerretryratestepchange"
           summary: "{{ $labels.worker }} retry rate is well above its own baseline"
           description: >-
             Retrying is expected; a step change is not. Usually a dependency degrading before it
@@ -131,6 +138,7 @@ groups:
         labels:
           severity: warning
         annotations:
+          runbook_url: "https://github.com/siddharth705/finora/blob/main/docs/engineering/observability.md#workerexecutionslow"
           summary: "{{ $labels.worker }} p95 pass duration is above 30s"
           description: >-
             p95 rather than the mean, because the mean hides the stalls that matter.
@@ -144,6 +152,7 @@ groups:
         labels:
           severity: warning
         annotations:
+          runbook_url: "https://github.com/siddharth705/finora/blob/main/docs/engineering/observability.md#connectionpoolsaturated"
           summary: "Database connection pool is over 90% utilised"
           description: >-
             Workers and request threads share this pool. Expect both to slow together.
@@ -155,6 +164,7 @@ groups:
         labels:
           severity: warning
         annotations:
+          runbook_url: "https://github.com/siddharth705/finora/blob/main/docs/engineering/observability.md#jvmheappressure"
           summary: "JVM heap is over 90% used"
           description: >-
             Sustained heap pressure precedes the OOM kills that show up later as recovered jobs.
