@@ -34,6 +34,11 @@ public class CsvParser {
             DateTimeFormatter.ofPattern("dd/MM/yyyy"),
             DateTimeFormatter.ofPattern("dd-MM-yyyy"),
             DateTimeFormatter.ofPattern("MM/dd/yyyy"),
+            // Dot-separated, verified against a real ICICI Bank savings-account transaction
+            // history ("28.07.2026"). Same day-month-year order as the slash and dash forms above
+            // and no more ambiguous than either -- only the separator differs -- but it was not
+            // listed, so every row on that export failed to anchor.
+            DateTimeFormatter.ofPattern("dd.MM.yyyy"),
             // Bug fix: verified against a real Kotak Mahindra Bank statement -- "01 Jul 2026," a
             // day-month(abbreviated name)-year format none of the above patterns match. Locale.ENGLISH
             // pinned explicitly so parsing this format doesn't depend on the JVM's default locale
@@ -62,7 +67,29 @@ public class CsvParser {
             // The four-digit space-separated form, case-insensitively. "dd MMM yyyy" above is
             // case-SENSITIVE, so it reads "01 Jul 2026" and rejects "01 JUL 2026" -- and statements
             // print month abbreviations in caps at least as often as in title case.
-            caseInsensitive("dd MMM yyyy")
+            caseInsensitive("dd MMM yyyy"),
+
+            // MONTH-NAME-FIRST. Verified against a real Bandhan Bank savings statement, whose
+            // Transaction Date and Value Date columns both read "July29, 2026" -- month name
+            // first, the day welded straight onto it with no separator, then a comma before the
+            // year. Every pattern above puts the DAY first, so none of them can reach that shape
+            // and parseDate returned null for all six date cells in the table.
+            //
+            // The consequence was total, not partial. PdfTableLocator.hasDateValue asks this same
+            // parser whether a row is a new transaction anchor, so with no date parseable, no row
+            // was ever an anchor: all three transactions fell into the leading-narration buffer,
+            // collapsed into one map, and a perfectly clean six-column table (correct columns,
+            // correct amounts, correct Dr/Cr markers, a balance chain that reconciles to the
+            // statement's own summary) staged ZERO transactions -- HTTP 422, "found a transaction
+            // table in this statement but could not read any transactions from it."
+            //
+            // parseLenient() is what lets ONE pattern cover both spellings of the month: lenient
+            // text parsing accepts an abbreviated name where the pattern asks for the full one, so
+            // "July 29, 2026" and "Jul 29, 2026" both read without a second formatter. The missing
+            // separator is deliberately NOT encoded here -- a pattern can only answer "is there a
+            // space" one way, and real statements print it both ways, so that half is handled by
+            // parseDate's retry below.
+            monthNameFirst("MMMM d, yyyy")
     );
 
     /**
@@ -75,6 +102,29 @@ public class CsvParser {
     private static DateTimeFormatter caseInsensitive(String pattern) {
         return new java.time.format.DateTimeFormatterBuilder()
                 .parseCaseInsensitive()
+                .appendPattern(pattern)
+                .toFormatter(Locale.ENGLISH);
+    }
+
+    /**
+     * {@link #caseInsensitive}, plus lenient TEXT matching so a {@code MMMM} pattern also accepts
+     * the abbreviated month name.
+     *
+     * <p>Java treats {@code MMMM} (full) and {@code MMM} (abbreviated) as separate name stores
+     * under strict parsing: a formatter built for {@code MMMM} reads "July" and rejects "Jul", and
+     * one built for {@code MMM} does the exact opposite. Which one a statement prints is a
+     * rendering choice its bank made, not a different date format -- so covering both with two
+     * near-identical formatters would be encoding that choice twice. {@code parseLenient()} makes
+     * the one pattern read either.
+     *
+     * <p>Kept separate from {@link #caseInsensitive} rather than folded into it: lenient parsing
+     * also relaxes NUMERIC fields (widths and signs), which the day-first patterns above have no
+     * need of and which would quietly widen what they accept.
+     */
+    private static DateTimeFormatter monthNameFirst(String pattern) {
+        return new java.time.format.DateTimeFormatterBuilder()
+                .parseCaseInsensitive()
+                .parseLenient()
                 .appendPattern(pattern)
                 .toFormatter(Locale.ENGLISH);
     }
@@ -222,10 +272,33 @@ public class CsvParser {
     private static final java.util.regex.Pattern TRAILING_DR = java.util.regex.Pattern.compile("(?i)\\(?\\s*dr\\.?\\s*\\)?\\s*$");
     private static final java.util.regex.Pattern TRAILING_CR = java.util.regex.Pattern.compile("(?i)\\(?\\s*cr\\.?\\s*\\)?\\s*$");
 
+    // The boundary between a letter and a digit with nothing between them -- "July29, 2026" on a
+    // real Bandhan Bank statement, where the month name and the day are rendered as one
+    // uninterrupted token (confirmed at the glyph level: PDFBox hands that cell back as a single
+    // text run, so this is what the document itself prints, not an extraction artifact that could
+    // be fixed upstream). Zero-width on both sides, so replacing it INSERTS a separator rather
+    // than consuming a character.
+    private static final java.util.regex.Pattern MISSING_SEPARATOR =
+            java.util.regex.Pattern.compile("(?<=\\p{L})(?=\\d)|(?<=\\d)(?=\\p{L})");
+
     public static LocalDate parseDate(String raw) {
         String withoutTime = TRAILING_TIME.matcher(raw).replaceFirst("");
+        LocalDate parsed = tryEveryFormat(withoutTime);
+        if (parsed != null) return parsed;
+
+        // Only ever a RETRY, never a first attempt. Every format that parses today is reached with
+        // the string exactly as the document wrote it, so this cannot change any existing
+        // document's answer -- it can only rescue a cell that had already failed outright. That
+        // ordering is the whole safety argument for normalising the input at all: a date parser
+        // that rewrites its input before looking at it is one that can silently start reading a
+        // value as something other than what it says.
+        String separated = MISSING_SEPARATOR.matcher(withoutTime).replaceAll(" ");
+        return separated.equals(withoutTime) ? null : tryEveryFormat(separated);
+    }
+
+    private static LocalDate tryEveryFormat(String value) {
         for (DateTimeFormatter fmt : DATE_FORMATS) {
-            try { return LocalDate.parse(withoutTime, fmt); } catch (Exception ignored) {}
+            try { return LocalDate.parse(value, fmt); } catch (Exception ignored) {}
         }
         return null;
     }

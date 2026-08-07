@@ -56,7 +56,24 @@ public class TransactionNormalizer {
             "balance", "running balance", "closing balance"};
     private static final String[] CREDIT_HINTS =
             {"credit", "cr amount", "credit amount", "deposit amt", "deposit amount", "deposit", "deposits"};
-    private static final String[] TYPE_HINTS = {"type"};
+    // Bug fix, verified against a real Bandhan Bank savings statement: its direction column is
+    // headed literally "Dr / Cr" -- the marker itself as the column name, with no "Type" anywhere
+    // -- so the exact "type" hint never matched and typeRaw was null on every row. The existing
+    // Dr/Cr support did not help either: that reads a marker SUFFIXED onto the amount cell
+    // ("37.94 Dr"), and here the amount cell is a clean "INR15,000.00" with the marker in its own
+    // column. With no Type column recognised and no Credit column in this layout at all, the
+    // direction check below fell through to its final default and staged all three transactions --
+    // including two genuine UPI credits of INR 15,000 and INR 10,000 -- as EXPENSE.
+    //
+    // That is the silently-wrong-data failure, not the visible dropped-row one: the amounts, dates
+    // and balances would all have looked right in the review screen while the sign was inverted on
+    // two thirds of the statement.
+    //
+    // Both spacings are listed because normalizeHeaderCell only strips a trailing parenthetical
+    // and trailing punctuation -- it leaves interior spacing alone, so "Dr / Cr" and "Dr/Cr" reach
+    // this list as genuinely different strings. (The already-covered "Type (DR/CR)" spelling still
+    // matches "type": there the parenthetical is what gets stripped.)
+    private static final String[] TYPE_HINTS = {"type", "dr / cr", "dr/cr", "cr / dr", "cr/dr"};
     // "transaction id" is deliberately LAST -- lowest priority, only used when none of the real
     // description columns above have a value at all. Bug fix, verified against a real Union Bank
     // of India statement: its header row detects a "Remarks" column, but every actual data row's

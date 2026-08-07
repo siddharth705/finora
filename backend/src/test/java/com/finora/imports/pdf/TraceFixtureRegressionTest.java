@@ -126,9 +126,22 @@ class TraceFixtureRegressionTest {
         // (savings / term deposit / recurring deposit) is the job of the product-classification
         // stage; this test pins the extraction it will be built on top of.
         assertThat(doc.sections()).hasSize(3);
-        assertThat(doc.sections().get(0).rows())
+
+        // Counted by date-anchored rows rather than by total rows. This assertion used to read
+        // "more than 100 rows", and 52 of those were not transactions: this statement wraps each
+        // narration onto a third line that exceeded MAX_TRAILING_CONTINUATION_ROWS and was emitted
+        // as its own orphan row ({Txn Date=Xxxxxx Value Dt 01/06/2026 Ref 999999999999}). Once
+        // BLOCK_PITCH_TOLERANCE let those lines rejoin the transactions they belong to, the total
+        // fell to 84 while the transaction count did not move -- so the total was measuring how
+        // badly the document was being split, and a threshold on it would have read that repair as
+        // a regression. The number of real transactions is the property this test means.
+        long transactions = doc.sections().get(0).rows().stream()
+                .map(row -> CsvParser.firstNonBlank(row, "txn date"))
+                .filter(date -> date != null && CsvParser.parseDate(date.trim()) != null)
+                .count();
+        assertThat(transactions)
                 .as("the savings account's own transaction table")
-                .hasSizeGreaterThan(100);
+                .isGreaterThan(70);
     }
 
     @Test

@@ -60,6 +60,56 @@ class CsvParserTest {
     }
 
     @Test
+    void parseDate_recognizesADotSeparatedDayMonthYear() {
+        // Verified against a real ICICI Bank savings-account transaction history ("28.07.2026").
+        // Necessary but not sufficient to import that particular file -- its header is printed
+        // across three stacked lines, which the locator does not yet read as one header, so its
+        // serial-number column shares a cell with the date. This is the date half of that, fixed
+        // where it belongs rather than left to be rediscovered alongside the harder half.
+        assertThat(CsvParser.parseDate("28.07.2026")).isEqualTo(java.time.LocalDate.of(2026, 7, 28));
+        assertThat(CsvParser.parseDate("01.01.2026")).isEqualTo(java.time.LocalDate.of(2026, 1, 1));
+
+        // A serial number sharing the cell is still not a date -- the value has to be the whole
+        // string, so the combined cell this layout currently produces keeps failing loudly.
+        assertThat(CsvParser.parseDate("1 28.07.2026")).isNull();
+    }
+
+    @Test
+    void parseDate_recognizesAMonthNameFirstFormat() {
+        // Verified against a real Bandhan Bank statement, whose Transaction Date and Value Date
+        // columns read "July29, 2026" -- month name first, no separator before the day. Every
+        // pattern the parser had put the DAY first, so no date in that table parsed; nothing could
+        // anchor as a transaction and the whole statement staged zero rows.
+        assertThat(CsvParser.parseDate("July29, 2026")).isEqualTo(java.time.LocalDate.of(2026, 7, 29));
+        assertThat(CsvParser.parseDate("September01, 2026")).isEqualTo(java.time.LocalDate.of(2026, 9, 1));
+
+        // The spaced form, and the abbreviated month name, from the same one pattern -- see
+        // CsvParser.monthNameFirst for why lenient text parsing covers both spellings.
+        assertThat(CsvParser.parseDate("July 29, 2026")).isEqualTo(java.time.LocalDate.of(2026, 7, 29));
+        assertThat(CsvParser.parseDate("Jul 29, 2026")).isEqualTo(java.time.LocalDate.of(2026, 7, 29));
+        assertThat(CsvParser.parseDate("JULY 29, 2026")).isEqualTo(java.time.LocalDate.of(2026, 7, 29));
+    }
+
+    @Test
+    void parseDate_retriesWithSeparatorsInsertedRatherThanNormalizingFirst() {
+        // The missing-separator retry only ever runs after every format has already failed on the
+        // string exactly as the document wrote it, so it can rescue a cell but never re-read one.
+        // Asserted because the ordering is the entire safety argument for touching the input at
+        // all: a date parser that rewrites before looking is one that can silently change answers.
+        assertThat(CsvParser.parseDate("01/07/2026")).isEqualTo(java.time.LocalDate.of(2026, 7, 1));
+        assertThat(CsvParser.parseDate("2026-07-29")).isEqualTo(java.time.LocalDate.of(2026, 7, 29));
+
+        // The retry generalises past the format it was added for: a real HSBC statement writes its
+        // dates as "29Jul2026", the day-first form with both separators dropped.
+        assertThat(CsvParser.parseDate("29Jul2026")).isEqualTo(java.time.LocalDate.of(2026, 7, 29));
+
+        // Still no, once separators are inserted -- narration that landed in a date column must
+        // not start parsing as a date just because it contains a month name.
+        assertThat(CsvParser.parseDate("UPI/DR/D650000000001/")).isNull();
+        assertThat(CsvParser.parseDate("Statement Summary")).isNull();
+    }
+
+    @Test
     void parseDate_recognizesTwoDigitYears() {
         // Every pattern required four digits, so the single most common rendering in Indian bank
         // statements did not parse at all. Measured on a real 39-page statement: it produced 2

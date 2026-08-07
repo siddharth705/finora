@@ -163,6 +163,48 @@ class TransactionNormalizerTest {
     }
 
     @Test
+    void normalize_readsDirectionFromAColumnNamedForTheMarkerItself() {
+        // Verified against a real Bandhan Bank statement, whose direction column is headed
+        // literally "Dr / Cr" -- the marker as the column name, no "Type" anywhere. The exact
+        // "type" hint never matched it, and with no Credit column in this layout either, every row
+        // fell through to the final default and staged as an EXPENSE. This is the wrong-data
+        // failure rather than the missing-data one: the amount, date and balance all looked right
+        // in the review screen while the sign was inverted on the credits.
+        Map<String, String> credit = rowOf(
+                "Transaction Date", "July12, 2026",
+                "Description", "UPI/CR/C210000000002/",
+                "Amount", "INR15,000.00",
+                "Dr / Cr", "Cr",
+                "Balance", "INR35,728.84");
+
+        StagedRow result = normalizer.normalize(userId, credit);
+
+        assertThat(result).isNotNull();
+        assertThat(result.type()).isEqualTo("INCOME");
+        assertThat(result.amount()).isEqualByComparingTo("15000.00");
+
+        Map<String, String> debit = rowOf(
+                "Transaction Date", "July29, 2026",
+                "Description", "UPI/DR/D650000000001/",
+                "Amount", "INR16,281.00",
+                "Dr / Cr", "Dr",
+                "Balance", "INR19,447.84");
+
+        assertThat(normalizer.normalize(userId, debit).type()).isEqualTo("EXPENSE");
+    }
+
+    @Test
+    void normalize_readsDirectionFromAnUnspacedDrCrColumnName() {
+        // normalizeHeaderCell strips a trailing parenthetical and trailing punctuation but leaves
+        // interior spacing alone, so "Dr/Cr" and "Dr / Cr" arrive as genuinely different strings
+        // and each has to be listed. Asserted so a future tidy-up of that list cannot drop one
+        // spelling on the assumption the other covers it.
+        Map<String, String> row = rowOf("Date", "12/07/2026", "Amount", "500", "Dr/Cr", "Cr", "Description", "x");
+
+        assertThat(normalizer.normalize(userId, row).type()).isEqualTo("INCOME");
+    }
+
+    @Test
     void normalize_stillRecognizesTheLiteralWordIncomeInATypeColumn() {
         // Pre-existing behavior (some exports use a Type column with values like "Income"/
         // "Expense" rather than Dr/Cr) -- the new Dr/Cr check must not replace this, only add to it.

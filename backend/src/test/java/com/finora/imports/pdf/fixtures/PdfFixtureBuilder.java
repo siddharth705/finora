@@ -74,6 +74,10 @@ import java.util.List;
  *      matching and doesn't need a rendered PDF to reach it.
  * LEADING_NARRATION_CONTINUATION
  *   -&gt; buildLeadingNarrationContinuationSample
+ * MONTH_NAME_FIRST_DATES / DR_CR_DIRECTION_COLUMN / BLOCK_PITCH_CONTINUATION
+ *   -&gt; buildMonthNameFirstDrCrColumnSample
+ * NARRATION_ABOVE_ITS_DATE_ROW (leading narration decided by proximity, rehomed by header)
+ *   -&gt; buildNarrationAboveItsDateRowSample
  * Never Lose Information (whole-document)
  *   -&gt; buildUnrecognizableDocumentSample
  * Composability (multiple already-evidenced capabilities firing together in one document)
@@ -653,6 +657,119 @@ public final class PdfFixtureBuilder {
                 .row(col, "16-07-2026", null, null, "200.00", "10300.00")
                 .row(new float[]{particularsX}, "09:15:00/REF789012")
                 .row(new float[]{particularsX}, "Chq: REF789012");
+
+        return render(List.of(page));
+    }
+
+    // ============ MONTH_NAME_FIRST_DATES / DR_CR_DIRECTION_COLUMN / BLOCK_PITCH_CONTINUATION ============
+
+    /**
+     * A savings-account layout with three properties that each broke a different stage of the
+     * pipeline, modeled on a real Bandhan Bank statement (values fully synthetic, per the
+     * Synthetic Fixture Policy) but none of them specific to that bank:
+     *
+     * <ol>
+     *   <li>Dates written month-name-first with no separator before the day ("August22, 2026").
+     *       Every date pattern the parser had put the day first, so nothing in the table parsed as
+     *       a date, no row could become a transaction anchor, and the statement staged zero rows.</li>
+     *   <li>A direction column headed with the marker itself, "Dr / Cr", rather than "Type".
+     *       Unrecognised, every row -- credits included -- staged as an EXPENSE.</li>
+     *   <li>Narration wrapping onto THREE trailing lines per transaction, one past
+     *       {@code MAX_TRAILING_CONTINUATION_ROWS}. The third was buffered forward onto the next
+     *       transaction, so every description carried a different transaction's tail.</li>
+     * </ol>
+     *
+     * <p>The blank line between transactions is load-bearing, not cosmetic: it is what makes the
+     * gap between blocks wider than the gap within one, which is the evidence
+     * {@code PdfTableLocator.continuesTheBlock} requires before it will trust line pitch at all.
+     * The real statement sets its narration at 10.8pt and separates transactions by 16.1pt; this
+     * reproduces that relationship (10pt within, 20pt between) rather than those exact numbers.
+     * Without it this fixture would be uniformly spaced, which is the shape
+     * {@link #buildLeadingNarrationContinuationSample} covers -- and where the count cap, not the
+     * pitch, is deliberately still the answer.
+     *
+     * <p>Listed newest-first with a running balance, as the real statement is. The chain reads
+     * upward: 5,000.00 opening -> +2,500.00 -> +1,000.00 -> -750.50 -> 7,749.50.
+     */
+    public static byte[] buildMonthNameFirstDrCrColumnSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 130f, 210f, 330f, 420f, 470f};
+        float descriptionX = col[2];
+
+        PageBuilder page = new PageBuilder();
+        page.line("Current and Savings Account Statement")
+                .blankLine()
+                .row(col, "Transaction Date", "Value Date", "Description", "Amount", "Dr / Cr", "Balance")
+                .blankLine()
+                .row(col, "August22, 2026", "August22, 2026", "UPI/DR/D100000000001/", "INR750.50", "Dr", "INR7,749.50")
+                .row(new float[]{descriptionX}, "Generic Merchant/abc/")
+                .row(new float[]{descriptionX}, "merchant@abc/UPI/")
+                .row(new float[]{descriptionX}, "ABC000000000000000000000000000001")
+                .blankLine()
+                .row(col, "August14, 2026", "August14, 2026", "UPI/CR/C200000000002/", "INR1,000.00", "Cr", "INR8,500.00")
+                .row(new float[]{descriptionX}, "GENERIC SENDER TWO/")
+                .row(new float[]{descriptionX}, "xyz/9000000000@xyzb/NA/")
+                .row(new float[]{descriptionX}, "XYZ000000000000000000000000000002")
+                .blankLine()
+                .row(col, "August03, 2026", "August03, 2026", "UPI/CR/C300000000003/", "INR2,500.00", "Cr", "INR7,500.00")
+                .row(new float[]{descriptionX}, "GENERIC SENDER THREE/")
+                .row(new float[]{descriptionX}, "xyz/9000000000@xyzb/NA/")
+                .row(new float[]{descriptionX}, "XYZ000000000000000000000000000003");
+
+        return render(List.of(page));
+    }
+
+    // ============ NARRATION_ABOVE_ITS_DATE_ROW ============
+
+    /**
+     * A layout that prints each transaction as three separate visual lines -- narration head, then
+     * the date/amount/balance row, then the narration's wrapped tail -- with a blank line between
+     * transactions, and whose narration text sits nearer the DATE column's anchor than its own
+     * NARRATION anchor. Modeled on a real Bank of Baroda statement (values fully synthetic per the
+     * Synthetic Fixture Policy); the shape is not specific to that bank.
+     *
+     * <p>Every description on that statement came back BLANK, from two bugs that only bite together:
+     *
+     * <ol>
+     *   <li>The narration buckets into the date column (its x is 30pt from the DATE anchor and 61pt
+     *       from NARRATION), so the continuation merge correctly refuses to append it onto a valid
+     *       date and redirects it to the description column -- but the redirect looked the column up
+     *       in the ROW's keys, and on this layout nothing ever lands in NARRATION while the row is
+     *       being built. It found nothing and dropped the text.</li>
+     *   <li>The narration head belongs to the transaction BELOW it, not the one above. Counting
+     *       dateless rows cannot see that, so each head was absorbed by the previous transaction --
+     *       every description carrying the following payment's merchant.</li>
+     * </ol>
+     *
+     * <p>The blank line between transactions is load-bearing: it is what makes each narration head
+     * measurably closer to its own date row (10pt) than to the transaction above it (20pt), which is
+     * the evidence {@code PdfTableLocator.belongsToTheRowAbove} needs. The real statement's numbers
+     * are 5.11pt and 10.21pt; this reproduces the relationship, not the values.
+     *
+     * <p>The leading "Opening Balance" row is the real statement's too, and it matters: it is the
+     * row that used to swallow the first transaction's narration. It is dated a day before the
+     * first transaction only so the tests can address the two rows separately; the real statement
+     * dates both the same, and nothing here depends on the dates differing.
+     */
+    public static byte[] buildNarrationAboveItsDateRowSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 141f, 252f, 308f, 423f, 530f};
+        // Left of the NARRATION anchor and nearer to DATE -- the whole point of the fixture.
+        float narrationX = 80f;
+
+        PageBuilder page = new PageBuilder();
+        page.row(col, "DATE", "NARRATION", "CHQ.NO.", "WITHDRAWAL (DR)", "DEPOSIT (CR)", "BALANCE")
+                .row(col, "01-06-2026", "Opening Balance", null, null, null, "38458.16 Cr")
+                .blankLine()
+                .row(new float[]{narrationX}, "UPI/100000000001/02:44:32/UPI/firstmerchant")
+                .row(col, "02-06-2026", null, null, "1420.00", null, "37038.16 Cr")
+                .row(new float[]{narrationX}, "one@bank")
+                .blankLine()
+                .row(new float[]{narrationX}, "UPI/200000000002/00:32:28/UPI/secondmerchant")
+                .row(col, "03-06-2026", null, null, "1211.00", null, "35827.16 Cr")
+                .row(new float[]{narrationX}, "two@bank")
+                .blankLine()
+                .row(new float[]{narrationX}, "UPI/300000000003/00:41:30/UPI/thirdmerchant")
+                .row(col, "04-06-2026", null, null, "750.00", null, "35077.16 Cr")
+                .row(new float[]{narrationX}, "three@bank");
 
         return render(List.of(page));
     }

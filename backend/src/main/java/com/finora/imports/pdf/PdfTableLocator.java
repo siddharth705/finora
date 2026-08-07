@@ -129,7 +129,15 @@ public class PdfTableLocator {
     // ASCII digits (verified against a real Union Bank of India statement, whose page-number line
     // extracted as "Page �1� of� 2" -- a font/encoding artifact on the digits
     // themselves, not just an isolated quirk this pattern needs to special-case digit-by-digit).
-    private static final Pattern PAGE_FOOTER = Pattern.compile("(?i)\\bpage\\b.*\\bof\\b");
+    private static final Pattern PAGE_FOOTER = Pattern.compile(
+            "(?i)\\bpage\\b.*\\bof\\b"
+                    // A footer that numbers the page WITHOUT saying "of": a real Canara Bank
+                    // statement ends each page with a bare "page 1", and a real HDFC one with
+                    // "Page No .: 2". Neither says "of", so neither was excluded, and both were
+                    // folded into the last transaction on the page once narration rehoming started
+                    // placing text that used to be dropped. Anchored to the WHOLE line, so a
+                    // narration that merely mentions a page cannot match.
+                    + "|(?i)^\\s*page\\s*(no\\b[.:\\s]*)?\\d+\\s*$");
 
     // Same capability as PAGE_FOOTER above (PAGE_BOUNDARY_ISOLATION in the Capability Registry) --
     // a statement-closing marker line, same as a page-number footer, has no date of its own and
@@ -153,7 +161,64 @@ public class PdfTableLocator {
     // wraps across several lines BEFORE its own date row, then closes with exactly these two
     // trailing detail lines before the NEXT transaction's leading narration begins. Set to the
     // larger of the two real requirements seen so far; revisit if a real document needs more.
+    //
+    // "Revisit if a real document needs more" happened: a real Bandhan Bank statement prints
+    // exactly THREE trailing lines per transaction (the UPI narration wraps onto a payee line, a
+    // VPA line, and an RRN line, all after the date row). The third exceeded this cap on every
+    // transaction, so each one's last narration line was buffered forward and prepended to the
+    // NEXT transaction instead -- every description in the table carried the tail of a different
+    // transaction, and the last transaction lost its own tail entirely. No row was dropped and no
+    // amount was wrong, which is precisely why it needed looking for.
+    //
+    // Raising the number would have traded one layout for another: Canara needs the boundary at
+    // exactly 2, and its third dateless row genuinely IS the next transaction's leading narration.
+    // The cap is not raised. See BLOCK_PITCH_TOLERANCE for the signal that separates the two cases
+    // without a bigger number; this remains the answer for rows that signal offers no opinion on.
     private static final int MAX_TRAILING_CONTINUATION_ROWS = 2;
+
+    /**
+     * How closely a dateless row's line spacing must match the block's own for it to count as more
+     * of the same transaction, in points.
+     *
+     * <p>The count cap above is a guess at a document's shape that the document itself can answer.
+     * A transaction and its wrapped narration are printed as one visually continuous block, at the
+     * font's line height; the gap to the NEXT transaction's block is larger, because a table puts
+     * space between its rows. So "is this row still part of the block above it" is measurable:
+     * compare its gap from the previous row against the gap that block already established between
+     * its date row and its first continuation.
+     *
+     * <p>Measured on the two layouts that disagree about the count. Bandhan: 10.8pt within a
+     * transaction, 16.1pt between transactions -- all three trailing lines match the pitch, so all
+     * three are kept. Canara: 12pt within, and its trailing "Chq: <number>" line sits 24pt below at
+     * a break in the pitch -- so no row is admitted past the cap and the boundary stays exactly
+     * where MAX_TRAILING_CONTINUATION_ROWS puts it.
+     *
+     * <p>Deliberately a match against a pitch the SAME block established, not a threshold. A fixed
+     * y-gap threshold is the heuristic this class already tried and documents as badly wrong (see
+     * locateAll's own comment on the HDFC statement it collapsed): ordinary line spacing between
+     * unrelated lines is indistinguishable from line spacing within a cell if all you have is a
+     * constant. Comparing against a pitch this transaction itself printed asks a different, local
+     * question, and it stays silent -- falling back to the count cap -- on any document whose
+     * spacing is not regular.
+     *
+     * <p>Tight, at well under a line height: two lines of the same block are set by the same
+     * leading and match to within rounding, so this only has to absorb float error, not variation.
+     *
+     * <p>Also the margin by which a document must prove it separates blocks at all -- see
+     * {@code separatesItsBlocks} in {@link #continuesTheBlock}.
+     */
+    private static final float BLOCK_PITCH_TOLERANCE = 1.5f;
+
+    /**
+     * Absolute ceiling on trailing rows admitted by pitch, however well they match.
+     *
+     * <p>Same role as {@link #MAX_LEADING_CONTINUATION_ROWS}, and set to the same value for the
+     * same reason: a document whose transaction rows and inter-row spacing happen to be identical
+     * offers the pitch check no signal at all, and it would then admit every dateless row up to the
+     * next date. That is a guard against pathology, not a model of narration -- a transaction whose
+     * narration genuinely runs a dozen lines past its own date row has not been seen.
+     */
+    private static final int MAX_BLOCK_CONTINUATION_ROWS = 12;
 
     /**
      * How many consecutive dateless rows may accumulate as LEADING narration before the extractor
@@ -255,6 +320,21 @@ public class PdfTableLocator {
         // a new account -- see the marker-handling block below.
         String currentSectionAccountId = null;
         Integer lastRowPage = null; // page index of the most recently added row in currentRows
+        // Parallel to lastRowPage: the y of that same row, and the line pitch the current
+        // transaction block established between its date row and its first continuation -- the two
+        // measurements the pitch check needs. Both reset wherever trailingCountSinceLastAnchor is,
+        // so a pitch can never carry across an anchor, a page, a header or a section.
+        Float lastRowY = null;
+        Float blockPitch = null;
+        Float blockSeparation = null;
+        // The row physically above the one being processed, whatever it turned out to be -- a
+        // header, a skipped page footer, a continuation. Tracked separately from lastRow* (which
+        // follows only rows ATTACHED to a transaction) because blockSeparation has to be
+        // measurable for the FIRST transaction under a header too, and on the first transaction of
+        // every later page. Measured from lastRow* instead, both of those came back null, and the
+        // very first transaction of a table -- the one a reader checks first -- kept the bug.
+        Float previousRowY = null;
+        Integer previousRowPage = null;
         int trailingCountSinceLastAnchor = 0;
         // LEADING_NARRATION_CONTINUATION: dateless rows that arrive once trailingCountSinceLastAnchor
         // has hit its cap -- narration for a transaction whose OWN date row hasn't been seen yet
@@ -263,12 +343,37 @@ public class PdfTableLocator {
         // claims it as its leading part -- see mergeLeadingInto's own doc comment for why that's a
         // prepend, not the ordinary append mergeInto does for trailing continuations.
         Map<String, String> pendingLeading = null;
+        // Whether every row in that buffer got there because it was printed CLOSER to the next
+        // transaction than to the previous one (see belongsToTheRowAbove), rather than merely
+        // overflowing the trailing cap. Only the former is evidence about whose narration it is,
+        // and only the former is rehomed into the next transaction's description -- see
+        // mergeLeadingInto. Measured before this distinction existed: rehoming both scrambled a
+        // real HDFC statement's descriptions, interleaving each transaction's wrapped tail into the
+        // next one's narration, which is worse than the truncation it replaced.
+        boolean pendingLeadingFromProximity = false;
         // Parallel to pendingLeading: how many rows have merged into it since the last date
         // anchor. Reset wherever pendingLeading is, or the cap would leak across sections.
         int leadingCount = 0;
 
-        for (List<PositionedText> row : rows) {
+        for (int rowIndex = 0; rowIndex < rows.size(); rowIndex++) {
+            List<PositionedText> row = rows.get(rowIndex);
             String rowLine = lineOf(row);
+
+            // Captured here, at the top, because several branches below `continue` past the end of
+            // the body -- a page footer still sits physically above the next row and still sets the
+            // spacing a reader sees.
+            Float gapFromPreviousRow = null;
+            if (!row.isEmpty()) {
+                int thisPage = row.get(0).pageIndex();
+                float thisY = row.get(0).y();
+                if (previousRowY != null && previousRowPage != null && previousRowPage == thisPage) {
+                    gapFromPreviousRow = thisY - previousRowY;
+                }
+                previousRowPage = thisPage;
+                previousRowY = thisY;
+            }
+            // The one row of lookahead the trailing/leading split needs -- see belongsToTheRowAbove.
+            Float gapToNextRow = gapBetween(row, rowIndex + 1 < rows.size() ? rows.get(rowIndex + 1) : null);
 
             Matcher sectionMarker = SECTION_MARKER.matcher(rowLine);
             if (sectionMarker.find()) {
@@ -304,8 +409,12 @@ public class PdfTableLocator {
                 currentHeaderSignature = null;
                 currentSectionAccountId = markerAccountId;
                 lastRowPage = null;
+                lastRowY = null;
+                blockPitch = null;
+                blockSeparation = null;
                 trailingCountSinceLastAnchor = 0;
                 pendingLeading = null;
+                pendingLeadingFromProximity = false;
                 leadingCount = 0;
                 pendingAuxiliary.add(rowLine);
                 continue;
@@ -337,8 +446,12 @@ public class PdfTableLocator {
                 currentHeaderSignature = signature;
                 currentRows = new ArrayList<>();
                 lastRowPage = null;
+                lastRowY = null;
+                blockPitch = null;
+                blockSeparation = null;
                 trailingCountSinceLastAnchor = 0;
                 pendingLeading = null;
+                pendingLeadingFromProximity = false;
                 leadingCount = 0;
                 continue;
             }
@@ -382,17 +495,30 @@ public class PdfTableLocator {
                     // order it actually appeared), then this row becomes the new anchor, open to
                     // its own (capped) trailing continuations.
                     if (pendingLeading != null) {
-                        if (!mergeLeadingInto(bucketed, pendingLeading)) {
+                        if (!mergeLeadingInto(bucketed, pendingLeading, headerNames, pendingLeadingFromProximity)) {
                             // Refused: this buffer is a standalone noise line, not this
                             // transaction's leading narration -- see mergeLeadingInto. Kept as its
                             // own row so it still surfaces as unparseable rather than vanishing.
                             currentRows.add(pendingLeading);
                         }
                         pendingLeading = null;
+                        pendingLeadingFromProximity = false;
                         leadingCount = 0;
                     }
                     currentRows.add(bucketed);
+                    // How far this anchor sits below whatever preceded it -- the document's own
+                    // evidence of how it separates one transaction's block from the next, and the
+                    // precondition for trusting line pitch at all (see continuesTheBlock).
+                    //
+                    // Retained rather than cleared when this particular anchor offers no
+                    // measurement (it opens a page, so nothing sits above it): "does this layout
+                    // separate its blocks" is a property of the table, not of one row, and a table
+                    // does not change how it is set at a page break. Cleared only at a header or a
+                    // section marker, where a genuinely different table begins.
+                    if (gapFromPreviousRow != null) blockSeparation = gapFromPreviousRow;
                     lastRowPage = row.get(0).pageIndex();
+                    lastRowY = row.get(0).y();
+                    blockPitch = null;
                     trailingCountSinceLastAnchor = 0;
                 } else if (currentRows.isEmpty()) {
                     // Nothing to attach to at all yet (e.g. an "Opening Balance" summary line
@@ -402,12 +528,27 @@ public class PdfTableLocator {
                     // content, not to this row as trailing content.
                     currentRows.add(bucketed);
                     lastRowPage = row.isEmpty() ? lastRowPage : row.get(0).pageIndex();
+                    lastRowY = row.isEmpty() ? lastRowY : row.get(0).y();
+                    blockPitch = null;
+                    blockSeparation = null;
                     trailingCountSinceLastAnchor = MAX_TRAILING_CONTINUATION_ROWS;
-                } else if (samePage && trailingCountSinceLastAnchor < MAX_TRAILING_CONTINUATION_ROWS) {
-                    mergeInto(currentRows.get(currentRows.size() - 1), bucketed);
+                } else if (samePage
+                        && (continuesTheBlock(row, lastRowY, blockPitch, blockSeparation,
+                                    trailingCountSinceLastAnchor)
+                            || (trailingCountSinceLastAnchor < MAX_TRAILING_CONTINUATION_ROWS
+                                && (!isNarrationOnly(bucketed)
+                                    || belongsToTheRowAbove(gapFromPreviousRow, gapToNextRow))))) {
+                    // The pitch this block prints its own wrapped lines at, learned from the first
+                    // one and never revised -- so a later line that breaks the pitch cannot quietly
+                    // redefine it and chain the whole page together (see BLOCK_PITCH_TOLERANCE).
+                    if (trailingCountSinceLastAnchor == 0 && lastRowY != null) {
+                        blockPitch = row.get(0).y() - lastRowY;
+                    }
+                    mergeInto(currentRows.get(currentRows.size() - 1), bucketed, headerNames);
                     if (ctx != null) ctx.record("WRAPPED_DESCRIPTION");
                     trailingCountSinceLastAnchor++;
                     lastRowPage = row.get(0).pageIndex();
+                    lastRowY = row.get(0).y();
                 } else {
                     // Past the trailing cap (or on a new page with nothing to trail into) -- this
                     // is leading narration for a transaction whose date row hasn't appeared yet.
@@ -442,11 +583,27 @@ public class PdfTableLocator {
                         pendingAuxiliary.add(rowLine);
                         continue;
                     }
-                    if (pendingLeading == null) pendingLeading = new LinkedHashMap<>();
-                    mergeInto(pendingLeading, bucketed);
+                    boolean nearerToTheTransactionBelow =
+                            trailingCountSinceLastAnchor < MAX_TRAILING_CONTINUATION_ROWS
+                                    && isNarrationOnly(bucketed)
+                                    && !belongsToTheRowAbove(gapFromPreviousRow, gapToNextRow);
+                    if (pendingLeading == null) {
+                        pendingLeading = new LinkedHashMap<>();
+                        pendingLeadingFromProximity = nearerToTheTransactionBelow;
+                    } else if (!nearerToTheTransactionBelow) {
+                        pendingLeadingFromProximity = false;
+                    }
+                    mergeInto(pendingLeading, bucketed, headerNames);
                     leadingCount++;
                     if (ctx != null) ctx.record("LEADING_NARRATION_CONTINUATION");
                     lastRowPage = row.isEmpty() ? lastRowPage : row.get(0).pageIndex();
+                    lastRowY = row.isEmpty() ? lastRowY : row.get(0).y();
+                    // The block above is closed the moment a row is buffered forward instead of
+                    // merged into it. Without this, a later row that happened to match the old
+                    // pitch would be appended to a transaction whose narration this buffered row
+                    // already moved past -- text rejoining a transaction out of order, behind text
+                    // that had been given to the next one.
+                    blockPitch = null;
                 }
             }
         }
@@ -456,6 +613,104 @@ public class PdfTableLocator {
         }
         if (ctx != null) ctx.recordTables(sections.size());
         return new LocatedDocument(sections);
+    }
+
+    /**
+     * Which of its two neighbouring transactions a dateless line belongs to, decided by which one
+     * it is printed closer to.
+     *
+     * <p>{@link #MAX_TRAILING_CONTINUATION_ROWS} answers "how many" dateless rows follow a
+     * transaction; it cannot answer "whose", and on a layout that prints narration BEFORE its date
+     * row the two questions have different answers. A real Bank of Baroda statement sets each
+     * transaction as narration-head / date-row / wrapped-tail, and puts a blank line between
+     * transactions: the tail sits 5.11pt below its own date row, and the NEXT transaction's
+     * narration head sits 10.21pt below that and 5.10pt above the date row it actually belongs to.
+     * Counting alone admits both as trailing, so every description on that statement carried the
+     * following transaction's merchant -- the amounts, dates and balances all correct, and the
+     * merchant that categorisation keys on wrong on every row.
+     *
+     * <p>Ties stay with the row above, which is the conservative reading and the one the count cap
+     * already gave: a real Canara Bank statement's trailing "Chq: &lt;number&gt;" line sits 24pt
+     * from the transaction above it and 24pt from the one below, and it belongs above -- its
+     * cheque number is the reference printed on the line directly under that transaction's date.
+     * Geometry cannot separate that case from the Bank of Baroda one by distance from the row
+     * above; only the comparison between both sides can, and only strictly-closer-below moves a
+     * line. That makes this narrow by construction: it changes nothing on a layout that spaces its
+     * rows evenly, or one that has no row below to compare against.
+     */
+    private boolean belongsToTheRowAbove(Float gapFromPreviousRow, Float gapToNextRow) {
+        if (gapFromPreviousRow == null || gapToNextRow == null) return true; // nothing to compare
+        // The margin is not decoration. Measured without it, a real HDFC statement whose rows are
+        // all set at 17.20pt -- a genuine tie, where this comparison should say nothing -- had the
+        // tie broken by float noise in the fourth decimal, and its descriptions came apart:
+        // each transaction's wrapped tail moved onto the next one's narration. A line has to be
+        // VISIBLY closer to the transaction below to be read as belonging to it.
+        return gapFromPreviousRow <= gapToNextRow + BLOCK_PITCH_TOLERANCE;
+    }
+
+    /**
+     * True when nothing in this row reads as a number -- it is narration and nothing else.
+     *
+     * <p>The gate on {@link #belongsToTheRowAbove}. Proximity is a claim about which transaction a
+     * line of TEXT describes, and it has no business moving a row that carries a figure: a dateless
+     * row holding an amount is a continuation of the transaction whose columns it shares, and
+     * reassigning it changes what that transaction is worth. Measured without this gate, on real
+     * statements: a Union Bank row turned from an 18,298.00 credit into a 500.00 debit, and a PNB
+     * row flipped from expense to income. Both are the failure this whole exercise is trying to
+     * avoid -- a staged import that looks right and is not.
+     */
+    private boolean isNarrationOnly(Map<String, String> bucketed) {
+        for (String value : bucketed.values()) {
+            if (value != null && CsvParser.parseNumeric(value.trim()) != null) return false;
+        }
+        return true;
+    }
+
+    /** Vertical distance between two visual rows, or null when either is missing or they are on
+     *  different pages -- a gap across a page break is a measure of page geometry, not of how the
+     *  table sets its lines. */
+    private Float gapBetween(List<PositionedText> above, List<PositionedText> below) {
+        if (above == null || below == null || above.isEmpty() || below.isEmpty()) return null;
+        if (above.get(0).pageIndex() != below.get(0).pageIndex()) return null;
+        return below.get(0).y() - above.get(0).y();
+    }
+
+    /**
+     * True when {@code row} sits at the same line pitch this transaction block already established
+     * -- i.e. it is one more visually continuous line of the narration above it, not the start of
+     * the next transaction's.
+     *
+     * <p>Only ever WIDENS what {@link #MAX_TRAILING_CONTINUATION_ROWS} admits, and only for a block
+     * that has already printed at least one continuation to measure a pitch from. A document with
+     * irregular spacing produces no match and keeps exactly the count-capped behaviour it had.
+     *
+     * <p>Two conditions, and the second is the one that makes this safe. The pitch must match, AND
+     * the document must have DEMONSTRATED that it separates transaction blocks by more than a line
+     * height -- evidenced by {@code blockSeparation}, the gap that preceded this very anchor. On a
+     * layout that sets every row at one uniform spacing, "same pitch as the line above" is true of
+     * the next transaction's leading narration exactly as it is of this one's trailing narration,
+     * so the measurement carries no information and extending on it would silently pull the next
+     * transaction's narration backwards. Requiring the document to show a wider gap somewhere is
+     * what distinguishes "the pitch says these lines belong together" from "everything here is at
+     * the same pitch." Where it cannot, the count cap decides, exactly as before.
+     *
+     * @param lastRowY        y of the row most recently merged into this transaction (null before any)
+     * @param blockPitch      gap between this transaction's date row and its first continuation
+     * @param blockSeparation gap between this transaction's date row and whatever preceded it, or
+     *                        null when there was nothing before it on the same page to measure
+     */
+    private boolean continuesTheBlock(List<PositionedText> row, Float lastRowY, Float blockPitch,
+                                       Float blockSeparation, int trailingCount) {
+        if (blockPitch == null || lastRowY == null || row.isEmpty()) return false;
+        if (trailingCount >= MAX_BLOCK_CONTINUATION_ROWS) return false;
+        // A non-positive pitch would mean the block's own first continuation was not below its date
+        // row -- rows arrive sorted top-to-bottom, so that can only be float noise within the
+        // same-row tolerance, and it is not something to extrapolate from.
+        if (blockPitch <= 0) return false;
+        boolean separatesItsBlocks = blockSeparation != null
+                && blockPitch + BLOCK_PITCH_TOLERANCE < blockSeparation;
+        if (!separatesItsBlocks) return false;
+        return Math.abs((row.get(0).y() - lastRowY) - blockPitch) <= BLOCK_PITCH_TOLERANCE;
     }
 
     /** A pending leading-narration buffer that never found a date-bearing row to attach to before
@@ -545,7 +800,7 @@ public class PdfTableLocator {
      *  per column, appending with a space when both already have a value (same join convention
      *  {@link #bucketRow} itself uses for two text runs landing in the same column), or simply
      *  filling it in when the target's own value for that column is blank/absent. */
-    private void mergeInto(Map<String, String> target, Map<String, String> continuation) {
+    private void mergeInto(Map<String, String> target, Map<String, String> continuation, List<String> headerNames) {
         for (Map.Entry<String, String> e : continuation.entrySet()) {
             if (e.getValue() == null || e.getValue().isBlank()) continue;
             String existing = target.get(e.getKey());
@@ -574,7 +829,7 @@ public class PdfTableLocator {
                     && CsvParser.parseNumeric(existing.trim()) != null
                     && CsvParser.parseNumeric((existing + " " + e.getValue()).trim()) == null;
             if (wouldBreakValidDate || wouldBreakValidAmount) {
-                String descriptionColumn = descriptionColumnIn(target);
+                String descriptionColumn = descriptionColumnIn(target, headerNames);
                 if (descriptionColumn == null) {
                     // Bug fix: this used to `continue` here, silently dropping the fragment -- in
                     // the same block whose comment promises "never lose information" and that text
@@ -585,7 +840,7 @@ public class PdfTableLocator {
                     // where a human reviewing the import can still see it. If every column is
                     // structured, the fragment goes nowhere -- but that is now a deliberate,
                     // narrow last resort rather than the ordinary case.
-                    String fallback = firstUnstructuredColumn(target);
+                    String fallback = firstUnstructuredColumn(target, headerNames);
                     if (fallback != null) {
                         String current = target.get(fallback);
                         target.put(fallback, (current == null || current.isBlank())
@@ -603,10 +858,29 @@ public class PdfTableLocator {
         }
     }
 
-    /** The description-ish column actually present in this row, or null when the layout has none --
-     *  used to rehome narration text that mis-bucketed into the date column (see mergeInto). */
-    private String descriptionColumnIn(Map<String, String> row) {
-        for (String column : row.keySet()) {
+    /**
+     * The description-ish column of the table this row belongs to, or null when the layout has
+     * none -- where narration that mis-bucketed into the date column gets rehomed (see mergeInto).
+     *
+     * <p>Asked of the TABLE'S HEADER, not of the row's own keys. That distinction is the whole bug,
+     * found on a real Bank of Baroda statement: it prints each transaction's narration on its own
+     * visual line above the date row, so nothing ever lands in NARRATION while the row is being
+     * built, and the row's keys are only {@code {DATE, WITHDRAWAL (DR), BALANCE}}. Searching those
+     * keys found no description column, {@link #firstUnstructuredColumn} then found nothing either
+     * (every remaining key is a date or an amount), and the narration was dropped -- in the branch
+     * whose own comment promises the text "is never simply discarded". Every description on that
+     * statement came back blank.
+     *
+     * <p>The giveaway was which row DID keep its narration: only "Opening Balance", the one row
+     * that happened to already hold a NARRATION value, so the redirect had somewhere to go.
+     *
+     * <p>A row's keys are always a subset of the header names ({@link #bucketRow} only ever writes
+     * a key it took from {@code headerNames}), so consulting the header can only find MORE columns,
+     * never a different one. The row-key search is kept as the fallback for a null header, which
+     * only the single-table convenience path can produce.
+     */
+    private String descriptionColumnIn(Map<String, String> row, List<String> headerNames) {
+        for (String column : headerNames == null ? row.keySet() : headerNames) {
             if (matchesAnyHint(column, DESCRIPTION_COLUMN_HINTS)) return column;
         }
         return null;
@@ -619,8 +893,8 @@ public class PdfTableLocator {
      *  <p>Deliberately excludes the structured columns rather than picking the first key outright:
      *  the whole reason the caller is here is that appending to a date or amount cell would
      *  invalidate it, so falling back onto one of those would recreate the bug being avoided. */
-    private String firstUnstructuredColumn(Map<String, String> row) {
-        for (String column : row.keySet()) {
+    private String firstUnstructuredColumn(Map<String, String> row, List<String> headerNames) {
+        for (String column : headerNames == null ? row.keySet() : headerNames) {
             if (!isDateColumn(column) && !isAmountColumn(column)) return column;
         }
         return null;
@@ -630,33 +904,64 @@ public class PdfTableLocator {
      *  used only for {@code pendingLeading} (see {@link #locateAll}): a leading narration buffer's
      *  text chronologically precedes whatever the new anchor row's own bucketed values already
      *  hold, so it has to read before them, not after. */
-    private boolean mergeLeadingInto(Map<String, String> target, Map<String, String> leading) {
+    private boolean mergeLeadingInto(Map<String, String> target, Map<String, String> leading,
+                                      List<String> headerNames, boolean fromProximity) {
         // Bug fix, exposed by tightening hasDateValue to require a PARSEABLE date: a per-page title
         // banner ("Savings Account" at the top of page 2) has no date of its own, so it is no
         // longer mistaken for a transaction anchor -- correct -- but it was then buffered as
         // LEADING narration and prepended into the next real transaction. Its text sits in the date
         // column, so the prepend produced "Savings Account 02-05-2026", which no longer parses, and
         // the genuine transaction it was prepended to was dropped entirely. A buffer that would
-        // destroy the anchor's own valid date is not that transaction's narration; it is a
-        // standalone noise line. Refusing the merge here lets the caller keep it as its own row, so
-        // it still surfaces as an unparseable row ("never lose information") instead of either
-        // vanishing or corrupting a real transaction.
+        // destroy the anchor's own valid date must never be prepended onto it.
+        //
+        // What that used to mean was: refuse the whole merge, and let the caller keep the buffer as
+        // its own unparseable row. That protected the anchor, but it also threw away every genuine
+        // LEADING narration whose text mis-bucketed into the date column -- and mis-bucketing into
+        // the date column is the NORMAL case for a wrapped narration line, since that column's
+        // anchor is leftmost. On a real Bank of Baroda statement, whose narration is printed above
+        // its own date row, that is every description in the file.
+        //
+        // So this now does what mergeInto has always done in the same situation: keep the anchor's
+        // value, and rehome the incoming text into the description column instead of refusing it.
+        // Same protection, without discarding the narration it was protecting the date from. The
+        // page-banner case is still not appended to the date -- it lands in the description, which
+        // is visible and correctable, rather than silently dropping a transaction.
+        //
+        // A false return is now reserved for the one case with genuinely nowhere to put the text:
+        // a layout whose every column is a date or an amount. The caller still keeps the buffer as
+        // its own row there, so nothing is lost.
+        // Decided in full before anything is written, so a refusal leaves the anchor untouched --
+        // the caller keeps the buffer as its own row, and a half-merged buffer would otherwise be
+        // counted twice.
+        String rehome = fromProximity ? descriptionColumnIn(target, headerNames) : null;
+        if (fromProximity && rehome == null) rehome = firstUnstructuredColumn(target, headerNames);
         for (Map.Entry<String, String> e : leading.entrySet()) {
             if (e.getValue() == null || e.getValue().isBlank()) continue;
-            if (isDateColumn(e.getKey())) {
-                String existing = target.get(e.getKey());
-                if (existing != null && CsvParser.parseDate(existing.trim()) != null
-                        && CsvParser.parseDate((e.getValue() + " " + existing).trim()) == null) {
-                    return false;
-                }
-            }
+            if (rehome == null && wouldInvalidate(target, e.getKey(), e.getValue())) return false;
         }
+
         for (Map.Entry<String, String> e : leading.entrySet()) {
             if (e.getValue() == null || e.getValue().isBlank()) continue;
-            String existing = target.get(e.getKey());
-            target.put(e.getKey(), (existing == null || existing.isBlank()) ? e.getValue() : e.getValue() + " " + existing);
+            String column = wouldInvalidate(target, e.getKey(), e.getValue()) ? rehome : e.getKey();
+            String existing = target.get(column);
+            target.put(column, (existing == null || existing.isBlank()) ? e.getValue() : e.getValue() + " " + existing);
         }
         return true;
+    }
+
+    /** True when prepending {@code value} to whatever {@code target} already holds for
+     *  {@code column} would turn a date or amount it can currently read into one it cannot. Shared
+     *  by {@link #mergeLeadingInto}'s two passes so the decision and the write cannot disagree. */
+    private boolean wouldInvalidate(Map<String, String> target, String column, String value) {
+        String existing = target.get(column);
+        if (existing == null) return false;
+        if (isDateColumn(column) && CsvParser.parseDate(existing.trim()) != null) {
+            return CsvParser.parseDate((value + " " + existing).trim()) == null;
+        }
+        if (isAmountColumn(column) && CsvParser.parseNumeric(existing.trim()) != null) {
+            return CsvParser.parseNumeric((value + " " + existing).trim()) == null;
+        }
+        return false;
     }
 
     /** Groups text runs into visual rows: same page, sorted top-to-bottom (ascending y --
