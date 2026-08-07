@@ -80,15 +80,17 @@ public class MerchantLearningEvent {
     @Column(name = "category_id", nullable = false)
     private UUID categoryId;
 
-    /** Which import produced this, for the admin queue. Nullable, and nulled rather than cascaded
-     *  if that import is deleted — the event stays processable either way. */
+    /** Which import produced this, for the admin queue. Nullable for two distinct reasons, and
+     *  both are correct: the import was deleted (nulled rather than cascaded, so the event stays
+     *  processable), or there was never an import at all — a bulk recategorization (WI1A) earns
+     *  real confirmations with no statement behind them. */
     @Column(name = "source_statement_import_id")
     private UUID sourceStatementImportId;
 
     /** The staging/review session this came from, when there was one. Null for direct-file
-     *  imports, which never have a session — never a synthetic placeholder, because an operator
-     *  following a link to a session that never existed would reasonably conclude the row is
-     *  corrupt. */
+     *  imports, which never have a session, and for every non-import caller — never a synthetic
+     *  placeholder, because an operator following a link to a session that never existed would
+     *  reasonably conclude the row is corrupt. */
     @Column(name = "source_import_session_id")
     private UUID sourceImportSessionId;
 
