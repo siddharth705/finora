@@ -4,17 +4,19 @@
   "version": "0.1.0",
   "description": "Cross-app end-to-end tests. Standalone, like frontend/ and admin-portal/ and mobile/ -- the repo has no npm workspaces, each app installs its own dependencies.",
   "scripts": {
-    "test": "playwright test",
-    "test:user": "playwright test --project=user-portal",
-    "test:admin": "playwright test --project=admin-portal",
-    "test:workflow": "playwright test --project=workflow",
-    "test:browsers": "node scripts/with-browsers.mjs --project=user-portal-firefox --project=user-portal-edge --project=admin-portal-firefox",
-    "test:responsive": "node scripts/with-browsers.mjs --project=user-portal-tablet --project=user-portal-mobile",
-    "test:headed": "playwright test --headed",
     "report": "playwright show-report",
-    "stack:up": "node scripts/stack.mjs up",
     "stack:down": "node scripts/stack.mjs down",
-    "stack:reset": "node scripts/stack.mjs reset"
+    "stack:reset": "node scripts/stack.mjs reset",
+    "stack:up": "node scripts/stack.mjs up",
+    "test": "playwright test --grep-invert @smoke",
+    "test:admin": "playwright test --project=admin-portal",
+    "test:all": "playwright test",
+    "test:browsers": "node scripts/with-browsers.mjs --project=user-portal-firefox --project=user-portal-edge --project=admin-portal-firefox",
+    "test:headed": "playwright test --headed",
+    "test:responsive": "node scripts/with-browsers.mjs --project=user-portal-tablet --project=user-portal-mobile",
+    "test:smoke": "playwright test --project=workflow --grep @smoke",
+    "test:user": "playwright test --project=user-portal",
+    "test:workflow": "playwright test --project=workflow"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",

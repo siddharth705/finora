@@ -26,12 +26,32 @@ That is on purpose: "did you rebuild" should be a question you can answer.
 npm run stack:reset   # destroy the database and start again, empty
 npm run stack:down    # stop it
 
-npm test              # user-portal + admin-portal + workflow
+npm run test:smoke    # the PR gate — one pass through the product, under 5 minutes
+npm test              # everything else: user-portal + admin-portal + workflow
+npm run test:all      # both
 npm run test:workflow # the business-outcome specs only
 npm run test:browsers # Firefox + Edge
 npm run test:responsive
 npm run report        # the HTML report from the last run
 ```
+
+## Two suites, on purpose
+
+`test:smoke` is the **build-confidence** suite: sign in, import a CSV, exercise the PDF path,
+resolve a duplicate, check the ledger and the dashboard agree, drain the learning queue, look at
+both operator screens, sign out. One journey through each system that would make the product
+unusable if broken. Run it on every PR.
+
+`npm test` is everything else — edge cases, error paths, permutations, behaviour at size. Run it
+nightly or before a release.
+
+The split is by file rather than by tag filter over one suite. A tag filter looks cheaper and drifts
+the moment someone retags, and it hides the fast suite's cost: nobody notices a five-minute gate
+becoming a fifteen-minute one until they are waiting on it. `smoke.spec.ts` asserts its own runtime
+budget, so it fails when it stops being a smoke test.
+
+**Adding to the smoke suite:** if the test fails, would you stop the release? If not, it belongs in
+the full suite.
 
 Playwright starts both Vite dev servers itself and points them at the test backend via
 `FINORA_API_PROXY_TARGET`. `globalSetup` fails the run with a readable message if the stack is not
