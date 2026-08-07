@@ -1,7 +1,7 @@
 # Finora — Phase 1 Scaffold
 
 This is a working slice of the Finora PRD (v1.0), built on the exact stack specified:
-**React + TypeScript + Vite + Tailwind** (frontend) and **Spring Boot 3 / Java 21 +
+**React + TypeScript + Vite + Tailwind** (frontend) and **Spring Boot 3 / Java 25 +
 Spring Security + PostgreSQL + Flyway** (backend). Two more apps have since joined
 the same backend: an **admin portal** (the User/Admin split) and a **React Native +
 Expo** mobile app — see "Mobile app" below for where that one actually stands.
