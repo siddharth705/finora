@@ -63,10 +63,30 @@ public class StatementAnalysisRecorder {
     public String recordParsed(UUID userId, StatementAnalysisSession.Source source, String fileName,
                                 String sourceFormat, long byteSize, String layoutFingerprint,
                                 int sectionCount, long durationMs, ParseDiagnostics diagnostics) {
+        return recordParsed(userId, source, fileName, sourceFormat, byteSize, layoutFingerprint,
+                sectionCount, durationMs, diagnostics, null);
+    }
+
+    /**
+     * The same, naming the staging session this upload produced.
+     *
+     * <p>That id is what turns three tables that merely coexist into a trace: {@code
+     * merchant_learning_events} has carried {@code source_import_session_id} since V63, so recording
+     * it here is the whole of what "which merchants did this import teach" needed. Callers with no
+     * session — the admin analysis path, which deliberately creates none — use the overload above.
+     *
+     * @return the reference of the recorded session, or null if recording failed.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public String recordParsed(UUID userId, StatementAnalysisSession.Source source, String fileName,
+                                String sourceFormat, long byteSize, String layoutFingerprint,
+                                int sectionCount, long durationMs, ParseDiagnostics diagnostics,
+                                UUID importSessionId) {
         try {
             var session = StatementAnalysisSession.parsed(nextReference(), userId, source, fileName,
                     sourceFormat, byteSize, layoutFingerprint, sectionCount, durationMs,
-                    diagnostics.rowCount(), writeHistogram(diagnostics, fileName));
+                    diagnostics.rowCount(), writeHistogram(diagnostics, fileName),
+                    importSessionId, currentCorrelationId());
             return repository.save(session).getReference();
         } catch (RuntimeException e) {
             log.error("Could not record a parsed analysis session for {} -- layout evidence for "
@@ -84,13 +104,31 @@ public class StatementAnalysisRecorder {
         try {
             var session = StatementAnalysisSession.failed(nextReference(), userId, source, fileName,
                     sourceFormat, byteSize, layoutFingerprint, failureCode, truncate(failureDetail),
-                    durationMs, diagnostics.rowCount(), writeHistogram(diagnostics, fileName));
+                    durationMs, diagnostics.rowCount(), writeHistogram(diagnostics, fileName),
+                    currentCorrelationId());
             return repository.save(session).getReference();
         } catch (RuntimeException e) {
             log.error("Could not record a FAILED analysis session for {} ({}) -- the layout that "
                     + "defeated the parser is now unrecorded", fileName, failureCode, e);
             return null;
         }
+    }
+
+    /**
+     * The correlation id in flight, read rather than passed in.
+     *
+     * <p>Taking it from MDC is what stops it drifting from the id the logs actually used: a
+     * parameter would be one more thing a call site can forget or fill in from the wrong variable,
+     * and an evidence row pointing at a correlation id that appears in no log line is worse than one
+     * pointing at nothing. The prefix ({@code request-}, {@code worker-}, {@code scheduler-}) comes
+     * along with it, so the row also records where the upload came from.
+     *
+     * <p>Bounded to the column width here rather than trusted: the key is writable by any filter.
+     */
+    private String currentCorrelationId() {
+        String id = org.slf4j.MDC.get(com.finora.config.CorrelationIdFilter.MDC_KEY);
+        if (id == null || id.isBlank()) return null;
+        return id.length() <= 64 ? id : id.substring(0, 64);
     }
 
     /**

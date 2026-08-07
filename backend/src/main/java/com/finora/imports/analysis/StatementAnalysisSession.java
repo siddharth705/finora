@@ -110,6 +110,30 @@ public class StatementAnalysisSession {
     @Column(name = "unanchored_reasons_json", columnDefinition = "TEXT", updatable = false)
     private String unanchoredReasonsJson;
 
+    /**
+     * The staging session this upload produced, when it produced one.
+     *
+     * <p>The join the unified import trace turns on. {@code merchant_learning_events} has carried
+     * {@code source_import_session_id} since V63, so once this row names its session, "which
+     * merchants did this import teach" stops being a guess about timing and becomes a join.
+     *
+     * <p>No foreign key, and no {@code ON DELETE SET NULL}: sessions expire after 48 hours and this
+     * row is permanent evidence that must outlive them. Keeping the id after the session is gone
+     * still says which session it was; nulling it would erase the fact that there had been one.
+     */
+    @Column(name = "import_session_id", updatable = false)
+    private UUID importSessionId;
+
+    /**
+     * The correlation id every log line, audit row and Sentry event from this upload also carries.
+     *
+     * <p>Read from MDC by {@link StatementAnalysisRecorder} rather than passed in, so it cannot
+     * drift from the id the logs actually used. Null when there was none — an upload recorded from
+     * a thread outside a request or a worker pass.
+     */
+    @Column(name = "correlation_id", length = 64, updatable = false)
+    private String correlationId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
@@ -121,7 +145,10 @@ public class StatementAnalysisSession {
                                      String sourceFormat, Long byteSize, String layoutFingerprint,
                                      Outcome outcome, String failureCode, String failureDetail,
                                      Integer sectionCount, Long durationMs, Integer rowCount,
-                                     String unanchoredReasonsJson) {
+                                     String unanchoredReasonsJson, UUID importSessionId,
+                                     String correlationId) {
+        this.importSessionId = importSessionId;
+        this.correlationId = correlationId;
         this.rowCount = rowCount;
         this.unanchoredReasonsJson = unanchoredReasonsJson;
         this.reference = reference;
@@ -143,9 +170,27 @@ public class StatementAnalysisSession {
                                                   String layoutFingerprint, Integer sectionCount,
                                                   Long durationMs, Integer rowCount,
                                                   String unanchoredReasonsJson) {
+        return parsed(reference, userId, source, fileName, sourceFormat, byteSize, layoutFingerprint,
+                sectionCount, durationMs, rowCount, unanchoredReasonsJson, null, null);
+    }
+
+    /**
+     * The same, plus the two ids that let this row be joined to the rest of the import.
+     *
+     * <p>An overload rather than two more parameters on the existing factory, matching what
+     * {@code StagingResponse} did when it grew a verification field: every construction site that
+     * has no session and no correlation id keeps compiling untouched, and only the ones that do
+     * need to know these fields exist.
+     */
+    public static StatementAnalysisSession parsed(String reference, UUID userId, Source source,
+                                                  String fileName, String sourceFormat, Long byteSize,
+                                                  String layoutFingerprint, Integer sectionCount,
+                                                  Long durationMs, Integer rowCount,
+                                                  String unanchoredReasonsJson, UUID importSessionId,
+                                                  String correlationId) {
         return new StatementAnalysisSession(reference, userId, source, fileName, sourceFormat,
                 byteSize, layoutFingerprint, Outcome.PARSED, null, null, sectionCount, durationMs,
-                rowCount, unanchoredReasonsJson);
+                rowCount, unanchoredReasonsJson, importSessionId, correlationId);
     }
 
     public static StatementAnalysisSession failed(String reference, UUID userId, Source source,
@@ -153,12 +198,29 @@ public class StatementAnalysisSession {
                                                    String layoutFingerprint, String failureCode,
                                                    String failureDetail, Long durationMs,
                                                    Integer rowCount, String unanchoredReasonsJson) {
+        return failed(reference, userId, source, fileName, sourceFormat, byteSize, layoutFingerprint,
+                failureCode, failureDetail, durationMs, rowCount, unanchoredReasonsJson, null);
+    }
+
+    /**
+     * A failed upload, with the correlation id that leads to its log lines.
+     *
+     * <p>No import session parameter, deliberately: an upload that failed never produced one, so
+     * there is nothing honest to put there and no way for a caller to be confused into inventing
+     * something.
+     */
+    public static StatementAnalysisSession failed(String reference, UUID userId, Source source,
+                                                   String fileName, String sourceFormat, Long byteSize,
+                                                   String layoutFingerprint, String failureCode,
+                                                   String failureDetail, Long durationMs,
+                                                   Integer rowCount, String unanchoredReasonsJson,
+                                                   String correlationId) {
         // Diagnostics on the FAILED path too, deliberately. A document rejected for extracting
         // nothing is precisely where the histogram earns its keep: "nothing was extracted" is the
         // symptom, and the reason breakdown is the only thing on this row that says why.
         return new StatementAnalysisSession(reference, userId, source, fileName, sourceFormat,
                 byteSize, layoutFingerprint, Outcome.FAILED, failureCode, failureDetail, null,
-                durationMs, rowCount, unanchoredReasonsJson);
+                durationMs, rowCount, unanchoredReasonsJson, null, correlationId);
     }
 
     public UUID getId() { return id; }
@@ -176,5 +238,7 @@ public class StatementAnalysisSession {
     public Long getDurationMs() { return durationMs; }
     public Integer getRowCount() { return rowCount; }
     public String getUnanchoredReasonsJson() { return unanchoredReasonsJson; }
+    public UUID getImportSessionId() { return importSessionId; }
+    public String getCorrelationId() { return correlationId; }
     public Instant getCreatedAt() { return createdAt; }
 }

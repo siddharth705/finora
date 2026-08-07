@@ -37,6 +37,12 @@ import java.util.UUID;
  * appears beside {@code worker=merchant-learning} with no new panels, because the metric names are
  * fixed by the framework rather than chosen per worker.
  *
+ * <p>{@link ImportStageRecorder} is not an exception to that. Metrics answer "how slow is PARSING
+ * across every job", which a timer does well and a table does badly; the recorder answers "which
+ * stage was slow in <b>that</b> import", which a timer cannot answer at all. The framework keeps
+ * every question it was built for, and the recorder writes rows nothing in it was ever going to
+ * hold.
+ *
  * <h2>What this class does NOT do yet</h2>
  *
  * <p><b>Nothing enqueues jobs.</b> The upload endpoint still imports inline; switching it to return
@@ -59,10 +65,32 @@ public class ImportJobWorker {
     private static final String WORKER = "import";
     private static final String JOB_KIND = "import-job";
 
+    /** The furthest this worker takes a job. Everything after staging is still the user's review. */
+    private static final ImportJob.Status LAST_STAGE_THIS_WORKER_RUNS = ImportJob.Status.ANALYZING;
+
+    /**
+     * The stages a completed job passed over without entering.
+     *
+     * <p>Recorded as {@code SKIPPED} rather than left absent, because "this stage did not run" and
+     * "nobody instrumented this stage" are different facts and only one of them is actionable. It is
+     * also the observation that can prove an optimisation unnecessary: someone about to speed up
+     * {@code DEDUPING} on the async path can see, per job, that it never runs there.
+     *
+     * <p>Derived from the enum rather than listed, so it cannot name a stage that does not exist or
+     * silently miss one that is added.
+     */
+    private static final List<ImportJob.Status> STAGES_THIS_WORKER_PASSES_OVER =
+            ImportJob.Status.IN_FLIGHT.stream()
+                    .filter(stage -> stage.ordinal() > LAST_STAGE_THIS_WORKER_RUNS.ordinal())
+                    .sorted(java.util.Comparator.comparingInt(Enum::ordinal))
+                    .toList();
+
     private final ImportJobStore jobStore;
     private final ImportService importService;
     private final Optional<StatementStorage> storage;
     private final WorkerObservability observability;
+    private final ImportStageRecorder stageRecorder;
+    private final com.finora.imports.analysis.ImportVerificationRecorder verificationRecorder;
 
     @Value("${app.import.queue.enabled:false}")
     private boolean enabled;
@@ -70,11 +98,15 @@ public class ImportJobWorker {
     public ImportJobWorker(ImportJobStore jobStore,
                             ImportService importService,
                             Optional<StatementStorage> storage,
-                            WorkerObservability observability) {
+                            WorkerObservability observability,
+                            ImportStageRecorder stageRecorder,
+                            com.finora.imports.analysis.ImportVerificationRecorder verificationRecorder) {
         this.jobStore = jobStore;
         this.importService = importService;
         this.storage = storage;
         this.observability = observability;
+        this.stageRecorder = stageRecorder;
+        this.verificationRecorder = verificationRecorder;
 
         observability.publishQueueDepth(WORKER, JOB_KIND, jobStore::queueDepth);
         observability.publishOldestPendingAge(WORKER, JOB_KIND, jobStore::oldestQueuedAt);
@@ -130,7 +162,14 @@ public class ImportJobWorker {
      *
      * <p>The catch is outside every job-store transaction on purpose: by the time it runs, whatever
      * failed has already rolled back, so the failure is recorded into a clean transaction rather
-     * than one already marked rollback-only.
+     * than one already marked rollback-only. The stage and verification recorders sit under the same
+     * rule -- each opens its own {@code REQUIRES_NEW} transaction and swallows its own exceptions,
+     * so a telemetry write can neither be undone by an import's rollback nor cause one.
+     *
+     * <p>Stages are opened before their work and closed after it. Opening first is what makes a
+     * worker that dies mid-stage leave a row naming the stage it died in; closing on exit is what
+     * gives the row a duration. A stage recorded only on completion would say nothing about exactly
+     * the case an operator is looking for.
      */
     private void runOne(WorkerExecution execution, UUID jobId) {
         ImportJob job = jobStore.find(jobId).orElse(null);
@@ -138,14 +177,30 @@ public class ImportJobWorker {
             // The user was deleted between claim and run; the CASCADE took the job with it.
             return;
         }
+        // Read once, after markClaimed has already incremented it, so every stage row for this pass
+        // carries the same attempt number and a retry's stages sit beside the first attempt's
+        // rather than overwriting them.
+        int attempt = job.getAttemptCount();
         execution.started(jobId, job.getCreatedAt());
         try {
+            // The job is already PARSING -- markClaimed put it there -- so this opens the stage the
+            // status column has been asserting all along and nothing has ever timed.
+            stageRecorder.entered(jobId, attempt, ImportJob.Status.PARSING);
             byte[] content = readContent(job);
+            stageRecorder.completed(jobId, attempt, ImportJob.Status.PARSING);
 
             jobStore.update(jobId, j -> j.advanceTo(ImportJob.Status.ANALYZING));
+            stageRecorder.entered(jobId, attempt, ImportJob.Status.ANALYZING);
             var staged = importService.parseAndStageAnyFormat(
                     job.getUserId(), ImportJobService.formatOf(job.getFileName()).name(),
                     job.getFileName(), content, null);
+            stageRecorder.completed(jobId, attempt, ImportJob.Status.ANALYZING);
+
+            // The verification rules have already run inside the preview generator. Without this
+            // they reach a StagingResponse nobody is holding -- the async path has no user looking
+            // at a review screen -- and are discarded before anyone could have read them.
+            verificationRecorder.recordForJob(jobId,
+                    java.util.Collections.singletonList(staged.verification()));
 
             jobStore.update(jobId, j -> {
                 // totalParsed rather than rows().size(): rows() is what staged successfully, and
@@ -154,9 +209,18 @@ public class ImportJobWorker {
                 j.recordProgress(staged.totalParsed(), staged.rows() == null ? 0 : staged.rows().size());
                 j.complete(null, Instant.now());
             });
+            // Only on the success path. A job that failed in PARSING did not skip IMPORTING, it
+            // never reached it, and recording that as SKIPPED would turn an honest absence into a
+            // false claim.
+            stageRecorder.skipped(jobId, attempt, STAGES_THIS_WORKER_PASSES_OVER);
             execution.completed(jobId);
 
         } catch (Exception e) {
+            // Before recordFailure, so the stage row is closed even if recording the job's own
+            // failure then fails -- the double-fault case that leaves the job stranded. A stranded
+            // job whose stage says FAILED at ANALYZING is diagnosable; one whose stage still says
+            // RUNNING is indistinguishable from a worker that is still working.
+            stageRecorder.failedWhereverItWas(jobId, attempt);
             recordFailure(execution, jobId, e);
         }
     }
