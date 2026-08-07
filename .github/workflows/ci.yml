@@ -154,7 +154,7 @@ jobs:
       - name: Import cross-reference
         run: python3 scripts/check-imports.py
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           java-version: '25'
           distribution: 'temurin'
@@ -436,7 +436,7 @@ jobs:
       # `./mvnw package` itself (see "Build the backend" below), so a JDK older than the compiler
       # release target fails here with "release version N not supported" even though nothing about
       # the smoke tests changed. Raise both together.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           java-version: '25'
           distribution: temurin
