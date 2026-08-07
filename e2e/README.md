@@ -19,7 +19,7 @@ platform-wide counts and financial totals, and a database carrying yesterday's e
 those either wrong or meaningless — and sharing your stack would mean a test run rewriting data you
 were in the middle of looking at.
 
-The backend runs from `backend/target/finora-backend-0.1.0.jar`, so it is whatever you last built.
+The backend runs from the `finora-backend-*.jar` in `backend/target/`, so it is whatever you last built.
 That is on purpose: "did you rebuild" should be a question you can answer.
 
 ```bash

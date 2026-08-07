@@ -1,0 +1,13 @@
+# Third-party packages the scripts in this directory import. Everything else they use is stdlib,
+# and it is worth keeping it that way -- these run in a pre-commit hook as well as in CI, and a
+# hook that needs a populated virtualenv is a hook people disable.
+#
+# This file exists because check-dashboard-metrics.py imports PyYAML and nothing installed it. That
+# worked by accident in two different environments and then stopped: the ubuntu-latest image ships
+# PyYAML, and on the self-hosted Mac the SYSTEM python3 happened to have a user-installed copy. The
+# day a brew formula pulled in a newer Python that took first place on PATH, the guard started
+# failing with ModuleNotFoundError on a commit that had nothing to do with it.
+#
+# Pinned loosely on purpose: the API used is yaml.safe_load, which has been stable for the life of
+# the library. The point of the pin is a floor, not a ceiling.
+PyYAML>=6.0

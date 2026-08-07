@@ -13,7 +13,7 @@
 
   <groupId>com.finora</groupId>
   <artifactId>finora-backend</artifactId>
-  <version>0.1.0</version>
+  <version>0.2.0</version>
   <name>finora-backend</name>
   <description>Finora Personal Financial Operating System - Backend API</description>
 

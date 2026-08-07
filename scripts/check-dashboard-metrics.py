@@ -102,7 +102,23 @@ def check_runbooks():
     Both directions are checked because they drift in both directions -- an alert gets added
     without a section, or an alert gets renamed and the section is orphaned.
     """
-    import yaml
+    # The only third-party import in scripts/. Declared in scripts/requirements.txt, and installed
+    # by CI -- but the pre-commit hook runs whatever python3 is on PATH, which may not have it. A
+    # bare ModuleNotFoundError traceback here reads as "the guard is broken" rather than "install
+    # one package", and it appears at commit time when nobody wants to read a stack trace.
+    try:
+        import yaml
+    except ModuleNotFoundError:
+        raise SystemExit(
+            "check-dashboard-metrics needs PyYAML, which is not installed for this interpreter:\n"
+            f"    {sys.executable}\n"
+            "\n"
+            "Install it with:\n"
+            "    pip install -r scripts/requirements.txt\n"
+            "\n"
+            "Note that `python3` may resolve to a different interpreter than you expect -- run\n"
+            "`which -a python3` if the install appears to succeed and this message persists."
+        ) from None
 
     alerts_file = OPS_DIR / "alerts.yml"
     if not alerts_file.is_file() or not RUNBOOK.is_file():
