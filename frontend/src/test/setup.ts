@@ -52,3 +52,50 @@ if (!window.IntersectionObserver) {
   window.IntersectionObserver = NoopIntersectionObserver as unknown as typeof IntersectionObserver;
   globalThis.IntersectionObserver = window.IntersectionObserver;
 }
+
+// Node 22+ ships its own experimental global `localStorage`, functional only when the process is
+// started with --localstorage-file. Without that flag the global still EXISTS, as an accessor that
+// returns undefined, and since vitest's jsdom environment aliases globalThis to the jsdom window
+// (globalThis === window in here), that accessor sits in the slot jsdom's own Storage would have
+// filled. Both `localStorage` and `window.localStorage` are then undefined, and every suite whose
+// beforeEach starts with localStorage.clear() dies before its first assertion:
+//
+//   TypeError: Cannot read properties of undefined (reading 'clear')
+//
+// Worth being precise about the failure mode, because it does not look like an environment
+// problem. It is 33 failures across four unrelated files (client, AuthContext, ThemeContext,
+// ChangePasswordModal), it survives a clean `npm install`, and CI stays green throughout, since
+// .github/workflows/ci.yml pins Node 20. Whoever upgrades Node first sees a suite that appears to
+// have broken itself.
+//
+// Guarded on the broken case, so under Node 20 jsdom's real Storage is left untouched and this
+// block does nothing. A plain in-memory Storage rather than a mock on purpose: these tests assert
+// on what was actually persisted (and read it back), not on which methods got called.
+if (!globalThis.localStorage) {
+  const entries = new Map<string, string>();
+  const memoryStorage = {
+    get length() {
+      return entries.size;
+    },
+    clear: () => {
+      entries.clear();
+    },
+    getItem: (key: string) => (entries.has(key) ? entries.get(key)! : null),
+    key: (index: number) => Array.from(entries.keys())[index] ?? null,
+    removeItem: (key: string) => {
+      entries.delete(key);
+    },
+    setItem: (key: string, value: string) => {
+      entries.set(String(key), String(value));
+    },
+  };
+
+  // defineProperty, not assignment: Node's version is an accessor with no setter, so `globalThis
+  // .localStorage = ...` is silently a no-op in sloppy mode and a TypeError under ESM's strict
+  // mode. It is configurable, so redefining it is allowed.
+  Object.defineProperty(globalThis, 'localStorage', {
+    value: memoryStorage as unknown as Storage,
+    configurable: true,
+    writable: true,
+  });
+}
