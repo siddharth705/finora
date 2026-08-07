@@ -91,6 +91,70 @@ ceiling, since each import holds a connection for far less time.
 
 ---
 
+## After-measurement — Priority 1 (category-rule caching)
+
+Taken 2026-08-07 against the shipped fix (`b7aab9d` production change, `1f029ee` guard test), same
+machine, same method, same generated files, same accounts, SQL logging on in both runs so the two
+are on equal footing.
+
+### SQL counts
+
+| Query | Before /row | After /row | Change |
+|---|---:|---:|---|
+| `select category_rules` | **2.00** | **~0.01** | 400 → **2** at 200 rows; 800 → **2** at 400 rows |
+| `select merchant_aliases` | 1.00–1.30 | 1.00 | unchanged (Priority 3) |
+| `select merchants` | 1.00 | 1.00 | unchanged (Priority 3) |
+| `select merchant_category_learning` | 1.00 | 1.00 | unchanged (Priority 3) |
+| `select transactions` | 1.00 | 1.00 | unchanged (Priority 2) |
+| **Total statements, 200 rows** | **1,329** | **810** | **−39%** |
+| **Total statements, 400 rows** | **2,408** | **1,610** | **−33%** |
+| **Per row** | 6.64 / 6.02 | **4.05 / 4.03** | −2.0 per row |
+
+`category_rules` is now **exactly 2 per statement** — one query for USER-scope rules, one for
+GLOBAL — and stays at 2 when the row count doubles. That is the fix behaving precisely as designed:
+constant, not merely smaller.
+
+The remaining ~4 queries/row are the four untouched patterns, which is the expected outcome: this
+change targeted one of the five and left the other four for Priorities 2 and 3, both deferred
+pending review.
+
+### Execution time
+
+| Rows | Before | After | Change |
+|---:|---:|---:|---|
+| 200 | 5,047 ms | 4,086 ms | −19% |
+| 400 | 9,125 ms | 5,213 ms | −43% |
+
+**Read these as a ratio, not as absolute throughput.** Both runs have SQL DEBUG logging on, which
+inflates wall time substantially (the before-run's 200-row import produced 56,818 log lines) — and
+part of the improvement is simply that there are fewer statements to log. Real-world timings without
+logging are in `E2E_TEST_REPORT.md` Issue 02.
+
+The 400-row case improving nearly twice as much as the 200-row case is the expected shape: the
+eliminated cost scaled with row count, so the larger file had more of it to lose.
+
+### Memory impact
+
+The rule set is held for the duration of one statement instead of being re-fetched per row. Its size
+is bounded by *the user's rule count plus the global set* — measured at **46 GLOBAL rules** on this
+database, with USER rules typically in single digits — and is **independent of row count**. A
+20,000-row import holds the same handful of `CategoryRule` objects a 200-row import does.
+
+This is the trade the standing performance rule asks to be stated explicitly: a bounded, row-count-
+independent allocation replacing an unbounded, row-count-proportional query load. Unlike the
+reverted merchant-resolution attempt, it does not shift cost from one resource to another — the
+per-row query cost is removed, not relocated.
+
+### Correctness
+
+Guarded by `ImportRuleLookupCountTest` (3 tests): the rule set is loaded exactly once per statement,
+the per-row loading overload is never reached from staging, and a 20× larger file still costs one
+lookup. Precedence is preserved by construction — `ruleSet()` returns USER rules before GLOBAL, and
+the evaluation iterates that list in order, which is the same order the two sequential queries
+produced.
+
+---
+
 ## Recommended order
 
 Ranked by ratio of impact to risk. Each is a batch-or-cache change, **none is architectural**, and
