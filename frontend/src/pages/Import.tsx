@@ -357,6 +357,10 @@ export default function Import() {
         // staged ruleId is echoed back here, same as categorySource already was.
         ruleId: r.ruleId,
         likelyDuplicate: r.likelyDuplicate,
+        // The user's answer, not the engine's guess. Without it, reconciliation re-flags the row
+        // the moment it lands and strips it from every spend total -- the decision would show in
+        // the ledger and vanish from the numbers. See ImportDto.ConfirmedRow.
+        confirmedNotDuplicate: dupDecisions[i] === 'import' && !!r.duplicateMatch,
         referenceNumber: r.referenceNumber,
         balanceAfter: r.balanceAfter,
       }));

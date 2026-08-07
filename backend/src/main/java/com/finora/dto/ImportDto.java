@@ -363,6 +363,23 @@ public class ImportDto {
             Integer installmentsPaid, Integer installmentsTotal
     ) {}
 
+    /**
+     * @param confirmedNotDuplicate the user's ANSWER on the duplicate review screen, as opposed to
+     *        {@code likelyDuplicate}, which is the engine's GUESS. True only when the engine
+     *        flagged this row and the person looked at both sides and chose "Import anyway".
+     *
+     *        <p>It has to travel with the row because nothing downstream can reconstruct it.
+     *        Reconciliation sees two rows with the same date, amount and description and has no
+     *        way to tell "the user re-uploaded the same statement" from "the user takes this train
+     *        twice a day and said so" -- and without being told, it assumed the first and stripped
+     *        the row out of every spend calculation. See V65 for the measured damage.
+     *
+     *        <p>A boolean rather than the review screen's three-state decision because "skip" never
+     *        reaches here: a skipped row arrives with {@code include=false} and is not imported at
+     *        all. The only decision that needs carrying is the one that changes what happens to a
+     *        row that IS imported. Defaults to false for a client that does not send it (the mobile
+     *        app, which has no duplicate review screen), which is exactly the old behaviour.
+     */
     public record ConfirmedRow(
             LocalDate date, String description, BigDecimal amount, String type,
             String category, boolean include,
@@ -370,8 +387,19 @@ public class ImportDto {
             UUID ruleId,             // carried from staging — see StagedRow.ruleId
             boolean likelyDuplicate, // carried from staging, so the summary can report it honestly
             String referenceNumber,  // carried from staging — see StagedRow.referenceNumber
-            BigDecimal balanceAfter  // carried from staging — see StagedRow.balanceAfter
-    ) {}
+            BigDecimal balanceAfter, // carried from staging — see StagedRow.balanceAfter
+            boolean confirmedNotDuplicate
+    ) {
+        /** Pre-WI5 arity. Kept so the many call sites that construct a row without a duplicate
+         *  decision -- re-import, tests, the multi-account path -- stay unchanged rather than
+         *  every one of them growing a literal `false` that says nothing. */
+        public ConfirmedRow(LocalDate date, String description, BigDecimal amount, String type,
+                            String category, boolean include, String categorySource, UUID ruleId,
+                            boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter) {
+            this(date, description, amount, type, category, include, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, false);
+        }
+    }
 
     /** Everything the PRD's "Import Summary" step asks for, computed from what actually happened
      *  during this import — not placeholder counts. See CsvImportService.confirm().

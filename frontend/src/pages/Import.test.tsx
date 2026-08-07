@@ -530,6 +530,41 @@ describe('Import — duplicate review gates the import', () => {
     ]);
   });
 
+  /**
+   * The decision has to reach the SERVER, not just the payload's include flag. Reconciliation runs
+   * straight after the import, sees two rows with the same date, amount and description, and — told
+   * nothing — marks the later one as a duplicate, which strips it from every spend total. The user's
+   * answer would show in the ledger and vanish from the numbers.
+   */
+  it('tells the server which duplicates the user personally cleared', async () => {
+    stageRows([
+      stagedRow('METRO FARE', true),
+      stagedRow('SWIGGY ORDER 4471', true),
+      stagedRow('BLINKIT GROCERIES 9982', false),
+    ]);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await screen.findByTestId('duplicate-review');
+
+    await user.click(screen.getAllByRole('button', { name: 'Import anyway' })[0]);
+    await user.click(screen.getAllByRole('button', { name: 'Skip this row' })[1]);
+    await user.click(confirmButton());
+
+    await waitFor(() => expect(importApi.confirm).toHaveBeenCalled());
+    const payload = vi.mocked(importApi.confirm).mock.calls[0][0] as {
+      rows: { description: string; confirmedNotDuplicate?: boolean }[];
+    };
+    expect(payload.rows.map((r) => [r.description, r.confirmedNotDuplicate === true])).toEqual([
+      ['METRO FARE', true],
+      ['SWIGGY ORDER 4471', false],
+      // Never flagged, so there was no question to answer -- asserting "not a duplicate" about a
+      // row nothing questioned would be claiming a decision the user was never asked to make.
+      ['BLINKIT GROCERIES 9982', false],
+    ]);
+  });
+
   /** Bulk resolution is the difference between reviewing 3 duplicates and abandoning 40 of them,
    *  but it must never overwrite a row the user already answered by hand. */
   it('applies one decision to identical duplicates without touching answered ones', async () => {

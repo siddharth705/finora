@@ -558,6 +558,13 @@ public class ImportService {
             t.setReferenceNumber(row.referenceNumber());
             t.setBalanceAfter(row.balanceAfter());
             t.setNeedsCategoryReview(isUnresolvedGuess);
+            // The user's answer on the duplicate review screen, recorded on the row itself so
+            // reconciliation cannot later overrule it. Only meaningful when the engine actually
+            // flagged the row -- a client asserting "not a duplicate" about a row nothing
+            // questioned would be claiming a decision the user was never asked to make.
+            if (row.likelyDuplicate() && row.confirmedNotDuplicate()) {
+                t.setNotDuplicateConfirmedAt(java.time.Instant.now());
+            }
             // See CategorizationService.decisionSourceFor -- categorySource/ruleId are carried
             // through from staging (StagedRow -> ConfirmedRow) unchanged by review, same as
             // category itself; a user changing the category during review doesn't currently

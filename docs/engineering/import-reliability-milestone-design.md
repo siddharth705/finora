@@ -312,6 +312,26 @@ unticked (safe by default) *and* unresolved, so the untick can never take effect
 `apply to similar` is bounded to still-unresolved rows so a bulk action cannot overwrite a hand-made
 choice. Multi-account PDFs are not covered — see §7.
 
+**WI5A — the decision has to survive what runs after it (V65).** The validation gate caught this by
+driving the real UI against a real database, which is the only place it existed. A user confirmed
+two identical METRO FARE charges with "Import anyway"; the rows landed correctly; then
+`ReconciliationService`'s duplicate pass — which runs after every import, create, edit and delete —
+saw two rows sharing a duplicate key and marked the later one `isDuplicateOf`. Seven call sites
+filter that out, so the ledger held ₹1,618.50 and the dashboard reported ₹1,528.50, the ₹90 gap
+being exactly the fares the user had asked for.
+
+Neither half was wrong on its own. Import wrote the row correctly; reconciliation ran correctly by
+its own lights. The defect lived in the composition, and only after both had committed — which is
+why `ConfirmedNotDuplicateIT` is an integration test and why a mocked test of either half would have
+passed while the product was wrong.
+
+The fix carries the user's answer through to the row: `ConfirmedRow.confirmedNotDuplicate` →
+`transactions.not_duplicate_confirmed_at`, which reconciliation's duplicate pass skips. Persisted
+rather than applied once, because a decision honoured only by the run following the import would be
+undone by the user's next unrelated action. The flag is ignored on a row the engine never flagged —
+it is an answer to a question, and a client cannot claim a decision the user was never asked to
+make. The guard skips the *marking*, not the *grouping*, so a third accidental copy is still caught.
+
 ---
 
 ## 5. Sequencing

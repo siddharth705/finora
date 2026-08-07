@@ -159,6 +159,22 @@ Three things the shape of the data enforces:
 `apply to similar` is bounded to rows still unresolved: a bulk action must never overwrite a choice
 already made by hand.
 
+**The decision travels with the row.** `ConfirmedRow.confirmedNotDuplicate` carries the user's
+*answer* alongside `likelyDuplicate`, which is only the engine's *guess*, and confirming an
+"Import anyway" row stamps `transactions.not_duplicate_confirmed_at`. `ReconciliationService`'s
+duplicate pass skips rows carrying that stamp.
+
+This is not belt-and-braces. Without it the milestone gate measured a ledger holding ₹1,618.50 while
+the dashboard reported ₹1,528.50 — the ₹90 difference being exactly the two fares the user had
+explicitly asked to import. Reconciliation runs after every import, create, edit *and* delete, and
+it cannot tell "the same statement uploaded twice" from "two metro fares on one day" without being
+told; every spend calculation filters `is_duplicate_of IS NULL`, so the decision was honoured in the
+ledger and reversed in the numbers. The stamp is persisted rather than applied once so the ruling
+survives the user's next unrelated action too.
+
+A client that sends no decision — the mobile app, which has no duplicate review screen — behaves
+exactly as before.
+
 **Not yet wired for multi-account PDFs** — that path still auto-unticks flagged rows, because its
 per-section state needs restructuring first rather than a second copy of the component. Recorded in
 [import-reliability-milestone-design.md](import-reliability-milestone-design.md) §7.

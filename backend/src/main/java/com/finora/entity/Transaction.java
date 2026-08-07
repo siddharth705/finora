@@ -74,6 +74,17 @@ public class Transaction extends BaseEntity {
     @Column(name = "is_duplicate_of")
     private UUID isDuplicateOf;
 
+    // Set when the user looked at this row on the duplicate review screen, saw what the engine
+    // thought it repeated, and chose "Import anyway" -- two identical metro fares on one day, a
+    // split bill, a legitimately repeated charge. A human ruling, distinct from isDuplicateOf,
+    // which is only ever the engine's.
+    //
+    // ReconciliationService's duplicate pass skips rows carrying this. That pass runs after EVERY
+    // import, create, edit and delete, so a one-shot skip at import time would have held only
+    // until the user's next action; this makes the decision permanent.
+    @Column(name = "not_duplicate_confirmed_at")
+    private java.time.Instant notDuplicateConfirmedAt;
+
     @Column(name = "is_transfer", nullable = false)
     private boolean isTransfer = false;
 
@@ -176,6 +187,9 @@ public class Transaction extends BaseEntity {
     public void setNotes(String notes) { this.notes = notes; }
     public UUID getIsDuplicateOf() { return isDuplicateOf; }
     public void setIsDuplicateOf(UUID isDuplicateOf) { this.isDuplicateOf = isDuplicateOf; }
+
+    public java.time.Instant getNotDuplicateConfirmedAt() { return notDuplicateConfirmedAt; }
+    public void setNotDuplicateConfirmedAt(java.time.Instant at) { this.notDuplicateConfirmedAt = at; }
     public boolean isTransfer() { return isTransfer; }
     public void setTransfer(boolean transfer) { isTransfer = transfer; }
     public UUID getTransferPairId() { return transferPairId; }
