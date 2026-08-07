@@ -97,6 +97,7 @@ public class ImportService {
     private final StatementAnalysisRecorder analysisRecorder;
     private final com.finora.imports.storage.StatementContentService statementContentService;
     private final com.finora.service.MerchantLearningEventPublisher learningEventPublisher;
+    private final LayoutRegistryService layoutRegistryService;
 
     public ImportService(AccountRepository accountRepository, AccountService accountService,
                           TransactionRepository transactionRepository, MerchantRepository merchantRepository,
@@ -112,7 +113,9 @@ public class ImportService {
                           ProductIdentityResolver productIdentityResolver,
                           com.finora.imports.storage.StatementContentService statementContentService,
                           StatementAnalysisRecorder analysisRecorder,
-                          com.finora.service.MerchantLearningEventPublisher learningEventPublisher) {
+                          com.finora.service.MerchantLearningEventPublisher learningEventPublisher,
+                          LayoutRegistryService layoutRegistryService) {
+        this.layoutRegistryService = layoutRegistryService;
         this.analysisRecorder = analysisRecorder;
         this.productIdentityResolver = productIdentityResolver;
         this.statementContentService = statementContentService;
@@ -642,6 +645,15 @@ public class ImportService {
         // one insert -- consistent across every row, which is what matters for comparing layouts.
         statementImport.setImportDurationMs(System.currentTimeMillis() - startedAtMs);
         StatementImport savedImport = statementImportRepository.save(statementImport);
+
+        // Milestone 2 item 2: the layout gets a row of its own, not just a string on this one.
+        // Placed here because this is the single authoritative moment a confirmed import records
+        // its fingerprint -- registering anywhere earlier would count staging runs the user
+        // abandoned. The write itself happens after this transaction commits and can never fail
+        // it; see LayoutRegistryService.
+        layoutRegistryService.observe(
+                savedImport.getLayoutFingerprint(), savedImport.getSourceFormat(), layoutMetadataJson);
+
         // Ordinal assigned here, from position in the list being inserted. Without it the V67
         // unique index on (statement_import_id, row_ordinal) covers nothing -- a NULL ordinal is
         // excluded by the index predicate, so every row would opt itself out of the guarantee it

@@ -1,12 +1,14 @@
 package com.finora.imports;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.finora.entity.RegisteredLayout;
 import com.finora.entity.StatementImport;
 import com.finora.imports.LayoutIntelligenceService.EvidenceReport;
 import com.finora.imports.LayoutIntelligenceService.LayoutSummary;
 import com.finora.imports.LayoutIntelligenceService.UnknownHeaderSummary;
 import com.finora.repository.StatementImportRepository;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.BeanUtils;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.lang.reflect.RecordComponent;
@@ -26,8 +28,11 @@ import static org.mockito.Mockito.when;
 class LayoutIntelligenceServiceTest {
 
     private final StatementImportRepository repository = mock(StatementImportRepository.class);
+    // Mockito answers an empty list by default, which is the "registry has never been written to"
+    // case -- every pre-registry assertion below still describes what the aggregate alone reports.
+    private final LayoutRegistryService registry = mock(LayoutRegistryService.class);
     private final LayoutIntelligenceService service =
-            new LayoutIntelligenceService(repository, new ObjectMapper());
+            new LayoutIntelligenceService(repository, registry, new ObjectMapper());
 
     private static final Instant JAN = Instant.parse("2026-01-15T10:00:00Z");
 
@@ -181,6 +186,125 @@ class LayoutIntelligenceServiceTest {
         assertThat(service.layoutOverview()).hasSize(2);
         assertThat(service.layoutOverview()).extracting(LayoutSummary::fingerprint)
                 .contains("FP-1-BBBB");
+    }
+
+    // ------------------------------------------------------------------ the registry overlay
+
+    @Test
+    void aLayoutWithNoRegistryRowIsStillReported() {
+        // V68 backfilled every fingerprint in history and every confirmed import registers its own,
+        // so this should not happen -- which is exactly why it must not be silently dropped. A
+        // fingerprint that reports UNREGISTERED means an observation went missing, and the only way
+        // anyone finds that out is by seeing the row.
+        when(repository.findAllWithLayoutFingerprint()).thenReturn(List.of(
+                imported("FP-1-AAAA", JAN, List.of("RUNNING_BALANCE"), List.of(), 400L)));
+
+        LayoutSummary layout = service.layoutOverview().get(0);
+
+        assertThat(layout.status()).isEqualTo(LayoutIntelligenceService.UNREGISTERED);
+        assertThat(layout.name()).isNull();
+        assertThat(layout.usageCount()).isEqualTo(1);
+    }
+
+    @Test
+    void theRegistryDecidesAlayoutsIdentityAndTheImportsDecideItsUsage() {
+        when(repository.findAllWithLayoutFingerprint()).thenReturn(List.of(
+                imported("FP-1-AAAA", JAN, List.of("RUNNING_BALANCE"), List.of(), 400L),
+                imported("FP-1-AAAA", JAN.plus(30, ChronoUnit.DAYS), List.of("RUNNING_BALANCE"), List.of(), 400L)));
+        when(registry.all()).thenReturn(List.of(
+                registered("FP-1-AAAA", "HDFC Savings (PDF)", RegisteredLayout.Status.SUPPORTED,
+                        "PDF", "PdfPreviewGenerator", JAN.minus(365, ChronoUnit.DAYS), JAN.plus(30, ChronoUnit.DAYS))));
+
+        LayoutSummary layout = service.layoutOverview().get(0);
+
+        assertThat(layout.name()).isEqualTo("HDFC Savings (PDF)");
+        assertThat(layout.status()).isEqualTo("SUPPORTED");
+        assertThat(layout.parser()).isEqualTo("PdfPreviewGenerator");
+        // Usage, capabilities and headers are still the aggregate's answer -- the registry knows
+        // what the layout IS, not what has happened to it.
+        assertThat(layout.usageCount()).isEqualTo(2);
+        assertThat(layout.stableCapabilities()).containsExactly("RUNNING_BALANCE");
+    }
+
+    @Test
+    void firstSeenComesFromTheRegistryRatherThanFromSurvivingImports() {
+        // The reason first_seen is a column and not a MIN(). Statement imports are soft-deleted and
+        // hidden from every query here, so an aggregate first-seen creeps forward every time a user
+        // tidies their uploads -- a layout Finora has handled for a year would report as new.
+        Instant reallyFirstSeen = JAN.minus(400, ChronoUnit.DAYS);
+        when(repository.findAllWithLayoutFingerprint()).thenReturn(List.of(
+                imported("FP-1-AAAA", JAN, List.of(), List.of(), 400L)));
+        when(registry.all()).thenReturn(List.of(
+                registered("FP-1-AAAA", null, RegisteredLayout.Status.OBSERVED, "PDF", null,
+                        reallyFirstSeen, JAN)));
+
+        assertThat(service.layoutOverview().get(0).firstSeen()).isEqualTo(reallyFirstSeen);
+    }
+
+    @Test
+    void aRegisteredLayoutWhoseStatementsWereAllDeletedIsStillListed() {
+        // The history loss the registry exists to stop. Every import of this layout is gone; the
+        // fact that Finora encountered it is not.
+        when(repository.findAllWithLayoutFingerprint()).thenReturn(List.of());
+        when(registry.all()).thenReturn(List.of(
+                registered("FP-1-GONE", "PNB Current", RegisteredLayout.Status.SUPPORTED, "CSV",
+                        "CsvParser", JAN, JAN.plus(10, ChronoUnit.DAYS))));
+
+        LayoutSummary layout = service.layoutOverview().get(0);
+
+        assertThat(layout.fingerprint()).isEqualTo("FP-1-GONE");
+        assertThat(layout.name()).isEqualTo("PNB Current");
+        // Zero rather than absent: "we support this and nothing exercises it any more" is the
+        // report, and it is a different statement from the layout not existing.
+        assertThat(layout.usageCount()).isZero();
+        assertThat(layout.isRecurring()).isFalse();
+        assertThat(layout.medianDurationMs()).isNull();
+    }
+
+    @Test
+    void aRegistryRowMissingItsSourceFormatDoesNotBlankTheAggregatesAnswer() {
+        // V68 backfills source_format but leaves parser null, and an older row may have neither.
+        // Overlaying a null over a value the aggregate does know would make the merge lose
+        // information rather than add it.
+        when(repository.findAllWithLayoutFingerprint()).thenReturn(List.of(
+                imported("FP-1-AAAA", JAN, List.of(), List.of(), 400L)));
+        when(registry.all()).thenReturn(List.of(
+                registered("FP-1-AAAA", null, RegisteredLayout.Status.OBSERVED, null, null, JAN, JAN)));
+
+        assertThat(service.layoutOverview().get(0).sourceFormat()).isEqualTo("PDF");
+    }
+
+    @Test
+    void aLayoutWithNoSurvivingImportsNeverCountsAsDrifting() {
+        // driftingLayouts() reads the overview, which now contains rows with no timeline at all.
+        // Reporting one of those as drift would be a signal derived from nothing.
+        when(repository.findAllWithLayoutFingerprint()).thenReturn(List.of());
+        when(registry.all()).thenReturn(List.of(
+                registered("FP-1-GONE", "PNB Current", RegisteredLayout.Status.SUPPORTED, "CSV",
+                        "CsvParser", JAN, JAN)));
+
+        assertThat(service.driftingLayouts()).isEmpty();
+    }
+
+    /**
+     * A registry row as this service would read one.
+     *
+     * <p>Built reflectively because nothing constructs a {@code RegisteredLayout} in Java --
+     * production rows come from an {@code ON CONFLICT} upsert, and giving the entity a public
+     * constructor purely so a test could call it would advertise a second way to create one. The
+     * upsert's own behaviour is covered against a real database in {@code LayoutRegistryIT}.
+     */
+    private RegisteredLayout registered(String fingerprint, String name, RegisteredLayout.Status status,
+                                         String sourceFormat, String parser, Instant firstSeen, Instant lastSeen) {
+        RegisteredLayout layout = BeanUtils.instantiateClass(RegisteredLayout.class);
+        ReflectionTestUtils.setField(layout, "fingerprint", fingerprint);
+        ReflectionTestUtils.setField(layout, "sourceFormat", sourceFormat);
+        ReflectionTestUtils.setField(layout, "parser", parser);
+        ReflectionTestUtils.setField(layout, "firstSeen", firstSeen);
+        ReflectionTestUtils.setField(layout, "lastSeen", lastSeen);
+        layout.rename(name);
+        layout.moveTo(status);
+        return layout;
     }
 
     /**
