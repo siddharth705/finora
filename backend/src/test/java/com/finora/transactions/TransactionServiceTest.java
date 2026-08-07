@@ -681,6 +681,65 @@ class TransactionServiceTest {
         assertThat(t1.isCategoryManuallySet()).isTrue();
     }
 
+    // --- WI1A: which learning path each action takes -------------------------------------------
+    // The wiring, asserted here; what it BUYS (a lost race no longer discards the whole batch) is
+    // asserted in BulkRecategorizeLearningIT against a real transaction, because a mocked test of
+    // that property would pass against code that does not have it.
+
+    @Test
+    void bulkRecategorize_queuesLearningForEveryRow_ratherThanApplyingItInline() {
+        UUID txn1Id = UUID.randomUUID();
+        UUID txn2Id = UUID.randomUUID();
+        Transaction t1 = ownedTransaction(txn1Id, userId);
+        Transaction t2 = ownedTransaction(txn2Id, userId);
+        t1.setDescription("SWIGGY*ORDR9182 BLR");
+        t2.setDescription("SWIGGY*ORDR7710 BLR");
+        when(transactionRepository.findById(txn1Id)).thenReturn(Optional.of(t1));
+        when(transactionRepository.findById(txn2Id)).thenReturn(Optional.of(t2));
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Groceries"))).thenReturn(dummyCategory);
+
+        transactionService.bulkRecategorize(userId, List.of(txn1Id, txn2Id), "Groceries");
+
+        verify(categorizationService).queueLearning(userId, "SWIGGY*ORDR9182 BLR", dummyCategory.getId());
+        verify(categorizationService).queueLearning(userId, "SWIGGY*ORDR7710 BLR", dummyCategory.getId());
+        // One event per row, not one per distinct merchant: each row is a real confirmation and
+        // increments confirmation_count once, which is what ConfidenceEngine.topCategory weighs.
+        verify(categorizationService, times(2)).queueLearning(any(), any(), any());
+        // The synchronous path is what this work item removed from here.
+        verify(categorizationService, never()).learn(any(), any(), any());
+    }
+
+    /**
+     * The other half of the WI1A rule, and the one a future change is more likely to get wrong:
+     * a SINGLE interactive action still learns synchronously. The caller is waiting on the result,
+     * the blast radius of a failure is the one change they asked for, and an error they can see and
+     * retry beats a silent queue entry — see CategorizationService.learn's doc comment.
+     */
+    @Test
+    void singleInteractiveRecategorizationStillLearnsSynchronously_andNeverQueues() {
+        UUID txnId = UUID.randomUUID();
+        UUID merchantId = UUID.randomUUID();
+
+        Transaction viaUpdateCategory = ownedTransaction(txnId, userId);
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(viaUpdateCategory));
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Dining"))).thenReturn(dummyCategory);
+        transactionService.updateCategory(userId, txnId, "Dining");
+
+        UUID confirmTxnId = UUID.randomUUID();
+        Transaction viaConfirm = ownedTransaction(confirmTxnId, userId);
+        viaConfirm.setMerchantId(merchantId);
+        when(transactionRepository.findById(confirmTxnId)).thenReturn(Optional.of(viaConfirm));
+        when(categoryRepository.findById(dummyCategory.getId())).thenReturn(Optional.of(dummyCategory));
+        transactionService.confirmMerchantCategory(userId, merchantId, confirmTxnId, dummyCategory.getId(), userId);
+
+        var createReq = new TransactionDto.CreateRequest(UUID.randomUUID(), "Dining", LocalDate.now(),
+                "Swiggy order", BigDecimal.valueOf(486), "EXPENSE", List.of());
+        transactionService.create(userId, createReq);
+
+        verify(categorizationService, times(3)).learn(eq(userId), anyString(), eq(dummyCategory.getId()));
+        verify(categorizationService, never()).queueLearning(any(), any(), any());
+    }
+
     @Test
     void delete_reversesTheAccountBalanceContribution() {
         UUID txnId = UUID.randomUUID();

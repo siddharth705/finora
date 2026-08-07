@@ -32,6 +32,7 @@ public class CategorizationService {
 
     private final MerchantNormalizationEngine merchantNormalizationEngine;
     private final MerchantLearningService merchantLearningService;
+    private final MerchantLearningEventPublisher learningEventPublisher;
     private final MerchantCategoryLearningRepository learningRepository;
     private final ConfidenceEngine confidenceEngine;
     private final CategoryRepository categoryRepository;
@@ -39,12 +40,14 @@ public class CategorizationService {
 
     public CategorizationService(MerchantNormalizationEngine merchantNormalizationEngine,
                                   MerchantLearningService merchantLearningService,
+                                  MerchantLearningEventPublisher learningEventPublisher,
                                   MerchantCategoryLearningRepository learningRepository,
                                   ConfidenceEngine confidenceEngine,
                                   CategoryRepository categoryRepository,
                                   RuleEngineService ruleEngineService) {
         this.merchantNormalizationEngine = merchantNormalizationEngine;
         this.merchantLearningService = merchantLearningService;
+        this.learningEventPublisher = learningEventPublisher;
         this.learningRepository = learningRepository;
         this.confidenceEngine = confidenceEngine;
         this.categoryRepository = categoryRepository;
@@ -192,12 +195,12 @@ public class CategorizationService {
      *  confirmation against the merchant's distribution (with audit trail + undo support),
      *  not a flat overwrite of a single "last category" value.
      *
-     *  <p><b>Synchronous, and deliberately so — but no longer used by the import path.</b> This is
-     *  now reached only by single, interactive actions: a user correcting one transaction's
-     *  category, or an admin confirming a category for one merchant. There, applying the learning
-     *  inline is the right behaviour — the caller is waiting for the result, the blast radius of a
-     *  failure is the one change they just asked for, and an error they can see and retry beats a
-     *  silent queue entry.
+     *  <p><b>Synchronous, and deliberately so — but only for SINGLE, INTERACTIVE actions.</b> This
+     *  is now reached only by a user creating or editing one transaction, correcting one
+     *  transaction's category, or an admin confirming a category for one merchant. There, applying
+     *  the learning inline is the right behaviour — the caller is waiting for the result, the blast
+     *  radius of a failure is the one change they just asked for, and an error they can see and
+     *  retry beats a silent queue entry.
      *
      *  <p>The import path used to come through here too, once per confirmed row inside one
      *  transaction, and that was Bug 02: a single lost race against
@@ -207,13 +210,55 @@ public class CategorizationService {
      *  ("Learning update fails after a transaction has been categorized" — do NOT rollback the
      *  category) is therefore satisfied where it actually mattered.
      *
-     *  <p>The remaining exposure is bounded and known: {@code TransactionService.bulkRecategorize}
-     *  still calls this in a loop, so it has the import path's old shape at up to
-     *  {@code TransactionDto.MAX_BULK_IDS} rows. It is the obvious next candidate for the queue,
-     *  and is left out of WI1 only because WI1's scope is the import path. */
+     *  <p><b>The last batch caller is gone too (WI1A).</b>
+     *  {@code TransactionService.bulkRecategorize} used to call this in a loop, up to
+     *  {@code TransactionDto.MAX_BULK_IDS} times inside one transaction — the import path's exact
+     *  pre-WI1 shape, and the same single-lost-race-rolls-back-everything exposure at 500 rows
+     *  instead of a statement's worth. It now calls {@link #queueLearning} instead. Every batch
+     *  learning path in the product is asynchronous; every synchronous one is a single action a
+     *  person is waiting on. That is the rule, and the two methods below are how it is expressed
+     *  in code rather than in a comment. */
     public void learn(UUID userId, String description, UUID categoryId) {
         Merchant merchant = merchantNormalizationEngine.resolve(userId, description);
         merchantLearningService.confirm(userId, merchant.getId(), categoryId);
+    }
+
+    /**
+     * The queued counterpart of {@link #learn}, for BATCH callers (WI1A).
+     *
+     * <p>Same confirmation, same distribution, same audit trail — applied by
+     * {@code MerchantLearningEventWorker} after the caller's transaction commits rather than inside
+     * it. Use this wherever learning happens N times in one unit of work; use {@link #learn} for a
+     * single action whose caller is waiting on the answer. The choice is not about how important
+     * the learning is, it is about blast radius: with N confirmations in one transaction, the
+     * chance that at least one loses its race against
+     * {@code UNIQUE(user_id, merchant_id, category_id)} scales with N, while the cost of losing
+     * scales with N as well — every one of the user's N changes is discarded because of one of
+     * them.
+     *
+     * <p><b>Both writes happen in the CALLER's transaction, and neither opens its own.</b> The
+     * merchant resolution below is a write ({@code resolve} creates a merchant and an alias on a
+     * miss) and the event row is a write, and both must roll back with the caller — a queued
+     * confirmation for a recategorization that never committed is a worse failure than the one this
+     * replaces. Only the APPLYING is deferred, by the {@code afterCommit} hook
+     * {@code MerchantLearningEventPublisher.enqueue} registers. See that class for why those two
+     * halves have to be separated rather than one of them chosen.
+     *
+     * <p>Both source ids are null, and that is honest rather than missing: this learning did not
+     * come from a statement import and there was no staging session. The admin queue's projection
+     * LEFT JOINs both, so the row renders with no statement rather than being hidden — and an
+     * operator following a link to an import that never existed would reasonably conclude the row
+     * is corrupt.
+     *
+     * <p>One event per call, with no de-duplication across a batch, deliberately. Each call is one
+     * real confirmation and increments {@code confirmation_count} once, which is what
+     * {@code ConfidenceEngine.topCategory} weighs; collapsing five rows for the same merchant into
+     * one event would quietly change what the engine learns from a bulk action. {@code
+     * ImportService.confirm} queues per row for the identical reason.
+     */
+    public void queueLearning(UUID userId, String description, UUID categoryId) {
+        Merchant merchant = merchantNormalizationEngine.resolve(userId, description);
+        learningEventPublisher.enqueue(userId, merchant.getId(), categoryId, null, null);
     }
 
     /** Records that an ASSIGN_CATEGORY rule match actually reached a persisted transaction --

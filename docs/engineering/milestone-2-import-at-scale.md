@@ -160,6 +160,36 @@ Not an enhancement: technical debt inside a subsystem already redesigned once, a
 maintaining two learning paths forever. Small and known, which is exactly why it stops being "later"
 only if it goes early. Do it alongside the one-line security fixes.
 
+**As built.** `CategorizationService.queueLearning` is the batch counterpart of `learn`: it resolves
+the merchant in the caller's transaction and hands the confirmation to the queue WI1 already built,
+so only the *applying* is deferred. No second queue, no second vocabulary, and no migration — the
+admin queue's projection already `LEFT JOIN`s the statement import, so a bulk event with null source
+ids renders rather than hiding. Null is stated rather than invented: a bulk recategorization is not
+an import and had no staging session.
+
+One event per row, not one per distinct merchant. Each row is a real confirmation and increments
+`confirmation_count` once, which is what `ConfidenceEngine.topCategory` weighs; de-duplicating a
+batch would quietly change what the engine learns from it. `ImportService.confirm` queues per row
+for the identical reason.
+
+The rule is now expressed as two methods rather than a comment: **every batch learning path is
+asynchronous, every synchronous one is a single action a person is waiting on.** `create`, `update`,
+`updateCategory` and `confirmMerchantCategory` are unchanged and stay synchronous by design.
+
+`BulkRecategorizeLearningIT` holds it, against a real Postgres because transaction-boundary
+behaviour is invisible to a mock — the lesson `BudgetServiceTest` and `BootstrapServiceTest` taught.
+Falsified before it was trusted: reverting `bulkRecategorize` to `learn` fails 4 of its 6 tests. The
+sharpest of them arms `confirm` to throw *before* the batch runs, which is where the old shape died,
+and asserts the outcome rather than `verify(never())` — a "confirm was not called" assertion still
+passes if the call is merely moved somewhere else that shares the transaction.
+
+**Nothing else was missed.** Every site that assigns a transaction's category was checked:
+`ImportService` (queued by WI1), `BudgetService` (a budget's category, no learning),
+`CategorizationService.applySideEffectRules` (no learning call), and the four single interactive
+paths above. `MerchantService.merge` writes learning rows in bulk but records no confirmation and
+de-duplicates by category before saving, so it never races the constraint; `AdminLearningQueueService.retryAll`
+only flips statuses, and the worker still applies one event per transaction. This was the last one.
+
 ### 4. Multi-account statements reach parity
 
 The multi-section path still auto-unticks flagged duplicate rows — the silent-filter behaviour WI5

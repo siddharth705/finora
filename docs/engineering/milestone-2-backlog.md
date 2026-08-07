@@ -75,20 +75,21 @@ account and wiring it correctly means restructuring that state rather than repea
 Left alone deliberately: doing it carelessly would make the path worse, not better. The
 single-account path is where the overwhelming majority of imports land.
 
-### WI1A — move bulk recategorization onto the asynchronous learning pipeline
+### WI1A — move bulk recategorization onto the asynchronous learning pipeline — **done**
 
-`TransactionService.bulkRecategorize` still calls `CategorizationService.learn` synchronously, in a
-loop, up to `TransactionDto.MAX_BULK_IDS` (500) times inside one transaction. That is the import
-path's exact pre-WI1 shape: one lost race against `UNIQUE(user_id, merchant_id, category_id)` rolls
-back all 500 recategorizations.
+`TransactionService.bulkRecategorize` called `CategorizationService.learn` synchronously, in a loop,
+up to `TransactionDto.MAX_BULK_IDS` (500) times inside one transaction. That is the import path's
+exact pre-WI1 shape: one lost race against `UNIQUE(user_id, merchant_id, category_id)` rolled back
+all 500 recategorizations.
 
 WI1 left it alone because its scope was the import path, but the objective was to remove the last
 synchronous *batch* learning path, not to leave one behind. Single interactive actions
 (`updateCategory`, `confirmMerchantCategory`, `create`) stay synchronous by design — see
 `CategorizationService.learn`'s doc comment.
 
-Of everything on this list, this is the one that is arguably a latent defect rather than an
-enhancement.
+Of everything on this list, this is the one that was arguably a latent defect rather than an
+enhancement. Delivered as item 3 of Milestone 2; see that charter for what was built and for the
+audit confirming no other synchronous batch learning path exists.
 
 ---
 

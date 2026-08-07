@@ -57,12 +57,14 @@ public class MerchantLearningEventPublisher {
      * outside a transaction still work: the save commits on its own and the nudge fires
      * immediately, since there is no commit to wait for.
      *
-     * @param sourceStatementImportId the confirmed import this came from; present for every
-     *                                import, and what the admin queue links back to
+     * @param sourceStatementImportId the confirmed import this came from, and what the admin queue
+     *                                links back to. Present for every import; null when the
+     *                                confirmation was not earned by one — a bulk recategorization
+     *                                (WI1A) is a real learning event with no statement behind it
      * @param sourceImportSessionId    the staging/review session, when there was one. Null for the
-     *                                 direct-file confirm path, which never has one — pass null
-     *                                 rather than inventing an id, or an operator following the
-     *                                 link lands on a session that never existed
+     *                                 direct-file confirm path and for every non-import caller —
+     *                                 pass null rather than inventing an id, or an operator
+     *                                 following the link lands on a session that never existed
      */
     public void enqueue(UUID userId, UUID merchantId, UUID categoryId,
                          UUID sourceStatementImportId, UUID sourceImportSessionId) {
