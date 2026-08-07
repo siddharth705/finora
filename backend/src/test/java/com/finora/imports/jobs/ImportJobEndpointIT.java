@@ -4,8 +4,10 @@ import com.finora.AbstractIntegrationTest;
 import com.finora.entity.ImportJob;
 import com.finora.entity.User;
 import com.finora.repository.ImportJobRepository;
+import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
+import com.finora.testsupport.TestSessions;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -49,6 +51,7 @@ class ImportJobEndpointIT extends AbstractIntegrationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private ImportJobRepository jobRepository;
     @Autowired private JwtService jwtService;
+    @Autowired private RefreshTokenRepository refreshTokens;
     private final ObjectMapper mapper = new ObjectMapper();
 
     private User user() {
@@ -62,7 +65,7 @@ class ImportJobEndpointIT extends AbstractIntegrationTest {
 
     private HttpHeaders bearerFor(User user) {
         HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(jwtService.generateToken(user.getId(), user.getEmail(), UUID.randomUUID()));
+        headers.setBearerAuth(TestSessions.accessTokenFor(jwtService, refreshTokens, user));
         return headers;
     }
 

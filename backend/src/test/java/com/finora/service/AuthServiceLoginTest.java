@@ -197,25 +197,62 @@ class AuthServiceLoginTest {
     }
 
     /**
-     * Locks in that a suspended account (User.status, see V23__user_account_status.sql and
-     * AdminUserService.suspend) is rejected before ever reaching Spring Security's
-     * authenticationManager -- a suspended user shouldn't get a "your password was correct"
-     * signal, mirroring how the existing lockout check above it in login() behaves.
+     * A suspended account is rejected, and only ever tells the CORRECT password that it is
+     * suspended.
+     *
+     * <p><b>These two tests replace one that asserted the opposite</b>
+     * ({@code login_withSuspendedAccount_isRejectedBeforeAuthenticating}, which verified
+     * {@code authenticationManager, never()).authenticate(any())}). That ordering was the bug: it
+     * meant an unauthenticated caller could post any email with any password and read "This account
+     * has been suspended" where an unregistered address returned "Invalid credentials" — an
+     * account-existence oracle on a public endpoint. The old test was not wrong about what the code
+     * did; it pinned the wrong behaviour, which is why it is deleted rather than adjusted.
      */
     @Test
-    void login_withSuspendedAccount_isRejectedBeforeAuthenticating() {
-        User u = user("suspended@example.com", "+919876500099");
+    void login_withSuspendedAccount_andTheRightPassword_saysItIsSuspended() {
+        // Same 98765-000NN fixture block the rest of this suite uses; unchanged from the
+        // test these two replace, and flagged only because the lines themselves are new.
+        User u = user("suspended@example.com", "+919876500099"); // synthetic-ok
         u.setStatus("SUSPENDED");
         when(userRepository.findByEmailIgnoreCaseAndAccountScope("suspended@example.com", "USER")).thenReturn(Optional.of(u));
+        stubSuccessfulAuthentication();
 
         try {
-            authService.login(new LoginRequest("suspended@example.com", "whatever", "USER"));
+            authService.login(new LoginRequest("suspended@example.com", "the-right-password", "USER"));
         } catch (Exception e) {
             assertThat(e.getMessage()).contains("suspended");
-            verify(authenticationManager, never()).authenticate(any());
+            // No session for an account that cannot sign in, whatever the password was.
+            verify(refreshTokenService, never()).issue(any());
             return;
         }
         throw new AssertionError("Expected login() to throw for a suspended account");
+    }
+
+    /**
+     * The enumeration fix itself. A wrong password against a suspended account has to be
+     * indistinguishable from a wrong password against an account that does not exist — which is
+     * what {@code login_withUnknownIdentifier} asserts returns "Invalid credentials".
+     */
+    @Test
+    void login_withSuspendedAccount_andAWrongPassword_revealsNothingAboutTheAccount() {
+        // Same 98765-000NN fixture block the rest of this suite uses; unchanged from the
+        // test these two replace, and flagged only because the lines themselves are new.
+        User u = user("suspended@example.com", "+919876500099"); // synthetic-ok
+        u.setStatus("SUSPENDED");
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("suspended@example.com", "USER")).thenReturn(Optional.of(u));
+        when(authenticationManager.authenticate(any())).thenThrow(new BadCredentialsException("nope"));
+
+        try {
+            authService.login(new LoginRequest("suspended@example.com", "wrong", "USER"));
+        } catch (Exception e) {
+            assertThat(e.getMessage())
+                    .as("a caller who has not proved the password must not learn that this address "
+                            + "belongs to a real, suspended account")
+                    .isEqualTo("Invalid credentials");
+            assertThat(e.getMessage()).doesNotContain("suspended");
+            return;
+        }
+        throw new AssertionError("Expected login() to throw for a wrong password");
     }
 
     @Test

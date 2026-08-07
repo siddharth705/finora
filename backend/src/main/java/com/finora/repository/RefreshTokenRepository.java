@@ -23,4 +23,23 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
             UUID userId, Instant now);
 
     Optional<RefreshToken> findByIdAndUserId(UUID id, UUID userId);
+
+    /**
+     * Whether a session still has a live refresh token, and therefore still exists at all.
+     *
+     * <p>Read on every authenticated request by {@link com.finora.security.SessionValidator}, which
+     * is what stops an access token outliving the revocation of the session that minted it. A
+     * session is alive exactly while ONE of its rows is unrevoked and unexpired: rotation revokes
+     * the presented row and writes a successor carrying the same {@code session_id}, so a session
+     * accumulates one revoked row per refresh and this must not be written as "no revoked rows
+     * exist" — that reading would end every session at its first rotation.
+     *
+     * <p>{@code expires_at} is checked as well as {@code revoked_at} because expiry is silent:
+     * nothing writes {@code revoked_at} when a refresh token simply ages out, so a session whose
+     * only row expired would otherwise still count as live.
+     *
+     * <p>Backed by {@code idx_refresh_tokens_live_session} (V71), a partial index on exactly the
+     * rows this predicate keeps.
+     */
+    boolean existsBySessionIdAndRevokedAtIsNullAndExpiresAtAfter(UUID sessionId, Instant now);
 }

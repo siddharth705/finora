@@ -2,8 +2,10 @@ package com.finora.controller;
 
 import com.finora.AbstractIntegrationTest;
 import com.finora.entity.User;
+import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
+import com.finora.testsupport.TestSessions;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -28,6 +30,7 @@ class AdminRbacIT extends AbstractIntegrationTest {
     @Autowired private TestRestTemplate restTemplate;
     @Autowired private UserRepository userRepository;
     @Autowired private JwtService jwtService;
+    @Autowired private RefreshTokenRepository refreshTokens;
 
     private User createUser(String role) {
         User user = new User();
@@ -35,6 +38,11 @@ class AdminRbacIT extends AbstractIntegrationTest {
         user.setPasswordHash("irrelevant-for-this-test");
         user.setFullName("RBAC Test User");
         user.setRole(role);
+        // An admin is an ADMIN-PORTAL account. Since V52 the scope is what decides whether a
+        // role's permissions are granted at all (AuthorizationService), so a fixture setting
+        // only the role builds a state the application refuses to create -- RoleService
+        // .requireScopeCanHold rejects attaching a permission-bearing role to a USER-scope row.
+        user.setAccountScope("USER".equals(role) ? User.SCOPE_USER : User.SCOPE_ADMIN);
         // Phone verification defaults to false and is now enforced server-side on every
         // protected endpoint (PhoneVerificationFilter) -- without this, both tests below would
         // be rejected before ever reaching the @PreAuthorize check this class exists to test,
@@ -47,7 +55,7 @@ class AdminRbacIT extends AbstractIntegrationTest {
     @Test
     void regularUser_isForbiddenFromAdminEndpoint() {
         User user = createUser("USER");
-        String token = jwtService.generateToken(user.getId(), user.getEmail(), java.util.UUID.randomUUID());
+        String token = TestSessions.accessTokenFor(jwtService, refreshTokens, user);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
@@ -62,7 +70,7 @@ class AdminRbacIT extends AbstractIntegrationTest {
     void adminUser_canAccessAdminEndpoint() {
         User admin = createUser("ADMIN");
         User targetUser = createUser("USER");
-        String token = jwtService.generateToken(admin.getId(), admin.getEmail(), java.util.UUID.randomUUID());
+        String token = TestSessions.accessTokenFor(jwtService, refreshTokens, admin);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);

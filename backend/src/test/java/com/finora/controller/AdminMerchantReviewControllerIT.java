@@ -7,9 +7,11 @@ import com.finora.entity.Merchant;
 import com.finora.entity.Transaction;
 import com.finora.entity.User;
 import com.finora.repository.MerchantRepository;
+import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
+import com.finora.testsupport.TestSessions;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -38,6 +40,7 @@ class AdminMerchantReviewControllerIT extends AbstractIntegrationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private com.finora.repository.AccountRepository accountRepository;
     @Autowired private JwtService jwtService;
+    @Autowired private RefreshTokenRepository refreshTokens;
     private final ObjectMapper mapper = new ObjectMapper();
 
     private User createUser(String role) {
@@ -46,6 +49,11 @@ class AdminMerchantReviewControllerIT extends AbstractIntegrationTest {
         user.setPasswordHash("irrelevant-for-this-test");
         user.setFullName("Merchant Review IT User");
         user.setRole(role);
+        // An admin is an ADMIN-PORTAL account. Since V52 the scope is what decides whether a
+        // role's permissions are granted at all (AuthorizationService), so a fixture setting
+        // only the role builds a state the application refuses to create -- RoleService
+        // .requireScopeCanHold rejects attaching a permission-bearing role to a USER-scope row.
+        user.setAccountScope("USER".equals(role) ? User.SCOPE_USER : User.SCOPE_ADMIN);
         user.setAccountScope(User.SCOPE_ADMIN);
         user.setPhoneVerified(true);
         return userRepository.save(user);
@@ -53,7 +61,7 @@ class AdminMerchantReviewControllerIT extends AbstractIntegrationTest {
 
     private HttpHeaders bearerFor(User user) {
         HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(jwtService.generateToken(user.getId(), user.getEmail(), UUID.randomUUID()));
+        headers.setBearerAuth(TestSessions.accessTokenFor(jwtService, refreshTokens, user));
         headers.setContentType(MediaType.APPLICATION_JSON);
         return headers;
     }

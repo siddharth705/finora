@@ -40,6 +40,60 @@ The access token carries `sid`, the registered claim name for a session identifi
 therefore answer "which session is asking" from the caller's own token, so no client stores or
 sends a session id and there is no second identifier to keep in sync across three clients.
 
+### A revocation has to reach the access token
+
+Every revocation below writes to `refresh_tokens`. None of it could touch an access token already
+in circulation, because a JWT is valid on its signature and expiry alone — so the platform could
+conclude a token was stolen, sign the user out of every device, and the attacker kept working for
+the remainder of the fifteen minutes.
+
+`JwtAuthFilter` now asks `SessionValidator`, on every authenticated request, whether the session
+named by `sid` still has a live refresh token. A request whose session has none is simply not
+authenticated, and Spring Security's entry point answers 401 exactly as it does for an expired
+token. No new response shape reaches any client: the *reason* a session ended is still reported by
+`/auth/refresh`, which is where all three clients already read it.
+
+Fifteen minutes was never the thing to measure. The defect was that a decision the platform had
+made did not take effect; shortening the access token narrows that window and never closes it, and
+lengthening it — a reasonable thing to want on mobile — silently widens it.
+
+**Keyed on the session, not the token.** Rotation revokes the presented refresh token roughly every
+fifteen minutes and writes a successor carrying the same `sid`. A check keyed on `refresh_tokens.id`
+would therefore sign every active user out at their first refresh, while looking exactly like a
+working security fix. That inverse property is held by its own test.
+
+**A null `sid` fails closed** — it means the token names no session, so its revocation status is
+unknowable, and the check would otherwise be bypassable by omitting the claim. This is deliberately
+stricter than the reading `DeviceController` applies to the same claim, where null means "cannot
+tell which device is asking" and badging nothing is the right answer.
+
+**Cost:** one indexed existence check per authenticated request, alongside the two reads that path
+already performs. `idx_refresh_tokens_live_session` (V71) is partial over the unrevoked rows, so it
+holds one entry per *live* session rather than one per rotation — V57's index makes the question
+answerable, not cheap, because nothing purges the revoked rows a long-lived session accumulates.
+
+### Account scope is an authorization input, not just a login input
+
+V52 introduced `account_scope` and recorded the model as "login disambiguates on it; authorization
+does not". That left the wall between the consumer app and the admin portal resting on
+`RoleService.requireScopeCanHold` refusing to *attach* a permission-bearing role to a USER-scope
+account — a guard that is only ever as good as the completeness of the set of granting paths, which
+nothing checks.
+
+`AuthorizationService` now withholds permission authorities from any account that is not an
+admin-portal account, so a USER-scope account holding admin permissions by any route — a row
+predating the guard, a future path that forgets it, a direct database edit — exercises none of them.
+Withholding *permissions* is exact rather than approximate: every `@PreAuthorize` in the application
+is `hasAuthority('<PERMISSION>')`, every seeded permission gates an `/api/v1/admin/**` or setup
+endpoint, and no user-facing endpoint carries a `@PreAuthorize` at all. `ROLE_*` authorities are
+still granted in full, because nothing authorizes on them and keeping them makes the anomaly legible
+rather than making a role look like it vanished.
+
+The token carries a `scope` claim, and `JwtAuthFilter` checks it against the `PORTAL_ADMIN` /
+`PORTAL_USER` authority computed for the same request — a set lookup, not a second query. An absent
+claim falls back to the row rather than failing closed, unlike an absent `sid`: the row being
+checked against is the same row the claim was copied from, so nothing is lost.
+
 ### Token lifecycle
 
 | | Lifetime | Notes |
@@ -66,6 +120,11 @@ no request context, so a null would quietly disable the check.
 | Voluntary logout | this session |
 | **Refresh token reuse** | **every session** |
 | Password change | every session |
+
+Every row above now takes effect on the *access* token as well, on the revoked session's next
+request — see [A revocation has to reach the access token](#a-revocation-has-to-reach-the-access-token).
+Previously each of them ended only the ability to *refresh*, and the token already in hand kept
+working for up to fifteen more minutes.
 
 The absolute cap deliberately does **not** revoke everything. Each device carries its own
 `session_started_at`, so a phone that signed in on day 3 reaches its own cap on day 10 regardless
@@ -105,13 +164,65 @@ as third-party cookies, so a credential depending on it ships with a deprecation
 
 ### Web clients still use `localStorage` today
 
-The cookie is issued and inert: a browser only stores a `Set-Cookie` from a cross-origin response
-if the request was credentialed, and no client has opted in. Migrating the two web apps is the one
-remaining piece, and it needs CSRF handled deliberately — `SameSite=Lax` plus a required custom
-header — rather than as a side effect of switching transports.
+The cookie transport itself works — `0205e8b` set `withCredentials` on both apps' axios instances,
+which is what a browser needs before it will store or return a cross-origin `Set-Cookie`. What has
+not happened is removing the `localStorage` copy, and until that happens the XSS mitigation the
+cookie exists for is not delivered: script on the page can still read the durable credential.
+
+**Two named dependencies, neither of them the transport.** This is recorded here because "remove the
+localStorage write" reads like a one-line change and is not one.
+
+1. **`/users/me/password-change/complete` requires the client to read its own refresh token.**
+   `CompleteRequest.currentRefreshToken` is `@NotBlank`, and it is how the backend identifies which
+   device to *exclude* from `revokeAllOtherSessionsForUser`. A web client that cannot read the token
+   cannot send it — and `revokeAllOtherSessionsForUser`'s documented fallback for a token that
+   matches nothing is to revoke everything *including this device*. So removing the copy without
+   changing this endpoint first would sign the user out of the device they just changed their
+   password on. The fix is for the endpoint to identify the current device from the access token's
+   `sid`, which is what that claim exists for; it has to be additive, because mobile legitimately
+   holds its refresh token in `SecureStore` and installed builds will keep sending the field.
+
+2. **CSRF, still.** `SameSite=Lax` stops a cross-*site* POST, but `app.` and `api.` are same-site by
+   design, so any present or future `finoratech.info` subdomain can reach `/auth/refresh` with the
+   cookie attached. CORS stops it *reading* the response, which bounds the impact to forcing a
+   rotation — but a forced rotation makes the victim's real tab replay a rotated token, which is the
+   theft signal, which signs them out everywhere. The mitigation is the required custom header named
+   above, and it also needs `CorsConfig.allowedHeaders` (today `Authorization` and `Content-Type`
+   only) or the preflight fails.
 
 Mobile does not migrate. It already keeps tokens in `SecureStore` (iOS Keychain / Android
 Keystore), which is the correct answer for a native client.
+
+**The order this has to happen in.** Each step is safe to ship on its own; the sequence is what
+matters, because doing step 3 first is what breaks the password-change flow.
+
+1. **Backend, additive — identify the current device from `sid`.**
+   `RefreshTokenService.revokeAllOtherSessionsForUser(userId, currentRawToken)` gains a sibling that
+   takes a **session id** instead of a raw token, and `PasswordChangeService.complete` prefers it,
+   reading `JwtAuthFilter.SESSION_ID_ATTRIBUTE` from the request. `CompleteRequest.currentRefreshToken`
+   relaxes from `@NotBlank` to optional and stays supported: installed mobile builds keep sending it,
+   and per [api-compatibility-policy.md](../engineering/api-compatibility-policy.md) loosening a
+   validation constraint is non-breaking while removing the field is not. Needs a test that a
+   password change with **no** `currentRefreshToken` still leaves the calling device signed in —
+   that is the assertion the whole sequence rests on.
+2. **Backend + both SPAs — the CSRF header.** A required custom header (e.g. `X-Finora-Client`) on
+   `/auth/refresh` and `/auth/logout` *when the cookie transport is used*, never when a body token
+   is, so mobile is unaffected. `CorsConfig.setAllowedHeaders` must list it in the same change or
+   every preflight fails. Ship before step 3, not with it: once the cookie is the only credential,
+   this is load-bearing.
+3. **Both SPAs — stop writing the token.** `AuthContext.persist` / `persistAdminSession` drop the
+   refresh-token key; the 401 interceptors call `authApi.refresh()` with no body and let the cookie
+   carry it. Note the interceptors currently gate on `if (refreshToken)` and fall straight to
+   `clearSessionAndRedirect()` when absent — that branch has to become "always attempt the refresh",
+   or the first 401 after this change signs everyone out. `ChangePasswordModal` stops reading
+   `finora_refresh_token`. Client unit tests that assert on the storage key
+   (`frontend/src/api/client.test.ts`, both `AuthContext.test.tsx`, the admin equivalents,
+   `ChangePasswordModal.test.tsx`) move with it. The Playwright suites reference no storage key, so
+   they are unaffected.
+
+`mobile/` is untouched throughout. The access token stays in `localStorage` either way — that is a
+fifteen-minute credential and, since the session check above, a revocable one; the durable
+credential is what this sequence is about.
 
 ## Consequences
 
@@ -145,6 +256,13 @@ without anything else failing.
 | `RefreshTokenTransportIT.theCookieWinsWhenBothAreSupplied` | Transport precedence. |
 | `RefreshTokenSessionLimitsTest.rotationCarriesTheORIGINALSessionStartForward` | The absolute cap exists at all. Stamping `now` here resets the clock every 15 minutes and the cap silently never fires. |
 | `RefreshTokenSessionLimitsTest.refreshTokenReuseStillSignsOutEverything` | The blast-radius contrast that makes the per-device cap safe to narrow. |
+| `AccessTokenSessionRevocationIT.aRevokedSessionsAccessTokenIsRejectedLongBeforeItExpires` | A revocation reaches the access token. Every rejection here is paired with an assertion that the token is **still signed and unexpired** — "it 401s after revocation" is satisfied equally well by the token having simply run out. |
+| `AccessTokenSessionRevocationIT.rotationDoesNotEndTheSession` | The inverse, and the one that catches the plausible wrong fix: keying the check on the token rather than the session signs every active user out at their first refresh. |
+| `AccessTokenSessionRevocationIT.signingOutOneDeviceLeavesTheOtherOneWorking` | Blast radius. A check that ended *every* session would satisfy the revocation test above and be useless. |
+| `AccessTokenSessionRevocationIT.anAccessTokenCarryingNoSessionClaimIsRejected` | Fail-closed on a missing `sid` — otherwise the check is bypassable by omitting the claim. |
+| `AuthorizationServiceTest.aConsumerScopeAccountHoldingAnAdminRole_getsNoneOfItsPermissions` | Scope is read where authorization happens, not only where a grant is made. |
+| `AuthorizationServiceTest.meAccessAgreesWithWhatTheServerWillActuallyAllow` | The admin portal's own gate cannot advertise permissions the server will refuse, or it admits an account and 403s every section inside it. |
+| `AuthServiceLoginTest.login_withSuspendedAccount_andAWrongPassword_revealsNothingAboutTheAccount` | A caller who has not proved the password learns nothing about whether the account exists. |
 
 **A note on how these were written.** Several passed initially while asserting less than their
 comments claimed — a badge existing rather than being on the right row; a token being rejected
