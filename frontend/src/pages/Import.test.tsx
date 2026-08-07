@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Import from './Import';
 import { importApi, categoriesApi, accountsApi } from '../api/endpoints';
+import type { StagedAccountSection } from '../types';
 import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID } from '../api/errorCodes';
 import type { DetectedAccountInfo } from '../types';
 
@@ -16,6 +17,7 @@ vi.mock('../api/endpoints', () => ({
     stageCsv: vi.fn(),
     stagePdf: vi.fn(),
     confirm: vi.fn(),
+    confirmMulti: vi.fn(),
     listSessions: vi.fn(),
     getSession: vi.fn(),
     discardSession: vi.fn(),
@@ -595,5 +597,219 @@ describe('Import — duplicate review gates the import', () => {
     // Rows 0 and 1 import (one by hand, one in bulk); row 2's earlier hand-made Skip survives.
     const payload = vi.mocked(importApi.confirm).mock.calls[0][0] as { rows: { include: boolean }[] };
     expect(payload.rows.map((r) => r.include)).toEqual([true, true, false]);
+  });
+});
+
+/**
+ * Milestone 2, item 4 — multi-account statements reach parity.
+ *
+ * A PDF that describes more than one account (an HSBC-style composite statement bundling a savings
+ * account and a credit card) took a different route through this page: per-account review state,
+ * no duplicate review, and `included: rows.map(r => !r.likelyDuplicate)` — the silent filter WI5
+ * removed everywhere else. The row vanished from the import unless the user noticed a checkbox they
+ * had never touched, on the one screen where they are also being asked to decide which account each
+ * section belongs to.
+ *
+ * The acceptance test for the milestone is one sentence: **no path silently unticks a row.** These
+ * are page-level because that is where it is true or false — the state machine's own tests
+ * (lib/importReview.test.ts) prove the invariant, and these prove this screen is wired to it.
+ */
+describe('Import — multi-account statements get the same duplicate review', () => {
+  const duplicateMatch = {
+    existingTransactionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    existingAccountId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+    existingDate: '2026-07-10',
+    existingDescription: 'METRO FARE',
+    existingAmount: 45,
+    existingType: 'EXPENSE' as const,
+    existingImportedAt: '2026-07-11T09:00:00Z',
+    matchCount: 1,
+    confidence: 'EXACT' as const,
+    reason: 'Same date, amount and description as a transaction already in your ledger.',
+  };
+
+  function stagedRow(description: string, duplicate: boolean) {
+    return {
+      date: '2026-07-10',
+      description,
+      amount: 45,
+      type: 'EXPENSE' as const,
+      suggestedCategory: 'Transport',
+      categorySource: 'rule' as const,
+      ruleId: null,
+      likelyDuplicate: duplicate,
+      referenceNumber: null,
+      balanceAfter: null,
+      duplicateMatch: duplicate ? { ...duplicateMatch, existingDescription: description } : null,
+    };
+  }
+
+  function section(name: string, rows: ReturnType<typeof stagedRow>[]): StagedAccountSection {
+    return {
+      detectedAccount: { ...detectedAccount, suggestedName: name },
+      rows,
+      totalParsed: rows.length,
+      flaggedDuplicates: rows.filter((r) => r.likelyDuplicate).length,
+      unparseableRows: [],
+    } as unknown as StagedAccountSection;
+  }
+
+  /** Stages a composite statement: `sections` is what the backend returns instead of `staging`
+   *  once PdfPreviewGenerator detects more than one account section in one file. */
+  function stageSections(sections: StagedAccountSection[]) {
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'session-multi-1',
+      multiAccount: true,
+      staging: null,
+      sections,
+    } as never);
+  }
+
+  const savingsAndCard = () => [
+    section('HSBC Savings', [stagedRow('METRO FARE', true), stagedRow('BLINKIT GROCERIES 9982', false)]),
+    section('HSBC Credit Card', [stagedRow('SWIGGY ORDER 4471', true)]),
+  ];
+
+  beforeEach(() => {
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(importApi.confirmMulti).mockReset().mockResolvedValue({ perAccount: [] } as never);
+  });
+
+  const confirmAll = () => screen.getByRole('button', { name: /confirm all 2 accounts/i });
+  const card = (i: number) => screen.getByTestId(`account-section-${i}`);
+
+  /**
+   * The acceptance criterion, asserted directly against the rendered screen: a row that arrives
+   * unticked is a row the user is being shown and asked about. Before this, the first assertion
+   * held and the second did not — the box was clear and there was no question anywhere.
+   */
+  it('never unticks a row without putting the question in front of the user', async () => {
+    stageSections(savingsAndCard());
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await screen.findByText(/this statement covers 2 accounts/i);
+
+    // Savings: the flagged fare is off, the clean grocery row is on.
+    expect(within(card(0)).getByLabelText('Include METRO FARE')).not.toBeChecked();
+    expect(within(card(0)).getByLabelText('Include BLINKIT GROCERIES 9982')).toBeChecked();
+
+    // ...and the untick is a question, not a decision, in BOTH sections.
+    expect(within(card(0)).getByTestId('duplicate-review')).toHaveTextContent('METRO FARE');
+    expect(within(card(0)).getByTestId('duplicate-0')).toHaveTextContent('Needs a decision');
+    expect(within(card(1)).getByTestId('duplicate-review')).toHaveTextContent('SWIGGY ORDER 4471');
+    expect(within(card(1)).getByTestId('duplicate-0')).toHaveTextContent('Needs a decision');
+  });
+
+  it('blocks the whole import until every section has answered, and says which one is blocking', async () => {
+    stageSections(savingsAndCard());
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await screen.findByText(/this statement covers 2 accounts/i);
+
+    expect(confirmAll()).toBeDisabled();
+    expect(screen.getByTestId('multi-duplicate-gate')).toHaveTextContent(/2 possible duplicates still need a decision/i);
+    expect(screen.getByTestId('multi-duplicate-gate')).toHaveTextContent(/Account 1 of 2 and Account 2 of 2/);
+
+    // Answering one section does not answer the other -- the review state is per account.
+    await user.click(within(card(0)).getByRole('button', { name: 'Import anyway' }));
+    expect(confirmAll()).toBeDisabled();
+    expect(screen.getByTestId('multi-duplicate-gate')).toHaveTextContent(/1 possible duplicate still needs a decision/i);
+    expect(screen.getByTestId('multi-duplicate-gate')).toHaveTextContent(/Account 2 of 2/);
+    expect(screen.getByTestId('multi-duplicate-gate')).not.toHaveTextContent(/Account 1 of 2/);
+
+    await user.click(within(card(1)).getByRole('button', { name: 'Skip this row' }));
+    expect(confirmAll()).toBeEnabled();
+    expect(screen.queryByTestId('multi-duplicate-gate')).not.toBeInTheDocument();
+  });
+
+  /** A composite statement with nothing suspicious in it must not pay for this feature. */
+  it('does not gate a multi-account statement with no duplicates in it', async () => {
+    stageSections([
+      section('HSBC Savings', [stagedRow('BLINKIT GROCERIES 9982', false)]),
+      section('HSBC Credit Card', [stagedRow('BLUE TOKAI COFFEE', false)]),
+    ]);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await screen.findByText(/this statement covers 2 accounts/i);
+
+    await waitFor(() => expect(confirmAll()).toBeEnabled());
+    expect(screen.queryByTestId('duplicate-review')).not.toBeInTheDocument();
+  });
+
+  /**
+   * The decision has to reach the server per section, not just the button. This is the field the
+   * multi-account confirm payload dropped entirely: without it the row lands in the ledger and
+   * reconciliation immediately re-flags it, so the user's answer shows in the ledger and vanishes
+   * from every spend total (commit 55f2db0, for the single-account path).
+   */
+  it('carries each section\'s decisions into that section\'s confirm payload', async () => {
+    stageSections(savingsAndCard());
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await screen.findByText(/this statement covers 2 accounts/i);
+
+    await user.click(within(card(0)).getByRole('button', { name: 'Import anyway' }));
+    await user.click(within(card(1)).getByRole('button', { name: 'Skip this row' }));
+    await user.click(confirmAll());
+
+    await waitFor(() => expect(importApi.confirmMulti).toHaveBeenCalled());
+    const payload = vi.mocked(importApi.confirmMulti).mock.calls[0][0] as {
+      sections: { rows: { description: string; include: boolean; confirmedNotDuplicate?: boolean }[] }[];
+    };
+
+    expect(payload.sections).toHaveLength(2);
+    expect(payload.sections[0].rows.map((r) => [r.description, r.include, r.confirmedNotDuplicate === true])).toEqual([
+      ['METRO FARE', true, true],
+      // Never flagged, so no decision to claim on its behalf.
+      ['BLINKIT GROCERIES 9982', true, false],
+    ]);
+    expect(payload.sections[1].rows.map((r) => [r.description, r.include, r.confirmedNotDuplicate === true])).toEqual([
+      ['SWIGGY ORDER 4471', false, false],
+    ]);
+  });
+
+  /**
+   * "Apply to similar" is scoped to the section it was clicked in. Two accounts on one statement
+   * routinely share a description (a card payment appears on both sides of a composite statement),
+   * and each is a separate question against a separate ledger — resolving one from the other would
+   * be a bulk action the user never aimed at that row.
+   */
+  it('keeps bulk resolution inside the account it was used in', async () => {
+    stageSections([
+      section('HSBC Savings', [stagedRow('METRO FARE', true), stagedRow('METRO FARE', true)]),
+      section('HSBC Credit Card', [stagedRow('METRO FARE', true)]),
+    ]);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await screen.findByText(/this statement covers 2 accounts/i);
+
+    await user.click(within(card(0)).getAllByRole('button', { name: 'Import anyway' })[0]);
+    await user.click(within(card(0)).getByRole('button', { name: /Apply to 1 similar/ }));
+
+    // Section 0 fully resolved; section 1's identical description untouched and still blocking.
+    expect(within(card(0)).getByTestId('duplicate-review')).toHaveTextContent('All duplicates resolved.');
+    expect(within(card(1)).getByTestId('duplicate-0')).toHaveTextContent('Needs a decision');
+    expect(confirmAll()).toBeDisabled();
+
+    await user.click(within(card(1)).getByRole('button', { name: 'Skip this row' }));
+    await user.click(confirmAll());
+
+    await waitFor(() => expect(importApi.confirmMulti).toHaveBeenCalled());
+    const payload = vi.mocked(importApi.confirmMulti).mock.calls[0][0] as {
+      sections: { rows: { include: boolean }[] }[];
+    };
+    expect(payload.sections[0].rows.map((r) => r.include)).toEqual([true, true]);
+    expect(payload.sections[1].rows.map((r) => r.include)).toEqual([false]);
   });
 });

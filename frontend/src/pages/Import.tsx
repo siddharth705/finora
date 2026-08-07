@@ -8,7 +8,18 @@ import { BankLogo } from '../components/BankLogo';
 import { MaskedAccountNumber } from '../components/MaskedAccountNumber';
 import { VerificationPanel } from '../components/VerificationPanel';
 import { matchExistingAccount } from '../lib/accountMatch';
-import { DuplicateReview, unresolvedCount, type DuplicateDecision } from '../components/DuplicateReview';
+import { DuplicateReview } from '../components/DuplicateReview';
+import {
+  EMPTY_REVIEW,
+  applyDecisionToSimilar,
+  beginReview,
+  decide,
+  setIncluded,
+  toConfirmedRows,
+  unresolvedCount,
+  type DuplicateDecision,
+  type RowReview,
+} from '../lib/importReview';
 import type { Account, DetectedAccountInfo, VerificationReport, ImportSummary, ReimportResult, StagedAccountSection, StagedRow, UnparseableRow } from '../types';
 import { formatDate } from '../utils/date';
 
@@ -26,10 +37,17 @@ interface ReimportNavState {
 // account section, e.g. an HSBC-style composite statement) -- one of these per detected
 // StagedAccountSection, holding exactly the same fields the single-account path already tracks as
 // flat top-level state, just namespaced per section instead.
+//
+// `review` is the field this shape was missing, and the whole reason the multi-account path kept
+// WI5's pre-WI5 behaviour: with only a flat `included: boolean[]` here, a flagged row could be
+// unticked but the user's answer had nowhere to live, so there was no answer and the untick was
+// silent. It is now the same RowReview the single-account path holds, produced by the same
+// beginReview() -- one review per detected account, because a decision about a row in the savings
+// section says nothing about a row in the credit-card section.
 interface SectionState {
   detectedAccount: DetectedAccountInfo;
   rows: StagedRow[];
-  included: boolean[];
+  review: RowReview;
   chosenCategory: string[];
   accountChoice: AccountChoice;
   selectedAccountId: string;
@@ -56,7 +74,10 @@ function initialSectionState(section: StagedAccountSection, existingAccounts: Ac
   return {
     detectedAccount: detected,
     rows: section.rows,
-    included: section.rows.map((r) => !r.likelyDuplicate),
+    // Was `section.rows.map((r) => !r.likelyDuplicate)` -- the silent filter WI5 removed from the
+    // single-account path and left here. beginReview() produces the include flags and the
+    // decisions together, so a row can no longer be unticked without also being unanswered.
+    review: beginReview(section.rows),
     chosenCategory: section.rows.map((r) => r.suggestedCategory),
     accountChoice: match ? 'existing' : 'new',
     selectedAccountId: match ? match.id : '',
@@ -107,9 +128,10 @@ export default function Import() {
   const [step, setStep] = useState<Step>('upload');
   const [error, setError] = useState<string | null>(null);
 
-  // Staged rows
+  // Staged rows. `review` holds the include flags and the duplicate decisions as one value --
+  // see lib/importReview.ts for why they are not two pieces of state.
   const [rows, setRows] = useState<StagedRow[]>([]);
-  const [included, setIncluded] = useState<boolean[]>([]);
+  const [review, setReview] = useState<RowReview>(EMPTY_REVIEW);
   const [chosenCategory, setChosenCategory] = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   // "Never lose information" -- rows the backend couldn't parse, shown for transparency.
@@ -130,9 +152,6 @@ export default function Import() {
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [multiSummary, setMultiSummary] = useState<ImportSummary[] | null>(null);
   const [confirming, setConfirming] = useState(false);
-  // One entry per staged row. Only rows carrying duplicateMatch are ever 'unresolved'; everything
-  // else is 'import' from the start, so unresolvedCount only ever counts flagged rows.
-  const [dupDecisions, setDupDecisions] = useState<DuplicateDecision[]>([]);
 
   // Set only for a multi-account PDF upload (see SectionState above) -- null the rest of the
   // time, and the single flat rows/detectedAccount/etc. state above is what's used instead.
@@ -170,8 +189,7 @@ export default function Import() {
 
     if (reimportState) {
       setRows(reimportState.staging.rows);
-      setIncluded(reimportState.staging.rows.map((r) => !r.likelyDuplicate));
-      setDupDecisions(reimportState.staging.rows.map((r) => (r.duplicateMatch ? 'unresolved' : 'import')));
+      setReview(beginReview(reimportState.staging.rows));
       setChosenCategory(reimportState.staging.rows.map((r) => r.suggestedCategory));
       setDetectedAccount(reimportState.staging.detectedAccount);
       setVerification(reimportState.staging.verification ?? null);
@@ -238,10 +256,9 @@ export default function Import() {
       setRows(staging.rows);
       // A flagged row starts EXCLUDED but UNRESOLVED -- not silently unticked. The confirm button
       // is blocked until every one has an explicit answer, so "I didn't mean to skip that" stops
-      // being possible. Before WI5 this line was the whole duplicate handling: the row vanished
-      // from the import unless the user noticed a checkbox they had never touched.
-      setIncluded(staging.rows.map((r) => !r.likelyDuplicate));
-      setDupDecisions(staging.rows.map((r) => (r.duplicateMatch ? 'unresolved' : 'import')));
+      // being possible. Before WI5 the untick alone was the whole duplicate handling: the row
+      // vanished from the import unless the user noticed a checkbox they had never touched.
+      setReview(beginReview(staging.rows));
       setChosenCategory(staging.rows.map((r) => r.suggestedCategory));
       setDetectedAccount(staging.detectedAccount);
       setVerification(staging.verification ?? null);
@@ -307,63 +324,24 @@ export default function Import() {
     }
   }
 
-  /** Records a decision and syncs the row's include flag, so the confirm payload stays the single
-   *  source of truth about what actually gets imported. */
-  function decideDuplicate(index: number, decision: DuplicateDecision) {
-    setDupDecisions((arr) => arr.map((v, j) => (j === index ? decision : v)));
-    setIncluded((arr) => arr.map((v, j) => (j === index ? decision === 'import' : v)));
-  }
+  // The single-account path's three review actions. Each is the same one-line delegation the
+  // multi-account path makes per section (see the section cards below) -- the behaviour lives in
+  // lib/importReview.ts so the two paths cannot drift, which is how they drifted in the first place.
+  const decideDuplicate = (index: number, decision: DuplicateDecision) =>
+    setReview((r) => decide(rows, r, index, decision));
 
-  /** Applies one row's decision to every OTHER duplicate with the same description that is still
-   *  unresolved. Bounded to unresolved rows deliberately: a bulk action must never overwrite a
-   *  choice the user already made by hand. */
-  function applyDuplicateDecisionToSimilar(index: number) {
-    const decision = dupDecisions[index];
-    if (decision === 'unresolved') return;
-    const description = rows[index].description;
-    setDupDecisions((arr) =>
-      arr.map((v, j) =>
-        j !== index && v === 'unresolved' && rows[j]?.duplicateMatch && rows[j].description === description
-          ? decision
-          : v
-      )
-    );
-    setIncluded((arr) =>
-      arr.map((v, j) =>
-        j !== index && dupDecisions[j] === 'unresolved' && rows[j]?.duplicateMatch
-          && rows[j].description === description
-          ? decision === 'import'
-          : v
-      )
-    );
-  }
+  const applyDuplicateDecisionToSimilar = (index: number) =>
+    setReview((r) => applyDecisionToSimilar(rows, r, index));
+
+  const toggleRowIncluded = (index: number, include: boolean) =>
+    setReview((r) => setIncluded(r, index, include));
 
   async function confirmImport() {
     if (!reimportState && !sessionId) return;
     setConfirming(true);
     setError(null);
     try {
-      const rowPayload = rows.map((r, i) => ({
-        date: r.date,
-        description: r.description,
-        amount: r.amount,
-        type: r.type,
-        category: chosenCategory[i],
-        include: included[i],
-        categorySource: r.categorySource,
-        // Without this, decision_rule_id would always land null through the normal UI flow --
-        // the backend derives decisionSource from categorySource alone, but the specific rule
-        // link (for a future "why was this categorized this way" screen) only survives if the
-        // staged ruleId is echoed back here, same as categorySource already was.
-        ruleId: r.ruleId,
-        likelyDuplicate: r.likelyDuplicate,
-        // The user's answer, not the engine's guess. Without it, reconciliation re-flags the row
-        // the moment it lands and strips it from every spend total -- the decision would show in
-        // the ledger and vanish from the numbers. See ImportDto.ConfirmedRow.
-        confirmedNotDuplicate: dupDecisions[i] === 'import' && !!r.duplicateMatch,
-        referenceNumber: r.referenceNumber,
-        balanceAfter: r.balanceAfter,
-      }));
+      const rowPayload = toConfirmedRows(rows, review, chosenCategory);
 
       const existingAccountId = accountChoice === 'existing' ? selectedAccountId : null;
       const newAccount =
@@ -441,19 +419,11 @@ export default function Import() {
     setError(null);
     try {
       const sections = multiSections.map((s) => {
-        const rowPayload = s.rows.map((r, i) => ({
-          date: r.date,
-          description: r.description,
-          amount: r.amount,
-          type: r.type,
-          category: s.chosenCategory[i],
-          include: s.included[i],
-          categorySource: r.categorySource,
-          ruleId: r.ruleId,
-          likelyDuplicate: r.likelyDuplicate,
-          referenceNumber: r.referenceNumber,
-          balanceAfter: r.balanceAfter,
-        }));
+        // The same builder the single-account confirm uses. This section used to hand-roll its own
+        // row payload and omit confirmedNotDuplicate, so even with a review screen in front of it
+        // the user's "import anyway" would have been honoured in the ledger and then reversed by
+        // reconciliation -- the exact defect 55f2db0 fixed for the single-account path.
+        const rowPayload = toConfirmedRows(s.rows, s.review, s.chosenCategory);
         const existingAccountId = s.accountChoice === 'existing' ? s.selectedAccountId : null;
         const newAccount =
           s.accountChoice === 'new'
@@ -493,6 +463,7 @@ export default function Import() {
   function startOver() {
     setStep('upload');
     setRows([]);
+    setReview(EMPTY_REVIEW);
     setUnparseableRows([]);
     setSummary(null);
     setMultiSummary(null);
@@ -512,6 +483,17 @@ export default function Import() {
   if (step === 'summary' && multiSummary) {
     return <MultiImportSummaryScreen summaries={multiSummary} onDone={() => navigate('/app')} onImportAnother={startOver} />;
   }
+
+  // Multi-account gate, derived rather than tracked -- one number over every section's own review,
+  // computed by the same unresolvedCount the single-account confirm button uses.
+  const outstandingMultiDuplicates = (multiSections ?? []).reduce(
+    (n, s) => n + unresolvedCount(s.rows, s.review.decisions),
+    0
+  );
+  const blockedSectionLabels = (multiSections ?? [])
+    .map((s, i) => ({ s, i }))
+    .filter(({ s }) => unresolvedCount(s.rows, s.review.decisions) > 0)
+    .map(({ s, i }) => sectionLabel(s, i, multiSections?.length ?? 0));
 
   return (
     <div className="space-y-4">
@@ -691,10 +673,17 @@ export default function Import() {
           </div>
 
           {multiSections.map((section, sectionIndex) => (
-            <div key={sectionIndex} className="bg-card rounded-xl2 shadow-card border border-border p-5 space-y-4">
+            /* data-testid scopes each card so a test (and Playwright's strict mode) can address one
+               section's duplicate review unambiguously -- N sections render N review panels, and
+               the panel keeps the same testids it has on the single-account path rather than
+               growing a per-section variant of its own. */
+            <div
+              key={sectionIndex}
+              data-testid={`account-section-${sectionIndex}`}
+              className="bg-card rounded-xl2 shadow-card border border-border p-5 space-y-4"
+            >
               <h3 className="font-semibold text-ink text-sm">
-                Account {sectionIndex + 1} of {multiSections.length}
-                {section.detectedAccount.bank.id !== 'OTHER' && ` — ${section.detectedAccount.bank.officialName}`}
+                {sectionLabel(section, sectionIndex, multiSections.length)}
               </h3>
 
               {/* This section's own report. Composite statements are exactly where a merged verdict
@@ -722,21 +711,56 @@ export default function Import() {
 
               <TransactionPreviewTable
                 rows={section.rows}
-                included={section.included}
-                setIncluded={(updater) => updateSection(setMultiSections, sectionIndex, { included: updater(section.included) })}
+                review={section.review}
+                onToggleIncluded={(rowIndex, include) =>
+                  updateSection(setMultiSections, sectionIndex, (s) => ({ review: setIncluded(s.review, rowIndex, include) }))
+                }
                 chosenCategory={section.chosenCategory}
                 setChosenCategory={(updater) => updateSection(setMultiSections, sectionIndex, { chosenCategory: updater(section.chosenCategory) })}
                 categories={categories}
               />
 
               <UnparseableRowsPanel rows={section.unparseableRows} />
+
+              {/* The same review the single-account path gets, once per detected account. Rendered
+                  per section rather than merged into one list because a decision is about a row in
+                  a specific account's ledger -- and because two sections can flag the same
+                  description against different existing transactions, which one merged list would
+                  present as one question. */}
+              <DuplicateReview
+                rows={section.rows}
+                decisions={section.review.decisions}
+                onDecide={(rowIndex, decision) =>
+                  updateSection(setMultiSections, sectionIndex, (s) => ({ review: decide(s.rows, s.review, rowIndex, decision) }))
+                }
+                onApplyToSimilar={(rowIndex) =>
+                  updateSection(setMultiSections, sectionIndex, (s) => ({ review: applyDecisionToSimilar(s.rows, s.review, rowIndex) }))
+                }
+              />
             </div>
           ))}
 
           <div className="bg-card rounded shadow p-4">
+            {/* The gate is one button over N sections, so it has to say WHICH account is still
+                blocking -- a disabled button with the reason three screens up is a dead end. */}
+            {outstandingMultiDuplicates > 0 && (
+              <p data-testid="multi-duplicate-gate" role="status" className="text-xs text-danger mb-3">
+                {outstandingMultiDuplicates} possible duplicate{outstandingMultiDuplicates === 1 ? '' : 's'} still{' '}
+                {outstandingMultiDuplicates === 1 ? 'needs' : 'need'} a decision, in{' '}
+                {blockedSectionLabels.join(' and ')}. Nothing is imported or skipped until you decide.
+              </p>
+            )}
             <button
               onClick={confirmMultiImport}
-              disabled={confirming || multiSections.some((s) => s.accountChoice === 'existing' && !s.selectedAccountId)}
+              disabled={
+                confirming ||
+                multiSections.some((s) => s.accountChoice === 'existing' && !s.selectedAccountId) ||
+                // The same gate the single-account path applies, summed across every section. A
+                // statement covering two accounts is not two imports the user can partially
+                // approve -- confirmMulti posts them together, so one unanswered row anywhere
+                // blocks all of it, exactly as one unanswered row blocks a single-account import.
+                outstandingMultiDuplicates > 0
+              }
               className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
             >
               {confirming ? 'Importing…' : `Confirm All ${multiSections.length} Accounts`}
@@ -821,8 +845,8 @@ export default function Import() {
             </p>
             <TransactionPreviewTable
               rows={rows}
-              included={included}
-              setIncluded={setIncluded}
+              review={review}
+              onToggleIncluded={toggleRowIncluded}
               chosenCategory={chosenCategory}
               setChosenCategory={setChosenCategory}
               categories={categories}
@@ -832,7 +856,7 @@ export default function Import() {
 
             <DuplicateReview
               rows={rows}
-              decisions={dupDecisions}
+              decisions={review.decisions}
               onDecide={decideDuplicate}
               onApplyToSimilar={applyDuplicateDecisionToSimilar}
             />
@@ -846,7 +870,7 @@ export default function Import() {
                 // The gate. Every flagged row must have an explicit answer before anything is
                 // written to the ledger -- which is what stops a duplicate being resolved by
                 // inattention rather than by a decision.
-                unresolvedCount(rows, dupDecisions) > 0
+                unresolvedCount(rows, review.decisions) > 0
               }
               className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50 mt-4"
             >
@@ -862,12 +886,30 @@ export default function Import() {
 // Small helper for updating one section's state within the multiSections array by index --
 // used throughout the multi-account review UI above instead of hand-rolling the same
 // map-and-replace pattern at every call site.
+//
+// The patch may be a function of the section's PREVIOUS state, which is what the review actions
+// use: a decision computed from the render closure's copy would be lost whenever two updates land
+// in the same React batch (clicking "Import anyway" and then immediately "Apply to N similar" is
+// exactly that), and losing a duplicate decision silently is the failure this whole item is about.
 function updateSection(
   setMultiSections: Dispatch<SetStateAction<SectionState[] | null>>,
   index: number,
-  patch: Partial<SectionState>,
+  patch: Partial<SectionState> | ((section: SectionState) => Partial<SectionState>),
 ) {
-  setMultiSections((prev) => (prev ? prev.map((s, i) => (i === index ? { ...s, ...patch } : s)) : prev));
+  setMultiSections((prev) =>
+    prev
+      ? prev.map((s, i) => (i === index ? { ...s, ...(typeof patch === 'function' ? patch(s) : patch) } : s))
+      : prev
+  );
+}
+
+/** How one detected account section is named, in its own heading and anywhere else that has to
+ *  point at it (the multi-account duplicate gate below the confirm button). One function so the
+ *  gate can never name a section differently from the card the user has to scroll to. */
+function sectionLabel(section: SectionState, index: number, total: number): string {
+  const bank = section.detectedAccount.bank;
+  const suffix = bank.id !== 'OTHER' && bank.officialName ? ` — ${bank.officialName}` : '';
+  return `Account ${index + 1} of ${total}${suffix}`;
 }
 
 // The existing-vs-new account picker + new-account detail fields -- shared between the
@@ -1120,15 +1162,18 @@ function AccountChoiceFields({
 // between the single-account review step and each account card in the multi-account review step.
 function TransactionPreviewTable({
   rows,
-  included,
-  setIncluded,
+  review,
+  onToggleIncluded,
   chosenCategory,
   setChosenCategory,
   categories,
 }: {
   rows: StagedRow[];
-  included: boolean[];
-  setIncluded: (updater: (arr: boolean[]) => boolean[]) => void;
+  // The whole review rather than a bare boolean[]: the include flags and the decisions that gate
+  // them are one value by construction (see lib/importReview.ts), and taking them apart here is
+  // how the multi-account path ended up able to untick a row with no decision attached to it.
+  review: RowReview;
+  onToggleIncluded: (index: number, include: boolean) => void;
   chosenCategory: string[];
   setChosenCategory: (updater: (arr: string[]) => string[]) => void;
   categories: string[];
@@ -1147,8 +1192,9 @@ function TransactionPreviewTable({
             <td className="p-1">
               <input
                 type="checkbox"
-                checked={included[i]}
-                onChange={(e) => setIncluded((arr) => arr.map((v, j) => (j === i ? e.target.checked : v)))}
+                aria-label={`Include ${r.description}`}
+                checked={review.included[i]}
+                onChange={(e) => onToggleIncluded(i, e.target.checked)}
               />
             </td>
             <td className="p-1">{r.date}</td>

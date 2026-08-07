@@ -1,4 +1,5 @@
 import type { StagedRow } from '../types';
+import { unresolvedCount, type DuplicateDecision } from '../lib/importReview';
 
 /**
  * The last decision point before Finora writes anything into a user's ledger (WI5).
@@ -22,9 +23,18 @@ import type { StagedRow } from '../types';
  * `confidence` is not rendered as a score. The backend matches on date, amount AND description
  * being identical, so every match is exact — a percentage would imply a spectrum the detector
  * cannot produce.
+ *
+ * **This component renders a review; it does not own one.** The decision state machine, and the
+ * rule that a row may only start unticked if it also starts unresolved, live in
+ * `lib/importReview.ts` — because the multi-account path holds one review per detected account and
+ * this component is rendered once per account against it. Putting the state here would have meant
+ * either duplicating it per section or special-casing the component, which is exactly what the
+ * multi-account gap needed restructuring to avoid.
  */
 
-export type DuplicateDecision = 'unresolved' | 'import' | 'skip';
+/** Re-exported for consumers that render this component; the definition lives with the state
+ *  machine in lib/importReview.ts. */
+export type { DuplicateDecision };
 
 function formatMoney(amount: number) {
   return (amount < 0 ? '-₹' : '₹') + Math.abs(amount).toLocaleString('en-IN', { maximumFractionDigits: 2 });
@@ -32,10 +42,6 @@ function formatMoney(amount: number) {
 
 function formatWhen(iso: string) {
   return new Date(iso).toLocaleDateString('en-IN', { dateStyle: 'medium' });
-}
-
-export function unresolvedCount(rows: StagedRow[], decisions: DuplicateDecision[]) {
-  return rows.reduce((n, row, i) => (row.duplicateMatch && decisions[i] === 'unresolved' ? n + 1 : n), 0);
 }
 
 /**

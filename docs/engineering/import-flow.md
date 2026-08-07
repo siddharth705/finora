@@ -175,9 +175,12 @@ survives the user's next unrelated action too.
 A client that sends no decision — the mobile app, which has no duplicate review screen — behaves
 exactly as before.
 
-**Not yet wired for multi-account PDFs** — that path still auto-unticks flagged rows, because its
-per-section state needs restructuring first rather than a second copy of the component. Recorded in
-[import-reliability-milestone-design.md](import-reliability-milestone-design.md) §7.
+**Multi-account PDFs get the same review, one per detected account** (Milestone 2 item 4). This was
+the last path still auto-unticking flagged rows, and the fix was not a second copy of the component:
+the include flags and the decisions that gate them are now one value, built together by
+`beginReview()` in `frontend/src/lib/importReview.ts`, so a path cannot untick a row without also
+producing the unresolved decision that blocks the import until the user answers it. See
+**Multi-account PDFs** below for what that looks like on screen.
 
 ---
 
@@ -187,6 +190,19 @@ One file can describe more than one account — a composite statement bundling a
 a credit card. Staging returns `multiAccount: true` with a `sections` array instead of `staging`,
 and each section is reviewed and assigned independently, then confirmed together via
 `/pdf/confirm-multi`.
+
+**Each section carries its own review**, not a share of one. A decision is about a row in a specific
+account's ledger, and two sections routinely flag the same description against different existing
+transactions — merging them into one list would present two questions as one. So each section card
+renders its own duplicate review, `apply to similar` reaches only inside the section it was used in,
+and `confirmedNotDuplicate` is built per section by the same `toConfirmedRows()` the single-account
+confirm uses.
+
+**The gate is shared, because the confirm is.** `/pdf/confirm-multi` posts every section together —
+this is not N imports the user can partially approve — so one unanswered row anywhere disables
+`Confirm All N Accounts`, exactly as one unanswered row disables `Confirm Import`. The blocking
+message names the account still outstanding: one button over N sections, with the reason several
+screens up, is otherwise a dead end.
 
 **Mobile does not support this.** `ImportScreen` discards the session and says so plainly rather
 than importing only the first section, because assigning a section to the wrong account files

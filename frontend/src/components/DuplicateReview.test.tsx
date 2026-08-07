@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DuplicateReview, unresolvedCount, type DuplicateDecision } from './DuplicateReview';
+import { DuplicateReview } from './DuplicateReview';
 import type { StagedRow, DuplicateMatch } from '../types';
 
 /**
@@ -46,18 +46,8 @@ function row(overrides: Partial<StagedRow> = {}): StagedRow {
 
 const clean = () => row({ description: 'BLINKIT 9982', likelyDuplicate: false, duplicateMatch: null });
 
-describe('unresolvedCount', () => {
-  it('counts only flagged rows that still need a decision', () => {
-    const rows = [row(), clean(), row()];
-    const decisions: DuplicateDecision[] = ['unresolved', 'import', 'import'];
-
-    expect(unresolvedCount(rows, decisions)).toBe(1);
-  });
-
-  it('is zero when there are no duplicates at all, so a clean import is never gated', () => {
-    expect(unresolvedCount([clean(), clean()], ['import', 'import'])).toBe(0);
-  });
-});
+// `unresolvedCount` moved to lib/importReview.ts along with the rest of the decision state machine
+// (this component renders a review, it does not own one) -- see importReview.test.ts for its tests.
 
 describe('DuplicateReview', () => {
   it('renders nothing when no row is flagged', () => {
