@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, ShieldCheck, ScrollText, HeartPulse, LogOut, Landmark, Settings,
-  ListFilter, Store, Sparkles, GitMerge, BarChart3, Stethoscope, FileSearch, ListRestart , BadgeCheck, Fingerprint } from 'lucide-react';
+  ListFilter, Store, Sparkles, GitMerge, BarChart3, Stethoscope, FileSearch, ListRestart , BadgeCheck, Fingerprint, Route } from 'lucide-react';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import logoMark from '../assets/logo-mark.png';
 
@@ -25,6 +25,7 @@ const links = [
   { to: '/diagnostics', label: 'Platform Diagnostics', icon: Stethoscope, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
   { to: '/layout-intelligence', label: 'Layout Intelligence', icon: Fingerprint, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
   { to: '/layout-studio', label: 'Layout Studio', icon: FileSearch, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
+  { to: '/import-trace', label: 'Import Trace', icon: Route, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
   { to: '/settings', label: 'Settings', icon: Settings, end: false, permission: 'SYSTEM_SETTINGS' },
 ] as const;
 

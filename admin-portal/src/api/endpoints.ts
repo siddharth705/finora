@@ -23,6 +23,7 @@ import type {
   UnknownHeaderSummary,
   LayoutTimelinePoint,
   LayoutEvidenceReport,
+  ImportTrace,
 } from '../types';
 
 // Which portal this account belongs to. The same person may hold a USER account and an ADMIN
@@ -411,6 +412,27 @@ export const adminStatementAnalysisApi = {
     api.get<StatementAnalysisSummaryDto>('/admin/imports/analyses/summary').then((r) => r.data),
   byReference: (reference: string) =>
     api.get<StatementAnalysisDetailDto>(`/admin/imports/analyses/${encodeURIComponent(reference)}`).then((r) => r.data),
+};
+
+/**
+ * One import, end to end — the read behind Milestone 2's sixth success criterion.
+ *
+ * Two routes rather than one that inspects its argument. An analysis reference and a job id are
+ * distinguishable by shape, so a single route could have served both, but a route that decides what
+ * its own argument means is a route that can decide wrong — and the failure would arrive as an
+ * unhelpful 404 rather than as a visibly wrong URL. Both return the same shape, so a caller holding
+ * either handle never needs the other.
+ *
+ * `byAnalysis` is the entry point for almost every real question, because a support conversation
+ * produces a reference. `byJob` is for the case that starts from the queue.
+ */
+export const adminImportTraceApi = {
+  byAnalysis: (reference: string) =>
+    api.get<ImportTrace>(`/admin/imports/traces/by-analysis/${encodeURIComponent(reference)}`)
+      .then((r) => r.data),
+  byJob: (jobId: string) =>
+    api.get<ImportTrace>(`/admin/imports/traces/by-job/${encodeURIComponent(jobId)}`)
+      .then((r) => r.data),
 };
 
 /** Runs the engine on a document and imports nothing. Separate permission (ENGINE_ANALYSIS_RUN)

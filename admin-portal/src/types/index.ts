@@ -602,6 +602,96 @@ export interface StatementAnalysisDetailDto {
   timesLayoutFailed: number;
 }
 
+/* ── Import trace ──────────────────────────────────────────────────────────────────────────────
+ * One import, end to end. Milestone 2's sixth success criterion: an administrator can follow an
+ * upload from parsing through verification and learning to completion in a single view, without a
+ * log or an engineer.
+ *
+ * Assembled, not aggregated — there is no health field, no score and no overall verdict. Each block
+ * reports what its own table recorded and the reader draws the conclusion, the same position
+ * VerificationReport takes about combining rules. Blocks are nullable or empty by design: an
+ * asynchronous job records no analysis row, a synchronous import has no job and no stage timings,
+ * and a staged-but-unconfirmed import has no completion. A missing block means "this path does not
+ * record that", which is a real answer.
+ *
+ * Nothing here identifies a person: no file name, no user id. The handles are the analysis
+ * reference (SA-20260806-0145) and the job id.
+ */
+
+export interface ImportTraceJob {
+  status: string;
+  attemptCount: number;
+  rowsTotal: number | null;
+  rowsProcessed: number;
+  lastError: string | null;
+  queuedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  /** Queued to finished — what the person who uploaded actually waited. Not any one stage's
+   *  duration, and not the analysis session's parse time. */
+  totalDurationMs: number | null;
+}
+
+export interface ImportTraceStage {
+  stage: string;
+  attempt: number;
+  /** A stage still RUNNING on a finished job is a worker that died inside it. SKIPPED is a stage
+   *  that did not run at all — the observation that can prove optimising it unnecessary. */
+  outcome: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
+  startedAt: string;
+  endedAt: string | null;
+  durationMs: number | null;
+}
+
+export interface ImportTraceFinding {
+  sectionIndex: number;
+  rule: string;
+  outcome: string;
+  /** Structural facts only — counts, booleans and bounded enum constants. Balances and raw cell
+   *  values are absent by construction. */
+  details: Record<string, unknown>;
+  recordedAt: string;
+}
+
+export interface ImportTraceLearningEvent {
+  id: string;
+  status: string;
+  attemptCount: number;
+  createdAt: string;
+}
+
+export interface ImportTraceLearning {
+  /** Zero is a legitimate answer: an import of merchants Finora already knew teaches it nothing. */
+  events: number;
+  byStatus: Record<string, number>;
+  /** The ones that have not completed, bounded. The only ones anyone acts on. */
+  outstanding: ImportTraceLearningEvent[];
+}
+
+export interface ImportTraceCompletion {
+  /** Null when nothing was confirmed. Staging successfully and importing are different events —
+   *  a job reaching COMPLETED means only the first, because confirming is the user's decision. */
+  statementImportId: string | null;
+  transactionsImported: number | null;
+  transactionsSkipped: number | null;
+  importedAt: string | null;
+  sessionConfirmedAt: string | null;
+}
+
+export interface ImportTrace {
+  analysisReference: string | null;
+  importJobId: string | null;
+  importSessionId: string | null;
+  correlationId: string | null;
+  analysis: StatementAnalysisDetailDto | null;
+  job: ImportTraceJob | null;
+  stages: ImportTraceStage[];
+  /** Empty means no verification was recorded — which is not the same as every rule passing. */
+  verification: ImportTraceFinding[];
+  learning: ImportTraceLearning;
+  completion: ImportTraceCompletion;
+}
+
 export interface StatementAnalysisSummaryDto {
   analysesInWindow: number;
   totalAnalysesEver: number;
