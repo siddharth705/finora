@@ -1,6 +1,7 @@
 # End-to-end tests
 
-Playwright tests that drive the user portal and the admin portal in a real browser.
+Playwright tests that drive the user portal and the admin portal in a real browser, against a real
+backend and a real database.
 
 ## Running them
 
@@ -8,62 +9,117 @@ Playwright tests that drive the user portal and the admin portal in a real brows
 cd e2e
 npm install
 npx playwright install chromium
+npm run stack:up
 npm test
 ```
 
-Playwright starts both Vite dev servers itself (5173 for the user app, 5174 for the admin portal —
-the ports each app's own `vite.config.ts` pins). You do not need to start anything first. If you
-already have a dev server running locally it is reused rather than clashing on the port.
+`stack:up` brings up the stack these tests need: a throwaway Postgres on **5433** and a backend on
+**8081**, deliberately *not* the 5432/8080 pair you already have running. Several assertions read
+platform-wide counts and financial totals, and a database carrying yesterday's experiments makes
+those either wrong or meaningless — and sharing your stack would mean a test run rewriting data you
+were in the middle of looking at.
+
+The backend runs from `backend/target/finora-backend-0.1.0.jar`, so it is whatever you last built.
+That is on purpose: "did you rebuild" should be a question you can answer.
 
 ```bash
-npm run test:user      # user portal only
-npm run test:admin     # admin portal only
-npm run test:headed    # watch it happen in a real browser window
-npm run report         # open the HTML report from the last run
+npm run stack:reset   # destroy the database and start again, empty
+npm run stack:down    # stop it
+
+npm test              # user-portal + admin-portal + workflow
+npm run test:workflow # the business-outcome specs only
+npm run test:browsers # Firefox + Edge
+npm run test:responsive
+npm run report        # the HTML report from the last run
 ```
 
-## What is and is not covered
+Playwright starts both Vite dev servers itself and points them at the test backend via
+`FINORA_API_PROXY_TARGET`. `globalSetup` fails the run with a readable message if the stack is not
+there, rather than letting the specs discover it as a wall of "element not found".
 
-These are **smoke tests over the unauthenticated surface only**. They prove each app builds, boots,
-routes and renders in a real browser, and they guard a few specific behaviours that a jsdom
-component test cannot see — the `rel="noopener"` attributes on the register page's new-tab links,
-and the admin portal's redirect-to-login for a protected route.
+## What these are for
 
-They deliberately stop at the login wall. Authenticated flows need a running backend, a migrated
-database and a seeded user — real fixtures that are a separate decision from installing the
-harness. Writing them against fixtures that do not exist would mean committing tests that cannot
-pass on a clean checkout.
+Not page-render checks. Every spec asserts a **business outcome**: the question is not "did the
+screen show something" but "did the user's decision survive the whole system". A workflow that looks
+correct while writing wrong financial data is still a failed test.
 
-`ECONNREFUSED /api/v1/setup/status` in the output is expected: no backend is running, and these
-tests do not need one.
+| Directory | Covers |
+|---|---|
+| `tests/workflow/` | Duplicate review, dashboard/ledger consistency, reconciliation, merchant lifecycle, multi-user isolation, data integrity |
+| `tests/user-portal/` | Upload, verification, import completion, session behaviour, negative and interruption cases, accessibility, behaviour at size |
+| `tests/admin-portal/` | Learning Queue, Merchant Review Center |
 
-## Relationship to the existing test suites
+The Vitest suites in `frontend/` and `admin-portal/` are **not** superseded. They run in jsdom with
+the network mocked — fast, and the right place for component behaviour, form validation and hook
+logic. A test belongs here only when it needs a real browser, a real database, or both apps at once.
 
-This does not replace the Vitest suites in `frontend/` and `admin-portal/`, and should not grow to
-duplicate them. Those run in jsdom with the network mocked — fast, and the right place for
-component behaviour, form validation, error states and hook logic. A test belongs here only when it
-genuinely needs a real browser or spans both apps.
+## The database is a first-class fixture
 
-## Adding a test
+`fixtures/db.ts` talks to Postgres directly, for two jobs, and it is worth being precise about why
+neither can go through the API.
 
-Put the spec in the directory for the app it drives:
+**Seeding.** On a genuinely fresh database there is no way to reach an authenticated state through
+the product. Setup suspends the only pre-verified account in the same transaction that promotes the
+new one, and `FirebaseConfig` returns null without credentials so phone verification cannot succeed
+locally at all. That is Issue 01 in `E2E_TEST_REPORT.md`. The fixtures do in SQL exactly what
+Firebase would have done — `phone_verified = true` — and nothing else. Registration itself goes
+through the real `POST /auth/register`, and first-run setup through the real BOOTSTRAP_ADMIN and
+installation-key flow.
 
-```
-tests/user-portal/*.spec.ts     -> runs against localhost:5173
-tests/admin-portal/*.spec.ts    -> runs against localhost:5174
-```
+**Assertion.** "Was this transaction *counted*" cannot be answered from the DOM. `is_duplicate_of IS
+NULL` is the filter shared by BudgetService, AnalyticsService, DashboardService, InsightsService,
+RecurringService, ReportService and two repository aggregates — asserting against it covers all
+seven at once.
 
-Each Playwright project is scoped to its directory, so **a spec placed anywhere else runs against
-nothing and is silently skipped** — no error, no warning. Keep specs inside one of those two
-folders.
+The rule: SQL may set up what the product cannot, and may observe anything, but never performs a
+step the test is meant to be exercising.
 
-One caveat worth knowing, because it already caused a flaky test here: `locator.count()` does not
-auto-wait, unlike the `expect(locator)` matchers. Calling it straight after `page.goto()` can
-sample the DOM before React has rendered, yielding zero and quietly making any loop over that count
-assert nothing. Wait for something to be visible first, then count.
+## Every test gets
+
+- **Its own freshly registered account.** This milestone's state is per-user, so a shared login would
+  make each duplicate test depend on what its neighbours imported — and would turn the isolation
+  specs into tautologies.
+- **A console and network guard.** Asserted at teardown on every test, not as a test of its own: a
+  page that renders correctly while throwing in the console is still a defect. Tests whose subject
+  *is* a failure call `allowConsoleErrors(reason)` — the reason is required, so the exemption is
+  visible where it is taken.
+
+## Things worth knowing before adding a test
+
+**Put the spec in the directory for the app it drives.** Each Playwright project is scoped by
+directory, so a spec placed anywhere else runs against nothing and is silently skipped.
+
+**The admin specs are serial.** The Learning Queue and Merchant Review Center are platform-wide
+views — that is what makes them useful to an operator — so parallel tests see each other's rows and
+approve merchants out from under one another.
+
+**Merchant Review is ordered oldest-first**, deliberately (a newest-first queue buries the oldest
+outstanding work forever). A freshly seeded account is therefore always on the last page, and the
+screen has no search or filter. `reviewRowFor` backdates the seeded merchants so they sort to page
+one — which does not bypass the ordering, it places the row where the product's own rule says the
+oldest work belongs. Paging to it instead is O(pages) and gets slower with every test in the run.
+That the workaround is needed at all is the WI4A gap stated as a cost.
+
+**Learning happens for confident categorisations, not for guesses.** A row the engine could not
+categorise falls to "Other" and is deliberately *not* learned — learning a guess would poison every
+future statement. A fixture of genuinely unrecognisable merchant names produces zero learning events
+and reads as a broken queue when it is a working one.
+
+**`locator.count()` does not auto-wait**, unlike the `expect(locator)` matchers. Calling it straight
+after `page.goto()` can sample the DOM before React has rendered, yielding zero and quietly making
+any loop over that count assert nothing. Wait for something visible first, then count.
 
 ## Not wired into CI
 
-Deliberately. An E2E job needs a backend, Postgres and a seeded test user, and it materially
-increases CI runtime — that is its own decision rather than a side effect of installing the
-harness. `.github/workflows/ci.yml` is unchanged.
+Deliberately. An E2E job needs a backend, Postgres and a built jar, and it materially increases CI
+runtime — that is its own decision rather than a side effect of installing the harness.
+`.github/workflows/ci.yml` is unchanged.
+
+## Known gaps
+
+- `tests/admin-portal/merchant-review.spec.ts` has one `test.fixme` — see the comment above it. The
+  behaviour it covers is asserted elsewhere; what is not covered is the row's own presentation.
+- The cross-browser and responsive projects (`test:browsers`, `test:responsive`) are configured but
+  have never been run to green.
+- Phase 14 of the milestone test brief — regression against previously-working statements — needs a
+  sanitized corpus that does not exist yet.

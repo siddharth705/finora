@@ -7,11 +7,20 @@
     "test": "playwright test",
     "test:user": "playwright test --project=user-portal",
     "test:admin": "playwright test --project=admin-portal",
+    "test:workflow": "playwright test --project=workflow",
+    "test:browsers": "node scripts/with-browsers.mjs --project=user-portal-firefox --project=user-portal-edge --project=admin-portal-firefox",
+    "test:responsive": "node scripts/with-browsers.mjs --project=user-portal-tablet --project=user-portal-mobile",
     "test:headed": "playwright test --headed",
-    "report": "playwright show-report"
+    "report": "playwright show-report",
+    "stack:up": "node scripts/stack.mjs up",
+    "stack:down": "node scripts/stack.mjs down",
+    "stack:reset": "node scripts/stack.mjs reset"
   },
   "devDependencies": {
-    "@playwright/test": "^1.49.1"
+    "@playwright/test": "^1.49.1",
+    "@types/pg": "^8.15.6",
+    "pg": "^8.22.0",
+    "typescript": "^5.9.3"
   },
   "engines": {
     "node": ">=20.19.0"

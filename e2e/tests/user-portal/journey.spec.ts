@@ -1,90 +1,124 @@
-import { expect, test, type ConsoleMessage, type Page } from '@playwright/test';
+import { test, expect, signIn } from '../../fixtures/test';
+import { USER_APP } from '../../fixtures/config';
+import type { Page } from '@playwright/test';
 
 /**
- * Authenticated user journeys against a live backend.
+ * Session behaviour: the things that have to hold for every authenticated screen, tested once here
+ * rather than repeated in each feature spec.
  *
- * These require the full stack running locally (Postgres + backend on :8080) and the seeded
- * accounts described in E2E_TEST_REPORT.md. They are skipped automatically when the backend is
- * not reachable, so a checkout without a running stack still gets a green `npm test` from the
- * smoke specs rather than a wall of misleading failures.
+ * Previously these signed in as a hardcoded `e2e.user@finora.test` that existed only because
+ * someone had once created it by hand in a developer's database. That is exactly the fixture this
+ * suite's seeding exists to remove: the tests passed on the machine where the account happened to
+ * exist and failed everywhere else, including against the fresh database the milestone brief asks
+ * for. They now seed their own account like every other spec.
  */
-const USER = { identifier: 'e2e.user@finora.test', password: 'E2eUserPass2026' };
 
-/** Console errors are collected per test and asserted at the end -- a page that renders correctly
- *  while throwing in the console is still a defect, and is exactly what a human tester misses. */
-function collectConsoleErrors(page: Page): string[] {
-  const errors: string[] = [];
-  page.on('console', (msg: ConsoleMessage) => {
-    if (msg.type() === 'error') errors.push(msg.text());
-  });
-  page.on('pageerror', (err) => errors.push(`pageerror: ${err.message}`));
-  return errors;
-}
-
-async function backendReachable(): Promise<boolean> {
-  try {
-    const res = await fetch('http://localhost:8080/actuator/health');
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-test.beforeAll(async () => {
-  test.skip(!(await backendReachable()), 'backend not running on :8080 -- see E2E_TEST_REPORT.md');
-});
-
-async function login(page: Page) {
-  await page.goto('/login');
-  await page.getByLabel(/email|phone/i).first().fill(USER.identifier);
-  await page.getByLabel(/password/i).first().fill(USER.password);
-  await page.getByRole('button', { name: /sign in|log in/i }).click();
-  await expect(page).not.toHaveURL(/\/login/, { timeout: 15_000 });
-}
-
-test.describe('authenticated user journey', () => {
-  test('signs in and lands on an app page that is not the login screen', async ({ page }) => {
-    const errors = collectConsoleErrors(page);
-    await login(page);
-
+test.describe('authenticated session', () => {
+  test('signing in lands on an app page that is not the login screen', async ({ userPage }) => {
     // Asserts the session actually took, rather than that some specific dashboard widget exists --
     // the widget set is product surface that changes; "no longer at /login and rendering content"
-    // is the invariant.
-    await expect(page.locator('body')).not.toBeEmpty();
-    expect(errors, `console errors after login:\n${errors.join('\n')}`).toEqual([]);
+    // is the invariant. The Phase 17 guard on this fixture covers the console.
+    await expect(userPage).not.toHaveURL(/\/login/);
+    await expect(userPage.locator('body')).not.toBeEmpty();
   });
 
-  test('reloading an authenticated page keeps the session', async ({ page }) => {
-    await login(page);
-    const afterLogin = page.url();
+  /** A session that survives login but not F5 is a real and common defect: it means the token lives
+   *  only in memory and the refresh path is not wired up. */
+  test('reloading an authenticated page keeps the session', async ({ userPage }) => {
+    await userPage.goto('/app/import');
+    const before = userPage.url();
 
-    await page.reload();
+    await userPage.reload();
 
-    // A session that survives login but not F5 is a real and common defect: it means the token
-    // lives only in memory and the refresh path is not wired up.
-    await expect(page).toHaveURL(afterLogin);
-    await expect(page).not.toHaveURL(/\/login/);
+    await expect(userPage).toHaveURL(before);
+    await expect(userPage).not.toHaveURL(/\/login/);
   });
 
-  test('the browser back button after login does not strand the user on a dead screen', async ({ page }) => {
-    await login(page);
-    await page.goBack();
-    await expect(page.locator('body')).not.toBeEmpty();
-  });
+  test('the back button after signing in does not strand the user on a dead screen',
+    async ({ userPage }) => {
+      await userPage.goto('/app/import');
+      await userPage.goBack();
 
-  test('logging out clears the session and protects app routes again', async ({ page }) => {
-    await login(page);
+      await expect(userPage.locator('body')).not.toBeEmpty();
+    });
 
-    const logout = page.getByRole('button', { name: /log ?out|sign ?out/i }).first();
-    if (await logout.isVisible().catch(() => false)) {
-      await logout.click();
-    } else {
-      // Some layouts hide logout behind a menu; fall back to clearing storage the way a closed
-      // browser would, then assert the guard still holds.
+  /**
+   * Signing out has to take the session with it. The failure this guards against is a client that
+   * clears its own state and calls it done — the user looks logged out while the token stays valid
+   * server-side, which is worse than not offering logout at all.
+   */
+  test('signing out clears the session and protects app routes again',
+    async ({ userPage, allowConsoleErrors }) => {
+      allowConsoleErrors('the point is that requests start failing once the session is gone');
+      const logout = userPage.getByRole('button', { name: /log ?out|sign ?out/i }).first();
+      if (await logout.isVisible().catch(() => false)) {
+        await logout.click();
+      } else {
+        // Some layouts keep logout behind a menu. Clearing storage is what a closed browser does,
+        // and the guard must hold either way.
+        await userPage.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+      }
+
+      // waitUntil 'commit' rather than the default: the app redirects to /login mid-navigation, and
+      // waiting for load on a request that gets aborted by that redirect is an ERR_ABORTED, not a
+      // failure of the thing under test.
+      await userPage.goto('/app', { waitUntil: 'commit' }).catch(() => {});
+      await expect(userPage).toHaveURL(/\/login/, { timeout: 20_000 });
+    });
+
+  /** Two accounts in one browser must not bleed into each other. Sequential sign-ins are the shape
+   *  a shared machine produces, and a leftover token from the first would show the second user
+   *  someone else's ledger. */
+  test('signing in as a second account does not inherit the first session',
+    async ({ page, user }) => {
+      await signIn(page, USER_APP, user.email, user.password);
       await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
-    }
 
-    await page.goto('/app');
-    await expect(page).toHaveURL(/\/login/, { timeout: 15_000 });
+      // 'commit' rather than the default: the guard redirects mid-navigation, and waiting for load
+      // on the request that redirect aborts is an ERR_ABORTED rather than a failure of the guard.
+      await page.goto(`${USER_APP}/app`, { waitUntil: 'commit' }).catch(() => {});
+      await expect(page).toHaveURL(/\/login/, { timeout: 20_000 });
+    });
+});
+
+test.describe('public surface', () => {
+  const visit = async (page: Page, path: string) => {
+    await page.goto(`${USER_APP}${path}`);
+    await expect(page.locator('body')).not.toBeEmpty();
+  };
+
+  test('the landing page renders and offers a route to register', async ({ page }) => {
+    await visit(page, '/');
+    await expect(page.getByRole('link', { name: /get started|register|sign up/i }).first())
+      .toBeVisible();
+  });
+
+  /**
+   * `rel="noopener"` on every link that opens a new tab. Without it the opened page gets a handle
+   * on `window.opener` and can navigate this one somewhere else — a phishing vector that costs one
+   * attribute to close, and one a jsdom component test cannot see.
+   */
+  test('new-tab links on the register page cannot reach back into this one', async ({ page }) => {
+    await visit(page, '/register');
+
+    const newTabLinks = page.locator('a[target="_blank"]');
+    const total = await newTabLinks.count();
+    test.skip(total === 0, 'no new-tab links on this page');
+
+    for (let i = 0; i < total; i++) {
+      const rel = (await newTabLinks.nth(i).getAttribute('rel')) ?? '';
+      const href = await newTabLinks.nth(i).getAttribute('href');
+      expect(rel, `target=_blank link to ${href} has no rel="noopener"`).toMatch(/noopener/);
+    }
+  });
+
+  test('an unknown route does not blank the page', async ({ page }) => {
+    await visit(page, '/this-route-does-not-exist');
+    await expect(page.locator('body')).not.toBeEmpty();
+  });
+
+  test('an app route is refused to someone who has not signed in', async ({ page }) => {
+    await page.goto(`${USER_APP}/app`);
+    await expect(page).toHaveURL(/\/login/, { timeout: 20_000 });
   });
 });
