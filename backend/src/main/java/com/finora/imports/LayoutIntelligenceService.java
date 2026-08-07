@@ -2,6 +2,7 @@ package com.finora.imports;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finora.dto.ImportDto.FinancialDocumentMetadata;
+import com.finora.entity.RegisteredLayout;
 import com.finora.entity.StatementImport;
 import com.finora.repository.StatementImportRepository;
 import org.slf4j.Logger;
@@ -22,6 +23,25 @@ import java.util.TreeMap;
  * Reads the layout data the import pipeline has been writing since V39 and answers questions about
  * it. The read side of {@code DocumentContext.buildFingerprint()}, which until now had no reader at
  * all -- every import computed and stored a layout key that nothing ever looked up.
+ *
+ * <h2>Curated first, aggregated second (Milestone 2 item 2)</h2>
+ * The overview is now a join of two sources rather than one {@code GROUP BY}. {@code layout_registry}
+ * (V68) supplies what a layout <em>is</em> -- its name, its status, the parser that handles it, and
+ * a first/last-seen that survives statement deletion. The aggregate over
+ * {@code statement_imports} still supplies what has <em>happened</em> to it: usage, capability
+ * stability, unknown headers, durations. Neither can answer the other's questions, which is why
+ * both are here.
+ *
+ * <p>The join is deliberately outer in both directions, and each side means something:
+ * <ul>
+ *   <li>A registry row with no surviving imports still appears, with a usage count of zero. Its
+ *       statements were deleted; the layout was still encountered, and dropping it is exactly the
+ *       history loss the registry exists to prevent.</li>
+ *   <li>An imported fingerprint with no registry row still appears, marked
+ *       {@value #UNREGISTERED}. After V68 backfilled every fingerprint in history and every
+ *       confirmed import registers its own, this should never occur -- which is what makes it worth
+ *       showing rather than hiding. One of these on the overview means an observation was dropped.</li>
+ * </ul>
  *
  * <h2>What this deliberately does NOT do</h2>
  * No layout reuse, no mapping cache, no parser shortcut, no confidence adjustment, no skipping
@@ -47,12 +67,40 @@ public class LayoutIntelligenceService {
 
     private static final Logger log = LoggerFactory.getLogger(LayoutIntelligenceService.class);
 
-    /** One layout, aggregated across every import that produced its fingerprint. */
+    /**
+     * Status reported for a fingerprint that history knows about and the registry does not.
+     *
+     * <p>Not a {@code RegisteredLayout.Status} value, on purpose: it describes the absence of a row
+     * rather than a state a row can be in, and adding it to the persisted enum would make "not
+     * registered" storable in the registry.
+     */
+    public static final String UNREGISTERED = "UNREGISTERED";
+
+    /**
+     * One layout: what the registry says it is, and what the imports say has happened to it.
+     *
+     * <p>{@code name}, {@code status} and {@code parser} come from {@code layout_registry};
+     * everything else is aggregated. {@code status} is a String rather than the persisted enum so
+     * this record can carry {@value #UNREGISTERED}, and so a reporting type never puts an entity
+     * type on the wire.
+     */
     public record LayoutSummary(
             String fingerprint,
+            /** Null until an operator names it -- never a generated placeholder, so "how many
+             *  layouts have we identified" stays answerable. */
+            String name,
+            /** OBSERVED / UNDER_REVIEW / SUPPORTED / UNSUPPORTED, or {@value #UNREGISTERED}. */
+            String status,
             String sourceFormat,
+            /** The extractor last observed producing this layout. Null on a layout registered
+             *  before any import recorded readable metadata for it. */
+            String parser,
             int columns,
+            /** Imports of this layout that still exist. Zero for a layout whose statements have all
+             *  been deleted -- the registry remembers it, the ledger does not. */
             int usageCount,
+            /** From the registry when it has a row, which is what makes these survive the deletion
+             *  of every statement that produced them. */
             Instant firstSeen,
             Instant lastSeen,
             /** Capabilities that fired on EVERY import of this layout -- the stable core. */
@@ -121,16 +169,70 @@ public class LayoutIntelligenceService {
     ) {}
 
     private final StatementImportRepository statementImportRepository;
+    private final LayoutRegistryService layoutRegistryService;
     private final ObjectMapper objectMapper;
 
-    public LayoutIntelligenceService(StatementImportRepository statementImportRepository, ObjectMapper objectMapper) {
+    public LayoutIntelligenceService(StatementImportRepository statementImportRepository,
+                                      LayoutRegistryService layoutRegistryService,
+                                      ObjectMapper objectMapper) {
         this.statementImportRepository = statementImportRepository;
+        this.layoutRegistryService = layoutRegistryService;
         this.objectMapper = objectMapper;
     }
 
-    /** Every layout across the platform, most-used first. */
+    /**
+     * Every layout across the platform, most-used first.
+     *
+     * <p>Registry rows and import aggregates, outer-joined on the fingerprint -- see the class
+     * comment for why neither side may drop the other's rows.
+     */
     public List<LayoutSummary> layoutOverview() {
-        return summarise(statementImportRepository.findAllWithLayoutFingerprint());
+        return withRegistry(summarise(statementImportRepository.findAllWithLayoutFingerprint()),
+                layoutRegistryService.all());
+    }
+
+    /**
+     * Overlays the curated record on the aggregate, and adds the layouts the aggregate cannot see.
+     *
+     * <p>Where a registry row exists it wins on identity (name, status, parser) and on
+     * first/last-seen. The aggregate's own first/last-seen are computed from surviving statement
+     * imports only, so they silently move forward as old statements are deleted; the registry's do
+     * not, and a "first seen" that drifts later every time somebody tidies their uploads is worse
+     * than no answer.
+     */
+    private List<LayoutSummary> withRegistry(List<LayoutSummary> aggregated,
+                                              List<RegisteredLayout> registered) {
+        Map<String, RegisteredLayout> byFingerprint = new LinkedHashMap<>();
+        for (RegisteredLayout layout : registered) byFingerprint.put(layout.getFingerprint(), layout);
+
+        List<LayoutSummary> merged = new ArrayList<>();
+        for (LayoutSummary summary : aggregated) {
+            RegisteredLayout layout = byFingerprint.remove(summary.fingerprint());
+            merged.add(layout == null ? summary : new LayoutSummary(
+                    summary.fingerprint(), layout.getName(), layout.getStatus().name(),
+                    // COALESCE, not override: a registry row backfilled by V68 has no parser and
+                    // may have no source format, and blanking a value the aggregate does know
+                    // would make the merge lose information rather than add it.
+                    layout.getSourceFormat() != null ? layout.getSourceFormat() : summary.sourceFormat(),
+                    layout.getParser(),
+                    summary.columns(), summary.usageCount(),
+                    layout.getFirstSeen(), layout.getLastSeen(),
+                    summary.stableCapabilities(), summary.unstableCapabilities(),
+                    summary.unknownHeaders(), summary.medianDurationMs(),
+                    summary.totalRowsImported(), summary.totalRowsSkipped()));
+        }
+
+        // Whatever is left has no surviving imports. Reported with an empty capability picture
+        // rather than an invented one -- there is genuinely nothing left to read it from.
+        byFingerprint.values().forEach(layout -> merged.add(new LayoutSummary(
+                layout.getFingerprint(), layout.getName(), layout.getStatus().name(),
+                layout.getSourceFormat(), layout.getParser(), 0, 0,
+                layout.getFirstSeen(), layout.getLastSeen(),
+                List.of(), List.of(), List.of(), null, 0, 0)));
+
+        merged.sort(Comparator.comparingInt(LayoutSummary::usageCount).reversed()
+                .thenComparing(LayoutSummary::fingerprint));
+        return merged;
     }
 
     /** Every unrecognised header across the platform, most-seen first. */
@@ -278,7 +380,11 @@ public class LayoutIntelligenceService {
                 else unstable.add(capability);
             });
 
-            summaries.add(new LayoutSummary(fingerprint, sourceFormat, columns, group.size(), first, last,
+            // name/status/parser are the registry's to supply; this method only sees imports.
+            // UNREGISTERED is therefore the honest default here, and withRegistry() replaces it for
+            // every fingerprint that has a row.
+            summaries.add(new LayoutSummary(fingerprint, null, UNREGISTERED, sourceFormat, null,
+                    columns, group.size(), first, last,
                     stable, unstable, new ArrayList<>(unknown), medianDuration(group), rowsImported, rowsSkipped));
         });
 
