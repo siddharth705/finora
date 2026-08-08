@@ -87,7 +87,7 @@ class AuthServiceAccountScopeTest {
         when(userRepository.existsByEmailIgnoreCaseAndAccountScope(anyString(), anyString())).thenReturn(true);
 
         assertThatThrownBy(() -> authService.register(new RegisterRequest(
-                "siddharth@example.com", "Password123", "Siddharth Tiwari", "+919876500001")))
+                "siddharth@example.com", "Password123", "Sample Customer", "+919876500001")))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("already exists");
 

@@ -234,7 +234,7 @@ public final class PdfFixtureBuilder {
      */
     public static byte[] buildReferenceNumberAndBalanceSample() throws IOException {
         // Wider gap between the Reference and Amount columns than other fixtures use -- a
-        // 14-digit reference value (e.g. "10203040506070") at FONT_SIZE runs wide enough to reach
+        // 14-digit reference value (e.g. "10203040506070") at FONT_SIZE runs wide enough to reach   // synthetic-ok: 10-20-30-40-50-60-70, invented, not corpus-derived
         // a too-narrow next column's anchor and get merged into it by PdfTableLocator's
         // nearest-x bucketing, which every other fixture's shorter/blank Instrument ID values
         // never exercised.
@@ -245,7 +245,7 @@ public final class PdfFixtureBuilder {
                 .blankLine()
                 .row(col, "Date", "Particulars", "Reference No", "Amount", "Balance")
                 .row(col, "01/07/2026", "UPI/DR/234567890123/GENERIC MERCHANT", "234567890123", "-1000.00", "49000.00")
-                .row(col, "01/07/2026", "MOB-IMPS/CR/RAHUL VERMA", "10203040506070", "1000.00", "50000.00")
+                .row(col, "01/07/2026", "MOB-IMPS/CR/SAMPLE SNDR", "10203040506070", "1000.00", "50000.00")   // synthetic-ok: 10-20-30-40-50-60-70, invented, not corpus-derived
                 .row(col, "02/07/2026", "UPI/DR/345678901234/GENERIC PAYEE", "345678901234", "-150.00", "49850.00");
 
         return render(List.of(page));
@@ -281,7 +281,7 @@ public final class PdfFixtureBuilder {
         // as "more of the same table," not a new section, and must not stage it as a data row.
         page2.row(col, "DATE", "TRANSACTION DETAILS", "MERCHANT CATEGORY", "AMOUNT (Rs.)")
                 .row(col, "10/07/2026", "UPI/SAMPLEB/SAMPLEB.SPAY@SBANKONE", "DEPT STORES", "249.00 Dr")
-                .row(col, "13/07/2026", "UPI/MYNTRA DESIGNS PRIVATE L/MYNTRA1ONLINE.GPAY", "MISC STORE", "496.00 Dr");
+                .row(col, "13/07/2026", "UPI/SAMPLE APPAREL PRIVATE L/SAMPLEAP.ONLINEPAY", "MISC STORE", "496.00 Dr");
 
         return render(List.of(page1, page2));
     }
@@ -505,7 +505,7 @@ public final class PdfFixtureBuilder {
                 .blankLine()
                 .row(headerCol, "DATE", "TRANSACTION DETAILS", "MERCHANT CATEGORY", "AMOUNT (Rs.)")
                 .row(dataCol, "24/06/2026", "UPI/SAMPLE VENDOR PRIVATE LT/SAMPLEA.PAYU@AXISB", "MISC STORE", "37.94 Dr")
-                .row(dataCol, "02/07/2026", "UPI/DR AGARWALS HEALTH CARE", "MEDICAL", "500.00 Dr")
+                .row(dataCol, "02/07/2026", "UPI/DR SAMPLE HEALTH CENTRE", "MEDICAL", "500.00 Dr")
                 // Fee line: a separate date cell (as usual), then the description AND its trailing
                 // amount as ONE combined cell -- no separate merchant-category or amount run at
                 // all -- exactly the shape a per-run redirect can't catch, since there's only one
@@ -542,7 +542,7 @@ public final class PdfFixtureBuilder {
                 .blankLine()
                 .row(col, "Date", "Description", "Withdrawal (Dr.)", "Deposit (Cr.)", "Balance")
                 .row(col, "01 Jul 2026", "IMPS to Landlord", "1000.00", null, "24361.97")
-                .row(col, "01 Jul 2026", "UPI/SIVVA SURESH K", null, "10.00", "24351.97")
+                .row(col, "01 Jul 2026", "UPI/SAMPLE PAYEE A", null, "10.00", "24351.97")
                 // Cashback row: no separate Withdrawal or Deposit value at all -- just a leading
                 // amount and the resulting balance combined in the Balance cell, exactly as PDFBox
                 // extracts it on a real Kotak Mahindra Bank statement for this row shape.
@@ -604,7 +604,7 @@ public final class PdfFixtureBuilder {
         float[] col = {LEFT_MARGIN, 150f, 470f};
 
         PageBuilder page = new PageBuilder();
-        page.line("RAHUL VERMA")
+        page.line("SAMPLE SNDR")
                 .line("Total Payment Due Minimum Payment Due Statement Period Payment Due Date Statement Generation Date")
                 // Statement Period ("01/06/2026 - 30/06/2026") shares this row with the standalone
                 // Payment Due Date ("20/07/2026") -- the fixture PdfMetadataExtractor's
@@ -841,7 +841,7 @@ public final class PdfFixtureBuilder {
                 .blankLine()
                 .row(headerCol, "DATE", "TRANSACTION DETAILS", "MERCHANT CATEGORY", "AMOUNT (Rs.)")
                 .row(dataCol, "24/06/2026", "UPI/SAMPLE VENDOR PRIVATE LT/SAMPLEA.PAYU@AXISB", "MISC STORE", "37.94 Dr")
-                .row(dataCol, "02/07/2026", "UPI/DR AGARWALS HEALTH CARE", "MEDICAL", "500.00 Dr")
+                .row(dataCol, "02/07/2026", "UPI/DR SAMPLE HEALTH CENTRE", "MEDICAL", "500.00 Dr")
                 .line("Page 1 of 2");
 
         PageBuilder page2 = new PageBuilder();

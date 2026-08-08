@@ -79,7 +79,7 @@ class OffsetColumnAnchorsPdfPreviewGeneratorTest {
         StagedAccountSection section = generateSections().get(0);
 
         var row = section.rows().stream()
-                .filter(r -> r.description().contains("AGARWALS HEALTH CARE")).findFirst().orElseThrow();
+                .filter(r -> r.description().contains("SAMPLE HEALTH CENTRE")).findFirst().orElseThrow();
         assertThat(row.amount()).isEqualByComparingTo("500.00");
     }
 

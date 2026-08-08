@@ -72,7 +72,7 @@ class MultiColumnPaymentSummaryGridPdfPreviewGeneratorTest {
     void generate_extractsAccountHolderName_fromTheUnlabeledLeadingLine() throws Exception {
         DetectedAccountInfo detected = detect();
 
-        assertThat(detected.accountHolderName()).isEqualTo("RAHUL VERMA");
+        assertThat(detected.accountHolderName()).isEqualTo("SAMPLE SNDR");
     }
 
     @Test

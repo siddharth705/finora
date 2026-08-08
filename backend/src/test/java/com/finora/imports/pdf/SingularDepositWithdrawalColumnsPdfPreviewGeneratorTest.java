@@ -71,7 +71,7 @@ class SingularDepositWithdrawalColumnsPdfPreviewGeneratorTest {
     void generate_usesTheActualDepositAmount_notTheRunningBalance() throws Exception {
         StagingResponse response = generate();
 
-        var row = response.rows().stream().filter(r -> r.description().contains("SIVVA")).findFirst().orElseThrow();
+        var row = response.rows().stream().filter(r -> r.description().contains("SAMPLE PAYEE")).findFirst().orElseThrow();
         assertThat(row.amount()).isEqualByComparingTo("10.00");
         assertThat(row.type()).isEqualTo("INCOME");
     }

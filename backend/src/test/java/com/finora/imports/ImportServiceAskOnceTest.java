@@ -622,13 +622,13 @@ class ImportServiceAskOnceTest {
 
         String csv = String.join("\n",
                 "Bank,Account Holder,Account Number,Date,Description,Debit (INR),Credit (INR)",
-                "State Bank of India,Siddharth Tiwari,XXXXXX4587,2026-07-01,Salary Credit,,85000"
+                "State Bank of India,Sample Customer,XXXXXX4587,2026-07-01,Salary Credit,,85000"
         ) + "\n";
         MockMultipartFile file = new MockMultipartFile("file", "sbi.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8));
 
         StagingResponse response = importService.parseAndStage(userId, file.getOriginalFilename(), file.getInputStream());
 
-        assertThat(response.detectedAccount().accountHolderName()).isEqualTo("Siddharth Tiwari");
+        assertThat(response.detectedAccount().accountHolderName()).isEqualTo("Sample Customer");
         assertThat(response.detectedAccount().accountNumberMasked()).isEqualTo("4587");
     }
 
@@ -643,7 +643,7 @@ class ImportServiceAskOnceTest {
         UUID newAccountId = UUID.randomUUID();
         when(accountService.create(eq(userId), any(), any())).thenReturn(
                 new AccountDto(newAccountId, "SBI Savings", "SAVINGS", BigDecimal.valueOf(25000), null, null, null,
-                        "Siddharth Tiwari", "4587", null, null,
+                        "Sample Customer", "4587", null, null,
                         AccountDto.BankDto.from(com.finora.util.BankRegistry.get("SBI")), null, null, null,
                         0, 0L, "ACTIVE",
                         null, null, null, null, null, null, null));
@@ -652,7 +652,7 @@ class ImportServiceAskOnceTest {
                 BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
         var newAccount = new com.finora.dto.ImportDto.NewAccountRequest(
                 "SBI Savings", "SAVINGS", BigDecimal.valueOf(25000), null, null,
-                "Siddharth Tiwari", "4587", "SBI", null, null, null, null,
+                "Sample Customer", "4587", "SBI", null, null, null, null,
                 null, null, null, null, null, null, null);
         var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null);
 
@@ -660,7 +660,7 @@ class ImportServiceAskOnceTest {
 
         ArgumentCaptor<AccountDto.CreateRequest> captor = ArgumentCaptor.forClass(AccountDto.CreateRequest.class);
         verify(accountService).create(eq(userId), captor.capture(), any());
-        assertThat(captor.getValue().accountHolderName()).isEqualTo("Siddharth Tiwari");
+        assertThat(captor.getValue().accountHolderName()).isEqualTo("Sample Customer");
         assertThat(captor.getValue().accountNumberMasked()).isEqualTo("4587");
     }
 
@@ -711,10 +711,10 @@ class ImportServiceAskOnceTest {
 
         String csv = String.join("\n",
                 "Bank,Account Holder,Account Number,Statement Period,Date,Description,Reference No,Debit (INR),Credit (INR),Running Balance (INR)",
-                "State Bank of India,Siddharth Tiwari,XXXXXX4587,01-Jul-2026 to 31-Jul-2026,,OPENING BALANCE,,,,25000.0",
-                "State Bank of India,Siddharth Tiwari,XXXXXX4587,01-Jul-2026 to 31-Jul-2026,2026-07-01,Salary Credit - ABC Pvt Ltd,SBI1001,,85000,110000.0",
-                "State Bank of India,Siddharth Tiwari,XXXXXX4587,01-Jul-2026 to 31-Jul-2026,2026-07-02,UPI Rent Payment,SBI1002,18000,,92000.0",
-                "State Bank of India,Siddharth Tiwari,XXXXXX4587,01-Jul-2026 to 31-Jul-2026,,CLOSING BALANCE,,,,80885.75"
+                "State Bank of India,Sample Customer,XXXXXX4587,01-Jul-2026 to 31-Jul-2026,,OPENING BALANCE,,,,25000.0",
+                "State Bank of India,Sample Customer,XXXXXX4587,01-Jul-2026 to 31-Jul-2026,2026-07-01,Salary Credit - ABC Pvt Ltd,SBI1001,,85000,110000.0",
+                "State Bank of India,Sample Customer,XXXXXX4587,01-Jul-2026 to 31-Jul-2026,2026-07-02,UPI Rent Payment,SBI1002,18000,,92000.0",
+                "State Bank of India,Sample Customer,XXXXXX4587,01-Jul-2026 to 31-Jul-2026,,CLOSING BALANCE,,,,80885.75"
         ) + "\n";
         MockMultipartFile file = new MockMultipartFile("file", "SBI_Dummy_Statement_July_2026.csv", "text/csv",
                 csv.getBytes(StandardCharsets.UTF_8));

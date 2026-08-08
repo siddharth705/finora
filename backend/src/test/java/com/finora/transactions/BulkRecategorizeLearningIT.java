@@ -83,7 +83,7 @@ class BulkRecategorizeLearningIT extends AbstractIntegrationTest {
      *  them onto one. */
     private static final List<String> DESCRIPTIONS = List.of(
             "SWIGGY BANGALORE", "ZOMATO BANGALORE", "AMAZON RETAIL",
-            "FLIPKART INTERNET", "MYNTRA DESIGNS");
+            "FLIPKART INTERNET", "RETAILER DESIGNS");
 
     private static final String TARGET_CATEGORY = "Groceries";
 

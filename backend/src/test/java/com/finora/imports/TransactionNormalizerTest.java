@@ -241,7 +241,7 @@ class TransactionNormalizerTest {
     @Test
     void normalize_recognizesASingularDepositColumnHeader_asACreditSignal_notJustTheBalanceFallback() {
         Map<String, String> row = rowOf("Date", "01/07/2026", "Deposit (Cr.)", "10.00", "Balance", "24351.97",
-                "Description", "UPI/SIVVA SURESH K");
+                "Description", "UPI/SAMPLE PAYEE A");
 
         StagedRow result = normalizer.normalize(userId, row);
 

@@ -106,10 +106,10 @@ class ReconciliationEndToEndTest {
         // runs (see MerchantNormalizationEngine) -- leaving it null would test the refund pass with
         // one of its two entry signals permanently disabled.
         Transaction purchase = txn(creditCard, LocalDate.of(2026, 7, 5), "3200.00",
-                Transaction.Type.EXPENSE, "MYNTRA RETAIL", Instant.parse("2026-07-05T12:00:00Z"));
+                Transaction.Type.EXPENSE, "RETAILER RETAIL", Instant.parse("2026-07-05T12:00:00Z"));
         purchase.setMerchant("Myntra");
         Transaction refund = txn(creditCard, LocalDate.of(2026, 7, 26), "1600.00",
-                Transaction.Type.INCOME, "MYNTRA REFUND FOR ORDER", Instant.parse("2026-07-26T12:00:00Z"));
+                Transaction.Type.INCOME, "RETAILER REFUND FOR ORDER", Instant.parse("2026-07-26T12:00:00Z"));
         refund.setMerchant("Myntra");
 
         // Must remain OK. Groceries is an ordinary expense; salary is income that shares neither
