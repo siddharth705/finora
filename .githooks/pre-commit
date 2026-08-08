@@ -1,0 +1,12 @@
+#!/bin/sh
+# Blocks a commit that would put real customer data into the repository.
+#
+# This hook did not exist until a real bank account number was committed to a design note and found
+# during review. check-fixture-hygiene.sh documented itself as "the pre-commit hook" for months while
+# nothing installed it, so the only enforcement was CI -- which scanned the net diff of a range and
+# therefore could not see a value added in one commit and removed in another.
+#
+# Install with: sh scripts/install-hooks.sh   (sets core.hooksPath, so it survives a fresh clone once
+# run, and is a single command to re-run after one.)
+set -e
+sh "$(git rev-parse --show-toplevel)/scripts/check-fixture-hygiene.sh"
