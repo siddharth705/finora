@@ -44,9 +44,25 @@ public class SummaryTotalsValidator {
         Map<String, Object> details = new LinkedHashMap<>();
 
         if (rows == null || rows.isEmpty() || summary == null || summary.isEmpty()) {
+            // Says what this method KNOWS, not what it assumes. The previous wording -- "The
+            // statement did not print its own totals" -- asserted a fact about the document that
+            // this method has no way to establish: it receives an already-resolved PrintedSummary
+            // and cannot tell a statement that printed nothing from one whose totals its caller
+            // declined to attribute. Both arrive here as PrintedSummary.NONE.
+            //
+            // Measured on a real HDFC composite statement: it prints "Debit Count 66 / Credit
+            // Count 9" and totals of 39,601.91 and 98,197.00, all four of which match the parse
+            // exactly -- and this rule reported that the statement did not print its own totals.
+            // The caller withholds a document-level summary on a multi-section document (see
+            // PdfPreviewGenerator's own comment on why), so the claim was false and would send
+            // anyone investigating to look for a summary block that is on page 1.
+            //
+            // Whether that summary SHOULD be attributed is a separate question with its own
+            // change; this one only stops the engine explaining itself with something untrue.
             details.put("reason", rows == null || rows.isEmpty()
                     ? "No transactions were parsed."
-                    : "The statement did not print its own totals, so there was nothing to compare against.");
+                    : "No printed totals were available for this section, so there was nothing to "
+                            + "compare against.");
             return new ImportDto.VerificationFinding(RULE, "NOT_APPLICABLE", details);
         }
 

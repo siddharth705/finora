@@ -71,8 +71,8 @@ class ImportVerificationRecorderIT extends AbstractIntegrationTest {
         return new ImportDto.VerificationReport(List.of(
                 new ImportDto.VerificationFinding("BALANCE_CHAIN", "FAILED", details),
                 new ImportDto.VerificationFinding("SUMMARY_TOTALS", "NOT_APPLICABLE",
-                        Map.of("reason", "The statement did not print its own totals, so there was "
-                                + "nothing to compare against."))));
+                        Map.of("reason", "No printed totals were available for this section, so there "
+                                + "was nothing to compare against."))));
     }
 
     @Test

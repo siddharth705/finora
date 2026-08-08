@@ -111,12 +111,36 @@ class SummaryTotalsValidatorTest {
         assertThat(finding.details()).containsEntry("suspectedCause", "MISSING_OR_EXTRA_ROWS");
     }
 
+    /**
+     * The explanation may only state what this validator can establish.
+     *
+     * <p>It receives an already-resolved {@code PrintedSummary} and cannot tell a statement that
+     * printed no totals from one whose totals its caller declined to attribute — both arrive as
+     * {@code NONE}. The reason therefore must not claim the document printed nothing.
+     *
+     * <p>Measured, not hypothetical: on a real HDFC composite statement that prints "Debit Count
+     * 66 / Credit Count 9" and totals matching the parse exactly, this rule reported that the
+     * statement did not print its own totals. The caller withholds a document-level summary on a
+     * multi-section document, so the claim was false, and anyone acting on it would go looking for
+     * a summary block sitting on page 1.
+     *
+     * <p>Asserted as an absence rather than a string match, so rewording cannot reintroduce the
+     * claim in different words.
+     */
     @Test
-    void reportsNotApplicableWhenTheStatementPrintedNoSummary() {
+    void doesNotClaimTheStatementPrintedNoTotals_whenItCannotKnowThat() {
         var finding = validator.check(correctRows(), PrintedSummary.NONE);
 
         assertThat(finding.outcome()).isEqualTo("NOT_APPLICABLE");
-        assertThat(finding.details().get("reason").toString()).contains("did not print its own totals");
+        String reason = finding.details().get("reason").toString();
+        assertThat(reason)
+                .as("the validator cannot see the document, so it must not assert what the document printed")
+                .doesNotContainIgnoringCase("did not print")
+                .doesNotContainIgnoringCase("statement printed no")
+                .doesNotContainIgnoringCase("no summary was printed");
+        assertThat(reason)
+                .as("and it must still say why there was no comparison")
+                .containsIgnoringCase("no printed totals were available");
     }
 
     @Test
