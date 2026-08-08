@@ -1,0 +1,47 @@
+<!doctype html>
+<!--
+  The destination for the /assets/* rule in _redirects, so a missing bundle gets a 404 instead of
+  being answered with the SPA's index.html as text/html.
+
+  This is NOT meant to be the site's general "page not found" screen. Client-side routes are still
+  handled by the SPA fallback and the router's own not-found page, which can render inside the app
+  chrome and offer somewhere to go. This file exists for requests that are not routes at all: a
+  build artefact that is gone. Almost nobody sees it -- a browser fetching a module script does not
+  render the body -- so it stays deliberately plain, with no assets of its own to fetch, since the
+  one thing we know about a client that lands here is that asset loading is already failing.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Not found — Finora</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        color: #1f2933;
+        background: #f7f8fa;
+      }
+      main { text-align: center; padding: 2rem; max-width: 32rem; }
+      h1 { font-size: 1.125rem; font-weight: 600; margin: 0 0 0.5rem; }
+      p { font-size: 0.875rem; color: #616e7c; margin: 0 0 1.5rem; line-height: 1.5; }
+      a { color: #2f6fed; text-decoration: none; font-size: 0.875rem; }
+      a:hover { text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>That file isn't here</h1>
+      <p>
+        This usually means the app was updated while your tab was open. Nothing has been lost — your
+        accounts and transactions are unaffected. Reloading will pick up the new version.
+      </p>
+      <a href="/">Reload Finora</a>
+    </main>
+  </body>
+</html>
