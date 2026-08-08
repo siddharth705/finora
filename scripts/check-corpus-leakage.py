@@ -73,6 +73,60 @@ PATTERNS = [
 
 SKIP = re.compile(r"^(backend/target/|.*-lock\.(json|yaml)$|.*\.pdf$)")
 
+# ---------------------------------------------------------------- separated identifiers
+#
+# A card number written "1234 5678 9012 3456" and the same number written contiguously are the same
+# identifier, and every digit rule in this repository saw only the second. That is not hypothetical:
+# a real card number and a real account number sat in a fixture through seven green automated gates
+# because their separators hid them, on BOTH sides of the comparison -- so normalisation has to apply
+# to the corpus extraction as well as the repository scan, or the two disagree by construction.
+#
+# Deliberately narrow, because the failure mode of a broad rule here is a scanner people bypass:
+#   - at least MIN_SEPARATED_DIGITS digits in total, which excludes dates (8 at most) and ordinary
+#     quantities;
+#   - groups joined by a SINGLE space or hyphen only, never a dot or comma, which excludes monetary
+#     amounts;
+#   - the UUID shape 8-4-4-4-12 is rejected outright, because an all-digit UUID would otherwise
+#     qualify on length alone.
+MIN_SEPARATED_DIGITS = 12
+SEPARATED = re.compile(r"(?<![\d.,-])\d{2,6}(?:[ -]\d{2,6}){1,5}(?![\d.,])")
+UUID_GROUPS = (8, 4, 4, 4, 12)
+
+
+def separated_digits(text: str) -> set:
+    """Digit-only forms of separator-split identifiers. Empty set is the normal case."""
+    out = set()
+    for m in SEPARATED.finditer(text):
+        raw = m.group()
+        groups = [len(g) for g in re.split(r"[ -]", raw)]
+        if tuple(groups) == UUID_GROUPS:
+            continue
+        digits = re.sub(r"[ -]", "", raw)
+        if len(digits) >= MIN_SEPARATED_DIGITS and not REPEATED_RUN.fullmatch(digits):
+            out.add(digits)
+    return out
+
+
+def _self_test() -> int:
+    cases = [
+        ("card, spaced",      "CREDIT CARD ACCOUNT  4000 1111 2222 3333", {"4000111122223333"}),
+        ("card, hyphenated",  "card 1234-5678-9012-3456",                 {"1234567890123456"}),  # synthetic-ok: sequential test pattern, absent from the corpus
+        ("account, 3-6-3",    "SAVINGS ACCOUNT-RES  100-111111-002",      {"100111111002"}),
+        ("uuid, all digits",  "id 12345678-1234-1234-1234-123456789012",  set()),  # synthetic-ok: sequential test pattern, absent from the corpus
+        ("date",              "txn on 22/07/2026 and 15-07-2026",         set()),
+        ("amount",            "Total 1,817.00 Minimum 200.00",            set()),
+        ("short quantity",    "rows 12 34",                               set()),
+        ("synthetic fixture", "card 0000 0000 0000 0000",                 set()),
+    ]
+    bad = 0
+    for name, text, want in cases:
+        got = separated_digits(text)
+        ok = got == want
+        bad += 0 if ok else 1
+        print(f"  {'ok  ' if ok else 'FAIL'} {name:<20} -> {sorted(got) if got else '(none)'}")
+    print(f"\n  {len(cases) - bad} passed, {bad} failed")
+    return 1 if bad else 0
+
 
 def corpus_text(corpus: Path) -> str:
     """Every statement's text, concatenated. Needs the backend's PDFBox on the classpath."""
@@ -111,7 +165,7 @@ def needles(text: str) -> set:
             if len(v) >= 10 and not REPEATED_RUN.fullmatch(v):
                 whole.add(v)
 
-    out = set(whole)
+    out = set(whole) | separated_digits(text)
     for v in whole:
         if not v.isdigit():
             continue                                # truncation of a VPA is not a distinct shape
@@ -125,8 +179,16 @@ def needles(text: str) -> set:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("corpus", type=Path, help="directory of real statements, OUTSIDE this repository")
+    ap.add_argument("corpus", type=Path, nargs="?",
+                    help="directory of real statements, OUTSIDE this repository")
+    ap.add_argument("--self-test", action="store_true",
+                    help="verify separator normalisation and its false-positive guards; no corpus needed")
     args = ap.parse_args()
+
+    if args.self_test:
+        return _self_test()
+    if args.corpus is None:
+        ap.error("corpus directory required (or pass --self-test)")
 
     corpus = args.corpus.resolve()
     if not corpus.is_dir():
@@ -143,6 +205,29 @@ def main() -> int:
     hits = subprocess.run(["git", "grep", "-nF", "-f", str(listfile), "--", "."],
                           cwd=REPO_ROOT, capture_output=True, text=True).stdout.splitlines()
     hits = [h for h in hits if not SKIP.match(h.split(":", 1)[0])]
+
+    # SYMMETRY. The pass above greps literally, so it only catches a corpus value that is spaced in
+    # the document and contiguous in the tree. The real card number was the other direction --
+    # contiguous in the statement, spaced 4x4 in the fixture -- and no literal needle can see that.
+    # So the repository side is normalised the same way the corpus side is, and the comparison is
+    # made on digits alone. Without this, "separator-tolerant" would be true of one side only, which
+    # is the same disagreement-by-construction the corpus normalisation exists to prevent.
+    corpus_digits = {n for n in ns if n.isdigit() and len(n) >= MIN_SEPARATED_DIGITS}
+    tracked = subprocess.run(["git", "ls-files"], cwd=REPO_ROOT,
+                             capture_output=True, text=True).stdout.splitlines()
+    for rel in tracked:
+        if SKIP.match(rel):
+            continue
+        f = REPO_ROOT / rel
+        try:
+            body = f.read_text(errors="ignore")
+        except OSError:
+            continue
+        for n_, line in enumerate(body.splitlines(), 1):
+            if "synthetic-ok" in line:
+                continue
+            for d in separated_digits(line) & corpus_digits:
+                hits.append(f"{rel}:{n_}: separator-split corpus identifier ({len(d)} digits)")
 
     if not hits:
         print("clean -- no corpus identifier occurs in tracked content.")
