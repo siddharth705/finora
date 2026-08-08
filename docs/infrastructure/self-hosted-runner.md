@@ -145,6 +145,36 @@ out, in order of effort:
 2. Register a second runner. Additional runners can live on the same machine in their own
    directories with their own names; nothing in the workflow has to change.
 
+### A merged PR's run keeps the runner
+
+`concurrency.cancel-in-progress` only cancels a run when a **new push arrives on the same ref**. It
+has no opinion about the pull request being closed. So merging a PR while its run is in flight does
+not stop that run: it keeps the single runner for its full five jobs, testing a branch whose result
+nobody will read, while everything behind it waits.
+
+Observed 2026-08-08: a run for an already-merged branch held the runner for its whole duration with
+three runs queued behind it, including the `main` run for the merge commit it had been superseded
+by. Nothing failed; the queue just drained roughly a run later than it needed to.
+
+With one runner this is worth knowing before you go looking for a fault that is not there. If it
+becomes routine, cancel the run by hand at merge time (`gh run cancel <id>`), or register the second
+runner above.
+
+### Cancellation is routine, and used to look like a failure
+
+Because `cancel-in-progress` fires on every second push to a branch, cancelled runs are normal here
+rather than exceptional. Two steps in the `backend` job report on the suite after it runs, and both
+used to carry `if: always()` — which covers cancellation. A cancelled run therefore killed the test
+step mid-suite, left no `target/guardian-rules.json`, and then ran the Guardian reporter against
+nothing, which exited 2 with `Repository Guardian: no rule manifest found`.
+
+That reads exactly like a broken architecture rule and is nothing of the sort. Both steps are now
+`if: ${{ !cancelled() }}`. The teardown steps deliberately keep `always()` — a cancelled run is
+precisely when a leftover Postgres container or backgrounded jar most needs killing.
+
+If you see a red Guardian step, check whether the run was cancelled before treating it as a rule
+failure.
+
 ## Security
 
 A self-hosted runner executes workflow code from every pull request on this machine, under your user
@@ -155,6 +185,24 @@ scripts.
 For a private repository with a single trusted committer that is a reasonable trade. It stops being
 one the moment this repository takes pull requests from outside contributors, or goes public.
 Revisit it then rather than discovering it then.
+
+**The repository being private is load-bearing, not incidental.** Verified private on 2026-08-08.
+GitHub's own guidance is not to use self-hosted runners with public repositories, for exactly this
+reason: anyone can open a fork PR, and a fork PR's workflow is code. Making this repository public
+without first moving CI to hosted runners hands arbitrary execution on this machine to anyone with a
+GitHub account. Treat "make the repo public" as a change that requires this file to be read first.
+
+**What the workflow itself can reach is now bounded.** `ci.yml` declares
+`permissions: contents: read` at workflow level, so `GITHUB_TOKEN` cannot push, publish or alter
+repository settings even though the job runs on a machine that could. That limits the token; it does
+**not** limit the workflow, which still runs as your user account with your home directory in reach.
+The two are separate controls and only one of them is enforced by anything.
+
+**No credential is stored in GitHub for a compromised job to read.** There are zero Actions secrets,
+zero Dependabot secrets and zero environment secrets on this repository — see
+[`../engineering/secrets-and-iam-audit.md`](../engineering/secrets-and-iam-audit.md). That is worth
+preserving deliberately: adding a deploy token to CI would put a production credential on this
+machine, inside a job that dependabot pull requests also run.
 
 ## Recovering on a new machine
 
