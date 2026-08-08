@@ -128,8 +128,8 @@ class ImportTraceIT extends AbstractIntegrationTest {
                 new ImportDto.VerificationFinding("BALANCE_CHAIN", "VERIFIED",
                         Map.of("rowsChecked", 124, "rowsWithBalance", 124)),
                 new ImportDto.VerificationFinding("SUMMARY_TOTALS", "NOT_APPLICABLE",
-                        Map.of("reason", "The statement did not print its own totals, so there was "
-                                + "nothing to compare against."))));
+                        Map.of("reason", "No printed totals were available for this section, so there "
+                                + "was nothing to compare against."))));
     }
 
     /**
