@@ -6,7 +6,7 @@ WHY THIS EXISTS, AND WHY IT IS DIFFERENT FROM THE OTHER TWO
 check-fixture-hygiene.sh answers "does this look like customer data?" from patterns -- long digit
 runs, IFSC shapes, email shapes. That is the right question for content nobody has ground truth
 about, and it has a hard limit: it cannot tell a real UPI reference from an invented one, and it does
-not fire at all on a real first name or a VPA like `utility@ok` that contains no suspicious digits.
+not fire at all on a real first name or a VPA like `paybill@xy` that contains no suspicious digits.
 
 This script asks a different question: "does this value actually occur in a real customer statement?"
 It has the source documents, so its answer is evidence rather than heuristic. A sweep of this kind is

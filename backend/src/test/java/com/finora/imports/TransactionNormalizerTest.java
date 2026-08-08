@@ -64,12 +64,12 @@ class TransactionNormalizerTest {
                 "Amount(INR)", "680.0",
                 "Type", "DR",
                 "Balance", "7025.86",
-                "Remarks", "UPI/DR/900011112222/MERCHANT/UTIB/sample-utility@ok/");
+                "Remarks", "UPI/DR/900011112222/MERCHANT/UTIB/sample-billpay@ok/");
 
         StagedRow result = normalizer.normalize(userId, row);
 
         assertThat(result).isNotNull();
-        assertThat(result.description()).isEqualTo("UPI/DR/900011112222/MERCHANT/UTIB/sample-utility@ok/");
+        assertThat(result.description()).isEqualTo("UPI/DR/900011112222/MERCHANT/UTIB/sample-billpay@ok/");
     }
 
     @Test
@@ -144,7 +144,7 @@ class TransactionNormalizerTest {
                 "Date", "31/07/2026",
                 "Amount(INR)", "680.0",
                 "Type", "DR",
-                "Remarks", "UPI/DR/900011112222/MERCHANT/UTIB/sample-utility@ok/");
+                "Remarks", "UPI/DR/900011112222/MERCHANT/UTIB/sample-billpay@ok/");
 
         StagedRow result = normalizer.normalize(userId, row);
 
@@ -321,7 +321,7 @@ class TransactionNormalizerTest {
         Map<String, String> row = rowOf(
                 "Date", "31/07/2026", "Instrument ID", "UPI2607315823",
                 "Amount(INR)", "680.0", "Type", "DR", "Balance", "7025.86",
-                "Remarks", "UPI/DR/900011112222/MERCHANT/UTIB/sample-utility@ok/");
+                "Remarks", "UPI/DR/900011112222/MERCHANT/UTIB/sample-billpay@ok/");
 
         StagedRow result = normalizer.normalize(userId, row);
 

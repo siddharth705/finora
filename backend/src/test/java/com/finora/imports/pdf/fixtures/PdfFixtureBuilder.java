@@ -199,7 +199,7 @@ public final class PdfFixtureBuilder {
 
         PageBuilder page = new PageBuilder();
         page.line("Branch Name: JHANSI,SIPRI BAZAR")
-                .line("IFSC: PUNB0222300")
+                .line("IFSC: PUNB0999999")
                 .blankLine()
                 .row(col, "Date", "Instrument ID", "Amount(INR)", "Type (DR/CR)", "Balance", "Remarks")
                 // File order is newest-first, exactly like the real export.
@@ -280,7 +280,7 @@ public final class PdfFixtureBuilder {
         // Same header repeated verbatim on the second page -- PdfTableLocator must recognize this
         // as "more of the same table," not a new section, and must not stage it as a data row.
         page2.row(col, "DATE", "TRANSACTION DETAILS", "MERCHANT CATEGORY", "AMOUNT (Rs.)")
-                .row(col, "10/07/2026", "UPI/SAMPLEB/SAMPLEB.PAYU@HDFCBANK", "DEPT STORES", "249.00 Dr")
+                .row(col, "10/07/2026", "UPI/SAMPLEB/SAMPLEB.SPAY@SBANKONE", "DEPT STORES", "249.00 Dr")
                 .row(col, "13/07/2026", "UPI/MYNTRA DESIGNS PRIVATE L/MYNTRA1ONLINE.GPAY", "MISC STORE", "496.00 Dr");
 
         return render(List.of(page1, page2));
@@ -846,7 +846,7 @@ public final class PdfFixtureBuilder {
 
         PageBuilder page2 = new PageBuilder();
         page2.row(headerCol, "DATE", "TRANSACTION DETAILS", "MERCHANT CATEGORY", "AMOUNT (Rs.)")
-                .row(dataCol, "10/07/2026", "UPI/SAMPLEB/SAMPLEB.PAYU@HDFCBANK", "DEPT STORES", "249.00 Dr");
+                .row(dataCol, "10/07/2026", "UPI/SAMPLEB/SAMPLEB.SPAY@SBANKONE", "DEPT STORES", "249.00 Dr");
 
         return render(List.of(page1, page2));
     }

@@ -167,7 +167,7 @@ trap 'rm -f "$warn" "$block"' EXIT
 
 # A deliberate placeholder: a run of 4+ identical characters (XXXX, 999999), or a word marking it
 # as fake. Note this is applied to the WHOLE token for emails/phones but only to an IFSC's 6-char
-# branch part -- real Indian IFSCs routinely contain runs of zeros (HDFC0000007), so the looser
+# branch part -- real Indian IFSCs routinely contain runs of zeros (ABCD0000000), so the looser
 # test would wave real ones straight through.
 is_placeholder() {
   printf '%s' "$1" | grep -qiE '(.)\1{3,}|example|sample|test|dummy|fake|placeholder|redacted|noreply|localhost'
