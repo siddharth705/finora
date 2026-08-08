@@ -72,7 +72,7 @@ public class PdfTableLocator {
 
     // A line naming an account-type word alongside an account-number-shaped digit run marks the
     // start of a brand-new account section -- e.g. HSBC's composite-statement banner
-    // "SAVINGS ACCOUNT-RES  120-070727-006", which introduces a second account partway through a
+    // "SAVINGS ACCOUNT-RES  100-111111-002", which introduces a second account partway through a
     // single PDF. Seeing this while a section is already active closes it immediately; this is a
     // stronger, more explicit signal than the header-signature-difference fallback below, so it's
     // checked first.
@@ -100,7 +100,7 @@ public class PdfTableLocator {
 
     // The account-number-shaped run within a SECTION_MARKER banner -- 4+ digits, matching the same
     // "\\d{4,}" shape SECTION_MARKER itself requires, and tolerating the separators real account
-    // numbers are printed with (HSBC's "120-070727-006"). See accountIdentityIn.
+    // numbers are printed with (HSBC's "100-111111-002"). See accountIdentityIn.
     private static final Pattern ACCOUNT_NUMBER_IN_MARKER = Pattern.compile("\\d[\\d-]{3,}\\d|\\d{4,}");
 
     // A trailing amount (optionally Dr/Cr-suffixed) embedded at the end of an otherwise-ordinary

@@ -198,7 +198,7 @@ public final class PdfFixtureBuilder {
         float[] col = {LEFT_MARGIN, 130f, 230f, 320f, 400f, 480f};
 
         PageBuilder page = new PageBuilder();
-        page.line("Branch Name: JHANSI,SIPRI BAZAR")
+        page.line("Branch Name: SAMPLETOWN,MAIN BAZAR")
                 .line("IFSC: PUNB0999999")
                 .blankLine()
                 .row(col, "Date", "Instrument ID", "Amount(INR)", "Type (DR/CR)", "Balance", "Remarks")
@@ -377,7 +377,7 @@ public final class PdfFixtureBuilder {
                 // Continuation line: description-only, no date, no amount -- must fold into the
                 // row above rather than becoming its own dropped, dateless row.
                 .row(col, null, "(Ref# ST000000000000000000)", null, null, null)
-                .row(col, "11/07/2026 19:34", "UPI-Amazon India", "", "942.50", "l");
+                .row(col, "11/07/2026 19:34", "UPI-Retailer One", "", "942.50", "l");
 
         return render(List.of(page));
     }
@@ -399,15 +399,15 @@ public final class PdfFixtureBuilder {
         page.line("HSBC")
                 .line("Composite Statement")
                 .blankLine()
-                .line("SAVINGS ACCOUNT-RES  120-070727-006")
+                .line("SAVINGS ACCOUNT-RES  100-111111-002")
                 .row(savingsCol, "Date", "Transaction Details", "Deposits", "Withdrawals", "Balance")
                 .row(savingsCol, "05/07/2026", "Salary Credit", "55000.00", "", "105000.00")
                 .row(savingsCol, "10/07/2026", "Grocery Store", "", "2000.00", "103000.00")
                 .blankLine()
-                .line("CREDIT CARD ACCOUNT  4862 6989 2271 6048")
+                .line("CREDIT CARD ACCOUNT  4000 1111 2222 3333")
                 .line("Total Amount Due 1,817.00 Minimum Due 200.00")
                 .row(ccCol, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
-                .row(ccCol, "15/07/2026", "UPI-Amazon India", "1,817.02 Dr");
+                .row(ccCol, "15/07/2026", "UPI-Retailer One", "1,817.02 Dr");
 
         return render(List.of(page));
     }
@@ -810,10 +810,10 @@ public final class PdfFixtureBuilder {
         PageBuilder page1 = new PageBuilder();
         page1.row(col, "Date", "Description", "Amount", "Balance")
                 .row(col, "01/07/2026", "Salary Credit", "50000.00", "50000.00")
-                .row(col, "02/07/2026", "UPI-Amazon India Purchase", "1200.00", "48800.00")
+                .row(col, "02/07/2026", "UPI-Retailer One Purchase", "1200.00", "48800.00")
                 // Continuation line: description-only, no date/amount -- must fold into the row
                 // above (WRAPPED_DESCRIPTION), not become its own dropped, dateless row.
-                .row(col, null, "(Ref# ORDER-8817234451)", null, null);
+                .row(col, null, "(Ref# ORDER-9000001111)", null, null);
 
         PageBuilder page2 = new PageBuilder();
         // Same header repeated verbatim on page 2 -- must be recognized as "more of the same

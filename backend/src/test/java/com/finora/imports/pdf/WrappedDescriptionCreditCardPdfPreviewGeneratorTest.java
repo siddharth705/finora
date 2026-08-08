@@ -68,7 +68,7 @@ class WrappedDescriptionCreditCardPdfPreviewGeneratorTest {
         assertThat(payment.type()).isEqualTo("INCOME");
         assertThat(payment.amount()).isEqualByComparingTo("355.00");
 
-        var purchase = response.rows().stream().filter(r -> r.description().contains("Amazon")).findFirst().orElseThrow();
+        var purchase = response.rows().stream().filter(r -> r.description().contains("Retailer")).findFirst().orElseThrow();
         assertThat(purchase.type()).isEqualTo("EXPENSE");
         assertThat(purchase.amount()).isEqualByComparingTo("942.50");
         assertThat(purchase.date()).isEqualTo(LocalDate.of(2026, 7, 11));
