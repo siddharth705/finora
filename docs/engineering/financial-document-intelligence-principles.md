@@ -882,7 +882,7 @@ actually works — no test, no claim.
 
 #### `GRID_METADATA_TRAILING_LABEL`
 - **Purpose:** extract account-level metadata from a grid where each row's VALUE comes BEFORE its
-  own label on the same line (`"317002010038811 Account Number"`, `"UBIN0531707 IFSC"`) — the
+  own label on the same line (`"900011112222333 Account Number"`, `"UBIN0999999 IFSC"`) — the
   reverse of every "Label: Value" shape `ACCOUNT_HOLDER`/`ACCOUNT_NUMBER`/`IFSC`/`BRANCH` already
   handle. Originally scoped (speculatively, before a real document existed to check it against) as
   "a 4-column grid" — the real layout turned out to be a two-column grid with reversed value/label
