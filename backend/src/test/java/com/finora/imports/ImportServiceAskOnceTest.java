@@ -579,22 +579,22 @@ class ImportServiceAskOnceTest {
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
 
         String csv = String.join("\n",
-                "Account Statement for Account Number 2223000101294802",
+                "Account Statement for Account Number 2222000011119999",
                 "",
                 "Branch Details,",
-                "Branch Name:,JHANSI,SIPRI BAZAR",
-                "IFSC:,PUNB0222300",
+                "Branch Name:,SAMPLETOWN,MAIN BAZAR",
+                "IFSC:,PUNB0999999",
                 "",
                 "Statement Period:     23-06-2026    to     23-07-2026",
                 "",
                 "Txn No.,Txn Date,Description,Branch Name,Cheque No.,Dr Amount,Cr Amount,Balance",
-                "T20721400,22/07/2026,UPI/DR/620309707458/MIDORI W/YESB/q577352703@ybl/S,-,,420.0,,10728.27 Cr.,",
-                "U55126421,20/07/2026,UPI/CR/271906002016/ONE97 CO/UTIB/poweraccess.pay/,-,,,1.0,11148.27 Cr.,",
+                "T20721400,22/07/2026,UPI/DR/900077778888/MERCHANT/YESB/sample11111@ybl/S,-,,420.0,,10728.27 Cr.,",
+                "U55126421,20/07/2026,UPI/CR/900099990000/PAYCO CO/UTIB/samplemerch.pay/,-,,,1.0,11148.27 Cr.,",
                 "",
                 "***Generated through PNB ONE ***",
                 "\"1.  Unless constituent notifies the bank immediately, it will be taken that the account is correct.\""
         ) + "\n";
-        MockMultipartFile file = new MockMultipartFile("file", "PNBONE_STMT_XX4802.csv", "text/csv",
+        MockMultipartFile file = new MockMultipartFile("file", "PNBONE_STMT_XX9999.csv", "text/csv",
                 csv.getBytes(StandardCharsets.UTF_8));
 
         StagingResponse response = importService.parseAndStage(userId, file.getOriginalFilename(), file.getInputStream());
@@ -666,7 +666,7 @@ class ImportServiceAskOnceTest {
 
     /**
      * Regression test for the "every credit row is Salary" bug found from real screenshots of
-     * friend UPI repayments (e.g. "UPI/CR/656007770610/TANISHQ/ICIC/tanishqmehta98-/U") landing
+     * friend UPI repayments (e.g. "UPI/CR/900022223333/SAMPLEP/ICIC/samplepayer98-/U") landing
      * under Salary with full confidence. parseRow() used to special-case isIncome straight to
      * "Salary"/"default" without ever calling the suggestion engine — this verifies income rows
      * now go through categorizationService.suggestReadOnly() exactly like expense rows do, so a
@@ -678,7 +678,7 @@ class ImportServiceAskOnceTest {
         when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
 
-        String description = "UPI/CR/656007770610/TANISHQ/ICIC/tanishqmehta98-/U";
+        String description = "UPI/CR/900022223333/SAMPLEP/ICIC/samplepayer98-/U";
         String csv = "Date,Description,Debit,Credit\n2026-07-13," + description + ",,38.00\n";
         MockMultipartFile file = new MockMultipartFile("file", "statement.csv", "text/csv",
                 csv.getBytes(StandardCharsets.UTF_8));
