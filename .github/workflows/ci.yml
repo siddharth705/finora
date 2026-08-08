@@ -579,7 +579,7 @@ jobs:
         working-directory: backend
         env:
           SPRING_PROFILES_ACTIVE: dev
-          SERVER_PORT: 8086
+          SERVER_PORT: 18086
           DB_PORT: 5433
         run: |
           set -euo pipefail
@@ -650,7 +650,7 @@ jobs:
         working-directory: backend
         env:
           SPRING_PROFILES_ACTIVE: dev
-          SERVER_PORT: 8088
+          SERVER_PORT: 18088
           DB_PORT: 5433
         run: |
           set -euo pipefail
@@ -682,11 +682,30 @@ jobs:
       # raised for the same reason as locally -- the suite registers an account per test and stages
       # a statement in most of them, so production per-IP limits stop the run partway through every
       # time regardless of whether the product works.
+      # PORT 18081, NOT 8081. 8081 is the React Native Metro bundler's default, and this runner is a
+      # developer's own Mac rather than a disposable VM -- so `npx expo start` in mobile/ and this
+      # step want the same port, and whoever binds first wins.
+      #
+      # That is not hypothetical. On 2026-08-08 three unrelated pull requests failed here at once,
+      # including one whose entire diff was an `actions/checkout` version bump, because an Expo dev
+      # server was running on the machine. The backend could not bind, the health poll ran its full
+      # 60 attempts, and the step failed pointing at the change under test. `lsof -nP -iTCP:8081`
+      # was the only thing that explained it.
+      #
+      # The file already predicted this failure two comments down ("the backend finds 8081 taken")
+      # but blamed a leftover CI process, so nobody looked for a dev server. Choosing a port nothing
+      # defaults to removes the class of failure rather than the last instance of it -- the same
+      # reasoning that already picked 5433 over 5432 for Postgres.
+      #
+      # FINORA_E2E_API_ORIGIN is passed to the Smoke step below because e2e/ defaults to 8081 too
+      # (fixtures/config.ts, playwright.config.ts, scripts/stack.mjs). That default is left alone:
+      # it is the documented local convention and every read of it already goes through this
+      # override, which exists for exactly this.
       - name: Start the backend
         working-directory: backend
         env:
           SPRING_PROFILES_ACTIVE: dev
-          SERVER_PORT: 8081
+          SERVER_PORT: 18081
           DB_PORT: 5433
           RATE_LIMIT_REGISTER_MAX: 10000
           RATE_LIMIT_LOGIN_MAX: 10000
@@ -694,7 +713,7 @@ jobs:
         run: |
           java -jar target/finora-backend-*.jar > "$RUNNER_TEMP/backend.log" 2>&1 &
           for _ in $(seq 1 60); do
-            if curl -sf http://localhost:8081/actuator/health | grep -q '"UP"'; then
+            if curl -sf http://localhost:18081/actuator/health | grep -q '"UP"'; then
               echo "backend up"; exit 0
             fi
             sleep 2
@@ -703,8 +722,12 @@ jobs:
           tail -50 "$RUNNER_TEMP/backend.log"
           exit 1
 
+      # Points the suite at the port the step above actually bound. Without this the harness falls
+      # back to its 8081 default and talks to whatever happens to be there -- or nothing.
       - name: Smoke
         working-directory: e2e
+        env:
+          FINORA_E2E_API_ORIGIN: http://localhost:18081
         run: npm run test:smoke
 
       # The report and traces are the whole value of a failed E2E run -- without them the only
@@ -733,7 +756,7 @@ jobs:
       # took both of these with it; a self-hosted machine keeps running, so anything left here is
       # still holding its port when the next run starts. That failure is particularly nasty to
       # diagnose because it lands on the NEXT commit: Postgres finds 5433 taken, or the backend
-      # finds 8081 taken, and the run fails for a reason that has nothing to do with the change
+      # finds 18081 taken, and the run fails for a reason that has nothing to do with the change
       # that triggered it.
       #
       # The backend needs an explicit kill because it is started with `&`. Backgrounding detaches it
