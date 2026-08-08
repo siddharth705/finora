@@ -123,7 +123,7 @@ jobs:
       # fetch-depth: 0 because the PII check diffs a commit RANGE here rather than the index (see
       # its --range flag). A shallow checkout would not have the base commit, and the script would
       # fall back to scanning nothing -- passing vacuously, which reads as coverage in review.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -211,7 +211,7 @@ jobs:
       - name: Import cross-reference
         run: python3 scripts/check-imports.py
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           java-version: '25'
           distribution: 'temurin'
@@ -296,10 +296,10 @@ jobs:
     # See the backend job for why. Shorter budget: no containers here, ~1m40s today.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           # Matches the engines field in frontend/package.json (">=20.19.0").
           node-version: '20'
@@ -360,10 +360,10 @@ jobs:
     # See the backend job for why. Shorter budget: no containers here, ~1m40s today.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'
@@ -396,10 +396,10 @@ jobs:
     # See the backend job for why. Shorter budget: no containers here, ~1m40s today.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'
@@ -476,7 +476,7 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # This was a `services:` container on ubuntu-latest. Service containers are a Linux-container
       # feature and do not run on a macOS runner at all, so the same container is started by hand.
@@ -518,14 +518,14 @@ jobs:
       # `./mvnw package` itself (see "Build the backend" below), so a JDK older than the compiler
       # release target fails here with "release version N not supported" even though nothing about
       # the smoke tests changed. Raise both together.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           java-version: '25'
           distribution: temurin
           cache: maven
 
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
 
