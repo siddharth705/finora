@@ -68,7 +68,12 @@ public class CapabilityCoverageService {
             // is the one gap this map exists to report. RIGHT_ALIGNED_AMOUNTS is among the most
             // frequently exercised capabilities there is, so the map had never reported on the
             // thing it most often does.
-            "PRINTED_SUMMARY_TOTALS", "RIGHT_ALIGNED_AMOUNTS");
+            "PRINTED_SUMMARY_TOTALS", "RIGHT_ALIGNED_AMOUNTS",
+            // A header split across two or three visual lines, found on a real HDFC combined
+            // statement whose fixed-deposit schedule was invisible to table location entirely
+            // because neither half of its header scored as one. See
+            // PdfTableLocator.HEADER_WRAP_MAX_GAP.
+            "WRAPPED_HEADER");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure

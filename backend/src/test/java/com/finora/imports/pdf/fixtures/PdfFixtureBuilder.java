@@ -78,6 +78,8 @@ import java.util.List;
  *   -&gt; buildMonthNameFirstDrCrColumnSample
  * NARRATION_ABOVE_ITS_DATE_ROW (leading narration decided by proximity, rehomed by header)
  *   -&gt; buildNarrationAboveItsDateRowSample
+ * WRAPPED_HEADER (one heading row printed across two visual lines, centered per column)
+ *   -&gt; buildWrappedHeaderDepositScheduleSample
  * Never Lose Information (whole-document)
  *   -&gt; buildUnrecognizableDocumentSample
  * Composability (multiple already-evidenced capabilities firing together in one document)
@@ -770,6 +772,54 @@ public final class PdfFixtureBuilder {
                 .row(new float[]{narrationX}, "UPI/300000000003/00:41:30/UPI/thirdmerchant")
                 .row(col, "04-06-2026", null, null, "750.00", null, "35077.16 Cr")
                 .row(new float[]{narrationX}, "three@bank");
+
+        return render(List.of(page));
+    }
+
+    // ==================== WRAPPED_HEADER ====================
+
+    /**
+     * A table whose column headings are too long for their columns and are therefore printed on
+     * TWO visual lines, with each heading's two halves centered over the column rather than
+     * left-aligned to it. Modeled on the fixed-deposit schedule inside a real HDFC combined
+     * statement (values fully synthetic per the Synthetic Fixture Policy); the shape is a
+     * consequence of narrow columns and long headings, not of that bank.
+     *
+     * <p>That schedule's nine deposits imported as nothing, while the import reported success.
+     * Both halves of its heading row are visible to the engine and NEITHER is a header:
+     *
+     * <ul>
+     *   <li>the upper half carries the column names but no date word at all, so it fails
+     *       {@code looksLikeHeaderRow}'s {@code hasDate} condition outright;</li>
+     *   <li>the lower half carries "Date", but only one other recognized name across seven cells,
+     *       so it fails the density condition that exists to keep prose from being read as a
+     *       header.</li>
+     * </ul>
+     *
+     * <p>Both conditions are correct individually. The mistake was asking them of one visual line
+     * at a time, when the header a reader sees spans two.
+     *
+     * <p>The half-line offsets are load-bearing, and are what centering produces: the LONGER of a
+     * heading's two lines starts further LEFT, so "Principal" sits left of "Deposit" above it
+     * while "Number" sits right of "FD". The real statement's offsets run from 0.23pt to 13.77pt;
+     * this reproduces that relationship at 2pt, not those values. A merge rule that assumed the
+     * two lines shared a left edge would find nothing here.
+     */
+    public static byte[] buildWrappedHeaderDepositScheduleSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 110f, 165f, 235f, 300f, 365f, 440f};
+        // Centered over the column: the shorter upper line starts right of the anchor, the longer
+        // lower line starts left of it.
+        float[] upper = {LEFT_MARGIN + 2f, 112f, 167f, 237f, 302f, 367f, 442f};
+        float[] lower = {LEFT_MARGIN - 2f, 108f, 163f, 233f, 298f, 363f, 438f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Some Financial Institution")
+                .line("FD DETAILS :- FOR CURRENT ACCOUNT HOLDER")
+                .row(upper, "FD", "Currency", "Deposit", "Open/Value", "Rate Of", "Maturity", "Nomination")
+                .row(lower, "Number", "Code", "Principal", "Date", "Interest", "Amount", "Registered")
+                .row(col, "FD0000001", "INR", "50,000.00", "12/01/2026", "7.10", "53,551.00", "YES")
+                .row(col, "FD0000002", "INR", "25,000.00", "05/03/2026", "6.85", "26,712.00", "YES")
+                .row(col, "FD0000003", "INR", "10,000.00", "18/04/2026", "6.60", "10,644.00", "NO");
 
         return render(List.of(page));
     }

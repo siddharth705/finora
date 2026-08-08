@@ -1,10 +1,10 @@
 trace: hdfc-composite-deposit-schedules
-sections: 3
+sections: 4
 
 [section 0]
   columns: [Txn Date, Narration, Withdrawals, Deposits, Closing Balance]
   rows: 84
-  auxLines: 161
+  auxLines: 96
   accountNumberMasked: ••••9999
   accountHolderName: Xxxxxxx Xxxxxx Xxxxxx
   ifscCode: HDFC0XXXXXX
@@ -13,7 +13,18 @@ sections: 3
   mayCreateAutomatically: true
 
 [section 1]
-  columns: [Amount(Xx), Xxxxx Date, Deposit(Xxxx), Xxxxxxxx Date, Amount(Xx)*]
+  columns: [Xxxxxxxx Xxxxxxxxx, Open/Xxxx Xxxxx Date]
+  rows: 9
+  auxLines: 28
+  accountNumberMasked: ••••9999
+  accountHolderName: Xxxxxxxx Xxxxxxx
+  ifscCode: HDFC0XXXXXX
+  statementPeriod: null .. null
+  product: UNKNOWN (34%, UNIDENTIFIED)
+  mayCreateAutomatically: false
+
+[section 2]
+  columns: [Account No, Xxxxxxxxxxx Amount(Xx), Deposit Xxxxx Date, Period Of Deposit(Xxxx), XXX, Deposit Xxxxxxxx Date, Xxxxxxxx Amount(Xx)*]
   rows: 2
   auxLines: 0
   accountNumberMasked: null
@@ -23,15 +34,15 @@ sections: 3
   product: UNKNOWN (26%, UNIDENTIFIED)
   mayCreateAutomatically: false
 
-[section 2]
+[section 3]
   columns: [Number, Due Date, Amount Xxxx, Due, Status, Xxxxxxx balance**]
-  rows: 2
-  auxLines: 12
+  rows: 7
+  auxLines: 5
   accountNumberMasked: null
-  accountHolderName: Xxxxxxxx Xxxxxxx
+  accountHolderName: null
   ifscCode: null
   statementPeriod: null .. null
   product: UNKNOWN (49%, UNIDENTIFIED)
   mayCreateAutomatically: false
 
-capabilities: [COMPOSITE_STATEMENT, LEADING_NARRATION_CONTINUATION, OFFSET_COLUMN_ANCHORS, PAGE_BOUNDARY_ISOLATION, REPEATED_HEADER, WRAPPED_DESCRIPTION]
+capabilities: [COMPOSITE_STATEMENT, LEADING_NARRATION_CONTINUATION, OFFSET_COLUMN_ANCHORS, PAGE_BOUNDARY_ISOLATION, REPEATED_HEADER, WRAPPED_DESCRIPTION, WRAPPED_HEADER]

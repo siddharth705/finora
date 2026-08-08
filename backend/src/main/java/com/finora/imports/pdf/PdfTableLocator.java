@@ -10,6 +10,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -35,15 +36,81 @@ import java.util.regex.Pattern;
  * comment) -- e.g. HSBC's "Composite Statement" bundles a savings-account section and a
  * credit-card section in one file. {@link #locate} remains as a single-table convenience
  * wrapper for the (still common) single-section case.
+ *
+ * <h2>Where this class stops</h2>
+ *
+ * This class reconstructs a document's PHYSICAL structure -- where the tables are, which runs form
+ * a row, which column a value belongs to. It does not decide what any of it MEANS financially, and
+ * it must not learn to. Product semantics (is this a savings ledger, a fixed deposit, a recurring
+ * deposit; is this column a principal, an instalment, a maturity amount) belong downstream, in
+ * product discovery and attribute extraction, where financial concepts and the evidence for them
+ * are available.
+ *
+ * <p>Stated explicitly because the pressure to cross that line is real and arrives disguised as a
+ * one-line fix. A real HDFC statement's fixed-deposit schedule extracts imperfectly here, and the
+ * shortest path to improving it is a condition like {@code if (header.contains("Principal"))}
+ * inside this class. That would buy one document and cost the boundary: every later product would
+ * need its own vocabulary here, the rules would interact, and the layer that is supposed to be
+ * purely geometric -- the one an OCR front end will eventually feed, with no vocabulary at all --
+ * would be carrying a bank's terminology. Two known limitations of {@code WRAPPED_HEADER} are left
+ * unfixed for exactly this reason; see that capability's registry entry in
+ * docs/engineering/financial-document-intelligence-principles.md.
  */
 @Component
 public class PdfTableLocator {
+
+    // Only ever written at DEBUG, and only by explainWrap -- see that method for why the
+    // wrapped-header decision is explained here rather than recorded on DocumentContext.
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(PdfTableLocator.class);
 
     // Text runs whose y differs by less than this are treated as the same visual row. Not
     // measured against a large corpus of real statements (there is no such corpus in this
     // sandbox) -- 3pt comfortably covers normal body-text line heights without this needing to
     // be exact; revisit if a real statement's row spacing turns out to need a different value.
     private static final float ROW_Y_TOLERANCE = 3.0f;
+
+    // WRAPPED_HEADER. A header cell whose label is too long for its column is printed on two (or
+    // three) visual lines, and groupIntoRows -- which only knows about y -- hands each of them to
+    // looksLikeHeaderRow as a separate candidate. Neither half is the header: the semantic half
+    // carries the column names but usually no date word, and the continuation half carries a date
+    // word but too few recognized names to clear the density check. Measured on the committed
+    // hdfc-composite-deposit-schedules trace, page 10 -- a real HDFC combined statement's
+    // fixed-deposit schedule. Its upper line is 8 cells beginning "FD Number" with no date word
+    // anywhere, so hasDate is false; its lower line is 7 cells of which exactly 2 are recognized
+    // column names, short of the matches*3 >= size the density check requires. So NEITHER line was
+    // recognized, the table was never located at all, and nine well-formed fixed deposits imported
+    // as nothing while the import reported success.
+    //
+    // (Several of those cells read as "Xxxxxxxx" rather than as words. The trace was captured
+    // before the redactor's allowlist carried any deposit vocabulary, so "Principal", "Maturity"
+    // and "Rate Of Interest" were masked to same-length filler -- see TraceMetadata's own note on
+    // that. It costs this document nothing here: the failure is geometric, and geometry survives
+    // redaction exactly.)
+    //
+    // The two lines are one header and are merged before scoring. Three thresholds bound that:
+    //
+    // MAX_GAP -- a wrapped label's second line sits one line-height below the first (9.0pt on that
+    // statement), while the table's own data rows are a full row pitch apart (19.67pt on the same
+    // page). Sitting between the two is what makes "wrapped label" distinguishable from "the next
+    // row", and 12pt is that gap with margin on both sides. Not a fitted constant: the data-value
+    // guard in wrapsOnto is the real protection, and this only has to stay under a row pitch.
+    //
+    // MAX_LINES -- 3, the deepest wrap seen in a real document (this same statement's page-0
+    // account summary prints its headings over three lines: "CR / Limit / ..." above
+    // "Ccy / Account Type / Balance" above "DR / Amount / Balance"). That table is not located for
+    // an unrelated reason -- it has no date column at all -- so 3 is an observed ceiling on the
+    // shape rather than a figure any current test depends on.
+    //
+    // MAX_COLUMN_JOIN -- how far a continuation cell may sit from a column's anchor and still be
+    // that column's second line. Needed because these labels are CENTER-aligned: the wider line
+    // starts further LEFT, so "CCY" (x=117.24) sits 3.11pt left of "FD" (x=120.35) rather than
+    // under it. Without an upper bound the nearest-anchor rule glues a genuinely separate
+    // rightmost column onto the last one it can find -- on page 10's second header tier that put
+    // "Withdrawable***" (x=428.02) into the column anchored at 261.46, 166pt away.
+    private static final float HEADER_WRAP_MAX_GAP = 12.0f;
+    private static final int HEADER_WRAP_MAX_LINES = 3;
+    private static final float HEADER_WRAP_MAX_COLUMN_JOIN = 40.0f;
+
 
     // Column-name hints for locating "the date column" within an already-bucketed row -- used by
     // the continuation-row merge in locateAll() below, kept in sync with
@@ -420,7 +487,39 @@ public class PdfTableLocator {
                 continue;
             }
 
-            if (looksLikeHeaderRow(row)) {
+            // WRAPPED_HEADER. Deliberately AFTER the section-marker branch above, not before it in
+            // a pass over the whole row list. Tried that way first and it silently merged an
+            // HSBC composite statement's "SAVINGS ACCOUNT-RES 100-111111-002" banner into the
+            // header line beneath it: the banner is dateless and carries no parseable number, so
+            // it reads exactly like the upper tier of a wrapped header. Consumed into a header
+            // cell, the marker was never matched, the document stopped splitting into two
+            // accounts, and the credit-card section's rows landed in the savings account. A
+            // structural line has to be spent on the meaning it already has before this asks
+            // whether it is half a header.
+            List<PositionedText> headerRow = row;
+            int wrappedHeaderLines = 0;
+            if (!looksLikeHeaderRow(row)) {
+                WrappedHeader wrapped = wrappedHeaderAt(rows, rowIndex);
+                if (wrapped != null) {
+                    headerRow = wrapped.row();
+                    wrappedHeaderLines = wrapped.extraLines();
+                }
+            }
+            if (looksLikeHeaderRow(headerRow)) {
+                row = headerRow;
+                if (wrappedHeaderLines > 0) {
+                    rowIndex += wrappedHeaderLines;
+                    if (ctx != null) ctx.record("WRAPPED_HEADER");
+                    // The absorbed lines are never revisited, so the running "row physically above
+                    // this one" pointer has to be advanced past them by hand -- left at the
+                    // header's FIRST line, every spacing measurement taken below (blockSeparation,
+                    // and with it the pitch check that decides whether a row is a continuation)
+                    // would be overstated by the height of the header's own wrap.
+                    if (!row.isEmpty()) {
+                        previousRowPage = row.get(0).pageIndex();
+                        previousRowY = row.get(0).y();
+                    }
+                }
                 Set<String> signature = headerSignature(row);
                 if (currentRows != null && signature.equals(currentHeaderSignature)) {
                     if (ctx != null) ctx.record("REPEATED_HEADER");
@@ -740,10 +839,26 @@ public class PdfTableLocator {
      * date -- CsvParser.parseDate is the same parser TransactionNormalizer itself uses to accept or
      * reject the row later, and the same one bucketRow already consults a few lines below, so this
      * now agrees with both instead of contradicting them.
+     *
+     * <p>Second bug fix, the third time this class has made the same mistake (see
+     * {@link #isDateColumn} and {@link #isAmountColumn}, both of which were exact-matching where
+     * their siblings matched per word): finding the date column via
+     * {@code CsvParser.firstNonBlank} compares each hint against the WHOLE normalized column name,
+     * so it only ever found a column named exactly "date", "txn date" or "value date". Meanwhile
+     * {@code isDateColumn} -- consulted a few lines away, about the same column, on the same row --
+     * matches per word and answered yes for the same header. The two disagreed, and the disagreement
+     * became reachable the moment WRAPPED_HEADER started producing the compound names a wrapped
+     * heading actually reads as: "Open/Value Date" is unmistakably the date column and matched
+     * nothing here, so EVERY row of such a table failed this check, none became a transaction
+     * anchor, and the whole table collapsed into one merged row. Now asked per word, the way every
+     * other date-column decision in this class is asked.
      */
     private boolean hasDateValue(Map<String, String> bucketed) {
-        String dateRaw = CsvParser.firstNonBlank(bucketed, DATE_HINTS.toArray(new String[0]));
-        return dateRaw != null && CsvParser.parseDate(dateRaw.trim()) != null;
+        for (Map.Entry<String, String> e : bucketed.entrySet()) {
+            if (e.getKey() == null || e.getValue() == null || e.getValue().isBlank()) continue;
+            if (isDateColumn(e.getKey()) && CsvParser.parseDate(e.getValue().trim()) != null) return true;
+        }
+        return false;
     }
 
     /**
@@ -1000,6 +1115,292 @@ public class PdfTableLocator {
         }
         if (!current.isEmpty()) rows.add(current);
         return rows;
+    }
+
+    /** A header reconstructed from several visual lines, and how many lines past the first the
+     *  caller must skip. */
+    private record WrappedHeader(List<PositionedText> row, int extraLines) {}
+
+    /**
+     * WRAPPED_HEADER: the header that begins at {@code index} and continues onto the line(s)
+     * below it, or null when the lines there are not one. See {@link #HEADER_WRAP_MAX_GAP}'s own
+     * comment for the real statement this was measured on and why neither half of a wrapped
+     * header is recognizable on its own.
+     *
+     * <p>Only ever called on a line that is NOT already a header by itself. That restriction is
+     * load-bearing, not caution: it means no document whose header is recognized today can have
+     * its header changed, so this can only turn "no table found" into "table found". It also
+     * protects the one layout that would otherwise be at risk --
+     * LEADING_NARRATION_CONTINUATION, where a real Canara Bank statement prints a dateless,
+     * amountless narration line directly beneath the header, which is exactly the shape
+     * {@link #wrapsOnto} accepts. There the header alone already scores as a header, so nothing
+     * is merged and that narration line stays the data row it is.
+     *
+     * <p>Merging is also the SAFE direction for the prose false-positive that
+     * {@link #MAX_HEADER_ROW_CELLS} and the density check exist to reject: joining lines adds
+     * cells faster than it adds recognized column names, so a paragraph merged with its
+     * neighbour scores strictly LESS dense than either line did, not more.
+     */
+    private WrappedHeader wrappedHeaderAt(List<List<PositionedText>> rows, int index) {
+        List<PositionedText> first = rows.get(index);
+        if (first.isEmpty()) return null;
+        if (!carriesNoDataValue(first)) {
+            explainWrap(first, () -> "NO_MERGE: upper line carries a date or a number, so it is a data row");
+            return null;
+        }
+        if (carriesStructuralMeaning(first)) {
+            explainWrap(first, () -> "NO_MERGE: upper line is a banner, page footer or closing marker");
+            return null;
+        }
+
+        List<List<PositionedText>> block = new ArrayList<>();
+        block.add(first);
+        WrappedHeader found = null;
+        for (int span = 1; span < HEADER_WRAP_MAX_LINES && index + span < rows.size(); span++) {
+            List<PositionedText> next = rows.get(index + span);
+            if (!wrapsOnto(block.get(block.size() - 1), next)) break;
+            block.add(next);
+            // Keeps extending while it can rather than stopping at the first span that scores: a
+            // three-line header whose first two lines happen to clear the bar would otherwise
+            // lose its third line's column names. Safe to be greedy because wrapsOnto has already
+            // refused every line carrying a data value, so the run cannot reach into the table's
+            // first row.
+            List<PositionedText> candidate = mergeHeaderLines(block);
+            if (candidate == null) break; // mergeHeaderLines has already explained which cell refused
+            if (looksLikeHeaderRow(candidate)) {
+                found = new WrappedHeader(candidate, span);
+                int lines = span + 1;
+                explainWrap(first, () -> "MERGED across " + lines + " lines: every lower cell joined a"
+                        + " column above, and the joined row scores as a header -> "
+                        + candidate.stream().map(t -> t.text().trim()).toList());
+            } else {
+                int lines = span + 1;
+                explainWrap(first, () -> "NO_MERGE across " + lines + " lines: the joined row still does"
+                        + " not score as a header (needs a date column, >= 2 recognized names, and"
+                        + " >= 1/3 of cells recognized) -> "
+                        + candidate.stream().map(t -> t.text().trim()).toList());
+            }
+        }
+        return found;
+    }
+
+    /**
+     * Why a wrapped-header merge was or was not made, at DEBUG.
+     *
+     * <p>Deliberately a log rather than a recorded capability: {@code DocumentContext} records
+     * facts with set semantics -- a capability either fired on this document or it did not -- and
+     * a per-decision narrative is neither a fact about the document nor something any caller acts
+     * on. It is for the person holding an unusual statement asking "why did the engine read that
+     * as one heading, or refuse to". Off unless enabled, so it costs a level check in production.
+     *
+     * <p>Both outcomes are logged, not just the merge. The refusals are the interesting half: a
+     * heading that was nearly merged and was not is exactly the case that otherwise needs a
+     * one-off probe to investigate -- which is how this capability's own bug took five diagnoses.
+     *
+     * <p>The outcome arrives as a {@link Supplier} rather than a String, and that is not style.
+     * Built eagerly, every message here -- string concatenation, and in two cases a stream over the
+     * merged row -- is constructed on every merge decision in every document and then thrown away,
+     * because this is off outside an investigation. This runs once per non-header row of every
+     * statement parsed.
+     */
+    private void explainWrap(List<PositionedText> upperLine, Supplier<String> outcome) {
+        if (!log.isDebugEnabled() || upperLine.isEmpty()) return;
+        PositionedText anchor = upperLine.get(0);
+        log.debug("WRAPPED_HEADER page={} y={} first={} -- {}",
+                anchor.pageIndex(), anchor.y(), anchor.text().trim(), outcome.get());
+    }
+
+    /** True when {@code next} can be the continuation of a header label begun on {@code line}:
+     *  same page, printed below it by less than a data row's pitch, carrying no value of its own,
+     *  and not a line that already means something structural. The value check is what separates
+     *  a wrapped label from the table's first row -- a header cell is a name, and every data row
+     *  carries at least one date or one number. */
+    private boolean wrapsOnto(List<PositionedText> line, List<PositionedText> next) {
+        if (line.isEmpty() || next.isEmpty()) return false;
+        if (line.get(0).pageIndex() != next.get(0).pageIndex()) return false;
+        float gap = next.get(0).y() - line.get(0).y();
+        if (gap <= 0 || gap > HEADER_WRAP_MAX_GAP) return false;
+        if (!carriesNoDataValue(next)) return false;
+        return !carriesStructuralMeaning(next);
+    }
+
+    /**
+     * True when this line already means something on its own -- a section banner, a page footer, a
+     * statement-closing marker -- and so is not available as half of a heading. Same principle as
+     * running the whole merge after the section-marker branch rather than before it: a line is
+     * spent on the meaning it already has. A footer printed between two heading lines is also
+     * positive evidence they are not one label; nothing is printed through the middle of a wrapped
+     * cell.
+     *
+     * <p>Asked of the SEEDING line as well as of each absorbed one, which it was not at first. That
+     * asymmetry was reachable: a "Page 1 of 5" footer extracting as two runs, directly above a
+     * table whose columns sit close together, was absorbed as the upper half of that table's
+     * heading. Its two runs seeded the columns, the three real heading cells collapsed into them,
+     * and the table came out with two columns named "Page Date" and "1 of 5 Amount Balance" --
+     * taking the amount and the balance into a single cell, which loses a value rather than just
+     * mislabelling one. Narrow columns are what make it reachable, and nothing guarantees a
+     * statement has wide ones.
+     */
+    private boolean carriesStructuralMeaning(List<PositionedText> row) {
+        String line = lineOf(row);
+        return SECTION_MARKER.matcher(line).find()
+                || PAGE_FOOTER.matcher(line).find()
+                || STATEMENT_CLOSING_MARKER.matcher(line).find();
+    }
+
+    /** True when no cell in {@code row} reads as a date or a number -- i.e. the row states names,
+     *  not values. Uses the same parsers the rest of the pipeline judges values by, so "is this a
+     *  value" cannot mean one thing here and another downstream. */
+    private boolean carriesNoDataValue(List<PositionedText> row) {
+        for (PositionedText t : row) {
+            String cell = t.text().trim();
+            if (cell.isEmpty()) continue;
+            if (CsvParser.parseDate(cell) != null || CsvParser.parseNumeric(cell) != null) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Folds a run of header lines into one row of cells, one per column.
+     *
+     * <p>The first line seeds the columns; every later line's cells join one of them. A cell joins
+     * the column its own x-span OVERLAPS, and falls back to the nearest anchor within
+     * {@link #HEADER_WRAP_MAX_COLUMN_JOIN} when no span overlaps. Both rules are needed. Overlap
+     * is the accurate one and is the only one that places a continuation under a wide
+     * left-aligned label, but it is unavailable exactly where this matters most: runs with no
+     * measured width (hand-built fixtures, and every trace captured before trace v3) have
+     * {@code endX() == x} and can never overlap anything. Nearest-anchor is what those fall back
+     * to, and it is the same rule {@link #nearestColumn} already places data runs by.
+     *
+     * <p>Returns null -- refusing the merge outright -- if any cell joins NO column. That is the
+     * rule that makes "these two lines are one header" mean something structural rather than just
+     * "these two lines are close together": a wrapped label's lower line lives inside the columns
+     * the upper line established. It stops a caption printed above a table being glued onto its
+     * heading (the synthetic fixtures print their rows 10pt apart, close enough that proximity
+     * alone accepted several), and it refuses the fixed-deposit schedule's lower header TIER --
+     * a tier for the second line of each record, whose "Withdrawable***" (x=428.02) sits 166pt
+     * past any column above it.
+     *
+     * <p>Known limitation, measured rather than assumed: this also refuses a heading whose upper
+     * line simply has fewer labels than the table has columns. The recurring-deposit installment
+     * schedule in the same statement is one -- six columns, four labels above them, with
+     * "Instalment Amt Due" (x=181.53) and "Closing balance**" (x=470.53) named only on the lower
+     * line. Its heading is therefore read from that lower line alone, which extracts every
+     * installment correctly but names the columns "Number" and "Due" rather than "Instalment
+     * Number" and "Instalment Amt Due". Admitting a new column was tried and does not reach it:
+     * bounding new columns to the span the upper line covers leaves 470.53 outside it, and
+     * removing the bound entirely lets the fixed-deposit tier back in, which splits that table and
+     * re-anchors it on three columns. Telling the two apart needs a signal this class does not
+     * have at the point it decides -- the data rows below the heading -- so the half-named
+     * heading is the deliberate outcome, not an oversight.
+     */
+    private List<PositionedText> mergeHeaderLines(List<List<PositionedText>> block) {
+        // Blank runs are dropped rather than folded in. PDFBox emits them, and a blank joined into
+        // a cell puts a DOUBLE space in that column's name -- which reads identically and is not:
+        // "Txn  Date" normalizes to "txn  date", and every whole-cell lookup in the pipeline
+        // (CsvParser.firstNonBlank, which is how TransactionNormalizer finds the date and amount
+        // columns) compares against "txn date" and misses. The column would bucket its values
+        // perfectly and then be invisible to the stage that reads them.
+        List<List<PositionedText>> columns = new ArrayList<>();
+        for (PositionedText t : block.get(0)) {
+            if (t.text().isBlank()) continue;
+            List<PositionedText> column = new ArrayList<>();
+            column.add(t);
+            columns.add(column);
+        }
+        if (columns.isEmpty()) return null;
+
+        for (int line = 1; line < block.size(); line++) {
+            for (PositionedText t : block.get(line)) {
+                if (t.text().isBlank()) continue;
+                int target = columnFor(t, columns);
+                if (target < 0) {
+                    explainWrap(block.get(0), () -> "NO_MERGE: lower cell \"" + t.text().trim() + "\" at x="
+                            + t.x() + " joins no column above it (nearest is more than "
+                            + HEADER_WRAP_MAX_COLUMN_JOIN + "pt away), so these lines are not one"
+                            + " heading -- a caption, or a second heading tier");
+                    return null;
+                }
+                columns.get(target).add(t);
+            }
+            // Re-sorted after every line because joining a cell can move a column's anchor left
+            // (these labels are centered), and a new column can land anywhere -- and the whole
+            // pipeline downstream of here reads header cells in left-to-right order.
+            columns.sort((a, b) -> Float.compare(anchorOf(a), anchorOf(b)));
+        }
+
+        List<PositionedText> headerRow = new ArrayList<>();
+        for (List<PositionedText> column : columns) headerRow.add(asOneCell(column, lastLineY(block)));
+        return headerRow;
+    }
+
+    private int columnFor(PositionedText cell, List<List<PositionedText>> columns) {
+        int byOverlap = -1;
+        float widestOverlap = 0f;
+        for (int c = 0; c < columns.size(); c++) {
+            float overlap = Math.min(endOf(columns.get(c)), cell.endX()) - Math.max(anchorOf(columns.get(c)), cell.x());
+            if (overlap > widestOverlap) {
+                widestOverlap = overlap;
+                byOverlap = c;
+            }
+        }
+        if (byOverlap >= 0) return byOverlap;
+
+        // Strictly-less, so equidistant columns resolve to the LEFTMOST -- the same tie-breaking
+        // nearestColumn uses a few methods down. The two were written to answer the same question
+        // ("which column is this x nearest") and disagreeing on ties is how siblings in this class
+        // have drifted apart before.
+        int nearest = -1;
+        float nearestDistance = Float.MAX_VALUE;
+        for (int c = 0; c < columns.size(); c++) {
+            float distance = Math.abs(cell.x() - anchorOf(columns.get(c)));
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                nearest = c;
+            }
+        }
+        return nearestDistance <= HEADER_WRAP_MAX_COLUMN_JOIN ? nearest : -1;
+    }
+
+    /** One column's lines joined top-to-bottom into the single label a reader sees. Width is the
+     *  span from the column's leftmost edge to its rightmost, but only when something in it was
+     *  actually measured: a column built entirely from zero-width runs stays zero-width, so a
+     *  trace that carries no widths cannot acquire a fabricated one here and start reaching
+     *  RIGHT_ALIGNED_AMOUNTS' right-edge correction on evidence it does not have. */
+    private PositionedText asOneCell(List<PositionedText> column, float y) {
+        PositionedText first = column.get(0);
+        if (column.size() == 1) return new PositionedText(first.text(), first.x(), y, first.pageIndex(), first.width());
+
+        StringBuilder text = new StringBuilder();
+        boolean anyMeasured = false;
+        for (PositionedText t : column) {
+            if (!text.isEmpty()) text.append(' ');
+            text.append(t.text().trim());
+            anyMeasured |= t.width() > 0;
+        }
+        float left = anchorOf(column);
+        return new PositionedText(text.toString(), left, y, first.pageIndex(),
+                anyMeasured ? endOf(column) - left : 0f);
+    }
+
+    private float anchorOf(List<PositionedText> column) {
+        float left = Float.MAX_VALUE;
+        for (PositionedText t : column) left = Math.min(left, t.x());
+        return left;
+    }
+
+    private float endOf(List<PositionedText> column) {
+        float right = -Float.MAX_VALUE;
+        for (PositionedText t : column) right = Math.max(right, t.endX());
+        return right;
+    }
+
+    /** The y of the block's LAST line, given to every merged cell. The header physically ends
+     *  there, and the row spacing measured off it (blockSeparation, and the page-boundary checks)
+     *  is measured from where the header ends, not from where it began. */
+    private float lastLineY(List<List<PositionedText>> block) {
+        List<PositionedText> last = block.get(block.size() - 1);
+        return last.get(0).y();
     }
 
     // No real statement header seen so far (across every capability this class handles) has more

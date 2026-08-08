@@ -723,6 +723,84 @@ actually works — no test, no claim.
   reprinted header with even slightly reordered or renamed columns would currently be treated as
   the start of a new section instead of a repeat.
 
+#### `WRAPPED_HEADER`
+- **Purpose:** one heading row printed across two or three visual lines, because the column
+  headings are too long for their columns. Read a line at a time, neither half is a header — on the
+  fixed-deposit schedule inside a real HDFC combined statement the upper half carries the column
+  names but no date word (failing `hasDate`), and the lower half carries "Date" but only one other
+  recognized name across seven cells (failing the density check that keeps prose out). So the table
+  was not located at all: nine deposits imported as nothing while the import reported success.
+- **Supported layouts:** any table whose headings wrap, including the centered case where the two
+  lines do *not* share a left edge (the longer line starts further left — measured offsets on that
+  statement run from 0.23pt to 13.77pt).
+- **Implementation:** `PdfTableLocator.wrappedHeaderAt` / `mergeHeaderLines`, called from
+  `locateAll` **after** the section-marker branch, so a banner line is spent on the meaning it
+  already has before it can be read as half a heading. A merge is attempted only on a line that is
+  not already a header by itself, so no document whose header is recognized today can have its
+  header changed; it can only turn "no table found" into "table found". Lines join when they are on
+  the same page, less than `HEADER_WRAP_MAX_GAP` (12pt) apart, and carry no parseable date or
+  number — and the merge is refused outright unless **every** cell of the lower line joins a column
+  the upper line established, which is what distinguishes a wrapped heading from a caption printed
+  above the table.
+- **Regression tests:** `WrappedHeaderPdfTableLocatorTest` — the two-line case, a three-line
+  heading, the caption false positive, the second-heading-tier false positive, a wrapped heading
+  reprinted on page 2, and the invariant below; `TraceFixtureRegressionTest` (the real statement,
+  via the committed `hdfc-composite-deposit-schedules` trace).
+- **Invariant:** this capability may make a table appear that was **not** being located, and may
+  **not** disturb one that was. Pinned by
+  `WrappedHeaderPdfTableLocatorTest.aTableThatWasAlreadyBeingLocatedIsNotDisturbed`, which asserts
+  it never fires on the two traces that have no wrapped heading, and that the savings ledger in the
+  one that does comes through with its 84 rows, 76 dated, and its columns unchanged. Structurally
+  it holds because a merge is only ever attempted on a line that is not already a header. Anything
+  that widens that precondition turns this into a general row-merging engine; the invariant is
+  written down so that change has to be deliberate.
+- **Boundary:** the locator recovers wrapped VISUAL headings. It does not determine
+  financial-product semantics. Product terminology (`Principal`, `Instalment`, `Maturity Amount`,
+  `Current FD Amount`) and multi-tier financial headings are downstream interpretation concerns and
+  must not be special-cased inside `PdfTableLocator` — see that class's own "Where this class
+  stops".
+- **Maturity:** Beta — one real document, two tables within it.
+- **Known limitations:** a heading whose upper line has FEWER labels than the table has columns is
+  refused, and read from its lower line alone. The recurring-deposit installment schedule in the
+  same statement is one — six columns, four labels above them, with "Instalment Amt Due" (x=181.53)
+  and "Closing balance\*\*" (x=470.53) named only on the lower line. It extracts every installment
+  correctly but names those columns "Number" and "Due" rather than "Instalment Number" and
+  "Instalment Amt Due" — a loss of exactly the vocabulary that would identify the table. Admitting
+  a new column was tried and measured: bounding new columns to the span the upper line covers
+  leaves 470.53 outside it, and removing the bound lets the fixed-deposit tier below back in, which
+  splits that table and re-anchors it on three columns. Separating the two needs a signal this
+  class does not have where it decides — the data rows beneath the heading.
+- **Known limitations (cont.):** that schedule prints a **second heading tier** lower down
+  (`Current FD Amount #`, `Maturity Available Date **`, `Withdrawable***`) for the second visual
+  line of each deposit record. It is correctly not treated as a header, but its columns are not
+  recognized either, so it lands as one unparseable row and the values beneath it bucket against
+  the upper tier's anchors. Two-tier records are not attempted here. Separately, that table's
+  amounts are right-aligned under centered headings, and the correction that would place them
+  (`RIGHT_ALIGNED_AMOUNTS`) is gated on the column being recognized as an amount column — which
+  deposit vocabulary ("Principal", "Rate Of Interest", "Maturity Amount") is not. Measured, not
+  assumed: adding estimated widths to the trace changes nothing on its own. Both belong to the
+  deposit-attribute work, not here.
+- **Known limitation (deferred to the intelligence layer):** a two-line block of pure LABELS scores
+  as a wrapped heading. A summary panel reading "Opening Balance | Debit Amount | Credit Amount |
+  Closing Balance" over "as on Date | Total | Net | Carried" is dateless, numberless, tightly spaced
+  and column-aligned — every signal a wrapped heading has — so it closes the table above it and
+  opens a section that never receives a row, leaving a phantom account. Bounded two ways: the same
+  outcome is already reachable without this capability (a single label line that scores as a header
+  does it too), and an empty section carries `mayCreateAutomatically=false`, so it is offered for
+  review rather than created. Pinned as current behaviour by
+  `doesNotYetRejectATwoLineLabelBlockThatScoresAsAHeading`. The obvious guard — require a merged
+  heading to be followed by a row that reads as data under it — was implemented and measured: it
+  rejects the label block correctly and also rejects the real fixed-deposit schedule, whose amounts
+  mis-bucket into its date column so no row within any sane lookahead yields a parseable date. It
+  removes the capability's only real win. Deciding this needs the semantic relationship between a
+  heading and the data beneath it, which is this layer's question and not the locator's.
+- **Known unverified:** a bank that reprints only PART of a wrapped heading on later pages. The
+  symmetric case is verified — a heading reprinted in full merges identically and is recognised as
+  `REPEATED_HEADER` rather than opening a second section
+  (`aWrappedHeadingReprintedOnTheNextPageIsTheSameTable`). The asymmetric case appears in no
+  committed document, so no behaviour is guaranteed for it and none is claimed. Recorded as an
+  open scenario rather than closed by speculative code.
+
 #### `PAGE_BOUNDARY_ISOLATION` / `PAGE_FOOTER_EXCLUSION`
 - **Purpose:** a page-number footer line, a per-page repeated title banner, or a statement-closing
   marker line must never merge into the last real transaction row before it.
