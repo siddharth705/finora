@@ -129,6 +129,16 @@ temp/
 [Ss]tatements/
 *.pdf.local
 
+# A scaffold generated INSIDE the repository root. `create-expo-app finora` run from the parent
+# directory lands here rather than beside it, producing a ~546 MB tree (nearly all node_modules)
+# that git sees as untracked content of this repo -- the same one-`git add -A`-away exposure the
+# block above exists for, differing only in that the payload is bulk rather than PII.
+#
+# Anchored with a leading slash deliberately: unanchored, this would also hide a legitimately named
+# directory anywhere in the tree, and the thing being excluded is specifically a project that
+# collided with its parent's name at the root.
+/finora/
+
 
 # ============================================================================================
 # Local Databases
