@@ -61,7 +61,7 @@ class MultiSectionCompositeStatementPdfPreviewGeneratorTest {
 
         assertThat(savings.detectedAccount().suggestedAccountType()).isEqualTo("SAVINGS");
         assertThat(savings.rows()).hasSize(2);
-        assertThat(savings.rows()).noneMatch(r -> r.description().contains("Amazon"));
+        assertThat(savings.rows()).noneMatch(r -> r.description().contains("Retailer"));
 
         var salary = savings.rows().stream().filter(r -> r.description().contains("Salary")).findFirst().orElseThrow();
         assertThat(salary.type()).isEqualTo("INCOME");
@@ -79,7 +79,7 @@ class MultiSectionCompositeStatementPdfPreviewGeneratorTest {
 
         assertThat(creditCard.detectedAccount().suggestedAccountType()).isEqualTo("CREDIT_CARD");
         assertThat(creditCard.rows()).hasSize(1);
-        assertThat(creditCard.rows().get(0).description()).contains("Amazon");
+        assertThat(creditCard.rows().get(0).description()).contains("Retailer");
         assertThat(creditCard.rows().get(0).type()).isEqualTo("EXPENSE");
         assertThat(creditCard.rows().get(0).amount()).isEqualByComparingTo("1817.02");
     }

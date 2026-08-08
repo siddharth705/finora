@@ -64,12 +64,12 @@ class TransactionNormalizerTest {
                 "Amount(INR)", "680.0",
                 "Type", "DR",
                 "Balance", "7025.86",
-                "Remarks", "UPI/DR/657880538392/Google I/UTIB/gpay-utility@ok/");
+                "Remarks", "UPI/DR/900011112222/MERCHANT/UTIB/sample-billpay@ok/");
 
         StagedRow result = normalizer.normalize(userId, row);
 
         assertThat(result).isNotNull();
-        assertThat(result.description()).isEqualTo("UPI/DR/657880538392/Google I/UTIB/gpay-utility@ok/");
+        assertThat(result.description()).isEqualTo("UPI/DR/900011112222/MERCHANT/UTIB/sample-billpay@ok/");
     }
 
     @Test
@@ -129,7 +129,7 @@ class TransactionNormalizerTest {
                 "Date", "18/07/2026",
                 "Amount(INR)", "1057.0",
                 "Type", "CR",
-                "Remarks", "UPI/CR/619968934901/AMAN KUM/SBIN/aks199747@oksbi/");
+                "Remarks", "UPI/CR/900033334444/SAMPLE P/SBIN/sample11111@oksbi/");
 
         StagedRow result = normalizer.normalize(userId, row);
 
@@ -144,7 +144,7 @@ class TransactionNormalizerTest {
                 "Date", "31/07/2026",
                 "Amount(INR)", "680.0",
                 "Type", "DR",
-                "Remarks", "UPI/DR/657880538392/Google I/UTIB/gpay-utility@ok/");
+                "Remarks", "UPI/DR/900011112222/MERCHANT/UTIB/sample-billpay@ok/");
 
         StagedRow result = normalizer.normalize(userId, row);
 
@@ -241,7 +241,7 @@ class TransactionNormalizerTest {
     @Test
     void normalize_recognizesASingularDepositColumnHeader_asACreditSignal_notJustTheBalanceFallback() {
         Map<String, String> row = rowOf("Date", "01/07/2026", "Deposit (Cr.)", "10.00", "Balance", "24351.97",
-                "Description", "UPI/SIVVA SURESH K");
+                "Description", "UPI/SAMPLE PAYEE A");
 
         StagedRow result = normalizer.normalize(userId, row);
 
@@ -253,7 +253,7 @@ class TransactionNormalizerTest {
     @Test
     void normalize_recognizesASingularWithdrawalColumnHeader_asTheAmount_notTheBalance() {
         Map<String, String> row = rowOf("Date", "01/07/2026", "Withdrawal (Dr.)", "1000.00", "Balance", "24361.97",
-                "Description", "SentIMPS618212386186");
+                "Description", "SentIMPS900055556666");
 
         StagedRow result = normalizer.normalize(userId, row);
 
@@ -321,7 +321,7 @@ class TransactionNormalizerTest {
         Map<String, String> row = rowOf(
                 "Date", "31/07/2026", "Instrument ID", "UPI2607315823",
                 "Amount(INR)", "680.0", "Type", "DR", "Balance", "7025.86",
-                "Remarks", "UPI/DR/657880538392/Google I/UTIB/gpay-utility@ok/");
+                "Remarks", "UPI/DR/900011112222/MERCHANT/UTIB/sample-billpay@ok/");
 
         StagedRow result = normalizer.normalize(userId, row);
 

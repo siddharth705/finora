@@ -72,7 +72,7 @@ public class PdfTableLocator {
 
     // A line naming an account-type word alongside an account-number-shaped digit run marks the
     // start of a brand-new account section -- e.g. HSBC's composite-statement banner
-    // "SAVINGS ACCOUNT-RES  120-070727-006", which introduces a second account partway through a
+    // "SAVINGS ACCOUNT-RES  100-111111-002", which introduces a second account partway through a
     // single PDF. Seeing this while a section is already active closes it immediately; this is a
     // stronger, more explicit signal than the header-signature-difference fallback below, so it's
     // checked first.
@@ -100,7 +100,7 @@ public class PdfTableLocator {
 
     // The account-number-shaped run within a SECTION_MARKER banner -- 4+ digits, matching the same
     // "\\d{4,}" shape SECTION_MARKER itself requires, and tolerating the separators real account
-    // numbers are printed with (HSBC's "120-070727-006"). See accountIdentityIn.
+    // numbers are printed with (HSBC's "100-111111-002"). See accountIdentityIn.
     private static final Pattern ACCOUNT_NUMBER_IN_MARKER = Pattern.compile("\\d[\\d-]{3,}\\d|\\d{4,}");
 
     // A trailing amount (optionally Dr/Cr-suffixed) embedded at the end of an otherwise-ordinary
@@ -729,7 +729,7 @@ public class PdfTableLocator {
      * column non-blank", which is not the same question as "is this row a new transaction." A
      * wrapped narration line's text frequently lands in the DATE column via nearest-X bucketing
      * (that column's anchor is leftmost, and a continuation line's text starts at the left margin) --
-     * e.g. "UPI/124008948334/02:44:32/UPI/paytm.s25j48". Under the old check that row looked like a
+     * e.g. "UPI/111122223333/02:44:32/UPI/paytm.s25j48". Under the old check that row looked like a
      * brand-new transaction anchor, so it was never merged into the transaction above it as a
      * continuation. Two failures fell out of that single misclassification: the row itself was
      * dropped at normalization ("didn't match any known date format" -- 114 of 169 rows on that one
@@ -807,8 +807,8 @@ public class PdfTableLocator {
 
             // Bug fix: a continuation row's wrapped narration very often mis-buckets into the DATE
             // column (that column's anchor is leftmost, and a wrapped line starts at the left
-            // margin) -- e.g. "UPI/124008948334/02:44:32/UPI/paytm.s25j48". Appending that onto the
-            // anchor row's own valid date produced "02/05/25 UPI/1240089..." which no longer parses
+            // margin) -- e.g. "UPI/111122223333/02:44:32/UPI/paytm.s25j48". Appending that onto the
+            // anchor row's own valid date produced "02/05/25 UPI/1111222..." which no longer parses
             // as a date, so the merge DESTROYED the very transaction it was supposed to complete --
             // every row on a real Bank of Baroda statement dropped this way. The anchor's date is
             // authoritative and must never be appended to; the incoming text is narration, so it's

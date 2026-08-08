@@ -81,6 +81,31 @@ if [ "$1" = "--each" ]; then
   exit "$rc"
 fi
 
+#   --tree                 scan ALL tracked content, regardless of when it was committed.
+#
+# --tree exists because the other two modes share a blind spot: both are diff-based, so a value that
+# predates the check is invisible forever. A real account number sat in a committed doc for months
+# while every PR went green, because no PR touched that line. The invariant the repository actually
+# needs is "no identifier exists in tracked content", not "no PR adds one".
+#   --tree-ratchet         --tree, but compared against a recorded baseline count instead of
+#                          failing on any finding. The tree currently reports 384 matches, of which
+#                          31 are values verified against the real corpus and the rest are annotation
+#                          debt on genuinely synthetic fixtures. A gate that fails on all 384 would be
+#                          "fixed" by loosening the patterns, which is the opposite of the point. A
+#                          ratchet lets the number only ever go DOWN, so nobody can add a suspicious
+#                          pattern while the cleanup proceeds -- and the baseline is lowered as
+#                          sanitization verifies each reduction, never to make CI quiet.
+MODE_TREE=""
+MODE_RATCHET=""
+BASELINE_FILE="$(git rev-parse --show-toplevel 2>/dev/null)/scripts/tree-hygiene-baseline.txt"
+if [ "$1" = "--tree" ]; then
+  MODE_TREE="yes"
+fi
+if [ "$1" = "--tree-ratchet" ]; then
+  MODE_TREE="yes"
+  MODE_RATCHET="yes"
+fi
+
 if [ "$1" = "--range" ]; then
   MODE_RANGE="yes"
   BASE="$2"
@@ -99,6 +124,9 @@ if [ -n "$MODE_RANGE" ]; then
   fi
   DIFF_ARGS="$BASE $HEAD"
   staged=$(git diff --name-only --diff-filter=ACM $DIFF_ARGS)
+elif [ -n "$MODE_TREE" ]; then
+  DIFF_ARGS=""
+  staged=$(git ls-files)
 else
   DIFF_ARGS="--cached"
   staged=$(git diff --cached --name-only --diff-filter=ACM)
@@ -139,7 +167,7 @@ trap 'rm -f "$warn" "$block"' EXIT
 
 # A deliberate placeholder: a run of 4+ identical characters (XXXX, 999999), or a word marking it
 # as fake. Note this is applied to the WHOLE token for emails/phones but only to an IFSC's 6-char
-# branch part -- real Indian IFSCs routinely contain runs of zeros (HDFC0000007), so the looser
+# branch part -- real Indian IFSCs routinely contain runs of zeros (ABCD0000000), so the looser
 # test would wave real ones straight through.
 is_placeholder() {
   printf '%s' "$1" | grep -qiE '(.)\1{3,}|example|sample|test|dummy|fake|placeholder|redacted|noreply|localhost'
@@ -184,7 +212,13 @@ printf '%s\n' "$targets" | while IFS= read -r f; do
   # $DIFF_ARGS is "--cached" for the hook and "BASE HEAD" in CI -- see the mode selection at the
   # top. Deliberately unquoted so the two-word range form expands to two arguments.
   # shellcheck disable=SC2086
-  added=$(git diff $DIFF_ARGS -- "$f" | grep -E '^\+' | grep -vE '^\+\+\+ (a/|b/|/dev/null)' | grep -v 'synthetic-ok' | cut -c2-)
+  if [ -n "$MODE_TREE" ]; then
+    # Whole-file content, not a diff. Same synthetic-ok filter, so a line already annotated during
+    # the sanitization stays annotated here rather than needing a second exception mechanism.
+    added=$(grep -v 'synthetic-ok' "$f" 2>/dev/null)
+  else
+    added=$(git diff $DIFF_ARGS -- "$f" | grep -E '^\+' | grep -vE '^\+\+\+ (a/|b/|/dev/null)' | grep -v 'synthetic-ok' | cut -c2-)
+  fi
   [ -z "$added" ] && continue
 
   # BLOCKS, and it used to only warn. That was the defect that actually let a real 14-digit account
@@ -234,6 +268,30 @@ printf '%s\n' "$targets" | while IFS= read -r f; do
     fi
   done
 done
+
+if [ -n "$MODE_RATCHET" ]; then
+  found=$(wc -l < "$block" | tr -d ' ')
+  baseline=$(tr -dc '0-9' < "$BASELINE_FILE" 2>/dev/null)
+  if [ -z "$baseline" ]; then
+    echo "check-fixture-hygiene: no baseline at $BASELINE_FILE" >&2
+    exit 1
+  fi
+  if [ "$found" -gt "$baseline" ]; then
+    echo "TREE RATCHET FAILED: $found pattern matches, baseline is $baseline." >&2
+    echo "Something added a suspicious pattern. The ratchet only moves DOWN." >&2
+    echo "Do NOT raise the baseline or loosen the patterns to clear this." >&2
+    echo "" >&2
+    sed 's/^/  /' "$block" >&2
+    exit 1
+  fi
+  if [ "$found" -lt "$baseline" ]; then
+    echo "tree ratchet: $found matches, baseline $baseline -- DOWN by $((baseline - found))."
+    echo "Lower the baseline in scripts/tree-hygiene-baseline.txt once the reduction is verified."
+    exit 0
+  fi
+  echo "tree ratchet: $found matches, at the baseline of $baseline."
+  exit 0
+fi
 
 if [ -s "$warn" ]; then
   echo "" >&2

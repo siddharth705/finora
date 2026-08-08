@@ -8,7 +8,7 @@ class PhoneMaskingTest {
 
     @Test
     void mask_aTypicalIndianNumber_keepsTheLeadingPlusAndLastThreeDigitsVisible() {
-        assertThat(PhoneMasking.mask("+917385476705")).isEqualTo("+•••••••••705");
+        assertThat(PhoneMasking.mask("+919000000705")).isEqualTo("+•••••••••705");
     }
 
     /**
@@ -18,8 +18,8 @@ class PhoneMaskingTest {
      */
     @Test
     void mask_aNumberMissingItsCountryCode_isVisuallyDistinctFromAProperlyFormattedOne() {
-        String withCountryCode = PhoneMasking.mask("+917385476705");
-        String withoutCountryCode = PhoneMasking.mask("7385476705");
+        String withCountryCode = PhoneMasking.mask("+919000000705");
+        String withoutCountryCode = PhoneMasking.mask("9000000705");
 
         assertThat(withoutCountryCode).isEqualTo("•••••••705");
         assertThat(withCountryCode).isNotEqualTo(withoutCountryCode);

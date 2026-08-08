@@ -182,6 +182,19 @@ jobs:
       - name: Fixture hygiene (self-test)
         run: sh scripts/test-fixture-hygiene.sh
 
+      # A RATCHET, not a pass/fail on findings. The whole tree reports 145 pattern matches; 31 are
+      # values verified against the real statement corpus and the rest are annotation debt on
+      # genuinely synthetic fixtures. Gating on zero would get "fixed" by loosening the patterns, so
+      # this gates on the count never RISING. The baseline drops as sanitization verifies each
+      # reduction -- never to make this step quiet.
+      #
+      # This is the only one of the three scans that sees a pre-existing line: --each is diff-based
+      # and blind to anything it did not touch, which is how a real account number survived months of
+      # green PRs. The third protection, check-corpus-leakage.py, cannot run here at all -- it needs
+      # the real corpus, which lives outside the tree by policy.
+      - name: Whole-tree hygiene ratchet
+        run: sh scripts/check-fixture-hygiene.sh --tree-ratchet
+
       - name: Customer PII check
         run: sh scripts/check-fixture-hygiene.sh --each "${{ github.event.pull_request.base.sha || github.event.before }}" "${{ github.sha }}"
 

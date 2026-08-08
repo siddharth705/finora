@@ -71,7 +71,7 @@ class ParserIndependencePreviewGeneratorTest {
         // rendered PDF table.
         String csv = "Date,Particulars,Reference No,Amount,Balance\n"
                 + "01/07/2026,UPI/DR/234567890123/GENERIC MERCHANT,234567890123,-1000.00,49000.00\n"
-                + "01/07/2026,MOB-IMPS/CR/RAHUL VERMA,10203040506070,1000.00,50000.00\n"
+                + "01/07/2026,MOB-IMPS/CR/SAMPLE SNDR,10203040506070,1000.00,50000.00\n"   // synthetic-ok: 10-20-30-40-50-60-70, invented, not corpus-derived
                 + "02/07/2026,UPI/DR/345678901234/GENERIC PAYEE,345678901234,-150.00,49850.00\n";
 
         UUID userId = UUID.randomUUID();

@@ -68,7 +68,7 @@ class CapabilityCompositionPdfPreviewGeneratorTest {
         // 3 real transactions -- the repeated header on page 2 must not be staged as a 4th row.
         assertThat(response.rows()).hasSize(3);
         assertThat(response.rows()).extracting(r -> r.description())
-                .containsExactly("Salary Credit", "UPI-Amazon India Purchase (Ref# ORDER-8817234451)", "Grocery Store");
+                .containsExactly("Salary Credit", "UPI-Retailer One Purchase (Ref# ORDER-9000001111)", "Grocery Store");
         assertThat(response.rows()).extracting(r -> r.balanceAfter().stripTrailingZeros().toPlainString())
                 .contains("50000", "48800", "46800");
     }

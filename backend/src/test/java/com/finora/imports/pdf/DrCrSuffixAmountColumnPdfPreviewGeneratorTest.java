@@ -60,7 +60,7 @@ class DrCrSuffixAmountColumnPdfPreviewGeneratorTest {
     void generate_classifiesDrAndCrSuffixCorrectly_withNoSeparateTypeColumn() throws Exception {
         StagingResponse response = generate();
 
-        var debit = response.rows().stream().filter(r -> r.description().contains("TOBOX VENTURES")).findFirst().orElseThrow();
+        var debit = response.rows().stream().filter(r -> r.description().contains("SAMPLE VENDOR")).findFirst().orElseThrow();
         assertThat(debit.type()).isEqualTo("EXPENSE");
         assertThat(debit.amount()).isEqualByComparingTo("37.94");
 

@@ -579,22 +579,22 @@ class ImportServiceAskOnceTest {
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
 
         String csv = String.join("\n",
-                "Account Statement for Account Number 2223000101294802",
+                "Account Statement for Account Number 2222000011119999",
                 "",
                 "Branch Details,",
-                "Branch Name:,JHANSI,SIPRI BAZAR",
-                "IFSC:,PUNB0222300",
+                "Branch Name:,SAMPLETOWN,MAIN BAZAR",
+                "IFSC:,PUNB0999999",
                 "",
                 "Statement Period:     23-06-2026    to     23-07-2026",
                 "",
                 "Txn No.,Txn Date,Description,Branch Name,Cheque No.,Dr Amount,Cr Amount,Balance",
-                "T20721400,22/07/2026,UPI/DR/620309707458/MIDORI W/YESB/q577352703@ybl/S,-,,420.0,,10728.27 Cr.,",
-                "U55126421,20/07/2026,UPI/CR/271906002016/ONE97 CO/UTIB/poweraccess.pay/,-,,,1.0,11148.27 Cr.,",
+                "T20721400,22/07/2026,UPI/DR/900077778888/MERCHANT/YESB/sample11111@ybl/S,-,,420.0,,10728.27 Cr.,",
+                "U55126421,20/07/2026,UPI/CR/900099990000/PAYCO CO/UTIB/samplemerch.pay/,-,,,1.0,11148.27 Cr.,",
                 "",
                 "***Generated through PNB ONE ***",
                 "\"1.  Unless constituent notifies the bank immediately, it will be taken that the account is correct.\""
         ) + "\n";
-        MockMultipartFile file = new MockMultipartFile("file", "PNBONE_STMT_XX4802.csv", "text/csv",
+        MockMultipartFile file = new MockMultipartFile("file", "PNBONE_STMT_XX9999.csv", "text/csv",
                 csv.getBytes(StandardCharsets.UTF_8));
 
         StagingResponse response = importService.parseAndStage(userId, file.getOriginalFilename(), file.getInputStream());
@@ -622,13 +622,13 @@ class ImportServiceAskOnceTest {
 
         String csv = String.join("\n",
                 "Bank,Account Holder,Account Number,Date,Description,Debit (INR),Credit (INR)",
-                "State Bank of India,Siddharth Tiwari,XXXXXX4587,2026-07-01,Salary Credit,,85000"
+                "State Bank of India,Sample Customer,XXXXXX4587,2026-07-01,Salary Credit,,85000"
         ) + "\n";
         MockMultipartFile file = new MockMultipartFile("file", "sbi.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8));
 
         StagingResponse response = importService.parseAndStage(userId, file.getOriginalFilename(), file.getInputStream());
 
-        assertThat(response.detectedAccount().accountHolderName()).isEqualTo("Siddharth Tiwari");
+        assertThat(response.detectedAccount().accountHolderName()).isEqualTo("Sample Customer");
         assertThat(response.detectedAccount().accountNumberMasked()).isEqualTo("4587");
     }
 
@@ -643,7 +643,7 @@ class ImportServiceAskOnceTest {
         UUID newAccountId = UUID.randomUUID();
         when(accountService.create(eq(userId), any(), any())).thenReturn(
                 new AccountDto(newAccountId, "SBI Savings", "SAVINGS", BigDecimal.valueOf(25000), null, null, null,
-                        "Siddharth Tiwari", "4587", null, null,
+                        "Sample Customer", "4587", null, null,
                         AccountDto.BankDto.from(com.finora.util.BankRegistry.get("SBI")), null, null, null,
                         0, 0L, "ACTIVE",
                         null, null, null, null, null, null, null));
@@ -652,7 +652,7 @@ class ImportServiceAskOnceTest {
                 BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
         var newAccount = new com.finora.dto.ImportDto.NewAccountRequest(
                 "SBI Savings", "SAVINGS", BigDecimal.valueOf(25000), null, null,
-                "Siddharth Tiwari", "4587", "SBI", null, null, null, null,
+                "Sample Customer", "4587", "SBI", null, null, null, null,
                 null, null, null, null, null, null, null);
         var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null);
 
@@ -660,13 +660,13 @@ class ImportServiceAskOnceTest {
 
         ArgumentCaptor<AccountDto.CreateRequest> captor = ArgumentCaptor.forClass(AccountDto.CreateRequest.class);
         verify(accountService).create(eq(userId), captor.capture(), any());
-        assertThat(captor.getValue().accountHolderName()).isEqualTo("Siddharth Tiwari");
+        assertThat(captor.getValue().accountHolderName()).isEqualTo("Sample Customer");
         assertThat(captor.getValue().accountNumberMasked()).isEqualTo("4587");
     }
 
     /**
      * Regression test for the "every credit row is Salary" bug found from real screenshots of
-     * friend UPI repayments (e.g. "UPI/CR/656007770610/TANISHQ/ICIC/tanishqmehta98-/U") landing
+     * friend UPI repayments (e.g. "UPI/CR/900022223333/SAMPLEP/ICIC/samplepayer98-/U") landing
      * under Salary with full confidence. parseRow() used to special-case isIncome straight to
      * "Salary"/"default" without ever calling the suggestion engine — this verifies income rows
      * now go through categorizationService.suggestReadOnly() exactly like expense rows do, so a
@@ -678,7 +678,7 @@ class ImportServiceAskOnceTest {
         when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
                 .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
 
-        String description = "UPI/CR/656007770610/TANISHQ/ICIC/tanishqmehta98-/U";
+        String description = "UPI/CR/900022223333/SAMPLEP/ICIC/samplepayer98-/U";
         String csv = "Date,Description,Debit,Credit\n2026-07-13," + description + ",,38.00\n";
         MockMultipartFile file = new MockMultipartFile("file", "statement.csv", "text/csv",
                 csv.getBytes(StandardCharsets.UTF_8));
@@ -711,10 +711,10 @@ class ImportServiceAskOnceTest {
 
         String csv = String.join("\n",
                 "Bank,Account Holder,Account Number,Statement Period,Date,Description,Reference No,Debit (INR),Credit (INR),Running Balance (INR)",
-                "State Bank of India,Siddharth Tiwari,XXXXXX4587,01-Jul-2026 to 31-Jul-2026,,OPENING BALANCE,,,,25000.0",
-                "State Bank of India,Siddharth Tiwari,XXXXXX4587,01-Jul-2026 to 31-Jul-2026,2026-07-01,Salary Credit - ABC Pvt Ltd,SBI1001,,85000,110000.0",
-                "State Bank of India,Siddharth Tiwari,XXXXXX4587,01-Jul-2026 to 31-Jul-2026,2026-07-02,UPI Rent Payment,SBI1002,18000,,92000.0",
-                "State Bank of India,Siddharth Tiwari,XXXXXX4587,01-Jul-2026 to 31-Jul-2026,,CLOSING BALANCE,,,,80885.75"
+                "State Bank of India,Sample Customer,XXXXXX4587,01-Jul-2026 to 31-Jul-2026,,OPENING BALANCE,,,,25000.0",
+                "State Bank of India,Sample Customer,XXXXXX4587,01-Jul-2026 to 31-Jul-2026,2026-07-01,Salary Credit - ABC Pvt Ltd,SBI1001,,85000,110000.0",
+                "State Bank of India,Sample Customer,XXXXXX4587,01-Jul-2026 to 31-Jul-2026,2026-07-02,UPI Rent Payment,SBI1002,18000,,92000.0",
+                "State Bank of India,Sample Customer,XXXXXX4587,01-Jul-2026 to 31-Jul-2026,,CLOSING BALANCE,,,,80885.75"
         ) + "\n";
         MockMultipartFile file = new MockMultipartFile("file", "SBI_Dummy_Statement_July_2026.csv", "text/csv",
                 csv.getBytes(StandardCharsets.UTF_8));

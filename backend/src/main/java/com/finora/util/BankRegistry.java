@@ -251,7 +251,7 @@ public final class BankRegistry {
      *    merchant's UPI handle ("...@HDFCBANK-...") inside someone else's statement.
      *  - But an IFSC is only decisive when LABELLED. Indian UPI/NEFT narrations embed the
      *    counterparty's IFSC in the transaction text, so a single HDFC statement legitimately
-     *    contains "YESB0MCHUPI", "YESB0PTMUPI" and "ICIC0099999" alongside its own "HDFC0000007",
+     *    contains "YESB0111111", "YESB0222222" and "ICIC0999999" alongside its own "HDFC0999999",
      *    and they can easily outnumber it. Frequency therefore cannot break the tie -- structure
      *    can: the account's own code is the one printed next to the word "IFSC".
      *  - Alias matching is anchored to whole words (see {@link #containsWholeWordAlias}). It
