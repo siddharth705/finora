@@ -550,7 +550,7 @@ jobs:
               "project_id": "finora-classpath-check",
               "private_key_id": "0" * 40,
               "private_key": key,
-              "client_email": "classpath-check@finora-classpath-check.iam.gserviceaccount.com",
+              "client_email": "classpath-check@example.invalid",
               "client_id": "0" * 21,
               "token_uri": "https://oauth2.googleapis.com/token",
           }, open(sys.argv[2], "w"))
@@ -563,7 +563,7 @@ jobs:
 
           started=no
           for _ in $(seq 1 45); do
-            if curl -sf "http://localhost:8086/actuator/health" 2>/dev/null | grep -q '"UP"'; then
+            if curl -sf "http://localhost:${SERVER_PORT}/actuator/health" 2>/dev/null | grep -q '"UP"'; then
               started=yes; break
             fi
             kill -0 "$pid" 2>/dev/null || break
