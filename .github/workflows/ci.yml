@@ -589,6 +589,31 @@ jobs:
           fi
           echo "packaged jar started clean with Firebase credentials present"
 
+      # The layer above. The step before proves the jar STARTS; this proves each critical library is
+      # actually EXECUTED, which is a different question with a different failure. A dependency whose
+      # classes load lazily starts clean and dies on the first real call -- the layer a user reaches.
+      #
+      # Runs the shipped jar with --verify-runtime-dependencies, which calls one real operation per
+      # library and exits non-zero unless every one of them ran. A library rejecting synthetic input
+      # is a PASS: a linkage error is thrown during class resolution, before any credential or
+      # validation check, so reaching the rejection proves the classes behind it resolved.
+      #
+      # It also fails when a check STOPS reaching its library -- see RuntimeDependencyVerifier's
+      # NOT_EXECUTED. Without credentials the Firebase probe short-circuits and proves nothing, and
+      # reporting that as success is how a guard goes quietly useless. Reuses the credentials file
+      # the previous step wrote, so if that step's generation ever breaks, this one goes red rather
+      # than silently checking three libraries instead of four.
+      - name: Runtime dependency verification
+        working-directory: backend
+        env:
+          SPRING_PROFILES_ACTIVE: dev
+          SERVER_PORT: 8088
+          DB_PORT: 5433
+        run: |
+          set -euo pipefail
+          GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/classpath-check-credentials.json" \
+            java -jar target/finora-backend-*.jar --verify-runtime-dependencies
+
       - name: Install dependencies
         run: |
           npm ci --prefix frontend
