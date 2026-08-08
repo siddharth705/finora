@@ -33,6 +33,17 @@ services:
       # directive) -- the user app on 5173 (frontend/) and the admin portal on 5174
       # (admin-portal/), each its own Vite dev server, each proxying /api to this backend.
       CORS_ORIGINS: http://localhost:5173,http://localhost:5174
+      # Phone verification (registration, password reset, authenticated password change) needs the
+      # Firebase Admin SDK -- see FirebaseConfig. Point at a service-account JSON key inside the
+      # .finora bind mount below, which is already gitignored: this file is a real secret and must
+      # never be committed. Get it from Firebase Console -> Project Settings -> Service Accounts ->
+      # Generate new private key, and save it as ./.finora/firebase-service-account.json.
+      #
+      # Safe to set before the file exists: FirebaseConfig catches the read failure, logs a warning
+      # and registers no bean, so the dev stack still boots -- only phone verification fails (503),
+      # exactly as it does today with this unset. Only the `prod` profile refuses to start without
+      # it (ProductionConfigValidator).
+      GOOGLE_APPLICATION_CREDENTIALS: /app/.finora/firebase-service-account.json
     ports:
       - "8080:8080"
     volumes:

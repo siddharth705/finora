@@ -145,6 +145,17 @@ export interface ConfirmedRowPayload {
   likelyDuplicate: boolean;
   referenceNumber: string | null;
   balanceAfter: number | null;
+  /**
+   * The user's ANSWER on the duplicate review screen, as opposed to `likelyDuplicate`, which is the
+   * engine's GUESS. True only when the engine flagged the row and the person chose "Import anyway".
+   *
+   * Optional because the backend defaults it to false, and its doc comment names this app as the
+   * client that does not send it. That is no longer true, and the field matters more here than the
+   * default suggests: without it, reconciliation re-flags the row the moment it lands and strips it
+   * from every spend total, so the user's decision shows in the ledger and vanishes from the
+   * numbers. See V65 for the measured damage on the web path.
+   */
+  confirmedNotDuplicate?: boolean;
 }
 
 /**

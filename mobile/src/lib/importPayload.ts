@@ -1,5 +1,6 @@
 import type { ConfirmedRowPayload, NewAccountPayload } from '../api/endpoints';
 import type { Account, DetectedAccountInfo, StagedRow } from '../types';
+import { isUnderReview, type RowReview } from './importReview';
 
 /**
  * Builds the confirm payloads for an import.
@@ -29,7 +30,7 @@ export interface NewAccountForm {
  */
 export function buildRowPayload(
   rows: StagedRow[],
-  included: boolean[],
+  review: RowReview,
   chosenCategory: string[]
 ): ConfirmedRowPayload[] {
   return rows.map((r, i) => ({
@@ -38,12 +39,17 @@ export function buildRowPayload(
     amount: r.amount,
     type: r.type,
     category: chosenCategory[i],
-    include: included[i],
+    include: review.included[i],
     categorySource: r.categorySource,
     ruleId: r.ruleId,
     likelyDuplicate: r.likelyDuplicate,
     referenceNumber: r.referenceNumber,
     balanceAfter: r.balanceAfter,
+    // The user's answer, not the engine's guess. Without it, reconciliation re-flags the row the
+    // moment it lands and strips it from every spend total -- the decision would show in the ledger
+    // and vanish from the numbers. Only ever true for a row the engine actually questioned: a
+    // client cannot claim a decision the user was never asked to make.
+    confirmedNotDuplicate: isUnderReview(r) && review.decisions[i] === 'import',
   }));
 }
 
@@ -100,11 +106,12 @@ export function buildNewAccountPayload(
   };
 }
 
-/** Rows a duplicate check flagged start excluded, so confirming without reading every row cannot
- *  silently double-import. The user can still tick them back on. */
-export function initialInclusion(rows: StagedRow[]): boolean[] {
-  return rows.map((r) => !r.likelyDuplicate);
-}
+// initialInclusion() used to live here: `rows.map(r => !r.likelyDuplicate)`, with the comment
+// "the user can still tick them back on". That was the whole problem -- the row was unticked
+// whether or not anyone read it, nothing recorded that a question had gone unanswered, and the
+// import could be confirmed without the user ever seeing one. Replaced by beginReview() in
+// ./importReview, which produces the include flags and the decisions together so an untick cannot
+// exist without the unresolved answer that blocks the import.
 
 export function initialCategories(rows: StagedRow[]): string[] {
   return rows.map((r) => r.suggestedCategory);

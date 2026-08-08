@@ -159,8 +159,8 @@ another build before suspecting the tests.
 ## Running it locally
 
 ```bash
-# 1. Start Postgres + backend
-docker compose up -d
+# 1. Start Postgres + backend  (--build matters, see below)
+docker compose up --build -d
 
 # 2. User frontend
 cd frontend
@@ -178,13 +178,34 @@ backend at `http://localhost:8080`. API docs (dev profile only): `http://localho
 Both frontends' Vite dev servers proxy `/api/*` to the backend (see each app's own
 `vite.config.ts`), so there's no CORS friction while developing either one.
 
-**This alone won't get you past registration.** `docker-compose.yml` sets no
-`GOOGLE_APPLICATION_CREDENTIALS`, and phone verification is enforced server-side
-(`PhoneVerificationFilter`) before any account reaches the dashboard — every verification call
-503s until the Firebase Admin SDK is configured. See `docs/engineering/deployment-guide.md`'s
-environment variable audit for `GOOGLE_APPLICATION_CREDENTIALS` /
-`GOOGLE_APPLICATION_CREDENTIALS_BASE64` and the frontend `VITE_FIREBASE_*` vars before expecting a
-fresh clone to reach the app past sign-up.
+**Pass `--build`, or you will run a stale jar.** `docker compose up -d` recreates *containers* from
+whatever image already exists; it does not rebuild the image when backend sources change. The
+container starts, reports healthy, and serves code you no longer have. This is not hypothetical: a
+local stack ran a jar built 13 hours before f55f9bb for an entire debugging session, reproducing a
+production `NoClassDefFoundError` that had already been fixed on disk. `--force-recreate` does *not*
+help — it recreates the container, which is the part that was never stale. When something makes no
+sense, check the image age (`docker image inspect finora-backend --format '{{.Created}}'`) before
+the code.
+
+**This alone won't get you past registration.** Phone verification is enforced server-side
+(`PhoneVerificationFilter`) before any account reaches the dashboard, and it needs the Firebase
+Admin SDK. `docker-compose.yml` points `GOOGLE_APPLICATION_CREDENTIALS` at
+`.finora/firebase-service-account.json` (gitignored), but does not — and cannot — supply the key
+itself: get one from Firebase Console → Project Settings → Service Accounts → Generate new private
+key and save it there. Until you do, the stack still boots and only verification calls 503, because
+`FirebaseConfig` treats an unreadable key as "not configured" rather than fatal.
+
+Two consequences of that graceful degradation are worth knowing before it wastes your time. It means
+**an unconfigured backend is not a quieter version of a working one** — `getApplicationDefault()`
+throws before the Admin SDK's transport is ever initialized, so an entire code path goes unexercised.
+That is exactly how the stale-jar defect above stayed invisible: it only surfaced once credentials
+were valid enough to reach the code that needed the missing class. And a bare 401 from
+`/api/v1/phone/verify` does *not* distinguish "configured and rejected a bad token" from
+"unauthenticated request" — check the response body, not the status.
+
+See `docs/engineering/deployment-guide.md`'s environment variable audit for
+`GOOGLE_APPLICATION_CREDENTIALS` / `GOOGLE_APPLICATION_CREDENTIALS_BASE64` and the frontend
+`VITE_FIREBASE_*` vars before expecting a fresh clone to reach the app past sign-up.
 
 **Before running anywhere but your own machine:** change `JWT_SECRET` in
 `docker-compose.yml` to a real random 32+ character value, and never commit

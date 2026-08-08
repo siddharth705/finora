@@ -167,6 +167,35 @@ export interface StagedRow {
   // between staging and the ledger.
   referenceNumber: string | null;
   balanceAfter: number | null;
+  /**
+   * The transaction this row appears to repeat, or null when the engine did not question it.
+   *
+   * The backend has sent this since duplicate detection stopped being a silent filter; this app
+   * simply never declared it, so the evidence arrived on the wire and was discarded at the type
+   * boundary. Without it a review screen can say "this looks like a duplicate" and show nothing to
+   * judge that against, which is not a review.
+   */
+  duplicateMatch: DuplicateMatch | null;
+}
+
+/**
+ * The already-imported transaction a staged row appears to repeat.
+ *
+ * Mirrors the web app's type of the same name, field for field, because both decode the same
+ * response -- see `frontend/src/types/index.ts`.
+ */
+export interface DuplicateMatch {
+  existingTransactionId: string;
+  existingAccountId: string | null;
+  existingDate: string;
+  existingDescription: string;
+  existingAmount: number;
+  existingType: 'INCOME' | 'EXPENSE' | null;
+  existingImportedAt: string;
+  /** How many already-imported transactions match, when it is more than one. */
+  matchCount: number;
+  confidence: 'EXACT';
+  reason: string;
 }
 
 // Best-effort fields pulled from the statement itself. Every field is nullable and genuinely

@@ -15,9 +15,13 @@ import { apiErrorCode, toUserMessage } from '../../lib/apiError';
 import { fmtCurrency } from '../../lib/format';
 import { invalidateFinancialData } from '../../lib/invalidateFinancialData';
 import {
-  buildNewAccountPayload, buildRowPayload, initialAccountForm, initialCategories, initialInclusion,
+  buildNewAccountPayload, buildRowPayload, initialAccountForm, initialCategories,
   type NewAccountForm,
 } from '../../lib/importPayload';
+import {
+  applyDecisionToSimilar, beginReview, decide, EMPTY_REVIEW, isUnderReview, setIncluded,
+  unresolvedCount, type DuplicateDecision, type RowReview,
+} from '../../lib/importReview';
 import { pickStatement, type StatementFormat } from '../../lib/statementFile';
 import { radius, spacing, useTheme } from '../../theme';
 import type { AppTabParamList } from '../../navigation/types';
@@ -41,7 +45,10 @@ export function ImportScreen() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [fileFormat, setFileFormat] = useState<StatementFormat | null>(null);
   const [rows, setRows] = useState<StagedRow[]>([]);
-  const [included, setIncluded] = useState<boolean[]>([]);
+  // Include flags and duplicate decisions as ONE value -- see lib/importReview.ts for why they
+  // cannot be two pieces of state. Two arrays is the shape that let a row be unticked with the
+  // question unasked.
+  const [review, setReview] = useState<RowReview>(EMPTY_REVIEW);
   const [chosenCategory, setChosenCategory] = useState<string[]>([]);
   const [unparseableRows, setUnparseableRows] = useState<UnparseableRow[]>([]);
   const [detected, setDetected] = useState<DetectedAccountInfo | null>(null);
@@ -76,7 +83,30 @@ export function ImportScreen() {
     queryFn: () => accountsApi.list(),
   });
 
-  const includedCount = useMemo(() => included.filter(Boolean).length, [included]);
+  const includedCount = useMemo(() => review.included.filter(Boolean).length, [review.included]);
+  // The gate. Confirm stays disabled while the engine has asked a question nobody has answered --
+  // the same rule the web app enforces, so a duplicate cannot be skipped by not looking at it.
+  const outstanding = useMemo(
+    () => unresolvedCount(rows, review.decisions),
+    [rows, review.decisions]
+  );
+  // Per row, so the card can offer "apply to N identical rows" without each card scanning the whole
+  // statement on every render. Counts OTHER rows still unresolved with the same description, which
+  // is exactly the set applyDecisionToSimilar would reach.
+  const similarUnresolved = useMemo(() => {
+    const pending = new Map<string, number>();
+    rows.forEach((row, i) => {
+      if (isUnderReview(row) && review.decisions[i] === 'unresolved') {
+        pending.set(row.description, (pending.get(row.description) ?? 0) + 1);
+      }
+    });
+    return rows.map((row, i) => {
+      if (!isUnderReview(row)) return 0;
+      const total = pending.get(row.description) ?? 0;
+      // Subtract self when this row is itself still unresolved, so the count is always "others".
+      return review.decisions[i] === 'unresolved' ? Math.max(total - 1, 0) : total;
+    });
+  }, [rows, review.decisions]);
 
   /**
    * Arriving from "Re-import" on the Statement History screen: the rows were already staged there,
@@ -101,7 +131,7 @@ export function ImportScreen() {
     setFileFormat(null);
     setSessionId(null);
     setRows(reimportParam.staging.rows);
-    setIncluded(initialInclusion(reimportParam.staging.rows));
+    setReview(beginReview(reimportParam.staging.rows));
     setChosenCategory(initialCategories(reimportParam.staging.rows));
     setUnparseableRows(reimportParam.staging.unparseableRows);
     setDetected(reimportParam.staging.detectedAccount);
@@ -115,7 +145,7 @@ export function ImportScreen() {
     setSessionId(null);
     setFileFormat(null);
     setRows([]);
-    setIncluded([]);
+    setReview(EMPTY_REVIEW);
     setChosenCategory([]);
     setUnparseableRows([]);
     setDetected(null);
@@ -183,7 +213,7 @@ export function ImportScreen() {
 
       const staging = (res as { staging: NonNullable<typeof res.staging> }).staging;
       setRows(staging.rows);
-      setIncluded(initialInclusion(staging.rows));
+      setReview(beginReview(staging.rows));
       setChosenCategory(initialCategories(staging.rows));
       setUnparseableRows(staging.unparseableRows);
       setDetected(staging.detectedAccount);
@@ -224,14 +254,14 @@ export function ImportScreen() {
       // this statement rather than importing a fresh one.
       const result = reimport
         ? await statementImportsApi.confirmReimport(reimport.statementImportId, {
-            rows: buildRowPayload(rows, included, chosenCategory),
+            rows: buildRowPayload(rows, review, chosenCategory),
             existingAccountId: reimport.accountId,
             statementOpeningBalance: detected?.openingBalance ?? null,
             statementClosingBalance: detected?.closingBalance ?? null,
           })
         : await importApi.confirm({
             sessionId: sessionId!,
-            rows: buildRowPayload(rows, included, chosenCategory),
+            rows: buildRowPayload(rows, review, chosenCategory),
             existingAccountId: accountChoice === 'existing' ? selectedAccountId : null,
             newAccount: accountChoice === 'new' ? buildNewAccountPayload(accountForm, detected) : null,
             statementOpeningBalance: detected?.openingBalance ?? null,
@@ -519,12 +549,16 @@ export function ImportScreen() {
         renderItem={({ item, index }) => (
           <StagedRowCard
             row={item}
-            included={included[index]}
+            included={review.included[index]}
             category={chosenCategory[index]}
             onToggleIncluded={() =>
-              setIncluded((prev) => prev.map((v, i) => (i === index ? !v : v)))
+              setReview((prev) => setIncluded(prev, index, !prev.included[index]))
             }
             onPressCategory={() => setCategoryPickerFor(index)}
+            decision={review.decisions[index]}
+            onDecide={(d: DuplicateDecision) => setReview((prev) => decide(rows, prev, index, d))}
+            similarUnresolved={similarUnresolved[index] ?? 0}
+            onApplyToSimilar={() => setReview((prev) => applyDecisionToSimilar(rows, prev, index))}
           />
         )}
         ListFooterComponent={
@@ -546,11 +580,20 @@ export function ImportScreen() {
             ) : null}
 
             <View style={styles.actions}>
+              {/* Says which question is outstanding, not just that one is. "Confirm is disabled"
+                  with no reason is the shape that makes people tap it repeatedly; the count tells
+                  them how much is left and the rows carry the questions themselves. */}
+              {outstanding > 0 ? (
+                <Text style={[styles.gateNotice, { color: c.warningInk, backgroundColor: c.warningBg }]}>
+                  {outstanding} possible duplicate{outstanding === 1 ? '' : 's'} still need
+                  {outstanding === 1 ? 's' : ''} an answer above before this can be imported.
+                </Text>
+              ) : null}
               <Button
                 label={`Import ${includedCount} transaction${includedCount === 1 ? '' : 's'}`}
                 onPress={confirmImport}
                 loading={confirming}
-                disabled={includedCount === 0}
+                disabled={includedCount === 0 || outstanding > 0}
               />
               <View style={styles.cancel}>
                 <Button label="Cancel" variant="link" onPress={resetToUpload} />
@@ -661,6 +704,14 @@ const styles = StyleSheet.create({
   rowsTitle: { fontSize: 15, fontWeight: '700' },
   unparseable: { fontSize: 12, marginTop: 6 },
   actions: { marginTop: spacing.md },
+  gateNotice: {
+    fontSize: 12,
+    fontWeight: '500',
+    padding: 10,
+    borderRadius: radius.md,
+    marginBottom: spacing.sm,
+    overflow: 'hidden',
+  },
   cancel: { marginTop: spacing.sm },
   statRow: { flexDirection: 'row', gap: spacing.md, marginBottom: spacing.sm },
   stat: { flex: 1 },

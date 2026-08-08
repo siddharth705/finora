@@ -73,28 +73,36 @@ new machine.
 
 ## Branching strategy
 
-Direct commits to `main` or `develop` are not allowed. Everything happens on a branch:
+Direct commits to `main` are not allowed. Everything happens on a branch, and reaches `main` through
+a pull request.
 
 ```
-main (production releases only)
+main (the trunk; releases are tags on it)
   ▲
-  │ (tagged releases)
-release/*
-  ▲
-develop (integration branch)
-  ▲
-  ├── feature/*   new work
-  ├── bugfix/*    non-urgent defect fixes
-  └── hotfix/*    urgent production patches, branched from main
+  ├── feat/*      new work
+  ├── fix/*       defect fixes
+  ├── chore/*     maintenance, dependencies, tooling
+  ├── ci/*        pipeline and runner changes
+  └── docs/*      documentation-only changes
 ```
 
-- Branch off `develop` for `feature/*` and `bugfix/*` (e.g. `feature/goal-contributions-api`).
-- Branch off `main` for `hotfix/*` when production is broken and can't wait for the next release
-  train; merge the hotfix back into both `main` and `develop`.
-- `release/*` branches cut from `develop` when it's stable enough to ship; only bug fixes land on
-  a release branch, no new features. Merges into `main` (tagged) and back into `develop`.
-- Open a PR into `develop` (or `main` for hotfixes) rather than merging locally, so there's a
-  review point.
+- Branch off `main`, PR back into `main`. Releases are tags on `main` (see `CHANGELOG.md`), not a
+  separate branch.
+- The prefix matches the Conventional Commit type the branch is mostly about. It is a readability
+  convention, not something tooling enforces.
+
+**This section used to describe a full gitflow** — a long-lived `develop` integration branch and
+`release/*` branches cut from it. That was never adopted: no `develop` branch has ever existed on
+the remote, and every pull request in the repository's history targets `main`. It is recorded here
+rather than quietly deleted because the instruction to "branch off `develop`" was followed by nobody
+and could not have been, and anyone who tried would have been debugging their own setup.
+
+If a long-lived integration branch is wanted later, that is a decision to make deliberately — the
+trunk-based flow above is what the project actually does today.
+
+- Open a PR into `main` rather than merging locally, so there is a review point — and because CI
+  does not run on a branch push without an open pull request (see the trigger comment in
+  `.github/workflows/ci.yml`). A branch pushed with no PR has been checked by nothing.
 
 ## Commit messages
 
