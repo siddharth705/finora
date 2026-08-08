@@ -167,17 +167,25 @@ class WrappedHeaderPdfTableLocatorTest {
     /**
      * The negative case that pins the span bound, and the reason it must not be relaxed.
      *
-     * <p>The geometry is measured from page 10 of the real statement: below its fixed-deposit
-     * heading, a SECOND heading tier is printed for the second visual line of each deposit record
-     * -- two lines, 9pt apart, neither carrying a date or a number, which is every positive signal
-     * a wrapped heading has. Merged, it scores as a header (an "amount" cell, a "date" cell, three
-     * cells, comfortably dense). It is refused only because its rightmost cell sits 166pt past any
-     * column on the line above it.
+     * <p>The geometry is measured from page 10 of the real statement -- x AND width, which is the
+     * whole point of this test. Below its fixed-deposit heading, a SECOND heading tier is printed
+     * for the second visual line of each deposit record: two lines, 9pt apart, neither carrying a
+     * date or a number, which is every positive signal a wrapped heading has. Merged, it scores as
+     * a header (an "amount" cell, a "date" cell, three cells, comfortably dense). It is refused
+     * only because its rightmost cell sits 166pt from any column anchor on the line above it.
      *
      * <p>Left to merge, it arrives immediately after the heading it follows, splits the table it
-     * belongs to, and re-anchors that table on three columns. Anyone who later reads the
-     * recurring-deposit half-naming limitation and reaches for "why not just relax the span
-     * condition" should fail here first: this is the measurement that says what relaxing it costs.
+     * belongs to, and re-anchors that table on two columns -- which is exactly what the real
+     * statement did before {@code columnFor} stopped consulting span overlap. This test PASSED
+     * against that bug, because an earlier version of it invented a plausible-looking width of 72
+     * for "Maturity Available". PDFBox measures that run at <b>214.80</b>: a run's width is its
+     * advance, and the wide gap between the two words is inside it, so the span reached x=476.26
+     * and swallowed "Withdrawable***" at [428.02, 489.36]. The measured widths below are what make
+     * this a regression test rather than a reassuring one.
+     *
+     * <p>Anyone who later reads the recurring-deposit half-naming limitation and reaches for "why
+     * not just relax the span condition" should fail here first: this is the measurement that says
+     * what relaxing it costs.
      */
     @Test
     void aSecondHeadingTierOutsideTheColumnsAboveItIsNotAHeader() {
@@ -190,10 +198,12 @@ class WrappedHeaderPdfTableLocatorTest {
                 run("14/01/2026", 50f, 45f, 140f), run("CARD PAYMENT", 150f, 62f, 140f),
                 run("2,000.00", 300f, 38f, 140f), run("6,750.00", 430f, 38f, 140f)));
 
-        // The tier, at its measured x positions.
+        // The tier, at its measured x AND measured width -- 214.80 is not a typo.
         runs.addAll(List.of(
-                run("Current FD Amount #", 153.21f, 78f, 170f), run("Maturity Available", 261.46f, 72f, 170f),
-                run("Date **", 265.24f, 30f, 179f), run("Withdrawable***", 428.02f, 64f, 179f)));
+                run("Current FD Amount #", 153.21f, 80.89f, 170f),
+                run("Maturity Available", 261.46f, 214.80f, 170f),
+                run("Date **", 265.24f, 25.78f, 179f),
+                run("Withdrawable***", 428.02f, 61.34f, 179f)));
 
         DocumentContext ctx = new DocumentContext("PDF", "WrappedHeaderPdfTableLocatorTest");
         PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(runs, ctx);

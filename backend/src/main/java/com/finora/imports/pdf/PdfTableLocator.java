@@ -1263,14 +1263,27 @@ public class PdfTableLocator {
     /**
      * Folds a run of header lines into one row of cells, one per column.
      *
-     * <p>The first line seeds the columns; every later line's cells join one of them. A cell joins
-     * the column its own x-span OVERLAPS, and falls back to the nearest anchor within
-     * {@link #HEADER_WRAP_MAX_COLUMN_JOIN} when no span overlaps. Both rules are needed. Overlap
-     * is the accurate one and is the only one that places a continuation under a wide
-     * left-aligned label, but it is unavailable exactly where this matters most: runs with no
-     * measured width (hand-built fixtures, and every trace captured before trace v3) have
-     * {@code endX() == x} and can never overlap anything. Nearest-anchor is what those fall back
-     * to, and it is the same rule {@link #nearestColumn} already places data runs by.
+     * <p>The first line seeds the columns; every later line's cells join the one whose anchor is
+     * NEAREST, within {@link #HEADER_WRAP_MAX_COLUMN_JOIN}. Left edges only -- the same rule
+     * {@link #nearestColumn} already places data runs by.
+     *
+     * <p>This deliberately does NOT consider whether the spans overlap, and that is the second
+     * thing this method got wrong. Span overlap is the more accurate question in principle, and it
+     * was tried first on the reasoning that it is the only rule that can place a continuation under
+     * a wide left-aligned label. Measured against the real statement, it is the rule that broke it.
+     * A run's measured width is its ADVANCE, not the extent of its glyphs: that statement's second
+     * heading tier prints "Maturity Available" as a single run at x=261.46 whose width PDFBox
+     * reports as 214.80 -- roughly three times its visible text, because the wide gap between the
+     * two words is inside the run. Its span therefore reaches x=476.26 and swallows
+     * "Withdrawable***" at [428.02, 489.36], 48 points of overlap between two labels that are not
+     * remotely in the same column. The tier merged, and the fixed-deposit table anchored on its two
+     * columns instead of the eight-column heading above it.
+     *
+     * <p>Left edges cannot be inflated that way. Dropping overlap also makes a width-less trace and
+     * a real PDF take the same path through this method, which is worth more than the accuracy it
+     * gives up: the committed trace could not have caught this bug precisely because overlap was
+     * unreachable there, so the fixture that was supposed to represent the document diverged from it
+     * exactly where the document was hardest.
      *
      * <p>Returns null -- refusing the merge outright -- if any cell joins NO column. That is the
      * rule that makes "these two lines are one header" mean something structural rather than just
@@ -1335,17 +1348,6 @@ public class PdfTableLocator {
     }
 
     private int columnFor(PositionedText cell, List<List<PositionedText>> columns) {
-        int byOverlap = -1;
-        float widestOverlap = 0f;
-        for (int c = 0; c < columns.size(); c++) {
-            float overlap = Math.min(endOf(columns.get(c)), cell.endX()) - Math.max(anchorOf(columns.get(c)), cell.x());
-            if (overlap > widestOverlap) {
-                widestOverlap = overlap;
-                byOverlap = c;
-            }
-        }
-        if (byOverlap >= 0) return byOverlap;
-
         // Strictly-less, so equidistant columns resolve to the LEFTMOST -- the same tie-breaking
         // nearestColumn uses a few methods down. The two were written to answer the same question
         // ("which column is this x nearest") and disagreeing on ties is how siblings in this class
