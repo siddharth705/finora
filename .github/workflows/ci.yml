@@ -211,6 +211,15 @@ jobs:
       - name: Import cross-reference
         run: python3 scripts/check-imports.py
 
+      # corpus-diff.py is the regression gate for parser changes, and CI can never exercise it on
+      # real data: the corpus is real customer statements and lives outside the working tree by
+      # policy. So its logic is tested against synthetic records instead, which is the only way this
+      # gate gets tested at all. One of these tests also asserts the script names no bank and no
+      # corpus filename (ADR-004) -- a diff tool that knows what each file "should" produce is the
+      # assumption we are deliberately not building.
+      - name: Corpus diff (self-test)
+        run: python3 scripts/test-corpus-diff.py
+
       - uses: actions/setup-java@v5
         with:
           java-version: '25'
