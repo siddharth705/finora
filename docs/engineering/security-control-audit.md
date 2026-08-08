@@ -56,6 +56,12 @@ enforce:
 **Before any of it:** finish the repository PII sanitization against the 1,745-test / 134-affected
 baseline. No parser behaviour changes as part of that cleanup.
 
+**And nothing from the document-ingestion track inside the cleanup branch** — no OCR, no parser
+improvement, no ground-truth work. Both are wanted, and mixing them here destroys the one property
+that makes this cleanup verifiable: if the suite moves, the cause must be unambiguously the
+sanitization. A fixture edit and a parser change landing together means neither can be cleared. The
+sequence is: security cleanup → green baseline → merge → document intelligence.
+
 **P0 — upload security.** Empty-file, content-type, extension and magic-byte validation in
 `StatementUpload`; malformed-PDF, decompression-bomb and page-count protection; parser timeouts;
 investigate malware scanning. This is the largest untrusted-input surface and the only row in the
@@ -72,8 +78,8 @@ call it.
 
 ## Why document integrity belongs in this document
 
-**Rule.** *Never classify a financial document as successfully processed merely because the parser
-produced output. Success requires evidence that the financial entities, transactions, ownership and
+**Rule, and it is release-blocking rather than advisory.** *Never classify a financial document as
+successfully processed merely because the parser produced output. Success requires evidence that the financial entities, transactions, ownership and
 totals extracted are consistent enough to trust.*
 
 A parser that silently turns **Savings + RD + FD** into **Savings only** is not a parsing bug with a
