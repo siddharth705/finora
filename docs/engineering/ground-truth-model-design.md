@@ -144,6 +144,20 @@ byte-identical `[75, 0, 0]` in both cases.
 If the model cannot separate A from B, nothing downstream can, and this document has failed. That is
 the first test to write, before any others.
 
+### 6.1 A precondition this note originally missed
+
+Writing the tests exposed it. **Shivani's real record cannot run the A/B discrimination today**, because
+its two deposit sections report `accountNumberMasked: null` and the same suggested type — nothing
+distinguishes them, so the matcher correctly answers `AMBIGUOUS` rather than pairing them by position.
+The pass/fail discrimination therefore needs RD/FD **attribute extraction to land first**, giving the
+sections something to be told apart by.
+
+This does not delay writing Shivani's ground truth, and it changes what that ground truth buys us. Two
+expected deposits against two indistinguishable sections yields `AMBIGUOUS`, or `MISSING` if neither is
+classified as a deposit at all — and either is a reportable failure where today the same document
+imports *successfully*. So ground truth is worth establishing now; the sharper A/B test arrives with
+extraction.
+
 Three more that pin the states most likely to collapse:
 
 - An expected entity that is **not detected at all** → `MISSING`, and the import must not report
