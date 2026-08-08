@@ -44,8 +44,8 @@
   },
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "test": "jest",
@@ -58,5 +58,12 @@
     ],
     "testTimeout": 15000
   },
-  "private": true
+  "private": true,
+  "allowScripts": {
+    "@firebase/util@1.15.2": true,
+    "@sentry/cli@2.58.4": true,
+    "fsevents@2.3.3": true,
+    "protobufjs@7.6.5": true,
+    "unrs-resolver@1.12.2": true
+  }
 }
