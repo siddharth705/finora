@@ -13,6 +13,39 @@ Do not re-derive these numbers by hand. `QueueOverheadMeasurementIT` prints them
 the reason [`methodology.md`](methodology.md) records: the last performance document here was stale
 within forty minutes.
 
+> **Follow-up, same day: recommendation 1 is implemented and re-measured. The threshold question is
+> answered — there should not be one.**
+>
+> `ImportProgress` now polls on a backoff schedule (`POLL_SCHEDULE_MS` = 100, 200, 400, 800, 1500)
+> instead of one immediate poll and then every 1500 ms. The immediate poll was worse than useless:
+> it fired while the job had just been accepted and no worker had touched it, so it always read
+> `QUEUED`, and its only effect was to make the *second* poll — at 1500 ms — the first that could
+> observe a finished job.
+>
+> Re-measured with the same harness, which now derives and prints the perceived figure rather than
+> leaving it to be worked out:
+>
+> | Rows | Server completes | Seen before | **Seen now** |
+> |---:|---:|---:|---:|
+> | 3 | ~40 ms | 1500 ms | **~100 ms** |
+> | 50 | ~88 ms | 1500 ms | **~100 ms** |
+> | 500 | ~295 ms | 1500 ms | **~300 ms** |
+>
+> A small statement is now perceived at ~100 ms against ~18 ms synchronous. That is a difference of
+> about 80 ms on an action that follows a file picker, and it is below the ~100 ms threshold the
+> milestone named as the point at which the routing question stops being worth asking.
+>
+> **So: no threshold, and async as the single path.** Not because the queue got faster — the
+> server-side overhead is unchanged at ~22 ms — but because the only figure that ever justified a
+> threshold was the poll interval, and it is gone. Two paths to one review screen is the condition
+> that produced the confirm-payload drift recorded in `lib/newAccountPayload.ts` and again in
+> mobile's `initialInclusion`; collapsing them is worth more than a routing rule.
+>
+> Unchanged by this: everything under *What this did not measure* below. R2, PDF and concurrent
+> load are all still unmeasured, and the first two would push the completion figures up. On the
+> schedule above that moves a statement from the 100 ms step to the 300 ms or 700 ms one — it does
+> not reinstate the 1500 ms floor, which is what the threshold argument rested on.
+
 ---
 
 ## Result
