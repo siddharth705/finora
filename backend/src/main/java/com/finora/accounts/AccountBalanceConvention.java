@@ -111,6 +111,31 @@ public final class AccountBalanceConvention {
     }
 
     /**
+     * The balance a statement's own arithmetic says it should end on.
+     *
+     * <p>The fifth thing that has to know the liability inversion, and the one that did not.
+     * {@code ClosingBalanceGuard} wrote {@code opening + credits − debits} inline for every account
+     * type, which is right for money HELD and backwards for money OWED: on a card, a purchase
+     * (EXPENSE, a debit) increases the outstanding and a payment (INCOME, a credit) reduces it.
+     *
+     * <p>The consequence was not a rare edge case. Every arithmetically perfect credit-card
+     * statement came out {@code UNCORROBORATED}, off by exactly {@code 2 × (credits − debits)}, so
+     * the user was told a statement that added up did not — and the statement's own authoritative
+     * closing balance was never applied to a card, leaving card balances permanently derived from
+     * {@link #netDelta} instead of stated.
+     *
+     * @param credits summed over imported rows only, absolute values (INCOME side)
+     * @param debits  summed over imported rows only, absolute values (EXPENSE side)
+     */
+    public static BigDecimal expectedClosingBalance(Account.Type type, BigDecimal opening,
+                                                     BigDecimal credits, BigDecimal debits) {
+        BigDecimal from = opening == null ? BigDecimal.ZERO : opening;
+        BigDecimal in = credits == null ? BigDecimal.ZERO : credits;
+        BigDecimal out = debits == null ? BigDecimal.ZERO : debits;
+        return isLiability(type) ? from.add(out).subtract(in) : from.add(in).subtract(out);
+    }
+
+    /**
      * The net movement a whole batch of transactions applies to one account.
      *
      * <p>Exists so the import path states its intent once rather than folding a loop at the call

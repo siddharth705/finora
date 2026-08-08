@@ -111,10 +111,24 @@ public class DuplicateDetector {
     public ReconciliationTally tally(List<Transaction> savedBatch) {
         List<Transaction> reconciled = transactionRepository.findAllById(
                 savedBatch.stream().map(Transaction::getId).toList());
-        int duplicatesDetected = (int) reconciled.stream().filter(t -> t.getIsDuplicateOf() != null).count();
+        List<Transaction> duplicates = reconciled.stream()
+                .filter(t -> t.getIsDuplicateOf() != null).toList();
         int transfersIdentified = (int) reconciled.stream().filter(Transaction::isTransfer).count();
-        return new ReconciliationTally(duplicatesDetected, transfersIdentified);
+        return new ReconciliationTally(duplicates.size(), transfersIdentified, duplicates);
     }
 
-    public record ReconciliationTally(int duplicatesDetected, int transfersIdentified) {}
+    /**
+     * @param duplicates the rows themselves, not just how many. BH-003: {@code ImportService}
+     *        moves {@code Account.balance} by the net effect of everything it inserted, and
+     *        reconciliation then flags the duplicates and excludes them from every reported total
+     *        -- but nothing reversed the balance movement they had already caused, so re-importing
+     *        a statement left the balance permanently wrong by its net while the ledger view showed
+     *        nothing amiss. Reversing it needs the rows, and the count cannot supply them.
+     *
+     *        <p>Deliberately NOT the transfers. A transfer-flagged row is excluded from income and
+     *        expense totals because it is not spending -- but the money genuinely moved out of this
+     *        account and into another, and both balances must reflect it.
+     */
+    public record ReconciliationTally(int duplicatesDetected, int transfersIdentified,
+                                       List<Transaction> duplicates) {}
 }

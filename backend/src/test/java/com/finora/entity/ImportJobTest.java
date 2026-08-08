@@ -8,6 +8,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 /**
  * The job lifecycle's rules, which are pure and need no database.
@@ -106,13 +107,73 @@ class ImportJobTest {
             job.markClaimed("worker", Instant.now());
             assertThat(job.recordFailure("boom", Instant.now()))
                     .as("attempt %d must not be terminal", attempt)
-                    .isFalse();
+                    .isEqualTo(ImportJob.FailureOutcome.RETRY_SCHEDULED);
             assertThat(job.getStatus()).isEqualTo(ImportJob.Status.QUEUED);
         }
 
         job.markClaimed("worker", Instant.now());
-        assertThat(job.recordFailure("boom", Instant.now())).isTrue();
+        assertThat(job.recordFailure("boom", Instant.now()))
+                .isEqualTo(ImportJob.FailureOutcome.DEAD_LETTERED);
         assertThat(job.getStatus()).isEqualTo(ImportJob.Status.FAILED);
+    }
+
+    /**
+     * BH-001. The bug this closes, stated as the sequence that produced it.
+     *
+     * <p>{@code complete()} already refused to overwrite a cancellation, and that refusal was
+     * undone one line later: the worker catches {@code ImportJobCancelledException} specifically,
+     * this throws {@code IllegalStateException}, so the general handler ran {@code recordFailure},
+     * which wrote {@code status = QUEUED} unconditionally. The job was re-claimed, {@code
+     * abortIfCancelled} now saw QUEUED rather than CANCELLED, and it ran to the end -- handing the
+     * user the staged session they had pressed Stop on.
+     *
+     * <p>Asserting the refusal alone (which {@link #completingCannotOverwriteACancellation} does,
+     * and did throughout) could not catch that. The assertion has to continue past the throw into
+     * what the caller does with it.
+     */
+    @Test
+    void aFailureCannotResurrectACancelledJob() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+        job.advanceTo(ImportJob.Status.ANALYZING);
+        job.cancel(Instant.now());
+
+        // The worker's pass, continuing exactly as ImportJobWorker.runOne does.
+        IllegalStateException refused = catchThrowableOfType(IllegalStateException.class,
+                () -> job.complete(UUID.randomUUID(), Instant.now()));
+        assertThat(refused).isNotNull();
+
+        ImportJob.FailureOutcome outcome = job.recordFailure("IllegalStateException: " + refused.getMessage(),
+                Instant.now());
+
+        assertThat(outcome).isEqualTo(ImportJob.FailureOutcome.ALREADY_FINISHED);
+        assertThat(job.getStatus())
+                .as("a cancelled job must not return to the queue -- it would be re-claimed and staged")
+                .isEqualTo(ImportJob.Status.CANCELLED);
+        assertThat(job.getLastError())
+                .as("the owner stopped it; the exception the worker hit on its way out is not its story")
+                .isNull();
+    }
+
+    /** The same rule for the other terminal states, so this closes a class rather than a case. */
+    @Test
+    void aFailureCannotResurrectAFinishedJob() {
+        ImportJob completed = job();
+        completed.markClaimed("worker", Instant.now());
+        completed.complete(UUID.randomUUID(), Instant.now());
+        assertThat(completed.recordFailure("late bookkeeping blew up", Instant.now()))
+                .isEqualTo(ImportJob.FailureOutcome.ALREADY_FINISHED);
+        assertThat(completed.getStatus()).isEqualTo(ImportJob.Status.COMPLETED);
+
+        ImportJob failed = job();
+        for (int i = 0; i <= ImportJob.MAX_ATTEMPTS; i++) {
+            failed.markClaimed("worker", Instant.now());
+            failed.recordFailure("boom", Instant.now());
+        }
+        assertThat(failed.getStatus()).isEqualTo(ImportJob.Status.FAILED);
+        assertThat(failed.recordFailure("boom again", Instant.now()))
+                .as("a dead-lettered job must stay dead-lettered")
+                .isEqualTo(ImportJob.FailureOutcome.ALREADY_FINISHED);
     }
 
     @Test
@@ -123,11 +184,41 @@ class ImportJobTest {
         job.markClaimed("worker", Instant.now());
         int afterClaim = job.getAttemptCount();
 
-        job.returnToQueue("abandoned", Instant.now());
+        assertThat(job.returnToQueue("abandoned", Instant.now())).isFalse();
 
         assertThat(job.getStatus()).isEqualTo(ImportJob.Status.QUEUED);
         assertThat(job.getAttemptCount()).isLessThan(afterClaim);
         assertThat(job.getStartedAt()).as("no longer in flight").isNull();
+    }
+
+    /**
+     * BH-002. Forgiveness has to terminate.
+     *
+     * <p>{@code markClaimed} increments the attempt count and {@code returnToQueue} decrements it,
+     * so a job whose parse reliably kills its worker cycled claim -> crash -> recover -> claim for
+     * ever at a net attempt count of zero: never dead-lettered, never in the admin queue, holding
+     * one of ten claim slots on every pass. Recoveries are counted separately now so the two
+     * counters cannot cancel, and {@code MAX_RECOVERIES} bounds the loop.
+     */
+    @Test
+    void aJobThatKeepsKillingItsWorkerEventuallyDeadLetters() {
+        ImportJob job = job();
+
+        for (int recovery = 1; recovery <= ImportJob.MAX_RECOVERIES; recovery++) {
+            job.markClaimed("worker", Instant.now());
+            assertThat(job.returnToQueue("worker died", Instant.now()))
+                    .as("recovery %d is still within budget", recovery)
+                    .isFalse();
+            assertThat(job.getStatus()).isEqualTo(ImportJob.Status.QUEUED);
+        }
+
+        job.markClaimed("worker", Instant.now());
+        assertThat(job.returnToQueue("worker died again", Instant.now()))
+                .as("past the recovery budget, the job is the common factor")
+                .isTrue();
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.FAILED);
+        assertThat(job.getFinishedAt()).isNotNull();
+        assertThat(job.getRecoveryCount()).isGreaterThan(ImportJob.MAX_RECOVERIES);
     }
 
     @Test

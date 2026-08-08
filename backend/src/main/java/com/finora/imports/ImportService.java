@@ -750,7 +750,25 @@ public class ImportService {
         //
         // The two agree wherever both are available: for a new account, opening + net == closing
         // exactly when the guard says CORROBORATED, since that is the arithmetic it checks.
+        //
+        // The guard needs the ACCOUNT TYPE, and that is not a detail. Whether a debit raises or
+        // lowers the closing balance is a property of the account -- on a card, balance is money
+        // OWED, so a purchase increases it. The guard used to assume every account was an asset,
+        // which made every arithmetically correct credit-card statement come out UNCORROBORATED
+        // (off by exactly twice the net) and meant no card ever had its stated closing balance
+        // applied.
+        //
+        // The TYPE is read here and the ENTITY is not held. Every block below re-fetches, which
+        // looks like a redundant query and is not: Account extends BaseEntity, whose non-null
+        // @Version makes Spring Data route save() through merge() -- and merge returns a NEW
+        // managed copy, leaving the instance you passed in on its old version. Holding one
+        // reference across two saves therefore fails the second with
+        // ObjectOptimisticLockingFailureException, which is precisely the trap BaseEntity's own
+        // class comment documents. The type cannot go stale; the row can.
+        Account.Type accountType = accountRepository.findById(accountId)
+                .map(Account::getAccountType).orElse(null);
         ClosingBalanceGuard.Decision balanceDecision = ClosingBalanceGuard.assess(
+                accountType,
                 request.statementOpeningBalance(), request.statementClosingBalance(),
                 totalCredits, totalDebits, toInsert.size(), skipped);
         boolean closingBalanceIsAuthoritative = balanceDecision.mayOverwriteAccountBalance()
@@ -815,6 +833,36 @@ public class ImportService {
             DuplicateDetector.ReconciliationTally tally = duplicateDetector.tally(saved);
             duplicatesDetected = tally.duplicatesDetected();
             transfersIdentified = tally.transfersIdentified();
+
+            // BH-003. The balance above moved by the net effect of EVERY row this import inserted.
+            // Reconciliation has just decided that some of them are duplicates of transactions the
+            // ledger already held, and every reported total -- dashboard, reports, category spend
+            // -- excludes them from here on. Account.balance was the one figure that did not, so
+            // re-importing a statement (or uploading the same file twice) moved the balance a
+            // second time and left it permanently overstated, with the rows that caused it hidden
+            // from the ledger view. Nothing recomputes that column, so the disagreement was
+            // permanent and silent -- the exact failure ClosingBalanceGuard's own comment describes
+            // this pipeline as existing to prevent.
+            //
+            // The rule the balance follows is unchanged: it moves with the transactions Finora
+            // COUNTS. A duplicate is not counted, so its contribution comes back off.
+            //
+            // Only on the netDelta branch. When the closing balance was authoritative the column
+            // holds an absolute figure the statement stated, not an accumulated one -- re-importing
+            // writes the same number again, which is already idempotent, and subtracting from it
+            // would corrupt a balance that was correct.
+            if (!closingBalanceIsAuthoritative && !tally.duplicates().isEmpty()) {
+                // Re-fetched, like every other block that writes this row -- see the note above
+                // the guard on why holding one Account reference across two saves does not work.
+                accountRepository.findById(accountId).ifPresent(account -> {
+                    BigDecimal reversal = AccountBalanceConvention
+                            .netDelta(account.getAccountType(), tally.duplicates()).negate();
+                    if (reversal.signum() != 0) {
+                        account.setBalance(account.getBalance().add(reversal));
+                        accountRepository.save(account);
+                    }
+                });
+            }
         }
 
         long merchantsAfter = merchantRepository.countByUserId(userId);

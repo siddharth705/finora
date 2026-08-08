@@ -1,5 +1,8 @@
 package com.finora.imports;
 
+import com.finora.accounts.AccountBalanceConvention;
+import com.finora.entity.Account;
+
 import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -15,11 +18,19 @@ import java.util.Map;
  * debt-utilisation and emergency-fund components, and the low-balance notification threshold.
  *
  * <h2>What "corroborated" means here</h2>
- * The same arithmetic {@link StatementTotalsValidator} already applies to a staged statement:
+ * The same arithmetic {@link StatementTotalsValidator} already applies to a staged statement — but
+ * <b>read through the account's own sign convention</b>, which this class originally did not do:
  *
  * <pre>
- *   openingBalance + Σ(credits) − Σ(debits) == closingBalance
+ *   asset      (savings, wallet, investment):  opening + Σ(credits) − Σ(debits) == closing
+ *   liability  (credit card, balance = OWED):  opening + Σ(debits)  − Σ(credits) == closing
  * </pre>
+ *
+ * <p>The single formula lives in {@link com.finora.accounts.AccountBalanceConvention}, not here.
+ * Writing it inline was how this class came to hold the fourth hand-copy of a rule that class
+ * exists to own, and to hold it backwards for cards: every correct credit-card statement was
+ * reported {@code UNCORROBORATED}, off by exactly {@code 2 × (credits − debits)}, and no card ever
+ * had its stated closing balance applied.
  *
  * <p>The totals are summed over the rows that are <em>actually being imported</em>, not over the
  * whole staged file, which is what makes this a real check rather than a restatement. If the
@@ -80,6 +91,13 @@ public final class ClosingBalanceGuard {
     /**
      * Assesses a claimed closing balance against the rows actually being imported.
      *
+     * @param accountType     the account being imported into. Deliberately the first parameter:
+     *                        whether a debit raises or lowers the closing balance is a property of
+     *                        the account, and a caller that does not have to supply it is a caller
+     *                        that can silently get a card backwards. {@code null} only when the
+     *                        account was deleted between resolution and this call, in which case
+     *                        the asset convention applies and the verdict is moot — there is no
+     *                        row left to write a balance onto
      * @param openingBalance  as stated on the statement; null when it stated none
      * @param closingBalance  the claim under test; null means nothing is being claimed
      * @param totalCredits    summed over imported rows only, absolute values
@@ -87,7 +105,8 @@ public final class ClosingBalanceGuard {
      * @param rowsImported    how many rows are actually being written
      * @param rowsSkipped     how many the user excluded during review
      */
-    public static Decision assess(BigDecimal openingBalance, BigDecimal closingBalance,
+    public static Decision assess(Account.Type accountType,
+                                   BigDecimal openingBalance, BigDecimal closingBalance,
                                    BigDecimal totalCredits, BigDecimal totalDebits,
                                    int rowsImported, int rowsSkipped) {
         Map<String, Object> details = new LinkedHashMap<>();
@@ -122,7 +141,8 @@ public final class ClosingBalanceGuard {
 
         BigDecimal credits = totalCredits == null ? BigDecimal.ZERO : totalCredits;
         BigDecimal debits = totalDebits == null ? BigDecimal.ZERO : totalDebits;
-        BigDecimal expectedClosing = openingBalance.add(credits).subtract(debits);
+        BigDecimal expectedClosing = AccountBalanceConvention.expectedClosingBalance(
+                accountType, openingBalance, credits, debits);
         BigDecimal difference = closingBalance.subtract(expectedClosing);
 
         details.put("openingBalance", openingBalance);
@@ -130,6 +150,11 @@ public final class ClosingBalanceGuard {
         details.put("totalDebits", debits);
         details.put("expectedClosingBalance", expectedClosing);
         details.put("difference", difference);
+        // Which convention produced expectedClosingBalance. An operator reading a warning needs to
+        // know whether the guard understood the account as money held or money owed -- getting that
+        // wrong is what this finding was, and a report that does not say cannot be checked.
+        details.put("balanceConvention",
+                AccountBalanceConvention.isLiability(accountType) ? "OWED" : "HELD");
 
         // compareTo, never equals: BigDecimal.equals is scale-sensitive, so "1500.00" and "1500"
         // are unequal under it. This is the trap MoneyMath exists to name, and getting it wrong

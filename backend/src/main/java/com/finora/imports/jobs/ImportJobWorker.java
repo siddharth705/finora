@@ -303,19 +303,32 @@ public class ImportJobWorker {
 
     private void recordFailure(WorkerExecution execution, UUID jobId, Exception cause) {
         try {
-            boolean[] deadLettered = {false};
+            ImportJob.FailureOutcome[] outcome = {ImportJob.FailureOutcome.RETRY_SCHEDULED};
             int[] attempts = {0};
             jobStore.update(jobId, job -> {
-                deadLettered[0] = job.recordFailure(describe(cause), Instant.now());
+                outcome[0] = job.recordFailure(describe(cause), Instant.now());
                 attempts[0] = job.getAttemptCount();
             });
-            if (deadLettered[0]) {
-                log.error("Import job {} failed {} times and will not be retried automatically",
-                        jobId, attempts[0], cause);
-                execution.deadLettered(jobId, attempts[0], cause);
-            } else {
-                log.warn("Import job {} failed (attempt {}), will retry", jobId, attempts[0]);
-                execution.retryScheduled(jobId, attempts[0]);
+            switch (outcome[0]) {
+                case DEAD_LETTERED -> {
+                    log.error("Import job {} failed {} times and will not be retried automatically",
+                            jobId, attempts[0], cause);
+                    execution.deadLettered(jobId, attempts[0], cause);
+                }
+                case RETRY_SCHEDULED -> {
+                    log.warn("Import job {} failed (attempt {}), will retry", jobId, attempts[0]);
+                    execution.retryScheduled(jobId, attempts[0]);
+                }
+                // The owner cancelled the job while this pass was inside it, and the pass then hit
+                // an exception on its way out -- most often the IllegalStateException complete()
+                // throws precisely to refuse a cancelled job. Not a failure, and emphatically not a
+                // retry: this is the case that used to resurrect the cancellation. Reported as a
+                // completed pass, because the pass did exactly what it should have.
+                case ALREADY_FINISHED -> {
+                    log.info("Import job {} reached a terminal state while this pass was running; "
+                            + "leaving it alone. The pass ended with: {}", jobId, describe(cause));
+                    execution.completed(jobId);
+                }
             }
         } catch (RuntimeException e) {
             // Recording the failure itself failed -- the job stays in flight and recoverAbandoned
