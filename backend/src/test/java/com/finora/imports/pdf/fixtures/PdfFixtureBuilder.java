@@ -346,7 +346,7 @@ public final class PdfFixtureBuilder {
         PageBuilder page = new PageBuilder();
         page.row(col, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
                 .row(col, "24/06/2026", "UPI/SAMPLE VENDOR PRIVATE LT/SAMPLEA.PAYU@AXISB", "37.94 Dr")
-                .row(col, "15/07/2026", "UPI/SAMPLEB ENTERPRISES/PAYCO.S111111@PTY/73854", "1,240.00 Dr")
+                .row(col, "15/07/2026", "UPI/SAMPLEB ENTERPRISES/PAYCO.S111111@PTY/90000", "1,240.00 Dr")
                 .line("**** End of Statement ****");
 
         return render(List.of(page));

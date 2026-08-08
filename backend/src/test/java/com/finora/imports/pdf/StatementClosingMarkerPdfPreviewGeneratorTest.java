@@ -52,7 +52,7 @@ class StatementClosingMarkerPdfPreviewGeneratorTest {
         assertThat(response.rows()).extracting(r -> r.description())
                 .containsExactly(
                         "UPI/SAMPLE VENDOR PRIVATE LT/SAMPLEA.PAYU@AXISB",
-                        "UPI/SAMPLEB ENTERPRISES/PAYCO.S111111@PTY/73854")
+                        "UPI/SAMPLEB ENTERPRISES/PAYCO.S111111@PTY/90000")
                 .noneMatch(d -> d.contains("End of Statement"));
     }
 }
