@@ -492,6 +492,93 @@ jobs:
         working-directory: backend
         run: ./mvnw -B -DskipTests package
 
+      # Boots the artifact that actually ships, with Firebase credentials present, and fails on any
+      # missing runtime class. This exists because of a production outage on 2026-08-08: httpclient5
+      # was declared `<scope>test</scope>`, which Maven resolves as overriding the compile-scoped
+      # copy firebase-admin needs, so the fat jar shipped without it and every boot died on
+      # NoClassDefFoundError before the web server started.
+      #
+      # Two things had to both be true for that to reach production, and this step is aimed at the
+      # second one.
+      #
+      # The backend job cannot see it: it runs `mvn test`, where the artifact is on the classpath
+      # regardless of scope, while the image is built by `mvn package`, where it was not. So a fully
+      # green suite says nothing about what ships.
+      #
+      # And the existing "Start the backend" step below cannot see it either, which is the
+      # non-obvious half. FirebaseConfig is not profile-gated -- it is CREDENTIALS-gated. With
+      # GOOGLE_APPLICATION_CREDENTIALS unset, GoogleCredentials.getApplicationDefault() throws
+      # IOException first, FirebaseConfig catches it and returns null, and FirebaseOptions.build()
+      # is never reached, so the class is never loaded. Running the jar under SPRING_PROFILES_ACTIVE
+      # of prod would still not have caught this. The credentials are the gate, so the credentials
+      # are what this step supplies.
+      #
+      # The key is generated here and thrown away. It never authenticates against Google: nothing in
+      # this path makes a network call, it only has to parse as a service account so that
+      # getApplicationDefault() succeeds and the class-loading path downstream of it executes.
+      #
+      # Deliberately asserts on the ERROR CLASS, not on a list of expected jars. Verified against
+      # both a broken and a fixed build of this exact jar, and the broken one names a DIFFERENT
+      # missing class locally (HttpAsyncClient) than it did in production
+      # (AsyncClientConnectionManager) because class load order varies by environment. An allowlist
+      # of expected classes would have been pinned to whichever name someone saw first; this is not.
+      - name: Production classpath check
+        working-directory: backend
+        env:
+          SPRING_PROFILES_ACTIVE: dev
+          SERVER_PORT: 8086
+          DB_PORT: 5433
+        run: |
+          set -euo pipefail
+          creds="$RUNNER_TEMP/classpath-check-credentials.json"
+          openssl genrsa -out "$RUNNER_TEMP/classpath-check-key.pem" 2048 2>/dev/null
+          python3 - "$RUNNER_TEMP/classpath-check-key.pem" "$creds" <<'PYTHON'
+          import json, sys
+          key = open(sys.argv[1]).read()
+          json.dump({
+              "type": "service_account",
+              "project_id": "finora-classpath-check",
+              "private_key_id": "0" * 40,
+              "private_key": key,
+              "client_email": "classpath-check@finora-classpath-check.iam.gserviceaccount.com",
+              "client_id": "0" * 21,
+              "token_uri": "https://oauth2.googleapis.com/token",
+          }, open(sys.argv[2], "w"))
+          PYTHON
+
+          log="$RUNNER_TEMP/classpath-check.log"
+          GOOGLE_APPLICATION_CREDENTIALS="$creds" \
+            java -jar target/finora-backend-*.jar > "$log" 2>&1 &
+          pid=$!
+
+          started=no
+          for _ in $(seq 1 45); do
+            if curl -sf "http://localhost:8086/actuator/health" 2>/dev/null | grep -q '"UP"'; then
+              started=yes; break
+            fi
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 2
+          done
+          kill "$pid" 2>/dev/null || true
+          wait "$pid" 2>/dev/null || true
+
+          if grep -qE "NoClassDefFoundError|ClassNotFoundException" "$log"; then
+            echo "BLOCKED: the packaged jar is missing a class it needs at runtime."
+            echo "A dependency the application resolves at runtime is not in the fat jar --"
+            echo "most often a direct <scope>test</scope> declaration overriding a compile-scoped"
+            echo "transitive one. Check backend/pom.xml for the artifact named below."
+            grep -E "NoClassDefFoundError|ClassNotFoundException" "$log" | head -5
+            exit 1
+          fi
+
+          if [ "$started" != "yes" ]; then
+            echo "BLOCKED: the packaged jar did not start under production-like configuration."
+            echo "No missing-class error, so this is a different fault. Last 40 lines:"
+            tail -40 "$log"
+            exit 1
+          fi
+          echo "packaged jar started clean with Firebase credentials present"
+
       - name: Install dependencies
         run: |
           npm ci --prefix frontend
