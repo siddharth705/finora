@@ -18,7 +18,7 @@ public final class PhoneMasking {
     private static final int VISIBLE_SUFFIX_LENGTH = 3;
 
     /**
-     * @return e.g. {@code "+917385476705"} -&gt; {@code "+•••••••••705"}; {@code null} for a
+     * @return e.g. {@code "+919000000705"} -&gt; {@code "+•••••••••705"}; {@code null} for a
      *         null/blank input (nothing to mask); the original value unchanged if it's too short
      *         to mask meaningfully (masking would either reveal everything or nothing useful).
      *         Deliberately does not attempt to split out and reveal the country code separately
