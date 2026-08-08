@@ -1,6 +1,7 @@
 package com.finora.service;
 
 import com.finora.config.EmailProperties;
+import com.finora.util.EmailMasking;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -68,10 +69,12 @@ public class ResendEmailProvider implements EmailProvider {
                     .retrieve()
                     .body(ResendResponse.class);
             String messageId = response != null ? response.id() : null;
-            log.info("Email sent via Resend to {} (subject=\"{}\", messageId={})", message.to(), message.subject(), messageId);
+            log.info("Email sent via Resend to {} (subject=\"{}\", messageId={})",
+                    EmailMasking.mask(message.to()), message.subject(), messageId);
             return EmailResult.success(ProviderType.RESEND, messageId);
         } catch (Exception e) {
-            log.error("Failed to send email to {} (subject=\"{}\"): {}", message.to(), message.subject(), e.getMessage());
+            log.error("Failed to send email to {} (subject=\"{}\"): {}",
+                    EmailMasking.mask(message.to()), message.subject(), e.getMessage());
             return EmailResult.failure(ProviderType.RESEND, e.getMessage());
         }
     }
