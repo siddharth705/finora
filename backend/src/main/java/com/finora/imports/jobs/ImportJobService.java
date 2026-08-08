@@ -157,9 +157,18 @@ public class ImportJobService {
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Import job not found."));
     }
 
-    /** The caller's recent jobs, newest first. */
+    /**
+     * The caller's recent jobs, newest first.
+     *
+     * <p>BH-008: this clamped only the UPPER bound, so {@code ?limit=0} (or any negative value)
+     * reached {@code PageRequest.of(0, 0)}, which Spring Data rejects with
+     * {@code IllegalArgumentException} -- a 500 for what is plainly a bad query parameter.
+     * {@link com.finora.util.PageBounds} is the clamp every other paginated endpoint here already
+     * uses and exists for exactly this; this one simply never adopted it.
+     */
     public List<ImportJobDto.Progress> recent(UUID userId, int limit) {
-        return repository.findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(0, Math.min(limit, 50)))
+        int size = com.finora.util.PageBounds.safeSize(limit, 50);
+        return repository.findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(0, size))
                 .stream().map(ImportJobDto.Progress::of).toList();
     }
 

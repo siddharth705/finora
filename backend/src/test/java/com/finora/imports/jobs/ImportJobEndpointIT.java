@@ -43,7 +43,18 @@ import static org.assertj.core.api.Assertions.assertThat;
         // branch), so this IT's first run hit the 503 guard, which was the guard working.
         "app.statement-storage.provider=filesystem",
         "app.statement-storage.filesystem.root=${java.io.tmpdir}/finora-import-job-it",
-        "app.import.queue.enabled=false"
+        "app.import.queue.enabled=false",
+        // BH-011 put /api/v1/import/jobs behind importStageLimiter, which is 10 per 10 minutes per
+        // IP -- and this class uploads well past that from one loopback address. The limiter is
+        // working; the ceiling is simply not what this class is here to test.
+        //
+        // Raised rather than switched off, and raised HERE rather than in application-test.yml, for
+        // the reason CI already raises it for the e2e stack: a limit that cannot be lifted for a
+        // test makes the system unverifiable, but lifting it globally would mean no integration
+        // context ever runs with the shipped value. That the endpoint is in the limiter's table at
+        // all is asserted by RateLimitFilterTest.everyEndpointWithARealPerCallCostIsLimited, which
+        // is where that guard belongs -- it is a property of the filter, not of this flow.
+        "app.rate-limit.import-stage.max=10000"
 })
 class ImportJobEndpointIT extends AbstractIntegrationTest {
 

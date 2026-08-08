@@ -573,6 +573,30 @@ public class AuthService {
             throw new ApiException(HttpStatus.BAD_REQUEST,
                     "This account has no phone number on file. Contact an administrator for help resetting your password.");
         }
+        // BH-015, KNOWN AND DELIBERATELY STILL OPEN. This returns the account's phone number in
+        // full to anyone holding a valid reset link, where register() and login() -- both of which
+        // authenticate the caller far more strongly than a link from an inbox -- return
+        // PhoneMasking.mask(). The weakest gate in the product hands back the most.
+        //
+        // <p><b>Masking here does not work, and was tried.</b> All three clients pass this value
+        // straight to Firebase to SEND the code -- see ResetPassword.tsx, which calls
+        // {@code sendPhoneVerificationCode(res.phoneNumber, ...)} with it. Returning "+•••••••705"
+        // makes every password reset fail at the send. The number is not being disclosed
+        // decoratively; the client-side Firebase architecture needs it to do the thing this
+        // endpoint exists for.
+        //
+        // <p>Closing it properly means inverting the flow: the USER types their number, the client
+        // sends the OTP to what they typed, and resetPassword() rejects the reset unless the
+        // Firebase-verified number matches the account -- a check it ALREADY performs, so the
+        // server-side half is done. What is missing is the UI change across three clients and the
+        // decision to make people type their number. That is a product change, not a bug fix, and
+        // doing half of it silently is how a reset flow breaks in production.
+        //
+        // <p>Until then the exposure is bounded by the reset token: unguessable, single-use,
+        // 30-minute TTL, invalidated by any newer link, and now rate-limited (this endpoint was
+        // outside every limiter, so a token holder could hammer it). What an attacker who has
+        // already compromised the mailbox gains is the account's second factor -- the input to a
+        // SIM swap -- handed over before completing the reset.
         return new ResolveResetPasswordPhoneResponse(user.getPhoneNumber());
     }
 

@@ -79,7 +79,19 @@ public class TransactionService {
     // next page existed (see PagedResponse's own doc comment; the admin Users directory hit this
     // exact gap first and got a real fix, this endpoint didn't). Now returns the same envelope.
     public PagedResponse<TransactionDto> search(UUID userId, TransactionDto.FilterRequest f) {
-        Sort sort = Sort.by(Sort.Direction.fromString(f.sortDir() == null ? "DESC" : f.sortDir()),
+        // BH-009: sortDir went into Sort.Direction.fromString unvalidated, so ?sortDir=bogus threw
+        // IllegalArgumentException and 500'd -- in the same method whose own comment two blocks
+        // down explains that page and size are clamped precisely so a malformed param stops doing
+        // that. Two of the three inputs were fixed and the third was missed.
+        //
+        // fromOptionalString, so an unrecognised value falls back to the default rather than
+        // failing the search. That matches how sortField already behaves (mapSortField's `default`
+        // arm quietly yields txnDate) -- a sort direction is a presentation preference, and
+        // refusing to return a user's transactions over one would be a worse answer than sorting
+        // them the usual way.
+        Sort sort = Sort.by(
+                Sort.Direction.fromOptionalString(f.sortDir() == null ? "" : f.sortDir())
+                        .orElse(Sort.Direction.DESC),
                 f.sortField() == null ? "txnDate" : mapSortField(f.sortField()));
         // Bank-aware search (PRD's "Improve Search"): a keyword like "Punjab National" should
         // also match transactions on accounts held with that bank, not just description/merchant
