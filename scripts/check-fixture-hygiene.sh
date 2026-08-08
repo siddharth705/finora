@@ -81,6 +81,17 @@ if [ "$1" = "--each" ]; then
   exit "$rc"
 fi
 
+#   --tree                 scan ALL tracked content, regardless of when it was committed.
+#
+# --tree exists because the other two modes share a blind spot: both are diff-based, so a value that
+# predates the check is invisible forever. A real account number sat in a committed doc for months
+# while every PR went green, because no PR touched that line. The invariant the repository actually
+# needs is "no identifier exists in tracked content", not "no PR adds one".
+MODE_TREE=""
+if [ "$1" = "--tree" ]; then
+  MODE_TREE="yes"
+fi
+
 if [ "$1" = "--range" ]; then
   MODE_RANGE="yes"
   BASE="$2"
@@ -99,6 +110,9 @@ if [ -n "$MODE_RANGE" ]; then
   fi
   DIFF_ARGS="$BASE $HEAD"
   staged=$(git diff --name-only --diff-filter=ACM $DIFF_ARGS)
+elif [ -n "$MODE_TREE" ]; then
+  DIFF_ARGS=""
+  staged=$(git ls-files)
 else
   DIFF_ARGS="--cached"
   staged=$(git diff --cached --name-only --diff-filter=ACM)
@@ -184,7 +198,13 @@ printf '%s\n' "$targets" | while IFS= read -r f; do
   # $DIFF_ARGS is "--cached" for the hook and "BASE HEAD" in CI -- see the mode selection at the
   # top. Deliberately unquoted so the two-word range form expands to two arguments.
   # shellcheck disable=SC2086
-  added=$(git diff $DIFF_ARGS -- "$f" | grep -E '^\+' | grep -vE '^\+\+\+ (a/|b/|/dev/null)' | grep -v 'synthetic-ok' | cut -c2-)
+  if [ -n "$MODE_TREE" ]; then
+    # Whole-file content, not a diff. Same synthetic-ok filter, so a line already annotated during
+    # the sanitization stays annotated here rather than needing a second exception mechanism.
+    added=$(grep -v 'synthetic-ok' "$f" 2>/dev/null)
+  else
+    added=$(git diff $DIFF_ARGS -- "$f" | grep -E '^\+' | grep -vE '^\+\+\+ (a/|b/|/dev/null)' | grep -v 'synthetic-ok' | cut -c2-)
+  fi
   [ -z "$added" ] && continue
 
   # BLOCKS, and it used to only warn. That was the defect that actually let a real 14-digit account
