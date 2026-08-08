@@ -85,7 +85,17 @@ a `RESEND_API_KEY` and a Firebase key — and, if its Postgres service still exi
 database with real rows in it. A signing key that still validates tokens is a live credential no
 matter how long ago its service last deployed.
 
-**To answer:** open Railway, and for `enchanting-caring` establish (a) whether any service is still
+**RESOLVED 2026-08-08 — closed by the repository owner after a manual Railway console review.**
+The project was checked and found clean; no credential exposure was identified. Recorded on the
+owner's report, not independently verified here, because establishing it requires reading environment
+variables in the Railway console and credential handling is deliberately outside what this audit does.
+
+Reopen only on concrete evidence — a credential found in the repository, or an exposure identified in
+a live environment. The rest of this section is kept as the original reasoning, and the caveat below
+is worth keeping in mind if the project is ever revisited: if two projects share a `JWT_SECRET`,
+deleting one does not retire the key, so a comparison must precede a deletion.
+
+**Original question:** open Railway, and for `enchanting-caring` establish (a) whether any service is still
 running, (b) whether a Postgres volume still exists and what is in it, and (c) which variables are
 set. Then either delete the project or, if it is deliberately kept, record why here. If its
 `JWT_SECRET` matches the live one, rotate the live one — two projects sharing a signing key means
