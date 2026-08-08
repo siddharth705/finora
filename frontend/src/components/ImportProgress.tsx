@@ -12,14 +12,40 @@ import { detail, isCancellable, isSettled, label, percent } from '../lib/importJ
  * durable queue: the job survives the browser, so the person who started it can watch it, leave it,
  * or stop it.
  *
- * <b>Polling, not a socket.</b> At 1–2s against a flow measured in seconds, one small GET is cheaper
- * to run and far cheaper to operate than the WebSocket or SSE it would otherwise take — and it is
- * the interval the progress endpoint was written for.
+ * <b>Polling, not a socket.</b> One small GET against a flow measured in seconds is cheaper to run
+ * and far cheaper to operate than the WebSocket or SSE it would otherwise take.
+ *
+ * <b>The schedule is the product decision, not an implementation detail.</b> This used to poll once
+ * immediately and then every 1500 ms, and the measurement in
+ * `docs/engineering/performance/queue-overhead-2026-08-08.md` found that the interval — not the
+ * queue — was ~98% of the penalty for queueing a small statement. The server-side difference for a
+ * 3-row CSV was 19 ms synchronous against 40 ms queued, which nobody can perceive; the wait was
+ * entirely the client not looking.
+ *
+ * The immediate poll did not help, and could not: it fires when the job has just been accepted and
+ * no worker has touched it, so it always reads QUEUED. Its only effect was to make the *second*
+ * poll — at 1500 ms — the first one that could observe a finished job.
+ *
+ * So the first real look is at 100 ms, and the interval grows from there to the 1500 ms this was
+ * always written for. A small statement is finished well inside the first step; a large one backs
+ * off to the same cost as before within five polls. {@link POLL_SCHEDULE_MS} is exported because
+ * the test asserts the schedule, and because a number chosen from a measurement should be findable
+ * from the measurement.
  *
  * <b>Stops on settle.</b> A terminal job never changes again, so polling past it is pure waste; the
- * interval is cleared the moment one arrives, and on unmount, so a user who navigates away
- * mid-import leaves no timer behind.
+ * timer is cleared the moment one arrives, and on unmount, so a user who navigates away mid-import
+ * leaves no timer behind.
  */
+
+/**
+ * Delay before each poll, in order; the last value repeats for the life of the job.
+ *
+ * Starts at 100 ms because the measured completion for a small statement is ~40 ms — the first look
+ * should land after the work is plausibly done, not while it is provably not. Reaches 1500 ms at the
+ * fifth poll, so a long import costs no more requests than it did before: five extra GETs in the
+ * first 3 seconds, and identical behaviour thereafter.
+ */
+export const POLL_SCHEDULE_MS = [100, 200, 400, 800, 1500] as const;
 export function ImportProgress({
   jobId,
   onReady,
@@ -41,21 +67,38 @@ export function ImportProgress({
 
   useEffect(() => {
     settled.current = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let poll = 0;
+    let stopped = false;
 
     const stop = () => {
+      stopped = true;
       if (timer !== null) {
-        clearInterval(timer);
+        clearTimeout(timer);
         timer = null;
       }
+    };
+
+    // A chained timeout rather than setInterval, because the delay changes between polls and
+    // because it cannot overlap: the next one is scheduled after the previous request settles, so a
+    // slow response delays the next poll instead of stacking another on top of it.
+    const schedule = () => {
+      if (stopped) return;
+      const delay = POLL_SCHEDULE_MS[Math.min(poll, POLL_SCHEDULE_MS.length - 1)];
+      poll += 1;
+      timer = setTimeout(() => void tick(), delay);
     };
 
     const tick = async () => {
       try {
         const next = await importJobsApi.progress(jobId);
+        if (stopped) return;
         setJob(next);
         setPollError(null);
-        if (!isSettled(next) || settled.current) return;
+        if (!isSettled(next) || settled.current) {
+          schedule();
+          return;
+        }
         // Guarded, because two ticks can be in flight when the job settles and calling back twice
         // would advance the parent's step twice.
         settled.current = true;
@@ -65,13 +108,14 @@ export function ImportProgress({
       } catch {
         // A blip mid-poll is not a failed import: the job is on the server either way, and the next
         // tick will pick it up. Said out loud rather than hidden, so a genuinely dead connection
-        // does not look like a stalled import.
+        // does not look like a stalled import. Keeps polling -- backing off, not giving up.
+        if (stopped) return;
         setPollError("Lost contact with the server — still trying. Your import is safe.");
+        schedule();
       }
     };
 
-    void tick();
-    timer = setInterval(() => void tick(), 1500);
+    schedule();
     return stop;
     // onReady/onGaveUp are deliberately not dependencies -- see the ref above.
     // eslint-disable-next-line react-hooks/exhaustive-deps

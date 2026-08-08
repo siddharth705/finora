@@ -132,15 +132,39 @@ class QueueOverheadMeasurementIT extends AbstractIntegrationTest {
             // it -- so when |delta| falls inside the spread the honest reading is "not resolvable",
             // and the table has to make that visible rather than leave it to be inferred.
             boolean resolvable = Math.abs(delta) > spread(syncRuns);
-            System.out.printf("[queue-overhead] %4d | %4d ms (%d-%d) | %4d ms (%d-%d) | %s%n",
+            System.out.printf("[queue-overhead] %4d | %4d ms (%d-%d) | %4d ms (%d-%d) | %-24s | seen at ~%4d ms%n",
                     rows,
                     syncMs, min(syncRuns), max(syncRuns),
                     asyncMs, min(asyncRuns), max(asyncRuns),
                     resolvable ? "%+d ms".formatted(delta)
-                               : "below noise (spread %d ms)".formatted(spread(syncRuns)));
+                               : "below noise (spread %d ms)".formatted(spread(syncRuns)),
+                    firstPollAtOrAfter(asyncMs));
         }
-        System.out.printf("[queue-overhead] client polls every 1500 ms, so perceived latency for a "
-                + "queued import has that as its floor regardless of the figures above.%n");
+        // The figures above are server-side. What a user experiences is the first poll AFTER the
+        // work finishes, so the client's schedule -- not this table -- sets the floor. It used to be
+        // a flat 1500 ms, which dominated every row here by two orders of magnitude; it is now
+        // ImportProgress.POLL_SCHEDULE_MS, {100, 200, 400, 800, 1500}, cumulative.
+        System.out.printf("[queue-overhead] \"seen at\" = first poll at or after completion, on the "
+                + "client's cumulative schedule: 100, 300, 700, 1500, then every 1500 ms.%n");
+    }
+
+    /**
+     * Where the client's cumulative poll schedule first lands at or after {@code completedAtMs}.
+     *
+     * <p>Mirrors {@code ImportProgress.POLL_SCHEDULE_MS} in the web app. Duplicated rather than
+     * shared because a Java test cannot import a TypeScript constant, and stated here so the number
+     * this harness prints is derived rather than asserted -- if the client's schedule changes and
+     * this does not, the two disagreeing is the signal.
+     */
+    private static long firstPollAtOrAfter(long completedAtMs) {
+        int[] schedule = {100, 200, 400, 800};
+        long at = 0;
+        for (int delay : schedule) {
+            at += delay;
+            if (at >= completedAtMs) return at;
+        }
+        while (at < completedAtMs) at += 1500;
+        return at;
     }
 
     private void warmUp() throws Exception {

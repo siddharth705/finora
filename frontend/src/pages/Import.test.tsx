@@ -1029,7 +1029,10 @@ describe('Import — queued imports', () => {
     await user.upload(screen.getByTestId('statement-file-input'), csvFile());
     await screen.findByTestId('import-progress');
 
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    // findBy, not getBy: the progress card renders as soon as the job id exists, but Cancel needs
+    // the job's STATUS to know whether the server would still accept it, and that arrives with the
+    // first poll at 100ms. The card used to poll at zero, so this was synchronously true.
+    await user.click(await screen.findByRole('button', { name: 'Cancel' }));
 
     await waitFor(() => expect(importJobsApi.cancel).toHaveBeenCalledWith('job-1'));
     // Back to the dropzone, with no error: a cancel is the user's own decision and needs no
