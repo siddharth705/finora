@@ -61,6 +61,7 @@ const config: ExpoConfig = {
     '@react-native-community/datetimepicker',
     '@react-native-firebase/app',
     '@react-native-firebase/auth',
+    './plugins/withRNFirebaseDisableSPM',
     [
       'expo-build-properties',
       {
