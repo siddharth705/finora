@@ -103,14 +103,20 @@ public final class CorpusProbe {
         List<StagedAccountSection> sections = generated.sections();
         int rows = 0;
         List<String> banks = new ArrayList<>();
+        List<Section> detail = new ArrayList<>();
         Map<String, String> verification = new LinkedHashMap<>();
-        for (StagedAccountSection section : sections) {
-            rows += section.rows().size();
+        for (int i = 0; i < sections.size(); i++) {
+            StagedAccountSection section = sections.get(i);
+            int sectionRows = section.rows().size();
+            rows += sectionRows;
             var account = section.detectedAccount();
             if (account != null && account.bank() != null) banks.add(account.bank().id());
+
+            Map<String, String> sectionVerification = new LinkedHashMap<>();
             var report = section.verification();
             if (report != null) {
                 for (var finding : report.findings()) {
+                    sectionVerification.merge(finding.rule(), finding.outcome(), CorpusProbe::worse);
                     // WORST outcome across sections wins, never the last one seen.
                     //
                     // "Last wins" was the first version and it hid a real finding: Shivani_HDFC has
@@ -122,6 +128,13 @@ public final class CorpusProbe {
                     verification.merge(finding.rule(), finding.outcome(), CorpusProbe::worse);
                 }
             }
+            detail.add(new Section(i, sectionRows,
+                    account == null ? null : account.detectedProduct(),
+                    account == null ? null : account.suggestedAccountType(),
+                    account == null ? null : account.accountNumberMasked(),
+                    account == null ? 0.0 : account.productConfidence(),
+                    account != null && account.productNeedsReview(),
+                    sectionVerification));
         }
 
         String fingerprint = generated.documentContext() == null ? "unknown"
@@ -155,6 +168,7 @@ public final class CorpusProbe {
          .append(",\"banks\":").append(stringArray(banks))
          .append(",\"capabilities\":").append(stringArray(capabilities))
          .append(",\"verification\":").append(stringMap(verification))
+         .append(",\"sectionDetail\":").append(sectionsJson(detail))
          .append('}')
          .append(",\"derived\":{")
          .append("\"documentClassification\":\"").append(DocumentClassification.of(signals)).append('"')
@@ -182,6 +196,53 @@ public final class CorpusProbe {
         when(transactions.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
         return new TransactionNormalizer(categorization, new DuplicateDetector(transactions),
                 TestRuleEngines.empty());
+    }
+
+    /**
+     * One detected section, exactly as the pipeline reported it.
+     *
+     * <p>This is the authoritative structure in the record; the document-level {@code rows} and
+     * {@code verification} beside it are conveniences for a summary line and must never be treated as
+     * a substitute. Shivani_HDFC is the reason: three sections, 75 rows in the first and none in the
+     * Recurring Deposit or Fixed Deposit ones, which at document level is indistinguishable from a
+     * single-account statement that parsed fine.
+     *
+     * <p>Carries no account grouping and no section identity. The pipeline cannot say whether two
+     * sections belong to one financial account -- {@code accountNumberMasked} is null in most of them
+     * -- so this records what was observed and leaves that question to whoever can answer it.
+     */
+    record Section(int index, int rows, String detectedProduct, String suggestedAccountType,
+                   String accountNumberMasked, double productConfidence, boolean productNeedsReview,
+                   Map<String, String> verification) {}
+
+    /**
+     * Renders sections as an ordered JSON array.
+     *
+     * <p>Order is preserved and is load-bearing: rows moving BETWEEN sections while the total holds
+     * constant is a real regression class -- an RD's transactions landing in the Savings account --
+     * and it is invisible in any aggregate. A consumer diffing two records must be able to see
+     * [75,15,0] become [15,75,0].
+     *
+     * <p>Deliberately emits no derived figures: no row vector, no count of row-bearing sections. Both
+     * are computable from this array, and duplicating them here would create a second thing to keep
+     * in step with it.
+     */
+    static String sectionsJson(List<Section> sections) {
+        StringBuilder b = new StringBuilder("[");
+        for (int i = 0; i < sections.size(); i++) {
+            Section s = sections.get(i);
+            if (i > 0) b.append(',');
+            b.append("{\"index\":").append(s.index())
+             .append(",\"rows\":").append(s.rows())
+             .append(",\"detectedProduct\":").append(s.detectedProduct() == null ? "null" : quote(s.detectedProduct()))
+             .append(",\"suggestedAccountType\":").append(s.suggestedAccountType() == null ? "null" : quote(s.suggestedAccountType()))
+             .append(",\"accountNumberMasked\":").append(s.accountNumberMasked() == null ? "null" : quote(s.accountNumberMasked()))
+             .append(",\"productConfidence\":").append(Math.round(s.productConfidence() * 1000) / 1000.0)
+             .append(",\"productNeedsReview\":").append(s.productNeedsReview())
+             .append(",\"verification\":").append(stringMap(s.verification()))
+             .append('}');
+        }
+        return b.append(']').toString();
     }
 
     /** Severity ranking used to collapse per-section outcomes without discarding the worst one. */
