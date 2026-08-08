@@ -245,6 +245,19 @@ jobs:
       - name: Corpus diff (self-test)
         run: python3 scripts/test-corpus-diff.py
 
+      # Same reasoning as the corpus-diff self-test above: ground-truth matching against the real
+      # corpus can never run here, because the corpus lives outside the working tree by policy. So the
+      # MECHANISM is tested against synthetic fixtures, and that is the only way this logic gets
+      # tested at all.
+      #
+      # The load-bearing case is the pair that judges one byte-identical observed record two ways --
+      # legitimately-empty deposits pass, deposits the document says have history fail. If those two
+      # ever agree, the model cannot tell a correct import from a silent data loss, which is the whole
+      # reason it exists. Two more assert UNKNOWN never becomes a pass, and that identity rather than
+      # position resolves which deposit is which.
+      - name: Ground-truth matcher (self-test)
+        run: python3 scripts/test-ground-truth-match.py
+
       - uses: actions/setup-java@v5
         with:
           java-version: '25'
