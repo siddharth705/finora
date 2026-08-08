@@ -36,6 +36,25 @@ import java.util.*;
 @Service
 public class RecurringService {
 
+    /**
+     * How many charges from one merchant it takes before an interval is evidence of a pattern.
+     *
+     * <p>BH-026. This was 2, and at 2 the regularity check cannot fail. With two transactions
+     * {@code gaps} holds a single element, so {@code avgGap} IS that element and
+     * {@code Math.abs(g - avgGap)} is exactly zero for it -- {@code gapRegular} is unconditionally
+     * true, whatever the spacing. The only surviving filters were the amount tolerance and the
+     * 5-95 day window, so any two similar charges from one merchant a few weeks apart became a
+     * "Monthly" subscription, complete with a predicted next date the user could plan around.
+     * Two coffees three weeks apart is the everyday version.
+     *
+     * <p>Three is the smallest number at which the check means anything: two points define an
+     * interval, three are the first that can agree or disagree about one. The
+     * {@code MARK_SUBSCRIPTION} rule path is unaffected and still fires on a single occurrence --
+     * there the rule's author has asserted the pattern rather than the engine inferring it, which
+     * is exactly the distinction this constant draws.
+     */
+    private static final int MIN_OCCURRENCES_FOR_A_PATTERN = 3;
+
     private final TransactionRepository transactionRepository;
     private final RuleEngineService ruleEngineService;
     private final AuditService auditService;
@@ -71,7 +90,7 @@ public class RecurringService {
         List<RecurringDto> results = new ArrayList<>();
         for (var entry : byMerchant.entrySet()) {
             List<Transaction> group = entry.getValue();
-            if (group.size() < 2) continue;
+            if (group.size() < MIN_OCCURRENCES_FOR_A_PATTERN) continue;
             group.sort(Comparator.comparing(Transaction::getTxnDate));
 
             List<Long> gaps = new ArrayList<>();

@@ -36,24 +36,32 @@ public class ReportService {
         Map<UUID, Category> categoriesById = categoryRepository.findByUserId(userId).stream()
                 .collect(Collectors.toMap(Category::getId, c -> c));
 
-        // Same REFUND exclusion as DashboardService.summarize() -- a REFUND-status transaction
-        // is the INCOME leg of a reconciled refund (see ReconciliationService's refund pass), not
-        // real income, so it must not inflate this month's `income` total below.
-        List<Transaction> txns = transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to).stream()
-                .filter(t -> t.getIsDuplicateOf() == null && !t.isTransfer()
-                        && t.getReconciliationStatus() != Transaction.ReconciliationStatus.REFUND)
-                .toList();
+        // BH-005. This was a hand-written copy of DashboardService's filter, and both copies were
+        // one-sided: the refund's INCOME leg was dropped and the EXPENSE it reverses was left
+        // counted in full, so a refunded purchase reported as a pure loss. RefundNetting owns the
+        // rule for both readers now -- it drops the income leg AND nets the refund off the
+        // purchase, which is the only treatment also correct for a partial refund.
+        //
+        // The refund legs come from a SEPARATE query, not from the month window. A refund
+        // routinely arrives in a later month than its purchase, so the rows that offset this
+        // month's expenses are frequently outside the range this month was queried with -- netting
+        // against only the in-window ones would leave every cross-month refund uncorrected, which
+        // is most of them.
+        RefundNetting refunds = RefundNetting.from(transactionRepository.findByUserIdAndReconciliationStatus(
+                userId, Transaction.ReconciliationStatus.REFUND));
+        List<Transaction> txns = RefundNetting.reportable(
+                transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to));
 
         BigDecimal income = txns.stream().filter(t -> t.getTxnType() == Transaction.Type.INCOME)
-                .map(Transaction::getAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+                .map(refunds::reportableAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal expense = txns.stream().filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
-                .map(Transaction::getAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+                .map(refunds::reportableAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
 
         Map<String, BigDecimal> byCategory = txns.stream()
                 .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
                 .collect(Collectors.groupingBy(
                         t -> categoriesById.containsKey(t.getCategoryId()) ? categoriesById.get(t.getCategoryId()).getName() : "Uncategorized",
-                        Collectors.reducing(BigDecimal.ZERO, Transaction::getAmount, BigDecimal::add)));
+                        Collectors.reducing(BigDecimal.ZERO, refunds::reportableAmount, BigDecimal::add)));
 
         List<ReportDto.CategoryAmount> categories = byCategory.entrySet().stream()
                 .sorted((a, b) -> b.getValue().compareTo(a.getValue()))
@@ -63,11 +71,22 @@ public class ReportService {
         return new ReportDto(monthStr, income, expense, categories);
     }
 
-    /** Which months have at least one transaction — backs the Reports page's month dropdown. */
+    /**
+     * Which months have at least one transaction — backs the Reports page's month dropdown.
+     *
+     * <p>BH-042: this used to load the user's ENTIRE transaction history as JPA entities, map each
+     * row to a {@code YearMonth}, and throw away everything but the distinct values. The result is
+     * a dozen strings; the query was proportional to the whole ledger, on a page load. Distinct
+     * dates come from the database now, and only the month projection happens here.
+     *
+     * <p>Distinct DATES rather than distinct months, because {@code date_trunc} has no portable
+     * JPQL form and pushing a native query down for this would trade one small cost for a
+     * dialect lock-in. The row count is bounded by days-with-activity, not by transactions.
+     */
     @Transactional(readOnly = true)
     public List<String> availableMonths(UUID userId) {
-        return transactionRepository.findByUserId(userId).stream()
-                .map(t -> YearMonth.from(t.getTxnDate()).toString())
+        return transactionRepository.findDistinctTransactionDates(userId).stream()
+                .map(date -> YearMonth.from(date).toString())
                 .distinct().sorted().toList();
     }
 }

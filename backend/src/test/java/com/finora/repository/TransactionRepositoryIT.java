@@ -171,4 +171,36 @@ class TransactionRepositoryIT extends AbstractIntegrationTest {
 
         assertThat(dupes).extracting(Transaction::getId).contains(original.getId());
     }
+
+    /**
+     * BH-042. {@code ReportService.availableMonths} used to load the user's ENTIRE history as
+     * entities to derive a dropdown's worth of month strings. It reads distinct dates from the
+     * database now, and this asserts the query against real Postgres rather than a mock -- a
+     * mocked repository would happily return whatever the test handed it and prove nothing about
+     * whether the JPQL is valid.
+     *
+     * <p>The soft-delete case is the one worth pinning: {@code DISTINCT} on a derived query still
+     * has to inherit Transaction's {@code @SQLRestriction}, or the Reports dropdown would offer a
+     * month whose only transaction the user had deleted.
+     */
+    @Test
+    @Transactional
+    void distinctTransactionDates_areScopedToTheUserAndExcludeSoftDeletedRows() {
+        newTransaction(BigDecimal.valueOf(100), LocalDate.of(2026, 5, 4), "May A");
+        newTransaction(BigDecimal.valueOf(200), LocalDate.of(2026, 5, 4), "May B -- same date");
+        newTransaction(BigDecimal.valueOf(300), LocalDate.of(2026, 6, 11), "June");
+        Transaction deleted = newTransaction(BigDecimal.valueOf(400), LocalDate.of(2026, 7, 1), "July, deleted");
+
+        transactionRepository.delete(deleted);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(transactionRepository.findDistinctTransactionDates(userId))
+                .as("two rows share 4 May, so DISTINCT must collapse them; the deleted July row must not appear")
+                .containsExactlyInAnyOrder(LocalDate.of(2026, 5, 4), LocalDate.of(2026, 6, 11));
+
+        assertThat(transactionRepository.findDistinctTransactionDates(UUID.randomUUID()))
+                .as("another user's dates are not this user's")
+                .isEmpty();
+    }
 }

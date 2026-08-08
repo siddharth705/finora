@@ -70,4 +70,31 @@ class ReportServiceTest {
 
         assertThat(report.income()).isEqualByComparingTo("50000.00");
     }
+
+    /**
+     * BH-042. {@code availableMonths} had no test at all, and it was the clearest case of the
+     * unbounded-history pattern: load every transaction the user has ever had, map each to a
+     * YearMonth, discard all but the distinct values, to fill a dropdown.
+     *
+     * <p>What this pins is the projection the service still owns after the query moved to the
+     * database -- many dates collapsing to one month, and the ordering the dropdown depends on.
+     */
+    @Test
+    void availableMonths_collapsesDatesToDistinctSortedMonths() {
+        when(transactionRepository.findDistinctTransactionDates(userId)).thenReturn(List.of(
+                LocalDate.of(2026, 6, 30),
+                LocalDate.of(2026, 5, 4),
+                LocalDate.of(2026, 6, 11),   // same month as the first
+                LocalDate.of(2026, 7, 1)));
+
+        assertThat(reportService.availableMonths(userId))
+                .containsExactly("2026-05", "2026-06", "2026-07");
+    }
+
+    @Test
+    void availableMonths_isEmptyForAUserWithNoTransactions() {
+        when(transactionRepository.findDistinctTransactionDates(userId)).thenReturn(List.of());
+
+        assertThat(reportService.availableMonths(userId)).isEmpty();
+    }
 }
