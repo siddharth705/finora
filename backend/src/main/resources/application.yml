@@ -89,6 +89,37 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+    # DECISION (audit, 2026-08-08): kept true, with the failure mode it accepts written down rather
+    # than left implicit. Reviewed and deliberately NOT changed -- flipping it is a behaviour change
+    # to every existing deployment's startup path, which is not something an audit should do
+    # silently.
+    #
+    # What it does: when Flyway meets a NON-EMPTY schema that has no flyway_schema_history table, it
+    # creates the history table, records the schema as already baselined at baseline-version
+    # (default 1), and then applies only migrations ABOVE that version. Without it (Flyway's own
+    # default, false) that same situation is a hard startup failure: "Found non-empty schema without
+    # schema history table".
+    #
+    # The risk it accepts, stated plainly: point this application at a non-empty database that its
+    # own migrations did not create -- a mistyped DATABASE_URL, a database shared with something
+    # else, a restore into the wrong instance -- and it will quietly adopt that schema and start
+    # applying V2 onward to it, instead of refusing. The loud failure is the one you want there.
+    #
+    # Why true is still the right setting HERE:
+    #   * There is a real second net. spring.jpa.hibernate.ddl-auto is `validate` (see above), so a
+    #     schema that does not match the entity model fails at startup anyway. An adopted foreign
+    #     schema does not get to serve traffic; it gets caught one bean later.
+    #   * This application owns every migration it runs (69 files, V1 through V72 -- 58, 69 and 70
+    #     are unused numbers, which Flyway does not require to be contiguous). So on any database
+    #     this application created, the history table already exists and baseline-on-migrate never
+    #     fires at all. It is inert in the normal case and only has an opinion in the abnormal one.
+    #   * CHANGELOG.md records that early work ran "directly against a working database" before the
+    #     migrations were formalised. This is the setting that let those databases keep working.
+    #
+    # WHAT WOULD CHANGE THE ANSWER: set this false the moment a deployment's database is provisioned
+    # empty by automation rather than adopted from an existing one -- at that point the setting has
+    # no upside left and only its failure mode remains. Setting baseline-version explicitly would
+    # also be worth doing then, since the default of 1 silently treats V1 as already applied.
     baseline-on-migrate: true
 
   # Production-readiness pass: multipart uploads (CSV/PDF statement import) ran on Spring Boot's
