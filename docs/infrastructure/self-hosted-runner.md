@@ -71,7 +71,8 @@ cd ~/actions-runner && ./svc.sh status
 docker version --format '{{.Server.Version}}' && docker ps
 
 # 4. Is anything holding a port CI needs?  Expect: no output
-lsof -nP -iTCP:8081 -sTCP:LISTEN; lsof -nP -iTCP:5433 -sTCP:LISTEN
+lsof -nP -iTCP:18081 -sTCP:LISTEN; lsof -nP -iTCP:18086 -sTCP:LISTEN
+lsof -nP -iTCP:18088 -sTCP:LISTEN; lsof -nP -iTCP:5433  -sTCP:LISTEN
 
 # 5. Does a real job get picked up?
 gh workflow run ci.yml --repo siddharth705/finora --ref main
@@ -89,9 +90,13 @@ Reading the results:
 - **Step 3 fails** — Docker Desktop is not running. This is the single most likely cause of a red
   build after a reboot, and it fails the `backend` and `smoke` jobs at container startup rather than
   on an assertion, so the error does not look like a Docker problem at first glance.
-- **Step 4 finds a listener** — a previous run left the backend (port 8081) or Postgres (5433)
-  behind. The `smoke` job's teardown step handles this normally; a killed run can skip it. Clear
-  with `docker rm -f finora-ci-postgres` and `pkill -f finora-backend`.
+- **Step 4 finds a listener** — a previous run left the backend (18081, or 18086/18088 for the two
+  jar-boot checks) or Postgres (5433) behind. The `smoke` job's teardown step handles this normally;
+  a killed run can skip it. Clear with `docker rm -f finora-ci-postgres` and
+  `pkill -f finora-backend`.
+
+  **If the listener is not a CI process, read the next section.** This machine is somebody's
+  development Mac as well as the runner, and that is the more likely cause.
 - **Step 5 queues but never starts** — the labels in `runs-on` do not match the labels the runner
   registered with. This is the failure that looks like nothing is wrong: GitHub reports the job as
   pending indefinitely rather than failing it.
@@ -119,6 +124,35 @@ display is off", equivalently `sudo pmset -c sleep 0`.
 
 Java and Node are deliberately NOT requirements: `actions/setup-java` and `actions/setup-node`
 install them per job exactly as on a hosted runner, and Temurin publishes ARM64 macOS builds.
+
+## CI shares this machine with your own work
+
+The runner is not a disposable VM. Anything you are running locally is running *next to* CI, on the
+same ports, and whoever binds first wins.
+
+This has already produced one confusing outage. On 2026-08-08 three unrelated pull requests failed
+at the `smoke` job's "Start the backend" step within minutes of each other — including one whose
+entire diff was an `actions/checkout` version bump. The cause was `npx expo start` running in
+`mobile/`: **the Metro bundler's default port is 8081, which was also the port the smoke job's
+backend bound.** The backend could not start, the health poll ran its full 60 attempts, and the
+step failed while pointing squarely at the change under test.
+
+The fix was to move CI off the crowded `80xx` range entirely:
+
+| What | Port | Was |
+|---|---|---|
+| `smoke` backend | **18081** | 8081 — Metro's default |
+| Production classpath check | **18086** | 8086 — InfluxDB's default |
+| Runtime dependency verification | **18088** | 8088 — Hadoop YARN's default |
+| Postgres (`smoke`) | 5433 | unchanged — already chosen to dodge a local 5432 |
+
+`e2e/` still defaults to 8081 for local runs; that is the documented developer convention and is
+left alone. CI overrides it with `FINORA_E2E_API_ORIGIN`, which every read of that value already
+goes through.
+
+**The general rule:** a CI failure that appears on several unrelated PRs at once, at the same step,
+is almost never those PRs. Check what else is running on this machine before reading the diff.
+`lsof -nP -iTCP:<port> -sTCP:LISTEN` answers it in a second.
 
 ## Throughput
 

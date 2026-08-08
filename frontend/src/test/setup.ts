@@ -1,6 +1,23 @@
 import '@testing-library/jest-dom/vitest';
 import { afterEach } from 'vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
+
+// Testing Library's async utilities -- findBy*, waitFor -- give up after their OWN timeout, which
+// defaults to 1000ms and is NOT the same knob as vitest's `testTimeout`. Both configs already set
+// testTimeout to 15s reasoning about slow, loaded CI machines; that raised the ceiling on a whole
+// test while leaving every individual `await screen.findByRole(...)` bailing out after one second.
+//
+// Which is what actually broke. On 2026-08-08 `main` went red on two admin-portal tests --
+// Diagnostics' "Copy diagnostics" button and UserDetail's "Accounts" heading -- both
+// `Unable to find role=...`, while the same two passed locally in 105ms and 297ms. The runner was
+// draining ~45 queued jobs from a dependabot batch at the time, and a render that takes 100ms idle
+// does not finish inside a second on a machine in that state. Nothing was wrong with either test
+// or the code under it.
+//
+// 5s rather than matching testTimeout's 15s: long enough to absorb a heavily loaded machine, short
+// enough that a genuine "this element never appears" still fails with the query's own useful error
+// well before vitest kills the whole test with a far less informative one.
+configure({ asyncUtilTimeout: 5_000 });
 
 // @testing-library/react's automatic post-test cleanup only self-registers against a *global*
 // afterEach -- since this project doesn't set `test.globals: true` in vitest.config.ts (tests
