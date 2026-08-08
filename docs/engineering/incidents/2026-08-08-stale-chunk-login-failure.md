@@ -32,7 +32,8 @@ Two things turned that into what the user saw:
 - **The 404 that wasn't.** Cloudflare Pages answers unmatched paths with the SPA fallback, which is
   right for routes and wrong for assets. The missing chunk came back as `index.html` with
   `200 text/html`, so the browser reported a MIME mismatch rather than a plain 404. Measured on
-  production: `/assets/does-not-exist.js` → `200 text/html`.
+  production: `/assets/does-not-exist.js` → `200 text/html`. This is still true — see §4a for why it
+  could not be fixed at the hosting layer.
 - **A retry that could not work.** `ErrorBoundary.reset()` cleared `hasError` and re-rendered. React
   re-attempted the same lazy import, requested the same missing URL, and failed identically. The
   button was an infinite loop of one failure.
@@ -62,11 +63,38 @@ scenario was outside all of them, and largely still is.
   a recovered stale chunk to Sentry. It is expected and self-healing on every release; reporting it
   would bury the signal that matters. A failure the guard *refused* does report, because that one is
   real.
-- **`frontend/public/_redirects`** — `/assets/*` now returns a genuine 404 instead of falling
-  through to the SPA HTML. Scoped to that one directory: every legitimate URL under it is generated
-  by the build, so a miss always means "this file is gone", never "this is a route".
 - **`frontend/public/_headers`** — hashed assets become `immutable, max-age=31536000`. A performance
   change only; it does not affect this incident either way.
+
+## 4a. Attempted and rejected: making `/assets/*` return a real 404
+
+The obvious companion fix — stop the SPA fallback answering missing assets with `200 text/html` —
+**cannot be done with `_redirects` on Cloudflare Pages**, and the attempt is recorded here so nobody
+spends the afternoon rediscovering it.
+
+`_redirects` needs a destination, so the rule was `/assets/* /404.html 404`. Adding that `404.html`
+also **replaces the SPA fallback**: Pages serves a `404.html` in preference to `index.html` for any
+unmatched path. Measured on the PR preview:
+
+```
+/login 404    /about 404    /terms 404    /dashboard 404
+```
+
+That is the entire client-side router. The asset rule itself worked perfectly; it just took the site
+with it.
+
+The natural repair — adding `/* /index.html 200` after it — **does not work either**. Pages does not
+honour a `200` rewrite in `_redirects`. Verified against the exact deployment: routes still returned
+404 with the catch-all in place.
+
+One thing the experiment did establish, and it is worth keeping: **Pages serves a matching static
+file before it consults `_redirects` at all.** With `/assets/* … 404` active, an existing bundle
+still returned `200 application/javascript`. So a catch-all in `_redirects` could never swallow real
+assets — that particular fear was unfounded.
+
+Both files were reverted. Doing this properly needs a Pages Function on the asset path, which was
+judged not worth it: the recovery in §4 matches both the 404 and the `text/html` spelling, so the
+user-visible outcome is identical either way, and the only real gain would be cleaner telemetry.
 
 ## 5. What is still true
 
