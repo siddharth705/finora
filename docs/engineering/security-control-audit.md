@@ -1,0 +1,33 @@
+# Security control audit: what exists, and how completely
+
+**Purpose.** Nine controls were spotted incidentally during the PII sanitization sweeps. That list
+was observation, not an audit, and it was at risk of being read as coverage. This states each one's
+status with the evidence, and says *Not verified* where the evidence is a count rather than a proof.
+
+**The rule this applies.** "The class exists" is not evidence that "the control is complete."
+`PhoneMasking` existing says nothing about whether every log site uses it.
+
+| Control | Status | Evidence |
+|---|---|---|
+| Log masking (`PhoneMasking`, `EmailMasking`) | **Partial** | Both exist with tests. Referenced in 8 main-source files, but only **3 are log statements** (`TwoFactorSmsProvider` ×2, `NoOpSmsProvider` ×1); the rest use them for DTO display. Nothing prevents a new unmasked log. |
+| Sentry scrubbing | **Implemented, completeness not verified** | `observability/SentryScrubber.java`, 14 scrubbed keys. A fixed key list cannot cover a field it does not know; no test asserts an unknown-field default. |
+| Rate limiting | **Not verified** | `config/RateLimitFilter.java` matches request paths at runtime, but **no endpoint literal appears in the file** — patterns come from configuration not read here. `importStageLimiter` is referenced from `StatementUpload`, so upload *is* bounded. Which of `/login`, `/register`, `/forgot-password`, `/export` are covered is unestablished. |
+| Upload validation | **Partial, and self-documented** | `StatementUpload`'s own javadoc states: *"no emptiness check, no content-type check, no extension check, no magic-byte sniff."* What does exist: `max-file-size` 10 MB, `MAX_FILE_NAME_LENGTH` 120, `importStageLimiter`, and storage never trusting the client filename. No page-count cap, no decompression-bomb guard, no parser timeout verified. |
+| Encrypted / malformed PDF handling | **Implemented** | `PasswordProtectedPdfTest`, 8 tests, green in the 1,745-test baseline. |
+| Malware scanning | **Missing** | Zero matches for clamav / virustotal / malware / antivirus across `backend/src`. Uploads reach the parser unscanned. |
+| Tenant isolation tests | **Partial, not verified** | 19 test files reference other-user identifiers (`otherUser`, `user2`, `userB`). A file count is not proof the assertions are *denials* — the horizontal-privilege matrix (A→B account, transaction, PDF, report, export) is not shown to be covered. |
+| Startup config validation | **Implemented** | `ProductionConfigValidator`, 10 assertion sites, and it now runs before the web server binds (`SmartInitializingSingleton`, guarded by rule FG-031 in `StartupConfigValidationLifecycleTest`). |
+| Web security headers | **Missing at the edge** | `frontend/public/_headers` sets only `Cache-Control`. No CSP, HSTS, `X-Content-Type-Options` or `Referrer-Policy`. Whether Spring Security sets equivalents at the API layer is **not verified**. |
+
+## The three findings worth acting on first
+
+1. **Malware scanning is absent**, and uploads are the largest untrusted-input surface. Concrete, not a judgement call.
+2. **Security headers are absent from `_headers`** — CSP and HSTS on a financial web app are cheap and currently missing at the CDN edge.
+3. **Masking has no enforcement.** Three log sites are masked because they were fixed by hand. A fourth added tomorrow would not be. The utilities are the easy half; a guard asserting no log statement interpolates a raw email, phone or account number is the half that makes it a control.
+
+## What this audit does not claim
+
+It does not say the repository is insecure, and it does not say the *Implemented* rows are sufficient.
+Two rows are marked *Not verified* precisely because a count was the only evidence available, and
+promoting either without reading the configuration or the assertions would repeat the mistake this
+document exists to correct.
