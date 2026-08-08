@@ -17,7 +17,7 @@ disagree with a rule — the Guardian enforces standards, it does not author the
 
 ## Summary
 
-**30 enforced rules**, all currently passing.
+**31 enforced rules**, all currently passing.
 
 | Category | Rules |
 |---|---|
@@ -27,7 +27,7 @@ disagree with a rule — the Guardian enforces standards, it does not author the
 | HYGIENE | 5 |
 | MIGRATION | 3 |
 | NAMING | 5 |
-| SECURITY | 5 |
+| SECURITY | 6 |
 
 Rule ids are permanent. They are never reused and never renumbered — `FG-007` means the same thing
 in a two-year-old commit message as it does in today's CI log. Ids run contiguously from `FG-001`;
@@ -126,6 +126,7 @@ Authorization, actor attribution, tenant scoping and input validation. Every one
 | `FG-026` | SECURITY | A filter reading the raw request URI must parse it, never string-compare it. | Incident: rate-limit bypass via percent-encoding | 2026-08-04 | architecture | MANUAL_FALSIFICATION | None |
 | `FG-027` | SECURITY | Every identity lookup on UserRepository is tenant-scoped. | Incident: unscoped identity lookup | 2026-08-03 | architecture | SELF_TEST | None |
 | `FG-028` | SECURITY | A @RequestBody whose type carries constraints is annotated @Valid. | CODING_STANDARDS.md > Backend > Validation | 2026-08-05 | architecture | SELF_TEST | None |
+| `FG-031` | SECURITY | A *ConfigValidator runs as a SmartInitializingSingleton, never as an ApplicationRunner, so it refuses startup before the web server binds. | Audit: ProductionConfigValidator served traffic before validating JWT_SECRET | 2026-08-08 | architecture | MANUAL_FALSIFICATION | None |
 
 ### Correctness rules
 

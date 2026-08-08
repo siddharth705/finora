@@ -1,6 +1,6 @@
 # Base configuration shared by every profile. Profile-specific files
 # (application-dev.yml / application-test.yml / application-prod.yml) override
-# individual keys as needed â€” this file should never contain anything that's
+# individual keys as needed -- this file should never contain anything that's
 # actually a secret, only sane defaults and structure.
 
 # Bug fix (production-readiness pass): there was no server.port configuration anywhere at all,
@@ -121,10 +121,10 @@ app:
     # unavailable exactly as before.
     commit: ${GIT_COMMIT:${RAILWAY_GIT_COMMIT_SHA:}}
   jwt:
-    # 32+ char secret required for HS256. Override via env var in every real deployment â€”
+    # 32+ char secret required for HS256. Override via env var in every real deployment --
     # never commit a real secret; this default is only safe because it's obviously a placeholder.
     secret: ${JWT_SECRET:change-this-to-a-long-random-secret-in-your-env-file-min-32-chars}
-    # Access tokens are short-lived by design â€” 15 minutes, not 24 hours â€” because a leaked
+    # Access tokens are short-lived by design -- 15 minutes, not 24 hours -- because a leaked
     # access token that expires quickly limits the damage window. Long-lived sessions are handled
     # by the refresh token instead, which can be individually revoked (the access token can't).
     expiration-ms: ${JWT_EXPIRATION_MS:900000}          # 15 min
@@ -153,7 +153,7 @@ app:
     # here doesn't need surrounding spaces to work correctly.
     allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:5174}
   email:
-    # Empty by default â€” falls back to logging + returning the reset link in the API response
+    # Empty by default -- falls back to logging + returning the reset link in the API response
     # (dev convenience). Set RESEND_API_KEY to switch to sending real emails via Resend.
     api-key: ${RESEND_API_KEY:}
     from-address: ${EMAIL_FROM:onboarding@resend.dev}
@@ -175,17 +175,17 @@ app:
   # not a Spring @ConfigurationProperties binding, so there's no app.sms.* entry for it here.
   sms:
     two-factor:
-      # Empty by default â€” falls back to logging only (NoOpSmsProvider), not a hard boot-time
+      # Empty by default -- falls back to logging only (NoOpSmsProvider), not a hard boot-time
       # requirement in prod (see SmsProperties' own doc comment for why: unlike RESEND_API_KEY,
       # a missing transaction-alert SMS provider is a degraded notification, not a security gap).
       # 2Factor is used for real-time transaction alerts only -- never authentication OTPs, which
       # stay on Firebase Phone Authentication.
       api-key: ${TWO_FACTOR_API_KEY:}
   setup:
-    # Empty by default â€” BootstrapService generates a random key and writes it to
+    # Empty by default -- BootstrapService generates a random key and writes it to
     # .finora/installation.key for local/dev use (see docker-compose.yml's bind mount for that path).
     # Set FINORA_SETUP_KEY in any deployment where an operator supplies the key themselves
-    # (deployment config, a secret manager) instead of one being generated or written anywhere â€”
+    # (deployment config, a secret manager) instead of one being generated or written anywhere --
     # see RFC-BOOTSTRAP-01 in docs/bootstrap-setup-future-work.md for the full production story.
     key: ${FINORA_SETUP_KEY:}
   security:
@@ -366,7 +366,7 @@ springdoc:
 
 logging:
   pattern:
-    # [%X{requestId}] pulls the correlation ID that CorrelationIdFilter puts into MDC â€”
+    # [%X{requestId}] pulls the correlation ID that CorrelationIdFilter puts into MDC --
     # every log line for a given request carries the same ID, so grepping one ID out of
     # a log file gives you that request's entire story, not just the line that errored.
     console: "%d{yyyy-MM-dd HH:mm:ss} %-5level [%X{requestId:-no-request-id}] %logger{36} - %msg%n"

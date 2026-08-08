@@ -777,8 +777,26 @@ public class ImportService {
                 // warn, not error: this is a statement Finora read imperfectly or a review the user
                 // changed, both of which are ordinary. It is logged because a sustained rise in
                 // these means the parser is misreading a layout, which is worth being able to see.
-                log.warn("Not applying the stated closing balance to account {}: {} details={}",
-                        accountId, balanceDecision.reason(), balanceDecision.details());
+                //
+                // The details MAP IS NOT LOGGED, only its keys. Its values are
+                // openingBalance/closingBalance/totalCredits/totalDebits/expectedClosingBalance/
+                // difference -- a customer's actual account balance and the totals that reconstruct
+                // it, written at WARN, which application-prod.yml emits (com.finora: INFO). That is
+                // customer financial data in the application log, and from there in whatever
+                // aggregator, backup and support tool the deployment feeds.
+                //
+                // The rate signal this line exists for survives the change intact: it is the COUNT
+                // of these warnings over time that says a layout is being misread, not any one
+                // statement's figures. The keys are kept because they say which branch of the guard
+                // fired and what evidence it had, which is the part that distinguishes one failure
+                // mode from another.
+                //
+                // Reproducing a specific misparse does not need the amounts here and never did: the
+                // established route is scripts/trace-capture.sh against the statement itself, which
+                // produces a redacted trace that can be committed as a regression fixture. See
+                // docs/engineering/trace-lifecycle.md.
+                log.warn("Not applying the stated closing balance to account {}: {} (evidence: {})",
+                        accountId, balanceDecision.reason(), balanceDecision.details().keySet());
             }
         }
 
