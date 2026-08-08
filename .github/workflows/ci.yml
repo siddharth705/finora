@@ -457,7 +457,29 @@ jobs:
   # minutes on a pull request.
   smoke:
     name: End-to-end smoke (Chromium)
-    runs-on: [self-hosted, macOS, ARM64]
+    # `primary` PINS THIS JOB TO ONE RUNNER, and it is the reason a second runner can exist at all.
+    #
+    # This is the only job in the file that takes host-level state rather than working inside its
+    # own workspace: a container named `finora-ci-postgres`, host port 5433, backend ports
+    # 18081/18086/18088, and a teardown that runs `pkill -f 'finora-backend-.*\.jar'`. Every one of
+    # those is machine-wide.
+    #
+    # So two runners on ONE machine would break it as soon as two runs reached this job together --
+    # and not with a clean "port in use". The failure would be the teardown of one job killing the
+    # OTHER job's backend halfway through its tests, which surfaces as assertion failures in
+    # whichever PR happened to be unlucky. Fast and flaky is worse than slow and correct, especially
+    # when the flake looks like a product bug.
+    #
+    # A label rather than a job-level `concurrency` group, deliberately. Concurrency keeps one job
+    # running and one pending and CANCELS any older pending one -- and this repository has now spent
+    # three separate investigations today on cancelled-reported-as-failed. Restricting eligibility
+    # makes the second smoke job queue for a busy runner instead, which is the behaviour we actually
+    # want and produces no confusing status.
+    #
+    # The other four jobs deliberately keep the unlabelled `[self-hosted, macOS, ARM64]` so either
+    # runner can take them -- that is where the parallelism comes from. Adding a third runner needs
+    # nothing here; adding host-level state to any OTHER job needs this same label.
+    runs-on: [self-hosted, macOS, ARM64, primary]
 
     # Blocking, because it has passed on an isolated checkout: fresh clone, fresh database, fresh
     # backend, 9 specs in 34s. That run was worth doing rather than assuming -- it caught two
