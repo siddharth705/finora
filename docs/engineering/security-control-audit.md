@@ -51,6 +51,23 @@ enforce:
 
 > A control is not Implemented because a utility, a class, or a test file exists.
 
+**And a value is not synthetic because a scanner accepted it.** The same error one level down, and
+it was made during this work. Two real IFSCs in a `BankRegistry` javadoc were classified as confirmed
+placeholders, on the reasoning that their conspicuous runs of zeros would satisfy `is_placeholder()`.
+They did not: the IFSC rule requires six *identical* characters at positions 6–11, and those branch
+parts each carried a differing final digit. Both had passed CI for months only because they sat on a
+pre-existing line no diff had touched — so the green history was evidence about the diff-based
+scanners' reach, not about the values. The pre-commit hook caught them the moment that line was
+edited; both were sanitized in `b3fc79c`.
+
+The values are not reproduced here, and that is not squeamishness: an earlier draft of this very
+paragraph quoted both, and the hook blocked the commit. Explaining a leak does not license repeating
+it.
+
+Two things follow. A predicate's acceptance is evidence about the predicate, not about the value's
+origin — only the corpus comparison establishes origin. And the classification of a value must cite
+the source evidence, never the scanner's verdict on it.
+
 ## Prioritised work, in order, not in parallel
 
 **Before any of it:** finish the repository PII sanitization against the 1,745-test / 134-affected
