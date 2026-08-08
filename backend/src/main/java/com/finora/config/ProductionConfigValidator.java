@@ -4,8 +4,7 @@ import com.finora.service.PhoneVerificationProvider;
 import com.finora.service.SmsProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
@@ -23,9 +22,37 @@ import java.util.List;
  * in production is the actually dangerous failure mode, so this fails loudly and immediately
  * instead. Deliberately does nothing outside the prod profile -- these placeholder defaults are
  * exactly what makes local dev and CI convenient, and must keep working with zero setup there.
+ *
+ * <h2>Why {@link SmartInitializingSingleton} and not {@code ApplicationRunner}</h2>
+ *
+ * <p>This was an {@code ApplicationRunner}, and "immediately" was not true of it. Spring Boot
+ * starts the web server inside {@code AbstractApplicationContext.finishRefresh()}, and only calls
+ * {@code ApplicationRunner}s afterwards, from {@code SpringApplication.callRunners()} once
+ * {@code run()} has a fully refreshed context. So the ordering was: bind the port, begin accepting
+ * connections, THEN check whether the JWT signing key is a placeholder committed to this
+ * repository, then throw. Every boot of a misconfigured production deployment served real requests
+ * against a publicly-known HS256 key for the width of that window, and because the throw kills the
+ * process the platform restarts it and the window reopens -- a crash loop is a repeating exposure,
+ * not a single one.
+ *
+ * <p>{@code afterSingletonsInstantiated()} runs at the end of
+ * {@code beanFactory.preInstantiateSingletons()}, inside {@code finishBeanFactoryInitialization()}
+ * -- one phase BEFORE {@code finishRefresh()} starts the connector. Throwing from here fails the
+ * refresh, so the server never binds and no request is ever served under the configuration this
+ * class exists to reject.
+ *
+ * <p>{@code SmartInitializingSingleton} rather than {@code @PostConstruct} on this bean: the checks
+ * call into {@code PhoneVerificationProvider} and {@code SmsProvider}, and a {@code @PostConstruct}
+ * fires as soon as THIS bean is constructed, which says nothing about whether those two are past
+ * their own initialisation. {@code afterSingletonsInstantiated()} is defined to run once every
+ * singleton exists, which is the guarantee the checks actually need.
+ *
+ * <p>The lifecycle is pinned by guardian rule FG-031 rather than left to a comment, because
+ * nothing at the call site makes the ordering visible and a future refactor back to
+ * {@code ApplicationRunner} would compile, pass every test here, and silently reopen the window.
  */
 @Component
-public class ProductionConfigValidator implements ApplicationRunner {
+public class ProductionConfigValidator implements SmartInitializingSingleton {
 
     private static final Logger log = LoggerFactory.getLogger(ProductionConfigValidator.class);
 
@@ -93,7 +120,14 @@ public class ProductionConfigValidator implements ApplicationRunner {
     }
 
     @Override
-    public void run(ApplicationArguments args) {
+    public void afterSingletonsInstantiated() {
+        validate();
+    }
+
+    /** The checks themselves, separated from the lifecycle hook that triggers them so a test can
+     *  invoke them directly without standing up a context -- and so the hook above stays a single
+     *  line whose only job is to say WHEN this runs. */
+    void validate() {
         boolean isProd = Arrays.asList(environment.getActiveProfiles()).contains("prod");
         if (!isProd) return;
 

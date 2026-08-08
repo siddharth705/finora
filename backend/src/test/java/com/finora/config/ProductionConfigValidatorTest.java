@@ -77,7 +77,7 @@ class ProductionConfigValidatorTest {
         JwtProperties jwt = jwtWith("change-this-to-a-long-random-secret-in-your-env-file-min-32-chars");
         var validator = new ProductionConfigValidator(environment, jwt, realEmail(), configuredFirebase(), mock(SmsProvider.class));
 
-        assertThatThrownBy(() -> validator.run(null))
+        assertThatThrownBy(() -> validator.validate())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("JWT_SECRET");
     }
@@ -88,7 +88,7 @@ class ProductionConfigValidatorTest {
         JwtProperties jwt = jwtWith("too-short");
         var validator = new ProductionConfigValidator(environment, jwt, realEmail(), configuredFirebase(), mock(SmsProvider.class));
 
-        assertThatThrownBy(() -> validator.run(null))
+        assertThatThrownBy(() -> validator.validate())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("JWT_SECRET");
     }
@@ -98,7 +98,7 @@ class ProductionConfigValidatorTest {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "finora");
         var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
 
-        assertThatThrownBy(() -> validator.run(null))
+        assertThatThrownBy(() -> validator.validate())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("DB_PASSWORD");
     }
@@ -114,7 +114,7 @@ class ProductionConfigValidatorTest {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
         var validator = new ProductionConfigValidator(environment, realJwt(), emailWith(null), configuredFirebase(), mock(SmsProvider.class));
 
-        assertThatThrownBy(() -> validator.run(null))
+        assertThatThrownBy(() -> validator.validate())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("RESEND_API_KEY");
     }
@@ -124,7 +124,7 @@ class ProductionConfigValidatorTest {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
         var validator = new ProductionConfigValidator(environment, realJwt(), emailWith("   "), configuredFirebase(), mock(SmsProvider.class));
 
-        assertThatThrownBy(() -> validator.run(null))
+        assertThatThrownBy(() -> validator.validate())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("RESEND_API_KEY");
     }
@@ -134,7 +134,7 @@ class ProductionConfigValidatorTest {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
         var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), unconfiguredFirebase(), mock(SmsProvider.class));
 
-        assertThatThrownBy(() -> validator.run(null))
+        assertThatThrownBy(() -> validator.validate())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("GOOGLE_APPLICATION_CREDENTIALS");
     }
@@ -200,7 +200,7 @@ class ProductionConfigValidatorTest {
     }
 
     private boolean catchNoThrow(ProductionConfigValidator validator) {
-        validator.run(null);
+        validator.validate();
         return true;
     }
 }
