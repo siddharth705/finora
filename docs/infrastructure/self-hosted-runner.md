@@ -176,8 +176,65 @@ out, in order of effort:
 
 1. Keep `on: push` narrow — it is `branches: [main]` for exactly this reason. See the comment at the
    top of `ci.yml`.
-2. Register a second runner. Additional runners can live on the same machine in their own
-   directories with their own names; nothing in the workflow has to change.
+2. Register a second runner — but read "The `primary` label" below first. The claim that "nothing in
+   the workflow has to change" was wrong, and acting on it produces a *faster, flakier* pipeline
+   rather than a faster one.
+
+### The `primary` label
+
+`smoke` is pinned to `runs-on: [self-hosted, macOS, ARM64, primary]`. The other four jobs are
+deliberately unlabelled so any runner can take them.
+
+**This label is load-bearing. A runner registered without it cannot run `smoke` at all**, and a
+repository whose only runner lacks it will queue that job forever with no eligible machine and no
+error. If you re-register the primary runner — the "Recovering on a new machine" steps below, or a
+`config.sh --replace` — the label list must include `primary`. Add it to an existing runner without
+reconfiguring:
+
+```bash
+gh api -X POST repos/siddharth705/finora/actions/runners/<id>/labels -f 'labels[]=primary'
+```
+
+Why it exists: `smoke` is the only job that takes **host-level** state rather than working inside its
+own workspace — a container named `finora-ci-postgres`, host port 5433, backend ports
+18081/18086/18088, and a teardown that runs `pkill -f 'finora-backend-.*\.jar'` machine-wide. Two
+runners on one machine reach that job concurrently as soon as two PRs are open, and the failure is
+not a tidy "port already in use": one job's teardown kills the *other* job's backend partway through
+its tests, and the assertions fail in whichever pull request was unlucky.
+
+A label rather than a job-level `concurrency` group, deliberately — concurrency keeps one job running
+and one pending and **cancels** any older pending one, and cancelled-reported-as-failed has cost this
+repository three separate investigations in a single day. Restricting eligibility makes the second
+smoke job wait for a busy runner instead.
+
+The other four jobs hold no host state: `backend`'s integration tests use Testcontainers, which
+allocates its own ports, and the three JS jobs only touch their own `node_modules`. So four of five
+jobs parallelise across runners and one serialises.
+
+### Adding and removing a second runner
+
+The default posture is **one runner**. A second is a deliberate, temporary response to a measured
+queue, not a standing part of the setup — capacity added during a spike tends to stay.
+
+```bash
+# add — note the labels DELIBERATELY omit `primary`, so it never takes smoke
+mkdir -p ~/actions-runner-2 && cd ~/actions-runner-2
+tar xzf ~/actions-runner/actions-runner-osx-arm64-<version>.tar.gz
+./config.sh --unattended --url https://github.com/siddharth705/finora \
+  --token "$(gh api -X POST repos/siddharth705/finora/actions/runners/registration-token --jq .token)" \
+  --name finora-m5-2 --labels self-hosted,macOS,ARM64 --work _work
+./svc.sh install && ./svc.sh start
+
+# remove
+cd ~/actions-runner-2 && ./svc.sh stop && ./svc.sh uninstall
+./config.sh remove --token "$(gh api -X POST repos/siddharth705/finora/actions/runners/remove-token --jq .token)"
+```
+
+Two things to watch while a second runner is live. It **doubles the untrusted-code surface**: both
+runners execute workflow code on this machine under your account, dependabot branches included, so
+the Security section below now applies twice over. And two heavy jobs can overlap — Testcontainers
+and Playwright Chromium are the CPU-hungry ones, so if wall-clock gets *worse* rather than better,
+contention is the reason and `svc.sh stop` reverses it.
 
 ### A merged PR's run keeps the runner
 
