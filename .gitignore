@@ -28,6 +28,18 @@
 # Bootstrap installation key (generated locally during first-time setup)
 .finora/
 
+# Firebase/Google service-account private keys, matched by NAME so a key is ignored wherever it
+# lands -- not only in the one directory we expect. Added after a real one was downloaded straight
+# to the repo root as finora-<project>-firebase-adminsdk-fbsvc-<id>.json, where nothing ignored it:
+# it sat in `git status` as untracked, one `git add -A` away from being committed and pushed.
+# Location-based protection only works when the file is put in the right place, which is exactly
+# what someone downloading a key for the first time doesn't know yet.
+#
+# Scoped to .json so Java sources like AuthServiceAccountScopeTest.java are unaffected.
+*service-account*.json
+*serviceaccount*.json
+*-firebase-adminsdk-*.json
+
 # Environment files
 .env
 .env.*
