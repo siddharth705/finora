@@ -47,7 +47,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   function persist(data: { token: string; refreshToken: string; email: string; fullName: string; phoneVerified: boolean }) {
     safeStorage.setItem('finora_token', data.token);
-    safeStorage.setItem('finora_refresh_token', data.refreshToken);
+    // BH-012: data.refreshToken is deliberately NOT stored. The same token arrives as an HttpOnly
+    // cookie the browser keeps out of script's reach, and writing a second copy here into storage
+    // any XSS can read is what made that cookie decorative. The field stays on the response
+    // because mobile -- which has no cookie jar -- genuinely needs it.
     safeStorage.setItem('finora_email', data.email);
     safeStorage.setItem('finora_name', data.fullName);
     safeStorage.setItem('finora_phone_verified', String(data.phoneVerified));
@@ -95,12 +98,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Best-effort: revoke the refresh token server-side so it can't be used again even if
     // someone captured it. Don't block clearing local state on this succeeding — if the
     // network call fails, the user still expects to be logged out locally.
-    const refreshToken = safeStorage.getItem('finora_refresh_token');
-    if (refreshToken) {
-      authApi.logout(refreshToken).catch(() => {});
+    // The cookie is what identifies the session to revoke, and the browser attaches it
+    // automatically -- there is nothing for this call to carry. Still gated on believing there IS
+    // a session: the access token is the proxy for that now (client.ts's interceptor uses the same
+    // one), where this used to gate on holding a readable refresh token. Logging out when nobody
+    // is logged in should stay a local no-op rather than a pointless request.
+    if (safeStorage.getItem('finora_token')) {
+      authApi.logout().catch(() => {});
     }
     safeStorage.removeItem('finora_token');
-    safeStorage.removeItem('finora_refresh_token');
     safeStorage.removeItem('finora_email');
     safeStorage.removeItem('finora_name');
     safeStorage.removeItem('finora_phone_verified');

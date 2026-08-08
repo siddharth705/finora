@@ -34,17 +34,26 @@ public class PasswordChangeDtos {
     public record VerifyOtpResponse(String message) {}
 
     /** signOutOtherDevices controls whether every OTHER active session gets revoked once the
-     *  password is updated -- the device completing this flow always stays signed in either way
-     *  (see currentRefreshToken below), unlike the old single-step flow this replaces, which
-     *  unconditionally logged out every device including the one making the change.
-     *  currentRefreshToken is this device's own stored refresh token, sent so the backend can
-     *  positively identify (and exclude) it from revocation -- an access token alone doesn't
-     *  carry enough information to know which refresh token belongs to this browser tab. */
+     *  password is updated -- the device completing this flow always stays signed in either way,
+     *  unlike the old single-step flow this replaces, which unconditionally logged out every
+     *  device including the one making the change.
+     *
+     *  <p>currentRefreshToken is DEPRECATED AND IGNORED. Its comment used to say "an access token
+     *  alone doesn't carry enough information to know which refresh token belongs to this browser
+     *  tab" -- that stopped being true when the access token gained its {@code sid} claim, which
+     *  names the session directly and, unlike a token, survives rotation. The server now reads
+     *  that claim (see UserController.completePasswordChange) and this field decides nothing.
+     *
+     *  <p>Kept on the record, and no longer {@code @NotBlank}, purely for the mobile support
+     *  window: installed builds still send it and must not start failing validation. Relaxing a
+     *  required request field is non-breaking under
+     *  docs/engineering/api-compatibility-policy.md; removing the field would not be. Delete it
+     *  once no supported client sends it. */
     public record CompleteRequest(
             @NotBlank String sessionId,
             @NotBlank @Size(min = 8, max = 72, message = AuthDtos.PASSWORD_SIZE_MESSAGE) String newPassword,
             boolean signOutOtherDevices,
-            @NotBlank String currentRefreshToken
+            String currentRefreshToken
     ) {}
 
     public record CompleteResponse(String message, boolean otherDevicesSignedOut) {}

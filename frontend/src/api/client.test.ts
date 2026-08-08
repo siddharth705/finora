@@ -65,7 +65,9 @@ describe('api response interceptor', () => {
    * locks in that concurrent 401s now share exactly ONE refresh call.
    */
   it('shares one refresh call across multiple 401s that arrive at the same time, instead of one per request', async () => {
-    localStorage.setItem('finora_refresh_token', 'the-refresh-token');
+    // BH-012: what says "this browser has a session" is now the ACCESS token. The refresh token
+    // lives only in the HttpOnly cookie and this app cannot read it.
+    localStorage.setItem('finora_token', 'the-stale-access-token');
     refreshMock.mockResolvedValue({ token: 'new-access-token', refreshToken: 'new-refresh-token' });
 
     const handler = rejectedHandler();
@@ -95,7 +97,7 @@ describe('api response interceptor', () => {
    * in the REQUEST interceptor only.
    */
   it('leaves a failed sign-in alone instead of treating it as an expired session', async () => {
-    localStorage.setItem('finora_refresh_token', 'a-stale-token-from-a-previous-session');
+    localStorage.setItem('finora_token', 'a-stale-access-token-from-a-previous-session');
 
     await rejectedHandler()({
       response: { status: 401, data: { message: 'Invalid credentials', errorCode: 'AUTH_001' } },
@@ -105,7 +107,7 @@ describe('api response interceptor', () => {
     expect(refreshMock).not.toHaveBeenCalled();
     // Still signed out (nothing to keep), but crucially NOT cleared-and-redirected: the stale token
     // survives untouched, which is the observable proof clearSessionAndRedirect() never ran.
-    expect(localStorage.getItem('finora_refresh_token')).toBe('a-stale-token-from-a-previous-session');
+    expect(localStorage.getItem('finora_token')).toBe('a-stale-access-token-from-a-previous-session');
     expect(localStorage.getItem('finora_session_ended_reason')).toBeNull();
   });
 
@@ -116,7 +118,7 @@ describe('api response interceptor', () => {
    * for Login.tsx to read once.
    */
   it('hands the backend reason for a real session expiry to the login page', async () => {
-    localStorage.setItem('finora_refresh_token', 'an-expired-token');
+    localStorage.setItem('finora_token', 'an-expired-session-access-token');
     refreshMock.mockRejectedValue({
       response: { status: 401, data: { message: 'Refresh token expired — please sign in again.', errorCode: 'AUTH_002' } },
     });
@@ -128,7 +130,7 @@ describe('api response interceptor', () => {
 
     expect(localStorage.getItem('finora_session_ended_reason'))
       .toBe('Refresh token expired — please sign in again.');
-    expect(localStorage.getItem('finora_refresh_token')).toBeNull();
+    expect(localStorage.getItem('finora_token')).toBeNull();
   });
 
   it('falls back to generic copy when there was no refresh token to explain the sign-out', async () => {
@@ -139,5 +141,94 @@ describe('api response interceptor', () => {
 
     expect(localStorage.getItem('finora_session_ended_reason'))
       .toBe('Your session has ended. Please sign in again to continue.');
+  });
+
+  /**
+   * BH-013. The in-tab promise above only de-duplicates within ONE JavaScript context. Two open
+   * tabs are two contexts with two module instances, so each has its own `refreshInFlight` and
+   * neither can see the other's. Both idle tabs wake, both 401, both refresh -- one wins, and the
+   * loser presents a token the server has just rotated. Reuse detection reads that as a stolen
+   * credential and revokes every session on every device, so the user is signed out of their
+   * laptop AND their phone for having two tabs open.
+   *
+   * <p>What actually prevents the second refresh is not the lock but the RE-CHECK inside it:
+   * waiting for the lock and then refreshing anyway would merely serialise the two calls and
+   * still present the rotated token. The loser has to notice the work is already done.
+   *
+   * <p>jsdom does not implement the Web Locks API, so the lock is stubbed here to do what a real
+   * contended lock does -- let the other tab finish first, then admit this one.
+   */
+  it('does not refresh again when another tab already did while this one waited for the lock', async () => {
+    localStorage.setItem('finora_token', 'the-stale-access-token');
+
+    (navigator as any).locks = {
+      request: async (_name: string, work: () => Promise<unknown>) => {
+        // The other tab held the lock, refreshed, and stored its result before releasing.
+        localStorage.setItem('finora_token', 'token-the-other-tab-obtained');
+        return work();
+      },
+    };
+
+    // Kept so the retried request's headers can be inspected -- the replayed call has no server
+    // to reach in this harness, so what it was replayed WITH is the observable outcome.
+    const config = { url: '/users/me', _retried: false, headers: {} as Record<string, string> };
+
+    try {
+      await rejectedHandler()({
+        response: { status: 401, data: { message: 'Unauthorized', errorCode: null } },
+        config,
+      }).catch(() => { /* no server behind the retry here */ });
+
+      expect(refreshMock).not.toHaveBeenCalled();
+      expect(localStorage.getItem('finora_token')).toBe('token-the-other-tab-obtained');
+      expect(config.headers.Authorization)
+        .toBe('Bearer token-the-other-tab-obtained');
+    } finally {
+      delete (navigator as any).locks;
+    }
+  });
+
+  /** The other side of it: with the lock free and nothing changed, this tab is the one that must
+   *  do the work -- the re-check must not swallow a refresh that genuinely needs to happen. */
+  it('does refresh, under the lock, when no other tab has beaten it to it', async () => {
+    localStorage.setItem('finora_token', 'the-stale-access-token');
+    refreshMock.mockResolvedValue({ token: 'new-access-token', refreshToken: 'ignored-by-web' });
+
+    const lockNames: string[] = [];
+    (navigator as any).locks = {
+      request: async (name: string, work: () => Promise<unknown>) => {
+        lockNames.push(name);
+        return work();
+      },
+    };
+
+    try {
+      await rejectedHandler()({
+        response: { status: 401, data: { message: 'Unauthorized', errorCode: null } },
+        config: { url: '/users/me', _retried: false, headers: {} },
+      }).catch(() => { /* the retry has no server to reach in this harness */ });
+
+      expect(refreshMock).toHaveBeenCalledTimes(1);
+      expect(lockNames)
+        .toEqual(['finora-token-refresh']);
+      expect(localStorage.getItem('finora_token')).toBe('new-access-token');
+    } finally {
+      delete (navigator as any).locks;
+    }
+  });
+
+  /** BH-012: refresh is called with NO argument. The token is in an HttpOnly cookie the browser
+   *  attaches itself; if this app ever passes one again it means it has started reading a
+   *  credential it is not supposed to be able to read. */
+  it('asks for a refresh without supplying a token', async () => {
+    localStorage.setItem('finora_token', 'the-stale-access-token');
+    refreshMock.mockResolvedValue({ token: 'new-access-token', refreshToken: 'ignored-by-web' });
+
+    await rejectedHandler()({
+      response: { status: 401, data: { message: 'Unauthorized', errorCode: null } },
+      config: { url: '/users/me', _retried: false, headers: {} },
+    }).catch(() => { /* as above */ });
+
+    expect(refreshMock).toHaveBeenCalledWith();
   });
 });

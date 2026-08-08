@@ -95,12 +95,21 @@ describe('AuthContext', () => {
     expect(screen.getByTestId('phoneVerified')).toHaveTextContent('true');
 
     // The actual persistence contract other code depends on (api/client.ts's request interceptor
-    // reads finora_token directly; clearSessionAndRedirect() clears exactly these same five keys).
+    // reads finora_token directly; clearSessionAndRedirect() clears exactly these same keys).
     expect(localStorage.getItem('finora_token')).toBe('access-token-1');
-    expect(localStorage.getItem('finora_refresh_token')).toBe('refresh-token-1');
     expect(localStorage.getItem('finora_email')).toBe('jane@example.com');
     expect(localStorage.getItem('finora_name')).toBe('Jane Doe');
     expect(localStorage.getItem('finora_phone_verified')).toBe('true');
+
+    // BH-012. The refresh token is the durable credential -- good for up to the absolute session
+    // cap, where the access token above is good for fifteen minutes. It arrives as an HttpOnly
+    // cookie precisely so script cannot read it, and this used to write a second copy right here
+    // where any XSS could, making the cookie decorative. Asserting its ABSENCE is the only form
+    // of this test that fails if someone reinstates the convenience.
+    expect(localStorage.getItem('finora_refresh_token')).toBeNull();
+    // Not just that one key: the value must not have been persisted under ANY name, or the next
+    // person to "helpfully" stash it somewhere else reopens the hole with this test still green.
+    expect(Object.values(localStorage)).not.toContain('refresh-token-1');
   });
 
   it('register() persists the session the same way login() does', async () => {
@@ -131,11 +140,12 @@ describe('AuthContext', () => {
     await waitFor(() => expect(screen.getByTestId('token')).toHaveTextContent('none'));
     expect(screen.getByTestId('phoneVerified')).toHaveTextContent('false');
     expect(localStorage.getItem('finora_token')).toBeNull();
-    expect(localStorage.getItem('finora_refresh_token')).toBeNull();
     expect(localStorage.getItem('finora_email')).toBeNull();
     expect(localStorage.getItem('finora_name')).toBeNull();
     expect(localStorage.getItem('finora_phone_verified')).toBeNull();
-    expect(authApi.logout).toHaveBeenCalledWith('refresh-token-1');
+    // BH-012: no argument. The session to revoke is identified by the HttpOnly cookie the browser
+    // attaches automatically, not by a token this app is able to read.
+    expect(authApi.logout).toHaveBeenCalledWith();
   });
 
   it('logout() is a safe no-op call when there is no session to revoke', async () => {

@@ -145,7 +145,7 @@ public class PasswordChangeService {
 
     /** Step 3: set the new password. Only reachable once the session itself shows OTP_VERIFIED --
      *  server-side state, not a client-supplied flag. The device making this request always stays
-     *  signed in (see CompleteRequest.currentRefreshToken's own doc comment); signOutOtherDevices
+     *  signed in (identified by its own sid claim, see revokeAllOtherSessionsForUser); signOutOtherDevices
      *  only controls every OTHER active session.
      *
      *  Idempotency: a session that's already COMPLETED (the frontend retried after a timeout, or
@@ -156,7 +156,7 @@ public class PasswordChangeService {
      *  signedOutOtherDevices is what makes the replayed response correct even if the caller's
      *  request body somehow disagreed with what actually happened the first time. */
     @Transactional(noRollbackFor = ApiException.class)
-    public CompleteResponse complete(UUID userId, CompleteRequest request) {
+    public CompleteResponse complete(UUID userId, CompleteRequest request, UUID currentSessionId) {
         PasswordChangeSession session = resolveSession(userId, request.sessionId());
 
         if (session.getStatus() == PasswordChangeSession.Status.COMPLETED) {
@@ -188,7 +188,9 @@ public class PasswordChangeService {
         sessionRepository.save(session);
 
         if (request.signOutOtherDevices()) {
-            refreshTokenService.revokeAllOtherSessionsForUser(userId, request.currentRefreshToken());
+            // The session making this request, from the access token's sid claim -- not a token
+            // the client had to be able to read. See revokeAllOtherSessionsForUser.
+            refreshTokenService.revokeAllOtherSessionsForUser(userId, currentSessionId);
             auditService.record(userId, "OTHER_SESSIONS_REVOKED", "User", userId);
         } else {
             auditService.record(userId, "OTHER_SESSIONS_PRESERVED", "User", userId);

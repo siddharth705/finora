@@ -67,14 +67,15 @@ class AccessTokenSessionRevocationIT extends AbstractIntegrationTest {
     }
 
     /** A real sign-in: a session row, and an access token naming it. */
-    private record SignedIn(String accessToken, String refreshToken) {}
+    private record SignedIn(String accessToken, String refreshToken, java.util.UUID sessionId) {}
 
     private SignedIn signIn(User user) {
         RefreshTokenService.IssuedToken issued = refreshTokenService.issue(user.getId());
         return new SignedIn(
                 jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId(),
                         user.getAccountScope()),
-                issued.rawToken());
+                issued.rawToken(),
+                issued.sessionId());
     }
 
     private HttpStatus callProtectedWith(String accessToken) {
@@ -141,7 +142,13 @@ class AccessTokenSessionRevocationIT extends AbstractIntegrationTest {
 
         // "Sign out my other devices" — the narrow revocation PasswordChangeService offers, which
         // deliberately spares the device that asked for it.
-        refreshTokenService.revokeAllOtherSessionsForUser(user.getId(), phone.refreshToken());
+        //
+        // Identified by SESSION, not by the device's raw refresh token. The token form could only
+        // ever work while a client was able to read its own refresh token, which BH-012 ended; and
+        // it had a live failure of its own, since a token that rotated between being read and
+        // being presented matched nothing and got this device revoked along with the rest. The sid
+        // is stable across rotation, which is the property ADR-002 built it for.
+        refreshTokenService.revokeAllOtherSessionsForUser(user.getId(), phone.sessionId());
 
         assertThat(callProtectedWith(laptop.accessToken()))
                 .as("the revoked device's access token dies with its session")

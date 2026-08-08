@@ -40,6 +40,11 @@ class PasswordChangeServiceTest {
     private PasswordChangeService service;
     private final UUID userId = UUID.randomUUID();
 
+    /** The session the request is coming FROM -- the sid claim on the caller's access token. What
+     *  "sign out my other devices" has to spare, and what it used to identify by asking the client
+     *  to hand back a refresh token it can no longer read (BH-012). */
+    private static final UUID THIS_DEVICES_SESSION = UUID.randomUUID();
+
     @BeforeEach
     void setUp() {
         userRepository = mock(UserRepository.class);
@@ -222,7 +227,8 @@ class PasswordChangeServiceTest {
         when(passwordEncoder.encode("NewPass456!")).thenReturn("hashed-new-password");
 
         var response = service.complete(userId,
-                new CompleteRequest(session.getId().toString(), "NewPass456!", false, "this-devices-refresh-token"));
+                new CompleteRequest(session.getId().toString(), "NewPass456!", false, null),
+                THIS_DEVICES_SESSION);
 
         assertThat(user.getPasswordHash()).isEqualTo("hashed-new-password");
         assertThat(user.getPasswordChangedAt()).isNotNull();
@@ -246,11 +252,14 @@ class PasswordChangeServiceTest {
         when(passwordEncoder.encode("NewPass456!")).thenReturn("hashed-new-password");
 
         var response = service.complete(userId,
-                new CompleteRequest(session.getId().toString(), "NewPass456!", true, "this-devices-refresh-token"));
+                new CompleteRequest(session.getId().toString(), "NewPass456!", true, null),
+                THIS_DEVICES_SESSION);
 
         assertThat(response.otherDevicesSignedOut()).isTrue();
         assertThat(session.getSignedOutOtherDevices()).isTrue();
-        verify(refreshTokenService).revokeAllOtherSessionsForUser(userId, "this-devices-refresh-token");
+        // BH-012: keyed on the session making the request (the access token's sid claim), not on a
+        // refresh token the client had to be able to read out of localStorage.
+        verify(refreshTokenService).revokeAllOtherSessionsForUser(userId, THIS_DEVICES_SESSION);
         verify(auditService).record(userId, "OTHER_SESSIONS_REVOKED", "User", userId);
         verify(auditService, never()).record(any(), eq("OTHER_SESSIONS_PRESERVED"), any(), any());
     }
@@ -264,7 +273,8 @@ class PasswordChangeServiceTest {
         when(passwordEncoder.matches("SamePass123!", "hashed-old-password")).thenReturn(true);
 
         assertThatThrownBy(() -> service.complete(userId,
-                new CompleteRequest(session.getId().toString(), "SamePass123!", false, "token")))
+                new CompleteRequest(session.getId().toString(), "SamePass123!", false, null),
+                THIS_DEVICES_SESSION))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("different from your current password");
 
@@ -280,7 +290,8 @@ class PasswordChangeServiceTest {
         when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
 
         assertThatThrownBy(() -> service.complete(userId,
-                new CompleteRequest(session.getId().toString(), "NewPass456!", false, "token")))
+                new CompleteRequest(session.getId().toString(), "NewPass456!", false, null),
+                THIS_DEVICES_SESSION))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Verify the code");
 
@@ -298,7 +309,8 @@ class PasswordChangeServiceTest {
         when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
 
         var response = service.complete(userId,
-                new CompleteRequest(session.getId().toString(), "NewPass456!", false, "token"));
+                new CompleteRequest(session.getId().toString(), "NewPass456!", false, null),
+                THIS_DEVICES_SESSION);
 
         assertThat(response.otherDevicesSignedOut()).isTrue();
         assertThat(response.message()).contains("every other device has been signed out");
@@ -313,7 +325,8 @@ class PasswordChangeServiceTest {
         when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
 
         assertThatThrownBy(() -> service.complete(userId,
-                new CompleteRequest(session.getId().toString(), "NewPass456!", false, "token")))
+                new CompleteRequest(session.getId().toString(), "NewPass456!", false, null),
+                THIS_DEVICES_SESSION))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("expired");
 
