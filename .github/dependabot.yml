@@ -41,6 +41,29 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
+  # ON THE `react` GROUP, which is the exception to "majors stay separate" above.
+  #
+  # That rule is right for independent dependencies and wrong for a peer-locked set. React ships as
+  # four packages that must move together: `@types/react-dom@18.x` declares a peer dependency on
+  # `@types/react@^18`, so raising one without the other produces a tree npm cannot resolve at all.
+  #
+  # It is not hypothetical. Excluding majors from grouping split the 18 -> 19 upgrade into two
+  # separate PRs, each holding half of it, each individually un-mergeable:
+  #
+  #   #16  bumps react + @types/react in /frontend      -> ERESOLVE, npm ci fails, build dies
+  #   #14  bumps react-dom + @types/react-dom in /admin-portal  -> the same, mirrored
+  #
+  # Splitting them did not produce two discussable upgrades. It produced two broken branches and a
+  # red Cloudflare build, and neither could be merged even after review.
+  #
+  # So the four move as one PR, across every update type including major. A React major still gets
+  # its own PR and its own discussion -- which is what the rule above actually wanted -- it just
+  # arrives complete rather than in halves.
+  #
+  # Listed BEFORE npm-minor-and-patch deliberately: a dependency joins the first group it matches,
+  # so a minor react bump has to be caught here rather than by the catch-all, or it splits again.
+  # Patterns are exact names, not prefixes -- `react` does not match `react-router` or
+  # `react-native`.
   - package-ecosystem: npm
     directory: /frontend
     schedule:
@@ -48,11 +71,20 @@ updates:
       day: monday
     open-pull-requests-limit: 3
     groups:
+      react:
+        patterns:
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
+        update-types: [major, minor, patch]
       npm-minor-and-patch:
         update-types: [minor, patch]
     commit-message:
       prefix: "chore(deps)"
 
+  # Same `react` group as /frontend, for the same reason -- see the comment above it. This app is
+  # where #14 landed its half of the split upgrade.
   - package-ecosystem: npm
     directory: /admin-portal
     schedule:
@@ -60,6 +92,13 @@ updates:
       day: monday
     open-pull-requests-limit: 3
     groups:
+      react:
+        patterns:
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
+        update-types: [major, minor, patch]
       npm-minor-and-patch:
         update-types: [minor, patch]
     commit-message:
@@ -68,6 +107,12 @@ updates:
   # Expo pins a large, tightly-coupled dependency set and upgrades are expected to move together
   # with the SDK rather than individually -- so the limit here is lower on purpose. An unsolicited
   # bump of a single Expo-managed package is usually noise, not an upgrade.
+  #
+  # Deliberately NO `react` group here, despite this app having react and react-dom too. Grouping
+  # them would not help: their versions are dictated by the Expo SDK, so a react bump arriving on
+  # its own is something to close rather than something to merge as a set. The fix for mobile is an
+  # SDK upgrade, which moves react along with everything else it pins. Grouping would only make an
+  # unmergeable PR tidier.
   - package-ecosystem: npm
     directory: /mobile
     schedule:
