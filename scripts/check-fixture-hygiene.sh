@@ -41,7 +41,46 @@
 # BASE may be empty or unresolvable on a branch's first push (github.event.before is all-zeros for
 # a new branch). That falls back to diffing HEAD against its parent rather than silently scanning
 # nothing.
+#   --each BASE HEAD       CI: scan every commit in the range INDIVIDUALLY.
+#
+# --each exists because of a leak this script had to be told about by a human. A real account number
+# was added in one commit and removed in a later one on the same branch. `--range BASE HEAD` diffs
+# the NET result, in which the value never appears -- so the check passed, twice, while the number sat
+# in the branch's history waiting to be merged. Net-diff scanning cannot see add-then-remove, and
+# add-then-remove is the shape of every leak that someone notices late.
+#
+# So --range is now a component of --each rather than the CI entry point. Use --each in CI.
 MODE_RANGE=""
+if [ "$1" = "--each" ]; then
+  BASE="$2"
+  HEAD="${3:-HEAD}"
+  if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] \
+      || ! git rev-parse --verify --quiet "$BASE^{commit}" >/dev/null; then
+    BASE="$HEAD^"
+    git rev-parse --verify --quiet "$BASE^{commit}" >/dev/null || {
+      echo "check-fixture-hygiene: no usable base commit; nothing to compare." >&2; exit 0; }
+  fi
+  commits=$(git rev-list --reverse "$BASE..$HEAD")
+  if [ -z "$commits" ]; then
+    echo "check-fixture-hygiene: no commits in $BASE..$HEAD." >&2
+    exit 0
+  fi
+  # Each commit against its own first parent. A merge commit's second-parent content arrived on the
+  # branch it came from and was scanned there; re-scanning it here would report the whole merged
+  # branch as newly added on every merge.
+  rc=0
+  n=0
+  for c in $commits; do
+    n=$((n + 1))
+    if ! git rev-parse --verify --quiet "$c^1^{commit}" >/dev/null; then continue; fi
+    sh "$0" --range "$c^1" "$c" || rc=1
+  done
+  if [ "$rc" -eq 0 ]; then
+    echo "check-fixture-hygiene: clean -- scanned $n commit(s) individually in $BASE..$HEAD."
+  fi
+  exit "$rc"
+fi
+
 if [ "$1" = "--range" ]; then
   MODE_RANGE="yes"
   BASE="$2"
@@ -148,8 +187,23 @@ printf '%s\n' "$targets" | while IFS= read -r f; do
   added=$(git diff $DIFF_ARGS -- "$f" | grep -E '^\+' | grep -vE '^\+\+\+ (a/|b/|/dev/null)' | grep -v 'synthetic-ok' | cut -c2-)
   [ -z "$added" ] && continue
 
+  # BLOCKS, and it used to only warn. That was the defect that actually let a real 14-digit account
+  # number into a committed design note: the hook was not installed, CI scanned the net diff, AND
+  # even a direct hit would have printed a warning and exited 0. Three independent failures, of which
+  # this was the one that made the other two survivable.
+  #
+  # is_placeholder() carries the false-positive load, and it does carry it: a duration like
+  # 2592000000 has a run of four zeros, which is what that predicate looks for. A genuinely
+  # account-shaped number that is nonetheless invented needs a `synthetic-ok` marker on its line --
+  # the same escape hatch every other rule here uses, and a deliberate cost, because "it is fine,
+  # trust me" is exactly the judgement this script exists to stop being made silently.
   echo "$added" | grep -oE '[0-9]{10,}' | sort -u | while IFS= read -r hit; do
-    [ -n "$hit" ] && echo "$f: long digit sequence (account/card/reference number?) - $hit" >> "$warn"
+    [ -z "$hit" ] && continue
+    if is_placeholder "$hit"; then
+      echo "$f: long digit sequence (looks synthetic, allowed) - $hit" >> "$warn"
+    else
+      echo "$f: long digit sequence (account/card/reference number?) - $hit" >> "$block"
+    fi
   done
 
   echo "$added" | grep -oE '\b[A-Z]{4}0[A-Z0-9]{6}\b' | sort -u | while IFS= read -r hit; do

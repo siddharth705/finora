@@ -170,8 +170,20 @@ jobs:
       #
       # fetch-depth 0 and an explicit range because the hook diffs the INDEX, which does not exist
       # on a CI checkout -- see the script's --range flag.
+      # --each, not --range. A real account number reached a committed design note through this step
+      # while it read green, because --range diffs the NET result of the range: the value was added in
+      # one commit and redacted in a later one, so it was invisible to the comparison. --each scans
+      # every commit against its own parent, which is the only shape that catches add-then-remove.
+      #
+      # The self-test runs FIRST and is not optional. This check has now failed silently once, and the
+      # thing that let it was a rule that printed a warning and exited 0. The self-test asserts a
+      # synthetic account number is BLOCKED, that add-then-remove is caught, and that a clean range
+      # still passes -- a guard nobody has falsified is a guard nobody knows is running.
+      - name: Fixture hygiene (self-test)
+        run: sh scripts/test-fixture-hygiene.sh
+
       - name: Customer PII check
-        run: sh scripts/check-fixture-hygiene.sh --range "${{ github.event.pull_request.base.sha || github.event.before }}" "${{ github.sha }}"
+        run: sh scripts/check-fixture-hygiene.sh --each "${{ github.event.pull_request.base.sha || github.event.before }}" "${{ github.sha }}"
 
       # Same absence, same fix. Its own comment records the shipped production bug it exists to
       # prevent -- "a 401-handling fix landed on web, missed mobile, and shipped a bug where a
@@ -210,6 +222,15 @@ jobs:
 
       - name: Import cross-reference
         run: python3 scripts/check-imports.py
+
+      # corpus-diff.py is the regression gate for parser changes, and CI can never exercise it on
+      # real data: the corpus is real customer statements and lives outside the working tree by
+      # policy. So its logic is tested against synthetic records instead, which is the only way this
+      # gate gets tested at all. One of these tests also asserts the script names no bank and no
+      # corpus filename (ADR-004) -- a diff tool that knows what each file "should" produce is the
+      # assumption we are deliberately not building.
+      - name: Corpus diff (self-test)
+        run: python3 scripts/test-corpus-diff.py
 
       - uses: actions/setup-java@v5
         with:
