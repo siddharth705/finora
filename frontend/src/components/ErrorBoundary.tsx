@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { reportHandledError } from '../lib/monitoring';
+import { isStaleChunkError, recoverFromStaleChunk } from '../lib/staleChunk';
 
 /**
  * Catches a render error in the subtree below it and shows a recovery panel instead of letting
@@ -20,6 +21,11 @@ import { reportHandledError } from '../lib/monitoring';
  *
  * Still a class component: `componentDidCatch`/`getDerivedStateFromError` have no hook equivalent.
  * This is the one place in the codebase where that is the correct choice rather than a leftover.
+ *
+ * ONE ERROR IS HANDLED DIFFERENTLY. A lazy route whose chunk no longer exists on the server cannot
+ * be recovered by the retry button, because retrying re-requests the same missing file. That case
+ * reloads the document instead, once, guarded against loops -- see `componentDidCatch` and
+ * `lib/staleChunk.ts`. It reached production as an unrecoverable "Try again" that never worked.
  */
 
 interface Props {
@@ -40,6 +46,21 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    // A route chunk that no longer exists is the one failure the panel below cannot offer a way out
+    // of: `reset` re-renders, React re-attempts the same lazy import, and it fails identically. Only
+    // a document reload fetches HTML naming chunks that exist. See lib/staleChunk.ts for why this
+    // happens on every deploy to anyone with the app already open, and why the reload is guarded.
+    //
+    // Attempted BEFORE reporting, so the reporting decision can depend on whether we recovered.
+    if (isStaleChunkError(error) && recoverFromStaleChunk()) {
+      // The document is on its way out; anything after this races the unload. Deliberately NOT
+      // reported: a stale chunk immediately after a deploy is expected, self-healing, and would
+      // otherwise spike Sentry on every release with an error nobody should act on. The case worth
+      // hearing about is the one below, where the guard refused because a reload already failed --
+      // that is a broken deploy rather than a stale tab, and it reports normally.
+      return;
+    }
+
     // Only the component stack is attached, never the error message as `extra` -- see
     // reportHandledError's own comment on why a caught value's message can quote user data.
     reportHandledError(error, this.props.context);

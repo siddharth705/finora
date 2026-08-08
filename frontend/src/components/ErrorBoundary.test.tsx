@@ -27,6 +27,13 @@ function Boom(): React.ReactElement {
   throw new Error('render blew up');
 }
 
+/** The production failure: a lazy route whose chunk the last deploy replaced. */
+function StaleChunk(): React.ReactElement {
+  throw new Error(
+    'Failed to fetch dynamically imported module: https://app.example.com/assets/Login-00kC5-u3.js'
+  );
+}
+
 describe('ErrorBoundary', () => {
   it('renders its children untouched when nothing throws', () => {
     render(
@@ -113,5 +120,88 @@ describe('ErrorBoundary', () => {
 
     expect(await screen.findByText('recovered content')).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  /**
+   * A stale route chunk is the one error the retry button cannot fix -- retrying re-requests the
+   * same missing file. It shipped as an unrecoverable "Try again" that never worked: the user in
+   * the incident was stuck on /login with no way forward but a manual hard refresh.
+   */
+  describe('when a route chunk no longer exists on the server', () => {
+    let reload: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      window.sessionStorage.clear();
+      reload = vi.fn();
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: { ...window.location, reload },
+      });
+    });
+
+    afterEach(() => {
+      window.sessionStorage.clear();
+    });
+
+    it('reloads the document instead of offering a retry that cannot work', () => {
+      render(
+        <ErrorBoundary context="root">
+          <StaleChunk />
+        </ErrorBoundary>
+      );
+
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    /** A stale chunk right after a deploy is expected and self-healing. Reporting it would spike
+     *  the crash reporter on every release with an error nobody should act on. */
+    it('does not report a failure it is recovering from', () => {
+      render(
+        <ErrorBoundary context="root">
+          <StaleChunk />
+        </ErrorBoundary>
+      );
+
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The other half, and the one that matters for safety: once a reload has already been tried,
+     * the same failure means the FRESH html failed too. That is a broken deploy, not a stale tab.
+     * The user gets the panel and the team gets the report, instead of an endless reload cycle.
+     */
+    it('shows the panel and reports when a reload has already been attempted', () => {
+      render(
+        <ErrorBoundary context="root">
+          <StaleChunk />
+        </ErrorBoundary>
+      );
+      expect(reload).toHaveBeenCalledTimes(1);
+      reload.mockClear();
+
+      render(
+        <ErrorBoundary context="root">
+          <StaleChunk />
+        </ErrorBoundary>
+      );
+
+      expect(reload).not.toHaveBeenCalled();
+      expect(screen.getAllByRole('alert').length).toBeGreaterThan(0);
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+    });
+
+    /** An ordinary bug must never trigger a reload -- that would swap a readable error for a page
+     *  that reloads and then fails identically. */
+    it('leaves ordinary render errors on the retry path', () => {
+      render(
+        <ErrorBoundary context="root">
+          <Boom />
+        </ErrorBoundary>
+      );
+
+      expect(reload).not.toHaveBeenCalled();
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+    });
   });
 });
