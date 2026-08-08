@@ -236,12 +236,15 @@ jobs:
         working-directory: backend
         run: ./mvnw -B --no-transfer-progress test
 
-      # `if: always()` so the breakdown renders for a FAILING run too -- that is when knowing
-      # which classes failed, and whether the ITs ran at all, is worth most. It reports rather
-      # than re-judges: a genuine test failure is already the previous step's exit code, and this
-      # only adds a failure of its own for a hollow result (no reports, 0 tests, or 0 *IT).
+      # Runs on a FAILING run too -- that is when knowing which classes failed, and whether the ITs
+      # ran at all, is worth most. It reports rather than re-judges: a genuine test failure is
+      # already the previous step's exit code, and this only adds a failure of its own for a hollow
+      # result (no reports, 0 tests, or 0 *IT).
+      #
+      # `!cancelled()` rather than `always()`, which was the original and included the CANCELLED
+      # case. See the Guardian step below for the incident that changed it.
       - name: Test summary
-        if: always()
+        if: ${{ !cancelled() }}
         run: python3 scripts/summarize-surefire.py
 
       # guardian-report.py was the last checker referenced only in documentation -- never in CI,
@@ -249,13 +252,32 @@ jobs:
       # already records this repository diagnosing once, and it was left standing next to it.
       #
       # It joins GuardianRegistryTest's generated rule manifest against the surefire results, so it
-      # needs the test step to have run and adds no work of its own. `if: always()` for the same
-      # reason the summary uses it: on a failing run, knowing WHICH guardian rules broke is worth
-      # most. It reports rather than re-judges -- a failed rule is already the test step's exit
-      # code -- but it exits non-zero on a report it could not produce, so a manifest that stops
-      # being generated is a failure rather than silence.
+      # needs the test step to have run and adds no work of its own. It runs on a failing run for
+      # the same reason the summary does: knowing WHICH guardian rules broke is worth most then. It
+      # reports rather than re-judges -- a failed rule is already the test step's exit code -- but
+      # it exits non-zero on a report it could not produce, so a manifest that stops being generated
+      # is a failure rather than silence.
+      #
+      # `!cancelled()` rather than `always()`. `always()` also covers CANCELLATION, and cancellation
+      # is ROUTINE here: `concurrency.cancel-in-progress` kills the in-flight run on every push to a
+      # branch that already has one. The test step dies mid-suite, no target/guardian-rules.json is
+      # ever written, and this step then runs anyway and exits 2 with
+      #
+      #   Repository Guardian: no rule manifest found.
+      #
+      # -- which reads exactly like a broken architecture rule and is nothing of the sort. Observed
+      # on run 31245844373: "Run tests" cancelled, this step failure, every other step green.
+      #
+      # That is the failure mode this repository keeps writing down about its own checks: a red
+      # signal produced by routine activity is one people learn to scroll past, and the next real
+      # Guardian failure arrives into a stream nobody reads. The step's whole purpose is to make a
+      # broken rule visible.
+      #
+      # Deliberately NOT applied to the two teardown steps further down, which keep `always()`. A
+      # cancelled run is exactly when a leftover Postgres container or a backgrounded jar most needs
+      # killing -- there, covering cancellation is the point.
       - name: Repository Guardian report
-        if: always()
+        if: ${{ !cancelled() }}
         run: python3 scripts/guardian-report.py
 
       # The XML behind the summary, for reading a stack trace without re-running the suite.
