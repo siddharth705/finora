@@ -211,9 +211,9 @@ class FinancialProductClassifierTest {
     }
 
     @Test
-    void theRealCombinedStatementsThreeSectionsAreNotAllAccounts() {
+    void theRealCombinedStatementsSectionsAreNotAllAccounts() {
         // Against the captured trace of a real HDFC combined statement -- the document that exposed
-        // all three sections being offered as accounts.
+        // every section being offered as an account.
         var doc = new PdfTableLocator().locateAll(PdfTrace.load("hdfc-composite-deposit-schedules"), null);
 
         List<FinancialProductType> detected = doc.sections().stream()
@@ -222,14 +222,20 @@ class FinancialProductClassifierTest {
                         s.auxiliaryText(), s.rows().size())).type())
                 .toList();
 
-        assertThat(detected).hasSize(3);
+        assertThat(detected).hasSize(4);
         assertThat(detected.get(0))
                 .as("the savings account, the only section carrying a ledger")
                 .isEqualTo(FinancialProductType.SAVINGS);
 
-        // The two deposit schedules must not be offered as accounts. They previously classified as
-        // SAVINGS -- confidently, and wrongly -- because a single "Deposit(Mnth)" column satisfied
-        // the old any-one-keyword ledger test.
+        // Four sections, not three: the fourth is the fixed-deposit schedule WRAPPED_HEADER made
+        // visible. It was never misclassified before, because it was never located -- its heading
+        // is printed across two visual lines and neither is a header on its own. A section that
+        // does not exist cannot be offered as an account, so this test could not have caught it;
+        // that is what the trace regression test is for.
+        //
+        // The three deposit schedules must not be offered as accounts. They previously classified
+        // as SAVINGS -- confidently, and wrongly -- because a single "Deposit(Mnth)" column
+        // satisfied the old any-one-keyword ledger test.
         //
         // Note what this asserts and what it does not. Neither section reaches FIXED_DEPOSIT here,
         // because this fixture's own capture redacted the words "Maturity" and "Mnth" out of its
@@ -242,6 +248,9 @@ class FinancialProductClassifierTest {
                 .as("a deposit schedule is not an account")
                 .isNotEqualTo(FinancialProductType.Domain.ACCOUNT);
         assertThat(detected.get(2).domain())
+                .as("a deposit schedule is not an account")
+                .isNotEqualTo(FinancialProductType.Domain.ACCOUNT);
+        assertThat(detected.get(3).domain())
                 .as("a deposit schedule is not an account")
                 .isNotEqualTo(FinancialProductType.Domain.ACCOUNT);
     }

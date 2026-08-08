@@ -122,10 +122,13 @@ class TraceFixtureRegressionTest {
         PdfTableLocator.LocatedDocument doc =
                 new PdfTableLocator().locateAll(PdfTrace.load(HDFC_COMBINED_TRACE), null);
 
-        // All three tables are correctly LOCATED -- that part was never the bug. What each one IS
-        // (savings / term deposit / recurring deposit) is the job of the product-classification
-        // stage; this test pins the extraction it will be built on top of.
-        assertThat(doc.sections()).hasSize(3);
+        // Four tables, not three. The fourth is this statement's fixed-deposit schedule, and it
+        // was not "classified wrongly" before WRAPPED_HEADER -- it was not located AT ALL, because
+        // its heading is printed across two visual lines and neither line is a header on its own
+        // (see PdfTableLocator.HEADER_WRAP_MAX_GAP). Nine deposits were invisible while the import
+        // reported success. What each table IS (savings / term deposit / recurring deposit) is the
+        // job of the product-classification stage; this test pins the extraction it is built on.
+        assertThat(doc.sections()).hasSize(4);
 
         // Counted by date-anchored rows rather than by total rows. This assertion used to read
         // "more than 100 rows", and 52 of those were not transactions: this statement wraps each
@@ -142,6 +145,60 @@ class TraceFixtureRegressionTest {
         assertThat(transactions)
                 .as("the savings account's own transaction table")
                 .isGreaterThan(70);
+    }
+
+    @Test
+    void theFixedDepositScheduleIsLocated_withItsHeadingReadAcrossBothLines() {
+        DocumentContext ctx = new DocumentContext("PDF", "TraceFixtureRegressionTest");
+
+        PdfTableLocator.LocatedDocument doc =
+                new PdfTableLocator().locateAll(PdfTrace.load(HDFC_COMBINED_TRACE), ctx);
+
+        assertThat(ctx.capabilities()).extracting("capability").contains("WRAPPED_HEADER");
+
+        // Asserted on the COLUMN NAMES rather than on a row count, because the names are what
+        // prove the two heading lines were joined the right way round and on the right x. Each one
+        // below is a cell from the upper line followed by the cell printed beneath it -- "FD" over
+        // "Number", "Open/Value" over "Date". Recognising only the lower line (the shape of the
+        // original bug) would name this column "Date" and anchor it 3.11pt to the left; joining on
+        // the wrong neighbour would pair "Date" with the wrong word entirely.
+        //
+        // Several names are still partly masked: the redactor's allowlist had no deposit
+        // vocabulary when this trace was captured, so "Principal", "Maturity" and "Rate Of
+        // Interest" were replaced with same-length filler. That limits what this document can be
+        // asked about its CONTENT -- see FinancialProductClassifierTest for the same limitation --
+        // but not what it proves about STRUCTURE, which is geometry and survives redaction intact.
+        List<String> columns = List.copyOf(doc.sections().get(1).rows().stream()
+                .flatMap(row -> row.keySet().stream()).distinct().toList());
+        assertThat(columns).contains("FD Number", "FD CCY", "Open/Xxxx Xxxxx Date", "Nomination Registered");
+
+        long dated = doc.sections().get(1).rows().stream()
+                .map(row -> row.get("Open/Xxxx Xxxxx Date"))
+                .filter(date -> date != null && CsvParser.parseDate(date.trim()) != null)
+                .count();
+        assertThat(dated)
+                .as("deposits that now anchor on their own date, where the whole table used to "
+                        + "collapse into a single unparseable row")
+                .isGreaterThanOrEqualTo(5);
+    }
+
+    @Test
+    void theRecurringDepositInstallmentScheduleKeepsEveryInstallment() {
+        // The same fix reaches a second table in this document. This schedule's heading is also
+        // wrapped ("Instalment" over "Number", "Instalment Amt" over "Due"), and every installment
+        // after the first used to merge into one row for the same reason: no row could anchor,
+        // because the date column was named "Xxxxxxx. Due Date" and the anchor check compared that
+        // whole string against "date". See PdfTableLocator.hasDateValue.
+        List<Map<String, String>> rows = new PdfTableLocator()
+                .locateAll(PdfTrace.load(HDFC_COMBINED_TRACE), null).sections().get(3).rows();
+
+        long installments = rows.stream()
+                .map(row -> CsvParser.firstNonBlank(row, "due date"))
+                .filter(date -> date != null && CsvParser.parseDate(date.trim()) != null)
+                .count();
+        assertThat(installments)
+                .as("the statement prints six paid installments in this schedule")
+                .isEqualTo(6);
     }
 
     @Test

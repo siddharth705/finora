@@ -340,30 +340,49 @@ class PdfPipelineDiagnostic {
      * "0 section(s) found" and then skip the entire per-section loop -- going completely silent in
      * the exact case an engineer most needs it (a document that imported "successfully" with zero
      * transactions). Two real statements hit this. Now it dumps the reconstructed lines and, for
-     * each, scores it against the two conditions {@code looksLikeHeaderRow} actually requires
-     * (a cell normalizing to "date", plus >= 2 recognized header names), so the near-miss line is
-     * visible immediately rather than needing a separate one-off probe to find.
+     * each, scores it against the conditions {@code looksLikeHeaderRow} actually requires, so the
+     * near-miss line is visible immediately rather than needing a separate one-off probe to find.
+     *
+     * <p>The scoring here has to be kept honest against that method, and twice has not been. It
+     * reported a bare cell equal to "date" long after detection moved to DATE_HINTS matched per
+     * word, so a line headed "Txn Date" scored {@code date=false} and read as a non-candidate --
+     * pointing an investigator away from the one line that was nearly right. It also predates the
+     * density condition and WRAPPED_HEADER entirely. All three are reflected below; a diagnostic
+     * that misstates the rule is worse than no diagnostic, because it is believed.
      */
     private void reportHeaderDetectionFailure(PdfTableLocator tableLocator, List<PositionedText> positioned) {
         // locate() (single-table wrapper) returns every reconstructed line as preTableLines when no
         // header was ever recognized -- exactly the "what did the parser actually see" view needed
         // here, without duplicating PdfTableLocator's private line-grouping logic.
         List<String> lines = tableLocator.locate(positioned).preTableLines();
-        System.out.println("  [HEADER DETECTION FAILED] No row satisfied: a cell normalizing to \"date\""
-                + " AND >= 2 cells matching known header names.");
+        System.out.println("  [HEADER DETECTION FAILED] No row satisfied ALL of: a cell naming a date"
+                + " column, >= 2 cells matching known header names, and >= 1/3 of the row's cells"
+                + " recognized (the density check that keeps prose out).");
+        System.out.println("  Adjacent lines were also scored MERGED, as one wrapped heading"
+                + " (WRAPPED_HEADER) -- so a near-miss below failed both on its own and joined to"
+                + " its neighbour.");
         System.out.println("  Reconstructed lines (" + lines.size() + "), scored as header candidates:");
         List<String> nearMisses = new ArrayList<>();
         for (int i = 0; i < lines.size(); i++) {
             String line = lines.get(i);
+            String[] cells = line.split("\\s{2,}|\\t");
             int hits = 0;
             boolean hasDate = false;
-            for (String cell : line.split("\\s{2,}|\\t")) {
+            for (String cell : cells) {
                 String normalized = CsvParser.normalizeHeaderCell(cell);
                 if (TransactionNormalizer.recognizedColumnNames().contains(normalized.toLowerCase())) hits++;
-                if (normalized.equals("date") || normalized.equals("date & time")) hasDate = true;
+                // Per word, matching DATE_HINTS the way looksLikeHeaderRow does -- "Txn Date" and
+                // "Value Date" name the date column just as much as a bare "Date" does.
+                for (String word : normalized.split("\\s+")) {
+                    String bare = word.replaceAll("^[^a-z0-9]+|[^a-z0-9]+$", "");
+                    if (bare.equals("date")) hasDate = true;
+                }
+                if (normalized.equals("date & time")) hasDate = true;
             }
             if (hits > 0 || hasDate) {
-                nearMisses.add("    line " + i + " [hints=" + hits + " date=" + hasDate + "] " + line);
+                boolean dense = hits * 3 >= cells.length;
+                nearMisses.add("    line " + i + " [hints=" + hits + "/" + cells.length
+                        + " date=" + hasDate + " dense=" + dense + "] " + line);
             }
         }
         if (nearMisses.isEmpty()) {
