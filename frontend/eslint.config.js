@@ -14,7 +14,11 @@ import reactHooks from 'eslint-plugin-react-hooks';
 export default tseslint.config(
   { ignores: ['dist/**', 'node_modules/**', 'src/test/**'] },
   {
-    files: ['src/**/*.{ts,tsx}'],
+    // 'functions' is in scope for the same reason it was added to tsconfig's include: Cloudflare
+    // compiles the Pages Functions separately at deploy time, so nothing in the app's own build
+    // looks at them. An unhandled promise in functions/assets/ would affect every asset request in
+    // production, which is exactly the bug class this config was written to catch.
+    files: ['src/**/*.{ts,tsx}', 'functions/**/*.ts'],
     extends: [js.configs.recommended, ...tseslint.configs.recommendedTypeChecked],
     // Registers the plugin the codebase's own pre-existing `// eslint-disable-next-line
     // react-hooks/exhaustive-deps` comments already assume exists (they predate ESLint actually
