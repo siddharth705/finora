@@ -108,6 +108,20 @@ experiments/
 # Temporary Financial Documents
 # ============================================================================================
 
+# Logo/brand source material and generation drafts.
+#
+# The finalised assets are committed at their real destinations -- mobile/assets/,
+# frontend/src/assets/, frontend/public/ and the admin-portal equivalents -- so a working directory
+# full of candidates is source material, not product. `logo/` held eleven generated variants of the
+# same mark, ~9.8 MB, of which four were used; committing the set would put the nine rejected ones
+# in history permanently.
+#
+# Ignored rather than merely uncommitted because this repository has now had three unrelated
+# untracked directories appear in the working tree in a single day (an Expo scaffold, a folder of
+# real bank statements, and this), and `git add -A` does not ask.
+logo/
+brand-source/
+
 # Real customer statements used for debugging.
 # Never commit financial documents containing customer information.
 backend/scratch-pdf/

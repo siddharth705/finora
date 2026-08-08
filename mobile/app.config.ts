@@ -44,10 +44,24 @@ const config: ExpoConfig = {
   android: {
     package: 'com.finora.app',
     ...(existsSync(here(androidGoogleServices)) ? { googleServicesFile: androidGoogleServices } : {}),
+    // Adaptive icon: a solid brand-navy plate with the Finora mark as the foreground layer.
+    //
+    // `backgroundColor` and NO `backgroundImage`, deliberately. Expo passes a supplied
+    // backgroundImage straight through to Android, where it WINS over backgroundColor -- and the
+    // image previously named here was `android-icon-background.png`, the pale blue grid from the
+    // Expo template. So the colour on this line was decorative: every Android launcher was drawing
+    // the template's background, not ours. Dropping the key is what makes the colour take effect,
+    // which is why the file it pointed at is deleted rather than left in place unused.
+    //
+    // #020E32 is sampled from the mark's own navy plate, so the foreground meets the background
+    // with no visible seam when a launcher masks the icon to a circle.
+    //
+    // foregroundImage is inset to ~52% of its canvas on purpose. Android reserves the outer third
+    // for mask and parallax, guaranteeing only the inner 66% is visible, so artwork drawn to the
+    // edge loses its extremities to whatever shape the launcher picks.
     adaptiveIcon: {
-      backgroundColor: '#E6F4FE',
+      backgroundColor: '#020E32',
       foregroundImage: './assets/android-icon-foreground.png',
-      backgroundImage: './assets/android-icon-background.png',
       monochromeImage: './assets/android-icon-monochrome.png',
     },
     predictiveBackGestureEnabled: false,
