@@ -513,9 +513,19 @@ jobs:
       # of prod would still not have caught this. The credentials are the gate, so the credentials
       # are what this step supplies.
       #
-      # The key is generated here and thrown away. It never authenticates against Google: nothing in
-      # this path makes a network call, it only has to parse as a service account so that
-      # getApplicationDefault() succeeds and the class-loading path downstream of it executes.
+      # The key is generated here and thrown away. Its only job is to be parseable as a service
+      # account, so that getApplicationDefault() succeeds and the class-loading path downstream of
+      # it executes; it is never a real credential for a real project. Deliberately NOT claiming
+      # anything here about whether initialization makes a network call -- that is the SDK's
+      # business and it can change between versions, and this step does not depend on the answer.
+      #
+      # WHAT THIS DOES NOT COVER, so nobody reads it as more than it is: it proves the jar STARTS.
+      # An integration whose classes load lazily can still start clean and then fail on the first
+      # real request, which is the same failure one layer later. Closing that needs a smoke test
+      # that hits one endpoint per critical integration and asserts the response is a normal
+      # application error rather than a linkage error -- note the call does not have to SUCCEED to
+      # be worth making, since a NoClassDefFoundError surfaces before any auth or network failure
+      # would. Not built yet.
       #
       # Deliberately asserts on the ERROR CLASS, not on a list of expected jars. Verified against
       # both a broken and a fixed build of this exact jar, and the broken one names a DIFFERENT
