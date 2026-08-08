@@ -158,7 +158,7 @@ class RuleEngineServiceTest {
                 "UPI/DR/", CategoryRule.ActionType.ASSIGN_CATEGORY, "UPI Debit", 100);
         stub(List.of(), List.of(r));
 
-        assertThat(ruleEngineService.evaluateCategoryRule(userId, "UPI/DR/620309707458/MIDORI", null, null, null)).isPresent();
+        assertThat(ruleEngineService.evaluateCategoryRule(userId, "UPI/DR/900077778888/MERCHANT", null, null, null)).isPresent();
         assertThat(ruleEngineService.evaluateCategoryRule(userId, "SOMETHING UPI/DR/ IN THE MIDDLE", null, null, null)).isEmpty();
     }
 
