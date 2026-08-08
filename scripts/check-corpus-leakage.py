@@ -200,10 +200,15 @@ def main() -> int:
     ns = needles(corpus_text(corpus))
     print(f"corpus identifiers + prefixes to match: {len(ns)}", file=sys.stderr)
 
-    listfile = REPO_ROOT / "backend" / "target" / "corpus-needles.txt"
-    listfile.write_text("\n".join(sorted(ns)))
-    hits = subprocess.run(["git", "grep", "-nF", "-f", str(listfile), "--", "."],
-                          cwd=REPO_ROOT, capture_output=True, text=True).stdout.splitlines()
+    # Patterns go to git grep on STDIN, so the needle list is never written anywhere. An earlier
+    # version persisted it to backend/target/corpus-needles.txt: thousands of real customer
+    # identifiers, materialised inside the repository tree on every run. Gitignored, so it would never
+    # have been committed -- and that is exactly the reasoning this incident exists to reject. The
+    # rule is that real customer data must not become a development artefact, not merely that it must
+    # not be committed, and a build directory is a development artefact.
+    hits = subprocess.run(["git", "grep", "-nF", "-f", "-", "--", "."],
+                          cwd=REPO_ROOT, input="\n".join(sorted(ns)),
+                          capture_output=True, text=True).stdout.splitlines()
     hits = [h for h in hits if not SKIP.match(h.split(":", 1)[0])]
 
     # SYMMETRY. The pass above greps literally, so it only catches a corpus value that is spaced in
@@ -229,13 +234,28 @@ def main() -> int:
             for d in separated_digits(line) & corpus_digits:
                 hits.append(f"{rel}:{n_}: separator-split corpus identifier ({len(d)} digits)")
 
+    # Fails the run rather than warning: a scanner that leaves customer identifiers behind has
+    # created the problem it exists to find.
+    leftover = [p for p in (REPO_ROOT / "backend" / "target").glob("corpus-needles*")]
+    if leftover:
+        sys.exit(f"REFUSED: this scan persisted corpus identifiers to {leftover[0]}. "
+                 "Needles must stay in memory; see the comment above the git grep call.")
+
     if not hits:
         print("clean -- no corpus identifier occurs in tracked content.")
         return 0
 
-    print("\nREAL CUSTOMER IDENTIFIERS FOUND IN TRACKED CONTENT:", file=sys.stderr)
+    # LOCATIONS AND CATEGORIES ONLY -- never the value, and never the matching line. The line would
+    # carry the identifier straight into a terminal, a CI log, a pasted report or a redirected file,
+    # which is how this scanner's own diagnostic output became a copy of the data during the incident.
+    # A file and a line number is enough to act on; the value is not needed to fix it.
+    print("\nCORPUS-DERIVED IDENTIFIERS FOUND IN TRACKED CONTENT:", file=sys.stderr)
     for h in hits:
-        print(f"  {h[:160]}", file=sys.stderr)
+        parts = h.split(":", 2)
+        where = ":".join(parts[:2]) if len(parts) >= 2 else h
+        kind = parts[2].strip() if len(parts) > 2 and parts[2].strip().startswith(
+            "separator-split") else "matches a corpus identifier"
+        print(f"  {where}  {kind}", file=sys.stderr)
     print(f"\n{len(hits)} line(s). These are verified occurrences, not pattern guesses.\n"
           "Replace with deterministic synthetic values that preserve what each test asserts.\n"
           "Do NOT paste the offending values into a file in this repository to track the work.",
