@@ -1,8 +1,9 @@
 import {
-  buildNewAccountPayload, buildRowPayload, initialAccountForm, initialCategories, initialInclusion,
+  buildNewAccountPayload, buildRowPayload, initialAccountForm, initialCategories,
   type NewAccountForm,
 } from './importPayload';
-import type { DetectedAccountInfo, StagedRow } from '../types';
+import { beginReview, type RowReview } from './importReview';
+import type { DetectedAccountInfo, DuplicateMatch, StagedRow } from '../types';
 
 const row = (over: Partial<StagedRow> = {}): StagedRow => ({
   date: '2026-08-01',
@@ -15,7 +16,34 @@ const row = (over: Partial<StagedRow> = {}): StagedRow => ({
   likelyDuplicate: false,
   referenceNumber: null,
   balanceAfter: null,
+  duplicateMatch: null,
   ...over,
+});
+
+/** A row the engine questioned: `likelyDuplicate` AND the evidence behind it, because the review
+ *  keys on the evidence and the two must not be able to disagree. */
+const flagged = (over: Partial<StagedRow> = {}): StagedRow =>
+  row({ likelyDuplicate: true, duplicateMatch: match(), ...over });
+
+const match = (over: Partial<DuplicateMatch> = {}): DuplicateMatch => ({
+  existingTransactionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  existingAccountId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+  existingDate: '2026-08-01',
+  existingDescription: 'ACME STORES',
+  existingAmount: 1200,
+  existingType: 'EXPENSE',
+  existingImportedAt: '2026-08-02T09:00:00Z',
+  matchCount: 1,
+  confidence: 'EXACT',
+  reason: 'Same date, amount and description as a transaction already in your ledger.',
+  ...over,
+});
+
+/** The include flags a caller would hold after answering nothing -- used where a test only cares
+ *  about a field being carried through, not about the duplicate gate. */
+const included = (flags: boolean[]): RowReview => ({
+  included: flags,
+  decisions: flags.map(() => 'import'),
 });
 
 const detected = (over: Partial<DetectedAccountInfo> = {}): DetectedAccountInfo =>
@@ -61,7 +89,7 @@ describe('buildRowPayload', () => {
   // record. Nothing failed -- the ledger just lost them.
   it('carries referenceNumber and balanceAfter through from staging', () => {
     const rows = [row({ referenceNumber: 'CHQ-77', balanceAfter: 8400 })];
-    const [out] = buildRowPayload(rows, [true], ['Shopping']);
+    const [out] = buildRowPayload(rows, included([true]), ['Shopping']);
     expect(out.referenceNumber).toBe('CHQ-77');
     expect(out.balanceAfter).toBe(8400);
   });
@@ -70,25 +98,54 @@ describe('buildRowPayload', () => {
   // merchant map, or an unresolved guess the user left alone.
   it('preserves categorySource and ruleId unchanged through review', () => {
     const rows = [row({ categorySource: 'user_rule', ruleId: 'rule-1' })];
-    const [out] = buildRowPayload(rows, [true], ['Groceries']);
+    const [out] = buildRowPayload(rows, included([true]), ['Groceries']);
     expect(out.categorySource).toBe('user_rule');
     expect(out.ruleId).toBe('rule-1');
   });
 
   it('uses the reviewed category, not the suggested one', () => {
-    const [out] = buildRowPayload([row({ suggestedCategory: 'Other' })], [true], ['Dining']);
+    const [out] = buildRowPayload([row({ suggestedCategory: 'Other' })], included([true]), ['Dining']);
     expect(out.category).toBe('Dining');
   });
 
   it('reflects the include toggle per row', () => {
-    const out = buildRowPayload([row(), row(), row()], [true, false, true], ['A', 'B', 'C']);
+    const out = buildRowPayload([row(), row(), row()], included([true, false, true]), ['A', 'B', 'C']);
     expect(out.map((r) => r.include)).toEqual([true, false, true]);
   });
 
   it('reports likelyDuplicate honestly rather than hiding excluded rows', () => {
-    const [out] = buildRowPayload([row({ likelyDuplicate: true })], [false], ['Shopping']);
+    const [out] = buildRowPayload([flagged()], { included: [false], decisions: ['skip'] }, ['Shopping']);
     expect(out.likelyDuplicate).toBe(true);
     expect(out.include).toBe(false);
+  });
+
+  /**
+   * The field this app never sent. Without it the backend defaults it to false, so a row the user
+   * explicitly imported is re-flagged by the next reconciliation pass and stripped from every spend
+   * total -- the decision visible in the ledger and absent from the numbers. V65 measured that on
+   * the web path before it was fixed there.
+   */
+  describe('confirmedNotDuplicate — the user answer, not the engine guess', () => {
+    it('is true only when the user chose to import a row the engine questioned', () => {
+      const rows = [flagged()];
+      const [out] = buildRowPayload(rows, { included: [true], decisions: ['import'] }, ['Shopping']);
+      expect(out.confirmedNotDuplicate).toBe(true);
+    });
+
+    it('is false when the user skipped the row', () => {
+      const [out] = buildRowPayload([flagged()], { included: [false], decisions: ['skip'] }, ['Shopping']);
+      expect(out.confirmedNotDuplicate).toBe(false);
+    });
+
+    // A client must not be able to claim a decision the user was never asked to make. An ordinary
+    // row is 'import' from the start -- that is a default, not an answer, and asserting it as one
+    // would tell reconciliation a human had cleared a row nobody ever looked at.
+    it('is false for a row the engine never questioned, even though it imports', () => {
+      const rows = [row()];
+      const [out] = buildRowPayload(rows, beginReview(rows), ['Shopping']);
+      expect(out.include).toBe(true);
+      expect(out.confirmedNotDuplicate).toBe(false);
+    });
   });
 });
 
@@ -173,10 +230,13 @@ describe('buildNewAccountPayload', () => {
 });
 
 describe('initial review state', () => {
-  // Confirming without reading every row must not silently double-import.
-  it('excludes flagged duplicates by default', () => {
-    expect(initialInclusion([row(), row({ likelyDuplicate: true }), row()])).toEqual([true, false, true]);
-  });
+  // "excludes flagged duplicates by default" used to sit here, asserting initialInclusion's
+  // `!likelyDuplicate`. It passed for as long as it existed and was testing the defect: excluding
+  // the row was only ever half the behaviour, and the half it did not assert -- that a question had
+  // been asked and left unanswered -- did not exist. The replacement is
+  // importReview.test.ts's "never unticks a row without also recording that nobody has answered
+  // for it", which asserts both halves together because beginReview cannot produce one without the
+  // other.
 
   it('starts each row at its suggested category', () => {
     expect(initialCategories([row({ suggestedCategory: 'Dining' }), row({ suggestedCategory: 'Fuel' })]))
