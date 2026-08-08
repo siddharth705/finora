@@ -87,9 +87,23 @@ fi
 # predates the check is invisible forever. A real account number sat in a committed doc for months
 # while every PR went green, because no PR touched that line. The invariant the repository actually
 # needs is "no identifier exists in tracked content", not "no PR adds one".
+#   --tree-ratchet         --tree, but compared against a recorded baseline count instead of
+#                          failing on any finding. The tree currently reports 384 matches, of which
+#                          31 are values verified against the real corpus and the rest are annotation
+#                          debt on genuinely synthetic fixtures. A gate that fails on all 384 would be
+#                          "fixed" by loosening the patterns, which is the opposite of the point. A
+#                          ratchet lets the number only ever go DOWN, so nobody can add a suspicious
+#                          pattern while the cleanup proceeds -- and the baseline is lowered as
+#                          sanitization verifies each reduction, never to make CI quiet.
 MODE_TREE=""
+MODE_RATCHET=""
+BASELINE_FILE="$(git rev-parse --show-toplevel 2>/dev/null)/scripts/tree-hygiene-baseline.txt"
 if [ "$1" = "--tree" ]; then
   MODE_TREE="yes"
+fi
+if [ "$1" = "--tree-ratchet" ]; then
+  MODE_TREE="yes"
+  MODE_RATCHET="yes"
 fi
 
 if [ "$1" = "--range" ]; then
@@ -254,6 +268,30 @@ printf '%s\n' "$targets" | while IFS= read -r f; do
     fi
   done
 done
+
+if [ -n "$MODE_RATCHET" ]; then
+  found=$(wc -l < "$block" | tr -d ' ')
+  baseline=$(tr -dc '0-9' < "$BASELINE_FILE" 2>/dev/null)
+  if [ -z "$baseline" ]; then
+    echo "check-fixture-hygiene: no baseline at $BASELINE_FILE" >&2
+    exit 1
+  fi
+  if [ "$found" -gt "$baseline" ]; then
+    echo "TREE RATCHET FAILED: $found pattern matches, baseline is $baseline." >&2
+    echo "Something added a suspicious pattern. The ratchet only moves DOWN." >&2
+    echo "Do NOT raise the baseline or loosen the patterns to clear this." >&2
+    echo "" >&2
+    sed 's/^/  /' "$block" >&2
+    exit 1
+  fi
+  if [ "$found" -lt "$baseline" ]; then
+    echo "tree ratchet: $found matches, baseline $baseline -- DOWN by $((baseline - found))."
+    echo "Lower the baseline in scripts/tree-hygiene-baseline.txt once the reduction is verified."
+    exit 0
+  fi
+  echo "tree ratchet: $found matches, at the baseline of $baseline."
+  exit 0
+fi
 
 if [ -s "$warn" ]; then
   echo "" >&2
