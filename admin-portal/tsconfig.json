@@ -15,5 +15,9 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+    // "functions" alongside "src" so the Cloudflare Pages Functions are type-checked by the same
+  // `tsc -b` the build runs. Cloudflare compiles them separately at deploy time, so without this
+  // they are the one directory that can ship a type error to production with a green build -- and
+  // functions/assets/ sits in front of every asset request.
+  "include": ["src", "functions"]
 }

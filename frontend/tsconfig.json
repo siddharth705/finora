@@ -15,5 +15,10 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  // "functions" alongside "src" so the Cloudflare Pages Functions are type-checked by the same
+  // `tsc -b` the build already runs. They are NOT part of the Vite bundle -- Cloudflare compiles
+  // them separately at deploy time -- which means without this they were the one directory in the
+  // app that could ship a type error to production with a green build. `functions/assets/` sits in
+  // front of every asset request, so that is the worst place in the project to have no check.
+  "include": ["src", "functions"]
 }

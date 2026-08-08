@@ -1,0 +1,23 @@
+# Cloudflare Pages response headers. Vite copies public/ verbatim into dist/, so this ships with
+# the build.
+#
+# ONLY the hashed-asset rule is here, deliberately. index.html is already served as
+# "public, max-age=0, must-revalidate" by Pages' own defaults -- verified against production -- and
+# that is exactly right: the HTML must be revalidated every load, because it is the file that names
+# which chunk hashes are current. Restating it here would add a second place to get it wrong.
+#
+# Worth being clear about what this does and does not fix. It does NOT prevent the stale-chunk
+# failure that motivated it. That failure happens to a tab which was ALREADY OPEN across a deploy:
+# the module graph in memory holds the old hashes, and client-side navigation never re-fetches the
+# HTML, so no cache header on any file can help. src/lib/staleChunk.ts is what handles that. This
+# is a straightforward performance change that happens to live next door to it.
+
+/assets/*
+  # Safe to cache forever because the filename IS the content hash: Vite emits a new name whenever
+  # the bytes change, so a cached copy can never be wrong -- it can only be unreferenced. Pages
+  # defaults these to max-age=14400 with must-revalidate, which makes a returning visitor
+  # revalidate every asset after four hours to be told, every time, that nothing changed.
+  #
+  # `immutable` is the half that matters most: without it a browser still revalidates on reload,
+  # which is precisely when a user is most likely to be in a hurry.
+  Cache-Control: public, max-age=31536000, immutable

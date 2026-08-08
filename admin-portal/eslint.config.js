@@ -12,7 +12,9 @@ import reactHooks from 'eslint-plugin-react-hooks';
 export default tseslint.config(
   { ignores: ['dist/**', 'node_modules/**', 'src/test/**'] },
   {
-    files: ['src/**/*.{ts,tsx}'],
+    // 'functions' for the same reason it is in tsconfig's include: Cloudflare compiles the Pages
+    // Functions separately, so nothing in this app's own build looks at them.
+    files: ['src/**/*.{ts,tsx}', 'functions/**/*.ts'],
     extends: [js.configs.recommended, ...tseslint.configs.recommendedTypeChecked],
     // Registers the plugin so any pre-existing `// eslint-disable-next-line
     // react-hooks/exhaustive-deps` comments resolve to a real rule instead of erroring as
