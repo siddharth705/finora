@@ -6,6 +6,13 @@ Phased plan derived from [`TESTING_AND_QUALITY_TOOLING_REVIEW.md`](TESTING_AND_Q
 the proposed tools are already implemented; two of them are not enforcing anything, and one whole
 tier of the system has no error reporting. Those are worth more than any new adoption.
 
+> **Status update — 2026-08-08. Phase 1 is done and the backend error-reporting gap is closed.**
+> Playwright runs as a blocking `smoke` job on every PR, and backend Sentry exists
+> (`com.finora.observability`). The phases below are left as written because the sequencing argument
+> is still the right one, but **the present-tense "not enforcing anything" and "no error reporting"
+> framing is out of date** and is annotated where it appears. What actually remains in Phase 1 is the
+> nightly cross-browser slot (1.3).
+
 ---
 
 ## Deviations from the proposed phasing
@@ -13,9 +20,10 @@ tier of the system has no error reporting. Those are worth more than any new ado
 The suggested order was Foundation → Security → Observability → Analytics → Performance →
 Modernization. Three changes:
 
-1. **Observability moves ahead of Security.** The backend has no error monitoring at all. A
-   production exception in the import pipeline is currently invisible. That outranks scanning for
-   vulnerabilities we have no evidence of.
+1. **Observability moves ahead of Security.** ~~The backend has no error monitoring at all. A
+   production exception in the import pipeline is currently invisible.~~ **— DONE.** Backend Sentry
+   landed (`com.finora.observability`); the reordering argument is kept because it is why that work
+   came first. That outranked scanning for vulnerabilities we have no evidence of.
 2. **Performance moves to "on trigger", not a phase.** k6 without metrics means load-testing
    something you cannot observe. It is gated on Phase 2 existing, and on a scaling trigger firing —
    not on a calendar.
@@ -45,15 +53,17 @@ local build.
 
 Nothing new is installed in this phase. Both items are capabilities we paid for and are not using.
 
-### 1.1 Playwright in CI — **P0**
+### 1.1 Playwright in CI — ~~**P0**~~ **DONE (2026-08-08)**
 
-9 specs and 8 browser/viewport projects that run only when someone remembers.
+Was: 9 specs and 8 browser/viewport projects that run only when someone remembers. Now 12 spec files
+/ 112 cases, with the Chromium smoke subset blocking every PR.
 
-- Fifth CI job, **Chromium-only**, on every push (~2–3 min)
-- Firefox / Edge / tablet / mobile projects move to the nightly job (Phase 1.3)
-- Publish the Playwright HTML report as an artifact on failure
-- **Blocked on:** `e2e/` settling — another engineer has `playwright.config.ts` and `package.json`
-  open, and two admin-portal specs landed during this review. Needs a short handoff first.
+- ~~Fifth CI job, **Chromium-only**, on every push (~2–3 min)~~ — shipped as the `smoke` job, which
+  also stands up Postgres, builds and boots the backend, and runs a production-classpath check
+- **Still open:** Firefox / Edge / tablet / mobile projects were to move to the nightly job
+  (Phase 1.3). There is no nightly job yet, so they remain manual (`npm run test:browsers`)
+- ~~Publish the Playwright HTML report as an artifact on failure~~ — shipped, plus the backend log
+- ~~**Blocked on:** `e2e/` settling~~ — resolved
 
 **Effort** ~2h. **Risk:** flake. Start Chromium-only; treat a flaky spec as broken, never as a retry
 candidate.
