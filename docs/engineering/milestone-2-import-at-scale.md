@@ -347,13 +347,17 @@ backlog stays in the maintenance track.
 **Security and production readiness.** Release-blocking engineering work, prioritised and done
 during this milestone, not defining it:
 
-- Access tokens survive session revocation — a stolen token stays valid up to 15 minutes after the
-  platform has concluded it was stolen. `JwtAuthFilter` already extracts `sid`; closing this means
-  validating it.
+- ~~Access tokens survive session revocation~~ — **closed.** `JwtAuthFilter` validates the `sid`
+  claim against `SessionValidator.isSessionLive` rather than merely extracting it.
 - The refresh token is still written to `localStorage`, so the XSS mitigation the HttpOnly cookie
-  exists for is not delivered (Bug 03, partial).
-- Account scope is absent from the JWT and unread at authorization time (Bug 18, partial).
-- Login reveals account existence for suspended accounts before authentication (finding #4).
+  exists for is not delivered (Bug 03, partial). **Still open** — the only one of these four that is.
+- ~~Account scope is absent from the JWT~~ — **closed.** `JwtService.generateToken` carries a
+  `scope` claim, and account scope decides authority rather than role grants alone.
+- ~~Login reveals account existence for suspended accounts~~ — **closed.** The suspension check moved
+  after `authenticate()`, so the message reaches only someone who already supplied the password. One
+  related leak is deliberately left and recorded in `AuthService`: the lockout check cannot move for
+  the same reason, and closing it means synthesising lockout state for identifiers that do not
+  exist — a design rather than an edit.
 - The rest of Bug 30's dependency backlog. PDFBox moved *into* the milestone as item 8 — the parser
   is the subject of the theme, so updating it supports the theme directly rather than running beside
   it. Everything else in that backlog stays here.
