@@ -253,19 +253,34 @@
       <artifactId>spring-security-test</artifactId>
       <scope>test</scope>
     </dependency>
-    <!-- Makes TestRestTemplate use Apache HttpClient instead of the JDK's HttpURLConnection,
-         which Spring Boot picks up automatically once this is on the test classpath.
+    <!-- NOT test-scoped, and that is the whole point of this comment.
 
-         Not a preference. HttpURLConnection silently DROPS a set of "restricted" request headers,
-         Origin among them, so AuthFlowIT's CORS test could never actually send the header whose
-         handling it exists to verify; it asserted on a request the JDK had quietly stripped. The
-         same client also throws HttpRetryException ("cannot retry due to server authentication, in
-         streaming mode") instead of surfacing a plain 401, which broke the wrong-password test.
-         Both are limitations of the client, not of the application. -->
+         firebase-admin needs this at RUNTIME: FirebaseOptions.Builder.build() reaches
+         ApiClientUtils.getDefaultTransport(), which loads
+         org.apache.hc.client5.http.nio.AsyncClientConnectionManager from this artifact. It arrives
+         transitively from firebase-admin at compile scope, but Maven resolves scope by nearest
+         definition, so a DIRECT declaration here overrides that transitive one. Declaring it with
+         scope `test` therefore did not "add it for tests"; it REMOVED it from the runtime
+         classpath and from the Spring Boot fat jar.
+
+         That took production down on 2026-08-08: every boot failed with NoClassDefFoundError on
+         that class, through FirebaseConfig.firebaseApp into productionConfigValidator, before the
+         web server ever started. The test suite could not have caught it, because CI runs
+         `mvn test`, where the artifact is present either way, while the image is built by
+         `mvn package`, where it was not. The gap stayed invisible for four days: firebase-admin
+         landed 2026-08-02 and the test-scoped declaration landed 2026-08-04, so every jar built
+         after that shipped without it and nothing restarted until the next deploy.
+
+         Keep it unscoped. It still satisfies the test usage it was originally added for: Spring
+         Boot makes TestRestTemplate use Apache HttpClient rather than the JDK's
+         HttpURLConnection once this is on the classpath, which AuthFlowIT's CORS test depends on
+         (HttpURLConnection silently drops "restricted" request headers, Origin among them, so that
+         test asserted on a request the JDK had already stripped) and which its wrong-password test
+         depends on too (HttpURLConnection throws HttpRetryException instead of surfacing a plain
+         401). Both are client limitations, not application behaviour. -->
     <dependency>
       <groupId>org.apache.httpcomponents.client5</groupId>
       <artifactId>httpclient5</artifactId>
-      <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
