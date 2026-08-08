@@ -31,3 +31,57 @@ It does not say the repository is insecure, and it does not say the *Implemented
 Two rows are marked *Not verified* precisely because a count was the only evidence available, and
 promoting either without reading the configuration or the assertions would repeat the mistake this
 document exists to correct.
+
+---
+
+## Accepted as the current baseline (2026-08-08)
+
+Accepted by the repository owner. **The classifications above do not change except on new
+evidence** — not on a plausible argument that a control is probably fine.
+
+The four-state vocabulary is the load-bearing part, and it is the rule this document exists to
+enforce:
+
+| State | What it requires |
+|---|---|
+| **Implemented** | evidence **and** a test |
+| **Partial** | the exact gap, named |
+| **Not verified** | what evidence would settle it |
+| **Missing** | implementation required |
+
+> A control is not Implemented because a utility, a class, or a test file exists.
+
+## Prioritised work, in order, not in parallel
+
+**Before any of it:** finish the repository PII sanitization against the 1,745-test / 134-affected
+baseline. No parser behaviour changes as part of that cleanup.
+
+**P0 — upload security.** Empty-file, content-type, extension and magic-byte validation in
+`StatementUpload`; malformed-PDF, decompression-bomb and page-count protection; parser timeouts;
+investigate malware scanning. This is the largest untrusted-input surface and the only row in the
+table that is both Missing and directly reachable by an anonymous upload.
+
+**P1 — access and data isolation.** Tenant isolation proven by explicit **positive and negative**
+authorization tests; rate limiting verified per endpoint, especially auth and the expensive
+import/OCR paths; **enforcement** around masking rather than reliance on a developer remembering to
+call it.
+
+**P1 — edge and API security.** Check whether Spring Security already supplies the missing headers
+*before* implementing duplicates at the CDN, then add CSP / HSTS / `X-Content-Type-Options` /
+`Referrer-Policy` at whichever layer is correct.
+
+## Why document integrity belongs in this document
+
+**Rule.** *Never classify a financial document as successfully processed merely because the parser
+produced output. Success requires evidence that the financial entities, transactions, ownership and
+totals extracted are consistent enough to trust.*
+
+A parser that silently turns **Savings + RD + FD** into **Savings only** is not a parsing bug with a
+UX consequence. It writes incorrect financial state into a financial system, under a success label —
+and a wrong balance a user acts on is an integrity failure, not a cosmetic one. That is the same
+category as an access-control failure, and it is why `PARSED_COMPLETE`, ground truth and per-section
+verification sit alongside masking and rate limiting here rather than in a separate quality backlog.
+
+See [ADR-004](../architecture/adr-004-document-pipeline-scope.md) §3: partial data under a success
+label is the one categorically unacceptable outcome, because refusal is visible and silent
+misattribution is not.
