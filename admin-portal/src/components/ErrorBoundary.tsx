@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { reportHandledError } from '../lib/monitoring';
+import { isStaleChunkError, recoverFromStaleChunk } from '../lib/staleChunk';
 
 /**
  * Catches a render error in the subtree below it and shows a recovery panel instead of letting
@@ -40,6 +41,22 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    // A route chunk that no longer exists is the one failure the panel below cannot offer a way out
+    // of: `reset` re-renders, React re-attempts the same lazy import, and it fails identically. Only
+    // a document reload fetches HTML naming chunks that exist. See lib/staleChunk.ts.
+    //
+    // The user app hit this in production on 2026-08-08 (docs/engineering/incidents/) and this app
+    // has the same shape -- lazy routes, the same boundary, the same reset -- so it had the same
+    // bug waiting. Fixed here as well rather than after an operator loses a session to it.
+    //
+    // Attempted BEFORE reporting, so the reporting decision can depend on whether we recovered.
+    if (isStaleChunkError(error) && recoverFromStaleChunk()) {
+      // Deliberately NOT reported: a stale chunk right after a deploy is expected and self-healing,
+      // and would otherwise spike the crash reporter on every release. A failure the guard REFUSED
+      // does report below -- that one is a broken deploy rather than a stale tab.
+      return;
+    }
+
     // Only the component stack is attached, never the error message as `extra` -- see
     // reportHandledError's own comment on why a caught value's message can quote user data.
     reportHandledError(error, this.props.context);

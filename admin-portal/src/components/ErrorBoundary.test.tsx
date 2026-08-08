@@ -27,6 +27,13 @@ function Boom(): React.ReactElement {
   throw new Error('render blew up');
 }
 
+/** A lazy route whose chunk the last deploy replaced -- the failure the user app hit in production. */
+function StaleChunk(): React.ReactElement {
+  throw new Error(
+    'Failed to fetch dynamically imported module: https://admin.example.com/assets/Dashboard-a1b2c3.js'
+  );
+}
+
 describe('ErrorBoundary', () => {
   it('renders its children untouched when nothing throws', () => {
     render(
@@ -114,5 +121,80 @@ describe('ErrorBoundary', () => {
 
     expect(await screen.findByText('recovered content')).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  /**
+   * The admin portal has the same lazy routes, the same boundary and the same reset as the user
+   * app, so it had the same unrecoverable "Try again" waiting for the next deploy. Fixed here too
+   * rather than after an operator loses a session to it.
+   */
+  describe('when a route chunk no longer exists on the server', () => {
+    let reload: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      window.sessionStorage.clear();
+      reload = vi.fn();
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: { ...window.location, reload },
+      });
+    });
+
+    afterEach(() => {
+      window.sessionStorage.clear();
+    });
+
+    it('reloads the document instead of offering a retry that cannot work', () => {
+      render(
+        <ErrorBoundary context="root">
+          <StaleChunk />
+        </ErrorBoundary>
+      );
+
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not report a failure it is recovering from', () => {
+      render(
+        <ErrorBoundary context="root">
+          <StaleChunk />
+        </ErrorBoundary>
+      );
+
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    /** Once a reload has been tried, the same failure means the FRESH html failed too -- a broken
+     *  deploy, not a stale tab. The operator gets the panel and the team gets the report. */
+    it('shows the panel and reports when a reload has already been attempted', () => {
+      render(
+        <ErrorBoundary context="root">
+          <StaleChunk />
+        </ErrorBoundary>
+      );
+      reload.mockClear();
+
+      render(
+        <ErrorBoundary context="root">
+          <StaleChunk />
+        </ErrorBoundary>
+      );
+
+      expect(reload).not.toHaveBeenCalled();
+      expect(screen.getAllByRole('alert').length).toBeGreaterThan(0);
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves ordinary render errors on the retry path', () => {
+      render(
+        <ErrorBoundary context="root">
+          <Boom />
+        </ErrorBoundary>
+      );
+
+      expect(reload).not.toHaveBeenCalled();
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+    });
   });
 });
