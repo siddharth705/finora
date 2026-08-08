@@ -7,18 +7,26 @@ Companion document: [`ENGINEERING_TOOLING_ROADMAP.md`](ENGINEERING_TOOLING_ROADM
 this list involve installing almost nothing —** wire the Playwright suite we own into CI, put Sentry
 on the backend where it is missing, and stop CI jobs from being able to hang for six hours.
 
+> **Status update — 2026-08-08. All three headline actions have since landed.** The Playwright smoke
+> suite is a blocking CI job on every PR, backend Sentry exists
+> (`com.finora.observability`, with `SentryScrubber` and its own test suite), and every job carries
+> `timeout-minutes`. The analysis below is left standing because the reasoning is still worth
+> reading, but **its "not in CI" / "zero enforcement" claims about Playwright and its "no backend
+> error monitoring" claim are no longer true** — they are annotated inline where they appear. A
+> reader acting on the un-annotated text would redo work that is already done.
+
 ---
 
 ## 1. What already exists
 
 | Proposed | Status | Correctly integrated? | In CI? |
 |---|---|---|---|
-| Playwright | **Implemented** — 9 specs, 8 browser/viewport projects, own dev-server orchestration | Yes | **No** |
-| JUnit | **Implemented** — 1200+ tests, 166 classes, 30 Testcontainers `*IT` | Yes | Yes, with published unit/IT breakdown |
+| Playwright | **Implemented** — 12 spec files / 112 cases, 8 browser/viewport projects, own dev-server orchestration | Yes | **Yes** — Chromium smoke subset, blocking on every PR |
+| JUnit | **Implemented** — 1689 tests, 226 classes, 59 Testcontainers `*IT` | Yes | Yes, with published unit/IT breakdown |
 | Vitest | **Implemented** — frontend + admin portal (mobile uses Jest) | Yes | Yes, gated |
 | JaCoCo | **Implemented** — 0.8.12, report-only **by design** | Yes | Runs; deliberately no gate |
 | Dependabot | **Implemented this week** — maven, npm ×4, github-actions | Yes | N/A (opens PRs) |
-| **Sentry** | **Implemented on frontend, admin portal and mobile** — `monitoring.ts` per app, PII-scrubbed, DSN-gated no-op | Yes | N/A |
+| **Sentry** | **Implemented on all four tiers** — `monitoring.ts` per client app; backend `com.finora.observability` with `SentryScrubber`, logback appender deliberately off | Yes | N/A |
 | PostHog | Not present | — | — |
 | Firebase | Phone auth only (web + admin + backend verification) | Yes | — |
 | ZAP / Snyk / SpotBugs / PMD / Checkstyle / Semgrep / Trivy / k6 / SonarQube / OpenRewrite | Not present | — | — |
@@ -57,34 +65,37 @@ Every one is a signal-to-noise failure. Adding a dozen finding-emitting tools re
 
 ### 3.1 End-to-end — Playwright
 
-**Already implemented; the gap is enforcement, not capability.**
+~~**Already implemented; the gap is enforcement, not capability.**~~ **— enforcement gap CLOSED,
+2026-08-08.** The `smoke` job runs Chromium specs against a real backend and database on every PR
+and blocks the merge.
 
-Coverage today: 9 specs — user-portal smoke and authenticated journey; admin-portal smoke,
-merchant-review and learning-queue; cross-app workflow specs for dashboard consistency, duplicate
-review, tenant isolation and merchant lifecycle. Eight projects cover Chromium, Firefox, Edge, plus
-tablet and mobile viewport emulation.
+Coverage today: 12 spec files / 112 cases — user-portal smoke, authenticated journey, import and
+negative paths; admin-portal smoke, merchant-review and learning-queue; cross-app workflow specs for
+dashboard consistency, duplicate review, tenant isolation and merchant lifecycle. Eight projects
+cover Chromium, Firefox, Edge, plus tablet and mobile viewport emulation.
 
 **Against the requested scope:** authentication ✅, admin portal ✅, user portal ✅, merchant
 learning ✅, queue management ✅, duplicate review ✅, cross-application workflows ✅.
-**Statement upload and the import pipeline are the notable gaps** — the highest-risk flow in the
-product has no E2E coverage, and that is a more valuable next test than any new tool.
-Reports and Settings are also uncovered.
+~~**Statement upload and the import pipeline are the notable gaps**~~ **— CLOSED.**
+`tests/user-portal/import.spec.ts` now covers the upload and import flow. Reports and Settings
+remain uncovered.
 
-**The problem: none of it runs automatically.** Nine specs that execute only when someone remembers
+~~**The problem: none of it runs automatically.** Nine specs that execute only when someone remembers
 is the `check-xml-comments.py` shape again — real work, zero enforcement — and the suite keeps
-growing, so the gap widens rather than closes.
+growing, so the gap widens rather than closes.~~
 
-**Recommendation: wire it into CI as a fifth job. Highest priority on this list.** Chromium-only per
-push (~2–3 min); Firefox/Edge/responsive nightly, because cross-browser is where E2E cost and flake
-concentrate. Effort ~2h. Maintenance: medium and ongoing — that is the honest price of E2E.
+~~**Recommendation: wire it into CI as a fifth job. Highest priority on this list.**~~ **— DONE.**
+The `smoke` job is the fifth job, Chromium-only, blocking on every PR. Firefox/Edge/responsive are
+still manual (`npm run test:browsers`) rather than nightly — the nightly slot in Phase 1.3 remains
+open, and is now the only part of this recommendation left.
 
 **Risk:** flake is what kills E2E suites. Mitigate by starting Chromium-only, requiring deterministic
 fixtures, and treating a flaky spec as broken rather than as a retry candidate.
 
 ### 3.2 Backend — JUnit
 
-Strong. 1200+ tests including 30 Testcontainers integration classes running against real Postgres,
-plus ArchUnit structural rules and a published unit/IT split on every run.
+Strong. 1689 tests including 59 Testcontainers integration classes running against real Postgres,
+plus 31 ArchUnit Repository Guardian rules and a published unit/IT split on every run.
 
 Against the requested list: unit ✅, integration ✅, transaction ✅, import pipeline ✅, security ✅
 (`AdminEndpointAuthorizationTest`, `AuditActorAttributionTest`, `ValidatedRequestBodyTest`).
@@ -291,7 +302,7 @@ should be preserved.
 | # | Finding | Why it matters | Effort |
 |---|---|---|---|
 | 1 | ~~No `timeout-minutes` on any job~~ **— DONE in this change** | A hung Testcontainers job ran to GitHub's **6-hour** default, burning the runner allowance and blocking the serialized `main` queue behind it. Now 20 min (backend) / 15 min (JS jobs) — hang detectors, not performance budgets | done |
-| 2 | **Playwright not executed** | 9 specs, zero enforcement | ~2h |
+| 2 | ~~**Playwright not executed**~~ **— DONE** | Was 9 specs with zero enforcement. Now the `smoke` job: Chromium, real backend and database, blocking on every PR | done |
 | 3 | **No nightly / scheduled jobs** | Cross-browser E2E, ZAP baseline and Trivy scans all want a nightly slot rather than per-push | ~1h |
 | 4 | **No artifact retention except surefire-on-failure** | JaCoCo HTML and the Playwright HTML report are the two worth publishing | ~30 min |
 | 5 | Every push runs all four jobs, including docs-only commits | Wasted minutes — but `paths-ignore` is a footgun that can make required checks never run on a PR. Recommend **only** if branch protection is configured to tolerate it | ~30 min, with care |

@@ -31,6 +31,27 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+# Least privilege for GITHUB_TOKEN, stated rather than inherited.
+#
+# With no `permissions:` block at all, the token gets whatever the repository's default workflow
+# permissions happen to be -- a REPOSITORY SETTING, not a property of this file. On an older repo,
+# or one whose org default was never changed, that default is read/write on everything: contents,
+# packages, deployments, issues, pull requests. Nothing here needs any of it, and a workflow that
+# runs untrusted-ish input (dependabot branches, and any future fork PR) should not be holding a
+# token that can push to main.
+#
+# `contents: read` is what the jobs actually use: actions/checkout reads the repo, and that is the
+# only GITHUB_TOKEN consumer in the file. Deliberately NOT narrower-per-job -- one top-level
+# declaration cannot be forgotten when a sixth job is added, whereas per-job blocks silently omit
+# the new one and it inherits the default again.
+#
+# Note what this does NOT break: actions/upload-artifact authenticates with the Actions runtime
+# token (ACTIONS_RUNTIME_TOKEN), which is issued separately and is unaffected by this block. The
+# three upload steps keep working. If a future step needs to comment on a PR or cut a release, give
+# THAT job its own wider `permissions:` rather than widening this one.
+permissions:
+  contents: read
+
 # Every job below runs on a SELF-HOSTED macOS (Apple Silicon) runner rather than ubuntu-latest.
 #
 # Why: GitHub-hosted runners stopped starting entirely ("The job was not started because recent
