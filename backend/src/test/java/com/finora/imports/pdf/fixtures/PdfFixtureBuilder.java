@@ -272,15 +272,15 @@ public final class PdfFixtureBuilder {
                 .line("Total Payment Due 27,665.16 Dr Minimum Payment Due 577.00 Dr")
                 .blankLine()
                 .row(col, "DATE", "TRANSACTION DETAILS", "MERCHANT CATEGORY", "AMOUNT (Rs.)")
-                .row(col, "24/06/2026", "UPI/TOBOX VENTURES PRIVATE L/GOKHANA.PAYU@AXISB", "MISC STORE", "37.94 Dr")
-                .row(col, "25/06/2026", "UPI/MANKAR DOSA/PAYTM.S27A881@PTY", "RESTAURANTS", "150.00 Dr")
+                .row(col, "24/06/2026", "UPI/SAMPLE VENDOR PRIVATE LT/SAMPLEA.PAYU@AXISB", "MISC STORE", "37.94 Dr")
+                .row(col, "25/06/2026", "UPI/SAMPLE FOOD/PAYCO.S222222@PTY", "RESTAURANTS", "150.00 Dr")
                 .row(col, "30/06/2026", "BBPS PAYMENT RECEIVED - DP000000000000AAAA", "", "10,081.99 Cr");
 
         PageBuilder page2 = new PageBuilder();
         // Same header repeated verbatim on the second page -- PdfTableLocator must recognize this
         // as "more of the same table," not a new section, and must not stage it as a data row.
         page2.row(col, "DATE", "TRANSACTION DETAILS", "MERCHANT CATEGORY", "AMOUNT (Rs.)")
-                .row(col, "10/07/2026", "UPI/BLINKIT/BLINKIT.PAYU@HDFCBANK", "DEPT STORES", "249.00 Dr")
+                .row(col, "10/07/2026", "UPI/SAMPLEB/SAMPLEB.PAYU@HDFCBANK", "DEPT STORES", "249.00 Dr")
                 .row(col, "13/07/2026", "UPI/MYNTRA DESIGNS PRIVATE L/MYNTRA1ONLINE.GPAY", "MISC STORE", "496.00 Dr");
 
         return render(List.of(page1, page2));
@@ -345,8 +345,8 @@ public final class PdfFixtureBuilder {
 
         PageBuilder page = new PageBuilder();
         page.row(col, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
-                .row(col, "24/06/2026", "UPI/TOBOX VENTURES PRIVATE L/GOKHANA.PAYU@AXISB", "37.94 Dr")
-                .row(col, "15/07/2026", "UPI/NATHANI ENTERPRISES/PAYTM.S1TG89W@PTY/73854", "1,240.00 Dr")
+                .row(col, "24/06/2026", "UPI/SAMPLE VENDOR PRIVATE LT/SAMPLEA.PAYU@AXISB", "37.94 Dr")
+                .row(col, "15/07/2026", "UPI/SAMPLEB ENTERPRISES/PAYCO.S111111@PTY/73854", "1,240.00 Dr")
                 .line("**** End of Statement ****");
 
         return render(List.of(page));
@@ -504,7 +504,7 @@ public final class PdfFixtureBuilder {
         page.line("Neo Rupay Credit Card Statement")
                 .blankLine()
                 .row(headerCol, "DATE", "TRANSACTION DETAILS", "MERCHANT CATEGORY", "AMOUNT (Rs.)")
-                .row(dataCol, "24/06/2026", "UPI/TOBOX VENTURES PRIVATE L/GOKHANA.PAYU@AXISB", "MISC STORE", "37.94 Dr")
+                .row(dataCol, "24/06/2026", "UPI/SAMPLE VENDOR PRIVATE LT/SAMPLEA.PAYU@AXISB", "MISC STORE", "37.94 Dr")
                 .row(dataCol, "02/07/2026", "UPI/DR AGARWALS HEALTH CARE", "MEDICAL", "500.00 Dr")
                 // Fee line: a separate date cell (as usual), then the description AND its trailing
                 // amount as ONE combined cell -- no separate merchant-category or amount run at
@@ -840,13 +840,13 @@ public final class PdfFixtureBuilder {
                 .line("5000.00 200.00 09 Aug, 2026")
                 .blankLine()
                 .row(headerCol, "DATE", "TRANSACTION DETAILS", "MERCHANT CATEGORY", "AMOUNT (Rs.)")
-                .row(dataCol, "24/06/2026", "UPI/TOBOX VENTURES PRIVATE L/GOKHANA.PAYU@AXISB", "MISC STORE", "37.94 Dr")
+                .row(dataCol, "24/06/2026", "UPI/SAMPLE VENDOR PRIVATE LT/SAMPLEA.PAYU@AXISB", "MISC STORE", "37.94 Dr")
                 .row(dataCol, "02/07/2026", "UPI/DR AGARWALS HEALTH CARE", "MEDICAL", "500.00 Dr")
                 .line("Page 1 of 2");
 
         PageBuilder page2 = new PageBuilder();
         page2.row(headerCol, "DATE", "TRANSACTION DETAILS", "MERCHANT CATEGORY", "AMOUNT (Rs.)")
-                .row(dataCol, "10/07/2026", "UPI/BLINKIT/BLINKIT.PAYU@HDFCBANK", "DEPT STORES", "249.00 Dr");
+                .row(dataCol, "10/07/2026", "UPI/SAMPLEB/SAMPLEB.PAYU@HDFCBANK", "DEPT STORES", "249.00 Dr");
 
         return render(List.of(page1, page2));
     }

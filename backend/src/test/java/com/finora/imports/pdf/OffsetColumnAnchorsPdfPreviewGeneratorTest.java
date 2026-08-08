@@ -68,7 +68,7 @@ class OffsetColumnAnchorsPdfPreviewGeneratorTest {
         StagedAccountSection section = generateSections().get(0);
 
         var row = section.rows().stream()
-                .filter(r -> r.description().contains("TOBOX VENTURES")).findFirst().orElseThrow();
+                .filter(r -> r.description().contains("SAMPLE VENDOR")).findFirst().orElseThrow();
         assertThat(row.date()).isEqualTo(java.time.LocalDate.of(2026, 6, 24));
         assertThat(row.type()).isEqualTo("EXPENSE");
         assertThat(row.amount()).isEqualByComparingTo("37.94");
