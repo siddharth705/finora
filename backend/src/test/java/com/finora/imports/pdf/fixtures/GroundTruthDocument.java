@@ -65,6 +65,9 @@ public final class GroundTruthDocument {
               .append(quote(e.accountNumberMasked())).append(" },\n");
         }
         sb.append("      \"expectedTransactions\": ").append(e.expectedTransactions()).append(",\n");
+        sb.append("      \"expectedTransactionValues\": [\n");
+        sb.append(e.rows().stream().map(GroundTruthDocument::row)
+                .collect(Collectors.joining(",\n"))).append("\n      ],\n");
         sb.append("      \"zeroTransactionsLegitimate\": {\n");
         sb.append("        \"value\": ").append(quote(e.zeroTransactionsLegitimate().name())).append(",\n");
         sb.append("        \"evidence\": { \"source\": \"GROUND_TRUTH\", \"reason\": ")
@@ -72,6 +75,25 @@ public final class GroundTruthDocument {
         sb.append("      }\n");
         sb.append("    }");
         return sb.toString();
+    }
+
+    /**
+     * One transaction, as the definition INTENDS it.
+     *
+     * <p>The value axis exists because entity, product and count agreeing is not the same as the
+     * money being right -- a recogniser's characteristic failure is the correct number of rows with
+     * a wrong digit in one of them, which count-based matching cannot see.
+     *
+     * <p>Direction is emitted as DEBIT/CREDIT rather than as a sign, because that is the distinction
+     * the pipeline actually makes and the one a misread flips. Amount is the plain string of the
+     * declared decimal: comparing rendered text avoids a float round-trip deciding whether two
+     * amounts are equal.
+     */
+    private static String row(SyntheticStatementDefinition.Row r) {
+        return "        { \"date\": " + quote(r.date().toString())
+                + ", \"amount\": " + quote(r.amount().toPlainString())
+                + ", \"direction\": " + quote(r.credit() ? "CREDIT" : "DEBIT")
+                + ", \"currency\": \"INR\" }";
     }
 
     private static String quote(String raw) {
