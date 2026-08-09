@@ -191,11 +191,51 @@ public class ImportService {
             verificationRecorder.recordForAnalysis(reference,
                     java.util.Collections.singletonList(staged.verification()));
             return new StagingSessionResponse(session.getId(), staged);
-        } catch (ApiException e) {
-            analysisRecorder.recordFailed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
-                    "CSV", fileContent.length, fingerprint, e.getCode() == null ? null : e.getCode().name(),
-                    e.getMessage(), System.currentTimeMillis() - startedAtMs, diagnostics);
+        } catch (RuntimeException e) {
+            // BH-028. This caught ApiException only, so a document that made the PARSER FALL OVER
+            // -- an index out of bounds in column bucketing, a PDFBox failure, anything unchecked
+            // -- produced a 500, a stack trace in the log, and NO row in the evidence table. That
+            // table exists to answer "which layouts defeat the parser", and it was systematically
+            // missing the layouts that defeat it hardest: the anticipated rejections were all
+            // recorded and the unanticipated crashes were all invisible, including on every retry.
+            //
+            // Recording is safe from here: recordFailed is REQUIRES_NEW, so it commits on its own
+            // and cannot roll anything back, and cannot itself be rolled back.
+            recordParseFailure(userId, fileName, "CSV", fileContent.length, fingerprint, e,
+                    startedAtMs, diagnostics);
             throw e;
+        }
+    }
+
+    /**
+     * Records a failed parse, whatever kind of failure it was.
+     *
+     * <p>BH-028. An {@code ApiException} carries an {@link ErrorCode} naming a rejection the
+     * pipeline anticipated ({@code IMPORT_001}, {@code IMPORT_007}, a missing PDF password).
+     * Anything else is the pipeline breaking rather than refusing, and there is no code for that --
+     * so the exception's own class name is used, which is the most useful thing available and
+     * keeps "index out of bounds" distinguishable from "PDFBox could not open this" in the failure
+     * histogram.
+     *
+     * <p><b>Recording must never replace the failure being recorded.</b> If the recorder itself
+     * throws -- the analysis table is unreachable, say -- the caller has to receive the ORIGINAL
+     * exception, because that is the one that explains what happened to their document. A
+     * bookkeeping failure masking a parse failure would turn a diagnosable problem into a
+     * mysterious one, which is the opposite of what this table is for.
+     */
+    private void recordParseFailure(UUID userId, String fileName, String sourceFormat, long byteSize,
+                                     String fingerprint, RuntimeException failure, long startedAtMs,
+                                     ParseDiagnostics diagnostics) {
+        String code = failure instanceof ApiException api
+                ? (api.getCode() == null ? null : api.getCode().name())
+                : failure.getClass().getSimpleName();
+        try {
+            analysisRecorder.recordFailed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
+                    sourceFormat, byteSize, fingerprint, code, failure.getMessage(),
+                    System.currentTimeMillis() - startedAtMs, diagnostics);
+        } catch (RuntimeException recordingFailed) {
+            log.error("Could not record the failed analysis for {} -- the parse failure itself is "
+                    + "being rethrown and is the one that matters.", fileName, recordingFailed);
         }
     }
 
@@ -269,13 +309,17 @@ public class ImportService {
                     diagnostics, session.getId(),
                     sections.stream().map(StagedAccountSection::verification).toList());
             return new PdfStagingSessionResponse(session.getId(), true, null, sections);
-        } catch (ApiException e) {
+        } catch (RuntimeException e) {
             // The whole point of the evidence table. A password failure carries no fingerprint --
             // the document was never opened -- but IMPORT_001 and IMPORT_007 do, and those are the
-            // ones that say "this layout defeated the parser", which is unanswerable today.
-            analysisRecorder.recordFailed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
-                    "PDF", fileContent.length, fingerprint, e.getCode() == null ? null : e.getCode().name(),
-                    e.getMessage(), System.currentTimeMillis() - startedAtMs, diagnostics);
+            // ones that say "this layout defeated the parser".
+            //
+            // BH-028: widened from ApiException. A PDF is far more likely than a CSV to crash the
+            // parser outright rather than be cleanly rejected, so this is the path where the gap
+            // mattered most -- the documents that most needed a fingerprint recorded were exactly
+            // the ones that recorded nothing.
+            recordParseFailure(userId, fileName, "PDF", fileContent.length, fingerprint, e,
+                    startedAtMs, diagnostics);
             throw e;
         }
     }
