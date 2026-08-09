@@ -187,6 +187,39 @@ describe('M0-A: the spending donut must not understate the period total', () => 
     expect(screen.getAllByText('₹35,500').length).toBeGreaterThanOrEqual(2);
   });
 
+  it('does not show two rows both labelled Other', async () => {
+    /**
+     * Found on a real Android device, in the state an actual import produces: a CSV whose merchants
+     * match no rule lands in a REAL backend category called "Other", and the remainder bucket is
+     * called "Other" too. The legend rendered "Other 3,000" and "Other 5,500" as separate rows.
+     * The total was right; two identically labelled rows with different amounts still is not
+     * something a reader can resolve.
+     *
+     * Nine categories, with a real "Other" large enough to survive into the named five:
+     *   Rent 20,000 · Food 5,000 · Transport 3,000 · Other 3,000 · Bills 2,500
+     *   + Health 2,000 · Shopping 2,000 · Education 800 · Misc 700  =  39,000
+     */
+    dashboard.summary.mockResolvedValue(
+      emptySummary({
+        spendByCategory: {
+          Rent: 20000, Food: 5000, Transport: 3000, Other: 3000, Bills: 2500,
+          Health: 2000, Shopping: 2000, Education: 800, Misc: 700,
+        },
+        monthlyExpense: 39000,
+      })
+    );
+
+    renderScreen();
+    await screen.findByText('Total Balance');
+
+    expect(screen.getAllByText('Other')).toHaveLength(1);
+    // 3,000 real + 5,500 remainder, in one row rather than two.
+    expect(screen.getByText('₹8,500')).toBeTruthy();
+    expect(screen.queryByText('₹5,500')).toBeNull();
+    // And the invariant that started all of this still holds.
+    expect(screen.getAllByText('₹39,000').length).toBeGreaterThanOrEqual(2);
+  });
+
   it('is unaffected when every category already fits', async () => {
     // Guards the fix from over-reaching: with six or fewer categories nothing was ever wrong, and
     // the displayed total must stay exactly what it was.
