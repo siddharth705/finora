@@ -1,6 +1,6 @@
 package com.finora.imports.pdf.fixtures;
 
-import com.finora.imports.pdf.fixtures.SyntheticStatementDefinition.Entity;
+import com.finora.imports.pdf.fixtures.SyntheticStatementDefinition.ExpectedEntity;
 import com.finora.imports.pdf.fixtures.SyntheticStatementDefinition.Presence;
 import com.finora.imports.pdf.fixtures.SyntheticStatementDefinition.Row;
 import com.finora.imports.pdf.fixtures.SyntheticStatementDefinition.ZeroTransactions;
@@ -47,7 +47,7 @@ public final class SyntheticGroundTruthEmitter {
      */
     static SyntheticStatementDefinition declaration(BigDecimal salary) {
         return new SyntheticStatementDefinition("synthetic-ledger-001", List.of(
-                new Entity("savings-primary", "SAVINGS", Presence.DETECTED, null,
+                new ExpectedEntity("savings-primary", "SAVINGS", Presence.DETECTED, null,
                         ZeroTransactions.FALSE, List.of(
                                 new Row(LocalDate.of(2026, 6, 5), "SALARY CREDIT", salary, true),
                                 new Row(LocalDate.of(2026, 6, 10), "GROCERY STORE",
@@ -59,10 +59,10 @@ public final class SyntheticGroundTruthEmitter {
 
     /** The same declaration with its last transaction withheld from the DOCUMENT only. */
     private static SyntheticStatementDefinition withOneRowMissing(SyntheticStatementDefinition full) {
-        Entity e = full.entities().get(0);
+        ExpectedEntity e = full.entities().get(0);
         List<Row> fewer = e.rows().subList(0, e.rows().size() - 1);
         return new SyntheticStatementDefinition(full.documentId(),
-                List.of(new Entity(e.id(), e.product(), e.presence(), e.accountNumberMasked(),
+                List.of(new ExpectedEntity(e.id(), e.product(), e.presence(), e.accountNumberMasked(),
                         e.zeroTransactionsLegitimate(), fewer)),
                 full.layout());
     }

@@ -2,7 +2,7 @@ package com.finora.imports.pdf.fixtures;
 
 import com.finora.imports.pdf.PdfTextExtractor;
 import com.finora.imports.pdf.PositionedText;
-import com.finora.imports.pdf.fixtures.SyntheticStatementDefinition.Entity;
+import com.finora.imports.pdf.fixtures.SyntheticStatementDefinition.ExpectedEntity;
 import com.finora.imports.pdf.fixtures.SyntheticStatementDefinition.LayoutGroundTruth;
 import com.finora.imports.pdf.fixtures.SyntheticStatementDefinition.Presence;
 import com.finora.imports.pdf.fixtures.SyntheticStatementDefinition.Row;
@@ -26,8 +26,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class SyntheticGroundTruthTest {
 
-    private static Entity savings(BigDecimal first, BigDecimal second) {
-        return new Entity("savings-primary", "SAVINGS", Presence.DETECTED, "••••4321",
+    private static ExpectedEntity savings(BigDecimal first, BigDecimal second) {
+        return new ExpectedEntity("savings-primary", "SAVINGS", Presence.DETECTED, "••••4321",
                 ZeroTransactions.FALSE, List.of(
                         new Row(LocalDate.of(2026, 6, 5), "SALARY CREDIT", first, true),
                         new Row(LocalDate.of(2026, 6, 10), "GROCERY STORE", second, false)));

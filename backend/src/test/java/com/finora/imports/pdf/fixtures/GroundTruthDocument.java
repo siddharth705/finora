@@ -1,6 +1,6 @@
 package com.finora.imports.pdf.fixtures;
 
-import com.finora.imports.pdf.fixtures.SyntheticStatementDefinition.Entity;
+import com.finora.imports.pdf.fixtures.SyntheticStatementDefinition.ExpectedEntity;
 
 import java.util.stream.Collectors;
 
@@ -50,7 +50,7 @@ public final class GroundTruthDocument {
      * and the model's central rule is that ground truth is never derived from parser output. Making
      * the claim explicit means a future reader can check it rather than trust it.
      */
-    private static String entity(Entity e) {
+    private static String entity(ExpectedEntity e) {
         StringBuilder sb = new StringBuilder();
         sb.append("    {\n");
         sb.append("      \"id\": ").append(quote(e.id())).append(",\n");

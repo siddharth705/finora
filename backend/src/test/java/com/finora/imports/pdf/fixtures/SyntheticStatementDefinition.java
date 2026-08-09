@@ -33,11 +33,11 @@ import java.util.List;
  * correct answer, and a financial ground truth that disagreed with one of them would be wrong for
  * reasons that have nothing to do with money.
  */
-public record SyntheticStatementDefinition(String documentId, List<Entity> entities,
+public record SyntheticStatementDefinition(String documentId, List<ExpectedEntity> entities,
                                             List<LayoutGroundTruth> layout) {
 
     /** What the matcher's own vocabulary calls a thing the document should contain. */
-    public record Entity(String id, String product, Presence presence, String accountNumberMasked,
+    public record ExpectedEntity(String id, String product, Presence presence, String accountNumberMasked,
                           ZeroTransactions zeroTransactionsLegitimate, List<Row> rows) {
 
         /** The count is DERIVED from the rows this entity declares, never counted from output. */

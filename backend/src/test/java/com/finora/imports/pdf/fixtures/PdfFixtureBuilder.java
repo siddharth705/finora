@@ -972,7 +972,7 @@ public final class PdfFixtureBuilder {
         page.line("Synthetic Financial Institution");
         page.line("Document " + definition.documentId());
 
-        for (SyntheticStatementDefinition.Entity entity : definition.entities()) {
+        for (SyntheticStatementDefinition.ExpectedEntity entity : definition.entities()) {
             if (entity.presence() == SyntheticStatementDefinition.Presence.ABSENT) continue;
             page.blankLine();
             page.line(bannerFor(entity));
@@ -991,7 +991,7 @@ public final class PdfFixtureBuilder {
 
     /** A section banner the locator already recognises, so the definition's entities become the
      *  document's sections without this fixture needing a capability of its own. */
-    private static String bannerFor(SyntheticStatementDefinition.Entity entity) {
+    private static String bannerFor(SyntheticStatementDefinition.ExpectedEntity entity) {
         String number = entity.accountNumberMasked() == null ? "90000000000001"
                 : entity.accountNumberMasked().replaceAll("[^0-9]", "") + "0000000001";
         return switch (entity.product()) {
