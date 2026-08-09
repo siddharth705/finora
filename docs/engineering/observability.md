@@ -347,6 +347,46 @@ narration appears) and `sentry.send-default-pii: false`.
 **Before setting a DSN in production for the first time**, run the observability suite and read
 `SentryScrubberTest` — that is the contract you are relying on.
 
+### Scheduled housekeeping, and how to tell it is running
+
+Two things are enforced by `@Scheduled` rather than by user traffic. Both are silent when switched
+off: nothing errors, nothing alerts, and the only symptom is data that should have gone still being
+there.
+
+| Variable / property | Default | What stops if it is off |
+|---|---|---|
+| `app.import.session-cleanup.enabled` | `true` | **Expired import sessions are never deleted.** Those rows carry raw statement bytes. |
+| `app.import.session-cleanup.interval-ms` | `900000` (15 min) | Sweep frequency. Each run removes at most 50 rows, so the drain rate is ~4,800/day. |
+| `app.learning.queue.enabled` | `true` | Queued merchant-learning confirmations are never applied. |
+| `@EnableScheduling` (`BackgroundWorkConfig`) | on, unconditional | **Both of the above**, plus the import-job poller. |
+
+**Why this table exists.** Until BH-047 the expired-session sweep ran opportunistically inside
+whichever upload happened next, so retention was enforced as a side effect of traffic. It is
+independent housekeeping now, which is correct — a stranger's failed upload can no longer roll back
+someone else's deletion — but it moves the failure mode. Retention previously degraded when nobody
+uploaded; it now degrades when the scheduler does not run. That is a better trade and a different
+thing to watch.
+
+**How to confirm it is actually running**, in increasing order of effort:
+
+1. The sweep logs at INFO whenever it removes anything: `Removed N expired import session(s)`.
+   Silence means either nothing was expired or nothing is sweeping — the two are indistinguishable
+   from the log alone, which is the point of checks 2 and 3.
+2. `SELECT count(*) FROM import_sessions WHERE expires_at < now() - interval '1 hour';` should sit
+   near zero on a healthy deployment. A number that only grows is the signal.
+3. `app.import.session-cleanup.enabled` and `SPRING_PROFILES_ACTIVE` in the deployment's own
+   environment. Neither is reported by `/actuator/health`.
+
+**There is deliberately no alert on this yet.** An alert needs a metric, the sweep publishes none,
+and adding one is a change to the worker-metrics contract in §7 rather than a documentation edit.
+Query 2 is the manual stand-in until then — recorded here so the gap is known rather than assumed
+covered.
+
+**What this does NOT cover.** Deleting the `import_sessions` row does not delete the statement
+bytes from object storage. Database cleanup and object-storage cleanup are separate concerns and
+only the first is automated (BH-017, open pending a retention decision). Do not read a shrinking
+`import_sessions` table as evidence that stored documents were removed.
+
 ---
 
 ## 9. Operational runbook

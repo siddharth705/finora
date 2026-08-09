@@ -190,6 +190,40 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
      *  pointing at a row that no longer exists. */
     List<Transaction> findByRefundOfTransactionIdIn(List<UUID> ids);
 
+    /**
+     * The months this user has any transaction in, newest last.
+     *
+     * <p>BH-042: {@code ReportService.availableMonths} loaded every transaction the user has ever
+     * had, mapped each to a {@code YearMonth}, and then discarded all but the distinct values --
+     * to populate a dropdown. The answer is a handful of strings and the query was proportional to
+     * the whole ledger. The database can produce exactly the distinct set.
+     *
+     * <p>Returns the first day of each month rather than a formatted string: date formatting is
+     * not the database's job, and {@code YearMonth.from} in the caller keeps the wire format
+     * decided in one place.
+     */
+    @Query("""
+           SELECT DISTINCT t.txnDate FROM Transaction t
+            WHERE t.userId = :userId
+           """)
+    List<LocalDate> findDistinctTransactionDates(@Param("userId") UUID userId);
+
+    /**
+     * Every refund leg this user has, whenever it landed.
+     *
+     * <p>BH-005: {@code ReportService} reports one calendar month by date range, but a refund
+     * routinely arrives in a LATER month than the purchase it reverses -- so the rows that offset
+     * a month's expenses are frequently outside the window that month was queried with. Netting
+     * against only the in-window refunds would fix the same-month case and leave the cross-month
+     * case reporting the purchase at full price for ever, which is the defect.
+     *
+     * <p>Unpaginated deliberately, and safe to be: this returns only rows reconciliation has
+     * matched as refunds, which is a small fraction of a ledger. It is not a general
+     * "all transactions" load.
+     */
+    List<Transaction> findByUserIdAndReconciliationStatus(
+            UUID userId, Transaction.ReconciliationStatus status);
+
     // Admin Portal, Reconciliation Monitor module -- platform-wide breakdown of every
     // reconciliation outcome, one grouped COUNT query rather than loading every transaction into
     // memory (WorkspaceDashboardService.summarize() does that, but per-user; doing the same

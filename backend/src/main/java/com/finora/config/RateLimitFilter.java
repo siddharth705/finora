@@ -222,8 +222,32 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/register"), registerLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/forgot-password"), forgotPasswordLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/reset-password"), resetPasswordLimiter),
+                // BH-015. This class's comment above dismissed /auth/reset-password/phone as
+                // "cheap, no-real-cost" and left it unlimited -- reasoning about COST, on an
+                // endpoint whose problem is DISCLOSURE. It returns the account's full phone number
+                // to any holder of a valid reset token, and until the flow is inverted so the user
+                // supplies the number instead (see AuthService.resolveResetPasswordPhone, where
+                // masking is shown not to work), the ceiling on how often a token holder may ask
+                // is the only control there is. Shares resetPasswordLimiter because the two are
+                // steps of one flow and one bucket is the honest way to bound it.
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/reset-password/phone"), resetPasswordLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/import/csv/stage"), importStageLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/import/pdf/stage"), importStageLimiter),
+                // The asynchronous upload path, sharing importStageLimiter because it is the same
+                // cost with more of it. This list covered the two synchronous staging endpoints and
+                // not this one -- and this one is what the web app now uploads through.
+                //
+                // The justification importStageLimiter already carries applies here verbatim and
+                // then some: every call writes an object to storage AND a queue row, and the job it
+                // creates then writes an import_sessions row with the raw statement bytes. Content
+                // addressing dedupes identical uploads, so an abusive caller varies one byte and
+                // every request is a new object -- which nothing ever deletes.
+                //
+                // NOT the same thing as ImportConcurrencyLimiter, which ImportJobController
+                // deliberately skips: that one bounds simultaneous PARSING, and this request does
+                // no parsing. This bounds how often an upload may be ACCEPTED, which is a different
+                // question and was simply not being asked.
+                new LimitedEndpoint(PARSER.parse("/api/v1/import/jobs"), importStageLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/password-change/start"), passwordChangeLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/password-change/verify-otp"), passwordChangeLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/password-change/complete"), passwordChangeLimiter));

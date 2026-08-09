@@ -70,8 +70,61 @@ public class ReconciliationService {
      *    routinely differs entirely from the original purchase's.
      */
     public void reconcileForUser(UUID userId) {
-        long startedAtNanos = System.nanoTime();
         List<Transaction> all = transactionRepository.findByUserId(userId);
+        reconcile(userId, all, Map.of("transactionsProcessed", all.size()));
+    }
+
+    /**
+     * BH-041. The same passes, over the only transactions that can possibly match this import.
+     *
+     * <p><b>Why a second entry point rather than narrowing the first.</b>
+     * {@link #reconcileForUser} has eight production callers — transaction create, update, delete,
+     * bulk delete, statement delete and this pipeline — and at least one depends on the unbounded
+     * re-scan: {@code TransactionService.clearReconciliationPointersTo} resets a surviving refund
+     * row to OK precisely so "the next reconciliation pass" re-evaluates it, and that row can be
+     * arbitrarily old. Narrowing the shared method would change all eight at once for the benefit
+     * of one. This is the smaller blast radius.
+     *
+     * <p><b>Why the window is the right axis, and the account is not.</b> Transfers are
+     * cross-account by definition (see the pass below: an expense on one account matched to an
+     * income on a <i>different</i> one). Scoping to "the accounts in this import" would leave a
+     * card payment unmatched whenever the savings leg arrived in an earlier import, and an
+     * unmatched payment is counted as real spending — the double-count the transfer pass exists to
+     * prevent. So every account stays in scope; only the date range narrows.
+     *
+     * <p>See {@link ReconciliationPolicy#CANDIDATE_WINDOW_DAYS} for what the window guarantees and
+     * what it deliberately stops doing.
+     *
+     * @param earliestImported the earliest transaction date this import wrote, or null if it wrote
+     *                         none — in which case this falls back to the unbounded pass rather
+     *                         than inventing a window around nothing
+     */
+    public void reconcileForImport(UUID userId, LocalDate earliestImported, LocalDate latestImported) {
+        if (earliestImported == null || latestImported == null) {
+            reconcileForUser(userId);
+            return;
+        }
+        LocalDate from = earliestImported.minusDays(ReconciliationPolicy.CANDIDATE_WINDOW_DAYS);
+        LocalDate to = latestImported.plusDays(ReconciliationPolicy.CANDIDATE_WINDOW_DAYS);
+        List<Transaction> candidates = transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to);
+        // candidatesLoaded, NOT transactionsProcessed. The unbounded path's field means "how many
+        // transactions this user has", and a scaling trend built on it would silently change
+        // meaning the day an import started reporting a window instead. Two names, two meanings,
+        // no discontinuity in either series.
+        reconcile(userId, candidates, Map.of(
+                "candidatesLoaded", candidates.size(),
+                "windowFrom", from.toString(),
+                "windowTo", to.toString()));
+    }
+
+    /**
+     * The passes themselves, over whatever candidate set the caller established.
+     *
+     * @param scopeAudit how the caller describes its own scope, merged into the RECONCILIATION_RUN
+     *                   audit row so a run says which shape it was
+     */
+    private void reconcile(UUID userId, List<Transaction> all, Map<String, Object> scopeAudit) {
+        long startedAtNanos = System.nanoTime();
 
         // 1) Duplicates -- grouped in-memory over the already-fetched `all` list rather than one
         // findPotentialDuplicates() query per transaction (the original shape of this pass, and
@@ -303,13 +356,16 @@ public class ReconciliationService {
         // what it cost was to reproduce it locally with a benchmark. A duration trend across real
         // accounts is the evidence scaling-triggers.md asks for, collected as a by-product of
         // ordinary use rather than as a special exercise.
-        auditService.record(userId, "RECONCILIATION_RUN", "Transaction", null, Map.of(
-                "transactionsProcessed", all.size(),
-                "duplicatesFound", newDuplicates,
-                "transfersMatched", newTransfers,
-                "refundsMatched", newRefunds,
-                "rowsWritten", dirty.size(),
-                "durationMs", elapsedMs));
+        //
+        // The scope fields come from the caller (see reconcileForImport on why the windowed path
+        // reports candidatesLoaded rather than reusing transactionsProcessed).
+        Map<String, Object> details = new java.util.LinkedHashMap<>(scopeAudit);
+        details.put("duplicatesFound", newDuplicates);
+        details.put("transfersMatched", newTransfers);
+        details.put("refundsMatched", newRefunds);
+        details.put("rowsWritten", dirty.size());
+        details.put("durationMs", elapsedMs);
+        auditService.record(userId, "RECONCILIATION_RUN", "Transaction", null, details);
 
         // Logged as well as audited, at a level that costs nothing on a normal run. The audit
         // trail is per user and read through the admin UI; this is what makes a slow run visible

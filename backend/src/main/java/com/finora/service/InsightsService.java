@@ -50,8 +50,14 @@ public class InsightsService {
 
     @Transactional(readOnly = true)
     public InsightsDto build(UUID userId) {
-        List<Transaction> txns = transactionRepository.findByUserId(userId).stream()
-                .filter(t -> t.getIsDuplicateOf() == null && !t.isTransfer() && t.getTxnType() == Transaction.Type.EXPENSE)
+        // BH-005, fourth copy -- and the one that did not even have the REFUND clause, so a
+        // refunded purchase was counted at full price in every insight and every budget
+        // recommendation derived from them. RefundNetting owns both halves: the refund's income
+        // leg is dropped and the purchase is reported at what it actually cost.
+        List<Transaction> all = transactionRepository.findByUserId(userId);
+        RefundNetting refunds = RefundNetting.from(all);
+        List<Transaction> txns = RefundNetting.reportable(all).stream()
+                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
                 .toList();
 
         if (txns.isEmpty()) {
@@ -81,10 +87,10 @@ public class InsightsService {
                 ? months.subList(Math.max(0, months.size() - 4), months.size() - 1)
                 : List.of();
 
-        Map<String, BigDecimal> currentByCat = groupByCategory(txns, currentMonth, categoriesById);
+        Map<String, BigDecimal> currentByCat = groupByCategory(txns, currentMonth, categoriesById, refunds);
         Map<String, BigDecimal> priorByCat = new HashMap<>();
         for (String m : priorMonths) {
-            groupByCategory(txns, m, categoriesById).forEach((k, v) -> priorByCat.merge(k, v, BigDecimal::add));
+            groupByCategory(txns, m, categoriesById, refunds).forEach((k, v) -> priorByCat.merge(k, v, BigDecimal::add));
         }
         int priorCount = Math.max(priorMonths.size(), 1);
 
@@ -151,7 +157,7 @@ public class InsightsService {
                         t -> Optional.ofNullable(t.getMerchant()).filter(s -> !s.isBlank())
                                 .or(() -> Optional.ofNullable(t.getDescription()).filter(s -> !s.isBlank()))
                                 .orElse("Unknown"),
-                        Collectors.reducing(BigDecimal.ZERO, Transaction::getAmount, BigDecimal::add)));
+                        Collectors.reducing(BigDecimal.ZERO, refunds::reportableAmount, BigDecimal::add)));
         merchantTotals.entrySet().stream().max(Map.Entry.comparingByValue())
                 .ifPresent(top -> sentences.add(String.format(Locale.ENGLISH,
                         "Your top merchant %s was \"%s\" at \u20b9%,.0f.", periodLabel, top.getKey(), top.getValue())));
@@ -159,11 +165,15 @@ public class InsightsService {
         return new InsightsDto(sentences, movers);
     }
 
-    private Map<String, BigDecimal> groupByCategory(List<Transaction> txns, String month, Map<UUID, Category> categoriesById) {
+    /** BH-005: the netting is a parameter rather than a field because it is derived per request
+     *  from the caller's own ledger -- see {@link RefundNetting}. */
+    private Map<String, BigDecimal> groupByCategory(List<Transaction> txns, String month,
+                                                     Map<UUID, Category> categoriesById,
+                                                     RefundNetting refunds) {
         return txns.stream()
                 .filter(t -> YearMonth.from(t.getTxnDate()).toString().equals(month))
                 .collect(Collectors.groupingBy(
                         t -> categoriesById.containsKey(t.getCategoryId()) ? categoriesById.get(t.getCategoryId()).getName() : "Uncategorized",
-                        Collectors.reducing(BigDecimal.ZERO, Transaction::getAmount, BigDecimal::add)));
+                        Collectors.reducing(BigDecimal.ZERO, refunds::reportableAmount, BigDecimal::add)));
     }
 }

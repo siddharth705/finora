@@ -204,6 +204,50 @@ class RateLimitFilterTest {
                 .isEqualTo(429);
     }
 
+    /**
+     * BH-011. Every endpoint that costs something to call must be in the table, and the table is
+     * the only thing that decides.
+     *
+     * <p>{@code /api/v1/import/jobs} -- the ASYNCHRONOUS upload path, and the one the web app now
+     * uploads through -- was not in it. The two synchronous staging endpoints beside it were, on a
+     * justification that applies to this one with more force: every call writes an object to
+     * storage AND a queue row, and the job it creates then writes an import_sessions row holding
+     * the raw statement bytes. Content addressing dedupes identical uploads, so an abusive caller
+     * varies one byte and every request becomes a new object that nothing ever deletes.
+     *
+     * <p>{@code /api/v1/auth/reset-password/phone} was the other gap, and it was reasoned about
+     * explicitly and wrongly: this filter's own class comment dismissed it as "cheap, no-real-cost",
+     * which is an argument about COST on an endpoint whose problem is DISCLOSURE -- it returns the
+     * account's full phone number to any holder of a reset token.
+     *
+     * <p>Written as a table rather than another one-off case because the failure mode is an
+     * omission, and a test that names the endpoints one at a time fails to catch the next one for
+     * exactly the same reason the filter did.
+     */
+    @Test
+    void everyEndpointWithARealPerCallCostIsLimited() throws Exception {
+        String[] mustBeLimited = {
+                "/api/v1/auth/login",
+                "/api/v1/auth/register",
+                "/api/v1/auth/forgot-password",
+                "/api/v1/auth/reset-password",
+                "/api/v1/auth/reset-password/phone",
+                "/api/v1/import/csv/stage",
+                "/api/v1/import/pdf/stage",
+                "/api/v1/import/jobs",
+                "/api/v1/users/me/password-change/start",
+                "/api/v1/users/me/password-change/verify-otp",
+                "/api/v1/users/me/password-change/complete",
+        };
+
+        for (String path : mustBeLimited) {
+            RateLimitFilter filter = newFilter(false);
+            assertThat(tripsRateLimitAfterManyRequests(filter, requestFor(path, "10.0.1.5", null)))
+                    .as("%s writes or discloses something per call and must be behind a limiter", path)
+                    .isTrue();
+        }
+    }
+
     /** The flip side: matching must not become so loose that unrelated endpoints get swept into a
      *  limiter. A path that merely starts with a limited one is a different endpoint. */
     @Test

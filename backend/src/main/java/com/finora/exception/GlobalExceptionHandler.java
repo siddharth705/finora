@@ -217,6 +217,71 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * An upload past {@code spring.servlet.multipart.max-file-size} (BH-010).
+     *
+     * <p>Spring's own {@code DefaultHandlerExceptionResolver} maps this correctly, and the
+     * catch-all below shadowed it -- the same mechanism {@link #handleBindingFailure} documents for
+     * the three binding exceptions. So an 11 MB statement came back as a 500 {@code INTERNAL_ERROR}
+     * logged as an unhandled exception: the user was told the server had broken when the real
+     * answer was "your statement is too big", and the error-rate alert counted it as a fault.
+     *
+     * <p>A year of statements as one PDF is an ordinary thing to try, not an attack, so the message
+     * names the limit rather than being deliberately vague. The limit is not a secret -- it is in
+     * the OpenAPI description and discoverable in one request either way.
+     */
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiResponse<Void>> handleUploadTooLarge(
+            org.springframework.web.multipart.MaxUploadSizeExceededException ex) {
+        long maxBytes = ex.getMaxUploadSize();
+        String limit = maxBytes > 0 ? " (limit " + (maxBytes / (1024 * 1024)) + " MB)" : "";
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(ApiResponse.error("That file is too large to upload" + limit
+                        + ". Try splitting the statement, or upload it as a CSV export instead.",
+                        "UPLOAD_TOO_LARGE"));
+    }
+
+    /**
+     * The last unmapped client-input channel (BH-008, BH-009).
+     *
+     * <p>Two endpoints reached {@code IllegalArgumentException} from ordinary query parameters and
+     * both produced a 500: {@code GET /import/jobs?limit=0} clamps only the upper bound and hands
+     * {@code PageRequest.of(0, 0)} a size Spring Data rejects, and
+     * {@code TransactionService.search} passes {@code sortDir} into
+     * {@code Sort.Direction.fromString} unvalidated -- in the same method whose own comment
+     * explains that it clamps page and size precisely so a malformed param stops 500ing. Two of
+     * three inputs were fixed and the third was not.
+     *
+     * <p>Registered as a HANDLER rather than fixed only at those two call sites, deliberately: the
+     * call-site clamps are still the right thing (a client should get a sensible page, not an
+     * error), and this is the backstop for the next parameter nobody thought to clamp. It is the
+     * same argument this class already made four times over -- the pattern is that a routine bad
+     * input must not be logged and alerted as a server fault.
+     *
+     * <p>Does NOT echo {@code ex.getMessage()}. Spring Data's text is safe today, but this handler
+     * now catches anything in the application that throws {@code IllegalArgumentException}, and
+     * some of those messages will quote the value that caused them -- which on this API is
+     * customer data.
+     *
+     * <p><b>Logged at WARN, with the stack trace, and that is deliberate.</b> This handler cannot
+     * distinguish "a client sent limit=0" from "a service threw IllegalArgumentException because of
+     * a real bug", and answering 400 for the second is a way to make an internal defect look like
+     * the caller's fault and disappear. Debug would hide it -- prod runs at INFO. So the client
+     * gets the correct status and the server keeps the evidence: a 400 here is still a line an
+     * engineer can find. If a legitimate client turns one of these into steady traffic, the answer
+     * is to validate that parameter at its call site (as {@code PageBounds} does) so it never
+     * reaches here, not to quieten this.
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ApiResponse<Void>> handleIllegalArgument(IllegalArgumentException ex,
+                                                                    HttpServletRequest request) {
+        log.warn("Rejecting a request with an unusable argument on {} {}. If this is not a bad "
+                        + "parameter from the caller, it is a bug in the handler for that route.",
+                request.getMethod(), request.getRequestURI(), ex);
+        return ResponseEntity.badRequest()
+                .body(ApiResponse.error("One of the request's parameters is not valid.", "INVALID_PARAMETER"));
+    }
+
+    /**
      * Bug fix (production-readiness pass): this used to include the raw exception's own message
      * in every 500 response, in every profile, unconditionally — not a full stack trace, but
      * still a real information-disclosure risk for a financial API (a SQL exception's message can

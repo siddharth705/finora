@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { X, Eye, EyeOff, CheckCircle2, Circle, ChevronDown, ChevronUp } from 'lucide-react';
 import { passwordChangeApi } from '../api/endpoints';
-import { safeStorage } from '../lib/safeStorage';
 import { sendPhoneVerificationCode, confirmPhoneVerificationCode, resetPhoneVerification } from '../lib/phoneAuth';
 import type { ConfirmationResult } from 'firebase/auth';
 
@@ -183,15 +182,14 @@ export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => voi
 
   async function submitNewPassword() {
     if (!sessionId || !canSubmitNewPassword) return;
-    const currentRefreshToken = safeStorage.getItem('finora_refresh_token');
-    if (!currentRefreshToken) {
-      setError('Your session information is missing. Please sign in again and retry.');
-      return;
-    }
+    // BH-012: no refresh token to look up, and no "your session information is missing" branch --
+    // that error existed only because this read a value out of localStorage that might not be
+    // there. The session is identified server-side from the access token this request already
+    // carries.
     setSubmitting(true);
     setError(null);
     try {
-      const res = await passwordChangeApi.complete(sessionId, newPassword, signOutOtherDevices, currentRefreshToken);
+      const res = await passwordChangeApi.complete(sessionId, newPassword, signOutOtherDevices);
       setSuccessMessage(res.message);
       setStep('success');
       onSuccess?.();

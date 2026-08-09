@@ -72,10 +72,15 @@ export const authApi = {
     api.post<{ message: string }>('/auth/reset-password', { token, firebaseIdToken, newPassword }).then((r) => r.data),
   // Uses a bare axios call (not the shared `api` instance) so a failing/expiring access token
   // on the shared instance can't interfere with the refresh call itself.
-  refresh: (refreshToken: string) =>
-    rawApi.post<ApiEnvelope<{ token: string; refreshToken: string }>>('/auth/refresh', { refreshToken }).then((r) => r.data.data),
-  logout: (refreshToken: string) =>
-    api.post<{ message: string }>('/auth/logout', { refreshToken }).then((r) => r.data),
+  // BH-012: no body token, on either call. The refresh token travels as the HttpOnly cookie and
+  // nothing in this app can read it -- which is the entire point of the cookie. The backend
+  // already prefers the cookie and treats the body as an optional fallback for native clients
+  // with no cookie jar (RefreshTokenCookie.resolve, @RequestBody(required = false)), so this needs
+  // no server change; mobile keeps sending a body from its own client and is unaffected.
+  refresh: () =>
+    rawApi.post<ApiEnvelope<{ token: string; refreshToken: string }>>('/auth/refresh').then((r) => r.data.data),
+  logout: () =>
+    api.post<{ message: string }>('/auth/logout').then((r) => r.data),
 };
 
 // Just one endpoint now -- there's no backend-triggered "send" step (Firebase's own client SDK
@@ -581,9 +586,13 @@ export const passwordChangeApi = {
   // currentRefreshToken lets the backend positively identify (and exclude) this device from
   // revocation when signOutOtherDevices is true -- an access token alone doesn't carry enough
   // information to know which refresh token belongs to this browser tab.
-  complete: (sessionId: string, newPassword: string, signOutOtherDevices: boolean, currentRefreshToken: string) =>
+  // BH-012: no currentRefreshToken. This browser can no longer read its own refresh token (it is
+  // HttpOnly now) and does not need to -- the backend identifies "this device" from the access
+  // token's sid claim, which names the session directly and survives rotation. The field is
+  // deprecated and ignored server-side; mobile still sends it and is unaffected.
+  complete: (sessionId: string, newPassword: string, signOutOtherDevices: boolean) =>
     api.post<{ message: string; otherDevicesSignedOut: boolean }>(
-      '/users/me/password-change/complete', { sessionId, newPassword, signOutOtherDevices, currentRefreshToken }
+      '/users/me/password-change/complete', { sessionId, newPassword, signOutOtherDevices }
     ).then((r) => r.data),
 };
 

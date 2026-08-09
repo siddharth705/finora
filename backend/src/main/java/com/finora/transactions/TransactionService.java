@@ -79,7 +79,19 @@ public class TransactionService {
     // next page existed (see PagedResponse's own doc comment; the admin Users directory hit this
     // exact gap first and got a real fix, this endpoint didn't). Now returns the same envelope.
     public PagedResponse<TransactionDto> search(UUID userId, TransactionDto.FilterRequest f) {
-        Sort sort = Sort.by(Sort.Direction.fromString(f.sortDir() == null ? "DESC" : f.sortDir()),
+        // BH-009: sortDir went into Sort.Direction.fromString unvalidated, so ?sortDir=bogus threw
+        // IllegalArgumentException and 500'd -- in the same method whose own comment two blocks
+        // down explains that page and size are clamped precisely so a malformed param stops doing
+        // that. Two of the three inputs were fixed and the third was missed.
+        //
+        // fromOptionalString, so an unrecognised value falls back to the default rather than
+        // failing the search. That matches how sortField already behaves (mapSortField's `default`
+        // arm quietly yields txnDate) -- a sort direction is a presentation preference, and
+        // refusing to return a user's transactions over one would be a worse answer than sorting
+        // them the usual way.
+        Sort sort = Sort.by(
+                Sort.Direction.fromOptionalString(f.sortDir() == null ? "" : f.sortDir())
+                        .orElse(Sort.Direction.DESC),
                 f.sortField() == null ? "txnDate" : mapSortField(f.sortField()));
         // Bank-aware search (PRD's "Improve Search"): a keyword like "Punjab National" should
         // also match transactions on accounts held with that bank, not just description/merchant
@@ -360,6 +372,64 @@ public class TransactionService {
     }
 
     /**
+     * "This is not a duplicate" -- the decision the engine cannot make and, until now, could only
+     * be told during an import review.
+     *
+     * <h2>The gap this closes</h2>
+     *
+     * <p>{@code ReconciliationService}'s duplicate pass groups on account, date, amount and
+     * description and flags every member but the earliest. It cannot distinguish "the same
+     * statement uploaded twice" from "two metro fares on one day", which is exactly why
+     * {@code notDuplicateConfirmedAt} exists -- and that field was writable from precisely one
+     * place in the application, {@code ImportService.confirm}, reachable only from the import
+     * review screen.
+     *
+     * <p>So a user who entered two identical transactions by hand had the second one flagged
+     * {@code DUPLICATE} on the very next write, silently excluded from income, expenses, category
+     * spend, budgets and every report, with no affordance anywhere to say otherwise. Worse, it was
+     * excluded inconsistently: {@code Account.balance} counts it, because a duplicate-flagged row
+     * is still a real ledger row. The ledger and the dashboard disagreed by that amount and the
+     * user had no way to reconcile them.
+     *
+     * <p>Two identical same-day charges is not an exotic case -- it is a commute, a round of
+     * coffees, a split bill paid twice.
+     *
+     * <h2>Why this also clears the pointer rather than only stamping the flag</h2>
+     *
+     * <p>{@code notDuplicateConfirmedAt} stops the NEXT pass re-flagging the row; on its own it
+     * would leave the current {@code isDuplicateOf} and {@code DUPLICATE} status sitting there, so
+     * the row would stay excluded until something else happened to touch it. The user asked for
+     * this row to count, so it counts now.
+     *
+     * <p>Reconciliation re-runs afterwards for the same reason every other write path re-runs it:
+     * a row returning to OK can complete or break a pattern elsewhere, and a third genuinely
+     * accidental copy must still be flagged against this one.
+     */
+    @Transactional
+    public TransactionDto confirmNotDuplicate(UUID userId, UUID txnId) {
+        Transaction t = getOwned(userId, txnId);
+
+        t.setNotDuplicateConfirmedAt(java.time.Instant.now());
+        t.setIsDuplicateOf(null);
+        t.setReconciliationStatus(Transaction.ReconciliationStatus.OK);
+        t.setReconciliationExplanation(null);
+        Transaction saved = transactionRepository.save(t);
+
+        // The balance is deliberately NOT touched. A duplicate-flagged row was always counted in
+        // Account.balance -- the flag only ever governed what the reports exclude -- so the money
+        // does not move here. What changes is that the reports now agree with the balance, which
+        // is the whole point.
+        reconciliationService.reconcileForUser(userId);
+        recurringService.detectForUser(userId);
+
+        auditService.record(userId, "TRANSACTION_CONFIRMED_NOT_DUPLICATE", "Transaction", txnId,
+                Map.of("amount", saved.getAmount(), "date", String.valueOf(saved.getTxnDate())));
+
+        return TransactionDto.from(saved,
+                categoryNamesById(userId).getOrDefault(saved.getCategoryId(), "Uncategorized"));
+    }
+
+    /**
      * Backs POST /api/v1/merchants/{merchantId}/confirm-category (spec §5.5) -- the
      * merchant-centric counterpart to updateCategory() above. Functionally the same three
      * things (set the transaction's category, mark it manually-set/reviewed, record the
@@ -445,7 +515,7 @@ public class TransactionService {
 
     @Transactional
     public void bulkDelete(UUID userId, List<UUID> ids) {
-        List<Transaction> owned = ids.stream().map(id -> getOwned(userId, id)).toList();
+        List<Transaction> owned = getOwnedAll(userId, ids);
         clearReconciliationPointersTo(owned.stream().map(Transaction::getId).toList());
         for (Transaction t : owned) {
             adjustAccountBalance(t.getAccountId(), balanceOf(t).negate());
@@ -474,25 +544,40 @@ public class TransactionService {
      */
     private void clearReconciliationPointersTo(List<UUID> removedIds) {
         if (removedIds.isEmpty()) return;
+        java.util.Set<UUID> removed = new java.util.HashSet<>(removedIds);
+        // BH-056: written once at the end rather than a save() per row. ReconciliationService made
+        // exactly this change for exactly this reason -- Hibernate's configured batch_size and
+        // order_updates can do nothing for writes issued one statement at a time -- and this
+        // method, which runs on the same delete paths, kept the per-row form.
+        //
+        // A LinkedHashSet because one surviving row can be reached by more than one of the three
+        // lookups (a transfer partner that is also a refund target), and Transaction has no
+        // equals/hashCode override, so this de-duplicates by identity while keeping write order
+        // deterministic -- the same reasoning ReconciliationService's own `dirty` set carries.
+        //
+        // `removed` is a Set rather than the original List: contains() ran per candidate row
+        // against a list of up to 500 ids, three times over.
+        java.util.Set<Transaction> dirty = new java.util.LinkedHashSet<>();
         for (Transaction t : transactionRepository.findByIsDuplicateOfIn(removedIds)) {
-            if (removedIds.contains(t.getId())) continue;
+            if (removed.contains(t.getId())) continue;
             t.setIsDuplicateOf(null);
             t.setReconciliationStatus(Transaction.ReconciliationStatus.OK);
-            transactionRepository.save(t);
+            dirty.add(t);
         }
         for (Transaction t : transactionRepository.findByTransferPairIdIn(removedIds)) {
-            if (removedIds.contains(t.getId())) continue;
+            if (removed.contains(t.getId())) continue;
             t.setTransfer(false);
             t.setTransferPairId(null);
             t.setReconciliationStatus(Transaction.ReconciliationStatus.OK);
-            transactionRepository.save(t);
+            dirty.add(t);
         }
         for (Transaction t : transactionRepository.findByRefundOfTransactionIdIn(removedIds)) {
-            if (removedIds.contains(t.getId())) continue;
+            if (removed.contains(t.getId())) continue;
             t.setRefundOfTransactionId(null);
             t.setReconciliationStatus(Transaction.ReconciliationStatus.OK);
-            transactionRepository.save(t);
+            dirty.add(t);
         }
+        if (!dirty.isEmpty()) transactionRepository.saveAll(dirty);
     }
 
     /**
@@ -518,8 +603,8 @@ public class TransactionService {
     @Transactional
     public void bulkRecategorize(UUID userId, List<UUID> ids, String categoryName) {
         Category category = categorizationService.resolveOrCreateCategory(userId, categoryName);
-        for (UUID id : ids) {
-            Transaction t = getOwned(userId, id);
+        // BH-057: one query for the whole list rather than one per id -- see getOwnedAll.
+        for (Transaction t : getOwnedAll(userId, ids)) {
             t.setCategoryId(category.getId());
             t.setNeedsCategoryReview(false); // an explicit bulk choice resolves the review flag too — see updateCategory()
             t.setCategoryManuallySet(true);
@@ -530,6 +615,29 @@ public class TransactionService {
         }
         auditService.record(userId, "TRANSACTION_BULK_RECATEGORIZED", "Transaction", null,
                 Map.of("count", ids.size(), "newCategory", categoryName));
+    }
+
+    /**
+     * BH-057. The owned rows for a whole bulk id list, in one query.
+     *
+     * <p>{@code bulkDelete} and {@code bulkRecategorize} called {@link #getOwned} per id -- up to
+     * {@code TransactionDto.MAX_BULK_IDS} (500) {@code findById} round trips inside one
+     * transaction, before the writes and before the two full-history reconciliation passes that
+     * follow. The bound is correct and stays; the round trips were free to remove.
+     *
+     * <p>Per-id error semantics are preserved deliberately, which is why this re-walks {@code ids}
+     * rather than just checking sizes: a caller who passes one id they do not own still gets the
+     * 403 naming a transaction, and one that does not exist still gets a 404, exactly as before.
+     * Collapsing both into "some of these are not yours" would be a worse answer cheaply obtained.
+     */
+    private List<Transaction> getOwnedAll(UUID userId, List<UUID> ids) {
+        Map<UUID, Transaction> found = transactionRepository.findAllById(ids).stream()
+                .collect(Collectors.toMap(Transaction::getId, t -> t));
+        return ids.stream()
+                .map(id -> OwnershipGuard.requireOwned(
+                        java.util.Optional.ofNullable(found.get(id)),
+                        Transaction::getUserId, userId, "Transaction"))
+                .toList();
     }
 
     private Transaction getOwned(UUID userId, UUID txnId) {

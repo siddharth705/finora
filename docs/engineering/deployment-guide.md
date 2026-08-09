@@ -107,7 +107,7 @@ DB_PORT=<Railway Postgres port>
 DB_NAME=<Railway Postgres database name>
 DB_USER=<Railway Postgres username>
 DB_PASSWORD=<Railway Postgres password>
-JWT_SECRET=<a real random 32+ character value — generate one, don't reuse any example>
+JWT_SECRET=<a real random 32+ char value — see "Generating JWT_SECRET" below; never reuse an example>
 CORS_ORIGINS=https://app.finoratech.info,https://admin.finoratech.info
 APP_BASE_URL=https://app.finoratech.info
 ADMIN_APP_BASE_URL=https://admin.finoratech.info
@@ -147,6 +147,25 @@ If `FINORA_SETUP_KEY` isn't set, the app starts fine — first-run bootstrap jus
 writing/logging a generated key instead (see `docs/bootstrap-setup-future-work.md`).
 **`GOOGLE_APPLICATION_CREDENTIALS` is different: it's a hard boot-time requirement, same as
 `RESEND_API_KEY`** — see the next paragraph.
+
+### Generating `JWT_SECRET` — use hex
+
+```bash
+openssl rand -hex 32
+```
+
+Hex rather than base64, and the reason is measurable rather than stylistic. `ProductionConfigValidator`
+rejects any secret containing a placeholder marker (`change-me`, `sample`, `dummy`, `insecure`, …),
+matched case-insensitively as a substring. A randomly generated secret can contain one by chance:
+over 2,000,000 generated 48-byte values, **1 base64url secret was rejected** (it happened to contain
+`dumMyy`), a rate of roughly 1 in 2 million.
+
+In **hex it is structurally impossible** — not merely unlikely. Every marker contains at least one
+character outside `[0-9a-f]`, so no hex secret can ever match one. Verified by the same run: 0
+rejections out of 2,000,000.
+
+If a generated secret is ever rejected at boot, that is this collision and not a bug. Generate
+another one; with hex you will not see it.
 
 `ProductionConfigValidator` refuses to start the app at all (loud failure at boot, not a silent
 insecure default, and not a `restartPolicyMaxRetries` crash-loop you have to dig through logs to

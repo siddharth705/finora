@@ -39,6 +39,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -191,11 +192,51 @@ public class ImportService {
             verificationRecorder.recordForAnalysis(reference,
                     java.util.Collections.singletonList(staged.verification()));
             return new StagingSessionResponse(session.getId(), staged);
-        } catch (ApiException e) {
-            analysisRecorder.recordFailed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
-                    "CSV", fileContent.length, fingerprint, e.getCode() == null ? null : e.getCode().name(),
-                    e.getMessage(), System.currentTimeMillis() - startedAtMs, diagnostics);
+        } catch (RuntimeException e) {
+            // BH-028. This caught ApiException only, so a document that made the PARSER FALL OVER
+            // -- an index out of bounds in column bucketing, a PDFBox failure, anything unchecked
+            // -- produced a 500, a stack trace in the log, and NO row in the evidence table. That
+            // table exists to answer "which layouts defeat the parser", and it was systematically
+            // missing the layouts that defeat it hardest: the anticipated rejections were all
+            // recorded and the unanticipated crashes were all invisible, including on every retry.
+            //
+            // Recording is safe from here: recordFailed is REQUIRES_NEW, so it commits on its own
+            // and cannot roll anything back, and cannot itself be rolled back.
+            recordParseFailure(userId, fileName, "CSV", fileContent.length, fingerprint, e,
+                    startedAtMs, diagnostics);
             throw e;
+        }
+    }
+
+    /**
+     * Records a failed parse, whatever kind of failure it was.
+     *
+     * <p>BH-028. An {@code ApiException} carries an {@link ErrorCode} naming a rejection the
+     * pipeline anticipated ({@code IMPORT_001}, {@code IMPORT_007}, a missing PDF password).
+     * Anything else is the pipeline breaking rather than refusing, and there is no code for that --
+     * so the exception's own class name is used, which is the most useful thing available and
+     * keeps "index out of bounds" distinguishable from "PDFBox could not open this" in the failure
+     * histogram.
+     *
+     * <p><b>Recording must never replace the failure being recorded.</b> If the recorder itself
+     * throws -- the analysis table is unreachable, say -- the caller has to receive the ORIGINAL
+     * exception, because that is the one that explains what happened to their document. A
+     * bookkeeping failure masking a parse failure would turn a diagnosable problem into a
+     * mysterious one, which is the opposite of what this table is for.
+     */
+    private void recordParseFailure(UUID userId, String fileName, String sourceFormat, long byteSize,
+                                     String fingerprint, RuntimeException failure, long startedAtMs,
+                                     ParseDiagnostics diagnostics) {
+        String code = failure instanceof ApiException api
+                ? (api.getCode() == null ? null : api.getCode().name())
+                : failure.getClass().getSimpleName();
+        try {
+            analysisRecorder.recordFailed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
+                    sourceFormat, byteSize, fingerprint, code, failure.getMessage(),
+                    System.currentTimeMillis() - startedAtMs, diagnostics);
+        } catch (RuntimeException recordingFailed) {
+            log.error("Could not record the failed analysis for {} -- the parse failure itself is "
+                    + "being rethrown and is the one that matters.", fileName, recordingFailed);
         }
     }
 
@@ -269,13 +310,17 @@ public class ImportService {
                     diagnostics, session.getId(),
                     sections.stream().map(StagedAccountSection::verification).toList());
             return new PdfStagingSessionResponse(session.getId(), true, null, sections);
-        } catch (ApiException e) {
+        } catch (RuntimeException e) {
             // The whole point of the evidence table. A password failure carries no fingerprint --
             // the document was never opened -- but IMPORT_001 and IMPORT_007 do, and those are the
-            // ones that say "this layout defeated the parser", which is unanswerable today.
-            analysisRecorder.recordFailed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
-                    "PDF", fileContent.length, fingerprint, e.getCode() == null ? null : e.getCode().name(),
-                    e.getMessage(), System.currentTimeMillis() - startedAtMs, diagnostics);
+            // ones that say "this layout defeated the parser".
+            //
+            // BH-028: widened from ApiException. A PDF is far more likely than a CSV to crash the
+            // parser outright rather than be cleanly rejected, so this is the path where the gap
+            // mattered most -- the documents that most needed a fingerprint recorded were exactly
+            // the ones that recorded nothing.
+            recordParseFailure(userId, fileName, "PDF", fileContent.length, fingerprint, e,
+                    startedAtMs, diagnostics);
             throw e;
         }
     }
@@ -422,6 +467,21 @@ public class ImportService {
         return parseAndStage(userId, filename, new java.io.ByteArrayInputStream(content));
     }
 
+    /**
+     * <p><b>{@code @Transactional} is not decorative here, and its absence was a real gap.</b> The
+     * overloads this delegates to are all annotated -- and they are reached by SELF-invocation, so
+     * Spring's proxy never sees those calls and their annotations did nothing. This entry point had
+     * none of its own, which meant the whole confirm ran with no transaction at all: every
+     * repository call committed independently, so a failure part way through left the statement
+     * import row, some of its transactions, and a moved account balance all separately committed
+     * with no way to unwind them.
+     *
+     * <p>Not a production path today -- the controller uses {@link #confirmSession} and
+     * {@code StatementImportService.confirmReimport} crosses a bean boundary, both of which are
+     * proxied and transactional. It is reached by tests, which is exactly how it stayed unnoticed,
+     * and it is one call away from becoming a production path.
+     */
+    @Transactional
     public ConfirmResponse confirm(UUID userId, MultipartFile file, ConfirmRequest request) throws IOException {
         String fileName = StatementUpload.safeFileName(file, "statement.csv");
         return confirm(userId, fileName, file.getBytes(), request);
@@ -452,7 +512,11 @@ public class ImportService {
                     "The reviewed sections don't match what was staged for this import session -- try staging again.");
         }
 
-        List<ConfirmResponse> responses = new ArrayList<>();
+        // BH-041: persist every section FIRST, reconcile once, then summarise. See reconcileAcross
+        // for why that is both cheaper and slightly more correct than the per-section loop this
+        // replaces. Row-count validation stays in this first pass, so a mismatched section still
+        // rejects the whole request before anything is written -- the transaction is the same one.
+        List<PersistedSection> persisted = new ArrayList<>();
         for (int i = 0; i < request.sections().size(); i++) {
             SectionConfirm sectionConfirm = request.sections().get(i);
             StagedAccountSection stagedSection = stagedSections.get(i);
@@ -464,9 +528,16 @@ public class ImportService {
                     null, // this section's ConfirmRequest doesn't carry its own sessionId -- the session is claimed once, above, for the whole multi-account request
                     sectionConfirm.rows(), sectionConfirm.existingAccountId(), sectionConfirm.newAccount(),
                     sectionConfirm.statementOpeningBalance(), sectionConfirm.statementClosingBalance());
-            responses.add(confirm(userId, session.getFileName(), statementContentService.read(session), perAccountRequest, i,
+            persisted.add(persistSection(userId, session.getFileName(), statementContentService.read(session), perAccountRequest, i,
                     session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
                 session.getUnparseableSummaryJson()));
+        }
+
+        reconcileAcross(userId, persisted);
+
+        List<ConfirmResponse> responses = new ArrayList<>();
+        for (PersistedSection section : persisted) {
+            responses.add(summarise(userId, section));
         }
         return new MultiAccountConfirmResponse(responses);
     }
@@ -545,6 +616,69 @@ public class ImportService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request, Integer sourceSectionIndex,
+                                    String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson,
+                                    String unparseableSummaryJson) {
+        PersistedSection section = persistSection(userId, fileName, fileContent, request, sourceSectionIndex,
+                layoutMetadataJson, layoutFingerprint, activatedCapabilitiesJson, unparseableSummaryJson);
+        reconcileAcross(userId, List.of(section));
+        return summarise(userId, section);
+    }
+
+    /**
+     * BH-041. One reconciliation pass for a whole import, however many sections it had.
+     *
+     * <p>This used to run once per section, at user-wide scope, from inside each section's own
+     * confirm. Three sections therefore reconciled the user's entire transaction history three
+     * times: measured at +309 prepared statements, +136 query executions and +132 ms against a
+     * 200-row history, all of it repeating work the previous section had just done.
+     *
+     * <p>Two things had to be true before the passes could be collapsed into one, and both were
+     * checked rather than assumed:
+     *
+     * <ul>
+     *   <li><b>The per-section counts survive.</b> Each section writes its own
+     *       {@code StatementImport}, and {@link DuplicateDetector#tally} is a post-hoc read of
+     *       persisted flags scoped by that id — it does not care how many passes ran or when. So
+     *       {@code perAccount} keeps exactly the meaning it had, and no API changed.</li>
+     *   <li><b>Reconciling later is not reconciling less.</b> Every pass was already user-wide, so
+     *       the last one always saw every section. Running once after all of them are persisted
+     *       reaches the same final state.</li>
+     * </ul>
+     *
+     * <p>It also fixes an asymmetry nobody had reported: section 1 was summarised before section 2
+     * existed, so a transfer between two sections of the same statement was counted in section 2's
+     * {@code transfersIdentified} and not in section 1's. Both sides see it now.
+     *
+     * <p>The window spans every section's dates together, so a transfer whose legs sit in different
+     * sections is inside one candidate set.
+     */
+    private void reconcileAcross(UUID userId, List<PersistedSection> sections) {
+        if (sections.stream().noneMatch(s -> s.imported() > 0)) return;
+        LocalDate earliest = sections.stream().map(PersistedSection::minDate)
+                .filter(Objects::nonNull).min(LocalDate::compareTo).orElse(null);
+        LocalDate latest = sections.stream().map(PersistedSection::maxDate)
+                .filter(Objects::nonNull).max(LocalDate::compareTo).orElse(null);
+        reconciliationService.reconcileForImport(userId, earliest, latest);
+        // Same reasoning as TransactionService's write paths -- a fresh batch of imported
+        // transactions is exactly the kind of change that can newly complete (or newly break) a
+        // recurring pattern, and a MARK_SUBSCRIPTION rule match needs this to take effect
+        // immediately rather than waiting on the user to open the Recurring page. Hoisted here with
+        // reconciliation for the same reason: it was per-section, it is user-wide, and the 3-vs-1
+        // measurement counted its repeats too.
+        recurringService.detectForUser(userId);
+    }
+
+    /**
+     * Everything one section does up to the point reconciliation has to run: resolve the account,
+     * build and insert the rows, write the StatementImport, move the balance.
+     *
+     * <p>Split out of {@code confirm()} for BH-041 so a multi-section import can persist every
+     * section before any reconciliation happens. The counterpart is {@link #summarise}, and the two
+     * are not independently reorderable — see that method on why the BH-003 balance reversal has to
+     * travel with the tally.
+     */
+    private PersistedSection persistSection(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request,
+                                    Integer sourceSectionIndex,
                                     String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson,
                                     String unparseableSummaryJson) {
         long startedAtMs = System.currentTimeMillis();
@@ -750,7 +884,25 @@ public class ImportService {
         //
         // The two agree wherever both are available: for a new account, opening + net == closing
         // exactly when the guard says CORROBORATED, since that is the arithmetic it checks.
+        //
+        // The guard needs the ACCOUNT TYPE, and that is not a detail. Whether a debit raises or
+        // lowers the closing balance is a property of the account -- on a card, balance is money
+        // OWED, so a purchase increases it. The guard used to assume every account was an asset,
+        // which made every arithmetically correct credit-card statement come out UNCORROBORATED
+        // (off by exactly twice the net) and meant no card ever had its stated closing balance
+        // applied.
+        //
+        // The TYPE is read here and the ENTITY is not held. Every block below re-fetches, which
+        // looks like a redundant query and is not: Account extends BaseEntity, whose non-null
+        // @Version makes Spring Data route save() through merge() -- and merge returns a NEW
+        // managed copy, leaving the instance you passed in on its old version. Holding one
+        // reference across two saves therefore fails the second with
+        // ObjectOptimisticLockingFailureException, which is precisely the trap BaseEntity's own
+        // class comment documents. The type cannot go stale; the row can.
+        Account.Type accountType = accountRepository.findById(accountId)
+                .map(Account::getAccountType).orElse(null);
         ClosingBalanceGuard.Decision balanceDecision = ClosingBalanceGuard.assess(
+                accountType,
                 request.statementOpeningBalance(), request.statementClosingBalance(),
                 totalCredits, totalDebits, toInsert.size(), skipped);
         boolean closingBalanceIsAuthoritative = balanceDecision.mayOverwriteAccountBalance()
@@ -800,29 +952,110 @@ public class ImportService {
             }
         }
 
-        // Bug fix (v7->v8): this path never ran reconciliation, so imported transactions never
-        // got flagged as internal transfers or duplicates the way manually-entered ones do. Now
-        // it does, and the summary reports exactly what reconciliation found among THIS batch.
-        int duplicatesDetected = 0;
-        int transfersIdentified = 0;
-        if (imported > 0) {
-            reconciliationService.reconcileForUser(userId);
-            // Same reasoning as TransactionService's write paths -- a fresh batch of imported
-            // transactions is exactly the kind of change that can newly complete (or newly break)
-            // a recurring pattern, and a MARK_SUBSCRIPTION rule match needs this to take effect
-            // immediately rather than waiting on the user to open the Recurring page.
-            recurringService.detectForUser(userId);
-            DuplicateDetector.ReconciliationTally tally = duplicateDetector.tally(saved);
-            duplicatesDetected = tally.duplicatesDetected();
-            transfersIdentified = tally.transfersIdentified();
-        }
-
+        // Counted HERE rather than after reconciliation, which is where it used to sit. Nothing
+        // between the two points creates merchants -- they are created while the rows above are
+        // built -- so the number is identical, and taking it before the shared pass is what keeps
+        // it attributable to THIS section instead of picking up merchants a later section learned.
         long merchantsAfter = merchantRepository.countByUserId(userId);
         int newMerchantsLearned = (int) Math.max(0, merchantsAfter - merchantsBefore);
 
+        return new PersistedSection(accountId, savedImport, saved, imported, skipped,
+                closingBalanceIsAuthoritative, balanceDecision, accountsCreated, productsCreated,
+                categoryTally, newMerchantsLearned, totalCredits, totalDebits,
+                request.statementOpeningBalance(), request.statementClosingBalance(),
+                minDate, maxDate, startedAtMs);
+    }
+
+    /**
+     * One section's share of an import, carried from {@link #persistSection} across the shared
+     * reconciliation pass to {@link #summarise}.
+     *
+     * <p>Exists because BH-041 put a step between persisting a section and reporting on it. Every
+     * field is a value the old single-pass method held as a local; nothing is recomputed on the far
+     * side, so the summary describes the section it came from rather than the import as a whole.
+     */
+    private record PersistedSection(
+            UUID accountId,
+            StatementImport savedImport,
+            List<Transaction> saved,
+            int imported,
+            int skipped,
+            boolean closingBalanceIsAuthoritative,
+            ClosingBalanceGuard.Decision balanceDecision,
+            List<String> accountsCreated,
+            Map<String, Integer> productsCreated,
+            Map<String, Integer> categoryTally,
+            int newMerchantsLearned,
+            BigDecimal totalCredits,
+            BigDecimal totalDebits,
+            BigDecimal statementOpeningBalance,
+            BigDecimal statementClosingBalance,
+            LocalDate minDate,
+            LocalDate maxDate,
+            long startedAtMs) {}
+
+    /**
+     * What one section reports once reconciliation has run: what it found among this section's own
+     * rows, the balance correction that follows from it, and the response.
+     *
+     * <p><b>The tally and the BH-003 reversal are one step, not two.</b> Reconciliation has just
+     * decided which of this section's rows are duplicates; the balance was moved by all of them.
+     * Reading the flags without reversing their contribution is the BH-003 bug exactly — a card
+     * balance that went 4000.00 to 3000.00 on a second import of the same file, with the rows that
+     * caused it hidden from the ledger view. Anything that reorders this method must keep the two
+     * together.
+     */
+    private ConfirmResponse summarise(UUID userId, PersistedSection section) {
+        UUID accountId = section.accountId();
+        boolean closingBalanceIsAuthoritative = section.closingBalanceIsAuthoritative();
+
+        // Bug fix (v7->v8): this path never ran reconciliation, so imported transactions never
+        // got flagged as internal transfers or duplicates the way manually-entered ones do. Now
+        // it does, and the summary reports exactly what reconciliation found among THIS batch --
+        // scoped by this section's own statement_import_id, which is what lets one shared pass
+        // still produce per-section numbers.
+        int duplicatesDetected = 0;
+        int transfersIdentified = 0;
+        if (section.imported() > 0) {
+            DuplicateDetector.ReconciliationTally tally = duplicateDetector.tally(section.saved());
+            duplicatesDetected = tally.duplicatesDetected();
+            transfersIdentified = tally.transfersIdentified();
+
+            // BH-003. The balance above moved by the net effect of EVERY row this import inserted.
+            // Reconciliation has just decided that some of them are duplicates of transactions the
+            // ledger already held, and every reported total -- dashboard, reports, category spend
+            // -- excludes them from here on. Account.balance was the one figure that did not, so
+            // re-importing a statement (or uploading the same file twice) moved the balance a
+            // second time and left it permanently overstated, with the rows that caused it hidden
+            // from the ledger view. Nothing recomputes that column, so the disagreement was
+            // permanent and silent -- the exact failure ClosingBalanceGuard's own comment describes
+            // this pipeline as existing to prevent.
+            //
+            // The rule the balance follows is unchanged: it moves with the transactions Finora
+            // COUNTS. A duplicate is not counted, so its contribution comes back off.
+            //
+            // Only on the netDelta branch. When the closing balance was authoritative the column
+            // holds an absolute figure the statement stated, not an accumulated one -- re-importing
+            // writes the same number again, which is already idempotent, and subtracting from it
+            // would corrupt a balance that was correct.
+            if (!closingBalanceIsAuthoritative && !tally.duplicates().isEmpty()) {
+                // Re-fetched, like every other block that writes this row -- see the note above
+                // the guard on why holding one Account reference across two saves does not work.
+                accountRepository.findById(accountId).ifPresent(account -> {
+                    BigDecimal reversal = AccountBalanceConvention
+                            .netDelta(account.getAccountType(), tally.duplicates()).negate();
+                    if (reversal.signum() != 0) {
+                        account.setBalance(account.getBalance().add(reversal));
+                        accountRepository.save(account);
+                    }
+                });
+            }
+        }
+
+        ClosingBalanceGuard.Decision balanceDecision = section.balanceDecision();
         List<String> warnings = new ArrayList<>();
-        if (skipped > 0) {
-            warnings.add(skipped + " row(s) were left unchecked during review and were not imported.");
+        if (section.skipped() > 0) {
+            warnings.add(section.skipped() + " row(s) were left unchecked during review and were not imported.");
         }
         // Silence here was the actual harm in Bug 02: the balance was written whether or not it
         // agreed with the transactions, so there was never anything to notice. The wording says
@@ -843,20 +1076,32 @@ public class ImportService {
                 .map(AccountDto::from)
                 .orElse(null);
 
-        return new ConfirmResponse(imported, skipped, duplicatesDetected, transfersIdentified,
-                newMerchantsLearned, accountsCreated, productsCreated, categoryTally, warnings,
-                accountSnapshot, totalCredits, totalDebits,
-                request.statementOpeningBalance(), request.statementClosingBalance(),
-                minDate, maxDate,
-                System.currentTimeMillis() - startedAtMs,
+        return new ConfirmResponse(section.imported(), section.skipped(), duplicatesDetected, transfersIdentified,
+                section.newMerchantsLearned(), section.accountsCreated(), section.productsCreated(),
+                section.categoryTally(), warnings,
+                accountSnapshot, section.totalCredits(), section.totalDebits(),
+                section.statementOpeningBalance(), section.statementClosingBalance(),
+                section.minDate(), section.maxDate(),
+                System.currentTimeMillis() - section.startedAtMs(),
                 "CSV");
     }
 
+    /**
+     * Whether this statement is the newest one on file for the account, so its stated closing
+     * balance may be treated as where the account actually ended.
+     *
+     * <p>BH-024. This used to load EVERY statement import the user has and filter in memory, once
+     * per confirm and once per section for a composite statement -- a full read of the largest
+     * table in the schema to produce a boolean. It also dereferenced {@code si.getAccountId()}
+     * without a null check, so a row with no account would have thrown mid-import. One aggregate
+     * query answers it, and the database handles the nulls.
+     */
     private boolean isMostRecentStatementForAccount(UUID userId, UUID accountId, LocalDate thisStatementEnd, UUID thisStatementId) {
         if (thisStatementEnd == null) return true; // nothing to compare against — apply rather than never updating
-        return statementImportRepository.findByUserIdOrderByImportedAtDesc(userId).stream()
-                .filter(si -> si.getAccountId().equals(accountId) && !si.getId().equals(thisStatementId))
-                .allMatch(si -> si.getStatementPeriodEnd() == null || !si.getStatementPeriodEnd().isAfter(thisStatementEnd));
+        return statementImportRepository
+                .findLatestPeriodEndForAccount(userId, accountId, thisStatementId)
+                .map(latestOther -> !latestOther.isAfter(thisStatementEnd))
+                .orElse(true); // this is the account's only statement, or no other one states a period
     }
 
     /** What the review screen says this product is, falling back to the coarse account type when a

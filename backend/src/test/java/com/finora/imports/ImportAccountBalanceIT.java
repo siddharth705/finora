@@ -10,6 +10,8 @@ import com.finora.repository.AccountRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.UserRepository;
 import com.finora.service.StatementImportService;
+import com.finora.repository.MerchantLearningEventRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -46,6 +48,39 @@ class ImportAccountBalanceIT extends AbstractIntegrationTest {
     @Autowired private AccountRepository accountRepository;
     @Autowired private StatementImportRepository statementImportRepository;
     @Autowired private UserRepository userRepository;
+    @Autowired private MerchantLearningEventRepository learningEventRepository;
+
+    /**
+     * The users this class created, so {@link #removeQueuedLearningEvents()} can clean up after
+     * exactly them and nothing else.
+     */
+    private final List<UUID> createdUserIds = new java.util.ArrayList<>();
+
+    /**
+     * Every confirmed import enqueues merchant-learning events, and the test profile disables the
+     * queue worker ({@code app.learning.queue.enabled=false}) so nothing ever drains them. Left
+     * alone they accumulate in a table every integration test in the JVM shares.
+     *
+     * <p>That is not hypothetical interference. {@code MerchantLearningImportIT.drainUntilSettled}
+     * documents the exact coupling: {@code drainOnce()} claims a bounded batch of 50 across the
+     * WHOLE table, so another class's undrained rows compete with its fixture's for the batch. It
+     * defends itself by backdating its own events so they sort first, and that defence looks
+     * sound -- but the defence existing is not a licence for this class to keep adding to the pile.
+     * A test that leaves persistent queue state behind is a test whose blast radius is every other
+     * test in the run, and the next class to be written may not have that defence.
+     *
+     * <p>Scoped to this class's own users rather than truncating the table: a blanket delete would
+     * make this class's cleanup destructive to anything running beside it, which is the same
+     * cross-test coupling one layer down.
+     */
+    @AfterEach
+    void removeQueuedLearningEvents() {
+        if (createdUserIds.isEmpty()) return;
+        learningEventRepository.deleteAll(learningEventRepository.findAll().stream()
+                .filter(e -> createdUserIds.contains(e.getUserId()))
+                .toList());
+        createdUserIds.clear();
+    }
 
     private record Fixture(User user, Account account) {}
 
@@ -56,6 +91,7 @@ class ImportAccountBalanceIT extends AbstractIntegrationTest {
         user.setFullName("Import Balance IT User");
         user.setPhoneVerified(true);
         User savedUser = userRepository.save(user);
+        createdUserIds.add(savedUser.getId());
 
         Account account = new Account();
         account.setUserId(savedUser.getId());
@@ -189,5 +225,76 @@ class ImportAccountBalanceIT extends AbstractIntegrationTest {
                 .as("however the balance came to include these transactions, removing them has to "
                         + "take their effect with it")
                 .isEqualByComparingTo("1000.00");
+    }
+
+    // ---- BH-003: a duplicate import must not move the balance twice ----
+
+    @Test
+    @DisplayName("BH-003: importing the same statement twice does not move the balance twice")
+    void aDuplicateImportDoesNotDoubleCountTheBalance() throws Exception {
+        Fixture f = fixture(Account.Type.SAVINGS, "1000.00");
+
+        importRows(f, null, null,
+                row("METRO FARE", "45.00", "EXPENSE"),
+                row("SALARY", "500.00", "INCOME"));
+        assertThat(balanceOf(f)).isEqualByComparingTo("1455.00");
+
+        // The same statement again -- a re-import, a double-clicked confirm, or the same file
+        // uploaded twice. Reconciliation flags these rows as duplicates of the ones already on the
+        // books and excludes them from every reported total from here on. Before the fix the
+        // balance was the one figure that did not follow: it moved to 1910.00 and stayed there,
+        // while the ledger view showed nothing that explained the difference. Nothing in the
+        // product ever recomputes that column, so it was permanently and silently wrong.
+        importRows(f, null, null,
+                row("METRO FARE", "45.00", "EXPENSE"),
+                row("SALARY", "500.00", "INCOME"));
+
+        assertThat(balanceOf(f))
+                .as("the duplicates are excluded from every total; the balance has to agree with "
+                        + "the transactions the product actually counts")
+                .isEqualByComparingTo("1455.00");
+    }
+
+    @Test
+    @DisplayName("BH-003: the same holds for a credit card, where the inversion doubles the error")
+    void aDuplicateCardImportDoesNotDoubleCountTheBalance() throws Exception {
+        // Cards are the case that hit this hardest. ClosingBalanceGuard used to read every account
+        // with the asset formula, so a card statement could never corroborate -- which meant every
+        // card import took the netDelta branch, which is the branch that double-counted.
+        Fixture f = fixture(Account.Type.CREDIT_CARD, "2000.00");
+
+        importRows(f, null, null,
+                row("ONLINE PURCHASE", "300.00", "EXPENSE"),
+                row("CARD PAYMENT", "500.00", "INCOME"));
+        assertThat(balanceOf(f)).isEqualByComparingTo("1800.00");
+
+        importRows(f, null, null,
+                row("ONLINE PURCHASE", "300.00", "EXPENSE"),
+                row("CARD PAYMENT", "500.00", "INCOME"));
+
+        assertThat(balanceOf(f))
+                .as("a second pass would have reported 1600.00 owed -- 200 less debt than is real")
+                .isEqualByComparingTo("1800.00");
+    }
+
+    @Test
+    @DisplayName("BH-003: genuinely new rows in a partly-duplicated import still move the balance")
+    void onlyTheDuplicateRowsAreReversed() throws Exception {
+        // The guard against over-correcting. A statement that overlaps a previous one -- the
+        // ordinary case when a user imports an overlapping date range -- must have its NEW rows
+        // applied and only its repeated rows reversed. Reversing the whole batch would leave the
+        // balance short by exactly the new activity.
+        Fixture f = fixture(Account.Type.SAVINGS, "1000.00");
+
+        importRows(f, null, null, row("METRO FARE", "45.00", "EXPENSE"));
+        assertThat(balanceOf(f)).isEqualByComparingTo("955.00");
+
+        importRows(f, null, null,
+                row("METRO FARE", "45.00", "EXPENSE"),   // already on the books
+                row("COFFEE", "120.00", "EXPENSE"));     // new
+
+        assertThat(balanceOf(f))
+                .as("only the repeated row comes back off; the new one is real spending")
+                .isEqualByComparingTo("835.00");
     }
 }

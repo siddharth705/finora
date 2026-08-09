@@ -73,9 +73,7 @@ class ImportSessionServiceTest {
     }
 
     @Test
-    void createSession_persistsSerializedRowsAndDetectedAccount_andDeletesThisUsersOwnExpiredSessionsFirst() {
-        when(importSessionRepository.findByExpiresAtBeforeOrderByExpiresAtAsc(any(), any())).thenReturn(List.of());
-
+    void createSession_persistsSerializedRowsAndDetectedAccount() {
         ImportSession created = service.createSession(userId, "statement.csv", new byte[]{1, 2, 3},
                 List.of(sampleRow()), sampleDetected());
 
@@ -84,7 +82,25 @@ class ImportSessionServiceTest {
         assertThat(created.getDetectedAccountJson()).contains("Test Bank");
         assertThat(created.getStatus()).isEqualTo(ImportSession.STATUS_STAGED);
         assertThat(created.getExpiresAt()).isAfter(Instant.now());
-        verify(importSessionRepository).findByExpiresAtBeforeOrderByExpiresAtAsc(any(), any());
+    }
+
+    /**
+     * BH-047. Creating a session performs no housekeeping at all -- asserted, not merely no longer
+     * asserted against.
+     *
+     * <p>This used to sweep expired sessions as its first statement, inside the caller's
+     * transaction. Those are other users' rows and {@code ImportSession} has no soft delete, so it
+     * took real row locks on them and then held those locks across {@code storeContent}'s
+     * object-storage write. A failure in the sweep rolled back the upload; a failed upload rolled
+     * back the sweep. The sweep is a scheduled job now.
+     */
+    @Test
+    void createSession_doesNoHousekeepingOfItsOwn() {
+        service.createSession(userId, "statement.csv", new byte[]{1, 2, 3},
+                List.of(sampleRow()), sampleDetected());
+
+        verify(importSessionRepository, never()).findByExpiresAtBeforeOrderByExpiresAtAsc(any(), any());
+        verify(importSessionRepository, never()).deleteAll(any());
     }
 
     /**
@@ -102,13 +118,16 @@ class ImportSessionServiceTest {
      * rather than the "full-table scan every time anyone imports anything" it was avoiding.
      */
     @Test
-    void createSession_deletesExpiredSessions_regardlessOfWhoOwnsThem() {
+    void sweepExpiredSessions_deletesExpiredSessions_regardlessOfWhoOwnsThem() {
         ImportSession someoneElsesExpired =
                 sessionOwnedBy(otherUserId, Instant.now().minusSeconds(60), ImportSession.STATUS_STAGED);
         when(importSessionRepository.findByExpiresAtBeforeOrderByExpiresAtAsc(any(), any()))
                 .thenReturn(List.of(someoneElsesExpired));
 
-        service.createSession(userId, "statement.csv", new byte[0], List.of(), sampleDetected());
+        // BH-047 moved WHERE this happens, not WHETHER it does. The assertion below is the one
+        // this test has always made and is the point of the earlier user-scoping fix; it now names
+        // the method that owns the behaviour instead of the upload it used to ride on.
+        assertThat(service.sweepExpiredSessions()).isEqualTo(1);
 
         verify(importSessionRepository).deleteAll(List.of(someoneElsesExpired));
 

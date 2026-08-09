@@ -81,6 +81,7 @@ public class AnalyticsService {
     public List<AnalyticsDto.TopMerchant> topMerchants(UUID userId, YearMonth month) {
         Map<UUID, String> merchantNames = merchantNamesFor(userId);
 
+        RefundNetting refunds = refundsFor(userId);
         Map<UUID, List<Transaction>> byMerchant = activeExpenseTransactions(userId, month).stream()
                 .filter(t -> t.getMerchantId() != null)
                 .collect(Collectors.groupingBy(Transaction::getMerchantId));
@@ -89,7 +90,7 @@ public class AnalyticsService {
                 .map(e -> new AnalyticsDto.TopMerchant(
                         e.getKey(),
                         merchantNames.getOrDefault(e.getKey(), "Unknown"),
-                        e.getValue().stream().map(Transaction::getAmount).reduce(BigDecimal.ZERO, BigDecimal::add),
+                        e.getValue().stream().map(refunds::reportableAmount).reduce(BigDecimal.ZERO, BigDecimal::add),
                         e.getValue().size()))
                 .sorted(Comparator.comparing(AnalyticsDto.TopMerchant::totalSpend).reversed())
                 .limit(TOP_MERCHANTS_LIMIT)
@@ -111,11 +112,12 @@ public class AnalyticsService {
         YearMonth start = end.minusMonths(TREND_MONTHS - 1L);
 
         Map<YearMonth, BigDecimal> byMonth = new HashMap<>();
+        RefundNetting refunds = refundsFor(userId);
         for (Transaction t : activeExpenseTransactions(userId, null)) {
             if (t.getMerchantId() == null) continue;
             YearMonth m = YearMonth.from(t.getTxnDate());
             if (m.isBefore(start) || m.isAfter(end)) continue;
-            byMonth.merge(m, t.getAmount(), BigDecimal::add);
+            byMonth.merge(m, refunds.reportableAmount(t), BigDecimal::add);
         }
 
         List<AnalyticsDto.TrendPoint> points = new ArrayList<>();
@@ -160,6 +162,7 @@ public class AnalyticsService {
         Map<UUID, String> categoryNames = new HashMap<>();
         categoryRepository.findByUserId(userId).forEach(c -> categoryNames.put(c.getId(), c.getName()));
 
+        RefundNetting refunds = refundsFor(userId);
         Map<UUID, List<Transaction>> byCategory = activeExpenseTransactions(userId, month).stream()
                 .filter(t -> t.getCategoryId() != null)
                 .collect(Collectors.groupingBy(Transaction::getCategoryId));
@@ -168,7 +171,7 @@ public class AnalyticsService {
                 .map(e -> new AnalyticsDto.TopCategory(
                         e.getKey(),
                         categoryNames.getOrDefault(e.getKey(), "Uncategorized"),
-                        e.getValue().stream().map(Transaction::getAmount).reduce(BigDecimal.ZERO, BigDecimal::add),
+                        e.getValue().stream().map(refunds::reportableAmount).reduce(BigDecimal.ZERO, BigDecimal::add),
                         e.getValue().size()))
                 .sorted(Comparator.comparing(AnalyticsDto.TopCategory::totalSpend).reversed())
                 .limit(TOP_MERCHANTS_LIMIT)
@@ -222,13 +225,27 @@ public class AnalyticsService {
         return points;
     }
 
+    /**
+     * BH-005, third copy. The REFUND clause here was doing nothing useful and hiding that: a refund
+     * leg is INCOME, so it was already excluded by the EXPENSE filter one line down, while the
+     * PURCHASE it reverses stayed counted in full. Every spend figure on this page therefore
+     * included money that had come back.
+     *
+     * <p>{@link RefundNetting} owns the rule; {@link #refundsFor} supplies the amounts. Filtering
+     * and amounts have to come from the same place, which is why the netting is returned alongside
+     * rather than being applied here.
+     */
     private List<Transaction> activeExpenseTransactions(UUID userId, YearMonth month) {
-        return transactionRepository.findByUserId(userId).stream()
-                .filter(t -> t.getIsDuplicateOf() == null && !t.isTransfer()
-                        && t.getReconciliationStatus() != Transaction.ReconciliationStatus.REFUND
-                        && t.getTxnType() == Transaction.Type.EXPENSE
+        return RefundNetting.reportable(transactionRepository.findByUserId(userId)).stream()
+                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE
                         && (month == null || YearMonth.from(t.getTxnDate()).equals(month)))
                 .toList();
+    }
+
+    /** The offsets for the same user, so a refunded purchase contributes what it actually cost. */
+    private RefundNetting refundsFor(UUID userId) {
+        return RefundNetting.from(transactionRepository.findByUserIdAndReconciliationStatus(
+                userId, Transaction.ReconciliationStatus.REFUND));
     }
 
     private Map<UUID, String> merchantNamesFor(UUID userId) {

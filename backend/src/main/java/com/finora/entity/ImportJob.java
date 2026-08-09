@@ -6,6 +6,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -93,6 +94,28 @@ public class ImportJob {
     @Column(name = "attempt_count", nullable = false)
     private int attemptCount;
 
+    /**
+     * How many times recovery has returned this job to the queue after a worker abandoned it.
+     *
+     * <p>Its own column rather than a reuse of {@code attemptCount}, because the two count
+     * different evidence and used to cancel each other out -- see {@link #returnToQueue}.
+     */
+    @Column(name = "recovery_count", nullable = false)
+    private int recoveryCount;
+
+    /**
+     * Two writers touch a job concurrently by design: the worker, through
+     * {@code ImportJobStore.update} in its own REQUIRES_NEW transaction, and the owner, through
+     * {@code ImportJobService.cancel} in the request's transaction. Both are read-modify-write and
+     * neither could see the other, so the conflict surfaced inside business logic (a
+     * {@code complete()} that throws) instead of as a lock failure -- which is the mechanism behind
+     * BH-001. Every other concurrently-written entity here already carries this;
+     * {@code GlobalExceptionHandler.handleOptimisticLock} already answers 409 for it.
+     */
+    @Version
+    @Column(nullable = false)
+    private Long version = 0L;
+
     @Column(name = "next_attempt_at", nullable = false)
     private Instant nextAttemptAt = Instant.now();
 
@@ -166,8 +189,16 @@ public class ImportJob {
      * boundary, but a cancel landing between that last check and this call would otherwise complete
      * a job the user had already stopped — handing them a staged session they asked not to have. The
      * window is small and closing it in the worker would mean closing it again in the next caller,
-     * so the state machine refuses instead. {@code ImportJobWorker} treats this as the cancellation
-     * it is rather than as a failure; anything else genuinely is a bug in the caller.
+     * so the state machine refuses instead.
+     *
+     * <p><b>The refusal alone was not enough, and this comment used to claim it was.</b> It said
+     * "{@code ImportJobWorker} treats this as the cancellation it is rather than as a failure",
+     * which was never true: the worker catches {@code ImportJobCancelledException} specifically and
+     * this throws {@code IllegalStateException}, so the general handler ran and called
+     * {@link #recordFailure}, which used to put the CANCELLED job straight back on the queue. The
+     * cancellation was refused here and undone one line later. {@code recordFailure} now declines
+     * to move a terminal job and reports {@link FailureOutcome#ALREADY_FINISHED}, which is what
+     * makes the refusal stick; the worker reports that outcome rather than a retry.
      */
     public void complete(UUID importSessionId, Instant now) {
         if (this.status == Status.CANCELLED) {
@@ -182,24 +213,58 @@ public class ImportJob {
     }
 
     /**
+     * What {@link #recordFailure} actually did, so the caller can report it honestly.
+     *
+     * <p>A boolean could say "dead-lettered or not" and could not say "this job was already
+     * finished and I left it alone" -- which is the outcome that matters, because reporting a
+     * cancelled job as a scheduled retry is how BH-001 stayed invisible.
+     */
+    public enum FailureOutcome {
+        /** Back on the queue, with backoff. */
+        RETRY_SCHEDULED,
+        /** Attempt budget spent; the job is FAILED and waiting in the admin queue. */
+        DEAD_LETTERED,
+        /** The job had already reached a terminal state. Nothing was changed. */
+        ALREADY_FINISHED
+    }
+
+    /**
      * Records a failed attempt, either scheduling a retry or dead-lettering.
      *
      * <p>Exponential backoff from one minute, capped: a job whose dependency is down should back
      * off, but a job that will succeed on the next attempt should not wait an hour to prove it.
      *
-     * @return true if this attempt exhausted the budget and the job is now FAILED
+     * <p><b>Refuses to move a job that has already finished.</b> This used to write
+     * {@code status = QUEUED} unconditionally, which made every terminal state reversible by a
+     * later failure -- and one path reached it routinely. A cancel landing between the worker's
+     * last {@code abortIfCancelled} and its call to {@link #complete} makes that method throw;
+     * {@code ImportJobWorker} catches it in its general handler and calls this, which put the
+     * CANCELLED job back on the queue. It was then re-claimed, ran to completion, and handed the
+     * user the staged session they had pressed Stop on. Same shape for a COMPLETED job whose
+     * post-completion bookkeeping fails.
+     *
+     * <p>The check lives here rather than in the worker for the reason {@link #complete}'s own
+     * comment gives: the next caller would have to remember the same rule, and the one after that.
+     *
+     * @return what happened -- see {@link FailureOutcome}
      */
-    public boolean recordFailure(String error, Instant now) {
+    public FailureOutcome recordFailure(String error, Instant now) {
+        if (this.status.isTerminal()) {
+            // Deliberately does not touch lastError either. A CANCELLED job's story is "the owner
+            // stopped it", and overwriting that with the exception the worker happened to hit on
+            // its way out would make the admin queue describe a failure that did not happen.
+            return FailureOutcome.ALREADY_FINISHED;
+        }
         this.lastError = error;
         if (attemptCount >= MAX_ATTEMPTS) {
             this.status = Status.FAILED;
             this.finishedAt = now;
-            return true;
+            return FailureOutcome.DEAD_LETTERED;
         }
         this.status = Status.QUEUED;
         this.nextAttemptAt = now.plus(backoffFor(attemptCount));
         this.startedAt = null;
-        return false;
+        return FailureOutcome.RETRY_SCHEDULED;
     }
 
     /** 1, 2, 4, 8, 16 minutes. Capped so a transient failure does not park work for an hour. */
@@ -208,18 +273,52 @@ public class ImportJob {
     }
 
     /**
+     * How many times recovery may return one job to the queue before it is treated as a job that
+     * kills workers rather than a job that met unlucky deploys.
+     *
+     * <p>Separate from {@link #MAX_ATTEMPTS} and deliberately smaller. An attempt is evidence
+     * about the DOCUMENT -- the parse ran and threw. A recovery is evidence about the WORKER --
+     * something killed the process, and the job may be entirely innocent. Three is enough to
+     * absorb a deploy, a restart and one genuine crash; a fourth says the job is the common
+     * factor.
+     */
+    public static final int MAX_RECOVERIES = 3;
+
+    /**
      * Returns an abandoned job to the queue without consuming an attempt.
      *
      * <p>A worker that died mid-parse did not prove anything about the job, so charging it an
-     * attempt would dead-letter perfectly good work after five unlucky deploys. The learning queue
-     * makes the same distinction.
+     * attempt would dead-letter perfectly good work after five unlucky deploys.
+     *
+     * <p><b>But not for free, and not for ever.</b> This used to decrement {@code attemptCount},
+     * exactly cancelling the increment {@link #markClaimed} had just made -- so a job whose parse
+     * reliably killed its worker (an OOM on a large PDF, a stack overflow in the table locator)
+     * cycled claim -> crash -> recover -> claim indefinitely at a net attempt count of zero. It
+     * never dead-lettered, never appeared in the admin queue, and consumed a claim slot out of ten
+     * on every pass. The recovery is now counted in its own column so the two counters cannot
+     * cancel, and {@link #MAX_RECOVERIES} bounds the loop.
+     *
+     * <p>Worth stating because the previous comment claimed otherwise: the learning queue does
+     * <em>not</em> make the same distinction. {@code MerchantLearningEventWorker.recoverAbandoned}
+     * calls {@code recordFailure}, which charges an attempt and moves the event toward
+     * dead-lettering. The two queues genuinely differ; this one is more forgiving, and now has a
+     * ceiling so that forgiveness terminates.
+     *
+     * @return true if this recovery exhausted the recovery budget and the job is now FAILED
      */
-    public void returnToQueue(String reason, Instant now) {
-        this.status = Status.QUEUED;
+    public boolean returnToQueue(String reason, Instant now) {
+        this.recoveryCount++;
         this.lastError = reason;
         this.startedAt = null;
+        if (this.recoveryCount > MAX_RECOVERIES) {
+            this.status = Status.FAILED;
+            this.finishedAt = now;
+            return true;
+        }
+        this.status = Status.QUEUED;
         this.nextAttemptAt = now;
         if (this.attemptCount > 0) this.attemptCount--;
+        return false;
     }
 
     /** Cancellable only before user-visible data exists -- see the class comment. */
@@ -248,6 +347,7 @@ public class ImportJob {
     public Integer getRowsTotal() { return rowsTotal; }
     public int getRowsProcessed() { return rowsProcessed; }
     public int getAttemptCount() { return attemptCount; }
+    public int getRecoveryCount() { return recoveryCount; }
     public Instant getNextAttemptAt() { return nextAttemptAt; }
     public String getLastError() { return lastError; }
     public String getCorrelationId() { return correlationId; }

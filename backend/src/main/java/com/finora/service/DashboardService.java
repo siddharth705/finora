@@ -50,15 +50,19 @@ public class DashboardService {
     @Transactional(readOnly = true)
     public DashboardSummaryDto summarize(UUID userId) {
         List<Account> accounts = accountRepository.findByUserId(userId);
-        // REFUND-status transactions are the INCOME leg of a reconciled refund (see
-        // ReconciliationService's refund pass) -- excluded here the same way TRANSFER/DUPLICATE
-        // already are, so a refunded purchase's money coming back doesn't get counted as real
-        // income (which would also silently inflate incomeCur, health score monthly income, and
-        // savingsRate, since all three are derived from this same `active` list below).
-        List<Transaction> active = transactionRepository.findByUserId(userId).stream()
-                .filter(t -> t.getIsDuplicateOf() == null && !t.isTransfer()
-                        && t.getReconciliationStatus() != Transaction.ReconciliationStatus.REFUND)
-                .toList();
+        // BH-005. This filter used to be written out here and again, identically, in
+        // ReportService -- and both copies were one-sided. A REFUND-status row is the INCOME leg of
+        // a reconciled refund, so dropping it is right; the EXPENSE it reverses was left counted in
+        // full, so a fully refunded purchase reported as a pure loss and Account.balance (which
+        // applied both legs) disagreed with this screen by the refunded amount.
+        //
+        // RefundNetting owns both halves now: it drops the income leg and nets the refund off the
+        // purchase, which is the only treatment correct for a PARTIAL refund too. Every amount read
+        // out of `active` below goes through reportableAmount for that reason -- summing
+        // Transaction::getAmount directly is what the bug was.
+        List<Transaction> all = transactionRepository.findByUserId(userId);
+        RefundNetting refunds = RefundNetting.from(all);
+        List<Transaction> active = RefundNetting.reportable(all);
         Map<UUID, Category> categoriesById = categoryRepository.findByUserId(userId).stream()
                 .collect(Collectors.toMap(Category::getId, c -> c));
 
@@ -88,10 +92,10 @@ public class DashboardService {
         // "vs last month". See ReportingPeriod.priorMonth.
         String priorMonth = period.priorMonth();
 
-        BigDecimal incomeCur = sumForMonth(active, currentMonth, Transaction.Type.INCOME);
-        BigDecimal expenseCur = sumForMonth(active, currentMonth, Transaction.Type.EXPENSE);
-        BigDecimal incomePrior = sumForMonth(active, priorMonth, Transaction.Type.INCOME);
-        BigDecimal expensePrior = sumForMonth(active, priorMonth, Transaction.Type.EXPENSE);
+        BigDecimal incomeCur = sumForMonth(active, currentMonth, Transaction.Type.INCOME, refunds);
+        BigDecimal expenseCur = sumForMonth(active, currentMonth, Transaction.Type.EXPENSE, refunds);
+        BigDecimal incomePrior = sumForMonth(active, priorMonth, Transaction.Type.INCOME, refunds);
+        BigDecimal expensePrior = sumForMonth(active, priorMonth, Transaction.Type.EXPENSE, refunds);
         BigDecimal netCur = incomeCur.subtract(expenseCur);
         BigDecimal netPrior = incomePrior.subtract(expensePrior);
 
@@ -99,14 +103,14 @@ public class DashboardService {
                 ? netCur.divide(incomeCur, 4, RoundingMode.HALF_UP).multiply(BigDecimal.valueOf(100))
                 : BigDecimal.ZERO;
 
-        var health = computeHealthScore(accounts, active, months, liquid);
+        var health = computeHealthScore(accounts, active, months, liquid, refunds);
 
         Map<String, BigDecimal> spendByCategory = active.stream()
                 .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE
                         && Objects.equals(YearMonth.from(t.getTxnDate()).toString(), currentMonth))
                 .collect(Collectors.groupingBy(
                         t -> categoriesById.getOrDefault(t.getCategoryId(), unknownCategory()).getName(),
-                        Collectors.reducing(BigDecimal.ZERO, Transaction::getAmount, BigDecimal::add)));
+                        Collectors.reducing(BigDecimal.ZERO, refunds::reportableAmount, BigDecimal::add)));
 
         // Same current-month EXPENSE figures as spendByCategory above, just keyed by category id
         // (rather than display name) so they can be joined against Budget.categoryId below --
@@ -139,7 +143,7 @@ public class DashboardService {
                         && t.getCategoryId() != null
                         && Objects.equals(YearMonth.from(t.getTxnDate()).toString(), period.calendarMonth()))
                 .collect(Collectors.groupingBy(Transaction::getCategoryId,
-                        Collectors.reducing(BigDecimal.ZERO, Transaction::getAmount, BigDecimal::add)));
+                        Collectors.reducing(BigDecimal.ZERO, refunds::reportableAmount, BigDecimal::add)));
         List<Budget> budgets = budgetRepository.findByUserId(userId);
         Optional<User> user = userRepository.findById(userId);
         BigDecimal lowBalanceThreshold = user.map(User::getLowBalanceThreshold).orElse(null);
@@ -191,11 +195,14 @@ public class DashboardService {
                 .map(Account::getBalance).reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    private BigDecimal sumForMonth(List<Transaction> txns, String month, Transaction.Type type) {
+    /** BH-005: sums the REPORTABLE amount, not the raw one -- a refunded purchase contributes what
+     *  it actually cost. See {@link RefundNetting}. */
+    private BigDecimal sumForMonth(List<Transaction> txns, String month, Transaction.Type type,
+                                    RefundNetting refunds) {
         if (month == null) return BigDecimal.ZERO;
         return txns.stream()
                 .filter(t -> t.getTxnType() == type && YearMonth.from(t.getTxnDate()).toString().equals(month))
-                .map(Transaction::getAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+                .map(refunds::reportableAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     private Double pct(BigDecimal current, BigDecimal prior) {
@@ -209,11 +216,15 @@ public class DashboardService {
     /** Weighted composite: savings rate 25%, debt utilization 20%, emergency fund 25%,
      *  spend consistency 15%, cash flow stability 15% — identical weighting to the prototype. */
     private HealthResult computeHealthScore(List<Account> accounts, List<Transaction> active,
-                                             List<String> months, BigDecimal liquid) {
+                                             List<String> months, BigDecimal liquid,
+                                             RefundNetting refunds) {
         List<String> last6 = months.size() > 6 ? months.subList(months.size() - 6, months.size()) : months;
 
-        List<BigDecimal> monthlyExpense = last6.stream().map(m -> sumForMonth(active, m, Transaction.Type.EXPENSE)).toList();
-        List<BigDecimal> monthlyIncome = last6.stream().map(m -> sumForMonth(active, m, Transaction.Type.INCOME)).toList();
+        // BH-005: the same netting the headline KPIs use. The score's savings-rate and cash-flow
+        // components are built from these two series, so an overstated expense month moved the
+        // score as well as the tiles.
+        List<BigDecimal> monthlyExpense = last6.stream().map(m -> sumForMonth(active, m, Transaction.Type.EXPENSE, refunds)).toList();
+        List<BigDecimal> monthlyIncome = last6.stream().map(m -> sumForMonth(active, m, Transaction.Type.INCOME, refunds)).toList();
 
         BigDecimal avgExpense = average(monthlyExpense);
         BigDecimal incomeCur = last6.isEmpty() ? BigDecimal.ZERO : monthlyIncome.get(monthlyIncome.size() - 1);

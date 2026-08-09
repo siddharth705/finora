@@ -287,4 +287,72 @@ class RecurringServiceTest {
 
         assertThat(t.isRecurring()).isTrue();
     }
+
+    /**
+     * BH-026. Two points cannot evidence an interval, and the old threshold of 2 made the
+     * regularity check structurally incapable of rejecting anything.
+     *
+     * <p>With two transactions {@code gaps} holds one element, {@code avgGap} equals it, and
+     * {@code Math.abs(g - avgGap)} is zero -- so {@code gapRegular} was true for ANY spacing. The
+     * only filters left were the amount tolerance and the 5-95 day window, which two ordinary
+     * purchases from the same merchant clear routinely.
+     */
+    @Test
+    void doesNotCallTwoChargesAPattern() {
+        // Two coffees three weeks apart: similar amount, inside the day window, nothing recurring
+        // about them. This used to be reported as a Monthly subscription with a predicted next
+        // charge date.
+        List<Transaction> txns = List.of(
+                expense("blue tokai", LocalDate.of(2026, 6, 2), BigDecimal.valueOf(420)),
+                expense("blue tokai", LocalDate.of(2026, 6, 23), BigDecimal.valueOf(430))
+        );
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        var results = recurringService.detectForUser(userId);
+
+        assertThat(results).isEmpty();
+        assertThat(txns).noneMatch(Transaction::isRecurring);
+    }
+
+    /**
+     * The other half of the same threshold: a third charge at the same spacing IS the evidence,
+     * and must still be detected. Raising the minimum must narrow false positives without
+     * disabling the feature.
+     */
+    @Test
+    void aThirdChargeAtTheSameSpacingIsAPattern() {
+        List<Transaction> txns = List.of(
+                expense("blue tokai", LocalDate.of(2026, 6, 2), BigDecimal.valueOf(420)),
+                expense("blue tokai", LocalDate.of(2026, 6, 23), BigDecimal.valueOf(430)),
+                expense("blue tokai", LocalDate.of(2026, 7, 14), BigDecimal.valueOf(425))
+        );
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        var results = recurringService.detectForUser(userId);
+
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0).occurrences()).isEqualTo(3);
+        assertThat(txns).allMatch(Transaction::isRecurring);
+    }
+
+    /**
+     * And the case that proves the check now actually checks: three charges whose spacing does NOT
+     * agree. Under the old threshold this reached the regularity test with two gaps and could
+     * fail it -- but nothing asserted that it did, so the test suite never distinguished "the
+     * check works" from "the check cannot fail".
+     */
+    @Test
+    void threeChargesWithIrregularSpacingAreNotAPattern() {
+        List<Transaction> txns = List.of(
+                expense("blue tokai", LocalDate.of(2026, 6, 2), BigDecimal.valueOf(420)),
+                expense("blue tokai", LocalDate.of(2026, 6, 9), BigDecimal.valueOf(425)),
+                expense("blue tokai", LocalDate.of(2026, 7, 28), BigDecimal.valueOf(430))
+        );
+        when(transactionRepository.findByUserId(userId)).thenReturn(txns);
+
+        var results = recurringService.detectForUser(userId);
+
+        assertThat(results).isEmpty();
+        assertThat(txns).noneMatch(Transaction::isRecurring);
+    }
 }

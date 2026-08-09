@@ -39,11 +39,20 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL
 // Every refresh fell through to RefreshTokenCookie.resolve()'s body-token branch and the whole
 // cookie mechanism was inert.
 //
-// This restores the cookie transport; it does NOT on its own deliver the XSS mitigation the
-// cookie exists for. AuthContext.persist still writes the same refresh token to localStorage,
-// where script can read it, and the backend still accepts a body token. Removing the
-// localStorage copy is the other half and is a change to how the session is held, not a
-// one-line fix -- see docs. Restoring the transport first is what makes that half possible.
+// BH-012: the localStorage copy is GONE, and with it the reason the cookie was inert. This
+// comment used to end "Removing the localStorage copy is the other half ... Restoring the
+// transport first is what makes that half possible" -- that is what this change is.
+//
+// The refresh token is now held only in the HttpOnly cookie, which script cannot read. An XSS on
+// this origin can still steal the 15-minute access token; it can no longer walk away with a
+// 30-day rotating credential that survives the tab closing.
+//
+// DEPLOYMENT PRECONDITION, because this now depends on it rather than merely benefiting from it:
+// the cookie is Secure, SameSite=Lax and host-only, scoped to /api/v1/auth. It reaches the API
+// only when the app and the API share a registrable domain (app.finoratech.info /
+// api.finoratech.info). Point VITE_API_BASE_URL at a different site -- a *.pages.dev or a bare
+// *.up.railway.app -- and the browser will not attach it, refresh will fail, and users will be
+// signed out every 15 minutes. That was survivable before because localStorage papered over it.
 export const api = axios.create({ baseURL: BASE_URL, withCredentials: true });
 
 // A separate, interceptor-free instance specifically for the /auth/refresh call itself —
@@ -109,7 +118,6 @@ function clearSessionAndRedirect(reason?: string) {
   // sitting in storage is exactly the kind of thing that turns into a real bug the moment some
   // future feature reads phoneVerified independently of token presence.
   safeStorage.removeItem('finora_token');
-  safeStorage.removeItem('finora_refresh_token');
   safeStorage.removeItem('finora_email');
   safeStorage.removeItem('finora_name');
   safeStorage.removeItem('finora_phone_verified');
@@ -132,29 +140,61 @@ function unwrapEnvelope(response: any) {
   return response;
 }
 
-// Bug fix: refresh tokens rotate server-side on every use (RefreshTokenService.rotate()) --
-// presenting an already-rotated token isn't just rejected, it's treated as a THEFT signal and
-// revokes every active session for the user, everywhere (see that method's own doc comment: "a
-// strong signal it was stolen... revoke every active token for the user"). Without this shared
-// promise, N requests that happen to 401 around the same moment (a very real scenario: the access
-// token expires while a tab is idle, then several components refetch at once when it regains
-// focus) each independently called authApi.refresh() with the SAME refresh token — only the
-// first ever succeeds; the other N-1 present an already-rotated token and trip the backend's
-// theft response, force-logging the user out of every device over a client-side race, not actual
-// theft. Now every 401 arriving while a refresh is already in flight awaits that SAME promise
-// instead of starting its own.
-let refreshInFlight: Promise<{ token: string; refreshToken: string }> | null = null;
+// Refresh tokens rotate server-side on every use (RefreshTokenService.rotate()) -- presenting an
+// already-rotated token isn't just rejected, it's treated as a THEFT signal and revokes every
+// active session for the user, everywhere. So two refreshes with the same token do not merely
+// waste a request; they sign the user out on their laptop AND their phone.
+//
+// This promise de-duplicates concurrent 401s WITHIN one tab: the access token expires while the
+// tab is idle, several components refetch on focus, and each would otherwise start its own
+// refresh.
+let refreshInFlight: Promise<string> | null = null;
 
-function refreshAccessToken(refreshToken: string): Promise<{ token: string; refreshToken: string }> {
+// BH-013. The in-tab promise above is not enough, and the gap is not exotic -- it is two open
+// tabs, which is ordinary use of a financial dashboard.
+//
+// Each tab is its own JavaScript context with its own module instance, so `refreshInFlight` is
+// invisible across them. Two idle tabs both wake, both 401, both refresh: one wins, the other
+// presents a token the server has just rotated, and reuse detection concludes the credential was
+// stolen and revokes every session on every device. The user is bounced out everywhere and shown
+// "All sessions have been signed out as a precaution" -- for having two tabs open. Repeated
+// often enough, that message stops meaning anything on the day it is real.
+//
+// navigator.locks is the right primitive rather than a localStorage mutex: it is same-origin and
+// cross-tab by definition, and the lock is released automatically if the holding tab is closed or
+// crashes mid-refresh -- a hand-rolled mutex has to invent a timeout for that case and then gets
+// to choose between deadlocking and reintroducing the race.
+//
+// The re-check inside the lock is the half that actually prevents the second refresh. Waiting for
+// the lock and then refreshing anyway would just serialise the two calls and still present the
+// rotated token. So the loser compares the access token it set out with against what is stored
+// now: if another tab has already rotated, that work is done and the stored token is the answer.
+async function refreshAccessToken(staleToken: string | null): Promise<string> {
   if (!refreshInFlight) {
-    refreshInFlight = (async () => {
+    refreshInFlight = withCrossTabLock(async () => {
+      const current = safeStorage.getItem('finora_token');
+      if (current && current !== staleToken) {
+        // Another tab refreshed while this one waited. Nothing to do.
+        return current;
+      }
       const { authApi } = await import('./endpoints');
-      return authApi.refresh(refreshToken);
-    })().finally(() => {
+      const refreshed = await authApi.refresh();
+      safeStorage.setItem('finora_token', refreshed.token);
+      return refreshed.token;
+    }).finally(() => {
       refreshInFlight = null;
     });
   }
   return refreshInFlight;
+}
+
+/** Serialises across tabs where the Web Locks API exists, and degrades to running directly where
+ *  it does not -- an old browser gets today's behaviour rather than a broken sign-in. */
+function withCrossTabLock<T>(work: () => Promise<T>): Promise<T> {
+  if (typeof navigator !== 'undefined' && navigator.locks?.request) {
+    return navigator.locks.request('finora-token-refresh', work) as Promise<T>;
+  }
+  return work();
 }
 
 api.interceptors.response.use(
@@ -178,14 +218,18 @@ api.interceptors.response.use(
 
     if (error.response?.status === 401 && !originalRequest._retried && !isAuthEndpoint) {
       originalRequest._retried = true;
-      const refreshToken = safeStorage.getItem('finora_refresh_token');
+      // BH-012: the refresh token is no longer read from storage, because it is no longer PUT
+      // there -- it travels only as the HttpOnly cookie. What is checked here is whether this
+      // browser believes it has a session at all: with no access token there is nothing to
+      // refresh, and attempting one would turn every anonymous request into a pointless round
+      // trip. The access token also doubles as the staleness marker the cross-tab lock compares
+      // against.
+      const staleToken = safeStorage.getItem('finora_token');
 
-      if (refreshToken) {
+      if (staleToken) {
         try {
-          const refreshed = await refreshAccessToken(refreshToken);
-          safeStorage.setItem('finora_token', refreshed.token);
-          safeStorage.setItem('finora_refresh_token', refreshed.refreshToken);
-          originalRequest.headers.Authorization = `Bearer ${refreshed.token}`;
+          const freshToken = await refreshAccessToken(staleToken);
+          originalRequest.headers.Authorization = `Bearer ${freshToken}`;
           return api(originalRequest);
         } catch (refreshError: any) {
           // The REFRESH call's own failure is what explains the sign-out, not the original 401 --

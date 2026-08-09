@@ -31,6 +31,9 @@ import java.util.UUID;
 @Component
 public class ImportSessionService {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(ImportSessionService.class);
+
     // A user has as long as this to come back and confirm a staged import before it's treated as
     // abandoned. No production usage data to tune this against yet (same "revisit once there's
     // real traffic" caveat as StatementImportHealthProvider's own threshold) -- 48h is picked to
@@ -40,6 +43,9 @@ public class ImportSessionService {
     /** How many expired sessions one import may clean up. Bounds the cost this adds to a user's
      *  own upload; a backlog drains over the next few imports instead of in one long delete. */
     private static final int CLEANUP_BATCH_SIZE = 50;
+
+    @org.springframework.beans.factory.annotation.Value("${app.import.session-cleanup.enabled:true}")
+    private boolean sessionCleanupEnabled;
 
     private final ImportSessionRepository importSessionRepository;
     private final ObjectMapper objectMapper;
@@ -71,9 +77,64 @@ public class ImportSessionService {
      * index-ordered slice, not a scan. A backlog drains across subsequent imports rather than in
      * one unbounded delete that could stall a user's upload.
      */
-    private void deleteExpiredSessions() {
-        importSessionRepository.deleteAll(importSessionRepository.findByExpiresAtBeforeOrderByExpiresAtAsc(
-                Instant.now(), PageRequest.of(0, CLEANUP_BATCH_SIZE)));
+    /**
+     * Removes a bounded batch of expired sessions, in a transaction of its own.
+     *
+     * <p>BH-047. This used to run as the first statement of {@code createSession} and
+     * {@code createMultiSection}, inside the acting user's transaction, and that coupling was
+     * wrong in four separate directions:
+     *
+     * <ul>
+     *   <li>The sweep deletes rows belonging to <b>other users</b>, and {@code ImportSession} has
+     *       no {@code @SQLDelete}, so it takes real row locks on them. Those locks were then held
+     *       for the rest of the upload -- which includes {@code storeContent}, an object-storage
+     *       write. One user's upload latency became a function of another user's network call.</li>
+     *   <li>A failure while sweeping somebody else's rows rolled back the acting user's upload.</li>
+     *   <li>A failed upload rolled back the sweep, so retention depended on unrelated uploads
+     *       succeeding.</li>
+     *   <li>Nothing swept at all when nobody was uploading -- and the population the TTL exists
+     *       for is precisely the people who imported once and never came back.</li>
+     * </ul>
+     *
+     * <p>The original comment justified the opportunistic placement with "this codebase has no
+     * background job infrastructure". That was true when it was written and is not now:
+     * {@code BackgroundWorkConfig} enables scheduling unconditionally and two workers already rely
+     * on it. The premise expired; the placement outlived it.
+     *
+     * <p>Still bounded to {@link #CLEANUP_BATCH_SIZE} per run, which preserves the reasoning the
+     * original scoping was built on -- a backlog drains across runs rather than in one unbounded
+     * delete. At the default interval that is several thousand rows a day, far above any plausible
+     * rate of abandoned sessions.
+     *
+     * @return how many rows were removed, so a caller or a test can see the sweep did something
+     */
+    @Transactional
+    public int sweepExpiredSessions() {
+        List<ImportSession> expired = importSessionRepository.findByExpiresAtBeforeOrderByExpiresAtAsc(
+                Instant.now(), PageRequest.of(0, CLEANUP_BATCH_SIZE));
+        if (expired.isEmpty()) return 0;
+        importSessionRepository.deleteAll(expired);
+        return expired.size();
+    }
+
+    /**
+     * The scheduled trigger. Gated by a flag for the same reason the learning queue's poller is:
+     * an integration suite needs the sweep to be deterministic, and a background thread deleting
+     * rows mid-test is the cross-test pollution BH-058 was about. {@code application-test.yml}
+     * turns it off, and tests drive {@link #sweepExpiredSessions()} directly.
+     *
+     * <p>{@code fixedDelay}, not {@code fixedRate}: the next sweep starts after the previous one
+     * finishes, so a slow sweep cannot pile up overlapping runs.
+     */
+    @org.springframework.scheduling.annotation.Scheduled(
+            fixedDelayString = "${app.import.session-cleanup.interval-ms:900000}",
+            initialDelayString = "${app.import.session-cleanup.initial-delay-ms:60000}")
+    public void scheduledSweep() {
+        if (!sessionCleanupEnabled) return;
+        int removed = sweepExpiredSessions();
+        if (removed > 0) {
+            log.info("Removed {} expired import session(s) past their {} TTL.", removed, SESSION_TTL);
+        }
     }
 
     @Transactional
@@ -91,8 +152,9 @@ public class ImportSessionService {
     public ImportSession createSession(UUID userId, String fileName, byte[] fileContent,
                                         List<StagedRow> rows, DetectedAccountInfo detectedAccount,
                                         DocumentContext documentContext) {
-        deleteExpiredSessions();
-
+        // BH-047: the expired-session sweep used to run here, inside this transaction. It is a
+        // scheduled job now -- see sweepExpiredSessions(). Housekeeping on other users' rows has
+        // no business being part of this user's upload.
         ImportSession session = new ImportSession();
         session.setUserId(userId);
         session.setFileName(fileName);
@@ -123,8 +185,9 @@ public class ImportSessionService {
     @Transactional
     public ImportSession createMultiSection(UUID userId, String fileName, byte[] fileContent,
                                              List<StagedAccountSection> sections, DocumentContext documentContext) {
-        deleteExpiredSessions();
-
+        // BH-047: the expired-session sweep used to run here, inside this transaction. It is a
+        // scheduled job now -- see sweepExpiredSessions(). Housekeeping on other users' rows has
+        // no business being part of this user's upload.
         ImportSession session = new ImportSession();
         session.setUserId(userId);
         session.setFileName(fileName);

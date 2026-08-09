@@ -47,6 +47,8 @@ import java.util.UUID;
 @Service
 public class ImportJobStore {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ImportJobStore.class);
+
     /** How many jobs one poll claims. Bounded so a backlog drains steadily rather than one worker
      *  holding a connection from a pool capped at 10 for an unbounded stretch. */
     static final int BATCH_SIZE = 10;
@@ -127,9 +129,24 @@ public class ImportJobStore {
         List<ImportJob> stuck = repository.findStuckInFlight(
                 now.minus(IN_FLIGHT_TIMEOUT), PageRequest.of(0, RECOVERY_BATCH_SIZE));
         if (stuck.isEmpty()) return 0;
-        stuck.forEach(job -> job.returnToQueue(
-                "Abandoned in " + job.getStatus() + " for longer than " + IN_FLIGHT_TIMEOUT, now));
+        int deadLettered = 0;
+        for (ImportJob job : stuck) {
+            if (job.returnToQueue(
+                    "Abandoned in " + job.getStatus() + " for longer than " + IN_FLIGHT_TIMEOUT, now)) {
+                deadLettered++;
+            }
+        }
         repository.saveAll(stuck);
+        // Logged rather than returned separately: the count this method returns is the recovery
+        // signal an operator watches, and splitting it would change what every existing dashboard
+        // panel means. A job that exhausts its recovery budget is a job that kills workers, which
+        // is worth its own line -- before this it looped for ever and produced none.
+        if (deadLettered > 0) {
+            log.error("{} import job(s) exhausted their recovery budget of {} and are now FAILED. A "
+                            + "job recovered this many times is killing the worker rather than failing "
+                            + "in it -- check the admin queue for the documents.",
+                    deadLettered, ImportJob.MAX_RECOVERIES);
+        }
         return stuck.size();
     }
 

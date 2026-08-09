@@ -46,7 +46,10 @@ describe('ChangePasswordModal', () => {
       message: 'Your password has been updated. This device stays signed in; every other device has been signed out.',
       otherDevicesSignedOut: true,
     });
-    localStorage.setItem('finora_refresh_token', 'this-devices-refresh-token');
+    // BH-012: nothing to seed. This modal used to read the device's refresh token out of
+    // localStorage and post it so the server knew which session to spare; it cannot read it any
+    // more (HttpOnly), and does not need to -- the server reads the sid claim off the access token
+    // the request already carries.
   });
 
   describe('Step 1 -- current password', () => {
@@ -233,7 +236,7 @@ describe('ChangePasswordModal', () => {
       await user.click(screen.getByRole('button', { name: /update password/i }));
 
       await waitFor(() => expect(passwordChangeApi.complete).toHaveBeenCalledWith(
-        'session-1', 'NewPass456!', true, 'this-devices-refresh-token',
+        'session-1', 'NewPass456!', true,
       ));
       expect(await screen.findByText(/password updated/i)).toBeInTheDocument();
       expect(screen.getByText(/every other device has been signed out/i)).toBeInTheDocument();
@@ -250,7 +253,7 @@ describe('ChangePasswordModal', () => {
       await user.click(screen.getByRole('button', { name: /update password/i }));
 
       await waitFor(() => expect(passwordChangeApi.complete).toHaveBeenCalledWith(
-        'session-1', 'NewPass456!', false, 'this-devices-refresh-token',
+        'session-1', 'NewPass456!', false,
       ));
     });
 

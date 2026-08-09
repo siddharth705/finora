@@ -208,16 +208,33 @@ public class RefreshTokenService {
         refreshTokenRepository.saveAll(active);
     }
 
-    /** Used by PasswordChangeService's "sign out other devices" choice -- unlike
-     *  revokeAllForUser(), the device that just completed the change stays signed in rather than
-     *  also being forced to re-authenticate, since currentRawToken identifies it and is excluded.
-     *  If currentRawToken doesn't match any active token (e.g. it was already rotated by the time
-     *  this runs), nothing is excluded and every session -- including, in that edge case, this
-     *  one -- ends up revoked; that fails toward the safer outcome, not a silent no-op. */
-    public void revokeAllOtherSessionsForUser(UUID userId, String currentRawToken) {
-        String currentHash = TokenHasher.sha256(currentRawToken);
+    /**
+     * Used by PasswordChangeService's "sign out other devices" choice -- unlike
+     * {@link #revokeAllForUser}, the device that just completed the change stays signed in rather
+     * than also being forced to re-authenticate.
+     *
+     * <p><b>Keyed on the SESSION, not on the raw token.</b> This used to take the caller's own
+     * refresh token and exclude the row whose hash matched. That worked only because the web app
+     * kept a copy of that token in {@code localStorage} where script could read it -- which is
+     * exactly the exposure BH-012 removed. With the token held only in an HttpOnly cookie the
+     * client cannot read it, and the cookie is path-scoped to {@code /api/v1/auth} so it does not
+     * reach this endpoint either.
+     *
+     * <p>The session id is the better key regardless, and was available all along. ADR-002 makes
+     * the session the unit rather than the token precisely because a token rotates roughly every
+     * fifteen minutes while the session does not -- so the old form also had a live failure mode
+     * of its own: a token that rotated between the client reading it and this running matched
+     * nothing, and "this device" was revoked along with the others. The {@code sid} claim is on
+     * every access token, so the request that is asking already proves which session it is.
+     *
+     * @param currentSessionId the session to spare. Null spares nothing and revokes every session
+     *        including the caller's -- the same fail-safe direction the previous implementation
+     *        took for an unmatched token, and reachable only for a token minted before {@code sid}
+     *        existed.
+     */
+    public void revokeAllOtherSessionsForUser(UUID userId, UUID currentSessionId) {
         List<RefreshToken> others = refreshTokenRepository.findByUserIdAndRevokedAtIsNull(userId).stream()
-                .filter(t -> !t.getTokenHash().equals(currentHash))
+                .filter(t -> currentSessionId == null || !currentSessionId.equals(t.getSessionId()))
                 .toList();
         Instant now = Instant.now();
         others.forEach(t -> t.setRevokedAt(now));

@@ -111,6 +111,29 @@ public class ImportJobService {
         // write that does not touch the database, so the connection is not doing anything during it.
         ContentAddress address = active.store(file.getBytes());
 
+        // BH-019. The same document submitted twice used to become two jobs and two staged
+        // sessions, and confirming both imported the statement twice. A double-clicked upload
+        // button and a client retrying a request whose 202 was lost both produce exactly that.
+        //
+        // Returning the EXISTING job rather than refusing: the caller wanted this document
+        // imported, that is already happening, and handing back the same jobId means their poll
+        // follows the real work. An error would be technically defensible and practically useless.
+        //
+        // Checked after the store because storage is content-addressed and idempotent -- a repeat
+        // costs one HEAD and no upload -- and because the address is what carries the identity to
+        // check against.
+        //
+        // This check is not the guarantee. It is a read followed by a write, so two genuinely
+        // simultaneous uploads can both miss it; idx_import_jobs_live_content (V74) is what
+        // decides then, and the loser gets the 409 GlobalExceptionHandler already answers for a
+        // constraint violation. Same reasoning V67 gives for preferring constraints to checks.
+        Optional<ImportJob> alreadyQueued = repository
+                .findFirstByUserIdAndContentHashAndStatusNotInOrderByCreatedAtDesc(
+                        userId, address.hash(), ImportJob.Status.TERMINAL);
+        if (alreadyQueued.isPresent()) {
+            return alreadyQueued.get();
+        }
+
         ImportJob job = jobStore.enqueue(
                 userId, file.getOriginalFilename(), address.hash(), address.key());
 
@@ -157,9 +180,18 @@ public class ImportJobService {
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Import job not found."));
     }
 
-    /** The caller's recent jobs, newest first. */
+    /**
+     * The caller's recent jobs, newest first.
+     *
+     * <p>BH-008: this clamped only the UPPER bound, so {@code ?limit=0} (or any negative value)
+     * reached {@code PageRequest.of(0, 0)}, which Spring Data rejects with
+     * {@code IllegalArgumentException} -- a 500 for what is plainly a bad query parameter.
+     * {@link com.finora.util.PageBounds} is the clamp every other paginated endpoint here already
+     * uses and exists for exactly this; this one simply never adopted it.
+     */
     public List<ImportJobDto.Progress> recent(UUID userId, int limit) {
-        return repository.findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(0, Math.min(limit, 50)))
+        int size = com.finora.util.PageBounds.safeSize(limit, 50);
+        return repository.findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(0, size))
                 .stream().map(ImportJobDto.Progress::of).toList();
     }
 

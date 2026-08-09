@@ -33,18 +33,52 @@ public class RateLimiter {
     // Piggybacks a sweep onto allow() itself every SWEEP_INTERVAL calls, rather than adding a
     // @Scheduled task -- this codebase has no async/scheduled infrastructure anywhere else, and a
     // sweep this small doesn't earn introducing that as a new pattern just for this.
-    private static final long SWEEP_INTERVAL = 1000;
-    private final AtomicLong callCount = new AtomicLong();
+    // BH-030. The sweep was "every SWEEP_INTERVAL calls", and callCount is per RateLimiter
+    // INSTANCE. loginLimiter and registerLimiter see plenty of traffic and swept fine;
+    // resetPasswordLimiter and passwordChangeLimiter are unlikely to see a thousand calls in a
+    // deployment's lifetime, so their maps accumulated an entry per distinct IP and never shrank.
+    // The fix comment claimed the leak was closed; it was closed for the busy limiters only.
+    //
+    // Elapsed time is the right trigger because it is what expiry is measured in. A sweep is cheap
+    // (one removeIf over a small map) and a limiter that is never called does not need one -- this
+    // runs at most once per interval, on a call, so an idle limiter costs nothing and a busy one
+    // sweeps on a predictable clock rather than a traffic-dependent one.
+    static final long DEFAULT_SWEEP_INTERVAL_SECONDS = 300;
+
+    private final long sweepIntervalSeconds;
+    private final AtomicLong lastSweepEpochSeconds = new AtomicLong(Instant.now().getEpochSecond());
 
     public RateLimiter(int maxRequests, long windowSeconds) {
+        this(maxRequests, windowSeconds, DEFAULT_SWEEP_INTERVAL_SECONDS);
+    }
+
+    /**
+     * Test seam, matching the one {@code RateLimitFilter} already carries for the same reason: the
+     * shipped sweep interval is five minutes, and a test that waited for it would either not run or
+     * not be a test. Package-private so only this package can shorten it.
+     */
+    RateLimiter(int maxRequests, long windowSeconds, long sweepIntervalSeconds) {
         this.maxRequests = maxRequests;
         this.windowSeconds = windowSeconds;
+        this.sweepIntervalSeconds = sweepIntervalSeconds;
+    }
+
+    /** How many client keys are currently being tracked. Exists so the eviction below can be
+     *  asserted on directly -- a leak is invisible from the outside otherwise, which is exactly
+     *  how BH-030 survived a fix that claimed to close it. */
+    int trackedKeys() {
+        return windows.size();
     }
 
     /** Returns true if the request is allowed, false if the caller has exceeded the limit. */
     public boolean allow(String key) {
         long now = Instant.now().getEpochSecond();
-        if (callCount.incrementAndGet() % SWEEP_INTERVAL == 0) {
+        // compareAndSet so concurrent callers cannot both sweep: the loser sees the updated
+        // timestamp and skips. Cheap enough that a missed sweep costs nothing anyway -- the next
+        // call past the interval takes it.
+        long lastSweep = lastSweepEpochSeconds.get();
+        if (now - lastSweep >= sweepIntervalSeconds
+                && lastSweepEpochSeconds.compareAndSet(lastSweep, now)) {
             evictExpired(now);
         }
         Window window = windows.compute(key, (k, existing) -> {

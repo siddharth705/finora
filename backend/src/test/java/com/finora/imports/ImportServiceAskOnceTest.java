@@ -234,6 +234,18 @@ class ImportServiceAskOnceTest {
         assertThat(captor.getValue().get(0).getMerchantId()).isEqualTo(resolvedMerchantId);
     }
 
+    /**
+     * BH-041 changed WHICH entry point the import path reconciles through, not whether it does.
+     *
+     * <p>{@code reconcileForImport} narrows the candidate set to the imported date range ±the widest
+     * matching window; {@code reconcileForUser} keeps its unbounded behaviour for its seven other
+     * callers, one of which depends on the full re-scan. Asserting the specific method matters here
+     * rather than being over-specification: "reconciliation happened" would pass if the import path
+     * silently reverted to the unbounded pass, which is the regression this names.
+     *
+     * <p>The date arguments are asserted too — a window built from the wrong dates would still
+     * satisfy a bare {@code any(), any()} while quietly failing to load the rows it exists to find.
+     */
     @Test
     void confirm_runsReconciliation_afterImportingAtLeastOneTransaction() throws Exception {
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
@@ -241,7 +253,9 @@ class ImportServiceAskOnceTest {
 
         importService.confirm(userId, dummyFile(), requestWith(row));
 
-        verify(reconciliationService).reconcileForUser(userId);
+        verify(reconciliationService).reconcileForImport(
+                userId, LocalDate.of(2026, 7, 10), LocalDate.of(2026, 7, 10));
+        verify(reconciliationService, never()).reconcileForUser(any());
     }
 
     @Test

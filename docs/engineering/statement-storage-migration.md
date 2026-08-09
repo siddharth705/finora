@@ -292,9 +292,18 @@ Engineering input for that later conversation, recorded now so it is not redisco
 - `StatementStorageService` abstraction, with R2 and local-filesystem implementations.
 - New uploads to R2; PostgreSQL keeps object key + content hash + metadata only.
 - Content-addressed identity so sections and re-imports share one object.
-- Deduplicating backfill of existing rows.
+- ~~Deduplicating backfill of existing rows.~~ **Removed — see §5.0.** There was nothing to back
+  fill, and the code was deleted rather than left untested on the statement path.
 - Reference-aware deletion (§3.2) — rows drop, objects are swept separately.
-- Lifecycle rules for temporary import-session objects.
+- **One object class, one cleanup mechanism.** This line previously read "lifecycle rules for
+  temporary import-session objects", which contradicted §3.2 and the implementation. There is no
+  separate session-object namespace: `ContentAddress.of()` is the only key scheme
+  (`statements/<hh>/<hh>/<hash>.bin`), `ImportSessionService` stores through the same
+  `StatementContentService.store()`, and both `import_sessions` and `statement_imports` carry the
+  hash and object key (§3.1). A session and the import it confirms **resolve to the same object**.
+  An age-based expiry applied to "session objects" would therefore delete objects a confirmed
+  import still needs — the silent, delayed failure §3.2 exists to prevent. The sweeper is the only
+  cleanup path, and it must count references from **both** tables.
 - Remove `BYTEA` only after the migration is verified.
 
 ### Explicitly out of scope

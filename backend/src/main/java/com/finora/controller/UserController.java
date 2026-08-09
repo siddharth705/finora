@@ -8,6 +8,10 @@ import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.repository.UserRepository;
 import com.finora.security.CurrentUser;
+import com.finora.security.JwtAuthFilter;
+import jakarta.servlet.http.HttpServletRequest;
+
+import java.util.UUID;
 import com.finora.service.AuthorizationService;
 import com.finora.service.PasswordChangeService;
 import com.finora.service.UserSettingsService;
@@ -59,9 +63,18 @@ public class UserController {
         return ApiResponse.ok(passwordChangeService.verifyOtp(currentUser.id(), request));
     }
 
+    /**
+     * Which session is asking comes from the access token's {@code sid} claim, published as a
+     * request attribute by {@code JwtAuthFilter} -- not from a refresh token in the body. BH-012
+     * removed the web client's ability to read its own refresh token (it is HttpOnly now), and the
+     * cookie is path-scoped to {@code /api/v1/auth} so it never reaches here. The sid was always
+     * the more accurate answer anyway: it survives rotation, and a token does not.
+     */
     @PostMapping("/password-change/complete")
-    public ApiResponse<CompleteResponse> completePasswordChange(@Valid @RequestBody CompleteRequest request) {
-        return ApiResponse.ok(passwordChangeService.complete(currentUser.id(), request));
+    public ApiResponse<CompleteResponse> completePasswordChange(
+            @Valid @RequestBody CompleteRequest request, HttpServletRequest httpRequest) {
+        UUID currentSessionId = (UUID) httpRequest.getAttribute(JwtAuthFilter.SESSION_ID_ATTRIBUTE);
+        return ApiResponse.ok(passwordChangeService.complete(currentUser.id(), request, currentSessionId));
     }
 
     /**

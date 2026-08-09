@@ -91,7 +91,12 @@ class AuditActorAttributionTest {
      * possible actor forever; if that stops being true the entry becomes a silent hole.
      */
     private static final Set<String> SINGLE_ACTOR_SYSTEM_PASSES = Set.of(
-            "ReconciliationService.reconcileForUser",   // RECONCILIATION_RUN
+            // RECONCILIATION_RUN. The audit write moved here in BH-041 when the passes were
+            // extracted behind two entry points -- reconcileForUser (unbounded) and
+            // reconcileForImport (windowed to an import's own date range). Both are still the same
+            // single-actor system pass: they run as a consequence of the owning user's own write,
+            // never on an admin's behalf, so there is no second actor to attribute.
+            "ReconciliationService.reconcile",          // RECONCILIATION_RUN
             "RecurringService.detectForUser"            // RECURRING_DETECTION_RUN
     );
 

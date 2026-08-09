@@ -5,7 +5,11 @@ import com.finora.util.EmailMasking;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
+import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
+import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
 import org.springframework.web.client.RestClient;
+
+import java.time.Duration;
 
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -31,9 +35,31 @@ public class ResendEmailProvider implements EmailProvider {
     private final EmailProperties emailProperties;
     private final RestClient restClient;
 
+    /**
+     * Connect and read timeouts, both of them, because {@code RestClient.create()} sets neither.
+     *
+     * <p>BH-016. Without a read timeout this call can block for as long as the far end keeps the
+     * socket open. That used to happen inside a {@code @Transactional} method, holding one of ten
+     * pooled database connections, so a hung Resend endpoint starved the whole application rather
+     * than just delaying an email. The sends have moved after commit, which fixes the connection
+     * half -- but an unbounded wait would still pin a request thread indefinitely, so the timeout
+     * is the other half rather than an alternative to it.
+     *
+     * <p>Ten seconds to connect and twenty to read: an email is a best-effort notification whose
+     * failure is already swallowed into {@link EmailResult}, so waiting longer buys nothing anybody
+     * is waiting for.
+     */
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
+    private static final Duration READ_TIMEOUT = Duration.ofSeconds(20);
+
     public ResendEmailProvider(EmailProperties emailProperties) {
         this.emailProperties = emailProperties;
-        this.restClient = RestClient.create();
+        ClientHttpRequestFactorySettings timeouts = ClientHttpRequestFactorySettings.defaults()
+                .withConnectTimeout(CONNECT_TIMEOUT)
+                .withReadTimeout(READ_TIMEOUT);
+        this.restClient = RestClient.builder()
+                .requestFactory(ClientHttpRequestFactoryBuilder.detect().build(timeouts))
+                .build();
     }
 
     @Override

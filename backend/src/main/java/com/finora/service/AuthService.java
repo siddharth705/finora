@@ -13,6 +13,7 @@ import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
 import com.finora.util.PhoneMasking;
 import com.finora.util.PhoneNumbers;
+import com.finora.util.AfterCommit;
 import com.finora.util.TokenHasher;
 import org.springframework.dao.IncorrectResultSizeDataAccessException;
 import org.springframework.http.HttpStatus;
@@ -106,9 +107,23 @@ public class AuthService {
         }
         User user = createUserRecord(request, User.SCOPE_USER);
         auditService.record(user.getId(), "USER_REGISTERED", "User", user.getId());
-        EmailResult welcomeEmailResult = emailProvider.sendWelcomeEmail(user.getEmail(), user.getFullName());
-        auditService.record(user.getId(), "EMAIL_SENT", "User", user.getId(), Map.of(
-                "type", "welcome", "provider", welcomeEmailResult.provider().name(), "success", welcomeEmailResult.success()));
+        // BH-016: sent AFTER this transaction commits, not inside it. The provider is an HTTP call
+        // to Resend with no read timeout, and this method holds one of ten pooled connections --
+        // so a provider that hangs does not degrade signup, it starves every endpoint in the
+        // application of database connections. The same afterCommit treatment TransactionService
+        // already applies to its SMS alert, for the same reason its comment gives.
+        //
+        // The audit row moves with it deliberately: it records what the provider actually
+        // returned, so writing it before the send would be recording a prediction.
+        UUID registeredUserId = user.getId();
+        String registeredEmail = user.getEmail();
+        String registeredName = user.getFullName();
+        AfterCommit.run("welcome email", () -> {
+            EmailResult welcomeEmailResult = emailProvider.sendWelcomeEmail(registeredEmail, registeredName);
+            auditService.record(registeredUserId, "EMAIL_SENT", "User", registeredUserId, Map.of(
+                    "type", "welcome", "provider", welcomeEmailResult.provider().name(),
+                    "success", welcomeEmailResult.success()));
+        });
 
         // Refresh token first: it is what mints the session, and the access token has to carry
         // that session's id in its sid claim.
@@ -541,9 +556,16 @@ public class AuthService {
         String resetLink = base + "/reset-password?token=" + rawToken;
 
         if (emailProvider.isConfigured()) {
-            EmailResult resetEmailResult = emailProvider.sendPasswordResetEmail(userOpt.get().getEmail(), resetLink);
-            auditService.record(userOpt.get().getId(), "EMAIL_SENT", "User", userOpt.get().getId(), Map.of(
-                    "type", "password_reset", "provider", resetEmailResult.provider().name(), "success", resetEmailResult.success()));
+            // BH-016: after commit -- see register(). The reset token row must be durable before
+            // the link reaches the user's inbox anyway, or a fast click could arrive ahead of it.
+            UUID resetUserId = userOpt.get().getId();
+            String resetEmail = userOpt.get().getEmail();
+            AfterCommit.run("password reset email", () -> {
+                EmailResult resetEmailResult = emailProvider.sendPasswordResetEmail(resetEmail, resetLink);
+                auditService.record(resetUserId, "EMAIL_SENT", "User", resetUserId, Map.of(
+                        "type", "password_reset", "provider", resetEmailResult.provider().name(),
+                        "success", resetEmailResult.success()));
+            });
             // Real email exists — no reason to also hand the link back in the API response.
             return new ForgotPasswordResponse(genericMessage, null);
         }
@@ -573,6 +595,30 @@ public class AuthService {
             throw new ApiException(HttpStatus.BAD_REQUEST,
                     "This account has no phone number on file. Contact an administrator for help resetting your password.");
         }
+        // BH-015, KNOWN AND DELIBERATELY STILL OPEN. This returns the account's phone number in
+        // full to anyone holding a valid reset link, where register() and login() -- both of which
+        // authenticate the caller far more strongly than a link from an inbox -- return
+        // PhoneMasking.mask(). The weakest gate in the product hands back the most.
+        //
+        // <p><b>Masking here does not work, and was tried.</b> All three clients pass this value
+        // straight to Firebase to SEND the code -- see ResetPassword.tsx, which calls
+        // {@code sendPhoneVerificationCode(res.phoneNumber, ...)} with it. Returning "+•••••••705"
+        // makes every password reset fail at the send. The number is not being disclosed
+        // decoratively; the client-side Firebase architecture needs it to do the thing this
+        // endpoint exists for.
+        //
+        // <p>Closing it properly means inverting the flow: the USER types their number, the client
+        // sends the OTP to what they typed, and resetPassword() rejects the reset unless the
+        // Firebase-verified number matches the account -- a check it ALREADY performs, so the
+        // server-side half is done. What is missing is the UI change across three clients and the
+        // decision to make people type their number. That is a product change, not a bug fix, and
+        // doing half of it silently is how a reset flow breaks in production.
+        //
+        // <p>Until then the exposure is bounded by the reset token: unguessable, single-use,
+        // 30-minute TTL, invalidated by any newer link, and now rate-limited (this endpoint was
+        // outside every limiter, so a token holder could hammer it). What an attacker who has
+        // already compromised the mailbox gains is the account's second factor -- the input to a
+        // SIM swap -- handed over before completing the reset.
         return new ResolveResetPasswordPhoneResponse(user.getPhoneNumber());
     }
 
@@ -635,9 +681,18 @@ public class AuthService {
         auditService.record(user.getId(), "PASSWORD_RESET", "User", user.getId(),
                 Map.of("method", "firebase_phone", "sessionsRevoked", true,
                         "otherResetLinksInvalidated", alsoInvalidated));
-        EmailResult changedEmailResult = emailProvider.sendPasswordChangedEmail(user.getEmail());
-        auditService.record(user.getId(), "EMAIL_SENT", "User", user.getId(), Map.of(
-                "type", "password_changed", "provider", changedEmailResult.provider().name(), "success", changedEmailResult.success()));
+        // BH-016: after commit -- see register(). This one matters most of the three: it tells the
+        // user their password changed, and sending it from inside a transaction that could still
+        // roll back would report a change that did not happen, on the one notification a victim
+        // relies on to notice a compromise.
+        UUID changedUserId = user.getId();
+        String changedEmail = user.getEmail();
+        AfterCommit.run("password changed email", () -> {
+            EmailResult changedEmailResult = emailProvider.sendPasswordChangedEmail(changedEmail);
+            auditService.record(changedUserId, "EMAIL_SENT", "User", changedUserId, Map.of(
+                    "type", "password_changed", "provider", changedEmailResult.provider().name(),
+                    "success", changedEmailResult.success()));
+        });
 
         return new ResetPasswordResponse("Password updated — you can now sign in with your new password.");
     }
