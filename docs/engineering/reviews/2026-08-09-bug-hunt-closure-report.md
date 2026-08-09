@@ -22,8 +22,8 @@ that never earned a BH number.
 |---|---:|---|
 | **CLOSED — VERIFIED** | 8 | The broken behaviour was independently demonstrated, then shown to be gone |
 | **CLOSED — REVIEWED** | 22 | Root cause established and fixed, suite green, but the break was never demonstrated |
-| **OPEN** | 14 | Confirmed issue, remediation outstanding |
-| **DEFERRED — DECISION REQUIRED** | 3 | Behaviour or product semantics need an explicit decision |
+| **OPEN** | 15 | Confirmed issue, remediation outstanding |
+| **DEFERRED — DECISION REQUIRED** | 2 | Behaviour or product semantics need an explicit decision |
 | **DEPLOYMENT VERIFICATION REQUIRED** | 1 | Cannot be closed from the repository alone |
 | **NEEDS REPRODUCTION** | 2 | Confirmed by inspection; deliberately not closed without a repro |
 | **CANNOT REPRODUCE** | 1 | Conditions attempted and recorded |
@@ -120,7 +120,32 @@ Each re-verified as still reproducing at `5a4c985`.
 | BH-046 | Design | Dual write to `file_content` has no end trigger |
 | BH-050 | Test defect | `negative.spec.ts` self-skips — would pass if rate limiting were removed entirely |
 | BH-053 | Test gap | `MerchantLearningService.confirm`'s documented race has no test |
+| BH-041 | Performance | Reconciliation runs once per section at user-wide scope. **Reclassified from DEFERRED 2026-08-09** — see below |
 | *(new)* | Test defect | Other tests may share BH-058's table-wide assumption. **Not swept.** Only the one demonstrated to break was fixed |
+
+### BH-041's reclassification, and why the deferral was wrong
+
+It was deferred on the belief that reconciling once would strip the per-section
+`duplicatesDetected` / `transfersIdentified` of any meaning, making it a product decision. Reading
+the code rather than reasoning about it showed that premise is false.
+
+Each section creates its own `StatementImport` (`new StatementImport()` sits inside `confirm()`,
+which `confirmMultiSection` calls per section), and `DuplicateDetector.tally()` is a **post-hoc read
+of persisted flags scoped by that `statementImportId`**. It has no dependency on how many
+reconciliation passes ran, or when. Persist-all → reconcile-once → summarize-each leaves every
+per-section count with exactly the meaning it has today. **No API change is required, and no
+product decision is needed.**
+
+It also fixes a live defect nobody had reported. Section 1 is summarised before section 2's rows
+exist, so a transfer between two sections of the same statement is counted in section 2's
+`transfersIdentified` and **not** section 1's. Reconciling after all sections are persisted makes
+both sides report it.
+
+**Named risk for whoever implements it.** The post-reconciliation block does not only produce the
+tally — it also carries BH-003's duplicate-balance reversal. Splitting `confirm()` into a persist
+phase and a summarise phase must move *both* together. Leaving the reversal behind re-opens
+BH-003, a CLOSED–VERIFIED finding where a card balance went 4000.00 → 3000.00 on a second import,
+and the existing coverage (`ImportAccountBalanceIT`) exercises the single-section path only.
 
 ---
 
@@ -128,7 +153,6 @@ Each re-verified as still reproducing at `5a4c985`.
 
 | ID | Decision needed | Evidence gathered |
 |---|---|---|
-| **BH-041** | Intended semantics of `duplicatesDetected` / `transfersIdentified` for multi-section imports, before any optimisation | Measured: 3 sections cost **3 reconcile + 3 recurring passes vs 1+1**, **+309 statements, +136 queries, +132 ms** over a 200-row history. Per-section counts are structurally 0 on a first composite import and **5** on a re-import. **No consumer reads them on the multi-section path** — web's `MultiImportSummaryScreen` never renders them, mobile refuses multi-account statements outright, no e2e spec asserts them |
 | **BH-017** | Retention policy: reference-counted sweep vs R2 lifecycle rule | Statement bytes are never deleted from object storage by any path. BH-047 removes the database row; **it does not remove the object** |
 | **BH-025** *(overlaps OPEN)* | Whether the BYTEA dual write should be skipped when an object address exists | Would change the migration's rollback story |
 
@@ -268,7 +292,8 @@ because both can silently corrupt financial data rather than fail loudly:
   `ImportService.resolveTargetAccount` acts on that answer by redirecting an import into an existing
   account without telling anyone.
 
-Also queued, and blocking: the three decisions in §4 and §5. Those are not engineering guesses.
+Also queued, and blocking: the two decisions in §4 and the environment check in §5. Those are not
+engineering guesses.
 
 ---
 
@@ -281,7 +306,7 @@ tests, breaks nothing the suite covers, and touches no file belonging to the par
 statement — the one to use in the PR, in status updates, and anywhere a number is quoted — is:
 
 > 61 findings were investigated. 30 are classified closed (8 verified against the broken behaviour,
-> 22 reviewed but not demonstrated), 14 remain confirmed and unfixed, and the rest are explicitly
+> 22 reviewed but not demonstrated), 15 remain confirmed and unfixed, and the rest are explicitly
 > classified by evidence level. The branch passes its committed verification suite, but this report
 > identifies significant areas that were not validated at all, including PDF extraction internals,
 > import/product classification, production runtime behaviour, and the nightly E2E workflow.
