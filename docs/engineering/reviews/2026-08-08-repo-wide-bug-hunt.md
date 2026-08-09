@@ -1666,3 +1666,78 @@ turned it red. Fixed my own pollution with an `@AfterEach` scoped to that class'
 cleanup `ImportAccountBalanceIT` already carries. **The underlying fragility is not fixed**: the
 test should assert against its own events rather than the whole table, and until it does the next
 person to add an import-heavy test will hit this. Filed rather than bundled.
+
+---
+
+## Remaining items, classified before any code is touched
+
+Requested so we stop treating every finding as something that necessarily needs a code change.
+Each line was re-verified against the tree at `e25b659`, not read off earlier notes.
+
+### Needs product decision — will not be touched without one
+
+| ID | Class | Why it is blocked |
+|---|---|---|
+| BH-017 | Needs product decision | Statement retention. Reference-counted sweep vs R2 lifecycle rule is a policy call, and the action deletes customer data. |
+| BH-041 | Performance + product decision | Measured (see above). Blocked on the `duplicatesDetected`/`transfersIdentified` semantics for multi-section imports being written down first. |
+| BH-031 | Security + needs evidence | The whole prod-hardening layer is gated on `SPRING_PROFILES_ACTIVE=prod`, which defaults to `dev`. Whether this is live depends on the deployment; I cannot see Railway's config. **One environment variable check closes or confirms it.** |
+
+### Needs a reproduction I do not yet have
+
+| ID | Class | What is missing |
+|---|---|---|
+| BH-006 / BH-023 | Confirmed defect (by inspection) | `confirmReimport` accepts arbitrary client rows; `confirmSession` compares only the row COUNT. Per instruction, not closing on inspection — needs a persisted re-import session to reproduce against. |
+| BH-033 | Cannot reproduce | `looksLikePlaceholderSecret` rejecting a legitimate random secret is probabilistic (`sample`, `dummy`, `example` as substrings). I could not produce a realistic failing case. Recommend **accept**. |
+
+### Confirmed defects, fixable, not yet fixed
+
+| ID | Class | Reproduces at `e25b659` |
+|---|---|---|
+| BH-028 | Confirmed defect (observability) | Yes — both staging methods still `catch (ApiException e)` only, so a `RuntimeException` from the parser records no failed analysis. The evidence table systematically misses the worst failures. |
+| BH-047 | Confirmed defect (transaction boundary) | Yes — `deleteExpiredSessions()` still called at two points inside `createSession`/`createMultiSection`'s transaction, deleting *other users'* rows inside the acting user's upload. |
+| BH-036 | Confirmed defect (latent) | Yes — CORS allows only `Authorization` and `Content-Type`, so the `X-Request-Id` propagation `CorrelationIdFilter` documents is unusable from a browser. No client sends it today, so it is latent. |
+| BH-014 | Security issue | Yes — `HttpStatus.LOCKED` still distinguishes a locked account from an unknown one. Five wrong passwords convert any email into an existence oracle. Fixable by the same "check after the password" pattern the suspension check already uses. |
+| BH-032 | Security issue (minor) | Yes — the DB-password check matches only the literal `"finora"`. |
+| BH-037 | Security issue (dev only) | Yes — `docker-compose.yml` publishes Postgres on `0.0.0.0:5432` with `finora/finora`. |
+
+### Performance issues
+
+| ID | Class | Note |
+|---|---|---|
+| BH-025 | Performance | Yes — `setFileContent` still writes the full document per section; a 3-section 9 MB PDF is 27 MB of BYTEA. |
+| BH-042 (rest) | Performance | Seven full-history loads remain; entangled with BH-041's design. |
+| BH-044 | Performance + design | Yes — a `RECONCILIATION_RUN` audit row per write, `audit_logs` unbounded, no retention. |
+| BH-045 | Performance | Whole files held in memory at four layers. |
+| BH-043 | Design | `ImportConcurrencyLimiter` blocks Tomcat request threads up to 20s. |
+
+### Design issues — accept or schedule, no defect to fix
+
+| ID | Note |
+|---|---|
+| BH-018 | Doc/code mismatch in `accept()`'s ordering claim. Partly a comment fix. |
+| BH-029 | Format decided by filename; should be persisted on the job row. |
+| BH-034 | Three single-instance controls vs a roadmap heading for multi-instance. |
+| BH-035 | `X-Forwarded-For` last-hop trust assumes exactly one proxy. |
+| BH-038 | Reuse detection has no grace window for a lost-response retry. |
+| BH-039 | Content addressing is global across tenants; matters only once a sweep exists. |
+| BH-046 | The dual write to `file_content` has no end trigger. |
+
+### Test defects
+
+| ID | Class | Status |
+|---|---|---|
+| BH-050 | Test defect | Open — `negative.spec.ts` self-skips when no 429 arrives, so it would pass if rate limiting were removed entirely. |
+| BH-053 | Test gap | Open — `MerchantLearningService.confirm`'s documented check-then-act race has no test. |
+| BH-051 | Test gap | **Closed** by batch 1 — `aFailureCannotResurrectACancelledJob`, `aFailureCannotResurrectAFinishedJob`, `aJobThatKeepsKillingItsWorkerEventuallyDeadLetters`. |
+| BH-052 | Test gap | **Closed** by batch 1 — five liability cases in `ClosingBalanceGuardTest`. |
+| BH-054 | Accepted | A push with no open PR gets no CI. Documented trade; the nightly (BH-048) reduces the exposure. |
+| BH-058 | Test defect | **Closed** — scoped assertions plus a negative case, mutation-checked. |
+
+---
+
+## Closure standard adopted from here
+
+A finding is closed only with: **what failed before → what changed → what proves the fix → what
+could regress → what remains out of scope**, and a negative test wherever one is practical. Two
+closures so far carry a mutation check (BH-058) or a named per-assertion regression (bulkDelete);
+that is the bar, not a green suite.
