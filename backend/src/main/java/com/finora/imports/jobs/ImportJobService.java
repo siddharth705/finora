@@ -38,6 +38,15 @@ import java.util.UUID;
  * were never written is unrecoverable. It is the same trade {@code StatementContentService} already
  * documents, and the same one the storage migration made.
  *
+ * <p><b>The limit of step 2's guarantee (BH-018).</b> {@link #accept} is not {@code @Transactional}
+ * and the boundary opens after the upload, so this class does not hold a transaction across it.
+ * That is as far as it goes: a <em>caller</em> that wrapped {@code accept()} in its own transaction
+ * would hold one, and nothing here prevents that. No caller does — the upload endpoint is not
+ * transactional — and {@code ImportJobStoreOutsideTransactionIT} covers both directions, including
+ * that one, so the boundary of the claim is asserted rather than assumed. This paragraph exists
+ * because the list above was previously true of the design and false of the code, which is the
+ * failure mode worth naming twice.
+ *
  * <h2>Storage is required here, and the endpoint says so</h2>
  *
  * <p>The synchronous path can keep bytes in the database, so it works with no provider configured.
@@ -55,6 +64,7 @@ public class ImportJobService {
     private final ImportJobRepository repository;
     private final Optional<StatementStorage> storage;
     private final ImportJobWorker worker;
+    private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
     @org.springframework.beans.factory.annotation.Value("${app.import.queue.enabled:false}")
     private boolean queueEnabled;
@@ -62,11 +72,13 @@ public class ImportJobService {
     public ImportJobService(ImportJobStore jobStore,
                              ImportJobRepository repository,
                              Optional<StatementStorage> storage,
-                             ImportJobWorker worker) {
+                             ImportJobWorker worker,
+                             org.springframework.transaction.support.TransactionTemplate transactionTemplate) {
         this.jobStore = jobStore;
         this.repository = repository;
         this.storage = storage;
         this.worker = worker;
+        this.transactionTemplate = transactionTemplate;
     }
 
     /**
@@ -103,7 +115,6 @@ public class ImportJobService {
      *                     have to be kept in agreement.
      * @throws ApiException 503 if object storage is not configured — see the class comment
      */
-    @Transactional
     public ImportJob accept(UUID userId, MultipartFile file, StatementUpload.Format sourceFormat)
             throws IOException {
         // Storage is a hard gate; the queue flag deliberately is not.
@@ -121,11 +132,43 @@ public class ImportJobService {
                         + "deployment. Set app.statement-storage.provider, or use the synchronous "
                         + "import endpoint."));
 
-        // Outside any transaction this method opens on the database's behalf -- see the class
-        // comment. Spring's @Transactional wraps the whole method, but the store call is a network
-        // write that does not touch the database, so the connection is not doing anything during it.
+        // BH-018. Outside the transaction, structurally -- this method is no longer @Transactional
+        // and the boundary opens below, after the upload has finished.
+        //
+        // It used to be @Transactional over the whole body, with a comment conceding the store
+        // happened inside and arguing it was harmless "because the store call is a network write
+        // that does not touch the database, so the connection is not doing anything during it".
+        // That argument is true only while no JDBC statement has been issued first -- it rests on
+        // Hibernate's delayed connection acquisition, which is a property of every caller above
+        // this method and of Hibernate's configuration, not of anything visible here. Nothing
+        // stated that, and nothing enforced it. A future caller that opened a transaction and read
+        // one row before calling accept() would have made the class comment's own warning come
+        // true (a connection from a pool capped at 10 held across a 10 MB network upload) with no
+        // test failing and no comment becoming wrong.
+        //
+        // The repository's rule is that a comment asserting a guarantee the code lacks is worse
+        // than silence. The guarantee was the correct one; the code now provides it.
         ContentAddress address = active.store(file.getBytes());
 
+        // Step 3, and everything that touches the database is inside it.
+        //
+        // A TransactionTemplate rather than an @Transactional method extracted from this one,
+        // because extracting it and calling it on `this` would bypass Spring's proxy and quietly
+        // apply no transaction at all -- the dedup check and the enqueue would stop being atomic,
+        // and isSynchronizationActive() below would be false, so the post-commit nudge would never
+        // register and every upload would wait for the next poll. Reaching a second bean or a
+        // self-injected proxy would work, and buys nothing here: this template makes the boundary
+        // visible on the two lines where BH-018 says it was invisible.
+        //
+        // Default propagation, so this still joins a caller's transaction if one ever exists --
+        // which is the guarantee ImportJobStore.enqueue's own comment depends on, and it is
+        // unchanged.
+        return transactionTemplate.execute(status ->
+                enqueueStoredUpload(userId, file.getOriginalFilename(), address, sourceFormat));
+    }
+
+    private ImportJob enqueueStoredUpload(UUID userId, String fileName, ContentAddress address,
+                                          StatementUpload.Format sourceFormat) {
         // BH-019. The same document submitted twice used to become two jobs and two staged
         // sessions, and confirming both imported the statement twice. A double-clicked upload
         // button and a client retrying a request whose 202 was lost both produce exactly that.
@@ -150,7 +193,7 @@ public class ImportJobService {
         }
 
         ImportJob job = jobStore.enqueue(
-                userId, file.getOriginalFilename(), address.hash(), address.key(), sourceFormat);
+                userId, fileName, address.hash(), address.key(), sourceFormat);
 
         // AFTER commit, deliberately. Nudging before it would let a worker claim a job whose
         // transaction has not committed -- it would read the row as absent and the nudge would be
