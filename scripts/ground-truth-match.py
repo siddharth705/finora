@@ -23,6 +23,68 @@ import sys
 
 MATCHED, MISSING, UNEXPECTED, AMBIGUOUS = "MATCHED", "MISSING", "UNEXPECTED", "AMBIGUOUS"
 PASS, FAIL, REVIEW = "PASS", "FAIL", "REVIEW"
+UNKNOWN = "UNKNOWN"
+
+REAL_CORPUS, SYNTHETIC = "REAL_CORPUS", "SYNTHETIC"
+
+# Dimensions the value axis can speak about. Each is judged SEPARATELY: an entity whose product and
+# transaction count agree is not made less certain by amounts being unobservable, so UNKNOWN is
+# per-dimension and never swallows the whole entity.
+VALUE_DIMENSIONS = ("date", "amount", "direction", "currency")
+
+
+def _observation_source(record):
+    """REAL_CORPUS unless a record says otherwise.
+
+    Defaulting to REAL_CORPUS is the safe direction: an unlabelled record is treated as the one that
+    may not carry financial values, so a probe that forgets to declare itself loses capability rather
+    than gaining permission.
+    """
+    return (record.get("observed") or {}).get("observationSource") or REAL_CORPUS
+
+
+def _values_of(section):
+    """The per-transaction values a SYNTHETIC observation may carry. Absent everywhere else."""
+    return section.get("transactions")
+
+
+def _compare_values(expected_rows, observed_rows):
+    """-> {dimension: (outcome, detail)}, one entry per dimension, never a single verdict.
+
+    The distinctions this preserves, and why each matters:
+
+      not observed         -> UNKNOWN     nobody looked; never agreement, never a pass
+      observed and equal   -> MATCHED
+      observed, different  -> UNEXPECTED  a value we did not expect is a FAIL, not a review item
+      expected, absent     -> MISSING     the row itself never arrived
+      several candidates   -> AMBIGUOUS   pairing failed; inventing one hides a real problem
+
+    An absent observation must never read as zero, as null-matches-anything, or as NOT_APPLICABLE.
+    Those three readings are how a value axis quietly stops checking while continuing to pass.
+    """
+    if observed_rows is None:
+        return {d: (UNKNOWN, "not observed -- this observation carries no financial values")
+                for d in VALUE_DIMENSIONS}
+
+    results = {}
+    for dimension in VALUE_DIMENSIONS:
+        outcome, detail = MATCHED, "as expected"
+        for i, want in enumerate(expected_rows):
+            if want.get(dimension) is None:
+                outcome, detail = UNKNOWN, f"row {i}: not asserted by the ground truth"
+                break
+            if i >= len(observed_rows):
+                outcome, detail = MISSING, f"row {i}: expected but not observed"
+                break
+            got = observed_rows[i].get(dimension)
+            if got is None:
+                outcome, detail = UNKNOWN, f"row {i}: dimension not observed"
+                break
+            if str(got) != str(want[dimension]):
+                outcome, detail = UNEXPECTED, f"row {i}: observed {got}, expected {want[dimension]}"
+                break
+        results[dimension] = (outcome, detail)
+    return results
 
 
 def _pair(expected, sections):
@@ -62,6 +124,7 @@ def _pair(expected, sections):
 def match(truth, record):
     """-> {"verdict": PASS|FAIL|REVIEW, "entities": [...], "unexpected": [...]}"""
     sections = (record.get("observed") or {}).get("sectionDetail") or []
+    source = _observation_source(record)
     expected = truth.get("entities") or []
     pairs, ambiguous, unpaired = _pair(expected, sections)
 
@@ -119,8 +182,25 @@ def match(truth, record):
             issues.append(f"product {s.get('suggestedAccountType')} != expected {want_product}")
             worst = FAIL
 
+        # The value axis. Structural by construction: financial values are legal only on a
+        # SYNTHETIC observation, so a real-corpus record cannot carry them even if a future probe
+        # were changed to emit some -- the privacy boundary does not depend on anyone remembering.
+        observed_rows = _values_of(s) if source == SYNTHETIC else None
+        if source != SYNTHETIC and _values_of(s) is not None:
+            issues.append("financial values present on a REAL_CORPUS observation -- refused")
+            worst = FAIL
+        values = _compare_values(e.get("expectedTransactionValues") or [], observed_rows)
+        for dimension, (outcome, detail) in values.items():
+            if outcome in (UNEXPECTED, MISSING):
+                issues.append(f"{dimension}: {detail}")
+                worst = FAIL
+            elif outcome == AMBIGUOUS:
+                issues.append(f"{dimension}: {detail}")
+                worst = REVIEW if worst == PASS else worst
+
         out.append({"id": eid, "outcome": MATCHED, "section": pairs[eid],
-                    "status": worst, "detail": "; ".join(issues) or "as expected"})
+                    "status": worst, "detail": "; ".join(issues) or "as expected",
+                    "values": {d: {"outcome": o, "detail": t} for d, (o, t) in values.items()}})
         worsen(worst)
 
     unexpected = [{"section": i, "outcome": UNEXPECTED,
@@ -128,7 +208,8 @@ def match(truth, record):
     if unexpected:
         worsen(REVIEW)                              # a real discovery OR a spurious section
 
-    return {"verdict": verdict, "entities": out, "unexpected": unexpected}
+    return {"verdict": verdict, "observationSource": source,
+            "entities": out, "unexpected": unexpected}
 
 
 def main():

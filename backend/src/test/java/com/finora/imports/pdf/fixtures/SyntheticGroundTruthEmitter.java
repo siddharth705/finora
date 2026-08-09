@@ -57,13 +57,26 @@ public final class SyntheticGroundTruthEmitter {
                 List.of());
     }
 
-    /** The same declaration with its last transaction withheld from the DOCUMENT only. */
-    private static SyntheticStatementDefinition withOneRowMissing(SyntheticStatementDefinition full) {
+    /** The declaration as the DOCUMENT should print it under a given mutation. Truth never moves. */
+    private static SyntheticStatementDefinition mutated(SyntheticStatementDefinition full, String how) {
+        if (how == null) return full;
         ExpectedEntity e = full.entities().get(0);
-        List<Row> fewer = e.rows().subList(0, e.rows().size() - 1);
+        List<Row> rows = new java.util.ArrayList<>(e.rows());
+        switch (how) {
+            case "--drop-row" -> rows.remove(rows.size() - 1);
+            // The canonical one: right number of rows, one wrong digit. Count-based matching cannot
+            // see this, which is why the value axis exists.
+            case "--wrong-amount" -> rows.set(0, new Row(rows.get(0).date(), rows.get(0).description(),
+                    new java.math.BigDecimal("35000.00"), rows.get(0).credit()));
+            case "--wrong-date" -> rows.set(0, new Row(rows.get(0).date().plusMonths(1),
+                    rows.get(0).description(), rows.get(0).amount(), rows.get(0).credit()));
+            case "--flip-direction" -> rows.set(1, new Row(rows.get(1).date(), rows.get(1).description(),
+                    rows.get(1).amount(), !rows.get(1).credit()));
+            default -> throw new IllegalArgumentException("unknown mutation: " + how);
+        }
         return new SyntheticStatementDefinition(full.documentId(),
                 List.of(new ExpectedEntity(e.id(), e.product(), e.presence(), e.accountNumberMasked(),
-                        e.zeroTransactionsLegitimate(), fewer)),
+                        e.zeroTransactionsLegitimate(), List.copyOf(rows))),
                 full.layout());
     }
 
@@ -73,7 +86,7 @@ public final class SyntheticGroundTruthEmitter {
             System.exit(2);
         }
         Path dir = Path.of(args[0]);
-        boolean mutate = args.length > 1 && "--mutate".equals(args[1]);
+        String mutation = args.length > 1 ? args[1] : null;
         Files.createDirectories(dir.resolve("statements"));
 
         // Truth always states the declared figure. The DOCUMENT is what --mutate changes, so a
@@ -82,13 +95,14 @@ public final class SyntheticGroundTruthEmitter {
         SyntheticStatementDefinition truth = declaration(declared);
         Files.writeString(dir.resolve("ground-truth.json"), GroundTruthDocument.of(truth));
 
-        // The document, which under --mutate prints one FEWER transaction than the truth declares.
-        // Truth still says three; the document shows two; the matcher must refuse to agree.
-        SyntheticStatementDefinition rendered = mutate ? withOneRowMissing(truth) : truth;
+        // Truth is always the declaration. Only the DOCUMENT is mutated, so a mutated run is a
+        // genuine disagreement rather than two consistent artefacts. Each mutation is a different
+        // KIND of wrongness, because a harness that catches a missing row is not thereby catching a
+        // wrong digit -- which is exactly the failure that passed before the value axis existed.
         Files.write(dir.resolve("statements").resolve("synthetic-ledger-001.pdf"),
-                PdfFixtureBuilder.render(rendered));
+                PdfFixtureBuilder.render(mutated(truth, mutation)));
 
         System.out.println("emitted ground-truth.json and statements/synthetic-ledger-001.pdf"
-                + (mutate ? " (MUTATED document)" : ""));
+                + (mutation == null ? "" : " (document mutated: " + mutation + ")"));
     }
 }

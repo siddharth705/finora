@@ -46,6 +46,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 BACKEND = REPO / "backend"
 EMITTER = "com.finora.imports.pdf.fixtures.SyntheticGroundTruthEmitter"
+PROBE = "com.finora.imports.analysis.SyntheticProbe"
 CLASSPATH_CACHE = BACKEND / "target" / "corpus-classpath.txt"
 
 
@@ -63,23 +64,27 @@ def classpath():
 
 
 def emit(cp, workdir, mutate):
-    args = ["java", "-cp", cp, EMITTER, str(workdir)] + (["--mutate"] if mutate else [])
+    args = ["java", "-cp", cp, EMITTER, str(workdir)] + ([mutate] if mutate else [])
     r = subprocess.run(args, capture_output=True, text=True)
     if r.returncode != 0:
         sys.exit(f"emitter failed:\n{r.stdout}\n{r.stderr}")
 
 
-def observe(workdir):
-    """Reuses corpus-run.py unchanged -- the same probe the real corpus goes through."""
-    out = workdir / "observed.jsonl"
-    r = subprocess.run([sys.executable, str(HERE / "corpus-run.py"),
-                        str(workdir / "statements"), "--out", str(out), "--quiet"],
-                       capture_output=True, text=True)
-    if r.returncode != 0 or not out.is_file():
-        sys.exit(f"corpus-run failed:\n{r.stdout[-800:]}\n{r.stderr[-800:]}")
-    record = json.loads(out.read_text().splitlines()[0])
+def observe(cp, workdir):
+    """SyntheticProbe, not CorpusProbe.
+
+    The real probe deliberately carries no amounts, dates or narration -- its records are produced
+    from real statements and become build artefacts. Value-level ground truth needs the observed side
+    to carry values, so a synthetic document gets a probe that only ever sees generated files. The
+    matcher then refuses financial values on anything not declaring itself SYNTHETIC, which is what
+    keeps the privacy boundary from moving to make this test possible.
+    """
+    pdf = workdir / "statements" / "synthetic-ledger-001.pdf"
+    r = subprocess.run(["java", "-cp", cp, PROBE, str(pdf)], capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"synthetic probe failed:\n{r.stdout[-800:]}\n{r.stderr[-800:]}")
     single = workdir / "observed.json"
-    single.write_text(json.dumps(record))
+    single.write_text(r.stdout.strip().splitlines()[-1])
     return single
 
 
@@ -94,7 +99,7 @@ def run_case(cp, mutate):
     workdir = Path(tempfile.mkdtemp(prefix="finora-synthetic-gt-"))
     try:
         emit(cp, workdir, mutate)
-        return verdict(workdir, observe(workdir))
+        return verdict(workdir, observe(cp, workdir))
     finally:
         # Removed on every path, including failure. The lesson from the corpus incident was not
         # "someone committed a file" -- it was real data becoming a persistent artefact while
@@ -124,21 +129,26 @@ def main():
     cp = classpath()
     failures = 0
 
-    agreeing, _ = run_case(cp, mutate=False)
+    agreeing, _ = run_case(cp, mutate=None)
     ok = agreeing == "PASS"
     print(f"  {'PASS' if ok else 'FAIL'}  definition -> PDF -> observed -> matcher: {agreeing}")
     failures += 0 if ok else 1
 
-    disagreeing, detail = run_case(cp, mutate=True)
-    # Anything other than PASS is detection. FAIL is expected; REVIEW would also be a refusal to
-    # agree, and treating only FAIL as success would make this brittle about which refusal it got.
-    detected = disagreeing != "PASS"
-    print(f"  {'PASS' if detected else 'FAIL'}  a contradicting document is detected: {disagreeing}")
-    if not detected:
-        print("        the loop agreed with a document it should not have -- expectations and")
-        print("        document are not independent")
-        print(detail)
-    failures += 0 if detected else 1
+    # Each mutation is a different KIND of disagreement, and they are listed separately because a
+    # harness that catches one is not thereby catching the others. The amount case is the canonical
+    # one: it passed before this milestone existed, which is the entire reason the value axis was
+    # added -- the right number of rows with a wrong digit in one of them.
+    for flag, what in (("--drop-row", "a withheld transaction"),
+                       ("--wrong-amount", "a wrong amount, correct row count"),
+                       ("--wrong-date", "a wrong date"),
+                       ("--flip-direction", "a debit read as a credit")):
+        got, detail = run_case(cp, mutate=flag)
+        detected = got != "PASS"
+        print(f"  {'PASS' if detected else 'FAIL'}  detected: {what}: {got}")
+        if not detected:
+            print("        the loop agreed with a document it should not have")
+            print(detail)
+        failures += 0 if detected else 1
 
     print(f"\n  {'OK' if failures == 0 else str(failures) + ' FAILED'}"
           f"  -- no corpus, no network, no OCR engine, no artefact left behind")
