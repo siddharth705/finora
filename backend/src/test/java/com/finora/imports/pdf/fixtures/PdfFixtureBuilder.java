@@ -82,6 +82,8 @@ import java.util.List;
  *   -&gt; buildWrappedHeaderDepositScheduleSample
  * SUMMARY_ATTRIBUTION (a document-level printed summary, and how many sections could own it)
  *   -&gt; buildSummaryWithOneTransactionalSectionSample, buildSummaryWithTwoTransactionalSectionsSample
+ * PRINTED_ACTIVITY_WITH_ZERO_STAGED (the statement claims activity; nothing reached the ledger)
+ *   -&gt; buildPrintedSummaryNoReadableTableSample
  * Never Lose Information (whole-document)
  *   -&gt; buildUnrecognizableDocumentSample
  * Composability (multiple already-evidenced capabilities firing together in one document)
@@ -907,6 +909,41 @@ public final class PdfFixtureBuilder {
                 .line("CREDIT CARD ACCOUNT  4000 1111 2222 3333")
                 .row(ccCol, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
                 .row(ccCol, "15/07/2026", "UPI-Retailer One", "1,817.02 Dr");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * A statement that prints its own totals and whose transaction table cannot be read at all.
+     *
+     * <p>The shape of a real SBI statement: a summary grid the engine reads perfectly -- "Dr Count
+     * 5 / Cr Count 1 / Total Debits / Total Credits" over its figures -- and below it a ledger with
+     * no recognisable header, so no table is located and nothing is staged. That combination is the
+     * point. The document asserts that money moved; the importer accepted none of it; and before
+     * this fixture existed the result carried no verification report at all.
+     *
+     * <p>The labels are spelled the way the summary extractor already reads them. The real
+     * statement abbreviates them ("Dr Count") and glues a bracket to one ("Total Credits("), which
+     * the vocabulary does not yet match -- a separate extraction defect, deliberately not fixed
+     * here and not baked into this fixture, so that this test fails for the reason it names.
+     */
+    public static byte[] buildPrintedSummaryNoReadableTableSample() throws IOException {
+        float[] totalsCol = {LEFT_MARGIN, 150f, 280f, 400f};
+        float[] countsCol = {LEFT_MARGIN, 150f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Some Financial Institution")
+                .line("Account Statement")
+                .row(totalsCol, "Opening Balance", "Total Debits", "Total Credits", "Closing Balance")
+                .row(totalsCol, "6098.10", "5000.00", "40000.00", "41098.10")
+                .row(countsCol, "Debit Count", "Credit Count")
+                .row(countsCol, "5", "1")
+                .blankLine()
+                // No header this engine can recognise, so no table is located and nothing stages.
+                .line("Particulars of entries appear below in the bank's own arrangement")
+                .line("01-07-2026 / by transfer / 40000.00 / 46098.10")
+                .line("03-07-2026 / to clearing / 1000.00 / 45098.10")
+                .line("07-07-2026 / to clearing / 4000.00 / 41098.10");
 
         return render(List.of(page));
     }

@@ -41,7 +41,55 @@ public class SummaryTotalsValidator {
     public static final String RULE = "SUMMARY_TOTALS";
 
     public ImportDto.VerificationFinding check(List<StagedRow> rows, PrintedSummary summary) {
+        return check(rows, summary, 0);
+    }
+
+    /**
+     * The machine-readable name for "the statement says there was activity and we accepted none of
+     * it". A bounded constant rather than a sentence, for the same reason every other outcome here
+     * carries one: the message is presentation, and a caller that must parse prose to learn what
+     * happened is a caller coupled to wording.
+     */
+    public static final String PRINTED_ACTIVITY_WITH_ZERO_STAGED = "PRINTED_ACTIVITY_WITH_ZERO_STAGED_TRANSACTIONS";
+
+    /**
+     * @param locatedRowCount rows the parser found in the table before normalisation, carried only
+     *                        as evidence and deliberately distinguished from staged rows. "66
+     *                        located, 0 staged" and "0 located, 0 staged" are different failures --
+     *                        the first says the table was seen and every row of it rejected, the
+     *                        second that no table was seen at all. Only the staged count is a claim
+     *                        about the ledger; the located count says where it went wrong.
+     */
+    public ImportDto.VerificationFinding check(List<StagedRow> rows, PrintedSummary summary, int locatedRowCount) {
         Map<String, Object> details = new LinkedHashMap<>();
+
+        // A statement that claims activity while nothing reached the ledger is not "nothing to
+        // compare against" -- it is the strongest evidence available that the read failed, and the
+        // one case where the printed summary matters MORE than usual, precisely because our own
+        // parse produced nothing to weigh against it.
+        //
+        // Guarded on the summary CLAIMING ACTIVITY rather than merely existing. Zero staged rows is
+        // not itself a contradiction: a dormant account's statement can print a summary of zeroes
+        // and have been read perfectly. The contradiction needs the document to assert that
+        // something happened.
+        //
+        // WARNING rather than FAILED: the financial data did not fail validation, it never arrived.
+        // WARNING is also what the existing renderers and the corpus diff already treat as "worth a
+        // human look" -- VerificationPanel's notable filter is WARNING-or-FAILED, so a new outcome
+        // would have been silently invisible in the one place a person would look for it.
+        if ((rows == null || rows.isEmpty()) && summary != null && claimsActivity(summary)) {
+            details.put("suspectedCause", PRINTED_ACTIVITY_WITH_ZERO_STAGED);
+            putIfPresent(details, "printedDebitCount", summary.debitCount());
+            putIfPresent(details, "printedCreditCount", summary.creditCount());
+            putIfPresent(details, "printedDebitTotal", summary.debitTotal());
+            putIfPresent(details, "printedCreditTotal", summary.creditTotal());
+            details.put("stagedTransactionCount", 0);
+            details.put("locatedRowCount", locatedRowCount);
+            details.put("explanation", "The statement reports activity of its own and no transactions "
+                    + "were accepted into the ledger. Nothing here says the amounts are wrong -- it "
+                    + "says they never arrived.");
+            return new ImportDto.VerificationFinding(RULE, "WARNING", details);
+        }
 
         if (rows == null || rows.isEmpty() || summary == null || summary.isEmpty()) {
             // Says what this method KNOWS, not what it assumes. The previous wording -- "The
@@ -126,6 +174,25 @@ public class SummaryTotalsValidator {
         }
 
         return new ImportDto.VerificationFinding(RULE, "FAILED", details);
+    }
+
+    /** True when the statement asserts that something happened -- any count or any total above
+     *  zero. A summary of zeroes asserts the opposite, and must not raise a contradiction. */
+    private static boolean claimsActivity(PrintedSummary summary) {
+        return positive(summary.debitCount()) || positive(summary.creditCount())
+                || positive(summary.debitTotal()) || positive(summary.creditTotal());
+    }
+
+    private static boolean positive(Integer count) {
+        return count != null && count > 0;
+    }
+
+    private static boolean positive(BigDecimal amount) {
+        return amount != null && amount.signum() > 0;
+    }
+
+    private static void putIfPresent(Map<String, Object> details, String key, Object value) {
+        if (value != null) details.put(key, value);
     }
 
     /** Absent printed evidence is not a mismatch — a statement that printed no credit count says

@@ -159,7 +159,10 @@ public class PdfPreviewGenerator {
             // reporting below, which is the one thing this branch exists to preserve.
             ProductDiscovery.DiscoveredProduct unknown = productDiscovery.discover(
                     new ProductEvidenceCollector.Section(List.of(), emptySection.auxiliaryText(), null, 0));
-            StagedAccountSection section = buildLedgerSection(userId, filename, emptySection, unknown, ctx, PrintedSummary.NONE);
+            // The summary IS this section's: no table was recognised, so the document is one
+            // section and there is no other candidate it could describe. Withholding it here left
+            // the contradiction -- printed activity, nothing staged -- with nothing to state it.
+            StagedAccountSection section = buildLedgerSection(userId, filename, emptySection, unknown, ctx, printedSummary);
             return new PdfGenerationResult(List.of(surfaceUnrecognizedText(section, empty.preTableLines())), ctx);
         }
 
@@ -369,7 +372,12 @@ public class PdfPreviewGenerator {
         for (StagedAccountSection s : sections) {
             revised.add(s != target ? s : new StagedAccountSection(s.detectedAccount(), s.rows(),
                     s.totalParsed(), s.flaggedDuplicates(), s.unparseableRows(),
-                    importVerifier.reviseSummaryTotals(s.verification(), s.rows(), printedSummary)));
+                    // Zero, and it is never read: the located-row count is evidence for the
+                    // contradiction branch, which requires a section with NO staged rows, while
+                    // attribution by definition targets the one section that has them. Passing the
+                    // unparseable count here would have been a different number wearing this one's
+                    // name.
+                    importVerifier.reviseSummaryTotals(s.verification(), s.rows(), printedSummary, 0)));
         }
         return revised;
     }
@@ -381,8 +389,14 @@ public class PdfPreviewGenerator {
             unparseable.add(new UnparseableRow(Map.of("text", line),
                     "No transaction table was recognized anywhere in this document"));
         }
+        // The five-argument constructor defaults verification to null, and this path used it --
+        // silently discarding the report buildLedgerSection had just computed. That threw the
+        // evidence away on exactly the documents where it matters most: the ones where nothing
+        // parsed, which is where a statement's own printed totals are the only thing left that can
+        // say the read failed. A real SBI statement printing 5 debits and 1 credit reached the user
+        // with no verification report at all.
         return new StagedAccountSection(section.detectedAccount(), section.rows(), section.totalParsed(),
-                section.flaggedDuplicates(), unparseable);
+                section.flaggedDuplicates(), unparseable, section.verification());
     }
 
     private record BalancePoint(LocalDate date, BigDecimal signedAmount, BigDecimal balance,
