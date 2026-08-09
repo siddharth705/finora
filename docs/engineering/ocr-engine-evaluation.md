@@ -366,6 +366,19 @@ changed routing would have produced exactly the diff a real regression hides in.
   making the choice
 - Fixture-hygiene ratchet at baseline; PII, XML-comment, client-auth and check-imports gates clean
 
-Not yet run: the 18-document real-corpus diff, which needs the corpus that lives outside the
-repository. Native-first makes a corpus change structurally impossible, but structural arguments are
-what corpus runs exist to check.
+### The real corpus
+
+Run, against OCR-4's own parent rather than `origin/main` — main had moved on, and diffing against a
+moved branch would have mixed in changes this PR did not make.
+
+```
+before: OCR-3B tip (cb32c85)      after: OCR-4 (5cd6e2b)
+no differences
+  0 regression   0 review   0 improvement   (0 document(s) changed)
+```
+
+All 18 records byte-identical. That is the check the native-first argument was asking for: the
+argument said no document with a text layer can change, and every document in the corpus has one.
+
+`check-corpus-leakage.py` also passes against the corpus — 7271 identifiers, none present in tracked
+content — so nothing in this change carries a real statement's data.
