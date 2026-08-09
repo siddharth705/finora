@@ -19,13 +19,16 @@ import java.io.IOException;
  * first couples the financial pipeline to whichever one was easiest to integrate; defining the
  * seam first means engines can be measured against the same ground truth and swapped on evidence.
  *
- * <h2>What this does NOT do</h2>
+ * <h2>Choosing between acquirers</h2>
  *
- * There is no routing here, and none is implied. Nothing in this package decides that a document
- * "looks bad enough to OCR", because no measurement supporting such a decision exists yet.
- * Character density is known NOT to be that signal -- across the corpus, 993 chars/page yields 58
- * rows while 1545 and 1799 chars/page yield none -- so a threshold on it would be a guess with an
- * authoritative appearance. Routing arrives after scanned documents with known ground truth do.
+ * Not here. An implementation reports what it can do and what it found; which one runs is
+ * {@link RoutingTextAcquirer}'s decision, made in one place so that it can be read and tested as
+ * one thing.
+ *
+ * <p>That routing waited for evidence, and the evidence is narrow. Character density is known NOT
+ * to be a signal -- across the corpus, 993 chars/page yields 58 transaction rows while 1545 and
+ * 1799 chars/page yield none -- so no "this text layer looks poor" threshold exists or should be
+ * invented. The only measured trigger is a document with no text at all.
  */
 public interface DocumentTextAcquirer {
 

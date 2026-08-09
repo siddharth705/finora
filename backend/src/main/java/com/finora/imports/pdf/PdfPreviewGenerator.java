@@ -56,7 +56,7 @@ import java.util.UUID;
 @Component
 public class PdfPreviewGenerator {
 
-    private final PdfTextExtractor textExtractor;
+    private final com.finora.imports.pdf.acquisition.DocumentTextAcquirer textAcquirer;
     private final PdfTableLocator tableLocator;
     private final PdfMetadataExtractor metadataExtractor;
     private final TransactionNormalizer transactionNormalizer;
@@ -66,12 +66,24 @@ public class PdfPreviewGenerator {
     private final com.finora.imports.ImportVerifier importVerifier;
     private final com.finora.service.RuleEngineService ruleEngineService;
 
-    public PdfPreviewGenerator(PdfTextExtractor textExtractor, PdfTableLocator tableLocator,
+    /**
+     * The wired constructor. Takes an ACQUIRER rather than an extractor, so that how the text was
+     * obtained is a decision made once, outside this class, and everything here stays the same
+     * whether the characters were read or recognised.
+     *
+     * <p>{@code @Autowired} because there are now two constructors and Spring will not guess. Its
+     * failure when it cannot is indirect -- "No default constructor found", reported against this
+     * class rather than against the ambiguity -- so the annotation is load-bearing rather than
+     * decorative.
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    public PdfPreviewGenerator(com.finora.imports.pdf.acquisition.DocumentTextAcquirer textAcquirer,
+                                PdfTableLocator tableLocator,
                                 PdfMetadataExtractor metadataExtractor, TransactionNormalizer transactionNormalizer,
                                 ProductDiscovery productDiscovery, ProductAttributeExtractor attributeExtractor,
                                 com.finora.imports.ImportVerifier importVerifier,
                                 com.finora.service.RuleEngineService ruleEngineService) {
-        this.textExtractor = textExtractor;
+        this.textAcquirer = textAcquirer;
         this.tableLocator = tableLocator;
         this.metadataExtractor = metadataExtractor;
         this.transactionNormalizer = transactionNormalizer;
@@ -79,6 +91,25 @@ public class PdfPreviewGenerator {
         this.attributeExtractor = attributeExtractor;
         this.importVerifier = importVerifier;
         this.ruleEngineService = ruleEngineService;
+    }
+
+    /**
+     * Native extraction only, for callers that hold an extractor rather than an acquirer.
+     *
+     * <p>Every existing test builds this class from a {@link PdfTextExtractor}, and rewriting all of
+     * them to construct an acquirer would have changed a great deal of test code in the same commit
+     * that changed routing -- which is exactly the diff in which a real regression hides. This
+     * overload keeps those call sites reading as they did and gives them the behaviour they have
+     * always had: read the text layer, and do nothing else.
+     */
+    public PdfPreviewGenerator(PdfTextExtractor textExtractor, PdfTableLocator tableLocator,
+                                PdfMetadataExtractor metadataExtractor, TransactionNormalizer transactionNormalizer,
+                                ProductDiscovery productDiscovery, ProductAttributeExtractor attributeExtractor,
+                                com.finora.imports.ImportVerifier importVerifier,
+                                com.finora.service.RuleEngineService ruleEngineService) {
+        this(new com.finora.imports.pdf.acquisition.NativePdfAcquirer(textExtractor), tableLocator,
+                metadataExtractor, transactionNormalizer, productDiscovery, attributeExtractor,
+                importVerifier, ruleEngineService);
     }
 
     /** Single-account convenience wrapper over {@link #generateSections} -- returns the FIRST
@@ -134,7 +165,10 @@ public class PdfPreviewGenerator {
      */
     public PdfGenerationResult generateSectionsWithContext(UUID userId, String filename, byte[] fileBytes, String password) throws IOException {
         DocumentContext ctx = new DocumentContext("PDF", "PdfPreviewGenerator");
-        List<PositionedText> positioned = textExtractor.extract(fileBytes, password);
+        // Acquisition, not extraction: this may be the PDF's own text layer or characters
+        // recognised from its pixels, and nothing below this line is allowed to care which. See
+        // RoutingTextAcquirer for which one runs and why.
+        List<PositionedText> positioned = textAcquirer.acquire(fileBytes, password).runs();
         // A count, never the text. Lets ExtractionCheck tell "the pages carry no text" from
         // "we read plenty and could not make a table of it" -- see DocumentContext.
         if (ctx != null) ctx.recordExtractedRuns(positioned.size());

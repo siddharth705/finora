@@ -284,3 +284,88 @@ noticed instead of passing quietly.
 Assembly and DPI are settled; routing is not. `DocumentTextAcquirer` still has no OCR
 implementation, nothing decides when to reach for one, and `NATIVE_PLUS_OCR` remains unbuilt. Those
 are OCR-4, and they now have measured behaviour to be designed against.
+
+---
+
+# OCR-4 — routing
+
+The first change in this sequence that touches production code. Until now the acquisition package
+was built and unused: `DocumentTextAcquirer`, `AcquiredDocument` and `NativePdfAcquirer` existed but
+were referenced nowhere outside their own package, and `PdfPreviewGenerator` called
+`PdfTextExtractor` directly.
+
+## The rule
+
+```
+native extraction always runs first
+any runs at all      -> return them, untouched
+zero runs            -> hand the bytes to a recogniser, if one is deployed
+zero runs, no engine -> return the empty result; the existing error explains it
+```
+
+**Zero, not a threshold.** The obvious design routes on "the text layer looks poor", and there is no
+evidence for what poor means. Across the real corpus, character density says nothing useful: 993
+characters per page yields 58 transaction rows, while 1545 and 1799 per page yield none. A density
+cutoff would be a guess wearing an authoritative number. The one measured signal is total absence —
+`DocumentContext.hasNoExtractableText`, established in OCR-2D — and that is the only one acted on.
+
+**Native-first is structural, not a preference.** A document with even one native run returns before
+any recogniser is consulted, so no statement that works today can change behaviour because routing
+exists. There is no path through `acquire` that reaches a recogniser while native text exists, and
+the test asserts the recogniser is never *called* rather than that the output looks native — a
+recogniser that happened to agree would satisfy the weaker claim.
+
+## No engine ships
+
+`RoutingTextAcquirer` takes `List<RecognisingTextAcquirer>`, and that list is **empty in the shipped
+configuration** — asserted in `AcquisitionWiringIT`, not assumed.
+
+An OCR engine is an operational dependency of a deployment, not a library. Registering Tesseract as
+a `@Component` would commit the project to installing a binary in the production image, with image
+size, cost and support consequences that are not this change's to make. So routing ships and its
+tests run in the configuration production actually runs — with no engine — while
+`TesseractRecogniser` in test scope proves the same seam carries a real engine end to end.
+
+The consequence is worth stating plainly: **this change does not by itself make scanned statements
+import in production.** It makes them importable the moment an engine is deployed, and it is
+measured doing exactly that.
+
+## What routing deliberately does not do
+
+- **No per-page routing, no `NATIVE_PLUS_OCR`.** A cover page with a text layer above a scanned
+  table is a real shape and `AcquiredDocument` already models it, but recognising *part* of a
+  document needs a measurement of which parts are missing, and none exists. Built on a guess it
+  would produce a document whose provenance is confident and wrong.
+- **No confidence thresholds.** OCR-3A measured Tesseract reporting ~0.96 on the row whose value the
+  pipeline then got wrong. Confidence has been shown *not* to predict financial correctness here, so
+  it is recorded and never acted on.
+- **No new failure mode.** A recogniser that throws is treated exactly like one that is absent: the
+  user gets the existing "this PDF has no text in it", and the next recogniser still gets its turn.
+
+## What this cost, and the guard that came out of it
+
+Adding the acquirer constructor left `PdfPreviewGenerator` with two constructors, and Spring will not
+choose between them. **344 tests failed at once**, every one reporting "No default constructor found"
+against `PdfPreviewGenerator` — accurate, and pointing at the class rather than at the ambiguity. The
+routing unit tests all passed throughout, because they construct it directly.
+
+`AcquisitionWiringIT` now asserts that injecting `DocumentTextAcquirer` reaches routing, and that no
+recogniser is present by default. A seam that is correct but unreachable is worth nothing, and the
+way it becomes unreachable is a change nowhere near it.
+
+The existing constructor taking a `PdfTextExtractor` was kept as a native-only delegate. Twenty-six
+test call sites build the generator that way, and rewriting all of them in the same commit that
+changed routing would have produced exactly the diff a real regression hides in.
+
+## Verification
+
+- 1892/1892 backend tests pass
+- The OCR-3A calibration still holds and the OCR-3B benchmark still holds, both through the changed
+  generator
+- A scanned statement reaches **the same ledger as its native original**, end to end, with routing
+  making the choice
+- Fixture-hygiene ratchet at baseline; PII, XML-comment, client-auth and check-imports gates clean
+
+Not yet run: the 18-document real-corpus diff, which needs the corpus that lives outside the
+repository. Native-first makes a corpus change structurally impossible, but structural arguments are
+what corpus runs exist to check.
