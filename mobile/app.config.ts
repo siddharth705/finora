@@ -24,9 +24,22 @@ import type { ExpoConfig } from 'expo/config';
 // google-services.json is not defined", because that plugin requires the key regardless of what
 // this file does. Verified, not assumed. See mobile-setup.md's "An iOS build error that points at
 // the wrong thing", which documents the same failure and its fix: download the file.
-const iosGoogleServices = './GoogleService-Info.plist';
-const androidGoogleServices = './google-services.json';
-const here = (p: string) => path.join(__dirname, p);
+/**
+ * On EAS the file arrives as a secret FILE environment variable rather than in the uploaded source,
+ * because it is gitignored and so is never part of what EAS receives. EAS materialises the upload
+ * into the build workspace and sets these variables to its absolute path.
+ *
+ * This is why the first cloud build failed in the Prebuild phase: `app.config.ts` omits
+ * `googleServicesFile` when the file is absent, and @react-native-firebase's plugin then rejects
+ * the config -- reporting it as a missing app.json key, several steps from the real cause. Reading
+ * the env var first keeps the credential out of git while still giving the cloud build a real path.
+ *
+ * Manage with `eas env:list` / `eas env:create --type file`.
+ */
+const iosGoogleServices = process.env.GOOGLE_SERVICES_PLIST ?? './GoogleService-Info.plist';
+const androidGoogleServices = process.env.GOOGLE_SERVICES_JSON ?? './google-services.json';
+// An EAS-provided path is already absolute; only a repo-relative default needs resolving.
+const here = (p: string) => (path.isAbsolute(p) ? p : path.join(__dirname, p));
 
 const config: ExpoConfig = {
   name: 'Finora',
@@ -68,6 +81,18 @@ const config: ExpoConfig = {
   },
   web: {
     favicon: './assets/favicon.png',
+  },
+  // Links this checkout to the EAS project @siddharth705/finora-mobile. `eas init` normally writes
+  // this itself, but it refuses to edit a dynamic config (app.config.ts) and prints the block to
+  // paste instead -- hence it living here by hand rather than by tooling.
+  //
+  // Not a secret: an EAS project id identifies a project, it does not authorise anything. Builds
+  // still require an authenticated `eas` session, so this is safe to commit and has to be, or every
+  // fresh clone would need to re-link before it could build.
+  extra: {
+    eas: {
+      projectId: '26326587-eec7-4917-a1ab-5a2390f41714',
+    },
   },
   plugins: [
     'expo-secure-store',
