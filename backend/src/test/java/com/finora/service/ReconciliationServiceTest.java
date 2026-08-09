@@ -457,24 +457,61 @@ class ReconciliationServiceTest {
         assertThat(metadataCaptor.getValue()).containsEntry("transfersMatched", 1);
     }
 
+    /**
+     * BH-044. This test used to be {@code recordsTheSummary_evenWhenNothingMatched} and asserted
+     * the opposite, backing a decision the service stated in its own comment: "'ran and found
+     * nothing new' is itself the answer to 'when did this last run'".
+     *
+     * <p>Inverted deliberately, not overlooked. Reconciliation is synchronous and unconditional
+     * after every transaction create, update and delete, every import confirm and every statement
+     * delete — so an all-zero run is written at the same instant as the {@code TRANSACTION_*} row
+     * that triggered it and carries no fact that row does not. The trigger answers "when did this
+     * last run". What the zeros cost is not nothing: {@code audit_logs} has no retention, no
+     * partitioning and no archival, and this doubled its growth against ordinary ledger editing.
+     *
+     * <p>The two cases the original reasoning was actually protecting both keep their row, and have
+     * their own tests below: a run that reclassified something, and a run that was slow.
+     */
     @Test
-    void reconcileForUser_recordsTheSummary_evenWhenNothingMatched() {
+    void reconcileForUser_writesNoAuditRow_whenTheRunReclassifiedNothing() {
         Transaction lone = txn(UUID.randomUUID(), UUID.randomUUID(), LocalDate.of(2026, 7, 10),
                 new BigDecimal("100.00"), Transaction.Type.EXPENSE, "ONE-OFF PURCHASE", Instant.now());
         when(transactionRepository.findByUserId(userId)).thenReturn(List.of(lone));
 
         reconciliationService.reconcileForUser(userId);
 
-        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> metadataCaptor = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        org.mockito.Mockito.verify(auditService, org.mockito.Mockito.never()).record(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq("RECONCILIATION_RUN"),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any());
+    }
+
+    /**
+     * The half that must never be dropped, asserted separately from the counter tests above so it
+     * cannot be lost if those change shape. A run that reclassified a transaction is the audit
+     * trail's whole subject.
+     */
+    @Test
+    void reconcileForUser_stillRecords_whenTheRunReclassifiedSomething() {
+        UUID accountId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 7, 10);
+        Transaction original = txn(UUID.randomUUID(), accountId, date, new BigDecimal("486.00"),
+                Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:00:00Z"));
+        Transaction duplicate = txn(UUID.randomUUID(), accountId, date, new BigDecimal("486.00"),
+                Transaction.Type.EXPENSE, "SWIGGY*ORDR9182 BLR", Instant.parse("2026-07-10T10:05:00Z"));
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(original, duplicate));
+
+        reconciliationService.reconcileForUser(userId);
+
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> metadataCaptor =
+                org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
         org.mockito.Mockito.verify(auditService).record(
                 org.mockito.ArgumentMatchers.eq(userId), org.mockito.ArgumentMatchers.eq("RECONCILIATION_RUN"),
                 org.mockito.ArgumentMatchers.eq("Transaction"), org.mockito.ArgumentMatchers.isNull(),
                 metadataCaptor.capture());
 
         assertThat(metadataCaptor.getValue())
-                .containsEntry("transactionsProcessed", 1)
-                .containsEntry("duplicatesFound", 0)
-                .containsEntry("transfersMatched", 0)
-                .containsEntry("refundsMatched", 0);
+                .containsEntry("duplicatesFound", 1)
+                .containsEntry("recordedBecause", "reclassified");
     }
 }

@@ -71,7 +71,8 @@ public class ReconciliationService {
      */
     public void reconcileForUser(UUID userId) {
         List<Transaction> all = transactionRepository.findByUserId(userId);
-        reconcile(userId, all, Map.of("transactionsProcessed", all.size()));
+        // alwaysRecord=false: this is the per-edit path. See reconcile()'s emission block.
+        reconcile(userId, all, Map.of("transactionsProcessed", all.size()), false);
     }
 
     /**
@@ -111,10 +112,15 @@ public class ReconciliationService {
         // transactions this user has", and a scaling trend built on it would silently change
         // meaning the day an import started reporting a window instead. Two names, two meanings,
         // no discontinuity in either series.
+        // alwaysRecord=true. An import is one event per uploaded statement, not one per keystroke
+        // in the ledger, so its volume was never what BH-044 was about -- and this is the only
+        // path that produces windowFrom/windowTo/candidatesLoaded, which is the sole record
+        // anywhere of how much history a reconciliation pass actually read. Dropping it for a
+        // quiet import would delete BH-041's evidence that the candidate window narrows anything.
         reconcile(userId, candidates, Map.of(
                 "candidatesLoaded", candidates.size(),
                 "windowFrom", from.toString(),
-                "windowTo", to.toString()));
+                "windowTo", to.toString()), true);
     }
 
     /**
@@ -122,8 +128,13 @@ public class ReconciliationService {
      *
      * @param scopeAudit how the caller describes its own scope, merged into the RECONCILIATION_RUN
      *                   audit row so a run says which shape it was
+     * @param alwaysRecord whether this caller's runs are worth an audit row even when they
+     *                     reclassify nothing. See the emission block below -- true for imports,
+     *                     which are infrequent and carry scope telemetry nothing else records;
+     *                     false for the per-edit path, which is where BH-044's volume came from
      */
-    private void reconcile(UUID userId, List<Transaction> all, Map<String, Object> scopeAudit) {
+    private void reconcile(UUID userId, List<Transaction> all, Map<String, Object> scopeAudit,
+                           boolean alwaysRecord) {
         long startedAtNanos = System.nanoTime();
 
         // 1) Duplicates -- grouped in-memory over the already-fetched `all` list rather than one
@@ -343,11 +354,50 @@ public class ReconciliationService {
 
         long elapsedMs = (System.nanoTime() - startedAtNanos) / 1_000_000;
 
-        // Financial Intelligence Workspace, Reconciliation Monitor -- one summary entry per run,
-        // not one per match (that would flood the activity feed with as many rows as duplicates
-        // found in a single large import). Recorded even when every counter is 0: "ran and found
-        // nothing new" is itself the answer to "when did this last run" and belongs in the
-        // history, not just a silent no-op.
+        // Financial Intelligence Workspace, Reconciliation Monitor -- one summary entry per run
+        // THAT DID SOMETHING, not one per match (that would flood the activity feed with as many
+        // rows as duplicates found in a single large import) and no longer one per run.
+        //
+        // BH-044. This used to record unconditionally, and said so: "Recorded even when every
+        // counter is 0: 'ran and found nothing new' is itself the answer to 'when did this last
+        // run'". That reasoning is being revisited deliberately rather than overlooked, so here is
+        // why it does not hold.
+        //
+        // Reconciliation is synchronous and unconditional after every transaction create, update
+        // and delete, every import confirm and every statement delete. So an all-zero run is
+        // written at the same instant as the TRANSACTION_CREATED / TRANSACTION_UPDATED /
+        // TRANSACTION_DELETED row that triggered it, carrying no fact that row does not already
+        // carry, and "when did this last run" is answered by the trigger. What the zeros cost is
+        // real: audit_logs has no retention, no partitioning and no archival, and this doubled its
+        // growth rate against ordinary ledger editing.
+        //
+        // Three things keep their record, and they are what the original reasoning was actually
+        // protecting:
+        //
+        //   dirty non-empty     -- the run CHANGED financial classification. That is the audit
+        //                          trail's whole subject and is never dropped.
+        //   elapsed >= slow     -- the run was expensive. durationMs exists to make a scaling
+        //                          problem visible before a user reports one, and a slow no-op is
+        //                          exactly the observation that matters; dropping it would remove
+        //                          the evidence scaling-triggers.md asks for. The WARN below fires
+        //                          on the same condition, so the log and the audit row agree.
+        //   alwaysRecord        -- the caller says its runs are worth recording regardless. Only
+        //                          reconcileForImport sets it, for two reasons: an import is one
+        //                          event per uploaded statement rather than one per ledger edit, so
+        //                          it was never the volume BH-044 named; and it is the ONLY source
+        //                          of windowFrom/windowTo/candidatesLoaded, the sole record
+        //                          anywhere of how much history a pass actually read.
+        //
+        // That third condition was added after the first version of this change broke
+        // MultiSectionReconciliationCostIT.theCandidateSetExcludesHistoryOutsideTheWindow, which
+        // reads candidatesLoaded off this row to prove BH-041's window narrows anything. Worth
+        // recording rather than quietly patching: this audit row is not only a trail, it is the
+        // only telemetry reconciliation scope has, and a test failing was the only thing that said
+        // so. A cheaper emission fix would have deleted BH-041's evidence and left the suite green
+        // except for one test that looked like it just needed its fixture adjusted.
+        //
+        // What is lost is the all-zero, fast, user-edit run -- a row saying nothing happened,
+        // quickly, beside another row saying what did.
         //
         // durationMs and rowsWritten are new, and they are the two numbers that make a scaling
         // problem visible BEFORE a user reports one. This pass is synchronous on the request
@@ -359,13 +409,25 @@ public class ReconciliationService {
         //
         // The scope fields come from the caller (see reconcileForImport on why the windowed path
         // reports candidatesLoaded rather than reusing transactionsProcessed).
-        Map<String, Object> details = new java.util.LinkedHashMap<>(scopeAudit);
-        details.put("duplicatesFound", newDuplicates);
-        details.put("transfersMatched", newTransfers);
-        details.put("refundsMatched", newRefunds);
-        details.put("rowsWritten", dirty.size());
-        details.put("durationMs", elapsedMs);
-        auditService.record(userId, "RECONCILIATION_RUN", "Transaction", null, details);
+        boolean changedSomething = !dirty.isEmpty();
+        boolean wasSlow = elapsedMs >= SLOW_RUN_WARN_MS;
+        String recordedBecause = changedSomething ? "reclassified"
+                : wasSlow ? "slow"
+                : alwaysRecord ? "scope"
+                : null;
+        if (recordedBecause != null) {
+            Map<String, Object> details = new java.util.LinkedHashMap<>(scopeAudit);
+            details.put("duplicatesFound", newDuplicates);
+            details.put("transfersMatched", newTransfers);
+            details.put("refundsMatched", newRefunds);
+            details.put("rowsWritten", dirty.size());
+            details.put("durationMs", elapsedMs);
+            // Says which condition put this row here, so a reader of the trail can tell "this run
+            // reclassified something" from "this run was slow and found nothing" from "this run is
+            // recorded because it is an import" without inferring it from the counters.
+            details.put("recordedBecause", recordedBecause);
+            auditService.record(userId, "RECONCILIATION_RUN", "Transaction", null, details);
+        }
 
         // Logged as well as audited, at a level that costs nothing on a normal run. The audit
         // trail is per user and read through the admin UI; this is what makes a slow run visible
