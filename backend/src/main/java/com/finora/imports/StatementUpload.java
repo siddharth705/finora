@@ -110,9 +110,42 @@ public final class StatementUpload {
 
         if (name.isEmpty() || ".".equals(name) || "..".equals(name)) return fallback;
         if (name.length() > MAX_FILE_NAME_LENGTH) {
-            name = name.substring(0, MAX_FILE_NAME_LENGTH);
+            name = truncateKeepingExtension(name);
         }
         return name;
+    }
+
+    /**
+     * Bounds the length without cutting the extension off, because here the extension is data.
+     *
+     * <p>This used to be {@code name.substring(0, MAX_FILE_NAME_LENGTH)}, and that is a real
+     * defect rather than a cosmetic one. {@code ImportService} derives
+     * {@code statement_imports.source_format} from the name this method returns
+     * ({@code endsWith(".pdf") ? "PDF" : "CSV"}), and {@code parseAndStageAnyFormat} routes
+     * {@code reimport()} on that column. A PDF whose filename ran past
+     * {@link #MAX_FILE_NAME_LENGTH} lost its extension here, was recorded as CSV, and re-imported
+     * by feeding a PDF's bytes to {@code CsvParser} — exactly the regression V36's column was
+     * added to prevent, arriving through the length bound instead of through the routing.
+     *
+     * <p>It stayed invisible because the CSV direction fails safe: a truncated {@code .csv} lands
+     * in the same default branch as a name with no extension, so it keeps working for the wrong
+     * reason.
+     *
+     * <p>{@link #MAX_EXTENSION_LENGTH} is what stops this becoming a way around the bound. Without
+     * it, a name that is one long dotted string would let an arbitrary tail survive, or produce a
+     * result that is almost entirely suffix and no longer identifies the document to whoever is
+     * reading the admin list.
+     */
+    private static final int MAX_EXTENSION_LENGTH = 10;
+
+    private static String truncateKeepingExtension(String name) {
+        int dot = name.lastIndexOf('.');
+        String extension = dot < 0 ? "" : name.substring(dot);
+        // A dot in the first character is a leading-dot name, not an extension.
+        if (dot <= 0 || extension.length() > MAX_EXTENSION_LENGTH) {
+            return name.substring(0, MAX_FILE_NAME_LENGTH);
+        }
+        return name.substring(0, MAX_FILE_NAME_LENGTH - extension.length()) + extension;
     }
 
     /** True when the first bytes are {@code %PDF-}. Reads only the header, never the whole file:
