@@ -44,7 +44,8 @@ public final class OcrEvaluation {
     private OcrEvaluation() {}
 
     /** Everything one engine produced for one document, including what it could not report. */
-    public record Observation(String engine, String json, int runsRecognised, Float meanConfidence) {}
+    public record Observation(String engine, String json, int runsRecognised, Float meanConfidence,
+                              List<PositionedText> recognised) {}
 
     /**
      * Render the declaration, rasterise it, recognise it, parse it.
@@ -60,7 +61,7 @@ public final class OcrEvaluation {
         List<PositionedText> runs = RecognisedTextAdapter.toPositionedText(recognised);
 
         return new Observation(engine.name(), OcrProbe.probe(engine.name(), runs),
-                runs.size(), meanConfidence(recognised));
+                runs.size(), meanConfidence(recognised), runs);
     }
 
     /**
