@@ -123,11 +123,13 @@ public final class TesseractEngine implements OcrEngine {
             if (text == null || text.isBlank()) continue;
 
             float conf = Float.parseFloat(c[10].trim());
+            float height = Integer.parseInt(c[9].trim()) * scale;
             runs.add(new RecognisedText(text,
                     Integer.parseInt(c[6].trim()) * scale,
-                    Integer.parseInt(c[7].trim()) * scale,
+                    // top + height: the baseline, which is what PDFBox reports. See the class note.
+                    Integer.parseInt(c[7].trim()) * scale + height,
                     Integer.parseInt(c[8].trim()) * scale,
-                    Integer.parseInt(c[9].trim()) * scale,
+                    height,
                     page,
                     conf < 0 ? null : conf / 100f));
         }

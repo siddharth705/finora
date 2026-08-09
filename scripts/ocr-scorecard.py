@@ -54,7 +54,10 @@ CALIBRATION = {
     "blind": "FAIL",
 }
 
-DEFAULT_DPI = 150
+# 300, not the 150 that ScannedPdfFixture produces. Measured: at 150 DPI ledger equivalence never
+# exceeds 7 of 10 layouts at any assembly threshold, and the three that fail there fail for all of
+# them -- the limit is pixels, not grouping. See OcrEvaluation.OCR_DPI.
+DEFAULT_DPI = 300
 
 
 def classpath():
