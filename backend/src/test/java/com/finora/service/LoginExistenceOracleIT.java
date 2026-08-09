@@ -174,42 +174,62 @@ class LoginExistenceOracleIT extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("BH-014: the locked path also returns faster, because it skips BCrypt entirely")
-    void theLockedPathIsMeasurablyCheaperThanAPasswordCheck() {
-        User real = registered();
-        String fake = "no-such-user-" + UUID.randomUUID() + "@example.com";
-        exhaust(real.getEmail());
+    @DisplayName("BH-014: locked, unknown and ordinary-invalid all cost about the same")
+    void theThreeFailurePathsAreComputationallyComparable() {
+        User locked = registered();
+        User ordinary = registered();
+        String unknown = "no-such-user-" + UUID.randomUUID() + "@example.com";
+        exhaust(locked.getEmail());
 
-        // Warm both paths before measuring -- the first call through either pays for class loading
-        // and JIT, which would swamp the difference being measured.
-        for (int i = 0; i < 3; i++) { attempt(real.getEmail()); attempt(fake); }
-
-        long lockedNanos = 0, unauthorizedNanos = 0;
-        int rounds = 5;
-        for (int i = 0; i < rounds; i++) {
-            long t0 = System.nanoTime();
-            attempt(real.getEmail());
-            lockedNanos += System.nanoTime() - t0;
-
-            t0 = System.nanoTime();
-            attempt(fake);
-            unauthorizedNanos += System.nanoTime() - t0;
+        // Warm every path first. The first call through any of them pays for class loading and JIT,
+        // which is far larger than the difference being measured.
+        for (int i = 0; i < 3; i++) {
+            attempt(locked.getEmail());
+            attempt(unknown);
+            attempt(ordinary.getEmail());
         }
-        long lockedMs = lockedNanos / rounds / 1_000_000;
-        long unauthorizedMs = unauthorizedNanos / rounds / 1_000_000;
+
+        int rounds = 8;
+        long lockedNs = 0, unknownNs = 0, ordinaryNs = 0;
+        for (int i = 0; i < rounds; i++) {
+            long t0 = System.nanoTime(); attempt(locked.getEmail());   lockedNs   += System.nanoTime() - t0;
+            t0 = System.nanoTime();      attempt(unknown);             unknownNs  += System.nanoTime() - t0;
+            t0 = System.nanoTime();      attempt(ordinary.getEmail()); ordinaryNs += System.nanoTime() - t0;
+        }
+        long lockedMs = lockedNs / rounds / 1_000_000;
+        long unknownMs = unknownNs / rounds / 1_000_000;
+        long ordinaryMs = ordinaryNs / rounds / 1_000_000;
+
+        // ordinary is the reference: a real account, a real wrong password, no lockout. Whatever a
+        // genuine failed login costs is what the other two have to cost.
+        double lockedRatio = (double) lockedMs / Math.max(1, ordinaryMs);
+        double unknownRatio = (double) unknownMs / Math.max(1, ordinaryMs);
 
         System.out.printf(
-                "BH-014 timing side-channel (mean of %d, warmed)%n"
-                + "  locked account (423, skips BCrypt) ...... %d ms%n"
-                + "  unknown account (401, pays for BCrypt) .. %d ms%n"
-                + "  Status and body are now identical; this gap is NOT closed. See the PR question.%n%n",
-                rounds, lockedMs, unauthorizedMs);
+                "%nBH-014 timing parity (mean of %d, warmed)%n"
+                + "  ordinary invalid password (reference) ... %4d ms%n"
+                + "  unknown account ......................... %4d ms  (%.2fx)%n"
+                + "  locked account .......................... %4d ms  (%.2fx)%n"
+                + "  Before the parity hash the locked path was ~4 ms against ~260 ms, ~70x.%n%n",
+                rounds, ordinaryMs, unknownMs, unknownRatio, lockedMs, lockedRatio);
 
-        // Deliberately NOT asserted as a hard threshold -- that would be a machine-speed assertion
-        // and would flake on a loaded CI runner. The number is printed so the fix can be judged
-        // against it, and so nobody claims the oracle is closed on the strength of the status code
-        // alone. BCrypt is intentionally slow; skipping it is intentionally fast; the gap is
-        // structural, not incidental.
-        assertThat(lockedMs).as("recorded, not bounded").isGreaterThanOrEqualTo(0);
+        // A WIDE bound, not an equality, and the width is evidence-based rather than cautious by
+        // habit. Across runs on an unloaded machine the reference path alone measured anywhere from
+        // 98 ms to 331 ms -- a 3.4x spread for identical work -- so anything tighter would fail on
+        // a busy CI runner and teach people to retry the build. A first draft used 3.0 and a
+        // mutation run promptly produced 2.67x on a path that was not even the one under test.
+        //
+        // What matters is the ORDER OF MAGNITUDE. Removing the parity hash sends the locked path to
+        // ~0.03x, which this still fails by a factor of six. That is the regression worth catching;
+        // distinguishing 0.9x from 1.4x is not, and pretending otherwise would make the test a
+        // liability rather than a control.
+        assertThat(lockedRatio)
+                .as("a locked account must not answer dramatically faster than an ordinary wrong "
+                        + "password -- that difference is the timing oracle, and it was ~70x")
+                .isBetween(0.2, 5.0);
+        assertThat(unknownRatio)
+                .as("Spring's own mitigateAgainstTimingAttack already holds this side; asserted so "
+                        + "the reference cannot silently become the outlier")
+                .isBetween(0.2, 5.0);
     }
 }

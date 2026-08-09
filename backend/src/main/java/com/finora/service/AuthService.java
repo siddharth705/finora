@@ -37,6 +37,26 @@ public class AuthService {
 
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AuthService.class);
 
+    /**
+     * BH-014. A hash to verify against on the locked-account path, so it costs what a real password
+     * check costs.
+     *
+     * <p>Computed ONCE, when this bean is built -- not per request, which would be the whole cost
+     * again, and not as a hardcoded literal, which would silently stop matching the day
+     * {@code SecurityConfig}'s BCrypt strength changes. Deriving it from the injected encoder means
+     * the parity holds by construction rather than by someone remembering.
+     *
+     * <p>The value hashed is irrelevant and deliberately not a plausible password: nothing ever
+     * compares equal to it on purpose, and the only property that matters is that verifying against
+     * it does the same work as verifying against a real one.
+     *
+     * <p>This is the same technique Spring Security already applies on the other side.
+     * {@code DaoAuthenticationProvider.mitigateAgainstTimingAttack} runs a throwaway password check
+     * when no user is found, which is why an unknown address costs ~260 ms rather than returning
+     * instantly. The locked path was the one case that skipped it.
+     */
+    private final String timingParityHash;
+
     // Default categories seeded for every new user — mirrors the prototype's starter category
     // list, expanded (see V11 migration, which backfills the same additions for existing users)
     // beyond the original 13 to cover common real-life cases the first pass didn't: repaying a
@@ -86,6 +106,7 @@ public class AuthService {
         this.categoryRepository = categoryRepository;
         this.resetTokenRepository = resetTokenRepository;
         this.passwordEncoder = passwordEncoder;
+        this.timingParityHash = passwordEncoder.encode("finora-bh-014-timing-parity-not-a-password");
         this.jwtService = jwtService;
         this.authenticationManager = authenticationManager;
         this.auditService = auditService;
@@ -345,6 +366,18 @@ public class AuthService {
             // sees "Invalid credentials" and is sent round the forgot-password loop rather than
             // being told to wait. Logged at INFO so the information survives for whoever is
             // reading the logs, who is not the person being defended against.
+            // BH-014, second half. Matching the status and message closed the obvious oracle and
+            // left a louder one: this branch returned before authenticate(), so it skipped BCrypt
+            // and answered in ~4 ms where every other failure cost ~260 ms. Identical responses
+            // arriving 70x faster still say "this account exists" to anyone with a stopwatch, and
+            // they say it behind a response that now LOOKS fixed, which is worse than the version
+            // that was honest about leaking.
+            //
+            // Verifying the supplied password against a throwaway hash makes the two paths cost
+            // the same. The result is deliberately discarded -- nothing can match this hash, and
+            // nothing is meant to. The lockout is untouched: no counter moves, lockedUntil is not
+            // rewritten, and the account is still refused.
+            passwordEncoder.matches(request.password(), timingParityHash);
             log.info("Refused login for locked account {} -- responding as invalid credentials (BH-014)",
                     user.getId());
             throw new ApiException(ErrorCode.AUTH_INVALID_CREDENTIALS, "Invalid credentials");
@@ -412,8 +445,8 @@ public class AuthService {
         // The lockout check above still stays where it is, and still cannot move -- its whole
         // purpose is to stop a locked account reaching password verification. What changed (BH-014)
         // is what it SAYS: the same 401 as a wrong password, so its position no longer leaks. It
-        // does still return faster than a real password check, because it skips BCrypt; that
-        // timing channel is measured in LoginExistenceOracleIT and is not closed here.
+        // no longer returns faster than a real password check either -- it verifies against a
+        // throwaway hash for timing parity. Both halves are measured in LoginExistenceOracleIT.
         if (user.isSuspended()) {
             throw new ApiException(HttpStatus.FORBIDDEN,
                     "This account has been suspended. Contact support for assistance.");
