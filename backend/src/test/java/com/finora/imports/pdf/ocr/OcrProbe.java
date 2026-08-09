@@ -62,6 +62,23 @@ final class OcrProbe {
      * OCR-3A to its stated scope. An evaluation that had to modify the parser in order to run would
      * already have made the routing decision it exists to inform.
      */
+    /** The same wiring, driven by an acquirer -- used by the routing tests. */
+    static PdfPreviewGenerator generatorFor(com.finora.imports.pdf.acquisition.DocumentTextAcquirer acquirer) {
+        CategorizationService cat = mock(CategorizationService.class);
+        when(cat.suggestReadOnly(any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
+        when(cat.suggestReadOnly(any(), any(), any(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Uncategorized", "default", null, null, null));
+        TransactionRepository repo = mock(TransactionRepository.class);
+        when(repo.findPotentialDuplicatesByUser(any(), any(), any(), any())).thenReturn(List.of());
+        return new PdfPreviewGenerator(acquirer, new PdfTableLocator(), new PdfMetadataExtractor(),
+                new TransactionNormalizer(cat, new DuplicateDetector(repo), TestRuleEngines.empty()),
+                ProductDiscovery.standard(), new ProductAttributeExtractor(),
+                new ImportVerifier(new BalanceChainValidator(), new StatementTotalsValidator(),
+                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator()),
+                TestRuleEngines.empty());
+    }
+
     private static PdfPreviewGenerator generator(List<PositionedText> runs) {
         PdfTextExtractor recognised = new PdfTextExtractor() {
             @Override
