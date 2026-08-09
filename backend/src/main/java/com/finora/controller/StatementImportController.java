@@ -77,7 +77,7 @@ public class StatementImportController {
     // Plain JSON, unlike /import/csv/confirm — the file is already stored server-side from the
     // original import, so there's nothing to re-upload here.
     @PostMapping("/{id}/reimport/confirm")
-    public ApiResponse<ConfirmResponse> confirmReimport(@PathVariable UUID id, @RequestBody ConfirmRequest request) {
+    public ApiResponse<ConfirmResponse> confirmReimport(@PathVariable UUID id, @RequestBody ConfirmRequest request) throws java.io.IOException {
         return ApiResponse.ok(statementImportService.confirmReimport(currentUser.id(), id, request), "Import complete");
     }
 

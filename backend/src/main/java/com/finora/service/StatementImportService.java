@@ -14,12 +14,14 @@ import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.accounts.AccountBalanceConvention;
 import com.finora.accounts.AccountDto;
+import com.finora.imports.ConfirmedRowIntegrity;
 import com.finora.imports.ImportService;
 import com.finora.security.OwnershipGuard;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.*;
@@ -205,15 +207,44 @@ public class StatementImportService {
      * to stay the account this statement already belongs to. Re-importing into a *different*
      * account would defeat the point of "re-import" (replaying the same statement) versus just
      * doing a fresh import.
+     *
+     * <p><b>BH-006.</b> This used to skip {@link ConfirmedRowIntegrity} entirely — the check
+     * {@code confirmSession} runs against its persisted {@code ImportSession} had nothing to run
+     * against here, because {@link #reimport} doesn't persist one; it returns the staged rows to
+     * the client and forgets them. So {@code request.rows()} went straight into
+     * {@code importService.confirm}, unchecked against the document this row claims to be from.
+     * Reproduced: a row dated 2099-01-01, for ₹999,999, present in no statement this account has
+     * ever had, confirmed successfully and posted to the ledger.
+     *
+     * <p>The fix re-parses the stored bytes — the same ones {@link #reimport} just parsed for the
+     * client to review — and runs the confirmed rows through the identical
+     * {@link ConfirmedRowIntegrity#requireSameRows} check {@code confirmSession} already trusts,
+     * rather than a second, parallel validation invented for this path. The server derives its own
+     * answer to "what does this document actually say" from the bytes it is holding; nothing the
+     * client sent is taken as that answer, including a row that merely happens to look plausible.
+     *
+     * <p>Re-parsing rather than caching the first parse costs one extra pass over the file, paid
+     * once per confirm — and it is the only source of server truth available without persisting an
+     * {@code ImportSession} for reimport too, which is a larger change than this fix. One
+     * consequence worth naming rather than hiding: a password-protected PDF's reimport now needs
+     * that password re-validated at confirm time, same as first-time import already requires
+     * ({@code IMPORT_PDF_PASSWORD_REQUIRED}) — reimport-confirm previously never touched the file's
+     * actual content at all, which was part of the same gap, not a feature being preserved.
      */
     @Transactional
     public com.finora.dto.ImportDto.ConfirmResponse confirmReimport(
-            UUID userId, UUID statementImportId, com.finora.dto.ImportDto.ConfirmRequest request) {
+            UUID userId, UUID statementImportId, com.finora.dto.ImportDto.ConfirmRequest request) throws IOException {
         StatementImport original = getOwned(userId, statementImportId);
+        byte[] content = statementContentService.read(original);
+
+        var freshStaging = importService.parseAndStageAnyFormat(userId, original.getSourceFormat(),
+                original.getFileName(), content, original.getSourceSectionIndex());
+        ConfirmedRowIntegrity.requireSameRows(freshStaging.rows(), request.rows());
+
         var scoped = new com.finora.dto.ImportDto.ConfirmRequest(
                 null, request.rows(), original.getAccountId(), null,
                 request.statementOpeningBalance(), request.statementClosingBalance());
-        return importService.confirm(userId, original.getFileName(), statementContentService.read(original), scoped);
+        return importService.confirm(userId, original.getFileName(), content, scoped);
     }
 
     /**
