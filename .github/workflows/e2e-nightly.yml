@@ -1,0 +1,204 @@
+name: E2E (full suite)
+
+# BH-048 and BH-049 from docs/engineering/reviews/2026-08-08-repo-wide-bug-hunt.md.
+#
+# ci.yml runs `npm run test:smoke` -- nine specs, one pass through the product -- and its own
+# comment says the rest "belongs on a nightly or pre-release schedule". That schedule did not
+# exist. `.github/workflows/` contained exactly one file, nothing invoked `npm run test`
+# (`--grep-invert @smoke`), and nothing invoked the cross-browser or responsive projects. So the
+# only automated browser coverage any change ever received was those nine specs, and the twelve
+# spec files holding the error paths, the negative cases and the behaviour-at-size ran when
+# somebody remembered to run them by hand.
+#
+# This is deliberately NOT moved into ci.yml. The trade the smoke job makes is sound: a suite that
+# every pull request waits on is a suite people learn to route around, and the full run needs
+# minutes of browser time. What was wrong was having only one half of that trade.
+#
+# WHAT THIS SHARES WITH ci.yml'S smoke JOB, AND WHY THAT IS SAFE
+# ---------------------------------------------------------------
+# The same container name (finora-ci-postgres), the same host ports (5433, 18081, 18086) and the
+# same teardown. Two jobs contending for those would be the failure mode smoke's own comment
+# describes -- one job's teardown killing the other's backend mid-test, surfacing as assertion
+# failures in whichever run was unlucky.
+#
+# The `primary` label is what makes it safe, and it is the same mechanism smoke already relies on:
+# a self-hosted runner executes ONE job at a time, so pinning both to that runner means this and a
+# smoke job can never overlap. A scheduled run that fires while a pull request is building simply
+# queues. Anything added here that takes host-level state needs the same label for the same reason.
+#
+# WHEN IT RUNS
+# ------------
+# 03:00 UTC daily. The runner is a developer's Mac rather than a datacentre VM, so two honest
+# caveats: a machine that is asleep or powered off will not pick the run up (GitHub queues it and
+# it starts whenever the runner next comes online), and a run that lands mid-morning competes with
+# whatever else that machine is doing. Neither breaks anything -- it means "nightly" is
+# best-effort, and workflow_dispatch exists so a release can force a real one on demand.
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      browsers:
+        description: 'Also run the Firefox/Edge and tablet/mobile projects (slower)'
+        type: boolean
+        default: false
+
+# A scheduled run that is still going when the next one fires should not be joined by it.
+concurrency:
+  group: e2e-full
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  full-suite:
+    name: Full Playwright suite (Chromium)
+    # See the header: `primary` is what stops this and ci.yml's smoke job holding the same
+    # container, ports and teardown at the same time.
+    runs-on: [self-hosted, macOS, ARM64, primary]
+    # Generous next to smoke's 25: this is the whole suite rather than nine specs, and a hang
+    # detector is all this number is meant to be.
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Started by hand rather than as a `services:` container -- service containers are a
+      # Linux-container feature and do not run on a macOS runner at all. Mirrors ci.yml exactly,
+      # including the force-remove first: a self-hosted workspace is reused, so a container from a
+      # crashed previous run may still be holding the port.
+      - name: Start Postgres
+        run: |
+          docker rm -f finora-ci-postgres >/dev/null 2>&1 || true
+          docker run -d --name finora-ci-postgres \
+            -e POSTGRES_DB=finora \
+            -e POSTGRES_USER=finora \
+            -e POSTGRES_PASSWORD=finora \
+            -p 5433:5432 \
+            postgres:16-alpine
+          for i in $(seq 1 30); do
+            if docker exec finora-ci-postgres pg_isready -U finora -d finora >/dev/null 2>&1; then
+              echo "postgres ready after ${i} attempt(s)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "postgres did not become ready within 60s"
+          docker logs finora-ci-postgres
+          exit 1
+
+      # Must track backend/pom.xml's java.version -- this job packages the backend itself.
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: temurin
+          cache: maven
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      # -DskipTests because ci.yml's backend job already ran them on this commit. This job exists
+      # to exercise the product through a browser, not to re-answer a question already answered.
+      - name: Build the backend
+        working-directory: backend
+        run: ./mvnw -B -DskipTests package
+
+      - name: Install dependencies
+        run: |
+          npm ci --prefix frontend
+          npm ci --prefix admin-portal
+          npm ci --prefix e2e
+
+      # Chromium always. Firefox/Edge and the responsive projects are opt-in via the dispatch input
+      # below, because engine-specific rendering changes far less often than business logic and
+      # tripling the runtime nightly would not pay for itself.
+      - name: Install Chromium
+        working-directory: e2e
+        run: npx playwright install chromium
+
+      - name: Install the other browsers
+        if: ${{ inputs.browsers }}
+        working-directory: e2e
+        run: npx playwright install firefox webkit
+
+      # PORT 18081, not 8081: 8081 is the React Native Metro bundler's default and this runner is a
+      # developer's own Mac, so whoever binds first wins. ci.yml records the day three unrelated
+      # pull requests failed here because an Expo dev server was running. Same reasoning, same port.
+      #
+      # The rate-limit ceilings are raised for the same reason ci.yml raises them: the suite
+      # registers an account per test and stages a statement in most of them, so production per-IP
+      # limits stop the run partway through regardless of whether the product works.
+      - name: Start the backend
+        working-directory: backend
+        env:
+          SPRING_PROFILES_ACTIVE: dev
+          SERVER_PORT: 18081
+          DB_PORT: 5433
+          RATE_LIMIT_REGISTER_MAX: 10000
+          RATE_LIMIT_LOGIN_MAX: 10000
+          RATE_LIMIT_IMPORT_STAGE_MAX: 10000
+        run: |
+          java -jar target/finora-backend-*.jar > "$RUNNER_TEMP/backend.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -sf http://localhost:18081/actuator/health | grep -q '"UP"'; then
+              echo "backend up"; exit 0
+            fi
+            sleep 2
+          done
+          echo "The backend never reported healthy. Last 50 lines:"
+          tail -50 "$RUNNER_TEMP/backend.log"
+          exit 1
+
+      # `npm run test` is `playwright test --grep-invert @smoke` -- everything ci.yml does NOT run.
+      - name: Full suite
+        working-directory: e2e
+        env:
+          FINORA_E2E_API_ORIGIN: http://localhost:18081
+        run: npm run test
+
+      - name: Cross-browser projects
+        if: ${{ inputs.browsers && !cancelled() }}
+        working-directory: e2e
+        env:
+          FINORA_E2E_API_ORIGIN: http://localhost:18081
+        run: npm run test:browsers
+
+      - name: Responsive projects
+        if: ${{ inputs.browsers && !cancelled() }}
+        working-directory: e2e
+        env:
+          FINORA_E2E_API_ORIGIN: http://localhost:18081
+        run: npm run test:responsive
+
+      # The report and traces are the whole value of a failed run -- without them the only artefact
+      # is a one-line assertion message and nobody can tell what the page looked like. Retained
+      # longer than ci.yml's seven days: nobody is watching a 03:00 run in real time, so the
+      # artefact has to survive until someone looks.
+      - name: Upload the report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-full-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 30
+
+      - name: Upload the backend log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-full-backend-log
+          path: ${{ runner.temp }}/backend.log
+          retention-days: 30
+
+      # always(), not !cancelled(): a cancelled run is exactly when a leftover Postgres container or
+      # a backgrounded jar most needs killing. The backend needs an explicit kill because it is
+      # started with `&` and outlives the step, the job and the workflow.
+      - name: Tear down Postgres and the backend
+        if: always()
+        run: |
+          docker rm -f finora-ci-postgres >/dev/null 2>&1 || true
+          pkill -f 'finora-backend-.*\.jar' >/dev/null 2>&1 || true

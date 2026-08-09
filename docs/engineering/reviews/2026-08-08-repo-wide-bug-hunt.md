@@ -1464,3 +1464,56 @@ compile check.** Read the `BUILD` line. A green `test-compile` does not mean the
   elsewhere cannot pass), and the two password-change tests verify revocation is keyed on the
   session. One test — `logout() is a safe no-op when there is no session` — caught a real mistake:
   the first cut called `authApi.logout()` unconditionally. Gated on the access token instead.
+
+---
+
+## Batch 3 (2026-08-09)
+
+| ID | What changed |
+|---|---|
+| BH-016 | The four email sends move after commit via a new `AfterCommit` helper, and `ResendEmailProvider` gets connect and read timeouts — it had **none**. |
+| BH-024 | `isMostRecentStatementForAccount` is one aggregate query instead of loading every statement import the user has, once per confirm and once per section. |
+| — | `ImportService.confirm(UUID, MultipartFile, ConfirmRequest)` gains `@Transactional`. Found while fixing BH-003; not a production path, but one call away from being one. |
+| BH-019 | Submitting the same document twice returns the job already queued for it, backed by a partial unique index over live jobs (V74). |
+| BH-048, BH-049 | `.github/workflows/e2e-nightly.yml` — the full Playwright suite on a schedule, with the cross-browser and responsive projects behind a dispatch input. |
+
+### A correction to BH-016
+
+The finding said an email failure could roll back registration. **That was wrong.**
+`ResendEmailProvider.send` catches `Exception` and returns `EmailResult.failure(...)`; it never
+throws, and its class comment says so deliberately. Anyone reading the original finding would have
+gone looking for a rollback that cannot happen.
+
+What the finding got right, and understated: `RestClient.create()` sets **no timeouts at all**. So
+the real exposure was not a throw, it was a hang — an unbounded wait on a third-party HTTP call
+while holding one of ten pooled database connections. A Resend incident would not have degraded
+email; it would have starved every endpoint in the application of connections. That is worse than
+what was reported, and it needed two fixes rather than one: move the send after commit so the
+connection is released first, and bound the call so a hang cannot pin a request thread either.
+
+### `AfterCommit`, and the seven copies it does not replace
+
+`TransactionSynchronizationManager.registerSynchronization(...)` is hand-rolled in **seven** places
+(`TransactionService`, `ImportJobService`, `LayoutRegistryService`, `MerchantLearningEventPublisher`,
+`MerchantNormalizationEngine`, `AdminLearningQueueService`, `SetupService`). All seven are correct
+as written, so converting them is a behaviour-preserving refactor and is deliberately not bundled
+into a bug fix — but it is worth doing, and `AccountBalanceConvention` exists because exactly this
+duplication already produced a real defect once with the credit-card sign convention. Recorded here
+so it is a decision rather than an oversight.
+
+### On the V74 migration
+
+`CREATE UNIQUE INDEX` on existing data fails the migration and therefore the deploy. The async queue
+is opt-in and off by default so the table is almost certainly empty — but "almost certainly" is not
+something to bet a deploy on, so V74 first cancels any pre-existing duplicate live jobs, keeping the
+newest, with an explaining `last_error`.
+
+### Verification
+
+- Backend **1786 tests, 0 failures, 0 errors, BUILD SUCCESS**, sequential, no concurrent Maven.
+- New tests: three in `ImportJobEndpointIT` for BH-019 against real Postgres (same document twice
+  returns one job; a terminal earlier job lets a resubmission through; two users are independent).
+- Both workflow files parse as valid YAML; `e2e-nightly.yml` pins to the same `primary` runner as
+  the smoke job, which is what stops the two contending for one Postgres container and one set of
+  ports.
+- All CI guard scripts pass.
