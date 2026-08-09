@@ -40,7 +40,20 @@ public class CorsConfig {
                 .toList();
         config.setAllowedOrigins(origins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+        // BH-036. CorrelationIdFilter reuses the client's X-Request-Id when one is supplied and
+        // echoes it back on every response, but CORS listed it in neither allowedHeaders nor
+        // exposedHeaders -- so from a browser the feature could not work in either direction. A
+        // cross-origin request carrying the header fails preflight, and the response header is
+        // invisible to JavaScript.
+        //
+        // Latent rather than broken today, because no client sends it yet. It is the kind of thing
+        // discovered when someone adds client-side tracing and loses an afternoon to a preflight
+        // error that has nothing to do with their change.
+        config.setAllowedHeaders(List.of("Authorization", "Content-Type", CorrelationIdFilter.HEADER_NAME));
+        // Exposed as well as allowed: allowedHeaders governs what the browser may SEND, exposed
+        // governs what JavaScript may READ off the response. Correlating a client-side error report
+        // with a server log needs the latter.
+        config.setExposedHeaders(List.of(CorrelationIdFilter.HEADER_NAME));
         config.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
