@@ -1580,3 +1580,89 @@ bulk fetch as on the 403 it means. It now asserts the status.
 - New `NotDuplicateConfirmationIT`: four cases against real Postgres — the confirmation survives a
   later reconciliation pass, a third genuinely accidental copy is still flagged, the account balance
   does not move (the flag governed reports, never the ledger), and ownership is enforced.
+
+---
+
+## BH-041: the measurement, before the decision
+
+Requested rather than assumed. `MultiSectionReconciliationCostIT` is the harness; it is a test and
+not a paragraph for the reason `ImportQueryCountIT` gives — the last performance document here was
+stale within forty minutes.
+
+**Measured** (Testcontainers Postgres, 200-row pre-existing history, 60 imported rows either way,
+no concurrent Maven):
+
+|  | 3 sections | 1 section | delta |
+|---|---|---|---|
+| `reconcileForUser` passes | 3 | 1 | **+2** |
+| `detectForUser` passes | 3 | 1 | **+2** |
+| prepared statements | 1055 | 746 | **+309** |
+| query executions | 717 | 581 | **+136** |
+| elapsed | 316 ms | 184 ms | **+132 ms** |
+
+Both passes load the user's **entire** history, so the delta grows with the ledger, not with the
+statement. At 200 rows of history it is 132 ms; the same shape at 10k is where
+`scaling-triggers.md` already measures a single pass at ~450 ms.
+
+**What the per-section response reports today.** The counts are only ever non-zero when a section's
+rows duplicate rows already in the *same* account — the duplicate pass groups by `accountId`. On a
+first import of a composite statement every section is a different account, so they are
+structurally zero. The case that produces a real number is a re-import:
+
+```
+first import  -> imported 5, duplicatesDetected 0, transfersIdentified 0
+re-import     -> imported 5, duplicatesDetected 5, transfersIdentified 0
+```
+
+**What it would report if reconciliation ran once at the end:** `0` in place of that `5`. Both
+fields are read from `DuplicateDetector.tally`, which runs after reconciliation.
+
+**Whether anyone depends on them — no, not on this path.** Web renders
+`duplicatesDetected`/`transfersIdentified` only in `ImportSummaryScreen`, the *single*-account
+summary. `MultiImportSummaryScreen` renders imported, skipped, closing balance, credits and debits,
+and never those two fields. Mobile refuses multi-account statements outright ("can only be imported
+from the Finora web app for now"), so it never receives a multi-section response at all. No e2e
+spec asserts them.
+
+So the contract concern I raised is real at the API level and has **no consumer today**. That is a
+fact for the decision, not the decision: the fields are in the public response shape, and a client
+could start reading them.
+
+**Options, with what each costs:**
+
+1. **Defer reconciliation to the end of `confirmMultiSection`.** Saves ~2/3 of the reconciliation
+   work on composite imports. Per-section `duplicatesDetected`/`transfersIdentified` become 0 on the
+   re-import case. No current consumer notices.
+2. **Defer, then recompute the tallies once and distribute them.** Keeps the numbers accurate,
+   costs a restructure of a nine-parameter method that writes to the ledger.
+3. **Leave it.** Composite statements are rare; the cost is bounded by section count.
+
+My recommendation is (1) with the fields documented as whole-import rather than per-section — but it
+is a contract change and it is yours to make.
+
+---
+
+## BH-030 (fixed, 2026-08-09)
+
+The sweep fired every N *calls*, and the counter is per limiter instance, so the busy limiters swept
+and the quiet ones (`resetPasswordLimiter`, `passwordChangeLimiter`) never did. Now time-based.
+`trackedKeys()` exists because a leaking limiter rate-limits exactly as correctly as a healthy one —
+no behavioural assertion can tell them apart, which is how the original half-fix read as a whole one.
+
+---
+
+## New finding from remediation: BH-058
+
+**`MerchantLearningQueueIT.twoConcurrentClaimsNeverReturnTheSameEvent` passes only because of what
+the rest of the suite happens to leave behind.** Severity: Medium · Test infrastructure.
+
+It calls `eventRepository.claimDueEvents(now, 10)` — **table-wide, not scoped to its own fixture** —
+and asserts the first claim returns exactly one event. Any test anywhere in the JVM that leaves a
+pending `merchant_learning_event` breaks it, and every confirmed import creates them while the test
+profile disables the worker that would drain them.
+
+Found by causing it: adding `MultiSectionReconciliationCostIT` (which performs two 200-row imports)
+turned it red. Fixed my own pollution with an `@AfterEach` scoped to that class's users — the same
+cleanup `ImportAccountBalanceIT` already carries. **The underlying fragility is not fixed**: the
+test should assert against its own events rather than the whole table, and until it does the next
+person to add an import-heavy test will hit this. Filed rather than bundled.
