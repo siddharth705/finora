@@ -1,6 +1,6 @@
 import { test, expect, uploadStatement } from '../../fixtures/test';
 import {
-  csv, emptyStatement, corruptedPdf, notAPdf, unsupportedFile, manyMerchants,
+  csv, emptyStatement, corruptedPdf, notAPdf, unsupportedFile, manyMerchants, wrappedHeaderPdf,
   FIVE_ROW_STATEMENT, CONSISTENT_BALANCE_STATEMENT, BROKEN_BALANCE_STATEMENT,
 } from '../../fixtures/statements';
 import { count, transactionsFor } from '../../fixtures/db';
@@ -105,6 +105,65 @@ test.describe('Phase 1 — statement upload', () => {
 
       await expect(userPage.getByText(/this file is not a PDF/i)).toBeVisible({ timeout: 30_000 });
       await expect(userPage.getByText(/upload it as a CSV instead/i)).toBeVisible();
+    });
+
+  /**
+   * A PDF whose column heading wraps across two visual lines reaches review with its rows, rather
+   * than succeeding with nothing in it.
+   *
+   * This is the end-to-end half of `WRAPPED_HEADER`. The unit tests assert the locator's geometry;
+   * this asserts the only thing a user experiences — that the statement arrives at the review step
+   * with its transactions, through the real upload, the real parse and the real screen.
+   *
+   * It is worth an E2E test specifically because of the shape of the failure it guards. A heading
+   * the engine cannot read does not raise an error: no table is found, nothing is staged, and the
+   * import reports SUCCESS. A real HDFC statement shipped exactly that, and every layer in
+   * isolation looked healthy while the user got an empty import. The assertion below is therefore
+   * on the rows being present AND on the absence of a "nothing to import" message — because the
+   * regression this protects against is silence, and silence passes any test that only checks for
+   * an error that never comes.
+   *
+   * See `wrappedHeaderPdf` for why neither line of that heading is a header on its own.
+   */
+  test('a PDF whose heading wraps onto a second line reaches review with its rows',
+    async ({ userPage }) => {
+      await userPage.goto('/app/import');
+      await uploadStatement(userPage, 'wrapped-header.pdf', 'application/pdf', wrappedHeaderPdf());
+
+      await expect(userPage.getByText(/4 row\(s\) parsed/i)).toBeVisible({ timeout: 30_000 });
+      await expect(userPage.getByRole('button', { name: /confirm import/i })).toBeVisible();
+
+      // The silent-success shape this capability exists to prevent.
+      await expect(userPage.getByText(/no transaction table|nothing to import|0 row/i)).toHaveCount(0);
+
+      // Anchored on the merged heading: the dates and amounts land in the right columns, which
+      // they only can if the columns came from both lines. Read one line at a time, this table is
+      // not found at all and none of these rows exist.
+      const review = userPage.getByRole('table');
+      await expect(review.getByText('2026-01-12')).toBeVisible();
+      await expect(review.getByText('2026-01-16')).toBeVisible();
+      await expect(review.getByText('₹45000')).toBeVisible();
+
+      /**
+       * ACKNOWLEDGED GAP, asserted rather than hidden.
+       *
+       * Every description arrives EMPTY. The merged heading names this column "Transaction
+       * Remarks", and `TransactionNormalizer` resolves the description with
+       * `CsvParser.firstNonBlank`, which compares each hint against the WHOLE normalized column
+       * name — "transaction remarks" is not "remarks", so it matches nothing and the description
+       * silently becomes "". It is the same whole-cell-versus-per-word mismatch already fixed
+       * three times in the engine (`isDateColumn`, `isAmountColumn`, `hasDateValue`), reaching a
+       * fourth place now that wrapped headings produce compound column names.
+       *
+       * Not fixed here, and not reachable on any real document yet: across the 18-statement
+       * corpus, wrapped headings appear only on deposit schedules, which stage no transactions.
+       * It becomes live the first time a bank wraps a heading over a TRANSACTION table, and the
+       * failure will be silent — rows import, descriptions are blank, nothing errors. Asserting
+       * the emptiness is what makes this test fail loudly on the day someone fixes it, so the fix
+       * is noticed rather than absorbed.
+       */
+      const firstDescription = review.getByRole('row').nth(1).getByRole('cell').nth(2);
+      await expect(firstDescription).toHaveText(/^\s*(low confidence)?\s*$/i);
     });
 });
 
