@@ -31,6 +31,26 @@ final class ExtractionCheck {
     static void rejectIfNothingWasExtracted(StagingResponse staged, DocumentContext ctx) {
         if (!staged.rows().isEmpty()) return;
 
+        // Checked first, because it is the most specific thing knowable and the only one of the
+        // three that is certain. A document with no extractable text is not a layout the engine
+        // failed to recognise -- there was nothing to lay out. Told it "could not find a
+        // transaction table", a user looks for a problem with their statement's format; the actual
+        // answer is that Finora cannot read images yet, which is ours and not theirs.
+        //
+        // Before this, a scanned PDF and a genuinely empty one were indistinguishable to the user:
+        // both produced zero rows, zero recovered lines and the same message. The one fact the
+        // engine knew for certain never reached them.
+        //
+        // The message states the observation and the limitation, and claims neither that the file
+        // is a bank statement nor that recognition would succeed on it. Those are not established
+        // by an absence of text.
+        if (ctx != null && ctx.hasNoExtractableText()) {
+            throw new ApiException(ErrorCode.IMPORT_IMAGE_ONLY_DOCUMENT,
+                    "This PDF has no text in it -- every page is an image, so there was nothing for "
+                            + "Finora to read. Statements exported directly from your bank's website "
+                            + "or app usually contain text and import correctly.");
+        }
+
         boolean locatedATable = ctx != null && ctx.buildMetadata().tables() > 0;
         int recoveredLines = staged.unparseableRows() == null ? 0 : staged.unparseableRows().size();
         throw new ApiException(

@@ -50,6 +50,13 @@ public enum ErrorCode {
     // message ("Cannot decrypt PDF, the password is incorrect"). The only thing that distinguishes
     // them is whether the request carried a password, which is why the distinction is drawn at the
     // call site rather than from the exception.
+    // Says what was observed -- the pages carry no text -- and not what the document IS. Zero
+    // extractable text proves no usable native text was acquired. It does not prove the file is a
+    // bank statement, a scan rather than a photo or an export, or that recognition would succeed on
+    // it. Naming it SCANNED or OCR_REQUIRED would assert all three from one measurement.
+    IMPORT_IMAGE_ONLY_DOCUMENT("IMPORT_010", HttpStatus.UNPROCESSABLE_ENTITY,
+            "This PDF has no text in it -- every page is an image"),
+
     IMPORT_PDF_PASSWORD_REQUIRED("IMPORT_008", HttpStatus.UNPROCESSABLE_ENTITY,
             "This statement is password protected. Enter the password your bank uses for it."),
     IMPORT_PDF_PASSWORD_INVALID("IMPORT_009", HttpStatus.UNPROCESSABLE_ENTITY,
