@@ -27,8 +27,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * BH-006 / BH-023, the REPRODUCTION. No fix here — this exists to establish what actually happens
- * before anything changes, and to make the impact a number rather than an adjective.
+ * BH-023's regression suite. Every case here failed before the fix — they began life as a
+ * characterization test asserting the defect, and were inverted once the guard landed.
  *
  * <h2>The claim under test</h2>
  *
@@ -64,6 +64,31 @@ import static org.assertj.core.api.Assertions.assertThat;
  * closed as VERIFIED is load-bearing only when the caller is honest.
  */
 class ConfirmTrustsTheClientIT extends AbstractIntegrationTest {
+
+    /** Confirms a session with whatever rows the caller supplies, returning the throwable or null. */
+    private Throwable confirmWith(User user, Account account, List<ConfirmedRow> rows,
+                                  BigDecimal opening, BigDecimal closing) {
+        ImportSession session = importSessionService.createSession(
+                user.getId(), "statement.csv", FILE, List.of(parsed(), parsedSecond()), null);
+        return org.assertj.core.api.Assertions.catchThrowable(() ->
+                importService.confirmSession(user.getId(), new ConfirmRequest(
+                        session.getId(), rows, account.getId(), null, opening, closing)));
+    }
+
+    /** The parsed pair, echoed back unchanged -- what every real client sends. */
+    private List<ConfirmedRow> echoed() {
+        return List.of(asConfirmed(parsed()), asConfirmed(parsedSecond()));
+    }
+
+    private ConfirmedRow asConfirmed(StagedRow r) {
+        return new ConfirmedRow(r.date(), r.description(), r.amount(), r.type(), "Other", true,
+                "rule", null, false, null, null, false);
+    }
+
+    private StagedRow parsedSecond() {
+        return new StagedRow(LocalDate.of(2026, 7, 2), "BOOKSHOP", new BigDecimal("420.00"),
+                "EXPENSE", "Other", "rule", null, false, null, null);
+    }
 
     @Autowired private ImportService importService;
     @Autowired private ImportSessionService importSessionService;
@@ -119,71 +144,152 @@ class ConfirmTrustsTheClientIT extends AbstractIntegrationTest {
                 null, false, null, null, false);
     }
 
+    // --- rejected: any of the four document fields altered -------------------------------------
+
     @Test
-    @DisplayName("BH-023: confirmSession writes the client's rows, not the parsed ones -- only the COUNT is checked")
-    void confirmSessionAcceptsRowsThatHaveNothingToDoWithTheStatement() {
+    @DisplayName("BH-023: a tampered AMOUNT is refused, and the account balance does not move")
+    void aTamperedAmountCannotReachTheLedgerOrTheBalance() {
         User user = user();
         Account account = account(user, new BigDecimal("10000.00"));
 
-        ImportSession session = importSessionService.createSession(
-                user.getId(), "statement.csv", FILE, List.of(parsed()), null);
+        // The reproduction, now refused. Before the fix this wrote CONSULTING INCOME 250000.00 and
+        // moved the balance to 260000.00, because ClosingBalanceGuard corroborated the client's
+        // stated closing balance against the client's own stated rows.
+        Throwable thrown = confirmWith(user, account,
+                List.of(fabricated(), asConfirmed(parsedSecond())),
+                new BigDecimal("10000.00"), new BigDecimal("260000.00"));
 
-        // Same row count, entirely different content -- and a stated closing balance that agrees
-        // with the fabrication rather than with the statement.
-        importService.confirmSession(user.getId(), new ConfirmRequest(
-                session.getId(), List.of(fabricated()), account.getId(), null,
-                new BigDecimal("10000.00"), new BigDecimal("260000.00")));
-
-        List<Transaction> written = transactionRepository.findByUserId(user.getId());
-        assertThat(written).hasSize(1);
-
-        Transaction t = written.get(0);
-        System.out.printf(
-                "%nBH-023 reproduction -- confirmSession%n"
-                + "  server parsed ....... 2026-07-01  COFFEE SHOP        150.00 EXPENSE%n"
-                + "  client confirmed .... %s  %s  %s %s%n"
-                + "  persisted ........... %s  %s  %s %s%n"
-                + "  account balance ..... opened 10000.00, now %s%n%n",
-                fabricated().date(), fabricated().description(), fabricated().amount(), fabricated().type(),
-                t.getTxnDate(), t.getDescription(), t.getAmount(), t.getTxnType(),
-                accountRepository.findById(account.getId()).orElseThrow().getBalance());
-
-        assertThat(t.getDescription())
-                .as("the ledger records what the CLIENT sent, not what the server parsed from the "
-                        + "document it is still storing")
-                .isEqualTo("CONSULTING INCOME");
-        assertThat(t.getAmount()).isEqualByComparingTo("250000.00");
-        assertThat(t.getTxnType()).isEqualTo(Transaction.Type.INCOME);
-
-        // The financial consequence. ClosingBalanceGuard corroborated a stated closing balance
-        // against the same request's own rows, so it agreed, and the balance was overwritten.
+        // Balance asserted FIRST, deliberately. All three of these fail against the pre-fix code,
+        // but this is the one whose failure message should say what actually went wrong: money
+        // moved. Against the count-only check this reads 260000.00.
         assertThat(accountRepository.findById(account.getId()).orElseThrow().getBalance())
-                .as("BH-004's guard cannot refuse this: it is checking the client's stated closing "
-                        + "balance against the client's stated transactions")
-                .isEqualByComparingTo("260000.00");
+                .as("THE case this fix exists for -- a fabricated amount must not be able to move money")
+                .isEqualByComparingTo("10000.00");
+        assertThat(thrown)
+                .as("a row the statement does not contain must not be importable as though it did")
+                .isNotNull();
+        assertThat(transactionRepository.findByUserId(user.getId()))
+                .as("nothing partially written")
+                .isEmpty();
     }
 
     @Test
-    @DisplayName("BH-023: a DIFFERENT row count is refused -- establishing that the count is the only check")
-    void aMismatchedRowCountIsTheOnlyThingConfirmSessionRejects() {
+    @DisplayName("BH-023: a tampered DATE is refused")
+    void aTamperedDateIsRefused() {
+        User user = user();
+        Account account = account(user, new BigDecimal("10000.00"));
+        ConfirmedRow shifted = new ConfirmedRow(LocalDate.of(2026, 9, 9), "COFFEE SHOP",
+                new BigDecimal("150.00"), "EXPENSE", "Other", true, "rule", null, false, null, null, false);
+
+        assertThat(confirmWith(user, account, List.of(shifted, asConfirmed(parsedSecond())), null, null))
+                .as("moving a transaction into another statement period changes which month it "
+                        + "lands in, and every total derived from that")
+                .isNotNull();
+    }
+
+    @Test
+    @DisplayName("BH-023: a tampered DESCRIPTION is refused")
+    void aTamperedDescriptionIsRefused() {
+        User user = user();
+        Account account = account(user, new BigDecimal("10000.00"));
+        ConfirmedRow renamed = new ConfirmedRow(LocalDate.of(2026, 7, 1), "SOMETHING ELSE ENTIRELY",
+                new BigDecimal("150.00"), "EXPENSE", "Other", true, "rule", null, false, null, null, false);
+
+        assertThat(confirmWith(user, account, List.of(renamed, asConfirmed(parsedSecond())), null, null))
+                .as("the description drives merchant resolution and categorisation -- rewriting it "
+                        + "re-points the row at a different merchant than the document names")
+                .isNotNull();
+    }
+
+    @Test
+    @DisplayName("BH-023: a tampered TYPE is refused -- an expense cannot be confirmed as income")
+    void aTamperedTypeIsRefused() {
+        User user = user();
+        Account account = account(user, new BigDecimal("10000.00"));
+        ConfirmedRow flipped = new ConfirmedRow(LocalDate.of(2026, 7, 1), "COFFEE SHOP",
+                new BigDecimal("150.00"), "INCOME", "Other", true, "rule", null, false, null, null, false);
+
+        assertThat(confirmWith(user, account, List.of(flipped, asConfirmed(parsedSecond())), null, null))
+                .as("flipping the sign is the cheapest way to move a balance without touching an "
+                        + "amount, and it is invisible in any check that only looks at magnitudes")
+                .isNotNull();
+    }
+
+    @Test
+    @DisplayName("BH-023: a mismatched row COUNT is still refused")
+    void aMismatchedRowCountIsStillRefused() {
         User user = user();
         Account account = account(user, new BigDecimal("10000.00"));
 
-        ImportSession session = importSessionService.createSession(
-                user.getId(), "statement.csv", FILE, List.of(parsed()), null);
-
-        // Two rows against one staged. This is the ONLY shape the check catches, which is what
-        // makes the test above a defect rather than a missing feature -- the validation exists,
-        // it is simply the weakest possible version of itself.
-        assertThat(org.assertj.core.api.Assertions.catchThrowable(() ->
-                importService.confirmSession(user.getId(), new ConfirmRequest(
-                        session.getId(), List.of(fabricated(), fabricated()), account.getId(), null,
-                        null, null))))
-                .as("count mismatch is rejected; content mismatch is not")
+        assertThat(confirmWith(user, account, List.of(asConfirmed(parsed())), null, null))
+                .as("the check the fix replaces still has to hold -- it was too weak, not wrong")
                 .isNotNull();
+    }
 
+    @Test
+    @DisplayName("BH-023: confirming the SAME row twice in place of two different rows is refused")
+    void duplicatingOneRowToCoverAnotherIsRefused() {
+        User user = user();
+        Account account = account(user, new BigDecimal("10000.00"));
+
+        // Right count, every row individually present in the parse -- and still wrong. This is why
+        // the comparison counts occurrences instead of testing set membership.
+        assertThat(confirmWith(user, account, List.of(asConfirmed(parsed()), asConfirmed(parsed())), null, null))
+                .as("a set-membership check would accept this; a multiset must not")
+                .isNotNull();
+    }
+
+    // --- accepted: everything a real review legitimately does -----------------------------------
+
+    @Test
+    @DisplayName("NEGATIVE: the rows exactly as parsed are accepted -- the guard must not break imports")
+    void theParsedRowsEchoedBackAreAccepted() {
+        User user = user();
+        Account account = account(user, new BigDecimal("10000.00"));
+
+        assertThat(confirmWith(user, account, echoed(), null, null))
+                .as("this is what every real client sends -- importReview.ts forwards date, "
+                        + "description, amount and type verbatim")
+                .isNull();
+        assertThat(transactionRepository.findByUserId(user.getId())).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("NEGATIVE: REORDERED rows are accepted -- the contract documented reordering as fine")
+    void reorderedRowsAreAccepted() {
+        User user = user();
+        Account account = account(user, new BigDecimal("10000.00"));
+
+        // The reason the comparison is a multiset rather than positional. A positional check would
+        // pass today, because the web client happens to preserve order, and break the first client
+        // that does not.
+        assertThat(confirmWith(user, account,
+                List.of(asConfirmed(parsedSecond()), asConfirmed(parsed())), null, null))
+                .as("same rows, different order -- the check this replaces explicitly allowed it")
+                .isNull();
+        assertThat(transactionRepository.findByUserId(user.getId())).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("NEGATIVE: category, include and the duplicate decision stay the user's to change")
+    void theReviewItselfIsStillFree() {
+        User user = user();
+        Account account = account(user, new BigDecimal("10000.00"));
+
+        // A real review: recategorise one row, deselect the other, and answer a duplicate prompt.
+        // Locking these would protect nothing and break the feature.
+        ConfirmedRow recategorised = new ConfirmedRow(LocalDate.of(2026, 7, 1), "COFFEE SHOP",
+                new BigDecimal("150.00"), "EXPENSE", "Dining", true, "user_rule", null, false, null, null, true);
+        ConfirmedRow deselected = new ConfirmedRow(LocalDate.of(2026, 7, 2), "BOOKSHOP",
+                new BigDecimal("420.00"), "EXPENSE", "Shopping", false, "rule", null, false, null, null, false);
+
+        assertThat(confirmWith(user, account, List.of(recategorised, deselected), null, null))
+                .as("the review is the point of the review screen")
+                .isNull();
         assertThat(transactionRepository.findByUserId(user.getId()))
-                .as("nothing written when the count check fires")
-                .isEmpty();
+                .as("one imported, one deselected")
+                .hasSize(1);
+        assertThat(transactionRepository.findByUserId(user.getId()).get(0).getDescription())
+                .isEqualTo("COFFEE SHOP");
     }
 }

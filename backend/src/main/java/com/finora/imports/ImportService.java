@@ -565,15 +565,11 @@ public class ImportService {
         var session = importSessionService.claimForConfirmation(userId, request.sessionId());
 
         var stagedRows = importSessionService.readStagedRows(session);
-        if (stagedRows.size() != request.rows().size()) {
-            // Not a full per-row diff (a user re-ordering or the frontend re-serializing rows in
-            // a different order is fine) -- just the cheapest real check that the confirmed list
-            // is plausibly "the same staged rows, reviewed," not something else entirely
-            // masquerading as a confirm for this session.
-            throw new ApiException(HttpStatus.BAD_REQUEST,
-                    "The reviewed rows don't match what was staged for this import session -- try staging again.");
-        }
-
+        // BH-023. The count check this replaces was the whole of the integrity story, and its own
+        // comment admitted as much: "the cheapest real check that the confirmed list is plausibly
+        // the same staged rows". Plausibly was not enough -- same count, entirely different rows
+        // was accepted, and the ledger recorded transactions the stored document does not contain.
+        ConfirmedRowIntegrity.requireSameRows(stagedRows, request.rows());
         return confirm(userId, session.getFileName(), statementContentService.read(session), request, null,
                 session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
                 session.getUnparseableSummaryJson());
