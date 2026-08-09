@@ -259,13 +259,15 @@ public class ImportJobWorker {
     /**
      * Stages the document, by the same two paths the synchronous endpoints use.
      *
-     * <p>Chosen by filename via {@link ImportJobService#formatOf}, which is also what the upload
-     * endpoint validated against — so the parser that runs here is the one the file was accepted
-     * for. PDF gets a null password: a protected document cannot be queued, because there is nobody
-     * to ask for the password minutes later.
+     * <p>BH-029: read from {@code import_jobs.source_format}, which the upload endpoint wrote after
+     * validating the bytes against it — so the parser that runs here is the one the file was
+     * accepted for, as a recorded fact rather than as two call sites evaluating
+     * {@link ImportJobService#formatOf} against the same filename and agreeing. PDF gets a null
+     * password: a protected document cannot be queued, because there is nobody to ask for the
+     * password minutes later.
      */
     private StagedForJob stage(ImportJob job, byte[] content) throws java.io.IOException {
-        return ImportJobService.formatOf(job.getFileName()) == StatementUpload.Format.PDF
+        return StatementUpload.Format.PDF.name().equals(job.getSourceFormat())
                 ? StagedForJob.of(importService.parseAndStagePdfWithSession(
                         job.getUserId(), job.getFileName(), content, null))
                 : StagedForJob.of(importService.parseAndStageWithSession(

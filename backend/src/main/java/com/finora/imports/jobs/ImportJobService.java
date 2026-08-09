@@ -75,8 +75,18 @@ public class ImportJobService {
      * <p>The endpoint validates against this and the worker parses according to it. If the two
      * disagreed, a file accepted as CSV could be handed to the PDF parser minutes later -- a
      * failure the user would see as an unexplained job error long after the upload succeeded.
-     * Filename-based because that is all the worker has: it holds a content address, not the
-     * multipart part the endpoint saw.
+     * Filename-based because that is all there is to go on at the moment of decision: the worker
+     * holds a content address, not the multipart part the endpoint saw.
+     *
+     * <p><b>BH-029.</b> "Decided once" is now literally true. This used to be called twice --
+     * here at upload validation, and again in {@code ImportJobWorker.stage()} against
+     * {@code job.getFileName()} minutes later -- and the two agreed only because they read the
+     * same string through the same function. That is agreement by construction, not by record: it
+     * held exactly as long as nobody changed how a filename is stored (it is truncated elsewhere
+     * in this package) or what this method does. The answer is now written to
+     * {@code import_jobs.source_format} at upload and read from there, the same shape
+     * {@code statement_imports.source_format} (V36) already uses after re-inferring a format from
+     * a filename routed a PDF's bytes through {@code CsvParser}.
      */
     public static StatementUpload.Format formatOf(String fileName) {
         return fileName != null && fileName.toLowerCase().endsWith(".pdf")
@@ -87,10 +97,15 @@ public class ImportJobService {
     /**
      * Records an upload as a queued job and returns immediately.
      *
+     * @param sourceFormat the format the caller validated the bytes against. Passed in rather than
+     *                     recomputed here so that the format a job is <em>accepted</em> as and the
+     *                     format it is <em>stored</em> as are the same evaluation, not two that
+     *                     have to be kept in agreement.
      * @throws ApiException 503 if object storage is not configured — see the class comment
      */
     @Transactional
-    public ImportJob accept(UUID userId, MultipartFile file) throws IOException {
+    public ImportJob accept(UUID userId, MultipartFile file, StatementUpload.Format sourceFormat)
+            throws IOException {
         // Storage is a hard gate; the queue flag deliberately is not.
         //
         // Without storage the job could never run anywhere: it holds a content address and there is
@@ -135,7 +150,7 @@ public class ImportJobService {
         }
 
         ImportJob job = jobStore.enqueue(
-                userId, file.getOriginalFilename(), address.hash(), address.key());
+                userId, file.getOriginalFilename(), address.hash(), address.key(), sourceFormat);
 
         // AFTER commit, deliberately. Nudging before it would let a worker claim a job whose
         // transaction has not committed -- it would read the row as absent and the nudge would be

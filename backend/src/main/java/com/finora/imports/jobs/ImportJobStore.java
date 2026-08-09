@@ -1,6 +1,7 @@
 package com.finora.imports.jobs;
 
 import com.finora.entity.ImportJob;
+import com.finora.imports.StatementUpload;
 import com.finora.repository.ImportJobRepository;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -77,8 +78,9 @@ public class ImportJobStore {
      * <p><b>Do not add {@code @Transactional} here.</b> See the class comment: independence is
      * precisely the property that breaks it.
      */
-    public ImportJob enqueue(UUID userId, String fileName, String contentHash, String objectKey) {
-        return repository.save(new ImportJob(userId, fileName, contentHash, objectKey));
+    public ImportJob enqueue(UUID userId, String fileName, String contentHash, String objectKey,
+                             StatementUpload.Format sourceFormat) {
+        return repository.save(new ImportJob(userId, fileName, contentHash, objectKey, sourceFormat.name()));
     }
 
     /**

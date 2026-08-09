@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.catchThrowableOfType;
 class ImportJobTest {
 
     private ImportJob job() {
-        return new ImportJob(UUID.randomUUID(), "statement.csv", "hash", "objects/key");
+        return new ImportJob(UUID.randomUUID(), "statement.csv", "hash", "objects/key", "CSV");
     }
 
     @Test

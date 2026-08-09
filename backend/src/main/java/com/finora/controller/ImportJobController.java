@@ -77,12 +77,17 @@ public class ImportJobController {
             @RequestParam("file") MultipartFile file) throws Exception {
         // Validated here rather than in the worker: a file the parser will certainly reject should
         // fail while the user is still looking at the upload dialog, not minutes later in a job
-        // status they have to go and check. Against ImportJobService.formatOf specifically, so the
-        // format this validates is the format the worker will actually parse with.
-        StatementUpload.requireReadable(file, ImportJobService.formatOf(file.getOriginalFilename()));
+        // status they have to go and check.
+        //
+        // BH-029: decided once, into a local, and then both used to validate and handed to accept()
+        // to be persisted. It used to be computed here and computed AGAIN in the worker, so "the
+        // format this validates is the format the worker will actually parse with" was a property
+        // of two call sites agreeing rather than of anything being recorded.
+        StatementUpload.Format format = ImportJobService.formatOf(file.getOriginalFilename());
+        StatementUpload.requireReadable(file, format);
 
         var accepted = ImportJobDto.Accepted.of(
-                importJobService.accept(currentUser.id(), file));
+                importJobService.accept(currentUser.id(), file, format));
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(ApiResponse.ok(accepted));
     }
 

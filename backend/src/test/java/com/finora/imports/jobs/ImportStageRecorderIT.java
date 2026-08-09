@@ -3,6 +3,7 @@ package com.finora.imports.jobs;
 import com.finora.AbstractIntegrationTest;
 import com.finora.entity.ImportJob;
 import com.finora.entity.User;
+import com.finora.imports.StatementUpload;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,7 +46,8 @@ class ImportStageRecorderIT extends AbstractIntegrationTest {
         user.setFullName("Stage Recorder IT User");
         user.setPhoneVerified(true);
         User saved = userRepository.save(user);
-        return jobStore.enqueue(saved.getId(), "statement.csv", "hash-" + UUID.randomUUID(), "objects/x");
+        return jobStore.enqueue(saved.getId(), "statement.csv", "hash-" + UUID.randomUUID(), "objects/x",
+                StatementUpload.Format.CSV);
     }
 
     @Test

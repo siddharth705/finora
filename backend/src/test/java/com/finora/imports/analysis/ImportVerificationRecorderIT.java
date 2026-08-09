@@ -3,6 +3,7 @@ package com.finora.imports.analysis;
 import com.finora.AbstractIntegrationTest;
 import com.finora.dto.ImportDto;
 import com.finora.entity.User;
+import com.finora.imports.StatementUpload;
 import com.finora.imports.jobs.ImportJobStore;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -139,7 +140,7 @@ class ImportVerificationRecorderIT extends AbstractIntegrationTest {
     void theAsynchronousPathRecordsAgainstItsJobBecauseItHasNoAnalysisRow() {
         User user = user();
         var job = jobStore.enqueue(user.getId(), "statement.csv",
-                "hash-" + UUID.randomUUID(), "objects/x");
+                "hash-" + UUID.randomUUID(), "objects/x", StatementUpload.Format.CSV);
 
         int written = recorder.recordForJob(job.getId(), List.of(balanceChainFailure()));
 

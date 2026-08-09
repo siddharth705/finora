@@ -10,6 +10,7 @@ import com.finora.entity.Merchant;
 import com.finora.entity.MerchantLearningEvent;
 import com.finora.entity.StatementImport;
 import com.finora.entity.User;
+import com.finora.imports.StatementUpload;
 import com.finora.imports.analysis.ImportVerificationRecorder;
 import com.finora.imports.analysis.ParseDiagnostics;
 import com.finora.imports.analysis.StatementAnalysisRecorder;
@@ -230,7 +231,7 @@ class ImportTraceIT extends AbstractIntegrationTest {
         User owner = user();
         Account account = account(owner);
         ImportJob job = jobStore.enqueue(owner.getId(), "statement.csv",
-                "hash-" + UUID.randomUUID(), "objects/x");
+                "hash-" + UUID.randomUUID(), "objects/x", StatementUpload.Format.CSV);
 
         stageRecorder.entered(job.getId(), 1, ImportJob.Status.PARSING);
         stageRecorder.completed(job.getId(), 1, ImportJob.Status.PARSING);
@@ -263,7 +264,7 @@ class ImportTraceIT extends AbstractIntegrationTest {
         // this case leaves evidence naming the stage, rather than leaving nothing.
         User owner = user();
         ImportJob job = jobStore.enqueue(owner.getId(), "statement.csv",
-                "hash-" + UUID.randomUUID(), "objects/x");
+                "hash-" + UUID.randomUUID(), "objects/x", StatementUpload.Format.CSV);
         stageRecorder.entered(job.getId(), 1, ImportJob.Status.ANALYZING);
 
         ImportTraceDto.Trace trace = traceService.byJobId(job.getId()).orElseThrow();

@@ -137,13 +137,31 @@ public class ImportJob {
     @Column(name = "finished_at")
     private Instant finishedAt;
 
+    /**
+     * Which parser this job runs. BH-029.
+     *
+     * <p>A recorded fact, not a function of {@link #fileName}. It used to be neither: the upload
+     * endpoint and the worker each called {@code ImportJobService.formatOf(fileName)} minutes
+     * apart, and they agreed only because they happened to read the same string through the same
+     * function. {@code statement_imports.source_format} (V36) is the same column for the same
+     * reason, added after re-inferring a format from a filename routed a PDF's bytes through
+     * {@code CsvParser}.
+     *
+     * <p>A String rather than {@code StatementUpload.Format} to match
+     * {@code StatementImport.sourceFormat}'s existing shape and V36's vocabulary, so the two
+     * columns that hold this answer hold it identically.
+     */
+    @Column(name = "source_format", nullable = false)
+    private String sourceFormat;
+
     protected ImportJob() {}
 
-    public ImportJob(UUID userId, String fileName, String contentHash, String objectKey) {
+    public ImportJob(UUID userId, String fileName, String contentHash, String objectKey, String sourceFormat) {
         this.userId = userId;
         this.fileName = fileName;
         this.contentHash = contentHash;
         this.objectKey = objectKey;
+        this.sourceFormat = sourceFormat;
     }
 
     // ------------------------------------------------------------------ transitions
@@ -343,6 +361,7 @@ public class ImportJob {
     public String getContentHash() { return contentHash; }
     public String getObjectKey() { return objectKey; }
     public String getFileName() { return fileName; }
+    public String getSourceFormat() { return sourceFormat; }
     public Status getStatus() { return status; }
     public Integer getRowsTotal() { return rowsTotal; }
     public int getRowsProcessed() { return rowsProcessed; }
