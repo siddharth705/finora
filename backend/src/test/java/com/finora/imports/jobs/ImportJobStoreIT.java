@@ -3,6 +3,7 @@ package com.finora.imports.jobs;
 import com.finora.AbstractIntegrationTest;
 import com.finora.entity.ImportJob;
 import com.finora.entity.User;
+import com.finora.imports.StatementUpload;
 import com.finora.repository.ImportJobRepository;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -56,7 +57,8 @@ class ImportJobStoreIT extends AbstractIntegrationTest {
     }
 
     private ImportJob enqueue(User user) {
-        return store.enqueue(user.getId(), "statement.csv", "hash-" + UUID.randomUUID(), "objects/x");
+        return store.enqueue(user.getId(), "statement.csv", "hash-" + UUID.randomUUID(), "objects/x",
+                StatementUpload.Format.CSV);
     }
 
     // ------------------------------------------------------------------ claiming

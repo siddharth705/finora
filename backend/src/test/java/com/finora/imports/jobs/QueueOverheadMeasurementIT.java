@@ -4,6 +4,7 @@ import com.finora.AbstractIntegrationTest;
 import com.finora.entity.ImportJob;
 import com.finora.entity.User;
 import com.finora.imports.ImportService;
+import com.finora.imports.StatementUpload;
 import com.finora.repository.ImportJobRepository;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -171,7 +172,7 @@ class QueueOverheadMeasurementIT extends AbstractIntegrationTest {
         importService.parseAndStageWithSession(
                 user().getId(), "warmup.csv", csv(20).getBytes(StandardCharsets.UTF_8));
         User warm = user();
-        jobService.accept(warm.getId(), file(20, csv(20)));
+        jobService.accept(warm.getId(), file(20, csv(20)), StatementUpload.Format.CSV);
         worker.drainOnce();
     }
 
@@ -191,7 +192,7 @@ class QueueOverheadMeasurementIT extends AbstractIntegrationTest {
     private long timeQueued(int rows, String content) throws Exception {
         UUID userId = user().getId();
         long startedAt = System.nanoTime();
-        ImportJob job = jobService.accept(userId, file(rows, content));
+        ImportJob job = jobService.accept(userId, file(rows, content), StatementUpload.Format.CSV);
         worker.drainOnce();
         long elapsed = millisSince(startedAt);
 

@@ -78,6 +78,61 @@ class StatementUploadTest {
         assertThat(StatementUpload.safeFileName(file(huge, "x"), "fallback").length()).isLessThanOrEqualTo(120);
     }
 
+    /**
+     * Truncation used to cut the extension off, and the extension is not decoration here.
+     *
+     * <p>Found while closing BH-029. {@code ImportService} writes
+     * {@code statement_imports.source_format} as
+     * {@code fileName.toLowerCase().endsWith(".pdf") ? "PDF" : "CSV"} against the name this method
+     * returns, and {@code parseAndStageAnyFormat} routes {@code reimport()} on that column. A PDF
+     * whose filename exceeded 120 characters was therefore recorded as CSV, and re-importing it
+     * fed a PDF's bytes to {@code CsvParser} — which is the exact regression V36 was added to
+     * prevent, described in {@code parseAndStageAnyFormat}'s own comment, reintroduced through the
+     * length bound rather than through the routing.
+     *
+     * <p>The CSV direction is silent rather than wrong, which is why this was never noticed: a
+     * truncated {@code .csv} falls into the same default branch as a name with no extension at
+     * all, so it keeps working by luck.
+     */
+    @Test
+    void truncationKeepsTheExtension() {
+        String longPdf = "b".repeat(200) + ".pdf";
+        String truncated = StatementUpload.safeFileName(file(longPdf, "x"), "fallback");
+
+        assertThat(truncated.length()).isLessThanOrEqualTo(120);
+        assertThat(truncated)
+                .as("the extension is what statement_imports.source_format is derived from")
+                .endsWith(".pdf");
+        assertThat(StatementUpload.looksLike(truncated, StatementUpload.Format.PDF))
+                .as("and it must still read as a PDF to the code that asks")
+                .isTrue();
+    }
+
+    /** A name that is long and has no extension must still be bounded -- the extension-preserving
+     *  branch must not become a way to skip the bound. */
+    @Test
+    void truncationStillBoundsANameWithNoExtension() {
+        assertThat(StatementUpload.safeFileName(file("c".repeat(400), "x"), "fallback").length())
+                .isLessThanOrEqualTo(120);
+    }
+
+    /**
+     * A dot late in a very long name is not an extension, and must not be treated as one.
+     *
+     * <p>Without a bound on what counts as an extension, {@code "a".repeat(300) + ".statement"}
+     * and worse — a name that is one long dotted string — would let an arbitrary tail survive, or
+     * produce a result that is mostly suffix. The stem has to keep enough of itself to still
+     * identify the document to a human reading the admin list.
+     */
+    @Test
+    void aLongTailIsNotTreatedAsAnExtension() {
+        String odd = "d".repeat(200) + "." + "e".repeat(60);
+        String truncated = StatementUpload.safeFileName(file(odd, "x"), "fallback");
+
+        assertThat(truncated.length()).isLessThanOrEqualTo(120);
+        assertThat(truncated).startsWith("dddd");
+    }
+
     @Test
     void requireReadableRejectsANullFile() {
         assertThatThrownBy(() -> StatementUpload.requireReadable(null, StatementUpload.Format.CSV))
