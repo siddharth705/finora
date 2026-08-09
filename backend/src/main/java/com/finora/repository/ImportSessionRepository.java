@@ -37,6 +37,20 @@ public interface ImportSessionRepository extends JpaRepository<ImportSession, UU
     List<ImportSession> findByExpiresAtBeforeOrderByExpiresAtAsc(Instant now, Pageable limit);
 
     /**
+     * Whether any row -- STAGED or CONFIRMED, expired or not -- still references this object key.
+     *
+     * <p>BH-017. {@code ImportSession} carries no soft delete, so "a row with this key exists" IS
+     * "this key is currently referenced"; unlike the equivalent check on
+     * {@code StatementImportRepository}, there is no lifecycle state to exclude. Deliberately not
+     * filtered by status: a CONFIRMED session's row still exists until its own 48h TTL sweeps it,
+     * during which it references the same object its resulting {@code StatementImport} does, and a
+     * STAGED one is, by definition, an active reference. See
+     * {@code StatementStorageSweepService}, which OR's this against
+     * {@code StatementImportRepository.existsByObjectKey}.
+     */
+    boolean existsByObjectKey(String objectKey);
+
+    /**
      * Atomically flips STAGED -> CONFIRMED, returning the number of rows actually updated (0 or
      * 1). This -- not a plain read-then-save -- is what actually closes the double-submission
      * race a double-click or a retried request could otherwise trigger: two concurrent

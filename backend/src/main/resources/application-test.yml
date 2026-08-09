@@ -27,3 +27,10 @@ app:
   import:
     session-cleanup:
       enabled: false
+
+  # BH-017. Same reasoning as session-cleanup above: a background thread reclaiming R2/filesystem
+  # objects mid-test is exactly the cross-test pollution BH-058 was about. Tests that exercise the
+  # sweep call StatementStorageSweepService.sweep() directly, which does not consult this flag.
+  statement-storage:
+    sweep:
+      enabled: false

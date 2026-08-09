@@ -47,8 +47,15 @@ import java.util.Optional;
  *
  * <h2>Ordering</h2>
  * {@link #store} is called before the row is persisted, so the only possible partial failure is an
- * object with no row — reclaimable by the future sweep. The reverse, a row pointing at an object
- * that was never written, cannot occur, and is the one outcome this design treats as unrecoverable
+ * object with no row. That is a narrower gap than it looks: BH-017's {@code
+ * StatementStorageSweepService} discovers what to reclaim by querying rows (a soft-deleted
+ * {@code statement_imports} row's {@code deleted_at}), so an object that never had ANY row --
+ * because the insert after this succeeded never committed -- leaves nothing for that query to find
+ * either. Tolerable for the same reason an unreferenced object always is here (see
+ * {@link StatementStorage}'s class doc): it is a reclaimable storage cost, not a correctness
+ * problem, and closing it fully would need object-listing support this interface does not have.
+ * The reverse, a row pointing at an object that was never written, cannot occur, and is the one
+ * outcome this design treats as unrecoverable
  * (§5.1 of the migration doc).
  */
 @Service

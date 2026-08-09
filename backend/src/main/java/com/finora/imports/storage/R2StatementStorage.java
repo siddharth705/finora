@@ -16,6 +16,7 @@ import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.http.apache.ApacheHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
@@ -247,6 +248,28 @@ public class R2StatementStorage implements StatementStorage {
             throw new StatementStorageException(
                     "Could not determine whether statement object " + address.key()
                     + " exists in R2 bucket '" + bucket + "'.", e);
+        }
+    }
+
+    /**
+     * BH-017. Only ever called by {@code StatementStorageSweepService} once it has established the
+     * key is unreferenced across both {@code statement_imports} and {@code import_sessions} and has
+     * been that way past the retention window -- see {@link StatementStorage}'s class doc.
+     *
+     * <p>DeleteObject on S3/R2 is idempotent and returns success for a key that is already absent,
+     * so no existence check is needed first, and a re-run of the sweep after a partial batch
+     * failure will not throw on a key it already removed.
+     */
+    @Override
+    public void delete(String objectKey) {
+        try {
+            client.deleteObject(DeleteObjectRequest.builder()
+                    .bucket(bucket)
+                    .key(objectKey)
+                    .build());
+        } catch (SdkException e) {
+            throw new StatementStorageException(
+                    "Could not delete statement object " + objectKey + " from R2 bucket '" + bucket + "'.", e);
         }
     }
 

@@ -81,6 +81,60 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
     @Query("SELECT s FROM StatementImport s WHERE s.layoutFingerprint IS NOT NULL")
     List<StatementImport> findAllWithLayoutFingerprint();
 
+    /**
+     * Whether any LIVE (non-soft-deleted) row still references this object key.
+     *
+     * <p>BH-017. Derived, so {@code @SQLRestriction("deleted_at IS NULL")} applies exactly as it
+     * does to every other lookup on this entity -- a soft-deleted row is, by the app's own model,
+     * no longer a current reference, so it correctly does not keep an object alive here. See
+     * {@code StatementStorageSweepService}, which OR's this against
+     * {@code ImportSessionRepository.existsByObjectKey} to decide whether an object is reclaimable.
+     */
+    boolean existsByObjectKey(String objectKey);
+
+    /**
+     * BH-017 sweep candidates: every {@code (content_hash, object_key)} pair whose most recent
+     * removal from this table -- a user deleting that statement, i.e. the soft-delete's
+     * {@code deleted_at} -- was more than {@code cutoff} ago.
+     *
+     * <p>Native, deliberately: {@code @SQLRestriction} hides {@code deleted_at IS NOT NULL} rows
+     * from every HQL/derived query on this entity, and reading {@code deleted_at} is the entire
+     * point here. This is also why the ordinary {@code @SQLDelete} soft-delete is what makes this
+     * table's history queryable at all -- {@code import_sessions} has no equivalent, so content
+     * whose only-ever reference was an {@code import_sessions} row that has since been hard-deleted
+     * by {@code ImportSessionService}'s 48h TTL sweep leaves no trace here or anywhere else in the
+     * database. That gap is real and is not closed by this query; see
+     * {@code StatementStorageSweepService}'s class doc.
+     *
+     * <p>{@code MAX(deleted_at)}, not {@code MIN} or "any": several sections of one composite
+     * statement, or several re-imports, can legitimately share one {@code object_key}, each
+     * soft-deleted independently. The object is only unreferenced BY THIS TABLE once the LAST of
+     * them was removed, so the retention window has to be measured from that point, not the first
+     * -- using an earlier one would reclaim an object while a more-recently-deleted row (still
+     * within its own re-import grace period) pointed at it.
+     *
+     * <p>This is only the discovery half of the sweep. It can be stale by the time the caller acts
+     * on it -- {@code StatementStorageSweepService} re-checks the reference count fresh, via
+     * {@link #existsByObjectKey} and {@code ImportSessionRepository.existsByObjectKey}, immediately
+     * before calling {@code StatementStorage.delete} on each candidate.
+     *
+     * <p>The third column is {@code MAX(deleted_at)} as epoch milliseconds, not a timestamp --
+     * FG-019 (see {@code ProductionCodeHygieneTest}) bans {@code java.sql.Timestamp} from
+     * production code, and a native query's {@code Object[]} projection has no other way to hand
+     * a JDBC timestamp column back without naming that type. A {@code bigint} of milliseconds
+     * comes back as a plain {@code Long}, which {@link Instant#ofEpochMilli} converts with no
+     * legacy date type anywhere in this class or its caller.
+     */
+    @Query(value = """
+            SELECT content_hash, object_key, (EXTRACT(EPOCH FROM MAX(deleted_at)) * 1000)::bigint
+              FROM statement_imports
+             WHERE object_key IS NOT NULL AND deleted_at IS NOT NULL AND deleted_at < :cutoff
+             GROUP BY content_hash, object_key
+             ORDER BY MAX(deleted_at) ASC
+             LIMIT :limit
+            """, nativeQuery = true)
+    List<Object[]> findObjectsUnreferencedSince(@Param("cutoff") Instant cutoff, @Param("limit") int limit);
+
     // Removed: findByIdIncludingDeleted(UUID). It bypassed the entity's
     // @SQLRestriction("deleted_at IS NULL") AND took no user id, so it read any user's statement
     // by primary key alone -- with zero callers anywhere in the codebase. An unscoped cross-user

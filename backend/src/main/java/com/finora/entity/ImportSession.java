@@ -73,7 +73,9 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
      *
      *  A session and the StatementImport it confirms into hold IDENTICAL bytes, so they resolve to
      *  the same address and share one stored object. That is why expiring a session must never
-     *  delete its object -- see StatementStorage's note on why there is no delete. */
+     *  delete its object directly -- BH-017's StatementStorageSweepService is the only caller of
+     *  StatementStorage.delete, and only after confirming no row in either statement_imports or
+     *  import_sessions references the object anymore. See StatementStorage's class doc. */
     @Column(name = "content_hash", length = 64)
     private String contentHash;
 
