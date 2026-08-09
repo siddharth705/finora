@@ -16,7 +16,7 @@ account isn't blocked behind the work that does.
    - [Building locally instead of on EAS](#building-locally-instead-of-on-eas)
 5. [Track B — iOS, gated on Apple enrollment](#track-b--ios-gated-on-apple-enrollment)
 6. [Firebase phone auth on device](#firebase-phone-auth-on-device)
-7. [EAS — not linked yet, and that is fine](#eas--not-linked-yet-and-that-is-fine)
+7. [EAS — linked, and how it is configured](#eas--linked-and-how-it-is-configured)
 8. [Device validation checklist](#device-validation-checklist)
 9. [Android validation status](#android-validation-status)
 10. [Known limitations](#known-limitations)
@@ -401,53 +401,98 @@ number and a fixed 6-digit code. Signing in with that number accepts that code w
 anything. Use these for repeat runs and anything automated; use one real number at least once to
 confirm actual delivery works.
 
-## EAS — not linked yet, and that is fine
+## EAS — linked, and how it is configured
 
-**There is no EAS project behind this repo.** `mobile/app.config.ts` carries no
-`extra.eas.projectId`, so any `eas` command that needs one fails with *"EAS project not
-configured"* — including `eas env:list`. Nothing is broken; the link has simply never been made,
-which is consistent with there being no EAS build in CI and no signing fingerprints on record.
+The project is **`@siddharth705/finora-mobile`**, id `26326587-eec7-4917-a1ab-5a2390f41714`, wired
+in through `extra.eas.projectId` in `app.config.ts`. A project id identifies a project rather than
+authorising anything — builds still need an authenticated `eas` session — so it is committed
+deliberately. Without it every fresh clone would have to re-link before it could build.
 
-A consequence worth stating plainly, because it looks like a gap and is not one: **there are no
-remote EAS environment variables, because there is no remote project to hold them.** Asking whether
-a cloud build receives `EXPO_PUBLIC_API_BASE_URL` is premature — no cloud build has ever run.
+`eas init` will not write that block itself: it refuses to edit a dynamic config (`app.config.ts`)
+and prints the JSON to paste instead. If you ever re-link, expect to paste by hand.
 
-### The missing `env` block in `eas.json` is deliberate
+Run every `eas` command from `mobile/`, not the repository root. `eas.json` lives there, and from
+the root the CLI reports a confusingly unrelated "EAS project not configured".
 
-`eas.json` sets no `env` for any profile, on purpose. A missing value makes `src/api/client.ts`
-throw a descriptive error at startup, which is a better failure than a committed placeholder that
-looks real and silently points a build at the wrong backend. The URL is per-deployment, so it does
-not belong in the repository.
+### Config plugins must be plain JavaScript
 
-For `preview` and `production` the bundle is built on EAS, so the value must come from exactly one
-of two places:
+`mobile/plugins/withRNFirebaseDisableSPM.js` is `.js` on purpose, and converting it back to `.ts`
+will break every cloud build while leaving local ones working:
 
-1. **EAS environment variables** (`eas env:create`, or the Expo dashboard) — preferred, since it
-   keeps a per-deployment URL out of git; or
-2. **an `env` block** on that profile in `eas.json` — simpler, but commits the URL.
-
-### Enabling cloud builds, when we decide to
-
-```bash
-cd mobile && eas init
+```
+Failed to resolve plugin for module "./plugins/withRNFirebaseDisableSPM"
 ```
 
-That creates the project under your Expo account and writes `extra.eas.projectId` into the app
-config — an account-linking step, so it needs a human. Then:
+The Expo CLI registers a TypeScript loader before evaluating `app.config.ts` and its plugins; the
+EAS CLI resolves plugin modules through its own bundled copy of `@expo/config`, which does not. The
+error names the plugin but not the reason, and it surfaces at `eas init` — nowhere near the file.
+Types come from JSDoc instead, which `tsc` still checks.
+
+### Environment variables
+
+Both are set for `production` and `preview`:
+
+| Variable | Type | Why |
+| --- | --- | --- |
+| `EXPO_PUBLIC_API_BASE_URL` | plaintext | `https://api.finoratech.info`. `EXPO_PUBLIC_*` is inlined into the bundle, so it is public by definition — marking it secret would be theatre |
+| `GOOGLE_SERVICES_JSON` | **secret file** | The Firebase Android config. Gitignored, so EAS never receives it in the upload |
 
 ```bash
-cd mobile && eas env:create --environment production --name EXPO_PUBLIC_API_BASE_URL --value https://api.finoratech.info
+cd mobile && npx eas env:list --environment production
 ```
+
+The file variable is not optional, and its absence fails in a place that does not name it: EAS never
+receives `google-services.json`, `app.config.ts` omits `googleServicesFile` when the file is absent,
+and `@react-native-firebase`'s plugin then rejects the config as a missing `app.json` key. That is
+the same misdirection [An iOS build error that points at the wrong thing](#an-ios-build-error-that-points-at-the-wrong-thing)
+describes on the other platform. `app.config.ts` reads `process.env.GOOGLE_SERVICES_JSON` first and
+falls back to the repo-relative path, so local and cloud builds both work.
+
+To re-create it:
 
 ```bash
-cd mobile && eas env:list --environment production
+cd mobile && npx eas env:create --environment production --name GOOGLE_SERVICES_JSON --type file --value ./google-services.json --visibility secret
 ```
 
-Run these from `mobile/`, not the repository root — `eas.json` lives there, and from the root the
-CLI reports a confusingly unrelated error.
+### Signing fingerprints — two keystores, not one
 
-After the first Android cloud build, collect the signing fingerprints and add them to Firebase, or
-phone auth fails on device — see [Firebase Android app](#firebase-android-app).
+Firebase phone auth attests the app by its signing certificate, so **every** keystore that produces
+a build needs its SHA-1 and SHA-256 registered in Firebase Console → Project Settings → the
+`com.finora.app` Android app. There are two, and forgetting the second is the usual way phone auth
+"works locally and fails on the installed build":
+
+- **The local debug keystore** at `~/.android/debug.keystore`, created on first build with the
+  well-known `android`/`androiddebugkey` credentials. Not a secret; it signs debug builds only.
+
+  ```bash
+  keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android
+  ```
+
+- **The EAS-managed keystore**, generated on the first cloud build and held by EAS. Different
+  certificate, different fingerprints.
+
+  ```bash
+  cd mobile && npx eas credentials --platform android
+  ```
+
+  That command is an interactive TUI and cannot be driven from a script. The scriptable alternative
+  is to read the certificate off a built artifact:
+
+  ```bash
+  keytool -printcert -jarfile <downloaded>.apk
+  ```
+
+Phone auth fails on any build whose fingerprints are missing, and the failure looks like a Firebase
+error rather than a configuration one.
+
+### Producing a build
+
+```bash
+cd mobile && npx eas build --platform android --profile preview
+```
+
+`preview` produces an installable APK (`eas.json` sets `buildType: apk`); `production` follows
+`autoIncrement` and is what a release goes through.
 
 ---
 
