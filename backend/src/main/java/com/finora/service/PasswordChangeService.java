@@ -3,6 +3,7 @@ package com.finora.service;
 import com.finora.dto.PasswordChangeDtos.*;
 import com.finora.entity.PasswordChangeSession;
 import com.finora.entity.User;
+import com.finora.util.AfterCommit;
 import com.finora.exception.ApiException;
 import com.finora.repository.PasswordChangeSessionRepository;
 import com.finora.repository.UserRepository;
@@ -197,9 +198,16 @@ public class PasswordChangeService {
         }
 
         auditService.record(userId, "PASSWORD_CHANGED", "User", userId, Map.of("method", "authenticated_settings_otp_gated"));
-        EmailResult changedEmailResult = emailProvider.sendPasswordChangedEmail(user.getEmail());
-        auditService.record(userId, "EMAIL_SENT", "User", userId, Map.of(
-                "type", "password_changed", "provider", changedEmailResult.provider().name(), "success", changedEmailResult.success()));
+        // BH-016: after commit. Same reasoning as AuthService's three sends -- the provider is an
+        // HTTP call with no read timeout and this method holds a pooled connection, and a
+        // "your password was changed" email for a change that then rolled back is worse than none.
+        String changedEmail = user.getEmail();
+        AfterCommit.run("password changed email", () -> {
+            EmailResult changedEmailResult = emailProvider.sendPasswordChangedEmail(changedEmail);
+            auditService.record(userId, "EMAIL_SENT", "User", userId, Map.of(
+                    "type", "password_changed", "provider", changedEmailResult.provider().name(),
+                    "success", changedEmailResult.success()));
+        });
 
         return new CompleteResponse(completeMessage(request.signOutOtherDevices()), request.signOutOtherDevices());
     }
