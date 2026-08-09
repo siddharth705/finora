@@ -60,8 +60,11 @@ export function ImportScreen() {
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [categoryPickerFor, setCategoryPickerFor] = useState<number | null>(null);
   // Set only while reviewing a re-import (see the block below). Confirming one goes to a
-  // different endpoint and cannot change the account, so this drives both.
-  const [reimport, setReimport] = useState<{ statementImportId: string; accountId: string; accountName: string } | null>(null);
+  // different endpoint and cannot change the account, so this drives both. `password` is carried
+  // through only for a protected PDF -- see ReimportParams's own doc comment on why it has to
+  // survive past staging now, and StatementImportService.confirmReimport's for the incident that
+  // made it necessary.
+  const [reimport, setReimport] = useState<{ statementImportId: string; accountId: string; accountName: string; password?: string } | null>(null);
   // The nonce of the re-import already loaded into the review step; see the block below.
   const [consumedReimportNonce, setConsumedReimportNonce] = useState<number | null>(null);
 
@@ -127,6 +130,7 @@ export function ImportScreen() {
       statementImportId: reimportParam.statementImportId,
       accountId: reimportParam.accountId,
       accountName: reimportParam.accountName,
+      password: reimportParam.password,
     });
     setFileFormat(null);
     setSessionId(null);
@@ -258,6 +262,7 @@ export function ImportScreen() {
             existingAccountId: reimport.accountId,
             statementOpeningBalance: detected?.openingBalance ?? null,
             statementClosingBalance: detected?.closingBalance ?? null,
+            password: reimport.password,
           })
         : await importApi.confirm({
             sessionId: sessionId!,

@@ -195,7 +195,8 @@ class MultiSectionReconciliationCostIT extends AbstractIntegrationTest {
     private void seedHistory(User user, Account account, int rows) {
         importService.confirm(user.getId(), "history.csv",
                 "rows-are-supplied-directly".getBytes(StandardCharsets.UTF_8),
-                new ConfirmRequest(null, rows(rows, 1000), account.getId(), null, null, null));
+                new ConfirmRequest(null, rows(rows, 1000), account.getId(), null, null, null,
+                null));
     }
 
     private record Cost(long statements, long queries, long elapsedMs) {}
@@ -348,7 +349,8 @@ class MultiSectionReconciliationCostIT extends AbstractIntegrationTest {
         }
         importService.confirm(user.getId(), "history.csv",
                 "rows-are-supplied-directly".getBytes(StandardCharsets.UTF_8),
-                new ConfirmRequest(null, spread, account.getId(), null, null, null));
+                new ConfirmRequest(null, spread, account.getId(), null, null, null,
+                null));
 
         // A one-month statement, three years after that history starts.
         importSections(user, List.of(account(user, "July 2026")), 20);
@@ -392,11 +394,13 @@ class MultiSectionReconciliationCostIT extends AbstractIntegrationTest {
         // case that produces a real number is a RE-import, which is what this models.
         var firstImport = importService.confirm(user.getId(), "statement.pdf",
                 "rows-are-supplied-directly".getBytes(StandardCharsets.UTF_8),
-                new ConfirmRequest(null, rows(5, 0), account.getId(), null, null, null), 0);
+                new ConfirmRequest(null, rows(5, 0), account.getId(), null, null, null,
+                null), 0);
 
         var reImport = importService.confirm(user.getId(), "statement.pdf",
                 "rows-are-supplied-directly".getBytes(StandardCharsets.UTF_8),
-                new ConfirmRequest(null, rows(5, 0), account.getId(), null, null, null), 0);
+                new ConfirmRequest(null, rows(5, 0), account.getId(), null, null, null,
+                null), 0);
 
         assertThat(firstImport.duplicatesDetected())
                 .as("nothing to duplicate on a first import")

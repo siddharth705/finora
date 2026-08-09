@@ -83,7 +83,10 @@ export default function StatementHistory() {
       const result = await statementImportsApi.reimport(statement.id, password);
       setPasswordPrompt(null);
       void navigate('/app/import', {
-        state: { reimportId: statement.id, staging: result.staging, accountId: result.accountId, accountName: result.accountName },
+        state: {
+          reimportId: statement.id, staging: result.staging, accountId: result.accountId,
+          accountName: result.accountName, password,
+        },
       });
     } catch (e: any) {
       const code = e.response?.data?.errorCode;

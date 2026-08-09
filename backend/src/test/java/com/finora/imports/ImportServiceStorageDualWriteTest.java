@@ -145,7 +145,8 @@ class ImportServiceStorageDualWriteTest {
         // app.statement-storage.provider unset. This branch MUST NOT change: it is every existing
         // deployment today, since no provider is configured in production yet.
         ImportService importService = importServiceWith(new StatementContentService(Optional.empty(), "", ""));
-        var request = new ConfirmRequest(null, List.of(confirmedRow()), accountId, null, null, null);
+        var request = new ConfirmRequest(null, List.of(confirmedRow()), accountId, null, null, null,
+                null);
         byte[] fileBytes = "irrelevant".getBytes();
 
         importService.confirm(userId, "statement.csv", fileBytes, request);
@@ -167,7 +168,8 @@ class ImportServiceStorageDualWriteTest {
         ContentAddress address = new ContentAddress("a".repeat(64), "statements/aa/aa/" + "a".repeat(64) + ".bin");
         when(storageBacked.store(any())).thenReturn(Optional.of(address));
         ImportService importService = importServiceWith(storageBacked);
-        var request = new ConfirmRequest(null, List.of(confirmedRow()), accountId, null, null, null);
+        var request = new ConfirmRequest(null, List.of(confirmedRow()), accountId, null, null, null,
+                null);
 
         importService.confirm(userId, "statement.csv", "irrelevant".getBytes(), request);
 

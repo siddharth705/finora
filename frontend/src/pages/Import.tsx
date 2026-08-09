@@ -33,6 +33,11 @@ interface ReimportNavState {
   staging: ReimportResult['staging'];
   accountId: string;
   accountName: string;
+  // Present only when the statement needed one to stage. confirmReimport() re-parses the same
+  // stored bytes server-side to check the reviewed rows against, and for a protected PDF that
+  // re-parse needs the password again -- see StatementImportService.confirmReimport's doc comment
+  // for the incident that happens when this is dropped instead of carried through to confirm.
+  password?: string;
 }
 
 // Per-account review state for the multi-account case (a PDF whose upload detected more than one
@@ -420,6 +425,7 @@ export default function Import() {
             existingAccountId,
             statementOpeningBalance: detectedAccount?.openingBalance ?? null,
             statementClosingBalance: detectedAccount?.closingBalance ?? null,
+            password: reimportState.password,
           })
         : await importApi.confirm({
             sessionId: sessionId!,

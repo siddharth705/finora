@@ -114,7 +114,8 @@ class ImportAccountBalanceIT extends AbstractIntegrationTest {
     private void importRows(Fixture f, BigDecimal opening, BigDecimal closing, ConfirmedRow... rows)
             throws Exception {
         importService.confirm(f.user().getId(), statementFile(),
-                new ConfirmRequest(null, List.of(rows), f.account().getId(), null, opening, closing));
+                new ConfirmRequest(null, List.of(rows), f.account().getId(), null, opening, closing,
+                null));
     }
 
     private BigDecimal balanceOf(Fixture f) {

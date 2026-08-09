@@ -32,15 +32,24 @@ export type MoreStackParamList = {
  * confirm steps are the ones the user already knows rather than a second copy of them.
  *
  * Plain JSON on purpose: React Navigation warns about non-serializable params, and this crosses a
- * tab boundary where state could be restored from disk. It carries the staged ROWS, not the file
- * or a password -- a protected statement is unlocked during staging on the Statement History
- * screen, and by the time this exists the password has already done its job and been dropped.
+ * tab boundary where state could be restored from disk. It carries the staged ROWS, not the file --
+ * that part of the original design held.
+ *
+ * The password is a different story. It used to be dropped here on the theory that staging was the
+ * password's whole job -- true for reading the document, not true for confirming it: confirm
+ * re-parses the same stored bytes server-side to check the reviewed rows against, and for a
+ * protected PDF that re-parse needs the password again. Dropping it here made every reimport-confirm
+ * of a protected statement fail unconditionally, with no way for this screen to recover (see
+ * StatementImportService.confirmReimport's own doc comment for the incident). Carried through now
+ * instead, in memory only, for exactly as long as this one review-and-confirm round trip lasts.
  */
 export interface ReimportParams {
   statementImportId: string;
   accountId: string;
   accountName: string;
   staging: ReimportResult['staging'];
+  /** Present only when the statement needed one to stage. Re-sent verbatim at confirm time. */
+  password?: string;
   /**
    * Distinguishes one arrival from the next. A tab's params outlive a visit, so the Import screen
    * needs to know whether it has already loaded THIS re-import -- and the statement id alone can't

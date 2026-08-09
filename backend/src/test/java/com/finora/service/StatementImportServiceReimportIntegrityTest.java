@@ -93,7 +93,8 @@ class StatementImportServiceReimportIntegrityTest {
     }
 
     private void mockFreshParseReturns(StagedRow... rows) throws Exception {
-        when(importService.parseAndStageAnyFormat(eq(userId), eq("CSV"), eq("hdfc_statement.csv"), any(), eq((Integer) null)))
+        when(importService.parseAndStageAnyFormat(eq(userId), eq("CSV"), eq("hdfc_statement.csv"), any(),
+                eq((Integer) null), any()))
                 .thenReturn(new StagingResponse(List.of(rows), rows.length, 0,
                         new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null, null,
                                 null, null, null, 0.0, true, List.of(), null, null, null, null, null, null, null, null),
@@ -110,7 +111,8 @@ class StatementImportServiceReimportIntegrityTest {
                 LocalDate.of(2099, 1, 1), "FORGED ROW", new BigDecimal("999999.00"), "EXPENSE",
                 "Uncategorized", true, "default", null, false, null, null);
 
-        ConfirmRequest request = new ConfirmRequest(null, List.of(forged), null, null, null, null);
+        ConfirmRequest request = new ConfirmRequest(null, List.of(forged), null, null, null, null,
+                null);
 
         assertThatThrownBy(() -> service.confirmReimport(userId, statementImportId, request))
                 .isInstanceOf(ApiException.class);
@@ -125,7 +127,8 @@ class StatementImportServiceReimportIntegrityTest {
     void confirmReimport_acceptsRowsThatMatchTheFreshParseExactly() throws Exception {
         mockFreshParseReturns(GENUINE_ROW);
         ConfirmedRow echoed = confirming(GENUINE_ROW);
-        ConfirmRequest request = new ConfirmRequest(null, List.of(echoed), null, null, null, null);
+        ConfirmRequest request = new ConfirmRequest(null, List.of(echoed), null, null, null, null,
+                null);
 
         ConfirmResponse expected = new ConfirmResponse(1, 0, 0, 0, 0, List.of(), java.util.Map.of(),
                 java.util.Map.of(), List.of(), null, BigDecimal.ZERO, new BigDecimal("150.00"), null, null,
@@ -150,10 +153,64 @@ class StatementImportServiceReimportIntegrityTest {
                 GENUINE_ROW.categorySource(), GENUINE_ROW.ruleId(), GENUINE_ROW.likelyDuplicate(),
                 GENUINE_ROW.referenceNumber(), GENUINE_ROW.balanceAfter());
 
-        ConfirmRequest request = new ConfirmRequest(null, List.of(tampered), null, null, null, null);
+        ConfirmRequest request = new ConfirmRequest(null, List.of(tampered), null, null, null, null,
+                null);
 
         assertThatThrownBy(() -> service.confirmReimport(userId, statementImportId, request))
                 .isInstanceOf(ApiException.class);
         verify(importService, never()).confirm(any(), anyString(), any(byte[].class), any(ConfirmRequest.class));
+    }
+
+    /**
+     * The regression this file's earlier fix introduced, and its own fix. The first version of
+     * BH-006's guard re-parsed with a hardcoded {@code null} password -- correct for a CSV or an
+     * unprotected PDF, but an unconditional dead end for a password-protected one: {@code
+     * ConfirmRequest} had nowhere to carry the password the user had already supplied once, at
+     * {@code reimport()}'s own staging step, so the fresh re-parse always failed with {@code
+     * IMPORT_PDF_PASSWORD_REQUIRED} regardless of what the client sent or how correct it was.
+     *
+     * <p>This mocks {@code parseAndStageAnyFormat} to succeed ONLY for the exact password
+     * {@code "AAAA1234"} -- modelling the real contract, where any other value (including the
+     * {@code null} the unfixed code always sent) throws. A request that supplies the right password
+     * must reach the ledger; the three tests above already cover what happens when the parse's
+     * account of the document disagrees with the confirmed rows.
+     */
+    @Test
+    void confirmReimport_forwardsTheClientSuppliedPasswordToTheFreshReParse() throws Exception {
+        StatementImport protectedPdf = new StatementImport();
+        ReflectionTestUtils.setField(protectedPdf, "id", statementImportId);
+        protectedPdf.setUserId(userId);
+        protectedPdf.setAccountId(accountId);
+        protectedPdf.setFileName("sbi_statement.pdf");
+        protectedPdf.setSourceFormat("PDF");
+        protectedPdf.setFileContent(new byte[]{1, 2, 3});
+        when(statementImportRepository.findById(statementImportId)).thenReturn(Optional.of(protectedPdf));
+
+        StagingResponse staged = new StagingResponse(List.of(GENUINE_ROW), 1, 0,
+                new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null, null,
+                        null, null, null, 0.0, true, List.of(), null, null, null, null, null, null, null, null),
+                List.of());
+        when(importService.parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("sbi_statement.pdf"), any(),
+                eq((Integer) null), eq("AAAA1234")))
+                .thenReturn(staged);
+        when(importService.parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("sbi_statement.pdf"), any(),
+                eq((Integer) null), argThat(p -> !"AAAA1234".equals(p))))
+                .thenThrow(new ApiException(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
+                        com.finora.exception.ErrorCode.IMPORT_PDF_PASSWORD_REQUIRED, "password required"));
+
+        ConfirmedRow echoed = confirming(GENUINE_ROW);
+        ConfirmResponse expected = new ConfirmResponse(1, 0, 0, 0, 0, List.of(), java.util.Map.of(),
+                java.util.Map.of(), List.of(), null, BigDecimal.ZERO, new BigDecimal("150.00"), null, null,
+                null, null, 0L, "PDF");
+        when(importService.confirm(eq(userId), eq("sbi_statement.pdf"), any(byte[].class), any(ConfirmRequest.class)))
+                .thenReturn(expected);
+
+        ConfirmRequest request = new ConfirmRequest(null, List.of(echoed), null, null, null, null, "AAAA1234");
+
+        ConfirmResponse result = service.confirmReimport(userId, statementImportId, request);
+
+        assertThat(result).isSameAs(expected);
+        verify(importService).parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("sbi_statement.pdf"), any(),
+                eq((Integer) null), eq("AAAA1234"));
     }
 }

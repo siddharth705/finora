@@ -255,6 +255,9 @@ export interface ConfirmPayload {
   newAccount: NewAccountPayload | null;
   statementOpeningBalance: number | null;
   statementClosingBalance: number | null;
+  // Only meaningful to confirmReimport, for a statement whose stored bytes are a password-protected
+  // PDF -- see ConfirmRequest's own doc comment on the backend. Every other confirm path ignores it.
+  password?: string;
 }
 
 // One account's worth of reviewed rows within a MultiAccountConfirmPayload -- same shape as

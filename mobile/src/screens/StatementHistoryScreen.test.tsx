@@ -173,6 +173,25 @@ describe('StatementHistoryScreen — re-importing a password-protected statement
     await waitFor(() => expect(api.reimport).toHaveBeenCalledTimes(2));
     expect(api.reimport).toHaveBeenLastCalledWith('stmt-1', 'AAAA1234');
     await waitFor(() => expect(mockNavigateToImport).toHaveBeenCalledTimes(1));
+
+    // The regression this guards: the password unlocked staging, but confirmReimport() re-parses
+    // the same stored bytes server-side and needs it again -- ConfirmRequest had nowhere to carry
+    // it, so every reimport-confirm of a protected statement failed unconditionally regardless of
+    // whether the password above was ever correct. Dropping it here, before the Import tab ever
+    // sees it, is exactly how that happened. See StatementImportService.confirmReimport's doc
+    // comment for the incident this is named after.
+    const [, params] = mockNavigateToImport.mock.calls[0];
+    expect(params.reimport.password).toBe('AAAA1234');
+  });
+
+  it('does not invent a password for a statement that never needed one', async () => {
+    renderScreen();
+
+    await tapReimport();
+
+    await waitFor(() => expect(mockNavigateToImport).toHaveBeenCalledTimes(1));
+    const [, params] = mockNavigateToImport.mock.calls[0];
+    expect(params.reimport.password).toBeUndefined();
   });
 
   it('keeps the prompt open with an inline error when the password is rejected', async () => {

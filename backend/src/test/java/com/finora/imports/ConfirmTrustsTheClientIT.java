@@ -72,7 +72,8 @@ class ConfirmTrustsTheClientIT extends AbstractIntegrationTest {
                 user.getId(), "statement.csv", FILE, List.of(parsed(), parsedSecond()), null);
         return org.assertj.core.api.Assertions.catchThrowable(() ->
                 importService.confirmSession(user.getId(), new ConfirmRequest(
-                        session.getId(), rows, account.getId(), null, opening, closing)));
+                        session.getId(), rows, account.getId(), null, opening, closing,
+                null)));
     }
 
     /** The parsed pair, echoed back unchanged -- what every real client sends. */

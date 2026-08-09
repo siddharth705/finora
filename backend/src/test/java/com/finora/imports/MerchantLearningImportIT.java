@@ -88,7 +88,8 @@ class MerchantLearningImportIT extends AbstractIntegrationTest {
                 new BigDecimal("486.00"), "EXPENSE", "Dining", true, "rule", null, false, null, null);
         ConfirmedRow second = new ConfirmedRow(LocalDate.of(2026, 7, 12), "SWIGGY*ORDR7710 BLR",
                 new BigDecimal("212.00"), "EXPENSE", "Dining", true, "rule", null, false, null, null);
-        return new ConfirmRequest(null, List.of(first, second), accountId, null, null, null);
+        return new ConfirmRequest(null, List.of(first, second), accountId, null, null, null,
+                null);
     }
 
     private MockMultipartFile statementFile() {

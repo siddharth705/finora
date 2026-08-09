@@ -344,7 +344,8 @@ class MultiSectionSharedTransferIT extends AbstractIntegrationTest {
         // The savings leg lands on its own, in its own import. Nothing to pair with yet.
         importService.confirm(user.getId(), "savings-only.csv", FILE,
                 new com.finora.dto.ImportDto.ConfirmRequest(null,
-                        List.of(confirmed("CREDIT CARD PAYMENT", "EXPENSE")), savings.getId(), null, null, null));
+                        List.of(confirmed("CREDIT CARD PAYMENT", "EXPENSE")), savings.getId(), null, null, null,
+                null));
 
         assertThat(transactionRepository.findByUserId(user.getId()))
                 .as("one leg alone is not a transfer")
@@ -356,7 +357,8 @@ class MultiSectionSharedTransferIT extends AbstractIntegrationTest {
         // 30,000 payment would stay classified as real money movement.
         importService.confirm(user.getId(), "card-only.csv", FILE,
                 new com.finora.dto.ImportDto.ConfirmRequest(null,
-                        List.of(confirmed("PAYMENT RECEIVED THANK YOU", "INCOME")), card.getId(), null, null, null));
+                        List.of(confirmed("PAYMENT RECEIVED THANK YOU", "INCOME")), card.getId(), null, null, null,
+                null));
 
         assertThat(transactionRepository.findByUserId(user.getId()))
                 .hasSize(2)

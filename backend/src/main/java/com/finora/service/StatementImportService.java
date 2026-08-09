@@ -225,11 +225,21 @@ public class StatementImportService {
      *
      * <p>Re-parsing rather than caching the first parse costs one extra pass over the file, paid
      * once per confirm — and it is the only source of server truth available without persisting an
-     * {@code ImportSession} for reimport too, which is a larger change than this fix. One
-     * consequence worth naming rather than hiding: a password-protected PDF's reimport now needs
-     * that password re-validated at confirm time, same as first-time import already requires
-     * ({@code IMPORT_PDF_PASSWORD_REQUIRED}) — reimport-confirm previously never touched the file's
-     * actual content at all, which was part of the same gap, not a feature being preserved.
+     * {@code ImportSession} for reimport too, which is a larger change than this fix.
+     *
+     * <p><b>Regression this introduced, and its fix.</b> Re-parsing a password-protected PDF needs
+     * its password, and the first version of this fix always passed {@code null} — {@link
+     * com.finora.dto.ImportDto.ConfirmRequest} had nowhere to carry one, so every reimport-confirm
+     * of a protected statement failed with {@code IMPORT_PDF_PASSWORD_REQUIRED} unconditionally,
+     * with no client-side way to recover: {@code reimport()}'s own password prompt (below) unlocks
+     * the document for STAGING, but the password was then dropped rather than carried into the
+     * separate confirm call. A sibling fix earlier the same day (BH-023, see {@code
+     * ConfirmedRowIntegrity}) had already named this exact trade-off and deliberately left
+     * confirmReimport unguarded rather than ship it — that judgment was overridden here without
+     * fully reckoning with the severity: not a degraded case, an unconditional dead end for the
+     * document type most Indian bank statements actually use. {@code ConfirmRequest.password()} now
+     * carries it, so a client that already asked for the password once (to stage) can send the same
+     * one again here rather than needing a second, new prompt.
      */
     @Transactional
     public com.finora.dto.ImportDto.ConfirmResponse confirmReimport(
@@ -238,12 +248,12 @@ public class StatementImportService {
         byte[] content = statementContentService.read(original);
 
         var freshStaging = importService.parseAndStageAnyFormat(userId, original.getSourceFormat(),
-                original.getFileName(), content, original.getSourceSectionIndex());
+                original.getFileName(), content, original.getSourceSectionIndex(), request.password());
         ConfirmedRowIntegrity.requireSameRows(freshStaging.rows(), request.rows());
 
         var scoped = new com.finora.dto.ImportDto.ConfirmRequest(
                 null, request.rows(), original.getAccountId(), null,
-                request.statementOpeningBalance(), request.statementClosingBalance());
+                request.statementOpeningBalance(), request.statementClosingBalance(), null);
         return importService.confirm(userId, original.getFileName(), content, scoped);
     }
 

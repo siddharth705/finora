@@ -202,7 +202,8 @@ class ImportServiceSessionTest {
 
     @Test
     void confirmSession_withoutSessionId_isRejected() {
-        var request = new ConfirmRequest(null, List.of(confirmedRow()), accountId, null, null, null);
+        var request = new ConfirmRequest(null, List.of(confirmedRow()), accountId, null, null, null,
+                null);
 
         assertThatThrownBy(() -> importService.confirmSession(userId, request))
                 .isInstanceOf(ApiException.class)
@@ -221,7 +222,8 @@ class ImportServiceSessionTest {
         // still sends the row, just with include=false, so the count stays the same).
         when(importSessionService.readStagedRows(session)).thenReturn(List.of(stagedRow(), stagedRow()));
 
-        var request = new ConfirmRequest(sessionId, List.of(confirmedRow()), accountId, null, null, null);
+        var request = new ConfirmRequest(sessionId, List.of(confirmedRow()), accountId, null, null, null,
+                null);
 
         assertThatThrownBy(() -> importService.confirmSession(userId, request))
                 .isInstanceOf(ApiException.class)
@@ -242,7 +244,8 @@ class ImportServiceSessionTest {
         when(importSessionService.claimForConfirmation(userId, sessionId)).thenReturn(session);
         when(importSessionService.readStagedRows(session)).thenReturn(List.of(stagedRow()));
 
-        var request = new ConfirmRequest(sessionId, List.of(confirmedRow()), accountId, null, null, null);
+        var request = new ConfirmRequest(sessionId, List.of(confirmedRow()), accountId, null, null, null,
+                null);
         var response = importService.confirmSession(userId, request);
 
         assertThat(response.imported()).isEqualTo(1);
@@ -268,7 +271,8 @@ class ImportServiceSessionTest {
         when(importSessionService.claimForConfirmation(userId, sessionId)).thenReturn(session);
         when(importSessionService.readStagedRows(session)).thenReturn(List.of(stagedRow()));
 
-        var request = new ConfirmRequest(sessionId, List.of(confirmedRow()), accountId, null, null, null);
+        var request = new ConfirmRequest(sessionId, List.of(confirmedRow()), accountId, null, null, null,
+                null);
         importService.confirmSession(userId, request);
 
         var captor = org.mockito.ArgumentCaptor.forClass(com.finora.entity.StatementImport.class);
@@ -284,7 +288,8 @@ class ImportServiceSessionTest {
         // The byte-array confirm() overload (used by StatementImportService.confirmReimport(),
         // which replays already-stored bytes rather than a fresh staged session) has no
         // DocumentContext to copy from -- best-effort, same as every other nullable field here.
-        var request = new ConfirmRequest(null, List.of(confirmedRow()), accountId, null, null, null);
+        var request = new ConfirmRequest(null, List.of(confirmedRow()), accountId, null, null, null,
+                null);
         importService.confirm(userId, "statement.csv", "date,description,amount\n".getBytes(), request);
 
         var captor = org.mockito.ArgumentCaptor.forClass(com.finora.entity.StatementImport.class);

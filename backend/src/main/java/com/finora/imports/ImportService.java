@@ -527,7 +527,8 @@ public class ImportService {
             ConfirmRequest perAccountRequest = new ConfirmRequest(
                     null, // this section's ConfirmRequest doesn't carry its own sessionId -- the session is claimed once, above, for the whole multi-account request
                     sectionConfirm.rows(), sectionConfirm.existingAccountId(), sectionConfirm.newAccount(),
-                    sectionConfirm.statementOpeningBalance(), sectionConfirm.statementClosingBalance());
+                    sectionConfirm.statementOpeningBalance(), sectionConfirm.statementClosingBalance(),
+                    null); // a multi-section PDF was already unlocked once to be staged; no password to carry here
             persisted.add(persistSection(userId, session.getFileName(), statementContentService.read(session), perAccountRequest, i,
                     session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
                 session.getUnparseableSummaryJson()));

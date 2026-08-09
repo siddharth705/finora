@@ -346,10 +346,19 @@ public class ImportDto {
      *  actually being written; if it is, it wins outright, and if it is not, the balance moves by
      *  those rows' net effect instead (AccountBalanceConvention.netDelta). Neither of these is a
      *  field a client can use to set a balance directly. */
+    /**
+     * @param password only meaningful to {@code confirmReimport}, and only for a statement whose
+     *   stored bytes are a password-protected PDF -- see that method's own doc comment. Every other
+     *   confirm path (a fresh CSV/PDF upload, a multi-section confirm) ignores it: those either have
+     *   no password to begin with, or already unlocked the document during staging and never touch
+     *   the raw bytes again at confirm time. Null for a client that doesn't send it, which is every
+     *   caller except a reimport of a protected PDF.
+     */
     public record ConfirmRequest(
             UUID sessionId,
             List<ConfirmedRow> rows, UUID existingAccountId, NewAccountRequest newAccount,
-            BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance
+            BigDecimal statementOpeningBalance, BigDecimal statementClosingBalance,
+            String password
     ) {}
 
     /**

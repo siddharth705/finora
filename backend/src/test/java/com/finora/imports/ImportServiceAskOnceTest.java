@@ -135,7 +135,8 @@ class ImportServiceAskOnceTest {
     }
 
     private ConfirmRequest requestWith(ConfirmedRow row) {
-        return new ConfirmRequest(null, List.of(row), accountId, null, null, null);
+        return new ConfirmRequest(null, List.of(row), accountId, null, null, null,
+                null);
     }
 
     private MockMultipartFile dummyFile() {
@@ -307,7 +308,8 @@ class ImportServiceAskOnceTest {
                 BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
         var newAccount = new NewAccountRequest("HDFC Savings", "SAVINGS", BigDecimal.valueOf(15000), null, null, null, null, null, null, null, null, null,
                 null, null, null, null, null, null, null);
-        var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null);
+        var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null,
+                null);
 
         var response = importService.confirm(userId, dummyFile(), request);
 
@@ -340,7 +342,8 @@ class ImportServiceAskOnceTest {
         var newAccount = new NewAccountRequest("HDFC Term Deposit", "SAVINGS", BigDecimal.valueOf(100000),
                 null, null, null, null, null, null, null, "FIXED_DEPOSIT", null,
                 null, null, null, null, null, null, null);
-        var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null);
+        var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null,
+                null);
 
         var response = importService.confirm(userId, dummyFile(), request);
 
@@ -373,7 +376,8 @@ class ImportServiceAskOnceTest {
         var newAccount = new NewAccountRequest("Mystery", "WALLET", BigDecimal.ZERO, null, null,
                 null, null, null, null, null, "UNKNOWN", null,
                 null, null, null, null, null, null, null);
-        var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null);
+        var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null,
+                null);
 
         importService.confirm(userId, dummyFile(), request);
 
@@ -405,7 +409,8 @@ class ImportServiceAskOnceTest {
                 null, null, null, null, null, null, null,
                 null, null, null, null, null, null, null);
 
-        importService.confirm(userId, dummyFile(), new ConfirmRequest(null, List.of(row), null, newAccount, null, null));
+        importService.confirm(userId, dummyFile(), new ConfirmRequest(null, List.of(row), null, newAccount, null, null,
+                null));
 
         ArgumentCaptor<AccountDto.CreateRequest> captor =
                 ArgumentCaptor.forClass(AccountDto.CreateRequest.class);
@@ -419,7 +424,8 @@ class ImportServiceAskOnceTest {
     void confirm_throws_whenNeitherExistingAccountNorNewAccountIsProvided() {
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SWIGGY*ORDR9182 BLR",
                 BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
-        var request = new ConfirmRequest(null, List.of(row), null, null, null, null);
+        var request = new ConfirmRequest(null, List.of(row), null, null, null, null,
+                null);
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> importService.confirm(userId, dummyFile(), request))
                 .isInstanceOf(com.finora.exception.ApiException.class);
@@ -449,7 +455,8 @@ class ImportServiceAskOnceTest {
                 BigDecimal.valueOf(486), "EXPENSE", "Dining", true, "rule", null, false, null, null);
         var row2 = new ConfirmedRow(LocalDate.of(2026, 7, 11), "ZOMATO ORDER",
                 BigDecimal.valueOf(300), "EXPENSE", "Dining", true, "rule", null, false, null, null);
-        var request = new ConfirmRequest(null, List.of(row1, row2), accountId, null, null, null);
+        var request = new ConfirmRequest(null, List.of(row1, row2), accountId, null, null, null,
+                null);
 
         var response = importService.confirm(userId, dummyFile(), request);
 
@@ -476,7 +483,8 @@ class ImportServiceAskOnceTest {
 
         var row = new ConfirmedRow(LocalDate.of(2026, 7, 10), "SIP MUTUAL FUND DEDUCTION",
                 BigDecimal.valueOf(5000), "EXPENSE", "Shopping", true, "rule", null, false, null, null);
-        var request = new ConfirmRequest(null, List.of(row), accountId, null, null, null);
+        var request = new ConfirmRequest(null, List.of(row), accountId, null, null, null,
+                null);
 
         var response = importService.confirm(userId, dummyFile(), request);
 
@@ -668,7 +676,8 @@ class ImportServiceAskOnceTest {
                 "SBI Savings", "SAVINGS", BigDecimal.valueOf(25000), null, null,
                 "Sample Customer", "4587", "SBI", null, null, null, null,
                 null, null, null, null, null, null, null);
-        var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null);
+        var request = new ConfirmRequest(null, List.of(row), null, newAccount, null, null,
+                null);
 
         importService.confirm(userId, dummyFile(), request);
 

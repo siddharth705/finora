@@ -90,6 +90,7 @@ export function StatementHistoryScreen() {
           accountId: result.accountId,
           accountName: result.accountName,
           staging: result.staging,
+          password,
           nonce: Date.now(),
         },
       });

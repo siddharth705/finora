@@ -147,6 +147,24 @@ describe('StatementHistory — re-importing a password-protected statement', () 
     await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
     // The modal must close on success, or the review screen opens underneath it.
     await waitFor(() => expect(screen.queryByTestId('reimport-password-modal')).not.toBeInTheDocument());
+
+    // The regression this guards: the password unlocked staging, but confirmReimport() re-parses
+    // the same stored bytes server-side and needs it again -- ConfirmRequest had nowhere to carry
+    // it, so every reimport-confirm of a protected statement failed unconditionally regardless of
+    // whether the password above was ever correct. Dropping it here, before Import ever sees it, is
+    // exactly how that happened. See StatementImportService.confirmReimport's doc comment for the
+    // incident this is named after.
+    expect(navigate.mock.calls[0][1].state.password).toBe('AAAA1234');
+  });
+
+  it('does not invent a password for a statement that never needed one', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await clickReimport(user);
+
+    await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
+    expect(navigate.mock.calls[0][1].state.password).toBeUndefined();
   });
 
   it('keeps the prompt open with an inline error when the password is rejected', async () => {

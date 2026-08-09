@@ -82,7 +82,8 @@ class ConfirmedNotDuplicateIT extends AbstractIntegrationTest {
                 "Transport", true, "rule", null, flaggedByEngine, null, null, confirmedByUser);
 
         importService.confirm(f.user().getId(), statementFile(),
-                new ConfirmRequest(null, List.of(row), f.account().getId(), null, null, null));
+                new ConfirmRequest(null, List.of(row), f.account().getId(), null, null, null,
+                null));
     }
 
     private List<Transaction> fares(Fixture f) {
@@ -214,7 +215,8 @@ class ConfirmedNotDuplicateIT extends AbstractIntegrationTest {
                 "Transport", true, "rule", null, true, null, null);
 
         importService.confirm(f.user().getId(), statementFile(),
-                new ConfirmRequest(null, List.of(legacyShape), f.account().getId(), null, null, null));
+                new ConfirmRequest(null, List.of(legacyShape), f.account().getId(), null, null, null,
+                null));
 
         assertThat(fares(f)).singleElement()
                 .satisfies(t -> assertThat(t.getNotDuplicateConfirmedAt()).isNull());
