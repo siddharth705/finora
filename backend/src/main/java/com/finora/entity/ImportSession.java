@@ -59,9 +59,13 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
      * <p>Every read of these bytes goes through {@code StatementContentService.read} from inside a
      * transaction ({@code ImportService.confirmSession} / {@code confirmMultiSection}), which is
      * what makes lazy safe here — the same precondition {@code StatementImport} already relies on.
+     *
+     * <p>Nullable as of V75 (BH-025/BH-046): null exactly when contentHash/objectKey are set --
+     * {@code ImportSessionService.storeContent} writes bytes here only when
+     * {@code StatementContentService.store()} came back empty (no provider configured).
      */
     @Basic(fetch = FetchType.LAZY)
-    @Column(name = "file_content", nullable = false)
+    @Column(name = "file_content")
     private byte[] fileContent;
 
     /** Hex SHA-256 of the staged file -- the document's identity. Null when no storage provider is
