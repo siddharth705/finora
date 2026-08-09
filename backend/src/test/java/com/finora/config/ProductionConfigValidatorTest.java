@@ -68,7 +68,87 @@ class ProductionConfigValidatorTest {
         when(environment.getProperty("spring.datasource.password")).thenReturn(dbPassword);
         when(environment.getProperty("app.security.trust-proxy-headers", Boolean.class, false))
                 .thenReturn(trustProxyHeaders);
+        // BH-046: production now requires a storage provider unconditionally. Stubbed configured
+        // here so every pre-existing test above keeps testing the thing it was written to test --
+        // the storage cases get their own tests below, where the stub is overridden deliberately.
+        when(environment.getProperty("app.statement-storage.provider")).thenReturn("r2");
         return environment;
+    }
+
+    /**
+     * BH-046. Production must refuse to start without durable object storage.
+     *
+     * <p><b>This is the case that used to boot.</b> The storage check existed already, gated on
+     * {@code app.import.queue.enabled} — which defaults to OFF. So a production deployment with
+     * the queue off and no provider configured started happily and stored every statement it
+     * accepted as a PostgreSQL BYTEA column and nowhere else.
+     *
+     * <p>Survivable while {@code file_content} is a dual write; not survivable once BH-046 removes
+     * it. With no provider, {@code StatementContentService.store()} returns empty, no content
+     * address is recorded, and {@code read()} then has neither an object nor a legacy column. The
+     * document is gone, and nothing notices until someone asks for it.
+     */
+    @Test
+    void run_inProdProfile_withNoStorageProvider_throws_evenWhenTheAsyncQueueIsOff() {
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
+        when(environment.getProperty("app.statement-storage.provider")).thenReturn(null);
+        when(environment.getProperty("app.import.queue.enabled")).thenReturn("false");
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+
+        assertThatThrownBy(validator::validate)
+                .as("the queue being off must no longer excuse missing storage -- that gate is "
+                        + "exactly the hole BH-046 cannot ship over")
+                .hasMessageContaining("app.statement-storage.provider is unset");
+    }
+
+    @Test
+    void run_inProdProfile_withABlankStorageProvider_throws() {
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
+        when(environment.getProperty("app.statement-storage.provider")).thenReturn("   ");
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+
+        assertThatThrownBy(validator::validate)
+                .as("an empty string is not a configured provider -- Railway sets blank variables "
+                        + "as readily as it sets real ones")
+                .hasMessageContaining("app.statement-storage.provider is unset");
+    }
+
+    @Test
+    void run_inProdProfile_withNoStorageAndTheQueueOn_saysBothThings() {
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
+        when(environment.getProperty("app.statement-storage.provider")).thenReturn(null);
+        when(environment.getProperty("app.import.queue.enabled")).thenReturn("true");
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+
+        assertThatThrownBy(validator::validate)
+                .as("the queue message adds information the general one does not -- uploads fail "
+                        + "immediately with 503 rather than silently losing bytes")
+                .hasMessageContaining("app.statement-storage.provider is unset")
+                .hasMessageContaining("503");
+    }
+
+    @Test
+    void run_inProdProfile_withFilesystemStorage_doesNotThrow() {
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
+        when(environment.getProperty("app.statement-storage.provider")).thenReturn("filesystem");
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+
+        assertThat(catchNoThrow(validator))
+                .as("filesystem is a supported provider -- this check is about durability being "
+                        + "configured at all, not about which backend was chosen")
+                .isTrue();
+    }
+
+    @Test
+    void run_outsideProdProfile_withNoStorageProvider_doesNotThrow() {
+        // NEGATIVE. Local dev, tests and CI must keep working with zero storage setup. A check that
+        // fired outside prod would make every developer configure R2 to run the app.
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"dev"}, "finora");
+        when(environment.getProperty("app.statement-storage.provider")).thenReturn(null);
+        JwtProperties jwt = jwtWith("change-this-to-a-long-random-secret-in-your-env-file-min-32-chars");
+        var validator = new ProductionConfigValidator(environment, jwt, emailWith(null), unconfiguredFirebase(), mock(SmsProvider.class));
+
+        assertThat(catchNoThrow(validator)).isTrue();
     }
 
     @Test

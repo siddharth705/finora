@@ -142,30 +142,41 @@ public class ProductionConfigValidator implements SmartInitializingSingleton {
             problems.append("- JWT_SECRET is set but shorter than the 32 characters HS256 requires.\n");
         }
 
-        // The async import path needs object storage: the worker runs later, in another thread and
-        // possibly another process, with nothing to read but a content address. ImportJobService
-        // already refuses uploads with 503 when it is missing, which is the right runtime
-        // behaviour -- but discovering it from a user's failed upload is worse than discovering it
-        // at startup, and a deployment that accepts no imports at all should not report healthy.
+        // BH-046. Object storage is REQUIRED in production, not merely required by the async
+        // queue. This check used to be gated on app.import.queue.enabled, which defaults to OFF --
+        // so a production deployment with the queue off and no provider configured booted happily,
+        // and every statement it imported was stored only as a PostgreSQL BYTEA column.
         //
-        // Checked only when the queue is enabled, and the queue defaults to OFF. Async import is
-        // opt-in: an existing deployment upgrading to this version starts unchanged, and enabling
-        // the queue is the deliberate act that makes storage mandatory. Defaulting the queue ON
-        // would have turned this validator into a hard startup failure for every deployment that
-        // upgraded without also configuring storage -- refusing to start over a feature nobody had
-        // asked for yet.
-        // Read as a String and parsed, not via getProperty(name, Boolean.class, default). This
-        // class's own test uses a bare mock(Environment.class), where an unstubbed typed lookup
-        // returns null rather than the supplied default and NPEs on unboxing -- a trap the test
-        // file already documents, and one this check walked into on its first draft. Boolean
-        // .parseBoolean(null) is false, which is also the intended default.
-        boolean asyncImportEnabled = Boolean.parseBoolean(environment.getProperty("app.import.queue.enabled"));
+        // That was survivable while file_content was a dual write. It stops being survivable the
+        // moment BH-046 removes it: StatementContentService.store() returns empty with no provider,
+        // no content address is recorded, and read() then has neither an object nor a legacy column
+        // to fall back on. The statement becomes permanently unreadable -- re-import, download and
+        // reprocessing all fail -- and nothing notices until a user asks for a document that is no
+        // longer anywhere.
+        //
+        // Failing at startup is the whole point. The alternative is discovering it from a customer
+        // whose bank statement cannot be produced, by which time the bytes were never written and
+        // there is nothing to recover. A deployment that cannot durably store the documents it
+        // accepts should not accept them.
         String storageProvider = environment.getProperty("app.statement-storage.provider");
-        if (asyncImportEnabled && (storageProvider == null || storageProvider.isBlank())) {
-            problems.append("- app.import.queue.enabled is true but app.statement-storage.provider ")
-                    .append("is unset. The async import worker has nothing to read: every upload to ")
-                    .append("/api/v1/import/jobs would be refused with 503. Configure storage, or ")
-                    .append("set app.import.queue.enabled=false to run the synchronous path only.\n");
+        boolean storageConfigured = storageProvider != null && !storageProvider.isBlank();
+        if (!storageConfigured) {
+            problems.append("- app.statement-storage.provider is unset. Production requires durable ")
+                    .append("object storage for statement documents: without it the bytes live only ")
+                    .append("in the file_content column, which BH-046 removes. Set it to 'r2' (with ")
+                    .append("the app.statement-storage.r2.* credentials) or 'filesystem' (with ")
+                    .append("app.statement-storage.filesystem.root on a persistent volume).\n");
+        }
+
+        // Kept as its own line rather than folded into the check above: when the queue is on, the
+        // consequence is different and worth naming. ImportJobService already refuses uploads with
+        // 503, so the failure is immediate and total rather than silent and delayed.
+        boolean asyncImportEnabled = Boolean.parseBoolean(environment.getProperty("app.import.queue.enabled"));
+        if (asyncImportEnabled && !storageConfigured) {
+            problems.append("- app.import.queue.enabled is true, which makes the above fatal rather ")
+                    .append("than merely dangerous: the async worker runs in another thread with ")
+                    .append("nothing to read but a content address, so every upload to ")
+                    .append("/api/v1/import/jobs would be refused with 503.\n");
         }
 
         String dbPassword = environment.getProperty("spring.datasource.password");
