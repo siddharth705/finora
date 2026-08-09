@@ -9,7 +9,7 @@ package com.finora.imports.storage;
  *
  * <ul>
  *   <li><b>Addressed</b> — {@code contentHash}/{@code objectKey} set, bytes in object storage only.
- *       Every row written while a storage provider is configured, as of V75 (BH-025/BH-046):
+ *       Every row written while a storage provider is configured, as of V76 (BH-025/BH-046):
  *       {@code file_content} is deliberately left {@code NULL} rather than duplicated into
  *       {@code BYTEA}.</li>
  *   <li><b>Legacy</b> — address null, bytes in {@code fileContent}. Every row written while no
