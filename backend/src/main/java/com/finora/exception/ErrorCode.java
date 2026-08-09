@@ -50,11 +50,15 @@ public enum ErrorCode {
     // message ("Cannot decrypt PDF, the password is incorrect"). The only thing that distinguishes
     // them is whether the request carried a password, which is why the distinction is drawn at the
     // call site rather than from the exception.
-    // Says what was observed -- the pages carry no text -- and not what the document IS. Zero
-    // extractable text proves no usable native text was acquired. It does not prove the file is a
+    // Named to match DocumentClassification.SCANNED_OCR_REQUIRED, so one condition has one name
+    // across the codebase rather than an analysis vocabulary and a product vocabulary that drift.
+    //
+    // The MESSAGE is held to a stricter standard than the identifier, and deliberately so: zero
+    // extractable text proves no usable native text was acquired, and does not prove the file is a
     // bank statement, a scan rather than a photo or an export, or that recognition would succeed on
-    // it. Naming it SCANNED or OCR_REQUIRED would assert all three from one measurement.
-    IMPORT_IMAGE_ONLY_DOCUMENT("IMPORT_010", HttpStatus.UNPROCESSABLE_ENTITY,
+    // it. So the user is told only what was observed, and a test requires the words "scanned" and
+    // "OCR" to be absent from what they read.
+    IMPORT_SCANNED_OCR_REQUIRED("IMPORT_010", HttpStatus.UNPROCESSABLE_ENTITY,
             "This PDF has no text in it -- every page is an image"),
 
     IMPORT_PDF_PASSWORD_REQUIRED("IMPORT_008", HttpStatus.UNPROCESSABLE_ENTITY,

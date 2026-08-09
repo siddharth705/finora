@@ -53,7 +53,7 @@ class ImageOnlyDocumentTest {
 
         assertThat(catchApi(ctx))
                 .extracting(ApiException::getCode)
-                .isEqualTo(ErrorCode.IMPORT_IMAGE_ONLY_DOCUMENT);
+                .isEqualTo(ErrorCode.IMPORT_SCANNED_OCR_REQUIRED);
     }
 
     /**

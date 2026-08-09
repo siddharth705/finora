@@ -45,7 +45,7 @@ final class ExtractionCheck {
         // is a bank statement nor that recognition would succeed on it. Those are not established
         // by an absence of text.
         if (ctx != null && ctx.hasNoExtractableText()) {
-            throw new ApiException(ErrorCode.IMPORT_IMAGE_ONLY_DOCUMENT,
+            throw new ApiException(ErrorCode.IMPORT_SCANNED_OCR_REQUIRED,
                     "This PDF has no text in it -- every page is an image, so there was nothing for "
                             + "Finora to read. Statements exported directly from your bank's website "
                             + "or app usually contain text and import correctly.");
