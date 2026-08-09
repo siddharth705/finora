@@ -1,6 +1,7 @@
-# Repo-Wide Bug Hunt — Closure Report
+# Repo-Wide Bug Hunt — Round 1 Closure Report
 
-**Branch:** `fix/bug-hunt-remediation` @ `5a4c985` (pushed, tracking `origin`)
+**Status:** formal baseline closing **Bug Hunt Round 1**. Not a declaration that Finora is bug-free.
+**Branch:** `fix/bug-hunt-remediation` (pushed, tracking `origin`)
 **Base:** `main` @ `64ea4e9`
 **Hunt report:** [`2026-08-08-repo-wide-bug-hunt.md`](2026-08-08-repo-wide-bug-hunt.md)
 
@@ -19,7 +20,8 @@ that never earned a BH number.
 
 | Disposition | Count | Meaning |
 |---|---:|---|
-| **CLOSED** | 30 | Reproduced, root cause established, fixed, regression test added, verified |
+| **CLOSED — VERIFIED** | 8 | The broken behaviour was independently demonstrated, then shown to be gone |
+| **CLOSED — REVIEWED** | 22 | Root cause established and fixed, suite green, but the break was never demonstrated |
 | **OPEN** | 14 | Confirmed issue, remediation outstanding |
 | **DEFERRED — DECISION REQUIRED** | 3 | Behaviour or product semantics need an explicit decision |
 | **DEPLOYMENT VERIFICATION REQUIRED** | 1 | Cannot be closed from the repository alone |
@@ -29,10 +31,23 @@ that never earned a BH number.
 | **REJECTED** | 4 | Investigated, not a defect |
 | **Total** | **61** | |
 
-Of the 30 CLOSED, **8 were demonstrated to fail against the broken behaviour** — five by executing
-the repository's own compiled classes before any fix, three by mutation testing after. The other 22
-rest on weaker evidence, and each one says which below. That distinction is the point of this
-report.
+### The two closure grades, and why they are not one grade
+
+"Closed" is not a single claim, so this report does not make it one.
+
+- **CLOSED — VERIFIED** requires that the defect was *demonstrated* — the broken behaviour observed
+  directly (by executing the repository's own compiled classes, or by a test that failed before the
+  fix), and then observed to be gone. Five were proven the first way, three by mutation testing the
+  regression test after the fix. Eight items clear this bar.
+- **CLOSED — REVIEWED** means the root cause was established, the fix is understood, a regression
+  test exists in most cases, and the full suite is green — but nobody ever watched the bug happen.
+  Twenty-two items sit here. Each row in §2.2 states what specifically is missing.
+
+A REVIEWED closure is not a lesser fix; it is a lesser *proof*. The failure mode it permits is
+closing something that was never actually broken in the way the finding described, or fixing a
+different bug that happens to sit nearby. **Do not upgrade a REVIEWED item to VERIFIED because the
+suite is green** — the suite being green is already part of what REVIEWED means. Upgrading requires
+demonstrating the break.
 
 ---
 
@@ -41,7 +56,9 @@ report.
 Every row answers: original behaviour → reproducible? → root cause → what changed → regression test
 → **demonstrated to fail against the break?** → verified → unverified.
 
-### 2.1 Demonstrated against the broken behaviour (strongest evidence)
+### 2.1 CLOSED — VERIFIED (8)
+
+Demonstrated against the broken behaviour.
 
 | ID | Original behaviour | Root cause | Demonstration |
 |---|---|---|---|
@@ -54,10 +71,11 @@ Every row answers: original behaviour → reproducible? → root cause → what 
 | **BH-028** | A parser crash produced a 500 and **no** evidence row, permanently | Both catches were `ApiException` only | **Reproduced pre-fix** (`Expected size: 1 but was: 0`), then **mutation-checked**: narrowing the catch fails the crash test and leaves both controls green |
 | **BH-058** | A concurrency test passed only because the rest of the suite happened to leave the queue empty | `claimDueEvents` is table-wide; the assertion was not scoped | **Mutation-checked**: removing `SKIP LOCKED` fails both tests on the right assertions |
 
-### 2.2 Closed on a named regression, not demonstrated against the break
+### 2.2 CLOSED — REVIEWED (22)
 
-Each has a regression test, and each test fails for a specific nameable change — but I did not run a
-mutation to prove it. Listed honestly rather than folded in with the eight above.
+Most have a regression test, and each test fails for a specific nameable change — but no mutation
+was run to prove it. Listed separately rather than folded in with the eight above. Two of them
+(BH-010, BH-016) have no test at all and are the weakest closures on the branch.
 
 | ID | What changed | Regression test | Not demonstrated because |
 |---|---|---|---|
@@ -221,12 +239,53 @@ The most important section. Read it before treating any part of the repository a
 
 ---
 
+---
+
+## Round 2 — scope, in priority order
+
+Round 2 is **not** "work through the 14 open items by number." Ticket order encodes when a defect
+was found, not what it costs. The ordering below is by financial/data-integrity impact and
+architectural blast radius.
+
+1. **Financial correctness and import classification.**
+2. **PDF extraction against the real-document corpus** — `PdfTableLocator` et al. This needs the
+   corpus, and it is the single largest unreviewed risk in the repository.
+3. **Import / re-import correctness** — including BH-006/BH-023, which are held for a reproduction.
+4. **Async import execution and recovery.**
+5. **Concurrency.**
+6. **Security and authentication** — BH-014 is the notable open item (a 423-vs-401 existence oracle).
+7. **Remaining operational defects.**
+8. **Test-quality sweep** — starting with the BH-058 class: tests that pass only because the rest of
+   the suite happened to leave shared state empty. One was found by accident; nobody has looked for
+   the others.
+
+Two of these deserve their own evidence-driven review rather than being folded into a general pass,
+because both can silently corrupt financial data rather than fail loudly:
+
+- **`PdfTableLocator`** — 1,358 lines, and its own comments record five separate
+  silently-wrong-data defects already found against real statements.
+- **`imports/product/`** — decides whether a re-imported deposit is the *same* deposit, and
+  `ImportService.resolveTargetAccount` acts on that answer by redirecting an import into an existing
+  account without telling anyone.
+
+Also queued, and blocking: the three decisions in §4 and §5. Those are not engineering guesses.
+
+---
+
 ## Merge recommendation
 
-The branch is safe to merge on the evidence available: it fixes 30 findings, adds 40+ regression
+The branch is safe to merge on the evidence available: it closes 30 findings, adds 40+ regression
 tests, breaks nothing the suite covers, and touches no file belonging to the parallel workstream.
 
-Merging it does **not** close the bug hunt. Fourteen findings remain open, one needs an environment
-variable checked, three need product decisions, and the two largest subsystems in the repository
-were never reviewed. The honest summary is that this branch materially improved a system whose
-overall defect level is still unknown.
+**This branch closes the remediation cycle. It does not close the bug hunt.** The defensible
+statement — the one to use in the PR, in status updates, and anywhere a number is quoted — is:
+
+> 61 findings were investigated. 30 are classified closed (8 verified against the broken behaviour,
+> 22 reviewed but not demonstrated), 14 remain confirmed and unfixed, and the rest are explicitly
+> classified by evidence level. The branch passes its committed verification suite, but this report
+> identifies significant areas that were not validated at all, including PDF extraction internals,
+> import/product classification, production runtime behaviour, and the nightly E2E workflow.
+
+What is *not* defensible is "1806 tests pass, therefore the system is validated." The 1806 are
+worth having. The reason this document exists is to draw a written boundary around what they prove,
+so that Round 2 does not begin from a false assumption of completeness.
