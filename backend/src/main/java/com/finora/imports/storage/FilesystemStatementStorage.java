@@ -85,6 +85,23 @@ public class FilesystemStatementStorage implements StatementStorage {
     }
 
     /**
+     * BH-017. Only ever called by {@code StatementStorageSweepService} once it has established the
+     * key is unreferenced across both tables and past the retention window -- see this interface's
+     * class doc. {@code deleteIfExists} rather than {@code delete}: idempotent, matching R2's
+     * DeleteObject semantics, and a re-run of the sweep after a partial batch failure must not
+     * throw on a key it already removed.
+     */
+    @Override
+    public void delete(String objectKey) {
+        Path target = resolveKey(objectKey);
+        try {
+            Files.deleteIfExists(target);
+        } catch (IOException e) {
+            throw new StatementStorageException("Could not delete statement " + objectKey, e);
+        }
+    }
+
+    /**
      * Maps an address to a path, refusing anything that escapes the root.
      *
      * The key comes from ContentAddress and is machine-generated, so this should be unreachable.
@@ -93,9 +110,13 @@ public class FilesystemStatementStorage implements StatementStorage {
      * externally influenced, and the check costs nothing.
      */
     private Path resolve(ContentAddress address) {
-        Path resolved = root.resolve(address.key()).normalize();
+        return resolveKey(address.key());
+    }
+
+    private Path resolveKey(String key) {
+        Path resolved = root.resolve(key).normalize();
         if (!resolved.startsWith(root)) {
-            throw new StatementStorageException("Statement key escapes the storage root: " + address.key());
+            throw new StatementStorageException("Statement key escapes the storage root: " + key);
         }
         return resolved;
     }

@@ -128,13 +128,21 @@ still reference the same content. Two cases are not hypothetical — they are th
 Get this wrong and the failure is silent and delayed: the delete succeeds, and some *other*
 statement's download or re-import breaks days later.
 
-**Recommended resolution: deletion never touches R2.** All three paths in §2.3 drop the row and
-nothing else; a separate sweeper reclaims objects no row references.
+**Resolution, built (BH-017): deletion never touches R2 directly.** All three paths in §2.3 drop
+the row and nothing else, exactly as before this migration; `StatementStorageSweepService`
+(`com.finora.imports.storage`) is the only caller of `StatementStorage.delete`, and only for an
+object that has been unreferenced -- checked fresh, across BOTH `statement_imports` and
+`import_sessions`, immediately before each delete -- for longer than
+`app.statement-storage.sweep.retention-days` (90 by default, §6).
 
 That follows directly from the failure semantics in §5.1 — an unreferenced object is a tolerable,
-reclaimable cost, while a row pointing at a missing object is unrecoverable. It also avoids
-reference counting, which would have to stay exactly correct across concurrent confirms,
-re-imports and session expiry to avoid causing the very data loss it was introduced to prevent.
+reclaimable cost, while a row pointing at a missing object is unrecoverable. Row-dropping itself
+still does no reference counting and does not need to; the sweeper is where that reasoning lives,
+and it stays correct across concurrent confirms, re-imports and session expiry the way §2.3's three
+paths individually never could — see that class's doc comment for the exact query and the one
+category of orphan it cannot discover (content whose only-ever reference was an `import_sessions`
+row already hard-deleted by the 48h TTL sweep, which leaves no timestamp anywhere in the database
+for a DB-only sweep to find).
 
 ## 4. Provider must stay replaceable
 
@@ -302,16 +310,40 @@ upload ──► write object to R2 ──► persist row ──► commit
 Content-addressing makes retries naturally idempotent: re-uploading identical bytes after a partial
 failure resolves to the same object instead of creating a second.
 
-## 6. Retention — out of scope
+## 6. Retention — decided and built (BH-017)
 
-Retention behaviour is **preserved exactly as it is today**. Changing how long statements are kept
-is a product decision, revisited separately once this migration is complete.
+The product decision this section used to defer has been made: once `app.statement-storage.provider`
+is configured (PR #67 made this the production default), object storage is genuinely permanent
+without a reclaim path — none of §2.3's three row-deletion paths ever touched the underlying
+object, which made the "48h" TTL the docs described false for R2/filesystem bytes the moment a
+provider was set. Sid decided explicitly: a reference-counted sweep (§3.2), not an R2 lifecycle
+rule and not delete-on-row-expiry, with statements staying **re-importable for approximately 90
+days** after every reference to them is gone. `StatementStorageSweepService` implements this;
+`app.statement-storage.sweep.retention-days` (default 90) is the knob.
 
-Engineering input for that later conversation, recorded now so it is not rediscovered:
+What "unreferenced" means, concretely, and its one known gap:
+
+- **statement_imports rows are soft-deleted** (`@SQLDelete`), so a user deleting a statement leaves
+  a `deleted_at`-stamped row behind forever — a durable, queryable trace of exactly when that
+  reference ended. The 90-day window is measured from there.
+- **import_sessions rows are hard-deleted** by the existing 48h TTL sweep
+  (`ImportSessionService.sweepExpiredSessions`, deliberately untouched by this change — see that
+  class's own reasoning for why it is a scheduled job and not opportunistic). A session that is
+  never confirmed has, once its row is gone, left literally no trace anywhere in the database that
+  its object ever existed. `StatementStorageSweepService` cannot discover — and therefore cannot
+  reclaim — that category of orphan. It is flagged, not silently missed: closing it fully would need
+  either object-listing/metadata support added to `StatementStorage` (a materially larger interface
+  than BH-017 asked for) or a durable tombstone recorded at the moment such a row is hard-deleted (a
+  behavioural change to that TTL sweep this change deliberately avoids).
+- **`ON DELETE CASCADE` on user deletion** hard-deletes at the database level, bypassing Hibernate
+  (and therefore the soft-delete) entirely — the same gap as above, for the same reason.
+
+Engineering input recorded when this was still open, now the basis for what got built:
 
 - **Deleting originals kills re-import.** `reimport()` re-parses the stored bytes and has no other
-  source. Any retention shorter than "forever" means re-import stops working for older statements,
-  and the UI would have to say so rather than fail.
+  source. That is exactly why the sweep waits 90 days rather than reclaiming on row-deletion — a
+  user who deletes a statement by mistake, or wants to re-run an import with different category
+  rules, keeps that window.
 - **Protected PDFs are stored still encrypted**, password deliberately never persisted — so an old
   statement whose password nobody remembers is *already* effectively un-re-importable. The
   practical retention window for those is shorter than the storage window regardless.
@@ -323,7 +355,9 @@ Engineering input for that later conversation, recorded now so it is not redisco
 - Content-addressed identity so sections and re-imports share one object.
 - ~~Deduplicating backfill of existing rows.~~ **Removed — see §5.0.** There was nothing to back
   fill, and the code was deleted rather than left untested on the statement path.
-- Reference-aware deletion (§3.2) — rows drop, objects are swept separately.
+- Reference-aware deletion (§3.2) — **BUILT, BH-017.** Rows drop, unchanged;
+  `StatementStorageSweepService` sweeps objects separately once every reference to them, across
+  both tables, has been gone for `app.statement-storage.sweep.retention-days` (90 default). See §6.
 - **One object class, one cleanup mechanism.** This line previously read "lifecycle rules for
   temporary import-session objects", which contradicted §3.2 and the implementation. There is no
   separate session-object namespace: `ContentAddress.of()` is the only key scheme
@@ -341,7 +375,7 @@ Engineering input for that later conversation, recorded now so it is not redisco
 - Import workflow changes
 - User-visible behaviour changes
 - Layout intelligence
-- Retention policy changes (§6)
+- ~~Retention policy changes (§6)~~ **Decided and built, BH-017 — see §6.**
 
 ## 8. Decisions recorded
 

@@ -335,6 +335,28 @@ app:
       # https, has a host) rather than passed through, because a typo here would otherwise surface
       # as a connection error at the first upload with nothing naming the variable.
       endpoint: ${R2_ENDPOINT:}
+    sweep:
+      # BH-017. StatementStorageSweepService reclaims objects no row in either statement_imports
+      # or import_sessions references, once they've been unreferenced for retention-days. No-ops
+      # (via Optional<StatementStorage>) with no provider configured, same as everything else in
+      # this migration -- these three settings only matter once provider is set above.
+      #
+      # Off under test for the same reason app.import.session-cleanup.enabled is: a background
+      # thread deleting R2 objects mid-test is exactly the cross-test pollution BH-058 was about.
+      # Tests call StatementStorageSweepService.sweep() directly.
+      enabled: ${STATEMENT_STORAGE_SWEEP_ENABLED:true}
+      # Sid's product decision: statements stay re-importable for ~90 days after every reference
+      # to them is gone. A floor of 24h is enforced in code regardless of what this is set to --
+      # see StatementStorageSweepService.MINIMUM_SAFETY_BUFFER.
+      retention-days: ${STATEMENT_STORAGE_SWEEP_RETENTION_DAYS:90}
+      # How many unreferenced-object candidates one run considers. Same reasoning as
+      # ImportSessionService.CLEANUP_BATCH_SIZE -- a backlog drains across runs rather than in one
+      # unbounded pass.
+      batch-size: ${STATEMENT_STORAGE_SWEEP_BATCH_SIZE:200}
+      # Hours, not minutes: unlike the 48h session TTL, nothing depends on this running promptly.
+      # An object sits at zero references for 90 days before it is even a candidate.
+      interval-ms: ${STATEMENT_STORAGE_SWEEP_INTERVAL_MS:21600000}
+      initial-delay-ms: ${STATEMENT_STORAGE_SWEEP_INITIAL_DELAY_MS:300000}
 
 # Backend error monitoring. Off unless SENTRY_DSN is set -- the same posture as every other
 # external integration here (RESEND_API_KEY, GOOGLE_APPLICATION_CREDENTIALS). See

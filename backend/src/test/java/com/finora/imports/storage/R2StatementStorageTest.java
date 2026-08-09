@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectResponse;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
@@ -179,6 +181,29 @@ class R2StatementStorageTest {
                 .thenThrow(s3ExceptionWithStatus(503));
 
         assertThatThrownBy(() -> storage.exists(ContentAddress.forContent(CONTENT)))
+                .isInstanceOf(StatementStorageException.class);
+    }
+
+    @Test
+    void deleteIssuesADeleteObjectRequestForTheGivenKey() {
+        when(client.deleteObject(any(DeleteObjectRequest.class)))
+                .thenReturn(DeleteObjectResponse.builder().build());
+
+        storage.delete("statements/a8/d3/a8d34f9.bin");
+
+        org.mockito.ArgumentCaptor<DeleteObjectRequest> captor =
+                org.mockito.ArgumentCaptor.forClass(DeleteObjectRequest.class);
+        verify(client).deleteObject(captor.capture());
+        assertThat(captor.getValue().bucket()).isEqualTo("finora-statements");
+        assertThat(captor.getValue().key()).isEqualTo("statements/a8/d3/a8d34f9.bin");
+    }
+
+    @Test
+    void aFailedDeleteThrowsRatherThanSilentlyLeavingTheObjectInPlace() {
+        when(client.deleteObject(any(DeleteObjectRequest.class)))
+                .thenThrow(s3ExceptionWithStatus(500));
+
+        assertThatThrownBy(() -> storage.delete("statements/a8/d3/a8d34f9.bin"))
                 .isInstanceOf(StatementStorageException.class);
     }
 }

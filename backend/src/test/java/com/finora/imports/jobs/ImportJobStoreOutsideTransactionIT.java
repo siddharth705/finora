@@ -81,6 +81,7 @@ class ImportJobStoreOutsideTransactionIT extends AbstractIntegrationTest {
 
         @Override public byte[] retrieve(ContentAddress address) { return new byte[0]; }
         @Override public boolean exists(ContentAddress address) { return true; }
+        @Override public void delete(String objectKey) { /* not exercised by this test */ }
     }
 
     @TestConfiguration
