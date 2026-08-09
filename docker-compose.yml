@@ -6,7 +6,15 @@ services:
       POSTGRES_USER: finora
       POSTGRES_PASSWORD: finora
     ports:
-      - "5432:5432"
+      # 127.0.0.1, not the bare "5432:5432" this used to be. Docker publishes a bare mapping on
+      # 0.0.0.0, so the previous form put a database holding whatever statements were used for
+      # testing on every interface of the machine, reachable with the finora/finora credentials
+      # three lines above -- on café wifi, a conference network, or any office LAN. Nothing here
+      # needs that: the backend container reaches Postgres over the compose network by service
+      # name (DB_HOST: postgres below), which does not involve a published port at all. This
+      # mapping exists purely so psql/DataGrip on the host can connect, and the host is where
+      # 127.0.0.1 already reaches.
+      - "127.0.0.1:5432:5432"
     volumes:
       - finora_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -45,6 +53,15 @@ services:
       # it (ProductionConfigValidator).
       GOOGLE_APPLICATION_CREDENTIALS: /app/.finora/firebase-service-account.json
     ports:
+      # Deliberately NOT narrowed to 127.0.0.1 the way postgres above was, and the asymmetry is
+      # the point. docs/engineering/mobile-setup.md tells you to point a real device at this port
+      # over your LAN IP (EXPO_PUBLIC_API_BASE_URL=http://192.168.1.42:8080), and the Android
+      # emulator reaches it via 10.0.2.2 -- both need a non-loopback bind. Postgres has no
+      # equivalent caller, which is what made it a free fix and this one a trade.
+      #
+      # So this port stays exposed, and it is exposed running the dev profile: Swagger is
+      # anonymous and forgotPassword returns live reset links in the response body. Treat the dev
+      # stack as untrusted on an untrusted network regardless of what is bound where.
       - "8080:8080"
     volumes:
       # BootstrapService (V33__bootstrap_admin.sql / SetupService) writes the one-time
