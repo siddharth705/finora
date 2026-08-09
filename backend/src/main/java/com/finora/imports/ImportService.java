@@ -39,6 +39,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -511,7 +512,11 @@ public class ImportService {
                     "The reviewed sections don't match what was staged for this import session -- try staging again.");
         }
 
-        List<ConfirmResponse> responses = new ArrayList<>();
+        // BH-041: persist every section FIRST, reconcile once, then summarise. See reconcileAcross
+        // for why that is both cheaper and slightly more correct than the per-section loop this
+        // replaces. Row-count validation stays in this first pass, so a mismatched section still
+        // rejects the whole request before anything is written -- the transaction is the same one.
+        List<PersistedSection> persisted = new ArrayList<>();
         for (int i = 0; i < request.sections().size(); i++) {
             SectionConfirm sectionConfirm = request.sections().get(i);
             StagedAccountSection stagedSection = stagedSections.get(i);
@@ -523,9 +528,16 @@ public class ImportService {
                     null, // this section's ConfirmRequest doesn't carry its own sessionId -- the session is claimed once, above, for the whole multi-account request
                     sectionConfirm.rows(), sectionConfirm.existingAccountId(), sectionConfirm.newAccount(),
                     sectionConfirm.statementOpeningBalance(), sectionConfirm.statementClosingBalance());
-            responses.add(confirm(userId, session.getFileName(), statementContentService.read(session), perAccountRequest, i,
+            persisted.add(persistSection(userId, session.getFileName(), statementContentService.read(session), perAccountRequest, i,
                     session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
                 session.getUnparseableSummaryJson()));
+        }
+
+        reconcileAcross(userId, persisted);
+
+        List<ConfirmResponse> responses = new ArrayList<>();
+        for (PersistedSection section : persisted) {
+            responses.add(summarise(userId, section));
         }
         return new MultiAccountConfirmResponse(responses);
     }
@@ -604,6 +616,69 @@ public class ImportService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request, Integer sourceSectionIndex,
+                                    String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson,
+                                    String unparseableSummaryJson) {
+        PersistedSection section = persistSection(userId, fileName, fileContent, request, sourceSectionIndex,
+                layoutMetadataJson, layoutFingerprint, activatedCapabilitiesJson, unparseableSummaryJson);
+        reconcileAcross(userId, List.of(section));
+        return summarise(userId, section);
+    }
+
+    /**
+     * BH-041. One reconciliation pass for a whole import, however many sections it had.
+     *
+     * <p>This used to run once per section, at user-wide scope, from inside each section's own
+     * confirm. Three sections therefore reconciled the user's entire transaction history three
+     * times: measured at +309 prepared statements, +136 query executions and +132 ms against a
+     * 200-row history, all of it repeating work the previous section had just done.
+     *
+     * <p>Two things had to be true before the passes could be collapsed into one, and both were
+     * checked rather than assumed:
+     *
+     * <ul>
+     *   <li><b>The per-section counts survive.</b> Each section writes its own
+     *       {@code StatementImport}, and {@link DuplicateDetector#tally} is a post-hoc read of
+     *       persisted flags scoped by that id — it does not care how many passes ran or when. So
+     *       {@code perAccount} keeps exactly the meaning it had, and no API changed.</li>
+     *   <li><b>Reconciling later is not reconciling less.</b> Every pass was already user-wide, so
+     *       the last one always saw every section. Running once after all of them are persisted
+     *       reaches the same final state.</li>
+     * </ul>
+     *
+     * <p>It also fixes an asymmetry nobody had reported: section 1 was summarised before section 2
+     * existed, so a transfer between two sections of the same statement was counted in section 2's
+     * {@code transfersIdentified} and not in section 1's. Both sides see it now.
+     *
+     * <p>The window spans every section's dates together, so a transfer whose legs sit in different
+     * sections is inside one candidate set.
+     */
+    private void reconcileAcross(UUID userId, List<PersistedSection> sections) {
+        if (sections.stream().noneMatch(s -> s.imported() > 0)) return;
+        LocalDate earliest = sections.stream().map(PersistedSection::minDate)
+                .filter(Objects::nonNull).min(LocalDate::compareTo).orElse(null);
+        LocalDate latest = sections.stream().map(PersistedSection::maxDate)
+                .filter(Objects::nonNull).max(LocalDate::compareTo).orElse(null);
+        reconciliationService.reconcileForImport(userId, earliest, latest);
+        // Same reasoning as TransactionService's write paths -- a fresh batch of imported
+        // transactions is exactly the kind of change that can newly complete (or newly break) a
+        // recurring pattern, and a MARK_SUBSCRIPTION rule match needs this to take effect
+        // immediately rather than waiting on the user to open the Recurring page. Hoisted here with
+        // reconciliation for the same reason: it was per-section, it is user-wide, and the 3-vs-1
+        // measurement counted its repeats too.
+        recurringService.detectForUser(userId);
+    }
+
+    /**
+     * Everything one section does up to the point reconciliation has to run: resolve the account,
+     * build and insert the rows, write the StatementImport, move the balance.
+     *
+     * <p>Split out of {@code confirm()} for BH-041 so a multi-section import can persist every
+     * section before any reconciliation happens. The counterpart is {@link #summarise}, and the two
+     * are not independently reorderable — see that method on why the BH-003 balance reversal has to
+     * travel with the tally.
+     */
+    private PersistedSection persistSection(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request,
+                                    Integer sourceSectionIndex,
                                     String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson,
                                     String unparseableSummaryJson) {
         long startedAtMs = System.currentTimeMillis();
@@ -877,19 +952,72 @@ public class ImportService {
             }
         }
 
+        // Counted HERE rather than after reconciliation, which is where it used to sit. Nothing
+        // between the two points creates merchants -- they are created while the rows above are
+        // built -- so the number is identical, and taking it before the shared pass is what keeps
+        // it attributable to THIS section instead of picking up merchants a later section learned.
+        long merchantsAfter = merchantRepository.countByUserId(userId);
+        int newMerchantsLearned = (int) Math.max(0, merchantsAfter - merchantsBefore);
+
+        return new PersistedSection(accountId, savedImport, saved, imported, skipped,
+                closingBalanceIsAuthoritative, balanceDecision, accountsCreated, productsCreated,
+                categoryTally, newMerchantsLearned, totalCredits, totalDebits,
+                request.statementOpeningBalance(), request.statementClosingBalance(),
+                minDate, maxDate, startedAtMs);
+    }
+
+    /**
+     * One section's share of an import, carried from {@link #persistSection} across the shared
+     * reconciliation pass to {@link #summarise}.
+     *
+     * <p>Exists because BH-041 put a step between persisting a section and reporting on it. Every
+     * field is a value the old single-pass method held as a local; nothing is recomputed on the far
+     * side, so the summary describes the section it came from rather than the import as a whole.
+     */
+    private record PersistedSection(
+            UUID accountId,
+            StatementImport savedImport,
+            List<Transaction> saved,
+            int imported,
+            int skipped,
+            boolean closingBalanceIsAuthoritative,
+            ClosingBalanceGuard.Decision balanceDecision,
+            List<String> accountsCreated,
+            Map<String, Integer> productsCreated,
+            Map<String, Integer> categoryTally,
+            int newMerchantsLearned,
+            BigDecimal totalCredits,
+            BigDecimal totalDebits,
+            BigDecimal statementOpeningBalance,
+            BigDecimal statementClosingBalance,
+            LocalDate minDate,
+            LocalDate maxDate,
+            long startedAtMs) {}
+
+    /**
+     * What one section reports once reconciliation has run: what it found among this section's own
+     * rows, the balance correction that follows from it, and the response.
+     *
+     * <p><b>The tally and the BH-003 reversal are one step, not two.</b> Reconciliation has just
+     * decided which of this section's rows are duplicates; the balance was moved by all of them.
+     * Reading the flags without reversing their contribution is the BH-003 bug exactly — a card
+     * balance that went 4000.00 to 3000.00 on a second import of the same file, with the rows that
+     * caused it hidden from the ledger view. Anything that reorders this method must keep the two
+     * together.
+     */
+    private ConfirmResponse summarise(UUID userId, PersistedSection section) {
+        UUID accountId = section.accountId();
+        boolean closingBalanceIsAuthoritative = section.closingBalanceIsAuthoritative();
+
         // Bug fix (v7->v8): this path never ran reconciliation, so imported transactions never
         // got flagged as internal transfers or duplicates the way manually-entered ones do. Now
-        // it does, and the summary reports exactly what reconciliation found among THIS batch.
+        // it does, and the summary reports exactly what reconciliation found among THIS batch --
+        // scoped by this section's own statement_import_id, which is what lets one shared pass
+        // still produce per-section numbers.
         int duplicatesDetected = 0;
         int transfersIdentified = 0;
-        if (imported > 0) {
-            reconciliationService.reconcileForUser(userId);
-            // Same reasoning as TransactionService's write paths -- a fresh batch of imported
-            // transactions is exactly the kind of change that can newly complete (or newly break)
-            // a recurring pattern, and a MARK_SUBSCRIPTION rule match needs this to take effect
-            // immediately rather than waiting on the user to open the Recurring page.
-            recurringService.detectForUser(userId);
-            DuplicateDetector.ReconciliationTally tally = duplicateDetector.tally(saved);
+        if (section.imported() > 0) {
+            DuplicateDetector.ReconciliationTally tally = duplicateDetector.tally(section.saved());
             duplicatesDetected = tally.duplicatesDetected();
             transfersIdentified = tally.transfersIdentified();
 
@@ -924,12 +1052,10 @@ public class ImportService {
             }
         }
 
-        long merchantsAfter = merchantRepository.countByUserId(userId);
-        int newMerchantsLearned = (int) Math.max(0, merchantsAfter - merchantsBefore);
-
+        ClosingBalanceGuard.Decision balanceDecision = section.balanceDecision();
         List<String> warnings = new ArrayList<>();
-        if (skipped > 0) {
-            warnings.add(skipped + " row(s) were left unchecked during review and were not imported.");
+        if (section.skipped() > 0) {
+            warnings.add(section.skipped() + " row(s) were left unchecked during review and were not imported.");
         }
         // Silence here was the actual harm in Bug 02: the balance was written whether or not it
         // agreed with the transactions, so there was never anything to notice. The wording says
@@ -950,12 +1076,13 @@ public class ImportService {
                 .map(AccountDto::from)
                 .orElse(null);
 
-        return new ConfirmResponse(imported, skipped, duplicatesDetected, transfersIdentified,
-                newMerchantsLearned, accountsCreated, productsCreated, categoryTally, warnings,
-                accountSnapshot, totalCredits, totalDebits,
-                request.statementOpeningBalance(), request.statementClosingBalance(),
-                minDate, maxDate,
-                System.currentTimeMillis() - startedAtMs,
+        return new ConfirmResponse(section.imported(), section.skipped(), duplicatesDetected, transfersIdentified,
+                section.newMerchantsLearned(), section.accountsCreated(), section.productsCreated(),
+                section.categoryTally(), warnings,
+                accountSnapshot, section.totalCredits(), section.totalDebits(),
+                section.statementOpeningBalance(), section.statementClosingBalance(),
+                section.minDate(), section.maxDate(),
+                System.currentTimeMillis() - section.startedAtMs(),
                 "CSV");
     }
 

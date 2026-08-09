@@ -71,4 +71,28 @@ public final class ReconciliationPolicy {
      * rather than amount closeness.
      */
     public static final BigDecimal TRANSFER_AMOUNT_TOLERANCE = BigDecimal.ONE;
+
+    /**
+     * How far either side of an import's own date range the candidate set has to reach for a
+     * windowed reconciliation to find everything an unbounded one would.
+     *
+     * <p><b>Derived, never typed as a number.</b> It is the widest of the three matching windows
+     * above, because a pass can only match a pair when BOTH rows are in the loaded set. Widen
+     * {@link #REFUND_WINDOW_DAYS} and this follows automatically; hard-coding 180 here would let
+     * the two drift and the failure would be silent — a refund that simply never matches.
+     *
+     * <p><b>Why symmetric.</b> The refund pass anchors on the INCOME row and looks backwards, so an
+     * imported purchase can be the target of a refund that is already in the ledger up to this many
+     * days <i>later</i> — normal whenever statements are imported out of order, which backfilling
+     * during onboarding does routinely. An asymmetric window (−180/+10) reads as sufficient and
+     * drops exactly those pairs.
+     *
+     * <p><b>What it guarantees.</b> Every pair involving at least one imported transaction. An
+     * imported row sits at some date D within [min, max]; its partner is at most this many days
+     * from D; so the partner is inside [min − W, max + W] and is loaded. What it deliberately does
+     * NOT do is re-evaluate pairs of two pre-existing rows that both fall outside the window —
+     * those were already evaluated when they were written.
+     */
+    public static final long CANDIDATE_WINDOW_DAYS =
+            Math.max(REFUND_WINDOW_DAYS, Math.max(DEFAULT_TRANSFER_DAY_WINDOW, OWN_ACCOUNT_MATCH_DAY_WINDOW));
 }
