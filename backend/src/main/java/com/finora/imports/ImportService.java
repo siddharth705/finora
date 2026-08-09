@@ -793,17 +793,31 @@ public class ImportService {
         statementImport.setUnparseableSummaryJson(unparseableSummaryJson);
         // Object storage first, then the row -- the ordering §5.1 of the migration doc requires. A
         // failure throws before anything is persisted, so a row can never point at an object that
-        // was never written. fileContent is still set: Phase 2 is a dual write, not a move.
+        // was never written.
         //
-        // Content-addressing is what makes this cheap for the two callers that duplicate bytes
-        // today -- confirmMultiSection() calls this once per account section with the same file,
-        // and confirmReimport() calls it again with an already-stored one. Both now resolve to the
-        // same object instead of writing another copy.
-        statementContentService.store(fileContent).ifPresent(address -> {
-            statementImport.setContentHash(address.hash());
-            statementImport.setObjectKey(address.key());
-        });
-        statementImport.setFileContent(fileContent);
+        // BH-025/BH-046: fileContent is set ONLY when store() came back empty (no provider
+        // configured -- the row stays legacy, read from fileContent exactly as before this fix).
+        // When storage IS configured, the object is the only copy; fileContent is left null
+        // instead of duplicated into BYTEA. This used to be an unconditional dual write,
+        // justified as temporary until a Phase 3 backfill + Phase 4 column drop. BH-046 found
+        // neither phase survived -- Phase 3 was deleted for having nothing to migrate, and Phase 4
+        // never got a trigger -- which turned "temporary" into "permanent", and BH-025 found the
+        // cost that permanence carries: confirmMultiSection() calls this once per account section
+        // with the same file, so a 3-section 9 MB statement was writing 27 MB of BYTEA on top of
+        // the already-deduplicated content-addressed object. See
+        // docs/engineering/statement-storage-migration.md §5.0 for the full history.
+        //
+        // Content-addressing is what makes the object-storage side of this cheap for the two
+        // callers that duplicate bytes today -- confirmMultiSection() calls this once per account
+        // section with the same file, and confirmReimport() calls it again with an
+        // already-stored one. Both resolve to the same object instead of writing another copy.
+        java.util.Optional<com.finora.imports.storage.ContentAddress> address = statementContentService.store(fileContent);
+        if (address.isPresent()) {
+            statementImport.setContentHash(address.get().hash());
+            statementImport.setObjectKey(address.get().key());
+        } else {
+            statementImport.setFileContent(fileContent);
+        }
         statementImport.setStatementPeriodStart(minDate);
         statementImport.setStatementPeriodEnd(maxDate);
         statementImport.setOpeningBalance(request.statementOpeningBalance());

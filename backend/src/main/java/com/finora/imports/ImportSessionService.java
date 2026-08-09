@@ -206,16 +206,22 @@ public class ImportSessionService {
      * doc's §5.1 requires. A failure here throws, so no session row is created; the reverse (a row
      * pointing at an object that was never written) cannot happen.
      *
-     * fileContent is still set regardless. Phase 2 is a dual write, not a move: until Phase 3 has
-     * backfilled and Phase 4 has dropped the column, the database copy is what makes an
-     * object-storage problem recoverable rather than terminal.
+     * BH-025/BH-046: fileContent is set ONLY when store() came back empty, i.e. no provider
+     * configured -- the session stays legacy, exactly as before this fix. When storage IS
+     * configured, fileContent is left null; the object is the only copy. This was previously an
+     * unconditional dual write, justified as temporary pending a Phase 3 backfill and a Phase 4
+     * column drop -- BH-046 found neither survived (Phase 3 was deleted for having nothing to
+     * migrate; Phase 4 never got a trigger), so the "temporary" duplication had become permanent.
+     * See docs/engineering/statement-storage-migration.md §5.0.
      */
     private void storeContent(ImportSession session, byte[] fileContent) {
-        statementContentService.store(fileContent).ifPresent(address -> {
-            session.setContentHash(address.hash());
-            session.setObjectKey(address.key());
-        });
-        session.setFileContent(fileContent);
+        java.util.Optional<com.finora.imports.storage.ContentAddress> address = statementContentService.store(fileContent);
+        if (address.isPresent()) {
+            session.setContentHash(address.get().hash());
+            session.setObjectKey(address.get().key());
+        } else {
+            session.setFileContent(fileContent);
+        }
     }
 
     private void applyDocumentContext(ImportSession session, DocumentContext documentContext) {

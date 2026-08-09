@@ -72,9 +72,15 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     // Deliberately NOT @Lob: on PostgreSQL, Hibernate maps @Lob byte[] to the `oid` large-object
     // type, but the V10 migration created a plain `bytea` column (simpler — no separate large
     // object storage/cleanup to manage). JdbcTypeCode(VARBINARY) is what actually matches `bytea`.
+    //
+    // Nullable as of V75 (BH-025/BH-046): null exactly when contentHash/objectKey are set --
+    // ImportService.persistSection writes bytes here only when statementContentService.store()
+    // came back empty (no provider configured). A row with an object address has its bytes in
+    // object storage only; StatementContentService.read is the one place that resolves either
+    // case back to bytes, mirroring StoredStatement's contract.
     @JdbcTypeCode(SqlTypes.VARBINARY)
     @Basic(fetch = FetchType.LAZY)
-    @Column(name = "file_content", nullable = false)
+    @Column(name = "file_content")
     private byte[] fileContent;
 
     @Column(name = "statement_period_start")

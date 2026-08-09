@@ -21,11 +21,29 @@ import java.util.Optional;
  * behaviour is byte-for-byte what it was before this class existed. That is what makes rolling the
  * migration back a config change rather than a deploy.
  *
- * <h2>Dual write, deliberately</h2>
- * A new upload writes its bytes to object storage AND still fills {@code file_content}. That
- * duplication is temporary and intentional: until Phase 3 has backfilled and Phase 4 has dropped
- * the column, the database copy is the thing that makes an object-storage problem recoverable
- * instead of terminal.
+ * <h2>No more dual write (BH-025 / BH-046)</h2>
+ * A new upload writes its bytes to object storage OR to {@code file_content}, never both. The
+ * caller (see {@code ImportService.persistSection}, {@code ImportSessionService.storeContent})
+ * checks whether {@link #store} returned a present {@link ContentAddress}: if so, the object is the
+ * only copy and {@code file_content} is left null; if {@link #store} came back empty (no provider
+ * configured), {@code file_content} is filled exactly as it always was.
+ *
+ * <p>This used to be an unconditional dual write, justified as temporary — "until Phase 3 has
+ * backfilled and Phase 4 has dropped the column, the database copy is what makes an object-storage
+ * problem recoverable instead of terminal." BH-046 found neither phase survived: Phase 3 was
+ * deleted outright (§5.0 of the migration doc — no production statements existed to back-fill), and
+ * Phase 4 was left with no trigger to fire it, so "temporary" had quietly become "permanent." BH-025
+ * found the concrete cost of that permanence: {@code confirmMultiSection()} persists one
+ * {@code StatementImport} row per detected account section, all sharing the same uploaded bytes, so
+ * a 3-section 9 MB statement was writing 27 MB into Postgres {@code BYTEA} on top of the one
+ * already-deduplicated content-addressed object. Skipping the database write once an address exists
+ * removes that multiplier rather than waiting for a backfill phase that was never coming.
+ *
+ * <p>{@code file_content} being null is therefore not a migration-in-progress artifact to be
+ * cleaned up later — it is the expected, permanent shape of any row created while a storage
+ * provider is configured. V75 relaxed both {@code file_content} columns to nullable for exactly this
+ * reason, with a check constraint enforcing that a row always has one of {@code file_content} or
+ * {@code object_key}.
  *
  * <h2>Ordering</h2>
  * {@link #store} is called before the row is persisted, so the only possible partial failure is an

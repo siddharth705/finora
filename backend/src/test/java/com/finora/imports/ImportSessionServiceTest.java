@@ -85,6 +85,78 @@ class ImportSessionServiceTest {
     }
 
     /**
+     * BH-025 / BH-046. {@code storeContent} used to call {@code session.setFileContent(...)}
+     * unconditionally right after {@code store().ifPresent(...)} recorded an address, so a
+     * session created while object storage is configured still duplicated its bytes into
+     * {@code file_content}. The fix: fill {@code file_content} only when {@code store()} came back
+     * empty (no provider configured -- this test's {@code service}, wired with an empty storage
+     * Optional in {@link #setUp}, is exactly that case and must keep behaving as before).
+     */
+    @Test
+    void createSession_whenNoStorageProviderConfigured_stillFillsFileContent_unchangedFromBeforeTheFix() {
+        byte[] fileBytes = {1, 2, 3};
+
+        ImportSession created = service.createSession(userId, "statement.csv", fileBytes,
+                List.of(sampleRow()), sampleDetected());
+
+        assertThat(created.getFileContent()).isEqualTo(fileBytes);
+        assertThat(created.getObjectKey()).isNull();
+        assertThat(created.getContentHash()).isNull();
+    }
+
+    /**
+     * The other half of BH-025 / BH-046: with a provider configured, {@code store()} returns a
+     * present address and {@code file_content} must be left null. Before the fix, this assertion
+     * on {@code getFileContent()} would have failed -- the unconditional
+     * {@code session.setFileContent(fileContent)} ran regardless of what {@code store()} returned.
+     */
+    @Test
+    void createSession_whenObjectStorageConfigured_recordsTheAddress_andLeavesFileContentNull() {
+        com.finora.imports.storage.StatementContentService storageBacked =
+                mock(com.finora.imports.storage.StatementContentService.class);
+        com.finora.imports.storage.ContentAddress address = new com.finora.imports.storage.ContentAddress(
+                "c".repeat(64), "statements/cc/cc/" + "c".repeat(64) + ".bin");
+        when(storageBacked.store(any())).thenReturn(Optional.of(address));
+        ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
+        ImportSessionService storageBackedService =
+                new ImportSessionService(importSessionRepository, objectMapper, storageBacked);
+
+        ImportSession created = storageBackedService.createSession(userId, "statement.csv",
+                new byte[]{1, 2, 3}, List.of(sampleRow()), sampleDetected());
+
+        assertThat(created.getFileContent()).isNull();
+        assertThat(created.getObjectKey()).isEqualTo(address.key());
+        assertThat(created.getContentHash()).isEqualTo(address.hash());
+    }
+
+    /**
+     * {@code createMultiSection} routes through the same {@code storeContent} as
+     * {@code createSession} -- confirmed separately since it is the path actually exercised by a
+     * multi-account BH-025 scenario (see {@code ImportServiceStorageDualWriteTest} for the
+     * corresponding {@code confirmMultiSection} coverage on the persisted-row side).
+     */
+    @Test
+    void createMultiSection_whenObjectStorageConfigured_alsoLeavesFileContentNull() {
+        com.finora.imports.storage.StatementContentService storageBacked =
+                mock(com.finora.imports.storage.StatementContentService.class);
+        com.finora.imports.storage.ContentAddress address = new com.finora.imports.storage.ContentAddress(
+                "d".repeat(64), "statements/dd/dd/" + "d".repeat(64) + ".bin");
+        when(storageBacked.store(any())).thenReturn(Optional.of(address));
+        ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
+        ImportSessionService storageBackedService =
+                new ImportSessionService(importSessionRepository, objectMapper, storageBacked);
+
+        var section = new com.finora.dto.ImportDto.StagedAccountSection(
+                sampleDetected(), List.of(sampleRow()), 1, 0, List.of());
+
+        ImportSession created = storageBackedService.createMultiSection(userId, "composite.pdf",
+                new byte[]{1, 2, 3}, List.of(section));
+
+        assertThat(created.getFileContent()).isNull();
+        assertThat(created.getObjectKey()).isEqualTo(address.key());
+    }
+
+    /**
      * BH-047. Creating a session performs no housekeeping at all -- asserted, not merely no longer
      * asserted against.
      *

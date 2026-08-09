@@ -180,12 +180,36 @@ upload ──► SHA-256 ──► store object ──► persist hash + key
 read   ──► fetch ────► SHA-256 ──────► compare ──► mismatch = StatementIntegrityException
 ```
 
-**Why `file_content` still exists.** Not redundancy for its own sake. Railway's container
-filesystem is **ephemeral**, and `FilesystemStatementStorage` is currently the only provider — so
-the BYTEA column is the only durable copy, and dropping it now would lose every statement on each
-deploy. Phase 4's precondition is therefore no longer "the backfill reports complete"; it is **a
-durable provider is configured and in use**. `V55`'s self-guard, which refuses to drop the column
-while any row lacks a content address, stays as the mechanical check.
+**Why `file_content` still exists, and why it is no longer always filled.** The column is not
+redundancy for its own sake — with nothing but object storage, Railway's container filesystem
+being **ephemeral** meant `FilesystemStatementStorage` (the only provider proven in production at
+the time) offered no durable copy at all, so the BYTEA column was the only durable copy and
+dropping it would have lost every statement on each deploy. That is still true; what changed is
+which cases actually write to it.
+
+BH-025 and BH-046 (2026-08-08 repo-wide bug hunt) found that the dual write itself had become a
+problem, not a stopgap: `confirmMultiSection()` persists one `StatementImport` row per detected
+account section, all sharing the same uploaded bytes, so a 3-section 9 MB statement wrote 27 MB of
+`BYTEA` on top of the one already-deduplicated content-addressed object (BH-025) — and there was no
+longer any phase left to end that duplication (BH-046: Phase 3 was deleted for having nothing to
+migrate, and Phase 4 never got a trigger, so "temporary until Phase 3/4" had quietly become
+permanent).
+
+As of **V75** (2026-08-09), `ImportService.persistSection` / `ImportSessionService.storeContent`
+write `file_content` **only when `StatementContentService.store()` returned empty** — i.e. no
+storage provider is configured, and the row is legacy exactly as it always was. When a provider
+**is** configured — filesystem or R2 — the stored object is the only copy and `file_content` is
+left `NULL`; `V75` relaxed both columns from `NOT NULL` to nullable and added a check constraint
+requiring at least one of `file_content` / `object_key` to be set. This is a real trade-off, not
+a free lunch: enabling `FilesystemStatementStorage` (documented above as a dev/test provider,
+backed by Railway's ephemeral container disk) now means `file_content` is skipped for those rows
+too, so **filesystem must never be the provider in an environment relying on statement durability**
+— only R2 (or another provider backed by durable storage) satisfies that once this fix is live. R2
+being unset in production today, this changes nothing about current production behavior; it changes
+what happens the day `STATEMENT_STORAGE_PROVIDER=r2` is actually set. Phase 4's precondition is
+therefore unaffected by this change: it is still **a durable provider is configured and in use**,
+and `V55`'s self-guard, which refuses to drop the column while any row lacks a content address,
+stays as the mechanical check.
 
 **R2 is implemented and inert.** `R2StatementStorage` speaks the S3 API through the AWS SDK, is
 selected by `app.statement-storage.provider=r2`, and does nothing at all until that is set — with
@@ -232,7 +256,7 @@ concrete provider.
 | Phase | Change | Reversible |
 |---|---|---|
 | **1 — BUILT** | `StatementStorage` + `ContentAddress` + `FilesystemStatementStorage`. Content-addressed, provider-selected, fully tested. | Yes — no storage change at all |
-| **2 — BUILT** | New uploads go to storage. Persist object key + content hash. Dual-write: `file_content` still filled. | Yes — old rows untouched |
+| **2 — BUILT, since revised** | New uploads go to storage. Persist object key + content hash. Originally dual-wrote `file_content` unconditionally; **V75 (2026-08-09, BH-025/BH-046) changed this to write `file_content` only when no provider is configured** — see the "Why `file_content` still exists" note above. | Yes — old rows untouched; toggling the provider still changes only new rows |
 | ~~**3 — backfill**~~ | ~~Backfill existing `BYTEA` into storage~~ — **REMOVED 2026-08-05, see §5.0** | n/a |
 | **4** | Drop `file_content`. Blocked on a durable provider — see §5.0. | **No** |
 
@@ -257,7 +281,12 @@ nothing" is checked rather than claimed.
 Phase 4 is its own change, its own migration, its own deploy — and only once a durable provider
 is configured and every row carries a key.
 
-### 5.1 Dual-write semantics
+### 5.1 Write ordering (not to be confused with the `file_content` dual write above)
+
+This section is about the ordering between the object-storage write and the row write, which is
+unchanged by V75 — it still always writes the object first. It is a separate question from
+*whether* `file_content` also gets filled, which §5.0 above now answers with "only when no
+provider is configured."
 
 The only acceptable ordering:
 
