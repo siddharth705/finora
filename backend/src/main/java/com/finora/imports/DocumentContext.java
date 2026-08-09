@@ -34,6 +34,8 @@ public class DocumentContext {
     private final List<CapabilityActivation> capabilities = new ArrayList<>();
     private final List<String> diagnostics = new java.util.ArrayList<>();
     private int pages;
+    // Null until acquisition records one -- see recordExtractedRuns.
+    private Integer extractedRuns;
     private int tables;
     // What failed to parse, as a reason/shape histogram -- a fact of this parse run exactly like
     // the header list or the capability activations, and recorded the same way. Never the rows
@@ -60,6 +62,39 @@ public class DocumentContext {
         for (String h : headerNames) {
             if (h != null && !h.isBlank() && !headers.contains(h)) headers.add(h);
         }
+    }
+
+    /**
+     * How many text runs acquisition produced for the whole document.
+     *
+     * <p>A COUNT, never the text. It exists so a later stage can tell "we read nothing because the
+     * pages carry no text" from "we read plenty and could not make a table of it" -- two failures
+     * that need completely different things from the user and were previously indistinguishable to
+     * them. Both produce zero transactions, so the distinction is not recoverable downstream and
+     * has to be carried from where it is known.
+     *
+     * <p>Deliberately not a threshold or a judgement. Zero is a fact about the document; anything
+     * above zero is left entirely to the existing rules, because no corpus evidence supports a
+     * non-zero cutoff -- the lowest density measured parses 58 rows correctly.
+     */
+    public void recordExtractedRuns(int runCount) {
+        this.extractedRuns = runCount;
+    }
+
+    /** Null when nothing recorded it, which is not the same as zero -- see hasNoExtractableText. */
+    public Integer extractedRuns() {
+        return extractedRuns;
+    }
+
+    /**
+     * True only when acquisition ran and found no text at all.
+     *
+     * <p>Returns false when the count was never recorded. That is the safe direction: an unrecorded
+     * count means nobody looked, and "nobody looked" must not present itself as "we looked and the
+     * document is an image".
+     */
+    public boolean hasNoExtractableText() {
+        return extractedRuns != null && extractedRuns == 0;
     }
 
     public void recordPages(int pageCount) {

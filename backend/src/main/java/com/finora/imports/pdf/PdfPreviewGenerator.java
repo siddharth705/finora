@@ -135,6 +135,9 @@ public class PdfPreviewGenerator {
     public PdfGenerationResult generateSectionsWithContext(UUID userId, String filename, byte[] fileBytes, String password) throws IOException {
         DocumentContext ctx = new DocumentContext("PDF", "PdfPreviewGenerator");
         List<PositionedText> positioned = textExtractor.extract(fileBytes, password);
+        // A count, never the text. Lets ExtractionCheck tell "the pages carry no text" from
+        // "we read plenty and could not make a table of it" -- see DocumentContext.
+        if (ctx != null) ctx.recordExtractedRuns(positioned.size());
         PdfTableLocator.LocatedDocument doc = tableLocator.locateAll(positioned, ctx);
         // Read from the positioned runs rather than from the located table: the summary grid has
         // its own column layout, so bucketing it against the TRANSACTION table's anchors shreds it
