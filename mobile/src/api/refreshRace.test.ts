@@ -187,6 +187,31 @@ describe('MOB-AUTH-01: concurrent refresh', () => {
     expect(stored === undefined || !consumed.has(stored) || stored === `R${consumed.size + 1}`).toBe(true);
   });
 
+  it('signs the session out when the refresh genuinely fails', async () => {
+    // The other half of check A: rotation working is only safe if a REJECTED rotation ends the
+    // session rather than leaving a dead token in storage for the next request to present again.
+    consumed.add('R1'); // the server has already retired this one, so presenting it is refused
+    secureStore.__store.set(REFRESH_TOKEN_KEY, 'R1');
+
+    await reject401().catch(() => {});
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(presented).toEqual(['R1']);
+    expect(secureStore.__store.get(REFRESH_TOKEN_KEY)).toBeUndefined();
+    expect(secureStore.__store.get(TOKEN_KEY)).toBeUndefined();
+  });
+
+  it('signs the session out when there is no refresh token at all', async () => {
+    // A 401 with nothing to rotate is an expired session, not a retryable error.
+    secureStore.__store.set(TOKEN_KEY, 'stale-access');
+
+    await reject401().catch(() => {});
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(presented).toEqual([]); // nothing was ever sent
+    expect(secureStore.__store.get(TOKEN_KEY)).toBeUndefined();
+  });
+
   it('writes the access token and the refresh token together or not at all', async () => {
     // They rotate as a pair; persisting one without the other strands a session that cannot recover.
     secureStore.__store.set(REFRESH_TOKEN_KEY, 'R1');

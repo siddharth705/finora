@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { authApi } from '../api/endpoints';
 import { setSessionCallbacks } from '../api/client';
 import { safeStorage } from '../lib/safeStorage';
@@ -39,6 +40,8 @@ const PHONE_VERIFIED_KEY = 'finora_phone_verified';
 const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  // Requires AuthProvider to sit inside QueryClientProvider, which App.tsx already arranges.
+  const queryClient = useQueryClient();
   const [bootstrapping, setBootstrapping] = useState(true);
   const [token, setToken] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
@@ -142,6 +145,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Clear local state first so the UI responds immediately -- the user expects to be signed out
     // whether or not the network call lands.
     clearLocalState();
+
+    /**
+     * Then the cache, and this is not housekeeping. The financial query keys carry no user
+     * identity -- ['dashboard-summary'], ['transactions'], ['accounts'] are the same keys for
+     * everybody -- and React Query serves cached data synchronously on mount before refetching.
+     * Leaving it populated means the next person to sign in on this device sees the PREVIOUS
+     * person's balances render first and then change. On a shared or handed-over phone that is a
+     * disclosure, and it is invisible to any test that only checks tokens.
+     *
+     * clear(), not a list of keys to remove: an allow-list goes stale the first time a screen adds
+     * a query, and the failure mode of forgetting one is leaking someone's money.
+     */
+    queryClient.clear();
     void (async () => {
       // Best-effort: revoke the refresh token server-side so it can't be reused even if someone
       // captured it. Read before removal, since removal would otherwise race this read.

@@ -1,5 +1,6 @@
 import { Text } from 'react-native';
 import { act, render, waitFor, type RenderAPI } from '@testing-library/react-native';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as SecureStore from 'expo-secure-store';
 import { AuthProvider, useAuth } from './AuthContext';
 import { authApi } from '../api/endpoints';
@@ -43,11 +44,17 @@ function Capture() {
 }
 
 function renderAuth(): RenderAPI {
+  // AuthProvider reads the QueryClient so logout can clear cached financial data -- see its own
+  // comment, and logoutCacheIsolation.test.tsx. App.tsx already nests it this way; wrapping here
+  // keeps the harness matching the real composition rather than testing a shape that never ships.
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
-    <AuthProvider>
-      <Probe />
-      <Capture />
-    </AuthProvider>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <Probe />
+        <Capture />
+      </AuthProvider>
+    </QueryClientProvider>
   );
 }
 
