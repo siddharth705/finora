@@ -60,7 +60,7 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
      * transaction ({@code ImportService.confirmSession} / {@code confirmMultiSection}), which is
      * what makes lazy safe here — the same precondition {@code StatementImport} already relies on.
      *
-     * <p>Nullable as of V75 (BH-025/BH-046): null exactly when contentHash/objectKey are set --
+     * <p>Nullable as of V76 (BH-025/BH-046): null exactly when contentHash/objectKey are set --
      * {@code ImportSessionService.storeContent} writes bytes here only when
      * {@code StatementContentService.store()} came back empty (no provider configured).
      */

@@ -41,7 +41,7 @@ import java.util.Optional;
  *
  * <p>{@code file_content} being null is therefore not a migration-in-progress artifact to be
  * cleaned up later — it is the expected, permanent shape of any row created while a storage
- * provider is configured. V75 relaxed both {@code file_content} columns to nullable for exactly this
+ * provider is configured. V76 relaxed both {@code file_content} columns to nullable for exactly this
  * reason, with a check constraint enforcing that a row always has one of {@code file_content} or
  * {@code object_key}.
  *

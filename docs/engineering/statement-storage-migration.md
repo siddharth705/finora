@@ -195,11 +195,11 @@ longer any phase left to end that duplication (BH-046: Phase 3 was deleted for h
 migrate, and Phase 4 never got a trigger, so "temporary until Phase 3/4" had quietly become
 permanent).
 
-As of **V75** (2026-08-09), `ImportService.persistSection` / `ImportSessionService.storeContent`
+As of **V76** (2026-08-09), `ImportService.persistSection` / `ImportSessionService.storeContent`
 write `file_content` **only when `StatementContentService.store()` returned empty** — i.e. no
 storage provider is configured, and the row is legacy exactly as it always was. When a provider
 **is** configured — filesystem or R2 — the stored object is the only copy and `file_content` is
-left `NULL`; `V75` relaxed both columns from `NOT NULL` to nullable and added a check constraint
+left `NULL`; `V76` relaxed both columns from `NOT NULL` to nullable and added a check constraint
 requiring at least one of `file_content` / `object_key` to be set. This is a real trade-off, not
 a free lunch: enabling `FilesystemStatementStorage` (documented above as a dev/test provider,
 backed by Railway's ephemeral container disk) now means `file_content` is skipped for those rows
@@ -256,7 +256,7 @@ concrete provider.
 | Phase | Change | Reversible |
 |---|---|---|
 | **1 — BUILT** | `StatementStorage` + `ContentAddress` + `FilesystemStatementStorage`. Content-addressed, provider-selected, fully tested. | Yes — no storage change at all |
-| **2 — BUILT, since revised** | New uploads go to storage. Persist object key + content hash. Originally dual-wrote `file_content` unconditionally; **V75 (2026-08-09, BH-025/BH-046) changed this to write `file_content` only when no provider is configured** — see the "Why `file_content` still exists" note above. | Yes — old rows untouched; toggling the provider still changes only new rows |
+| **2 — BUILT, since revised** | New uploads go to storage. Persist object key + content hash. Originally dual-wrote `file_content` unconditionally; **V76 (2026-08-09, BH-025/BH-046) changed this to write `file_content` only when no provider is configured** — see the "Why `file_content` still exists" note above. | Yes — old rows untouched; toggling the provider still changes only new rows |
 | ~~**3 — backfill**~~ | ~~Backfill existing `BYTEA` into storage~~ — **REMOVED 2026-08-05, see §5.0** | n/a |
 | **4** | Drop `file_content`. Blocked on a durable provider — see §5.0. | **No** |
 
@@ -284,7 +284,7 @@ is configured and every row carries a key.
 ### 5.1 Write ordering (not to be confused with the `file_content` dual write above)
 
 This section is about the ordering between the object-storage write and the row write, which is
-unchanged by V75 — it still always writes the object first. It is a separate question from
+unchanged by V76 — it still always writes the object first. It is a separate question from
 *whether* `file_content` also gets filled, which §5.0 above now answers with "only when no
 provider is configured."
 
