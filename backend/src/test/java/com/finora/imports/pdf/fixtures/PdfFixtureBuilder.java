@@ -84,6 +84,8 @@ import java.util.List;
  *   -&gt; buildSummaryWithOneTransactionalSectionSample, buildSummaryWithTwoTransactionalSectionsSample
  * PRINTED_ACTIVITY_WITH_ZERO_STAGED (the statement claims activity; nothing reached the ledger)
  *   -&gt; buildPrintedSummaryNoReadableTableSample
+ * SYNTHETIC GROUND TRUTH (a definition rendered to PDF, with expectations emitted independently)
+ *   -&gt; render(SyntheticStatementDefinition)
  * Never Lose Information (whole-document)
  *   -&gt; buildUnrecognizableDocumentSample
  * Composability (multiple already-evidenced capabilities firing together in one document)
@@ -946,6 +948,56 @@ public final class PdfFixtureBuilder {
                 .line("07-07-2026 / to clearing / 4000.00 / 41098.10");
 
         return render(List.of(page));
+    }
+
+    // ==================== SYNTHETIC GROUND TRUTH ====================
+
+    /**
+     * Renders a {@link SyntheticStatementDefinition}. The definition is the source; this consumes it.
+     *
+     * <p>The direction matters and is the whole point of the arrangement. This method may not be
+     * asked what it drew, and the ground-truth document may not be built from its output: an
+     * expected value derived from the generator would be wrong in exactly the same way as a
+     * generator defect, and the comparison would pass while proving nothing. Both artefacts descend
+     * from the definition; neither descends from the other.
+     *
+     * <p>Deliberately plain. A ledger heading and dated rows, nothing that exercises a capability --
+     * this fixture exists to test the ground-truth machinery, and a layout that also stressed the
+     * parser would make a failure ambiguous between the two.
+     */
+    public static byte[] render(SyntheticStatementDefinition definition) throws IOException {
+        float[] col = {LEFT_MARGIN, 130f, 300f, 380f, 460f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Synthetic Financial Institution");
+        page.line("Document " + definition.documentId());
+
+        for (SyntheticStatementDefinition.ExpectedEntity entity : definition.entities()) {
+            if (entity.presence() == SyntheticStatementDefinition.Presence.ABSENT) continue;
+            page.blankLine();
+            page.line(bannerFor(entity));
+            page.row(col, "Date", "Description", "Withdrawals", "Deposits", "Balance");
+            for (SyntheticStatementDefinition.Row row : entity.rows()) {
+                String amount = row.amount().toPlainString();
+                page.row(col, row.date().format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy")),
+                        row.description(),
+                        row.credit() ? "" : amount,
+                        row.credit() ? amount : "",
+                        "");
+            }
+        }
+        return render(List.of(page));
+    }
+
+    /** A section banner the locator already recognises, so the definition's entities become the
+     *  document's sections without this fixture needing a capability of its own. */
+    private static String bannerFor(SyntheticStatementDefinition.ExpectedEntity entity) {
+        String number = entity.accountNumberMasked() == null ? "90000000000001"
+                : entity.accountNumberMasked().replaceAll("[^0-9]", "") + "0000000001";
+        return switch (entity.product()) {
+            case "FIXED_DEPOSIT", "RECURRING_DEPOSIT" -> "DEPOSIT - " + number;
+            default -> "SAVINGS ACCOUNT  - " + number;
+        };
     }
 
     // ==================== Never Lose Information (whole-document) ====================
