@@ -1517,3 +1517,66 @@ newest, with an explaining `last_error`.
   the smoke job, which is what stops the two contending for one Postgres container and one set of
   ports.
 - All CI guard scripts pass.
+
+---
+
+## Batch 4 (2026-08-09)
+
+| ID | What changed |
+|---|---|
+| BH-027 | `POST /api/v1/transactions/{id}/not-duplicate`. The escape hatch existed and was reachable from exactly one screen. |
+| BH-055 | `DuplicateDetector.tally` scopes by `statement_import_id` instead of building an `IN` clause with one UUID per imported row. |
+| BH-056 | `clearReconciliationPointersTo` batches its writes and uses a `Set` for the membership test it ran per candidate, three times over. |
+| BH-057 | `bulkDelete` and `bulkRecategorize` fetch their id list in one query instead of up to 500 `findById` calls. |
+
+### BH-027 is a correctness fix, not a convenience
+
+Worth restating because the finding is filed under a modest heading. The duplicate pass groups on
+account, date, amount and description and suppresses every member of a group but the earliest —
+from **income, expenses, category spend, budgets and every report**. `Account.balance` counts the
+row regardless, because a flagged duplicate is still a real ledger row.
+
+So a user who entered two identical transactions by hand — a commute, a round of coffees, a split
+bill paid twice — had the second silently excluded, the ledger and the dashboard permanently
+disagreeing by that amount, and no affordance anywhere to say otherwise.
+`notDuplicateConfirmedAt` was writable from one place: `ImportService.confirm`, reachable only from
+the import review screen.
+
+The endpoint clears the pointer as well as stamping the flag. Stamping alone would stop the *next*
+pass re-flagging the row while leaving it excluded right now, which is not what the user asked for.
+
+### What I did NOT do, and why
+
+**BH-041 remains open, including the part of it that looked easy.** `confirmMultiSection` runs
+`reconcileForUser` + `detectForUser` once *per section*, so a three-section composite statement
+makes six full-history passes where one would do. Deduplicating that is not the mechanical change
+it appears to be: each section's `ConfirmResponse` reports `duplicatesDetected` and
+`transfersIdentified`, and those are computed from `DuplicateDetector.tally` **after**
+reconciliation has run. Move reconciliation to the end and every per-section response reports
+zero — a visible API change to the import summary, traded for latency on a rare path. Not a call
+to make silently inside a performance fix.
+
+The larger version of BH-041 — getting reconciliation off the request thread entirely — has the
+same shape at a larger scale, and a second problem besides: bounding the scan by date is tempting
+(all three passes *are* date-bounded) but it silently changes which rows get matched if the window
+is wrong, and it gives up the self-healing property the full pass currently has. Both need a
+decision and a measurement, not a patch.
+
+### A note on the four tests that broke
+
+`TransactionServiceTest`'s bulk cases failed on BH-057 — not because behaviour changed, but because
+they stub `findById` per id and the service now issues one `findAllById`. That is a test pinned to
+the implementation, and re-pinning it to the new implementation would only move the problem, so the
+fixture answers `findAllById` by delegating to whatever `findById` is stubbed with. Every existing
+test keeps its own setup and none had to be rewritten.
+
+One of them, `bulkDelete_stopsAtFirstTransactionNotOwnedByCaller`, asserted only
+`isInstanceOf(ApiException.class)` — which would have passed just as happily on a 404 from an empty
+bulk fetch as on the 403 it means. It now asserts the status.
+
+### Verification
+
+- Backend **1790 tests, 0 failures, 0 errors, BUILD SUCCESS**.
+- New `NotDuplicateConfirmationIT`: four cases against real Postgres — the confirmation survives a
+  later reconciliation pass, a third genuinely accidental copy is still flagged, the account balance
+  does not move (the flag governed reports, never the ledger), and ownership is enforced.

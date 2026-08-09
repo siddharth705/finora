@@ -98,6 +98,23 @@ class TransactionServiceTest {
         // already register their own more specific when(accountRepository.findById(accountId))
         // stub for their own known id, which Mockito matches ahead of this any()-matcher fallback.
         when(accountRepository.findById(any())).thenReturn(Optional.of(account(UUID.randomUUID(), Account.Type.SAVINGS, BigDecimal.ZERO)));
+        // BH-057: the bulk paths fetch their whole id list in one query now instead of one
+        // findById per id. Every test below stubs findById, and none of them care HOW the rows are
+        // fetched -- what they assert is that the review flag is cleared on each, that learning is
+        // queued per row, that recurring detection runs once for the batch.
+        //
+        // So this answers findAllById by delegating to whatever findById is stubbed with, rather
+        // than making each test restate its fixture in a second form. A test that had to be
+        // rewritten because a service swapped one query shape for an equivalent one is a test
+        // pinned to the implementation, and re-pinning it to the new implementation would just
+        // move the problem.
+        when(transactionRepository.findAllById(any())).thenAnswer(invocation -> {
+            List<Transaction> found = new java.util.ArrayList<>();
+            for (UUID id : invocation.<Iterable<UUID>>getArgument(0)) {
+                transactionRepository.findById(id).ifPresent(found::add);
+            }
+            return found;
+        });
     }
 
     private Transaction ownedTransaction(UUID id, UUID owner) {
@@ -426,8 +443,15 @@ class TransactionServiceTest {
         when(transactionRepository.findById(ownedId)).thenReturn(Optional.of(ownedTransaction(ownedId, userId)));
         when(transactionRepository.findById(notOwnedId)).thenReturn(Optional.of(ownedTransaction(notOwnedId, otherUserId)));
 
+        // The STATUS, not merely that something was thrown. BH-057 moved this path from a findById
+        // per id to one bulk fetch, and a bulk fetch that came back empty would also throw here --
+        // as 404, for a row that exists and belongs to someone else. Asserting the class alone
+        // cannot tell the two apart, and "not found" for another user's transaction is both the
+        // wrong answer and a worse one.
         assertThatThrownBy(() -> transactionService.bulkDelete(userId, List.of(ownedId, notOwnedId)))
-                .isInstanceOf(ApiException.class);
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getStatus())
+                        .isEqualTo(org.springframework.http.HttpStatus.FORBIDDEN));
     }
 
     // --- Account balance maintenance (previously: Account.balance was never touched by any

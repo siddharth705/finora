@@ -109,8 +109,21 @@ public class DuplicateDetector {
      *  vs. internal transfers. Re-fetches by ID rather than trusting in-memory copies, since
      *  reconciliation mutates rows via its own repository calls. */
     public ReconciliationTally tally(List<Transaction> savedBatch) {
-        List<Transaction> reconciled = transactionRepository.findAllById(
-                savedBatch.stream().map(Transaction::getId).toList());
+        if (savedBatch.isEmpty()) return new ReconciliationTally(0, 0, List.of());
+        // BH-055. This built one IN clause per imported row -- 5,000 UUIDs for a large statement --
+        // to re-read a set the database can identify by one indexed column. Every row in the batch
+        // belongs to the statement import that was just created, which is what makes the narrower
+        // query equivalent rather than merely similar.
+        //
+        // The re-read itself stays: reconciliation mutates these rows through its own repository
+        // calls, so the in-memory copies this was handed are not what to count.
+        UUID statementImportId = savedBatch.get(0).getStatementImportId();
+        List<Transaction> reconciled = statementImportId == null
+                // No statement import to scope by -- only reachable from a caller that inserted
+                // rows without one. Falls back to the id list rather than silently counting
+                // nothing, which would report a clean import for one that flagged duplicates.
+                ? transactionRepository.findAllById(savedBatch.stream().map(Transaction::getId).toList())
+                : transactionRepository.findByStatementImportId(statementImportId);
         List<Transaction> duplicates = reconciled.stream()
                 .filter(t -> t.getIsDuplicateOf() != null).toList();
         int transfersIdentified = (int) reconciled.stream().filter(Transaction::isTransfer).count();
