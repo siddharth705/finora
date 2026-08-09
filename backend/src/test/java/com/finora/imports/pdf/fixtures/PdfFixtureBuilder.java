@@ -1000,6 +1000,18 @@ public final class PdfFixtureBuilder {
         };
     }
 
+    /**
+     * The same definition, as a genuinely scanned document: rendered to images with no text layer.
+     *
+     * <p>Deliberately the SAME definition that produces the native fixture and the ground-truth
+     * document. That is what makes a later comparison meaningful -- native acquisition and
+     * recognition can both be judged against one declaration, rather than each against whatever the
+     * other produced. See {@link ScannedPdfFixture} for why the result is byte-reproducible.
+     */
+    public static byte[] renderScanned(SyntheticStatementDefinition definition) throws IOException {
+        return ScannedPdfFixture.scan(render(definition));
+    }
+
     // ==================== Never Lose Information (whole-document) ====================
 
     /**
