@@ -64,6 +64,20 @@ public class TransactionController {
 
     /** Full edit — the Transactions page's Edit action. See TransactionDto.UpdateRequest for
      *  exactly which fields this covers (everything except which account it belongs to). */
+    /**
+     * BH-027. "No, these really are two separate transactions."
+     *
+     * <p>POST rather than PATCH: this records a decision the user made, it does not edit a field
+     * they chose the value of. The response carries the transaction as it now stands so the row
+     * can be re-rendered without a refetch.
+     */
+    @PostMapping("/{id}/not-duplicate")
+    public ResponseEntity<ApiResponse<TransactionDto>> confirmNotDuplicate(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                transactionService.confirmNotDuplicate(currentUser.id(), id),
+                "Kept as a separate transaction"));
+    }
+
     @PutMapping("/{id}")
     public ResponseEntity<ApiResponse<TransactionDto>> update(
             @PathVariable UUID id, @Valid @RequestBody TransactionDto.UpdateRequest request) {
