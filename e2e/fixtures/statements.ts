@@ -91,3 +91,89 @@ export function manyMerchants(n: number, startDate = '2026-05-01'): Row[] {
     };
   });
 }
+
+/**
+ * A real, parseable PDF whose column heading is printed across TWO visual lines.
+ *
+ * Built here rather than committed, for the same reason every other fixture in this file is: a
+ * binary nobody can read is a fixture nobody can check. It is assembled by hand because the e2e
+ * workspace has no PDF library and this needs no new dependency to justify — the whole file is a
+ * catalog, one page, one font and one uncompressed content stream of positioned `Tj` calls, which
+ * is exactly what a bank's own generator emits and exactly what the extractor reads back.
+ *
+ * The layout is the point. Neither line is a header on its own:
+ *
+ *   - the UPPER line carries the column names and no date word at all;
+ *   - the LOWER line carries "Date" but only two recognised names across seven cells, which is
+ *     under the density the engine requires to tell a heading from a sentence.
+ *
+ * Read one line at a time, this table is invisible and the import succeeds with nothing in it —
+ * the failure a real HDFC statement shipped. Read as one heading, it yields "Txn Date",
+ * "Transaction Remarks", "Withdrawal Amt" and "Deposit Amt", and its rows stage as transactions.
+ *
+ * PDF user space puts the origin at the BOTTOM-left with y increasing upward, so rows are laid out
+ * by DECREASING y — the 9pt gap between the two heading lines is what makes them one heading, and
+ * the 20pt gap to the first transaction is what keeps that transaction out of it.
+ */
+export function wrappedHeaderPdf(): Buffer {
+  const COLUMNS = [56, 120, 180, 300, 370, 440, 510];
+  const upper = ['Txn', 'Cheque', 'Transaction', 'Withdrawal', 'Deposit', 'Closing', 'Value'];
+  const lower = ['Date', 'No.', 'Remarks', 'Amt', 'Amt', 'Bal', 'Ref'];
+  const rows = [
+    ['12/01/2026', '000123', 'UPI PAYMENT GROCER', '1,250.00', '', '8,750.00', 'R001'],
+    ['14/01/2026', '000124', 'CARD PAYMENT FUEL', '2,000.00', '', '6,750.00', 'R002'],
+    ['16/01/2026', '000125', 'SALARY CREDIT', '', '45,000.00', '51,750.00', 'R003'],
+    ['18/01/2026', '000126', 'ATM WITHDRAWAL', '500.00', '', '51,250.00', 'R004'],
+  ];
+
+  const cells: string[] = [];
+  const line = (values: string[], y: number) =>
+    values.forEach((v, i) => {
+      if (v) cells.push(`BT /F1 9 Tf ${COLUMNS[i]} ${y} Td (${pdfEscape(v)}) Tj ET`);
+    });
+
+  line(upper, 770);
+  line(lower, 761); // 9pt below: a wrapped heading's second line, not the next row
+  rows.forEach((r, i) => line(r, 741 - i * 20)); // 20pt apart: unmistakably separate rows
+
+  return assemblePdf(cells.join('\n'));
+}
+
+/** `(`, `)` and `\` end or escape a PDF string literal, so a description containing one would
+ *  truncate the content stream and produce a file that is corrupt in a way that looks like a
+ *  parser bug. */
+function pdfEscape(text: string): string {
+  return text.replace(/([\\()])/g, '\\$1');
+}
+
+/**
+ * The smallest valid PDF that holds one page of positioned text.
+ *
+ * The cross-reference table is computed from real byte offsets rather than faked. Readers vary in
+ * how much they will repair, and a fixture that only works because the extractor happens to be
+ * forgiving is a fixture that will fail for a reason that has nothing to do with the test.
+ */
+function assemblePdf(contentStream: string): Buffer {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] '
+      + '/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    `<< /Length ${Buffer.byteLength(contentStream, 'latin1')} >>\nstream\n${contentStream}\nendstream`,
+  ];
+
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  objects.forEach((body, i) => {
+    offsets.push(Buffer.byteLength(pdf, 'latin1'));
+    pdf += `${i + 1} 0 obj\n${body}\nendobj\n`;
+  });
+
+  const startxref = Buffer.byteLength(pdf, 'latin1');
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  offsets.forEach((o) => { pdf += `${String(o).padStart(10, '0')} 00000 n \n`; });
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${startxref}\n%%EOF\n`;
+
+  return Buffer.from(pdf, 'latin1');
+}
