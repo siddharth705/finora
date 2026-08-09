@@ -108,8 +108,22 @@ public final class OcrScorecardEmitter {
             case "drifted-column" -> StubEngines.driftsValueColumn(sourcePdf, 380f, 80f);
             case "blind" -> StubEngines.blind();
             case "tesseract" -> new TesseractEngine();
+            // The same engine, with word-level output assembled into phrase-level runs. Registered
+            // beside the raw one so the scorecard shows what assembly changed rather than asserting it.
+            case "tesseract-assembled" -> assembling(new TesseractEngine());
             default -> throw new IllegalArgumentException("no such engine: " + name
-                    + " (available: ceiling, misread-amount, drifted-column, blind, tesseract)");
+                    + " (available: ceiling, misread-amount, drifted-column, blind, tesseract, tesseract-assembled)");
+        };
+    }
+
+    /** An engine whose runs are grouped into phrases before the parser sees them. */
+    private static OcrEngine assembling(OcrEngine engine) {
+        return new OcrEngine() {
+            @Override public String name() { return engine.name() + "-assembled"; }
+            @Override public List<OcrEngine.RecognisedText> recognise(byte[] pdf, int dpi)
+                    throws java.io.IOException {
+                return RunAssembler.assemble(engine.recognise(pdf, dpi));
+            }
         };
     }
 

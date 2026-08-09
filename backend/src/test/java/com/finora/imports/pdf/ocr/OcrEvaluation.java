@@ -43,6 +43,22 @@ public final class OcrEvaluation {
 
     private OcrEvaluation() {}
 
+    /**
+     * The resolution OCR is evaluated at, and the one a production acquirer would have to use.
+     *
+     * <p>Not a preference. Swept over ten statement layouts at both resolutions, 150 DPI never
+     * exceeds seven of ten on ledger equivalence at ANY assembly threshold, while 300 DPI reaches
+     * nine or ten across a broad band. The three layouts that fail at 150 fail for every threshold
+     * tried, so the limit is the pixels rather than the grouping -- 9pt text at 150 DPI is about
+     * nineteen pixels tall, and the characters that decide a financial value are the ones that go
+     * first.
+     *
+     * <p>{@link ScannedPdfFixture#DEFAULT_DPI} stays at 150 deliberately: it describes what a
+     * scanner produces, which is the input OCR has to cope with, not the resolution OCR should
+     * rasterise at. The two numbers answer different questions and should not be shared.
+     */
+    public static final int OCR_DPI = 300;
+
     /** Everything one engine produced for one document, including what it could not report. */
     public record Observation(String engine, String json, int runsRecognised, Float meanConfidence,
                               List<PositionedText> recognised) {}

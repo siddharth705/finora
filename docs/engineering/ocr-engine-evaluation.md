@@ -192,3 +192,95 @@ PaddleOCR is still not justified. The defect found here is not one a different r
 avoid — word-level output is the norm for OCR engines, so PaddleOCR would meet the same parser
 contract and most likely the same failure. Swapping engines to escape a segmentation mismatch would
 be treating the wrong layer.
+
+---
+
+# OCR-3B — run assembly
+
+The OCR-3A verdict was "viable, not yet sufficient: the blocker is the run-segmentation contract,
+not recognition quality". This closes that gap, and turned up two defects rather than one.
+
+## Defect 1 — the two sides did not report the same y
+
+PDFBox's `getYDirAdj` is the **baseline**, at the bottom of the text. Tesseract's `top` is the top
+of the ink box. Nothing reconciled them, so every recognised row sat one line-height above where the
+same row sits natively.
+
+Measured across nine fixtures and 368 matched runs, the offset is **6.27–6.54pt** against a median
+run height of 6.48–6.72 — one text height, consistently. The adapter now reports `top + height`.
+
+This alone took ledger equivalence from 5/8 layouts to 6/8, and fixed `offset column anchors`
+outright (0 rows → 3, matching native). It was invisible on the evaluation fixture because a uniform
+offset preserves relative structure; it only appeared when comparing against native geometry.
+
+## Defect 2 — word-level runs, and what a threshold can and cannot do
+
+`RunAssembler` groups words into phrases by line, joining while the horizontal gap stays below
+`JOIN_WITHIN × median run height`. Confidence of a merged phrase is the **minimum** of its parts —
+averaging would let one shaky digit disappear into a long confident description.
+
+The threshold was swept against ledger equivalence over ten layouts at both resolutions:
+
+| threshold | 150 DPI | 300 DPI |
+|---|---|---|
+| 0.55x | 4/10 | 8/10 |
+| 0.58x | 7/10 | 9/10 |
+| **0.64x** | 7/10 | **10/10** |
+| **0.70x–1.10x** | 7/10 | **9/10** ← broad plateau |
+| 1.25x | 5/10 | 8/10 |
+| 1.50x | 5/10 | 8/10 |
+
+10/10 is reachable at 0.64x **and only there**. A constant that must land on one point to work
+against ten documents is a fit to those ten, and the first statement in a different font moves the
+point out from under it. **0.85x** sits in the middle of the plateau instead, where a quarter either
+way changes nothing.
+
+An estimate derived from the document's own space width — the median of each line's smallest gap —
+was tried in its place and behaved no better (10/10 at 1.3x alone, 9/10 across 1.5x–2.5x), so the
+simpler measure stayed.
+
+## The finding that outranks the threshold — 300 DPI
+
+**At 150 DPI, ledger equivalence never exceeds 7 of 10 at any threshold tested.** The same three
+layouts fail for every value, so the limit is pixels rather than grouping: 9pt text at 150 DPI is
+about 19 pixels tall, and the characters that decide a financial value go first.
+
+So `OcrEvaluation.OCR_DPI = 300`, and a production acquirer will have to rasterise there.
+`ScannedPdfFixture.DEFAULT_DPI` deliberately stays at 150 — it describes what a *scanner* produces,
+which is the input OCR must cope with, not the resolution OCR should render at. Two different
+questions; sharing one constant would have hidden this.
+
+## Result
+
+| scenario | raw Tesseract | assembled |
+|---|---|---|
+| baseline | PASS | PASS |
+| wrong-amount mutation | FAIL, as required | FAIL, as required |
+| wrong-direction mutation | FAIL, as required | FAIL, as required |
+| multi-page | **FAIL** — `11.00` read as `111.00` | **PASS** |
+
+Stub calibration is unchanged: a flawless read still passes, and a one-digit misread, a one-column
+drift and a blind engine all still fail. Assembly fixed the contract without blinding the ruler.
+
+Seven of the eight repository statement layouts now read the same ledger through OCR as through
+native extraction, asserted directly in `TesseractRunAssemblyTest`.
+
+## Known limitation — `Dr`/`Cr` suffixes
+
+`buildDrCrSuffixAmountColumnSample` prints amounts as `37.94 Dr`. PDFBox emits that as one run; a
+word-level engine emits two, and whether they rejoin depends on a gap that is not reliably smaller
+than the gap to the next column. No value of `JOIN_WITHIN` fixes it without costing others.
+
+It is **not** bought back with vocabulary. Teaching the assembler that `Dr` and `Cr` belong to the
+amount before them would put statement terminology inside a geometric component — the boundary
+`PdfTableLocator` already refuses to cross. A component that knows what a debit is cannot be reused
+for a document that does not have one.
+
+The limitation is asserted rather than omitted, so a change that fixes it fails the test and gets
+noticed instead of passing quietly.
+
+## What remains before production
+
+Assembly and DPI are settled; routing is not. `DocumentTextAcquirer` still has no OCR
+implementation, nothing decides when to reach for one, and `NATIVE_PLUS_OCR` remains unbuilt. Those
+are OCR-4, and they now have measured behaviour to be designed against.
