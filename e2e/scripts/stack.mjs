@@ -126,11 +126,18 @@ async function startBackend() {
       // stop the run partway through every time, regardless of whether the product works. Raised
       // here and nowhere else: these are the app's defence against credential stuffing, spam
       // registration and unbounded import_sessions growth, and this is a throwaway stack on
-      // localhost. The negative phase still asserts a limit trips, against whatever is configured.
+      // localhost. See the BH-050 note below on the one that is
+      // deliberately left alone.
       RATE_LIMIT_REGISTER_MAX: '10000',
       RATE_LIMIT_LOGIN_MAX: '10000',
       RATE_LIMIT_IMPORT_STAGE_MAX: '10000',
-      RATE_LIMIT_FORGOT_PASSWORD_MAX: '10000',
+      // BH-050: forgot-password is deliberately NOT raised, and must stay that way. The
+      // negative phase asserts that rate limiting is actually ENFORCED, and it needs one
+      // endpoint whose ceiling it can reach -- otherwise its assertion is unreachable and
+      // the test proves nothing. That is precisely what had happened: this script raised
+      // all six while ci.yml raised three, the test hammered /auth/login 40 times against a
+      // ceiling of 10000, and it had never once asserted anything in either environment.
+      // Nothing else in the suite spends this budget.
       RATE_LIMIT_PASSWORD_CHANGE_MAX: '10000',
       RATE_LIMIT_RESET_PASSWORD_MAX: '10000',
     },
