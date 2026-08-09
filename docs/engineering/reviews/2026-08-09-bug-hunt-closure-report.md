@@ -20,11 +20,10 @@ that never earned a BH number.
 
 | Disposition | Count | Meaning |
 |---|---:|---|
-| **CLOSED — VERIFIED** | 9 | The broken behaviour was independently demonstrated, then shown to be gone |
+| **CLOSED — VERIFIED** | 10 | The broken behaviour was independently demonstrated, then shown to be gone |
 | **CLOSED — REVIEWED** | 22 | Root cause established and fixed, suite green, but the break was never demonstrated |
 | **OPEN** | 14 | Confirmed issue, remediation outstanding |
 | **DEFERRED — DECISION REQUIRED** | 2 | Behaviour or product semantics need an explicit decision |
-| **DEPLOYMENT VERIFICATION REQUIRED** | 1 | Cannot be closed from the repository alone |
 | **NEEDS REPRODUCTION** | 2 | Confirmed by inspection; deliberately not closed without a repro |
 | **CANNOT REPRODUCE** | 1 | Conditions attempted and recorded |
 | **ACCEPTED** | 6 | Real, understood, deliberately not being changed |
@@ -38,7 +37,8 @@ that never earned a BH number.
 - **CLOSED — VERIFIED** requires that the defect was *demonstrated* — the broken behaviour observed
   directly (by executing the repository's own compiled classes, or by a test that failed before the
   fix), and then observed to be gone. Five were proven the first way, four by mutation testing the
-  regression test after the fix. Nine items clear this bar.
+  regression test after the fix, and one by probing the running production deployment. Ten items
+  clear this bar.
 - **CLOSED — REVIEWED** means the root cause was established, the fix is understood, a regression
   test exists in most cases, and the full suite is green — but nobody ever watched the bug happen.
   Twenty-two items sit here. Each row in §2.2 states what specifically is missing.
@@ -56,7 +56,7 @@ demonstrating the break.
 Every row answers: original behaviour → reproducible? → root cause → what changed → regression test
 → **demonstrated to fail against the break?** → verified → unverified.
 
-### 2.1 CLOSED — VERIFIED (9)
+### 2.1 CLOSED — VERIFIED (10)
 
 Demonstrated against the broken behaviour.
 
@@ -70,12 +70,13 @@ Demonstrated against the broken behaviour.
 | **BH-047** | Expired-session sweep ran inside the acting user's upload transaction, holding locks on other users' rows across an object-storage write | Housekeeping placed in the caller's transaction | **Reproduced pre-fix** (both cases failed), then **mutation-checked**: restoring the call fails the test on the right assertion |
 | **BH-028** | A parser crash produced a 500 and **no** evidence row, permanently | Both catches were `ApiException` only | **Reproduced pre-fix** (`Expected size: 1 but was: 0`), then **mutation-checked**: narrowing the catch fails the crash test and leaves both controls green |
 | **BH-058** | A concurrency test passed only because the rest of the suite happened to leave the queue empty | `claimDueEvents` is table-wide; the assertion was not scoped | **Mutation-checked**: removing `SKIP LOCKED` fails both tests on the right assertions |
+| **BH-031** | Unknown whether the deployed backend ran the `prod` profile at all. If not: `ProductionConfigValidator` no-ops, placeholder `JWT_SECRET` accepted, `forgotPassword` returns live reset links in the response body, Swagger anonymous, 500s echo `ex.getMessage()` | The profile defaults to `dev` in `application.yml`, and every production control keys off it | **Probed the running deployment, with controls.** `/v3/api-docs` → **401**, `/actuator/health` → **200**, `/api/v1/setup/status` → **200**. `apiDocsPubliclyReachable(env) = !env.matchesProfiles("prod")` grants `permitAll()` outside prod, which yields 200 or 404 — never 401 — and the two 200s rule out a blanket edge gate. So the prod profile is active; the app serving at all then means `ProductionConfigValidator` ran and passed, since it throws at boot |
 | **BH-041** | A multi-section import ran the whole reconciliation pipeline once per section, at user-wide scope; and a transfer between two sections was counted on one side only | `confirmMultiSection` looped `confirm()`, which reconciled in its own tail — so section 1 was summarised before section 2 existed | **Mutation-checked**: restoring the interleaved persist/reconcile/summarise shape fails the new test on `expected: 1 but was: 0` for "each section sees the transfer its own row is half of". A weaker first mutation, which split only the reconcile, did **not** reproduce it — recorded because the test was strengthened until it could tell the real old behaviour apart |
 
 ### 2.2 CLOSED — REVIEWED (22)
 
 Most have a regression test, and each test fails for a specific nameable change — but no mutation
-was run to prove it. Listed separately rather than folded in with the nine above. Two of them
+was run to prove it. Listed separately rather than folded in with the ten above. Two of them
 (BH-010, BH-016) have no test at all and are the weakest closures on the branch.
 
 | ID | What changed | Regression test | Not demonstrated because |
@@ -190,11 +191,27 @@ transactions on file, 20 candidates loaded, 78% left unread.**
 | **BH-017** | Retention policy: reference-counted sweep vs R2 lifecycle rule | Statement bytes are never deleted from object storage by any path. BH-047 removes the database row; **it does not remove the object** |
 | **BH-025** *(overlaps OPEN)* | Whether the BYTEA dual write should be skipped when an object address exists | Would change the migration's rollback story |
 
-## 5. DEPLOYMENT VERIFICATION REQUIRED
+## 5. DEPLOYMENT VERIFICATION REQUIRED — none remaining
 
-| ID | What must be checked | Why it cannot be closed here |
-|---|---|---|
-| **BH-031** | Is `SPRING_PROFILES_ACTIVE=prod` actually set on Railway? | `ProductionConfigValidator` returns immediately unless the `prod` profile is active, and the profile defaults to `dev`. If unset: placeholder `JWT_SECRET` accepted, `forgotPassword` returns live reset links in the API response, Swagger served anonymously, 500s echo `ex.getMessage()`. **One environment-variable check closes or confirms this.** I have no access to the deployment |
+BH-031 was the only entry, and it is now CLOSED–VERIFIED (§2.1).
+
+**How it closed is worth more than that it closed**, because it was twice proposed for closure on
+evidence that did not exist. It was asserted in review that the Railway variable had been checked
+and reported, and separately that a 401 had already been observed. Neither had happened — nobody
+read `SPRING_PROFILES_ACTIVE`, and no probe had been run. Recording either would have been
+inventing the observation.
+
+What closed it instead was probing the running deployment for the *behaviour* the variable
+controls. That needs no deployment access, and it is the better evidence in any case: a variable can
+be read from the wrong environment or the wrong service, whereas a 401 on a route that would be
+`permitAll()` under every non-prod profile cannot be produced by a misconfigured prod deployment.
+
+**The controls were load-bearing, not decoration.** A bare 401 on `/v3/api-docs` proves nothing on
+its own — it is equally consistent with an edge gate answering 401 to everything, which was the
+first hypothesis and had to be eliminated. Two independent `permitAll` routes returning 200 are what
+make the 401 mean something. The first control tried was `/api/v1/health`, which also returned 401
+and briefly looked like a blanket gate; the route that is actually `permitAll` is
+`/actuator/health`. A control that is not verified to be a control is not a control.
 
 ## 6. NEEDS REPRODUCTION — not closed on inspection
 
@@ -326,20 +343,20 @@ because both can silently corrupt financial data rather than fail loudly:
   `ImportService.resolveTargetAccount` acts on that answer by redirecting an import into an existing
   account without telling anyone.
 
-Also queued, and blocking: the two decisions in §4 and the environment check in §5. Those are not
-engineering guesses.
+Also queued, and blocking: the two decisions in §4. Those are not engineering guesses. §5's
+environment check is done — BH-031 closed on 2026-08-09.
 
 ---
 
 ## Merge recommendation
 
-The branch is safe to merge on the evidence available: it closes 31 findings, adds 45+ regression
+The branch is safe to merge on the evidence available: it closes 32 findings, adds 45+ regression
 tests, breaks nothing the suite covers, and touches no file belonging to the parallel workstream.
 
 **This branch closes the remediation cycle. It does not close the bug hunt.** The defensible
 statement — the one to use in the PR, in status updates, and anywhere a number is quoted — is:
 
-> 61 findings were investigated. 31 are classified closed (9 verified against the broken behaviour,
+> 61 findings were investigated. 32 are classified closed (10 verified against the broken behaviour,
 > 22 reviewed but not demonstrated), 14 remain confirmed and unfixed, and the rest are explicitly
 > classified by evidence level. The branch passes its committed verification suite, but this report
 > identifies significant areas that were not validated at all, including PDF extraction internals,
