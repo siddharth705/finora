@@ -70,9 +70,9 @@ def classpath():
     return f"{test_classes}:{BACKEND / 'target' / 'classes'}:{CLASSPATH_CACHE.read_text().strip()}"
 
 
-def emit(cp, workdir, engines, dpi):
+def emit(cp, workdir, engines, dpi, scenario="baseline"):
     """Ground truth, the scanned image, and one observation per engine."""
-    r = subprocess.run(["java", "-cp", cp, EMITTER, str(workdir), str(dpi)] + engines,
+    r = subprocess.run(["java", "-cp", cp, EMITTER, str(workdir), str(dpi), scenario] + engines,
                        capture_output=True, text=True)
     if r.returncode != 0:
         sys.exit(f"emitter failed:\n{r.stdout}\n{r.stderr}")
@@ -120,12 +120,54 @@ def axes(result):
     return worst, notes
 
 
-def run(engines, dpi):
+def run(engines, dpi, scenario="baseline"):
     cp = classpath()
     with tempfile.TemporaryDirectory(prefix="ocr-scorecard-") as tmp:
         workdir = Path(tmp)
-        stats = emit(cp, workdir, engines, dpi)
+        stats = emit(cp, workdir, engines, dpi, scenario)
         return {e: judge(workdir, e) for e in engines}, stats
+
+
+# What each scenario must produce for the scorecard to mean anything. A mutation scenario prints a
+# document that disagrees with truth, so an engine reading it CORRECTLY must still be judged wrong --
+# that is what separates "the engine read the statement" from "the harness cannot fail".
+SCENARIOS = {
+    "baseline": "PASS",
+    "wrong-amount": "FAIL",
+    "wrong-direction": "FAIL",
+    "multi-page": "PASS",
+}
+
+
+def benchmark(engine, dpi):
+    """Every scenario against one engine, as the acceptance table."""
+    rows, ok = [], True
+    for scenario, expected in SCENARIOS.items():
+        verdicts, stats = run([engine], dpi, scenario)
+        result = verdicts[engine]
+        got = result.get("verdict", "?")
+        worst, notes = axes(result)
+        passed = got == expected
+        ok = ok and passed
+        rows.append((scenario, expected, got, "OK" if passed else "WRONG", worst, notes,
+                     stats.strip()))
+
+    width = 74
+    print(f"{'scenario':<17}{'expect':<8}{'got':<7}{'':<7}"
+          + "".join(f"{d:<11}" for d in DIMENSIONS))
+    print("-" * width)
+    for scenario, expected, got, mark, worst, _, _ in rows:
+        print(f"{scenario:<17}{expected:<8}{got:<7}{mark:<7}"
+              + "".join(f"{worst[d]:<11}" for d in DIMENSIONS))
+    print()
+    for scenario, _, _, _, _, notes, stats in rows:
+        print(f"{scenario}: {stats}")
+        for n in notes:
+            print(f"    {n}")
+    print()
+    print(("BENCHMARK HOLDS: correct documents pass and mutated ones fail."
+           if ok else "BENCHMARK BROKEN: a scenario did not behave as required."))
+    return 0 if ok else 1
 
 
 def report(verdicts, stats):
@@ -167,6 +209,8 @@ def calibrate():
 
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if "--benchmark" in sys.argv:
+        return benchmark(args[0] if args else "tesseract", DEFAULT_DPI)
     if "--calibrate" in sys.argv or not args:
         return calibrate()
     verdicts, stats = run(args, DEFAULT_DPI)
