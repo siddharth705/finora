@@ -65,6 +65,22 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, UUID> {
      *  someone else's import. */
     Optional<ImportJob> findByIdAndUserId(UUID id, UUID userId);
 
+    /**
+     * A job this user already has in flight for the same bytes, if there is one.
+     *
+     * <p>BH-019. The ordinary case this exists for is a double-clicked upload, or a client retrying
+     * a request whose 202 never arrived -- both of which used to create a second job and a second
+     * staged session for one document. Returning the existing job means the client polls the work
+     * that is already happening instead of racing a duplicate of it.
+     *
+     * <p>Not the guarantee -- {@code idx_import_jobs_live_content} (V74) is, because this is a read
+     * followed by a write and two simultaneous uploads can both miss. Terminal statuses are
+     * excluded so re-uploading a statement whose earlier import finished, failed or was cancelled
+     * still starts fresh work.
+     */
+    Optional<ImportJob> findFirstByUserIdAndContentHashAndStatusNotInOrderByCreatedAtDesc(
+            UUID userId, String contentHash, java.util.Collection<ImportJob.Status> excludedStatuses);
+
     List<ImportJob> findByUserIdOrderByCreatedAtDesc(UUID userId, Pageable pageable);
 
     /** Queue depth for the {@code finora.worker.queue_depth} gauge. */

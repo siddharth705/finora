@@ -19,7 +19,10 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
+import org.springframework.data.domain.PageRequest;
+
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -377,5 +380,74 @@ class ImportJobEndpointIT extends AbstractIntegrationTest {
         } catch (Exception e) {
             throw new IllegalStateException("unreadable response: " + response.getBody(), e);
         }
+    }
+
+    /**
+     * BH-019. Two POSTs of the same document must not become two jobs.
+     *
+     * <p>V67 made REPLAY of one job safe and said nothing about the same bytes being SUBMITTED
+     * twice -- a double-clicked upload, or a client retrying a request whose 202 was lost. That
+     * produced two jobs, two staged sessions, and a statement imported twice if the user confirmed
+     * both. The second call now gets the SAME jobId back, so its poll follows work that is already
+     * happening rather than racing a duplicate of it.
+     */
+    @Test
+    void submittingTheSameDocumentTwiceReturnsTheJobAlreadyQueuedForIt() {
+        User user = user();
+
+        ResponseEntity<String> first = restTemplate.exchange(
+                "/api/v1/import/jobs", HttpMethod.POST, upload(user, "statement.csv", CSV), String.class);
+        ResponseEntity<String> second = restTemplate.exchange(
+                "/api/v1/import/jobs", HttpMethod.POST, upload(user, "statement.csv", CSV), String.class);
+
+        assertThat(second.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+        assertThat(read(second).get("data").get("jobId").asText())
+                .as("the same document, so the same job -- not a second one racing it")
+                .isEqualTo(read(first).get("data").get("jobId").asText());
+        assertThat(jobRepository.findByUserIdOrderByCreatedAtDesc(user.getId(), PageRequest.of(0, 10)))
+                .as("and exactly one row exists to prove it")
+                .hasSize(1);
+    }
+
+    /**
+     * The other half: deduplication is scoped to LIVE jobs, so a document whose earlier import
+     * reached a terminal state can be uploaded again. Re-importing after fixing an account mapping,
+     * or retrying something that failed, are both ordinary -- an index over all history would
+     * refuse them for ever.
+     */
+    @Test
+    void theSameDocumentCanBeSubmittedAgainOnceTheEarlierJobIsFinished() {
+        User user = user();
+
+        ResponseEntity<String> first = restTemplate.exchange(
+                "/api/v1/import/jobs", HttpMethod.POST, upload(user, "statement.csv", CSV), String.class);
+        UUID firstJobId = UUID.fromString(read(first).get("data").get("jobId").asText());
+
+        ImportJob finished = jobRepository.findById(firstJobId).orElseThrow();
+        finished.cancel(Instant.now());
+        jobRepository.saveAndFlush(finished);
+
+        ResponseEntity<String> second = restTemplate.exchange(
+                "/api/v1/import/jobs", HttpMethod.POST, upload(user, "statement.csv", CSV), String.class);
+
+        assertThat(second.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+        assertThat(read(second).get("data").get("jobId").asText())
+                .as("the earlier job is terminal, so this is genuinely new work")
+                .isNotEqualTo(firstJobId.toString());
+    }
+
+    /** And it is per user: two people uploading the same statement are two independent imports. */
+    @Test
+    void twoUsersUploadingTheSameDocumentEachGetTheirOwnJob() {
+        User one = user();
+        User two = user();
+
+        ResponseEntity<String> a = restTemplate.exchange(
+                "/api/v1/import/jobs", HttpMethod.POST, upload(one, "statement.csv", CSV), String.class);
+        ResponseEntity<String> b = restTemplate.exchange(
+                "/api/v1/import/jobs", HttpMethod.POST, upload(two, "statement.csv", CSV), String.class);
+
+        assertThat(read(a).get("data").get("jobId").asText())
+                .isNotEqualTo(read(b).get("data").get("jobId").asText());
     }
 }

@@ -12,6 +12,31 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface StatementImportRepository extends JpaRepository<StatementImport, UUID> {
+
+    /**
+     * The latest statement period end already on file for this account, ignoring one row.
+     *
+     * <p>BH-042/BH-024. {@code ImportService.isMostRecentStatementForAccount} used to answer this
+     * by loading EVERY statement import the user has -- entities, including the file_content
+     * column's mapping -- and filtering in memory, once per confirm, inside the confirm
+     * transaction. {@code confirmMultiSection} paid it once per account section. The answer is a
+     * single date.
+     *
+     * <p>Excludes the import being confirmed by id, because it has just been saved and would
+     * otherwise compare against itself and always win.
+     *
+     * @return empty when this is the account's only statement, or when no other one states a period
+     */
+    @Query("""
+           SELECT MAX(si.statementPeriodEnd) FROM StatementImport si
+            WHERE si.userId = :userId
+              AND si.accountId = :accountId
+              AND si.id <> :excludingId
+           """)
+    Optional<java.time.LocalDate> findLatestPeriodEndForAccount(@Param("userId") UUID userId,
+                                                                 @Param("accountId") UUID accountId,
+                                                                 @Param("excludingId") UUID excludingId);
+
     List<StatementImport> findByUserIdOrderByImportedAtDesc(UUID userId);
 
     /**

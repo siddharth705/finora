@@ -422,6 +422,21 @@ public class ImportService {
         return parseAndStage(userId, filename, new java.io.ByteArrayInputStream(content));
     }
 
+    /**
+     * <p><b>{@code @Transactional} is not decorative here, and its absence was a real gap.</b> The
+     * overloads this delegates to are all annotated -- and they are reached by SELF-invocation, so
+     * Spring's proxy never sees those calls and their annotations did nothing. This entry point had
+     * none of its own, which meant the whole confirm ran with no transaction at all: every
+     * repository call committed independently, so a failure part way through left the statement
+     * import row, some of its transactions, and a moved account balance all separately committed
+     * with no way to unwind them.
+     *
+     * <p>Not a production path today -- the controller uses {@link #confirmSession} and
+     * {@code StatementImportService.confirmReimport} crosses a bean boundary, both of which are
+     * proxied and transactional. It is reached by tests, which is exactly how it stayed unnoticed,
+     * and it is one call away from becoming a production path.
+     */
+    @Transactional
     public ConfirmResponse confirm(UUID userId, MultipartFile file, ConfirmRequest request) throws IOException {
         String fileName = StatementUpload.safeFileName(file, "statement.csv");
         return confirm(userId, fileName, file.getBytes(), request);
@@ -900,11 +915,22 @@ public class ImportService {
                 "CSV");
     }
 
+    /**
+     * Whether this statement is the newest one on file for the account, so its stated closing
+     * balance may be treated as where the account actually ended.
+     *
+     * <p>BH-024. This used to load EVERY statement import the user has and filter in memory, once
+     * per confirm and once per section for a composite statement -- a full read of the largest
+     * table in the schema to produce a boolean. It also dereferenced {@code si.getAccountId()}
+     * without a null check, so a row with no account would have thrown mid-import. One aggregate
+     * query answers it, and the database handles the nulls.
+     */
     private boolean isMostRecentStatementForAccount(UUID userId, UUID accountId, LocalDate thisStatementEnd, UUID thisStatementId) {
         if (thisStatementEnd == null) return true; // nothing to compare against — apply rather than never updating
-        return statementImportRepository.findByUserIdOrderByImportedAtDesc(userId).stream()
-                .filter(si -> si.getAccountId().equals(accountId) && !si.getId().equals(thisStatementId))
-                .allMatch(si -> si.getStatementPeriodEnd() == null || !si.getStatementPeriodEnd().isAfter(thisStatementEnd));
+        return statementImportRepository
+                .findLatestPeriodEndForAccount(userId, accountId, thisStatementId)
+                .map(latestOther -> !latestOther.isAfter(thisStatementEnd))
+                .orElse(true); // this is the account's only statement, or no other one states a period
     }
 
     /** What the review screen says this product is, falling back to the coarse account type when a
