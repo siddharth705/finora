@@ -58,7 +58,10 @@ public class ProductionConfigValidator implements SmartInitializingSingleton {
 
     private static final String DEFAULT_JWT_SECRET =
             "change-this-to-a-long-random-secret-in-your-env-file-min-32-chars";
-    private static final String DEFAULT_DB_PASSWORD = "finora";
+    /** Lower-cased. See the check below for why this is a short list of known defaults rather
+     *  than a password-strength rule. */
+    private static final java.util.Set<String> WEAK_DB_PASSWORDS = java.util.Set.of(
+            "finora", "postgres", "password", "changeme", "admin", "root", "secret", "test");
 
     /**
      * Bug fix: this validator used to compare the secret against {@link #DEFAULT_JWT_SECRET} and
@@ -168,10 +171,20 @@ public class ProductionConfigValidator implements SmartInitializingSingleton {
                     .append("set app.import.queue.enabled=false to run the synchronous path only.\n");
         }
 
+        // BH-032. This compared against the literal "finora" and nothing else, while the message
+        // it printed claimed to catch "unset" as well. It did not: an unset password reads as null,
+        // null does not equal "finora", and production started silently. The one case the message
+        // named was the one case it missed.
         String dbPassword = environment.getProperty("spring.datasource.password");
-        if (DEFAULT_DB_PASSWORD.equals(dbPassword)) {
-            problems.append("- DB_PASSWORD is unset or still the local-dev default (\"finora\"). ")
-                    .append("Set the real database password.\n");
+        if (dbPassword == null || dbPassword.isBlank()) {
+            problems.append("- DB_PASSWORD is unset or blank. Set the real database password.\n");
+        } else if (WEAK_DB_PASSWORDS.contains(dbPassword.toLowerCase(java.util.Locale.ROOT))) {
+            // Case-insensitive, and a short list rather than one literal. These are the values in
+            // this repository's own compose file and on the first page of any Postgres tutorial.
+            // Deliberately NOT a password-strength rule -- refusing to boot over a password an
+            // operator deliberately chose is a different decision, and a validator that cries wolf
+            // gets its exception caught.
+            problems.append("- DB_PASSWORD is a well-known default. Set the real database password.\n");
         }
 
         // Bug fix: JWT_SECRET/DB_PASSWORD were the only two settings this validator checked, even

@@ -171,6 +171,54 @@ class ProductionConfigValidatorTest {
         assertThat(catchNoThrow(validator)).isTrue();
     }
 
+    /**
+     * BH-032. The check compared against the literal "finora" and nothing else, while the message
+     * it printed claimed to catch "unset" too. It did not -- an unset password reads as null, null
+     * does not equal "finora", and production started silently. The one case the message named was
+     * the one case it missed.
+     */
+    @Test
+    void run_inProdProfile_withNoDbPassword_throws() {
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, null);
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+
+        assertThatThrownBy(validator::validate)
+                .as("an unset password was the case the old message claimed to catch and did not")
+                .hasMessageContaining("DB_PASSWORD is unset or blank");
+    }
+
+    @Test
+    void run_inProdProfile_withABlankDbPassword_throws() {
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "   ");
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+
+        assertThatThrownBy(validator::validate)
+                .hasMessageContaining("DB_PASSWORD is unset or blank");
+    }
+
+    @Test
+    void run_inProdProfile_withAWellKnownDefaultDbPassword_throws() {
+        // Case-insensitive, and not only this repository's own compose default. "POSTGRES" is the
+        // first thing on the first page of any tutorial, and a production database reachable with
+        // it is not meaningfully protected.
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "POSTGRES");
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+
+        assertThatThrownBy(validator::validate)
+                .hasMessageContaining("DB_PASSWORD is a well-known default");
+    }
+
+    @Test
+    void run_inProdProfile_withADeliberateIfShortDbPassword_doesNotThrow() {
+        // NEGATIVE. This is a known-defaults check, not a password-strength rule. Refusing to boot
+        // over a password an operator deliberately chose is a different decision and not this
+        // validator's to make -- and a validator that cries wolf gets its exception caught.
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "hunter2");
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+
+        assertThat(catchNoThrow(validator)).isTrue();
+    }
+
     @Test
     void run_inProdProfile_withRealSecretsConfigured_doesNotThrow() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
