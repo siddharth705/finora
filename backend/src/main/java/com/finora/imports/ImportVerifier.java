@@ -78,4 +78,32 @@ public class ImportVerifier {
         findings.add(columnAmbiguityValidator.check(rawRows));
         return new ImportDto.VerificationReport(List.copyOf(findings));
     }
+
+    /**
+     * Re-decides SUMMARY_TOTALS alone, once it is known which section a document-level printed
+     * summary belongs to.
+     *
+     * <p>A printed summary describes the whole document, so at the moment a section is built there
+     * is no way to know whether it is the section the totals are about. That is only answerable
+     * after every section exists and has been parsed -- see PdfPreviewGenerator's attribution
+     * step. This lets that answer be applied without re-running the other three rules, which
+     * depend on nothing that changed and would have to be handed inputs this class no longer has.
+     *
+     * <p>Only SUMMARY_TOTALS is replaced, and only ever by re-asking the same validator the same
+     * question with better information. Every other finding is carried through untouched, in
+     * order: a report is assembled, not aggregated, and reordering it would change what a client
+     * renders first for no reason.
+     */
+    public ImportDto.VerificationReport reviseSummaryTotals(ImportDto.VerificationReport report,
+                                                            List<StagedRow> rows,
+                                                            PrintedSummary printedSummary) {
+        if (report == null) return null;
+        List<ImportDto.VerificationFinding> revised = new ArrayList<>();
+        for (ImportDto.VerificationFinding finding : report.findings()) {
+            revised.add(SummaryTotalsValidator.RULE.equals(finding.rule())
+                    ? summaryTotalsValidator.check(rows, printedSummary)
+                    : finding);
+        }
+        return new ImportDto.VerificationReport(List.copyOf(revised));
+    }
 }

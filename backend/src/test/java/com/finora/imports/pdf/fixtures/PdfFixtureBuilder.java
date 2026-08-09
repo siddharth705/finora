@@ -80,6 +80,8 @@ import java.util.List;
  *   -&gt; buildNarrationAboveItsDateRowSample
  * WRAPPED_HEADER (one heading row printed across two visual lines, centered per column)
  *   -&gt; buildWrappedHeaderDepositScheduleSample
+ * SUMMARY_ATTRIBUTION (a document-level printed summary, and how many sections could own it)
+ *   -&gt; buildSummaryWithOneTransactionalSectionSample, buildSummaryWithTwoTransactionalSectionsSample
  * Never Lose Information (whole-document)
  *   -&gt; buildUnrecognizableDocumentSample
  * Composability (multiple already-evidenced capabilities firing together in one document)
@@ -820,6 +822,91 @@ public final class PdfFixtureBuilder {
                 .row(col, "FD0000001", "INR", "50,000.00", "12/01/2026", "7.10", "53,551.00", "YES")
                 .row(col, "FD0000002", "INR", "25,000.00", "05/03/2026", "6.85", "26,712.00", "YES")
                 .row(col, "FD0000003", "INR", "10,000.00", "18/04/2026", "6.60", "10,644.00", "NO");
+
+        return render(List.of(page));
+    }
+
+    // ==================== SUMMARY_ATTRIBUTION ====================
+
+    /**
+     * A printed summary grid, one section that carries transactions, and two that do not.
+     *
+     * <p>The shape of the real HDFC combined statement: a savings ledger alongside a fixed-deposit
+     * schedule and a recurring-deposit schedule, with the document's own debit/credit totals and
+     * counts printed once, at the top, describing the whole file. Only the ledger stages
+     * transactions -- the deposit schedules are rows of figures about products, not payments.
+     *
+     * <p>The printed figures describe the ledger exactly: 2 debits totalling 3,404.91 and 1 credit
+     * of 55,000.00. That is deliberate, and it is what makes this fixture able to tell attribution
+     * from non-attribution: if the summary reaches the ledger the rule VERIFIES, and if it does not
+     * the rule can only report that it had nothing to compare against.
+     */
+    public static byte[] buildSummaryWithOneTransactionalSectionSample() throws IOException {
+        float[] totalsCol = {LEFT_MARGIN, 150f, 260f, 380f};
+        float[] countsCol = {LEFT_MARGIN, 150f};
+        float[] ledgerCol = {LEFT_MARGIN, 130f, 260f, 350f, 440f};
+        float[] fdCol = {LEFT_MARGIN, 140f, 230f, 320f, 430f};
+        float[] rdCol = {LEFT_MARGIN, 110f, 190f, 300f, 390f, 490f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Some Financial Institution")
+                .line("Statement Summary")
+                .row(totalsCol, "Opening Balance", "Debit Amount", "Credit Amount", "Closing Balance")
+                .row(totalsCol, "24818.22", "3404.91", "55000.00", "76413.31")
+                .row(countsCol, "Debit Count", "Credit Count")
+                .row(countsCol, "2", "1")
+                .blankLine()
+                .line("SAVINGS ACCOUNT  - 10000000000001")
+                .row(ledgerCol, "Txn Date", "Narration", "Withdrawals", "Deposits", "Closing Balance")
+                .row(ledgerCol, "05/06/2026", "Salary Credit", "", "55000.00", "79818.22")
+                .row(ledgerCol, "10/06/2026", "Grocery Store", "2000.00", "", "77818.22")
+                .row(ledgerCol, "18/06/2026", "Electricity Bill", "1404.91", "", "76413.31")
+                .blankLine()
+                .line("TERM DEPOSIT  - 20000000000002")
+                .row(fdCol, "Principal Amount", "Start Date", "Deposit(Mnth)", "Maturity Date", "Rate of Interest")
+                .row(fdCol, "100000.00", "12/03/2026", "0.00", "12/03/2027", "7.10")
+                .blankLine()
+                .line("RECURRING DEPOSIT  - 30000000000003")
+                .row(rdCol, "Number", "Due Date", "Installment Paid", "Maturity Date", "Rate of Interest", "Status")
+                .row(rdCol, "1", "05/05/2026", "5000.00", "05/05/2027", "6.75", "Paid");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * The same printed summary, and TWO sections that carry transactions.
+     *
+     * <p>Modeled on the composite savings-plus-credit-card shape
+     * ({@link #buildMultiSectionCompositeStatementSample}), with a document-level summary added.
+     * The totals still describe the FIRST section exactly, which is the trap: a rule that picked
+     * the largest, the first, or the most populated section would verify here and be wrong, because
+     * a document-level summary on a genuine two-account statement describes neither section on its
+     * own. There is no corpus document of this shape, which is why it is built rather than
+     * captured.
+     */
+    public static byte[] buildSummaryWithTwoTransactionalSectionsSample() throws IOException {
+        float[] totalsCol = {LEFT_MARGIN, 150f, 260f, 380f};
+        float[] countsCol = {LEFT_MARGIN, 150f};
+        float[] ledgerCol = {LEFT_MARGIN, 130f, 260f, 350f, 440f};
+        float[] ccCol = {LEFT_MARGIN, 150f, 470f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Some Financial Institution")
+                .line("Statement Summary")
+                .row(totalsCol, "Opening Balance", "Debit Amount", "Credit Amount", "Closing Balance")
+                .row(totalsCol, "24818.22", "3404.91", "55000.00", "76413.31")
+                .row(countsCol, "Debit Count", "Credit Count")
+                .row(countsCol, "2", "1")
+                .blankLine()
+                .line("SAVINGS ACCOUNT  - 10000000000001")
+                .row(ledgerCol, "Txn Date", "Narration", "Withdrawals", "Deposits", "Closing Balance")
+                .row(ledgerCol, "05/06/2026", "Salary Credit", "", "55000.00", "79818.22")
+                .row(ledgerCol, "10/06/2026", "Grocery Store", "2000.00", "", "77818.22")
+                .row(ledgerCol, "18/06/2026", "Electricity Bill", "1404.91", "", "76413.31")
+                .blankLine()
+                .line("CREDIT CARD ACCOUNT  4000 1111 2222 3333")
+                .row(ccCol, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                .row(ccCol, "15/07/2026", "UPI-Retailer One", "1,817.02 Dr");
 
         return render(List.of(page));
     }

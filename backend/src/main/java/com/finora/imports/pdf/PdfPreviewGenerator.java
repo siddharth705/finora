@@ -166,16 +166,15 @@ public class PdfPreviewGenerator {
         List<StagedAccountSection> result = new ArrayList<>();
         List<UnparseableRow> unparseableAcrossDocument = new ArrayList<>();
         for (int i = 0; i < doc.sections().size(); i++) {
-            // A printed summary covers the whole document, so it can only be attributed to a
-            // section when there is exactly one. On a composite statement the totals belong to
-            // some section and we cannot tell which -- checking the wrong section's rows against
-            // them would manufacture a failure out of a correct import.
+            // Built with no summary regardless. Which section a document-level summary belongs to
+            // is not answerable here -- see attributePrintedSummary below, which decides it once
+            // every section exists.
             List<StagedAccountSection> staged = buildSections(userId, filename, doc.sections().get(i),
-                    i, doc.sections().size(), ctx,
-                    doc.sections().size() == 1 ? printedSummary : PrintedSummary.NONE);
+                    i, doc.sections().size(), ctx, PrintedSummary.NONE);
             for (StagedAccountSection s : staged) unparseableAcrossDocument.addAll(s.unparseableRows());
             result.addAll(staged);
         }
+        result = attributePrintedSummary(result, printedSummary);
         // One document's worth, across every section -- the DocumentContext is per-file, and a
         // combined statement's sections all failed (or didn't) as part of the same parse run.
         ctx.recordUnparseable(unparseableAcrossDocument);
@@ -322,6 +321,57 @@ public class PdfPreviewGenerator {
                 detected == null ? null : detected.closingBalance(),
                 printedSummary, section.rows());
         return new StagedAccountSection(detected, staged, staged.size(), dupCount, unparseable, verification);
+    }
+
+    /**
+     * Gives a document-level printed summary to the one section it can only be about.
+     *
+     * <p>A printed summary describes the whole document, so attributing it to a section is a guess
+     * unless the document leaves exactly one candidate. Checking the wrong section's rows against
+     * another section's totals would manufacture a failure out of a correct import, which is worse
+     * than not checking at all.
+     *
+     * <p>The rule is therefore exactly one condition, and deliberately not a heuristic near it:
+     * <b>attribute only when precisely one section ended up with transactions.</b> Not the section
+     * with the most rows, not the largest, not the first -- those are guesses wearing a rule's
+     * clothing, and on a genuine two-account statement each one would pick a section whose totals
+     * the summary does not describe.
+     *
+     * <p>Measured on the real HDFC combined statement this exists for: four sections, of which one
+     * carries 75 transactions and three (a fixed-deposit schedule and two recurring-deposit
+     * tables) carry none. The statement prints "Debit Count 66 / Credit Count 9" and totals of
+     * 39,601.91 and 98,197.00, every one of which matches that section exactly -- and the strongest
+     * evidence available that the parse is correct was being discarded, on the document family
+     * SummaryTotalsValidator was built for.
+     *
+     * <p>Why this runs after building rather than during it: "has transactions" means STAGED rows,
+     * which is not known until a section has been parsed. Deciding it from located rows instead
+     * would have counted all four of that statement's sections -- its deposit tables locate 9, 2
+     * and 7 rows and stage none of them -- and declined to attribute, which is the behaviour this
+     * change exists to correct.
+     */
+    private List<StagedAccountSection> attributePrintedSummary(List<StagedAccountSection> sections,
+                                                                PrintedSummary printedSummary) {
+        if (printedSummary == null || printedSummary.isEmpty()) return sections;
+
+        List<StagedAccountSection> transactional = sections.stream()
+                .filter(s -> s.rows() != null && !s.rows().isEmpty())
+                .toList();
+        // Zero candidates and two-or-more candidates are both "cannot tell", and both keep the
+        // existing behaviour. Zero is not merely uninteresting: a statement that printed totals
+        // while nothing parsed is real evidence of a failed read, and surfacing THAT is a separate
+        // question about when a finding should exist at all -- not this one, which only decides
+        // which section receives a finding that already exists.
+        if (transactional.size() != 1) return sections;
+
+        StagedAccountSection target = transactional.get(0);
+        List<StagedAccountSection> revised = new ArrayList<>(sections.size());
+        for (StagedAccountSection s : sections) {
+            revised.add(s != target ? s : new StagedAccountSection(s.detectedAccount(), s.rows(),
+                    s.totalParsed(), s.flaggedDuplicates(), s.unparseableRows(),
+                    importVerifier.reviseSummaryTotals(s.verification(), s.rows(), printedSummary)));
+        }
+        return revised;
     }
 
     private StagedAccountSection surfaceUnrecognizedText(StagedAccountSection section, List<String> extractedLines) {
