@@ -1741,3 +1741,39 @@ A finding is closed only with: **what failed before → what changed → what pr
 could regress → what remains out of scope**, and a negative test wherever one is practical. Two
 closures so far carry a mutation check (BH-058) or a named per-assertion regression (bulkDelete);
 that is the bar, not a green suite.
+
+---
+
+## BH-033 — Cannot reproduce, with the conditions recorded
+
+Recorded rather than asserted, so this can be revisited on evidence rather than re-argued.
+
+**Hypothesis under test.** `ProductionConfigValidator.looksLikePlaceholderSecret` matches eighteen
+markers (`change-me`, `sample`, `dummy`, `insecure`, …) case-insensitively as substrings, so a
+legitimately generated random secret could contain one by chance and be rejected at boot.
+
+**Method.** 2,000,000 trials, `SecureRandom.getInstanceStrong()`, 48 random bytes per trial, each
+rendered two ways and passed to the real production method (harness run against
+`backend/target/classes`, not a reimplementation).
+
+**Result.**
+
+| Encoding | Rejected | Rate |
+|---|---|---|
+| base64url, 64 chars | **1** in 2,000,000 | ~5 × 10⁻⁷ |
+| lowercase hex, 96 chars | **0** in 2,000,000 | structurally impossible |
+
+The single base64 rejection contained `dumMyy` → `dummy`. Every one of the eighteen markers
+contains at least one character outside `[0-9a-f]`, so **no hex secret can ever match one** — that
+is a property of the alphabet, not a probability.
+
+A positive control was run in the same harness: a secret deliberately containing `sample` is
+rejected, confirming the matcher works and the near-zero rate is not a broken test.
+
+**Disposition: cannot reproduce as a practical failure → recommend ACCEPT.** The failure is loud
+(refuses to boot), self-explaining, and resolved by generating another secret. The deployment guide
+now specifies `openssl rand -hex 32`, which takes the rate from ~1-in-2-million to zero.
+
+**What would reopen this.** A new marker containing only hex characters (`add`, `dead`, `beef`,
+`facade` are the realistic shapes), or the check being extended to values whose alphabet is not the
+operator's choice — an API key from a third party, say, where regenerating is not free.
