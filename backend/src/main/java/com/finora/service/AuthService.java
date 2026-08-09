@@ -35,6 +35,28 @@ import java.util.UUID;
 @Service
 public class AuthService {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AuthService.class);
+
+    /**
+     * BH-014. A hash to verify against on the locked-account path, so it costs what a real password
+     * check costs.
+     *
+     * <p>Computed ONCE, when this bean is built -- not per request, which would be the whole cost
+     * again, and not as a hardcoded literal, which would silently stop matching the day
+     * {@code SecurityConfig}'s BCrypt strength changes. Deriving it from the injected encoder means
+     * the parity holds by construction rather than by someone remembering.
+     *
+     * <p>The value hashed is irrelevant and deliberately not a plausible password: nothing ever
+     * compares equal to it on purpose, and the only property that matters is that verifying against
+     * it does the same work as verifying against a real one.
+     *
+     * <p>This is the same technique Spring Security already applies on the other side.
+     * {@code DaoAuthenticationProvider.mitigateAgainstTimingAttack} runs a throwaway password check
+     * when no user is found, which is why an unknown address costs ~260 ms rather than returning
+     * instantly. The locked path was the one case that skipped it.
+     */
+    private final String timingParityHash;
+
     // Default categories seeded for every new user — mirrors the prototype's starter category
     // list, expanded (see V11 migration, which backfills the same additions for existing users)
     // beyond the original 13 to cover common real-life cases the first pass didn't: repaying a
@@ -84,6 +106,7 @@ public class AuthService {
         this.categoryRepository = categoryRepository;
         this.resetTokenRepository = resetTokenRepository;
         this.passwordEncoder = passwordEncoder;
+        this.timingParityHash = passwordEncoder.encode("finora-bh-014-timing-parity-not-a-password");
         this.jwtService = jwtService;
         this.authenticationManager = authenticationManager;
         this.auditService = auditService;
@@ -320,8 +343,44 @@ public class AuthService {
         User user = findUserByEmailIgnoreCaseSafely(email, scope).orElse(null);
 
         if (user != null && user.getLockedUntil() != null && user.getLockedUntil().isAfter(Instant.now())) {
-            throw new ApiException(HttpStatus.LOCKED,
-                    "This account is temporarily locked due to repeated failed login attempts. Try again later.");
+            // BH-014. This used to answer 423 LOCKED with a message naming the reason, and that
+            // turned the endpoint into an account-existence oracle: five wrong passwords, and a
+            // registered address starts answering 423 while an unregistered one answers 401
+            // forever. Registration confirmed with a handful of requests and no credential, on an
+            // unauthenticated public endpoint.
+            //
+            // Everything else on this path already works to prevent exactly that --
+            // resolveEmailForLogin, findUserByEmailIgnoreCaseSafely, the "no-such-account"
+            // principal below, and the suspension check that was deliberately moved BELOW password
+            // verification for this reason. The lockout check undid all of it.
+            //
+            // The comment that used to sit further down called closing this "a design, not an
+            // edit", on the reasoning that it would mean synthesising lockout state for
+            // identifiers that do not exist. That assumed the fix had to make a nonexistent
+            // address behave like a locked one. The reverse works and costs nothing: a locked
+            // account behaves like a wrong password. Indistinguishable from outside, no new state,
+            // and the lockout is fully enforced -- the account still cannot be logged into, the
+            // caller is simply not told which of the two reasons applies.
+            //
+            // The cost is real and accepted: a legitimate user who has locked themselves out now
+            // sees "Invalid credentials" and is sent round the forgot-password loop rather than
+            // being told to wait. Logged at INFO so the information survives for whoever is
+            // reading the logs, who is not the person being defended against.
+            // BH-014, second half. Matching the status and message closed the obvious oracle and
+            // left a louder one: this branch returned before authenticate(), so it skipped BCrypt
+            // and answered in ~4 ms where every other failure cost ~260 ms. Identical responses
+            // arriving 70x faster still say "this account exists" to anyone with a stopwatch, and
+            // they say it behind a response that now LOOKS fixed, which is worse than the version
+            // that was honest about leaking.
+            //
+            // Verifying the supplied password against a throwaway hash makes the two paths cost
+            // the same. The result is deliberately discarded -- nothing can match this hash, and
+            // nothing is meant to. The lockout is untouched: no counter moves, lockedUntil is not
+            // rewritten, and the account is still refused.
+            passwordEncoder.matches(request.password(), timingParityHash);
+            log.info("Refused login for locked account {} -- responding as invalid credentials (BH-014)",
+                    user.getId());
+            throw new ApiException(ErrorCode.AUTH_INVALID_CREDENTIALS, "Invalid credentials");
         }
         // An EXPIRED lockout clears the counter that produced it. Serving the lockout is the
         // penalty; carrying the count past it turns every subsequent typo into an instant re-lock.
@@ -383,11 +442,11 @@ public class AuthService {
         // happened, and recording one would put a successful-sign-in row in the trail of an account
         // that cannot sign in.
         //
-        // The lockout check above stays where it is. It cannot move: its whole purpose is to stop a
-        // locked account reaching password verification, so "check it after the password" is not a
-        // thing it can do. It leaks the same way and is reported rather than papered over here --
-        // closing it means synthesising lockout state for identifiers that do not exist, which is a
-        // design, not an edit.
+        // The lockout check above still stays where it is, and still cannot move -- its whole
+        // purpose is to stop a locked account reaching password verification. What changed (BH-014)
+        // is what it SAYS: the same 401 as a wrong password, so its position no longer leaks. It
+        // no longer returns faster than a real password check either -- it verifies against a
+        // throwaway hash for timing parity. Both halves are measured in LoginExistenceOracleIT.
         if (user.isSuspended()) {
             throw new ApiException(HttpStatus.FORBIDDEN,
                     "This account has been suspended. Contact support for assistance.");
