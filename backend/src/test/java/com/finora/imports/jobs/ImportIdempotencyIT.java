@@ -93,10 +93,23 @@ class ImportIdempotencyIT extends AbstractIntegrationTest {
     void differentJobsCanEachProduceAnImport() {
         // The constraint must not be so broad that it blocks legitimate work.
         User user = user();
-        importFor(user.getId(), UUID.randomUUID());
-        importFor(user.getId(), UUID.randomUUID());
+        UUID firstJob = UUID.randomUUID();
+        UUID secondJob = UUID.randomUUID();
+        importFor(user.getId(), firstJob);
+        importFor(user.getId(), secondJob);
 
-        assertThat(statementImportRepository.count()).isPositive();
+        // BH-058 sweep. This asserted statementImportRepository.count() was POSITIVE -- a table-wide
+        // count, in a suite where every other test also creates imports. It would have passed if
+        // both inserts had silently done nothing, and it would have passed if only one of the two
+        // had landed, which is the exact failure the test is named for.
+        //
+        // Demonstrated rather than argued: with the second import removed, the original assertion
+        // still passed and this one reports "Expected size: 2 but was: 1".
+        assertThat(statementImportRepository.findByUserIdOrderByImportedAtDesc(user.getId()))
+                .as("both jobs must produce their own import -- the constraint is per job, not global")
+                .hasSize(2)
+                .extracting(StatementImport::getImportJobId)
+                .containsExactlyInAnyOrder(firstJob, secondJob);
     }
 
     @Test
@@ -109,7 +122,13 @@ class ImportIdempotencyIT extends AbstractIntegrationTest {
         importFor(user.getId(), null);
         importFor(user.getId(), null);
 
-        assertThat(statementImportRepository.count()).isPositive();
+        // Same reasoning: a table-wide isPositive() could not tell three successful inserts from
+        // zero. Postgres allows many NULLs in a UNIQUE index and THAT is the property under test,
+        // so the number has to be three.
+        assertThat(statementImportRepository.findByUserIdOrderByImportedAtDesc(user.getId()))
+                .as("the synchronous path has no job id, and a partial unique index must not "
+                        + "collapse its NULLs into one")
+                .hasSize(3);
     }
 
     // ------------------------------------------------------------------ row level
@@ -167,7 +186,12 @@ class ImportIdempotencyIT extends AbstractIntegrationTest {
         row(user.getId(), accountId, null, null);
         row(user.getId(), accountId, null, null);
 
-        assertThat(transactionRepository.count()).isPositive();
+        // transactionRepository.count() is table-wide and this suite creates thousands of rows, so
+        // isPositive() was true before this test did anything at all.
+        assertThat(transactionRepository.findByUserId(user.getId()))
+                .as("two identical manual entries are legitimate -- the partial index excludes rows "
+                        + "with no statement import, and both must survive")
+                .hasSize(2);
     }
 
     @Test
