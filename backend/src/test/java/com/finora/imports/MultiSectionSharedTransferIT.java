@@ -16,6 +16,7 @@ import com.finora.repository.MerchantLearningEventRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.service.ReconciliationService;
+import com.finora.service.RecurringService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -85,6 +86,7 @@ class MultiSectionSharedTransferIT extends AbstractIntegrationTest {
     @Autowired private MerchantLearningEventRepository learningEventRepository;
 
     @SpyBean private ReconciliationService reconciliationService;
+    @SpyBean private RecurringService recurringService;
 
     private static final LocalDate WHEN = LocalDate.of(2026, 7, 10);
     private static final BigDecimal AMOUNT = new BigDecimal("30000.00");
@@ -163,6 +165,18 @@ class MultiSectionSharedTransferIT extends AbstractIntegrationTest {
                                 savings.getId(), null, null, null),
                         new SectionConfirm(List.of(confirmed("PAYMENT RECEIVED THANK YOU", "INCOME")),
                                 card.getId(), null, null, null))));
+    }
+
+    private static final BigDecimal SUBSCRIPTION = new BigDecimal("499.00");
+
+    private ConfirmedRow subscription(LocalDate on) {
+        return new ConfirmedRow(on, "NETFLIX SUBSCRIPTION", SUBSCRIPTION, "EXPENSE", "Other",
+                true, "rule", null, false, null, null, false);
+    }
+
+    private StagedRow subscriptionStaged(LocalDate on) {
+        return new StagedRow(on, "NETFLIX SUBSCRIPTION", SUBSCRIPTION, "EXPENSE", "Other", "rule",
+                null, false, null, null);
     }
 
     private BigDecimal balanceOf(Account account) {
@@ -247,6 +261,77 @@ class MultiSectionSharedTransferIT extends AbstractIntegrationTest {
         assertThat(balanceOf(card))
                 .as("and the liability side has to hold too -- the inversion is where BH-004 lived")
                 .isEqualByComparingTo(cardAfterFirst);
+    }
+
+    /**
+     * BH-041 hoisted {@code recurringService.detectForUser} alongside reconciliation, and that was a
+     * deliberate decision rather than code drifting with the block it lived in. Recording why, and
+     * proving the behaviour, because it went slightly beyond the approved wording of the ticket.
+     *
+     * <h2>Why it moved</h2>
+     *
+     * <p>It sat in the same per-section tail and had the same shape — user-wide, once per section —
+     * so a 3-section import ran it three times over the whole history. The measurement that
+     * justified BH-041 counted those passes explicitly ("+2 recurring passes" alongside "+2
+     * reconcile passes"); leaving it per-section would have left a large share of the repetition
+     * the ticket exists to remove.
+     *
+     * <h2>Why it is safe</h2>
+     *
+     * <p>Not "the last pass saw everything" — something stronger. {@code detectForUser} begins by
+     * resetting {@code setRecurring(false)} on every active transaction and then re-derives every
+     * pattern from scratch. It is a full recomputation over current state, so it is idempotent:
+     * running it three times and running it once reach the same result, and only the final run's
+     * output survives. Its ordering dependency is preserved too — it filters out transfers and
+     * duplicates, so it must run AFTER reconciliation, and {@code reconcileAcross} keeps that order.
+     *
+     * <p>What did change is the audit trail: one {@code RECURRING_DETECTION_RUN} row per import
+     * instead of one per section. Same class of change as reconciliation's, and deliberate.
+     *
+     * <h2>What this test pins</h2>
+     *
+     * <p>That a recurring pattern whose occurrences are SPLIT ACROSS SECTIONS is still found. That
+     * is the case a single shared pass has to get right, and it is the one a reader would reasonably
+     * worry about after learning detection stopped running per section.
+     */
+    @Test
+    @DisplayName("BH-041: a recurring pattern split across two sections is detected by the single shared pass")
+    void recurringDetectionRunsOnceAndStillSeesAPatternSpanningSections() {
+        User user = user();
+        Account savings = account(user, "Savings", Account.Type.SAVINGS, SAVINGS_OPENING);
+        Account card = account(user, "Credit Card", Account.Type.CREDIT_CARD, CARD_OPENING);
+
+        // Three monthly charges to one merchant, two on the savings section and the third on the
+        // card section. Grouping is by merchant across accounts, so this is one pattern that no
+        // single section can see on its own.
+        List<LocalDate> savingsDates = List.of(LocalDate.of(2026, 1, 5), LocalDate.of(2026, 2, 5));
+        LocalDate cardDate = LocalDate.of(2026, 3, 5);
+
+        StagedAccountSection stagedSavings = new StagedAccountSection(
+                null, savingsDates.stream().map(d -> subscriptionStaged(d)).toList(), 2, 0, List.of());
+        StagedAccountSection stagedCard = new StagedAccountSection(
+                null, List.of(subscriptionStaged(cardDate)), 1, 0, List.of());
+        ImportSession session = importSessionService.createMultiSection(
+                user.getId(), "consolidated.pdf", FILE, List.of(stagedSavings, stagedCard));
+
+        clearInvocations(recurringService);
+        importService.confirmMultiSection(user.getId(), new MultiAccountConfirmRequest(
+                session.getId(),
+                List.of(
+                        new SectionConfirm(savingsDates.stream().map(d -> subscription(d)).toList(),
+                                savings.getId(), null, null, null),
+                        new SectionConfirm(List.of(subscription(cardDate)), card.getId(), null, null, null))));
+
+        List<Transaction> all = transactionRepository.findByUserId(user.getId());
+        assertThat(all).hasSize(3);
+        assertThat(all)
+                .as("all three charges belong to one monthly pattern, and two of them are in a "
+                        + "different section from the third -- a per-section pass would have had to "
+                        + "wait for the last section to see it, which is exactly why running once "
+                        + "at the end is not a loss")
+                .allSatisfy(t -> assertThat(t.isRecurring()).isTrue());
+
+        verify(recurringService, times(1)).detectForUser(user.getId());
     }
 
     @Test

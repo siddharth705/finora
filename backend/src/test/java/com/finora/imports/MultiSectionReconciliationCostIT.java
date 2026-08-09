@@ -254,24 +254,32 @@ class MultiSectionReconciliationCostIT extends AbstractIntegrationTest {
                 (System.nanoTime() - startedAt) / 1_000_000);
         verify(reconciliationService, times(1)).reconcileForImport(eq(single.getId()), any(), any());
 
+        // Deliberately NOT printed against the old "+309 / +136 / +132" figures. Those came from
+        // comparing three confirm() calls to one, so they counted two extra sections of persistence
+        // as though it were reconciliation cost. Showing them in a column beside these numbers
+        // would invite the same misreading the class comment exists to correct.
         System.out.printf(
-                "%nBH-041 AFTER (history %d rows, %d imported rows either way)%n"
-                + "                          3 sections    1 section     delta     baseline delta%n"
-                + "  reconcile passes ....... %8d %12d %9d %15s%n"
-                + "  recurring passes ....... %8d %12d %9d %15s%n"
-                + "  prepared statements .... %8d %12d %9d %15s%n"
-                + "  query executions ....... %8d %12d %9d %15s%n"
-                + "  elapsed (ms) ........... %8d %12d %9d %15s%n"
-                + "  (baseline = the pre-fix figures this class recorded before the change)%n%n",
+                "%nBH-041 section-count sensitivity (history %d rows, %d imported rows either way)%n"
+                + "                          3 sections    1 section     delta%n"
+                + "  reconcile passes ....... %8d %12d %9d%n"
+                + "  recurring passes ....... %8d %12d %9d%n"
+                + "  prepared statements .... %8d %12d %9d%n"
+                + "  query executions ....... %8d %12d %9d%n"
+                + "  elapsed (ms) ........... %8d %12d %9d%n"
+                + "  The pass counts are the result. The remaining statement/query delta is%n"
+                + "  per-section persistence -- three Account resolves and three StatementImport%n"
+                + "  rows against one -- which is real work that SHOULD scale with sections.%n"
+                + "  For the actual before/after of the change itself, see the class comment:%n"
+                + "  a 3-section import went 994 -> 938 statements, 628 -> 616 queries.%n%n",
                 history, totalRows,
-                1, 1, 0, "+2",
-                1, 1, 0, "+2",
+                1, 1, 0,
+                1, 1, 0,
                 threeSections.statements(), oneSection.statements(),
-                threeSections.statements() - oneSection.statements(), "+309",
+                threeSections.statements() - oneSection.statements(),
                 threeSections.queries(), oneSection.queries(),
-                threeSections.queries() - oneSection.queries(), "+136",
+                threeSections.queries() - oneSection.queries(),
                 threeSections.elapsedMs(), oneSection.elapsedMs(),
-                threeSections.elapsedMs() - oneSection.elapsedMs(), "+132");
+                threeSections.elapsedMs() - oneSection.elapsedMs());
 
         // The claim. Not "cheaper" -- INDIFFERENT. One pass either way, asserted above by call
         // count, and a database cost that no longer tracks section count.
@@ -283,16 +291,23 @@ class MultiSectionReconciliationCostIT extends AbstractIntegrationTest {
         // so 3 sections came out 2 statements CHEAPER than 1 on the first run of this. Asserting
         // "3 > 1" looked obviously true and was false; asserting equality would flake on batch
         // boundaries. The bound is what actually matters.
+        // THESE BOUNDS ARE A REGRESSION GUARD, NOT A PERFORMANCE TARGET. Nobody should read the
+        // gap between the observed delta (~66-126) and the ceiling (200) as headroom that is
+        // meant to be consumed, or as an expected value. The only thing they assert is "the old
+        // repeated-work shape has not come back" -- that shape produced +309 statements and +136
+        // queries, and any regression toward it trips these long before it reaches the old figure.
+        // A tighter bound would encode today's per-section persistence cost as a contract, which it
+        // is not: adding a legitimate per-section query would then fail a test about
+        // reconciliation.
+        //
         // Bounds chosen against MEASURED spread, not by eye. Across seven runs -- isolated and as
         // part of the full suite -- the statement delta landed between 66 and 126 and the query
         // delta between -5 and +29. The first bound written here was 100 and the full suite
         // promptly produced exactly 100, which is the whole argument for picking these from
         // observed data rather than from what looks like a round number.
         //
-        // 200 still sits far below the +309 that means per-section reconciliation is back, which is
-        // the only regression this can usefully catch. The deterministic signal is the pass count
-        // asserted above by call count; this is the backstop for a per-section query creeping in
-        // without changing it.
+        // The deterministic signal is the pass count asserted above by call count. This is only the
+        // backstop for a per-section query creeping in without changing it.
         long statementDelta = Math.abs(threeSections.statements() - oneSection.statements());
         long queryDelta = Math.abs(threeSections.queries() - oneSection.queries());
         assertThat(statementDelta)
