@@ -63,10 +63,22 @@ jest.mock('@expo/vector-icons/Ionicons', () => {
 // Safe-area insets come from a native module and are otherwise only available under a real
 // <SafeAreaProvider>. Zeroed here so every screen test doesn't have to wrap its own provider --
 // no assertion in this suite depends on the notch size.
-jest.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-  SafeAreaProvider: ({ children }: { children: unknown }) => children,
-}));
+//
+// SafeAreaInsetsContext is exported too, because OfflineBoundary re-provides the top inset to its
+// subtree (see its own comment on why double-counting the notch would shift every screen down the
+// moment the banner appears). While it was missing, the real export read as undefined and anything
+// rendering that boundary died on `Cannot read properties of undefined (reading 'Provider')` -- a
+// property of this mock, not of the component, and the kind of failure that sends someone hunting
+// through source that turns out to be correct.
+jest.mock('react-native-safe-area-context', () => {
+  const React = require('react');
+  const insets = { top: 0, bottom: 0, left: 0, right: 0 };
+  return {
+    useSafeAreaInsets: () => insets,
+    SafeAreaProvider: ({ children }: { children: unknown }) => children,
+    SafeAreaInsetsContext: React.createContext(insets),
+  };
+});
 
 // The system date picker is a native module. Rendered as nothing, with the imperative Android
 // entry point stubbed: DateField's job under test is what it does with the value it gets back, and

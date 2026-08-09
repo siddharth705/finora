@@ -43,16 +43,17 @@ export function LedgerScreen() {
    * page with no way back, so it watches the server's totalPages and clamps. Here there is no
    * current page to strand -- an invalidation just refetches from page 0 forward.
    */
-  const { data, isLoading, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage, refetch } =
-    useInfiniteQuery({
-      queryKey: ['transactions', filters],
-      queryFn: ({ pageParam }) => transactionsApi.search({ ...filters, page: pageParam }),
-      initialPageParam: 0,
-      // The backend's PagedResponse carries a real totalPages, so "is there more" is answered by
-      // the server rather than inferred from whether a page came back full.
-      getNextPageParam: (lastPage) =>
-        lastPage.page + 1 < lastPage.totalPages ? lastPage.page + 1 : undefined,
-    });
+  const {
+    data, isLoading, isError, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage, refetch,
+  } = useInfiniteQuery({
+    queryKey: ['transactions', filters],
+    queryFn: ({ pageParam }) => transactionsApi.search({ ...filters, page: pageParam }),
+    initialPageParam: 0,
+    // The backend's PagedResponse carries a real totalPages, so "is there more" is answered by
+    // the server rather than inferred from whether a page came back full.
+    getNextPageParam: (lastPage) =>
+      lastPage.page + 1 < lastPage.totalPages ? lastPage.page + 1 : undefined,
+  });
 
   const txns = data?.pages.flatMap((p) => p.content) ?? [];
   const totalElements = data?.pages[0]?.totalElements ?? 0;
@@ -130,8 +131,26 @@ export function LedgerScreen() {
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={c.primary} />
         </View>
+      ) : isError && txns.length === 0 ? (
+        /**
+         * A failed search must not fall through to ListEmptyComponent below. Without this branch
+         * `data` is undefined, `txns` is [], and the list renders "No transactions yet. Import a
+         * statement to get started." -- which tells someone who may have years of imported history
+         * that they have none, and sends them to re-import data they already own. Same class of bug
+         * as the dashboard's `!summary` guard: a request that failed is not an answer of zero.
+         *
+         * Only when there is nothing on screen. A failure while paging is handled in the footer
+         * instead, so one bad page cannot blank a list the user is already reading.
+         */
+        <View style={styles.centered}>
+          <Text style={[styles.errorText, { color: c.muted }]}>Couldn't load your transactions.</Text>
+          <Pressable onPress={() => void refetch()} hitSlop={12} accessibilityRole="button">
+            <Text style={[styles.retry, { color: c.primary }]}>Try again</Text>
+          </Pressable>
+        </View>
       ) : (
         <FlatList
+          testID="ledger-list"
           data={txns}
           keyExtractor={(t) => t.id}
           onEndReached={() => {
@@ -149,7 +168,21 @@ export function LedgerScreen() {
             </Text>
           }
           ListFooterComponent={
-            isFetchingNextPage ? <ActivityIndicator style={styles.footer} color={c.primary} /> : null
+            isFetchingNextPage ? (
+              <ActivityIndicator style={styles.footer} color={c.primary} />
+            ) : isError ? (
+              // Reached only with rows already on screen, since the empty case is handled above.
+              // Silently stopping here would read as "you have reached the end", so say otherwise
+              // and keep the rest of the list usable.
+              <View style={styles.footer}>
+                <Text style={[styles.errorText, { color: c.muted }]}>
+                  Couldn't load more transactions.
+                </Text>
+                <Pressable onPress={() => void fetchNextPage()} hitSlop={12} accessibilityRole="button">
+                  <Text style={[styles.retry, { color: c.primary }]}>Try again</Text>
+                </Pressable>
+              </View>
+            ) : null
           }
           renderItem={({ item: t }) => (
             <Pressable
@@ -248,5 +281,7 @@ const styles = StyleSheet.create({
   meta: { fontSize: 11, marginTop: 2 },
   amount: { fontSize: 14, fontWeight: '700' },
   empty: { fontSize: 13, textAlign: 'center', paddingVertical: spacing.xl },
-  footer: { paddingVertical: spacing.md },
+  footer: { paddingVertical: spacing.md, alignItems: 'center', gap: spacing.xs },
+  errorText: { fontSize: 14 },
+  retry: { fontSize: 14, fontWeight: '600' },
 });

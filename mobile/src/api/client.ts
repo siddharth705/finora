@@ -100,11 +100,35 @@ function unwrapEnvelope(response: any) {
 // present the same soon-to-be-stale refresh token.
 let refreshInFlight: Promise<{ token: string; refreshToken: string }> | null = null;
 
-function refreshAccessToken(refreshToken: string): Promise<{ token: string; refreshToken: string }> {
+/**
+ * Reads the stored token, rotates it, and persists the new pair -- all inside the shared promise.
+ *
+ * The persistence belongs in here, not in the caller, and that is the whole point. When the write
+ * lived in the interceptor, `.finally` cleared this guard the instant the network call settled,
+ * while storage still held the OLD token for the length of two further awaits. A 401 arriving in
+ * that window found the guard open, read the retired token, and presented it again --
+ * RefreshTokenService.rotate() reads a second presentation as theft and revokes every session the
+ * user has, on every device. So one badly-timed request signs you out everywhere.
+ *
+ * Reproduced deterministically in refreshRace.test.ts before this was changed: the fake server
+ * recorded ["R1", "R1"]. Holding the guard until the new pair is written means a late caller either
+ * joins this promise or reads storage that is already current -- there is no ordering left in which
+ * a retired token can be sent.
+ *
+ * Reading the token in here rather than accepting it as an argument closes the same window from the
+ * other side: a caller that read storage before joining would otherwise hand in a value that was
+ * already stale by the time it was used.
+ */
+function refreshAccessToken(): Promise<{ token: string; refreshToken: string }> {
   if (!refreshInFlight) {
     refreshInFlight = (async () => {
+      const stored = await safeStorage.getItem(REFRESH_TOKEN_KEY);
+      if (!stored) throw new Error('No refresh token stored');
       const { authApi } = await import('./endpoints');
-      return authApi.refresh(refreshToken);
+      const refreshed = await authApi.refresh(stored);
+      await safeStorage.setItem(TOKEN_KEY, refreshed.token);
+      await safeStorage.setItem(REFRESH_TOKEN_KEY, refreshed.refreshToken);
+      return refreshed;
     })().finally(() => {
       refreshInFlight = null;
     });
@@ -134,21 +158,18 @@ api.interceptors.response.use(
 
     if (error.response?.status === 401 && !originalRequest._retried && !isAuthEndpoint) {
       originalRequest._retried = true;
-      const refreshToken = await safeStorage.getItem(REFRESH_TOKEN_KEY);
 
-      if (refreshToken) {
-        try {
-          const refreshed = await refreshAccessToken(refreshToken);
-          await safeStorage.setItem(TOKEN_KEY, refreshed.token);
-          await safeStorage.setItem(REFRESH_TOKEN_KEY, refreshed.refreshToken);
-          originalRequest.headers.Authorization = `Bearer ${refreshed.token}`;
-          return api(originalRequest);
-        } catch {
-          await clearSessionAndRedirect();
-          return Promise.reject(error);
-        }
-      } else {
+      // Reading the stored token, rotating it and persisting the result all happen inside
+      // refreshAccessToken so they cannot be interleaved -- see its comment for the session-wide
+      // sign-out that splitting them caused. A missing token throws there too, so "no session" and
+      // "refresh rejected" land on the same branch, which is what they both mean here.
+      try {
+        const refreshed = await refreshAccessToken();
+        originalRequest.headers.Authorization = `Bearer ${refreshed.token}`;
+        return api(originalRequest);
+      } catch {
         await clearSessionAndRedirect();
+        return Promise.reject(error);
       }
     }
 

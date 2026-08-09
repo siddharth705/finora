@@ -78,12 +78,32 @@ export function DashboardScreen() {
   const sentences = insightsQ.data?.sentences ?? [];
   const firstName = fullName?.split(' ')[0] ?? 'there';
 
+  /**
+   * Every category is accounted for, either as its own slice or inside "Other".
+   *
+   * This used to take the top six and stop, and the centre label summed only what survived. With
+   * seven or more categories that produced two different spend totals on one screen -- the donut
+   * saying 34,000 while the Expenses KPI beside it said 35,500 -- and the smaller one carried the
+   * authority of sitting inside the chart. The backend builds spendByCategory and monthlyExpense
+   * from the same filtered list (DashboardService.java:104), so the full sum IS the period's
+   * expense figure; anything less is not a rounding difference, it is wrong.
+   *
+   * Folding the remainder into a final slice keeps the chart readable without dropping money out
+   * of it, so the slices, the centre and the KPI all agree by construction rather than by luck.
+   */
   const donutSlices: Slice[] = useMemo(() => {
     if (!summary) return [];
-    return Object.entries(summary.spendByCategory)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, DONUT_COLORS.length)
-      .map(([label, value], i) => ({ label, value, color: DONUT_COLORS[i] }));
+    const sorted = Object.entries(summary.spendByCategory).sort((a, b) => b[1] - a[1]);
+    if (sorted.length <= DONUT_COLORS.length) {
+      return sorted.map(([label, value], i) => ({ label, value, color: DONUT_COLORS[i] }));
+    }
+    // The last colour is the neutral grey, which is what "Other" should read as anyway.
+    const named = sorted.slice(0, DONUT_COLORS.length - 1);
+    const rest = sorted.slice(DONUT_COLORS.length - 1).reduce((sum, [, value]) => sum + value, 0);
+    return [
+      ...named.map(([label, value], i) => ({ label, value, color: DONUT_COLORS[i] })),
+      { label: 'Other', value: rest, color: DONUT_COLORS[DONUT_COLORS.length - 1] },
+    ];
   }, [summary]);
 
   if (loading) {

@@ -39,6 +39,10 @@ export function OfflineBoundary({ children }: { children: ReactNode }) {
     <View style={styles.flex}>
       <View
         style={[styles.bar, { backgroundColor: c.warningBg, paddingTop: insets.top + 6 }]}
+        // `accessible` groups the strip into one announced element rather than leaving the role on
+        // a container a screen reader steps past on its way to the text. It is also what makes the
+        // role queryable, so the announcement can actually be asserted rather than assumed.
+        accessible
         accessibilityRole="alert"
         accessibilityLiveRegion="polite"
       >
