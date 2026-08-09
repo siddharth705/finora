@@ -138,6 +138,69 @@ describe('when /dashboard/summary fails', () => {
   });
 });
 
+describe('M0-A: the spending donut must not understate the period total', () => {
+  /**
+   * A known corpus, not a plausible-looking one. Eight categories, because the donut has six
+   * colours and the interesting case is the seventh:
+   *
+   *   Rent 20,000 + Food 5,000 + Transport 3,000 + Bills 2,500 + Shopping 2,000
+   *     + Health 1,500 + Education 800 + Misc 700  =  35,500
+   *   top six only                                 =  34,000
+   *
+   * The backend builds spendByCategory and monthlyExpense from the same filtered transaction list
+   * (DashboardService.java:104 and the expenseCur it shares), so their totals agree by
+   * construction: 35,500 is the authoritative figure for the period, and any smaller number shown
+   * as a spend total is wrong rather than merely rounded.
+   */
+  const CATEGORIES = {
+    Rent: 20000, Food: 5000, Transport: 3000, Bills: 2500,
+    Shopping: 2000, Health: 1500, Education: 800, Misc: 700,
+  };
+  const TRUE_TOTAL = 35500;
+
+  it('shows the whole period total in the centre, not just the slices that fit', async () => {
+    dashboard.summary.mockResolvedValue(
+      emptySummary({ spendByCategory: CATEGORIES, monthlyExpense: TRUE_TOTAL })
+    );
+
+    renderScreen();
+    await screen.findByText('Total Balance');
+
+    // ₹34,000 is the sum of the six largest categories. Rendering it as the centre of a chart
+    // titled "Spending by Category" tells the user they spent 1,500 less than they did.
+    expect(screen.queryByText('₹34,000')).toBeNull();
+    // getAllByText, not getByText: the correct total legitimately appears more than once (the
+    // centre and the Expenses KPI), and the next test asserts exactly that agreement.
+    expect(screen.getAllByText('₹35,500').length).toBeGreaterThan(0);
+  });
+
+  it('agrees with the Expenses KPI, which reads the same backend field', async () => {
+    // Two figures for one quantity on one screen is the failure mode worth pinning: whichever is
+    // wrong, a user cannot tell which to believe.
+    dashboard.summary.mockResolvedValue(
+      emptySummary({ spendByCategory: CATEGORIES, monthlyExpense: TRUE_TOTAL })
+    );
+
+    renderScreen();
+    await screen.findByText('Total Balance');
+
+    expect(screen.getAllByText('₹35,500').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('is unaffected when every category already fits', async () => {
+    // Guards the fix from over-reaching: with six or fewer categories nothing was ever wrong, and
+    // the displayed total must stay exactly what it was.
+    dashboard.summary.mockResolvedValue(
+      emptySummary({ spendByCategory: { Rent: 20000, Food: 5000 }, monthlyExpense: 25000 })
+    );
+
+    renderScreen();
+    await screen.findByText('Total Balance');
+
+    expect(screen.getAllByText('₹25,000').length).toBeGreaterThanOrEqual(2);
+  });
+});
+
 describe('when the dashboard is legitimately empty', () => {
   it('renders the real dashboard, not the failure state', async () => {
     // A brand-new account with nothing imported: the request SUCCEEDED and the answer is zero.
