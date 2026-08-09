@@ -6,7 +6,7 @@
 **Hunt report:** [`2026-08-08-repo-wide-bug-hunt.md`](2026-08-08-repo-wide-bug-hunt.md)
 
 > **This repository is not defect-free, and a green test suite is not the claim being made here.**
-> 1806 backend tests pass. That says the changes on this branch did not break what the suite covers.
+> 1810 backend tests pass. That says the changes on this branch did not break what the suite covers.
 > It does not say the repository is correct, and several of the largest subsystems were never
 > reviewed at all — see [What this hunt did not cover](#what-this-hunt-did-not-cover), which is the
 > most important section of this document.
@@ -20,9 +20,9 @@ that never earned a BH number.
 
 | Disposition | Count | Meaning |
 |---|---:|---|
-| **CLOSED — VERIFIED** | 8 | The broken behaviour was independently demonstrated, then shown to be gone |
+| **CLOSED — VERIFIED** | 9 | The broken behaviour was independently demonstrated, then shown to be gone |
 | **CLOSED — REVIEWED** | 22 | Root cause established and fixed, suite green, but the break was never demonstrated |
-| **OPEN** | 15 | Confirmed issue, remediation outstanding |
+| **OPEN** | 14 | Confirmed issue, remediation outstanding |
 | **DEFERRED — DECISION REQUIRED** | 2 | Behaviour or product semantics need an explicit decision |
 | **DEPLOYMENT VERIFICATION REQUIRED** | 1 | Cannot be closed from the repository alone |
 | **NEEDS REPRODUCTION** | 2 | Confirmed by inspection; deliberately not closed without a repro |
@@ -37,8 +37,8 @@ that never earned a BH number.
 
 - **CLOSED — VERIFIED** requires that the defect was *demonstrated* — the broken behaviour observed
   directly (by executing the repository's own compiled classes, or by a test that failed before the
-  fix), and then observed to be gone. Five were proven the first way, three by mutation testing the
-  regression test after the fix. Eight items clear this bar.
+  fix), and then observed to be gone. Five were proven the first way, four by mutation testing the
+  regression test after the fix. Nine items clear this bar.
 - **CLOSED — REVIEWED** means the root cause was established, the fix is understood, a regression
   test exists in most cases, and the full suite is green — but nobody ever watched the bug happen.
   Twenty-two items sit here. Each row in §2.2 states what specifically is missing.
@@ -56,7 +56,7 @@ demonstrating the break.
 Every row answers: original behaviour → reproducible? → root cause → what changed → regression test
 → **demonstrated to fail against the break?** → verified → unverified.
 
-### 2.1 CLOSED — VERIFIED (8)
+### 2.1 CLOSED — VERIFIED (9)
 
 Demonstrated against the broken behaviour.
 
@@ -70,11 +70,12 @@ Demonstrated against the broken behaviour.
 | **BH-047** | Expired-session sweep ran inside the acting user's upload transaction, holding locks on other users' rows across an object-storage write | Housekeeping placed in the caller's transaction | **Reproduced pre-fix** (both cases failed), then **mutation-checked**: restoring the call fails the test on the right assertion |
 | **BH-028** | A parser crash produced a 500 and **no** evidence row, permanently | Both catches were `ApiException` only | **Reproduced pre-fix** (`Expected size: 1 but was: 0`), then **mutation-checked**: narrowing the catch fails the crash test and leaves both controls green |
 | **BH-058** | A concurrency test passed only because the rest of the suite happened to leave the queue empty | `claimDueEvents` is table-wide; the assertion was not scoped | **Mutation-checked**: removing `SKIP LOCKED` fails both tests on the right assertions |
+| **BH-041** | A multi-section import ran the whole reconciliation pipeline once per section, at user-wide scope; and a transfer between two sections was counted on one side only | `confirmMultiSection` looped `confirm()`, which reconciled in its own tail — so section 1 was summarised before section 2 existed | **Mutation-checked**: restoring the interleaved persist/reconcile/summarise shape fails the new test on `expected: 1 but was: 0` for "each section sees the transfer its own row is half of". A weaker first mutation, which split only the reconcile, did **not** reproduce it — recorded because the test was strengthened until it could tell the real old behaviour apart |
 
 ### 2.2 CLOSED — REVIEWED (22)
 
 Most have a regression test, and each test fails for a specific nameable change — but no mutation
-was run to prove it. Listed separately rather than folded in with the eight above. Two of them
+was run to prove it. Listed separately rather than folded in with the nine above. Two of them
 (BH-010, BH-016) have no test at all and are the weakest closures on the branch.
 
 | ID | What changed | Regression test | Not demonstrated because |
@@ -120,32 +121,65 @@ Each re-verified as still reproducing at `5a4c985`.
 | BH-046 | Design | Dual write to `file_content` has no end trigger |
 | BH-050 | Test defect | `negative.spec.ts` self-skips — would pass if rate limiting were removed entirely |
 | BH-053 | Test gap | `MerchantLearningService.confirm`'s documented race has no test |
-| BH-041 | Performance | Reconciliation runs once per section at user-wide scope. **Reclassified from DEFERRED 2026-08-09** — see below |
 | *(new)* | Test defect | Other tests may share BH-058's table-wide assumption. **Not swept.** Only the one demonstrated to break was fixed |
 
-### BH-041's reclassification, and why the deferral was wrong
+### BH-041 in full — DEFERRED → OPEN → CLOSED–VERIFIED, all on 2026-08-09
 
-It was deferred on the belief that reconciling once would strip the per-section
-`duplicatesDetected` / `transfersIdentified` of any meaning, making it a product decision. Reading
-the code rather than reasoning about it showed that premise is false.
+Kept end to end because the route matters more than the destination: it was deferred for a reason
+that turned out to be false, and the only thing that found that was reading the code.
 
-Each section creates its own `StatementImport` (`new StatementImport()` sits inside `confirm()`,
-which `confirmMultiSection` calls per section), and `DuplicateDetector.tally()` is a **post-hoc read
-of persisted flags scoped by that `statementImportId`**. It has no dependency on how many
-reconciliation passes ran, or when. Persist-all → reconcile-once → summarize-each leaves every
-per-section count with exactly the meaning it has today. **No API change is required, and no
-product decision is needed.**
+**Why the deferral was wrong.** It was held as a product decision on the belief that reconciling
+once would strip the per-section `duplicatesDetected` / `transfersIdentified` of any meaning. Each
+section in fact creates its own `StatementImport`, and `DuplicateDetector.tally()` is a **post-hoc
+read of persisted flags scoped by that `statementImportId`** — indifferent to how many passes ran
+or when. Persist-all → reconcile-once → summarise-each leaves every count exactly as it was. **No
+API change, no product decision.**
 
-It also fixes a live defect nobody had reported. Section 1 is summarised before section 2's rows
-exist, so a transfer between two sections of the same statement is counted in section 2's
-`transfersIdentified` and **not** section 1's. Reconciling after all sections are persisted makes
-both sides report it.
+**What shipped.** `confirm()` split into `persistSection()` and `summarise()`;
+`confirmMultiSection` persists all sections, reconciles once, then summarises each. The import path
+reconciles through a new `reconcileForImport(userId, min, max)` over a symmetric ±180-day candidate
+window; `reconcileForUser` is untouched for its seven other callers, one of which depends on the
+unbounded re-scan. The window is **derived from the widest matching window** rather than typed as
+`180`, so it follows `REFUND_WINDOW_DAYS` if that ever moves.
 
-**Named risk for whoever implements it.** The post-reconciliation block does not only produce the
-tally — it also carries BH-003's duplicate-balance reversal. Splitting `confirm()` into a persist
-phase and a summarise phase must move *both* together. Leaving the reversal behind re-opens
-BH-003, a CLOSED–VERIFIED finding where a card balance went 4000.00 → 3000.00 on a second import,
-and the existing coverage (`ImportAccountBalanceIT`) exercises the single-section path only.
+**The live defect it also fixed.** Section 1 was summarised before section 2's rows existed, so a
+transfer between two sections of one statement was counted on one side only —
+`transfersIdentified` 1 for the later section, 0 for the earlier.
+
+**Scope expansion, acknowledged.** `recurringService.detectForUser` was hoisted alongside
+reconciliation. That went past the approved wording. It is safe for a structural reason, not a
+circumstantial one: `detectForUser` resets `setRecurring(false)` across every active transaction and
+re-derives every pattern from scratch, so it is a full recomputation — idempotent, with only the
+last run's output surviving. Its ordering dependency holds too (it filters out transfers and
+duplicates, so it must follow reconciliation, and it does). One `RECURRING_DETECTION_RUN` audit row
+per import now, instead of one per section.
+
+**Regression coverage.** `MultiSectionSharedTransferIT` (3 cases): a Savings→Card transfer split
+across sections, re-imported — asserting cross-account detection, both legs classified, both
+sections reporting it, balances unmoved by the re-import (BH-003), and one pass not three; a leg
+arriving in a *separate earlier* import still matching (the case account-scoping would have broken);
+and a recurring pattern split across sections. Plus `MultiSectionReconciliationCostIT` (3 cases)
+for pass counts and the candidate window.
+
+**Measured, on the same path with only the reconciliation shape swapped** — a 3-section import over
+200 rows of history:
+
+| | passes | statements | queries | elapsed |
+|---|---:|---:|---:|---:|
+| per-section + unbounded | 3 + 3 | 994 | 628 | ~514–629 ms |
+| once + windowed | 1 + 1 | 938 | 616 | ~219–402 ms |
+
+**A correction to this report's own earlier number.** The "+309 statements / +136 queries / +132 ms"
+recorded when BH-041 was deferred compared three `confirm()` calls against one, so most of it was
+two extra account resolves, `StatementImport` rows and transaction batches — per-section work that
+is real and unchanged. The reconciliation repetition itself was worth ~56 statements and ~12
+queries, plus a third to a half of wall-clock. A pass is only a couple of queries; its cost is the
+in-memory O(n²) matching, which is why time moved far more than statement count. **The old headline
+should not be quoted as the expected improvement.**
+
+Windowing showed *no* benefit in that fixture — 994 either way — because every row sits inside
+±180 days. A separate measurement gives three years of history and imports one month: **92
+transactions on file, 20 candidates loaded, 78% left unread.**
 
 ---
 
@@ -197,7 +231,7 @@ workstream's files provably absent. **No concurrent Maven during the backend run
 
 | Suite | Result |
 |---|---|
-| Backend | **1806 tests, 0 failures, 0 errors** — BUILD SUCCESS (236 classes, 64 integration) |
+| Backend | **1810 tests, 0 failures, 0 errors** — BUILD SUCCESS (238 classes, 65 integration) |
 | Frontend | **321 tests**, `tsc -b` clean, `eslint --max-warnings 0` clean |
 | Admin portal | **301 tests** (41 files) |
 | Mobile | `tsc --noEmit` clean |
@@ -299,18 +333,18 @@ engineering guesses.
 
 ## Merge recommendation
 
-The branch is safe to merge on the evidence available: it closes 30 findings, adds 40+ regression
+The branch is safe to merge on the evidence available: it closes 31 findings, adds 45+ regression
 tests, breaks nothing the suite covers, and touches no file belonging to the parallel workstream.
 
 **This branch closes the remediation cycle. It does not close the bug hunt.** The defensible
 statement — the one to use in the PR, in status updates, and anywhere a number is quoted — is:
 
-> 61 findings were investigated. 30 are classified closed (8 verified against the broken behaviour,
-> 22 reviewed but not demonstrated), 15 remain confirmed and unfixed, and the rest are explicitly
+> 61 findings were investigated. 31 are classified closed (9 verified against the broken behaviour,
+> 22 reviewed but not demonstrated), 14 remain confirmed and unfixed, and the rest are explicitly
 > classified by evidence level. The branch passes its committed verification suite, but this report
 > identifies significant areas that were not validated at all, including PDF extraction internals,
 > import/product classification, production runtime behaviour, and the nightly E2E workflow.
 
-What is *not* defensible is "1806 tests pass, therefore the system is validated." The 1806 are
+What is *not* defensible is "1810 tests pass, therefore the system is validated." The 1810 are
 worth having. The reason this document exists is to draw a written boundary around what they prove,
 so that Round 2 does not begin from a false assumption of completeness.
