@@ -2,12 +2,13 @@
 
 **Status:** closes the **Medium and Low** tranche assigned after Round 1. Not a claim that the
 repository is defect-free, and explicitly not a claim about the performance cluster — see §2.
-**Branch:** `fix/bug-hunt-medium-low`
-**Base:** `origin/main` @ `44406e6`
+**Branch:** `fix/bug-hunt-medium-low-reconciled` (originally `fix/bug-hunt-medium-low`; rebased and
+two commits dropped — see §2a)
+**Base:** `origin/main` @ `2c22dd6`
 **Round 1 report:** [`2026-08-09-bug-hunt-closure-report.md`](2026-08-09-bug-hunt-closure-report.md)
 **Hunt report:** [`2026-08-08-repo-wide-bug-hunt.md`](2026-08-08-repo-wide-bug-hunt.md)
 
-> **1877 backend tests pass. That is not the claim being made here.**
+> **1884 backend tests pass. That is not the claim being made here.**
 > It says this branch did not break what the suite covers. What each finding is actually *proven*
 > to have fixed is in §3, one row at a time, and [§6](#6-what-this-pass-did-not-cover) is the part
 > that matters most.
@@ -30,8 +31,8 @@ what REVIEWED means.
 | ID | Class | Disposition | Grade |
 |---|---|---|---|
 | **BH-053** | Test gap | Race reproduced; propagation contract pinned | **CLOSED — VERIFIED** (test only; the race itself stays OPEN) |
-| **BH-036** | Security (latent) | CORS allows and exposes `X-Request-Id` | **CLOSED — VERIFIED** |
-| **BH-032** | Security (minor) | DB-password check widened, measured first | **CLOSED — VERIFIED** |
+| **BH-036** | Security (latent) | CORS allows and exposes `X-Request-Id` | **CLOSED — VERIFIED, on `main`** (superseded — see §2a) |
+| **BH-032** | Security (minor) | DB-password check widened | **CLOSED — VERIFIED, on `main`** (superseded — see §2a) |
 | **BH-037** | Security (dev) | Postgres bound to loopback | **CLOSED — VERIFIED** (observed on a live stack) |
 | **BH-029** | Design | Parser format persisted on `import_jobs` | **CLOSED — VERIFIED** |
 | **BH-018** | Design | Store moved outside the transaction | **CLOSED — VERIFIED** (transaction half only) |
@@ -39,7 +40,10 @@ what REVIEWED means.
 | **(new) BH-059** | Financial correctness | Filename truncation stripped the extension | **CLOSED — VERIFIED at the point of failure**; chain to reimport **REVIEWED** |
 | BH-042 · BH-043 · BH-045 | Performance | **DESCOPED mid-run** — see §2 | **NOT ATTEMPTED** |
 
-Seven assigned findings closed, all VERIFIED. One new finding found and fixed. Three descoped.
+Five findings closed **by this branch**, all VERIFIED. Two more (BH-032, BH-036) were independently
+fixed and merged to `main` first by a parallel session — this branch's own versions were dropped
+during reconciliation rather than shipped redundantly; see §2a for what was kept from them. One new
+finding found and fixed. Three descoped.
 
 ---
 
@@ -116,67 +120,23 @@ confirmation is kept.
 
 ---
 
-### BH-036 — CORS forbade the correlation header the app advertises
+### 2a. BH-036 and BH-032 — independently fixed elsewhere first; reconciled, not duplicated
 
-**Commit:** `20996de` · **Grade: CLOSED — VERIFIED**
+Both were fixed on this branch (`20996de`, `da9c6f1`) before it became known that a separate,
+concurrent session had independently fixed the same two findings and already merged them to `main`
+(PR #74, commits `e9521dd` and `00a2dfa`). Confirmed by the repository owner: keep `main`'s
+already-live versions, drop this branch's, avoid shipping two designs for one finding. This branch
+was rebased onto `main` post-merge and the two commits removed rather than cherry-picked.
 
-Reproduced first, over real HTTP through the real Spring Security CORS processor:
+**BH-036 (CORS / `X-Request-Id`)** — both fixes address the same gap; not diffed line-for-line
+before dropping, since `main`'s version is live and this branch's contributed no evidence the other
+lacked.
 
-```
-preflight with Access-Control-Request-Headers: X-Request-Id
-  expected: 200 OK
-   but was: 403 FORBIDDEN
-```
-
-**A second half the finding did not name, found while writing the test for the half it did.**
-`CorrelationIdFilter` sets `X-Request-Id` on every response "so a client can report 'this is the
-request that failed' without needing to parse logs" — and a cross-origin response header is
-invisible to JavaScript unless it appears in `Access-Control-Expose-Headers`, which nothing set:
-
-```
-Access-Control-Expose-Headers on a 401
-  Expecting ListN: [] to contain: ["x-request-id"]
-```
-
-That direction has no preflight to fail loudly. It reads as `null` in a browser and works perfectly
-under curl — the same shape as the bug already recorded in `CorsConfig`'s own class comment.
-
-Both pass after the change. Tested over the wire rather than against the `CorsConfiguration` bean,
-because `CorsConfig`'s comment records a prior bug where the bean was correct and what a browser
-got back was not. The expose-headers case deliberately drives an **unauthenticated** request: the
-response whose ID a user is asked to quote is a failing one.
-
-Both directions were latent — no client in any of the three apps sends or reads the header (grep).
-
----
-
-### BH-032 — the DB password check only rejected one literal
-
-**Commit:** `da9c6f1` · **Grade: CLOSED — VERIFIED**
-
-Five things reached production through `DEFAULT_DB_PASSWORD.equals(dbPassword)`, each demonstrated
-failing before the change and passing after:
-
-| Value | Why it got through |
-|---|---|
-| `"Finora"` / `"FINORA"` | equality is case-sensitive |
-| `"  finora  "` | Spring does not trim property values |
-| `""` / `"   "` / `null` | **no placeholder in it at all** |
-| `"change-me-…"` | self-announcing; the JWT scan already caught this class |
-| `"postgres"` / `"root"` | what an operator types when not generating |
-
-The blank case is the easiest to miss. `${DB_PASSWORD:finora}` substitutes the default only when
-the variable is *unset*, so `DB_PASSWORD=` resolves to the empty string and `"finora".equals("")`
-is false — while the guard's own message claimed to cover "unset".
-
-**The part worth reading is what was measured and then deliberately not built.**
-
-BH-033 is ACCEPTED, not fixed: the marker scan can reject a legitimate secret. Its closure names
-the condition that would reopen it — applying the check *"to a value whose alphabet the operator
-does not choose"*. A Railway-generated database password is exactly that, and unlike `JWT_SECRET`
-the operator cannot regenerate it to get past a false rejection. So the widening was measured
-first, same method as BH-033, **2,000,000 trials per alphabet** against
-`SecureRandom.getInstanceStrong()`:
+**BH-032 (DB password check)** — `main`'s version (`00a2dfa`) blocks null/blank and a fixed literal
+list. This branch's dropped version did that plus case/whitespace handling, a helper shared with the
+JWT placeholder check, and — the one thing worth keeping even though the code did not ship —
+**a false-positive measurement taken before choosing a matching strategy**, the same method BH-033
+used: 2,000,000 trials per alphabet against `SecureRandom.getInstanceStrong()`.
 
 | Alphabet | Markers as substrings | Weak words as substrings |
 |---|---:|---:|
@@ -184,21 +144,13 @@ first, same method as BH-033, **2,000,000 trials per alphabet** against
 | hex × 32 | **0** | **0** |
 | base64url × 43 | **2** (1.0 × 10⁻⁶, `dummy`) | **65** (3.3 × 10⁻⁵) |
 
-Positive control: both matchers fire on a value that should match.
-
-The marker scan is the same order BH-033 already accepted, and stays. The weak-password list as a
-substring scan is **seventy times worse** — essentially all of it `root` at four characters — and
-would refuse roughly one correct deployment in twenty-seven thousand while buying nothing: an
-operator who picks a weak database password types `root`, they do not generate a value containing
-it. **So markers are matched as substrings and the weak list by equality.**
-
-That split is the entire product of the measurement. *The substring version is what would have been
-written without it.* A test pins it: a generated password that merely **contains** `root` must be
-accepted, and it fails on a one-word change to the implementation.
-
-`deployment-guide.md` updated in both places it described the old behaviour, including its existing
-hex-vs-base64 measurement section, which now records why `DB_PASSWORD` is the case where "generate
-another one" is not available.
+**Matching a weak-password list by substring is ~70× worse than matching markers by substring** —
+almost entirely `root` at four characters — and would refuse roughly one correct deployment in
+27,000 while stopping nothing real: an operator who picks a weak password types `root`, they do not
+generate a value containing it. If `main`'s current equality-only match is ever widened past exact
+values, this number is the reason to match the weak list by equality and reserve substring matching
+for high-entropy markers only. Recorded here so the measurement is not lost with the commit that
+took it; not filed as a new finding, since `main`'s version is not wrong, only narrower.
 
 ---
 
@@ -455,48 +407,60 @@ is why **BH-017 is still deferred**.
 
 ## 4. Verification results
 
-Run against this branch with **no concurrent Maven** sharing `backend/target/`.
+Run against **`fix/bug-hunt-medium-low-reconciled`**, rebased onto `origin/main` @ `2c22dd6` after
+the BH-032/BH-036 reconciliation in §2a, with **no concurrent Maven** sharing `backend/target/`.
+First attempt threw mid-suite on an unrelated Mockito inline-mock-maker self-attach failure under
+Java 25 — the same transient class the parallel session's PR #76 independently reported; a clean
+rerun immediately after was green with no code change between attempts, consistent with a
+self-attach race rather than a real regression.
 
 | Suite | Result |
 |---|---|
-| **Backend** | **1877 tests, 0 failures, 0 errors** — `./mvnw verify` BUILD SUCCESS (359 classes analysed) |
+| **Backend** | **1884 tests, 0 failures, 0 errors** — `./mvnw verify` BUILD SUCCESS |
 | Frontend | **Not re-run.** No file under `frontend/` is touched by this branch |
 | Admin portal | **Not re-run.** No file under `admin-portal/` is touched |
 | Mobile | **Not re-run.** No file under `mobile/` is touched |
 | E2E | **Not re-run.** No file under `e2e/` is touched |
 | Pre-commit guards | Pass on every commit (`check-imports`: 644 files, 0 problems; executable-bit and fixture-hygiene checks clean) |
 
-**25 tests added or changed by this branch**, across 8 files:
+**16 tests added or changed by this branch**, across 6 files — down from the pre-reconciliation 25
+across 8, the difference being `CorrelationIdCorsIT` (3, BH-036) and `ProductionConfigValidatorTest`
+(+6, BH-032) dropped with their commits:
 
 | Class | Cases |
 |---|---:|
 | `MerchantLearningConfirmRaceIT` *(new)* | 3 |
-| `CorrelationIdCorsIT` *(new)* | 3 |
-| `ProductionConfigValidatorTest` | +6 |
 | `ImportJobSourceFormatIT` *(new)* | 4 |
 | `StatementUploadTest` | +3 |
 | `ImportJobStoreOutsideTransactionIT` *(new)* | 3 |
 | `ReconciliationServiceTest` | +1 (and one inverted) |
 | `ReconciliationAuditVolumeIT` *(new)* | 2 |
 
-**An arithmetic caveat, stated rather than smoothed over.** The brief quoted a baseline of 1837.
-1877 − 1837 = 40, which does not equal the 25 above. The difference is that `origin/main` moved
-after that baseline was quoted (PRs #69, #70, #71 merged). **I did not re-run the suite at the base
-commit to confirm this**, because doing so requires a second Maven build and this repository's own
-rule forbids two builds sharing `backend/target/`. The number that is directly verified is
-**1877 / 0 failures on this branch**.
+**1884 on this branch vs. 1837 quoted in the original brief is not a clean diff of the 16 above** —
+`origin/main` moved from `44406e6` to `2c22dd6` between the brief and this reconciliation (PRs #67,
+#69–#72, #74 merged in between, several adding their own tests), and this branch is now based on the
+newer commit. **1884 / 0 failures on this specific branch, at this specific base, is the number that
+is directly verified**; it is not decomposable into "base count + 16" without re-running the suite at
+`2c22dd6` itself, which was not done for the same reason Round 1 gives for not re-running a second
+Maven build.
 
 ---
 
 ## 5. Cross-cutting notes
 
-- **Every closure here is VERIFIED.** That is a property of the tranche, not of the effort: these
-  are small, well-bounded findings where reproducing the break was cheap. Round 1's 22 REVIEWED
-  closures were mostly larger changes where it was not.
-- **Two measurements changed a design decision rather than confirming one.** BH-032's false-
-  rejection run turned a substring scan into an equality check; BH-044's broken test turned a
-  two-condition emission rule into a three-condition one. Both are cases of a diagnostic earning
-  its place by proving a proposed capability unnecessary or wrong.
+- **Every closure shipped by this branch is VERIFIED.** That is a property of the tranche, not of
+  the effort: these are small, well-bounded findings where reproducing the break was cheap. Round
+  1's 22 REVIEWED closures were mostly larger changes where it was not.
+- **A parallel-session collision was caught before it reached `main`, not after.** BH-032 and
+  BH-036 were fixed twice, independently, by two sessions working from the same base. Caught by
+  inspecting `git worktree list` and process state before either branch's version of these two
+  findings merged — see §2a. No duplicate code shipped; one measurement was salvaged from the
+  version that didn't.
+- **Two measurements changed a design decision rather than confirming one.** The dropped BH-032
+  commit's false-rejection run turned a substring scan into an equality check (not shipped, kept as
+  a note in §2a); BH-044's broken test turned a two-condition emission rule into a three-condition
+  one (shipped). Both are cases of a diagnostic earning its place by proving a proposed capability
+  unnecessary or wrong.
 - **Three wrong first drafts are recorded in commit messages** rather than silently corrected: the
   `FAILED`-vs-`QUEUED` assertion (BH-029), the self-invocation `@Transactional` (BH-018), and the
   two-condition emission rule (BH-044). The last two would have shipped green.
@@ -535,10 +499,11 @@ The most important section. Read it before treating any of the above as broader 
 - **V75 has never been applied to a non-test database.** Testcontainers proves it runs against a
   schema built by the preceding migrations; it has not met production data. Its backfill is a data
   mutation, and the same caveat Round 1 recorded for V73/V74 applies unchanged.
-- **BH-032's measurement models a generated password, not Railway's actual generator.** Three
-  plausible alphabets were sampled 2,000,000 times each. Railway's real alphabet and length were
-  not read from Railway; if it generates something outside those three shapes, the rate is
-  unmeasured.
+- **The preserved BH-032 measurement (§2a) models a generated password, not Railway's actual
+  generator.** Three plausible alphabets were sampled 2,000,000 times each. Railway's real alphabet
+  and length were not read from Railway; if it generates something outside those three shapes, the
+  rate is unmeasured. Applies only if the ~70× number is ever acted on — the code itself did not
+  ship.
 
 ### Structural gaps this pass did not close
 
