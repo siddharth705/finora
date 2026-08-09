@@ -48,7 +48,8 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "test": "jest",
+    "_test_comment": "--experimental-vm-modules is required, not optional: client.ts reaches endpoints.ts through a dynamic import (they are mutually dependent, so a static one would be circular). Without the flag Node refuses that import inside Jest's VM, the refresh-on-401 branch throws before any network call, and every test touching it silently exercises the forced-sign-out path instead -- passing while asserting the opposite of what it claims. Metro implements import() itself, so this is a test-runner limitation rather than anything about the app.",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
     "lint": "expo lint --max-warnings 0"
   },
   "jest": {
