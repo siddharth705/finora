@@ -19,6 +19,13 @@ const RANGE_MONTHS: Record<CashFlowRange, number> = { '3M': 3, '6M': 6, '12M': 1
 
 const DONUT_COLORS = ['#3b82f6', '#16a34a', '#f59e0b', '#8b5cf6', '#ef4444', '#94a3b8'];
 
+/**
+ * The label for the remainder bucket, and also a category name the backend really assigns -- which
+ * is exactly why it is a named constant: the two have to be compared, not merely both spelled the
+ * same way in two places.
+ */
+const OTHER_LABEL = 'Other';
+
 export function DashboardScreen() {
   const c = useTheme();
   const insets = useSafeAreaInsets();
@@ -100,9 +107,26 @@ export function DashboardScreen() {
     // The last colour is the neutral grey, which is what "Other" should read as anyway.
     const named = sorted.slice(0, DONUT_COLORS.length - 1);
     const rest = sorted.slice(DONUT_COLORS.length - 1).reduce((sum, [, value]) => sum + value, 0);
+
+    /**
+     * The bucket has to absorb a real category of the same name rather than sit beside it.
+     * "Other" is a category the backend genuinely assigns -- an import whose merchant matched no
+     * rule lands there -- so on an account with enough categories the legend showed "Other 3,000"
+     * and "Other 5,500" as separate rows. The total stayed correct, but two identically labelled
+     * rows with different amounts is not something a reader can resolve, and this bucket created
+     * the collision. Merging is also the honest reading: uncategorised spending IS other spending.
+     */
+    const collidingIndex = named.findIndex(([label]) => label === OTHER_LABEL);
+    if (collidingIndex >= 0) {
+      return named.map(([label, value], i) => ({
+        label,
+        value: i === collidingIndex ? value + rest : value,
+        color: DONUT_COLORS[i],
+      }));
+    }
     return [
       ...named.map(([label, value], i) => ({ label, value, color: DONUT_COLORS[i] })),
-      { label: 'Other', value: rest, color: DONUT_COLORS[DONUT_COLORS.length - 1] },
+      { label: OTHER_LABEL, value: rest, color: DONUT_COLORS[DONUT_COLORS.length - 1] },
     ];
   }, [summary]);
 
