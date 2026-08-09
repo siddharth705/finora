@@ -173,9 +173,66 @@ class SummaryTotalsValidatorTest {
         assertThat(finding.details()).containsEntry("suspectedCause", "DIRECTION");
     }
 
+    /**
+     * The contradiction: the statement says money moved, and none of it reached the ledger.
+     *
+     * <p>This used to report NOT_APPLICABLE -- "no transactions were parsed", as though the absence
+     * were the end of the matter. It is the opposite. When our own parse produces nothing there is
+     * nothing to weigh the printed evidence against, which makes that evidence the ONLY thing left
+     * that can say the read failed. Found on a real SBI statement printing 5 debits and 1 credit
+     * totalling 45,000, which reached the user with no verification report at all.
+     *
+     * <p>WARNING, not FAILED: the amounts did not fail validation, they never arrived.
+     */
     @Test
-    void reportsNotApplicableWithNoRows() {
-        var finding = validator.check(List.of(), PRINTED);
+    void warnsWhenTheStatementClaimsActivityAndNothingWasStaged() {
+        var finding = validator.check(List.of(), PRINTED, 66);
+
+        assertThat(finding.outcome()).isEqualTo("WARNING");
+        assertThat(finding.details())
+                .containsEntry("suspectedCause", SummaryTotalsValidator.PRINTED_ACTIVITY_WITH_ZERO_STAGED)
+                .containsEntry("stagedTransactionCount", 0)
+                .containsEntry("printedDebitCount", 3)
+                .containsEntry("printedCreditCount", 1);
+    }
+
+    /**
+     * The distinction that makes the evidence worth carrying: "the table was read and every row of
+     * it rejected" is a different failure from "no table was found at all", and both stage zero.
+     * Only the located count tells them apart, and it is deliberately not the staged count.
+     */
+    @Test
+    void recordsLocatedRowsSeparatelyFromStagedRows() {
+        assertThat(validator.check(List.of(), PRINTED, 66).details())
+                .as("the table was seen; every row of it was refused")
+                .containsEntry("locatedRowCount", 66)
+                .containsEntry("stagedTransactionCount", 0);
+
+        assertThat(validator.check(List.of(), PRINTED, 0).details())
+                .as("no table was seen at all -- same staged count, different failure")
+                .containsEntry("locatedRowCount", 0)
+                .containsEntry("stagedTransactionCount", 0);
+    }
+
+    /**
+     * Zero staged rows is NOT itself the warning condition, and this is the guard that says so.
+     * A dormant account's statement prints a summary of zeroes and has been read perfectly; raising
+     * a contradiction there would train people to ignore the warning that matters.
+     */
+    @Test
+    void doesNotWarnWhenTheStatementItselfReportsNoActivity() {
+        var dormant = new PrintedSummary(BigDecimal.ZERO, BigDecimal.ZERO, 0, 0);
+
+        var finding = validator.check(List.of(), dormant, 0);
+
+        assertThat(finding.outcome()).isEqualTo("NOT_APPLICABLE");
+        assertThat(finding.details()).doesNotContainKey("suspectedCause");
+    }
+
+    /** No printed evidence and nothing staged is genuinely nothing to compare -- unchanged. */
+    @Test
+    void reportsNotApplicableWithNoRowsAndNoPrintedSummary() {
+        var finding = validator.check(List.of(), PrintedSummary.NONE, 0);
 
         assertThat(finding.outcome()).isEqualTo("NOT_APPLICABLE");
     }

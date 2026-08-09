@@ -66,6 +66,11 @@ public class ImportVerificationRecorder {
     private static final Set<String> STRUCTURAL_KEYS = Set.of(
             "rowsChecked", "rowsWithBalance", "anchoredOnOpeningBalance", "ambiguousRows",
             "printedCreditCount", "parsedCreditCount", "printedDebitCount", "parsedDebitCount",
+            // Counts of our own rows, so neither can hold money or document text. Kept because the
+            // pair is the whole evidence of the printed-activity-with-nothing-staged contradiction:
+            // "66 located, 0 staged" says the table was read and every row rejected, which is a
+            // different failure from "0 located, 0 staged".
+            "stagedTransactionCount", "locatedRowCount",
             "suspectedCause");
 
     /**

@@ -72,7 +72,10 @@ public class ImportVerifier {
         List<ImportDto.VerificationFinding> findings = new ArrayList<>();
         findings.addAll(balanceChainValidator.report(rows, openingBalance).findings());
         findings.add(statementTotalsValidator.check(rows, openingBalance, closingBalance));
-        findings.add(summaryTotalsValidator.check(rows, printedSummary));
+        // rawRows is what the locator found before normalisation. The summary rule needs its SIZE
+        // to tell "the table was read and every row rejected" from "no table was found at all" --
+        // both stage zero rows and they are not the same failure.
+        findings.add(summaryTotalsValidator.check(rows, printedSummary, rawRows == null ? 0 : rawRows.size()));
         // The rows BEFORE normalization, which is the only point at which an ambiguous cell is
         // still ambiguous -- every other rule here sees values whose reading is already settled.
         findings.add(columnAmbiguityValidator.check(rawRows));
@@ -96,12 +99,13 @@ public class ImportVerifier {
      */
     public ImportDto.VerificationReport reviseSummaryTotals(ImportDto.VerificationReport report,
                                                             List<StagedRow> rows,
-                                                            PrintedSummary printedSummary) {
+                                                            PrintedSummary printedSummary,
+                                                            int locatedRowCount) {
         if (report == null) return null;
         List<ImportDto.VerificationFinding> revised = new ArrayList<>();
         for (ImportDto.VerificationFinding finding : report.findings()) {
             revised.add(SummaryTotalsValidator.RULE.equals(finding.rule())
-                    ? summaryTotalsValidator.check(rows, printedSummary)
+                    ? summaryTotalsValidator.check(rows, printedSummary, locatedRowCount)
                     : finding);
         }
         return new ImportDto.VerificationReport(List.copyOf(revised));
