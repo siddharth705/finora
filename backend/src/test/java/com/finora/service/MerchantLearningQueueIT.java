@@ -197,10 +197,98 @@ class MerchantLearningQueueIT extends AbstractIntegrationTest {
             threads.shutdownNow();
         }
 
-        assertThat(firstClaim.get()).hasSize(1);
+        // BH-058. Scoped to THIS fixture's events, not to whatever the table happens to hold.
+        //
+        // claimDueEvents is table-wide by design -- a worker claims work, not one user's work --
+        // so asserting on the raw result made this test depend on the entire suite leaving the
+        // queue empty. Every confirmed import enqueues learning events and the test profile
+        // disables the worker that would drain them, so that assumption held only by luck. Adding
+        // an unrelated import-heavy test class turned this red, which is how it was found.
+        //
+        // The contract being tested is unchanged and is not weakened by scoping: the SAME event
+        // must never be returned to two claimants. Filtering to this fixture's user is what
+        // expresses that, where hasSize(1) merely expressed "nothing else is going on".
+        assertThat(mine(firstClaim.get(), f))
+                .as("the first claimant takes this fixture's event")
+                .hasSize(1);
         // Skipped, not blocked and not returned -- that is what SKIP LOCKED buys over plain
         // FOR UPDATE, which would have made the second worker wait rather than move on.
-        assertThat(secondClaim.get()).isEmpty();
+        assertThat(mine(secondClaim.get(), f))
+                .as("and the second must not see it while the first still holds the lock")
+                .isEmpty();
+    }
+
+    /**
+     * BH-058, the negative case: unrelated pending work must not change the answer.
+     *
+     * <p>A test-isolation defect cuts both ways. The failure this one produced was a false
+     * FAILURE -- another class's leftovers made a correct implementation look broken. The
+     * dangerous direction is the false PASS: if the assertions were loose enough, a genuinely
+     * broken SKIP LOCKED could be masked by whichever rows happened to be in the table. So this
+     * deliberately fills the queue with unrelated pending events and asserts the outcome is
+     * identical to the clean case.
+     *
+     * <p>The unrelated events belong to a DIFFERENT user and are left claimable, which is the
+     * hostile arrangement: they are eligible for both claims, they sort ahead of or behind this
+     * fixture's event unpredictably, and they are exactly what a real multi-tenant queue looks
+     * like at any busy moment.
+     */
+    @Test
+    void unrelatedPendingEventsCannotChangeWhoClaimsWhat() throws Exception {
+        Fixture noise = fixture();
+        for (int i = 0; i < 5; i++) {
+            publisher.enqueue(noise.user().getId(), noise.merchant().getId(), noise.category().getId(), null, null);
+        }
+
+        Fixture f = fixture();
+        publisher.enqueue(f.user().getId(), f.merchant().getId(), f.category().getId(), null, null);
+
+        CountDownLatch firstHasClaimed = new CountDownLatch(1);
+        CountDownLatch secondHasFinished = new CountDownLatch(1);
+        AtomicReference<List<MerchantLearningEvent>> firstClaim = new AtomicReference<>();
+        AtomicReference<List<MerchantLearningEvent>> secondClaim = new AtomicReference<>();
+
+        ExecutorService threads = Executors.newFixedThreadPool(2);
+        try {
+            threads.submit(() -> transactionTemplate.executeWithoutResult(status -> {
+                firstClaim.set(eventRepository.claimDueEvents(Instant.now(), 10));
+                firstHasClaimed.countDown();
+                await(secondHasFinished);
+            }));
+            threads.submit(() -> {
+                await(firstHasClaimed);
+                transactionTemplate.executeWithoutResult(status ->
+                        secondClaim.set(eventRepository.claimDueEvents(Instant.now(), 10)));
+                secondHasFinished.countDown();
+            });
+            threads.shutdown();
+            assertThat(threads.awaitTermination(30, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            threads.shutdownNow();
+        }
+
+        assertThat(mine(firstClaim.get(), f))
+                .as("six events in the queue instead of one changes nothing about who gets this one")
+                .hasSize(1);
+        assertThat(mine(secondClaim.get(), f))
+                .as("still skipped -- the noise must not let a second claimant through to it")
+                .isEmpty();
+
+        // And the property that actually matters across the whole table, not just this fixture:
+        // no event may appear in both claims, whoever it belongs to.
+        List<UUID> claimedTwice = firstClaim.get().stream()
+                .map(MerchantLearningEvent::getId)
+                .filter(id -> secondClaim.get().stream().anyMatch(e -> e.getId().equals(id)))
+                .toList();
+        assertThat(claimedTwice)
+                .as("SKIP LOCKED's whole promise: no row is handed to two workers")
+                .isEmpty();
+    }
+
+    /** This fixture's events only. See BH-058 -- claimDueEvents is table-wide by design, so an
+     *  assertion about it has to say which events it means. */
+    private static List<MerchantLearningEvent> mine(List<MerchantLearningEvent> claimed, Fixture f) {
+        return claimed.stream().filter(e -> e.getUserId().equals(f.user().getId())).toList();
     }
 
     // --- Failure handling --------------------------------------------------------------------
