@@ -55,7 +55,7 @@ public class StatementValidator {
      *  the statement's earliest date, where "first line for that date" was actually the day's
      *  LAST transaction, not its first). */
     private record BalanceObservation(LocalDate date, BigDecimal signedAmount,
-                                       BigDecimal balance) implements BalanceChainUtil.ChainLink {
+                                       BigDecimal balance, String description) implements BalanceChainUtil.ChainLink {
         @Override public BigDecimal balanceAfter() { return balance; }
     }
 
@@ -70,7 +70,7 @@ public class StatementValidator {
             BigDecimal balance = CsvParser.parseNumeric(balanceRaw);
             if (balance != null) {
                 BigDecimal signedAmount = "INCOME".equals(parsedRow.type()) ? parsedRow.amount() : parsedRow.amount().negate();
-                acc.balanceObservations.add(new BalanceObservation(parsedRow.date(), signedAmount, balance));
+                acc.balanceObservations.add(new BalanceObservation(parsedRow.date(), signedAmount, balance, parsedRow.description()));
             }
         }
 
@@ -133,7 +133,21 @@ public class StatementValidator {
 
             BalanceObservation trueFirstOfDay = BalanceChainUtil.first(minDateGroup);
             BalanceObservation trueLastOfDay = BalanceChainUtil.last(maxDateGroup);
-            openingBalance = trueFirstOfDay.balance().subtract(trueFirstOfDay.signedAmount());
+
+            // Bug fix: this used to unconditionally back out the first row's own signed amount,
+            // on the assumption every statement's earliest balance observation is an ordinary
+            // transaction rather than an explicit "OPENING BALANCE" label row. TransactionNormalizer
+            // falls back to the balance/running-balance column as the amount for such label rows
+            // (no debit/credit value to read), which made this subtract balance - (-balance),
+            // silently doubling the detected opening balance whenever a CSV export prints one of
+            // these rows. Mirrors the identical fix already applied on the PDF path
+            // (PdfPreviewGenerator.buildDetectedAccountInfo's isExplicitOpeningRow) -- only skip the
+            // signed-amount subtraction when the row actually IS that kind of explicit label row.
+            boolean isExplicitOpeningRow = trueFirstOfDay.description() != null
+                    && trueFirstOfDay.description().toLowerCase(Locale.ROOT).contains("opening balance");
+            openingBalance = isExplicitOpeningRow
+                    ? trueFirstOfDay.balance()
+                    : trueFirstOfDay.balance().subtract(trueFirstOfDay.signedAmount());
             closingBalance = trueLastOfDay.balance();
         }
 

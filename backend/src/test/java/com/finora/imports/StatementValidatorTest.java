@@ -118,6 +118,30 @@ class StatementValidatorTest {
         assertThat(info.closingBalance()).isEqualByComparingTo("1300.00");
     }
 
+    /**
+     * Bug fix: TransactionNormalizer's balance-column fallback stages an explicit "Opening
+     * Balance" label row (no debit/credit value, so it defaults to type=EXPENSE with
+     * amount==balance) exactly like an ordinary transaction. The old logic unconditionally backed
+     * out that row's own signedAmount from its balance -- for a label row that's
+     * balance - (-balance), silently doubling the detected opening balance. Mirrors the equivalent
+     * fixture already covered on the PDF path (PdfPreviewGeneratorTest's "OPENING BALANCE, 4 real
+     * transactions, CLOSING BALANCE" golden fixture); this file had no CSV equivalent before now.
+     */
+    @Test
+    void buildDetectedAccountInfo_doesNotDoubleTheOpeningBalance_whenTheFirstRowIsAnExplicitOpeningBalanceLabel() {
+        StatementValidator.AccountSignalAccumulator acc = new StatementValidator.AccountSignalAccumulator();
+        StagedRow openingRow = new StagedRow(LocalDate.parse("2026-07-01"), "Opening Balance",
+                new BigDecimal("50000.00"), "EXPENSE", "Other", "default", null, false, null, null);
+        validator.scanRow(balanceRow("50000.00"), openingRow, acc);
+        StagedRow txn = row("2026-07-02", new BigDecimal("486.00"), "EXPENSE");
+        validator.scanRow(balanceRow("49514.00"), txn, acc);
+
+        DetectedAccountInfo info = validator.buildDetectedAccountInfo(
+                "statement.csv", List.of(), -1, List.of(openingRow, txn), acc);
+
+        assertThat(info.openingBalance()).isEqualByComparingTo("50000.00");
+    }
+
     @Test
     void buildDetectedAccountInfo_withNoBalanceColumnAtAll_leavesBothBalancesNull() {
         StatementValidator.AccountSignalAccumulator acc = new StatementValidator.AccountSignalAccumulator();
