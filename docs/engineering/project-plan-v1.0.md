@@ -1,8 +1,17 @@
 # Finora — Project Plan to v1.0 GA
 
-**Baselined:** 2026-08-09 · **Re-baselined:** 2026-08-09 (D-1, D-2 resolved)
+**Baselined:** 2026-08-09 · **Re-baselined:** 2026-08-10, morning
 **Owner:** Siddharth Tiwari · **Maintained by:** the PM role
 **Status:** On Track (see §7)
+
+> **Process note, recorded rather than hidden.** This file was reverted to an earlier committed
+> version at least once overnight — a round of edits covering the PR #80 reconciliation, the V75 CI
+> break and fix, and a correction to how BH-006 was reported were lost when a parallel session
+> operating in this same shared directory checked out or wrote over this file while it sat uncommitted
+> on disk. Content has been reconstructed from this session's own record and is committed at the end
+> of this update specifically so it survives the next branch switch. See the changelog for what was
+> lost and restored, and [[parallel-sessions-on-finora]] for the underlying pattern — this is its
+> second occurrence, not its first.
 
 This is the living plan. It is re-baselined whenever an engineering session, review, bug hunt or
 deployment reports back — see §12 for the re-baseline procedure. Every number in it is derived from
@@ -19,17 +28,18 @@ comes out is right, and stays right. The two share a name and almost nothing els
 
 | | |
 |---|---|
-| **Overall completion toward v1.0 GA** | **80%** (weighted — see §2). Was 77% at 16:43, 65% at 00:42, same day |
-| **Current phase** | Phase 4 — Hardening & Defect Remediation, **Round 1 merged; Round 2 opening** |
+| **Overall completion toward v1.0 GA** | **82%** (weighted — see §2). Was 80% at 20:49 on 08-09, 65% at 00:42 the same day |
+| **Current phase** | Phase 4 — Hardening & Defect Remediation, **effectively finished as engineering work** |
 | **Health** | **On Track**, with one warning — see §8 |
 | **v1.0 scope** | Web + admin portal + **mobile** (D-2, 2026-08-09) |
-| **Open bug-hunt findings** | **0 High** — BH-006 reproduced and fixed (PR #75, open). **7 Medium** — BH-017 and BH-025 now decided (D-3, below) and in implementation (two PRs building), leaving 5. **5 Low** (1 in review). Was 1 Critical + 12 High + 24 Medium + 18 Low |
-| **Baselined against** | `origin/main` @ `2c22dd6`. PRs #67 (BH-046 step 1), #72 (BH-058 sweep), #74 (CORS + DB password check) merged this session |
-| **Commits** | 489 across 9 days (first commit 2026-07-31) |
-| **Backend** | 357 main classes, 256 test classes, 69 Flyway migrations, ~1,745 tests green |
+| **Open bug-hunt findings** | **0 Critical, 0 High.** All six original P0s and BH-006 merged. BH-017/025/032/036/044/050/053 also closed since. Genuinely still open: BH-042/043/045 (owned by a parallel session), a fresh full tally against the original 61 is a named next action rather than an estimate |
+| **Baselined against** | `origin/main` @ `e44bf54`. `main` fully green — the V75 Flyway collision from overnight is fixed and confirmed, and a `BulkRecategorizeLearningIT` CI failure on an unrelated commit was rerun and confirmed a flake, not a regression |
+| **Commits** | 591+ across 10 days (first commit 2026-07-31) |
+| **Backend** | 1936+ tests green as of the last confirmed run |
 | **Clients** | frontend 122 files · admin-portal 105 · mobile 88 · e2e 12 specs / 112 cases |
 | **CI** | green on `main`, self-hosted macOS runner, smoke E2E blocking on every PR |
 | **Deployed** | Yes — `app.finoratech.info` (Cloudflare Pages) + Railway backend + Railway Postgres |
+| **Store enrolment** | **Apple: submitted as Individual overnight, not yet confirmed complete** — first attempt hit the Organization/DUNS flow by mistake, corrected. **Google Play: not yet started** |
 
 **The deployment is real but unpopulated.** `app.finoratech.info` is live, and the 2026-08-08
 stale-chunk incident happened on it — but **D-1 is resolved: the only user is the owner, testing.**
@@ -58,16 +68,22 @@ whose remaining 10% is the part that corrupts a balance is not 90% done for laun
 | # | Workstream | Weight | Done | Contribution | What the remainder is |
 |---|---|---|---|---|---|
 | 1 | Core product (auth, ledger, accounts, budgets, goals, dashboard, reports, admin portal) | 20% | 95% | 19.0 | Password-policy convergence, a few unmigrated TanStack pages |
-| 2 | Import pipeline (M1 reliability + M2 at-scale) | 20% | 78% ▲ | 15.6 | **Revised down from an intended 85%.** BH-041, BH-028 and the multi-section work landed — but the closure report disclosed that `PdfTableLocator` (1,358 lines) and `imports/product/` (14 classes) have **never been reviewed**, and both sit inside this workstream |
-| 3 | **Financial correctness defects** | 10% | **80%** ▲ | 8.0 | Was 0%. BH-003/004/005 are CLOSED–VERIFIED — demonstrated broken, then demonstrated fixed. BH-006 (High) and BH-023 remain, deliberately held for a reproduction rather than closed on inspection |
-| 4 | Security & privacy | 12% | 78% ▲ | 9.4 | Refresh token out of `localStorage`, job endpoint rate-limited, prod profile verified live by probing. Still: no malware scan, no edge headers, no secret manager, BH-014 existence oracle, retention undecided |
-| 5 | Testing & QA readiness | 12% | 80% ▲ | 9.6 | Backend 1745→1810, frontend 232→321, admin 247→301, +45 regression tests, 12 CI guards. Still: the full E2E suite has **never run in CI**, BH-050 self-skips, the BH-058 class was never swept |
-| 6 | Infrastructure & production readiness | 14% | 57% ▲ | 8.0 | Prod profile confirmed active by behavioural probe rather than assumption. Still: no restore drill, no load test, no secret manager, V73/V74 never applied to a non-test database |
-| 7 | Mobile app | 12% | 65% ▲ | 7.8 | EAS project linked, `eas.json` and native dirs exist, Track A/B split documented, four mobile defects fixed. Still: **no confirmed run on a physical device**, store enrolment unconfirmed, no E2E |
-| | **Total** | **100%** | | **77.4 → 77%** | |
+| 2 | Import pipeline (M1 reliability + M2 at-scale) | 20% | 78% | 15.6 | `PdfTableLocator` (1,358 lines) and `imports/product/` (14 classes) still **never reviewed** — the largest unquantified risk in the repo. A new, small, appropriately-scoped gap logged this morning (non-text header row on a real SBI statement), not built ad hoc |
+| 3 | **Financial correctness defects** | 10% | **90%** ▲ | 9.0 | All six original P0s (BH-001/003/004/005/006 + BH-023) CLOSED–VERIFIED and merged, including a real defect found in BH-006's own fix and corrected same night (see §12 changelog). Remainder is Round 2's unreviewed surface, not open tickets |
+| 4 | Security & privacy | 12% | 88% ▲ | 10.6 | BH-014, 017, 025, 032, 036 all merged. Still: no malware scan, no edge headers, no secret manager |
+| 5 | Testing & QA readiness | 12% | 85% ▲ | 10.2 | BH-050, 053 closed; suite at 1936+ tests, 0 failures, confirmed via a real rerun after a same-commit CI flake. Still: full E2E has **never actually executed** in CI, the wider BH-058 class was flagged but not swept |
+| 6 | Infrastructure & production readiness | 14% | 57% | 8.0 | **Unchanged across multiple reports now.** No restore drill, no load test, no secret manager, V73/V74 never applied to a non-test database |
+| 7 | Mobile app | 12% | 68% ▲ | 8.2 | **Apple enrolment submitted** (Individual) overnight — first real movement on the item flagged in every prior report. Google Play still not started. Still no confirmed run on a physical device |
+| | **Total** | **100%** | | **81.6 → 82%** | |
 
 **Mobile is in v1.0** (D-2, 2026-08-09). Its 12% weight stays, and workstream 7 is now on the
 critical path rather than beside it — see §5 and §9.
+
+**The pattern holds, report after report.** Defect and infra-hygiene work keeps closing — six more
+findings and a CI break fixed within the hour, overnight — and it keeps not moving the date, because
+the date was never gated on it. Workstream 6 (infrastructure) has now shown the identical number
+across three consecutive re-baselines. That is the clearest evidence available that store enrolment
+and device bring-up, not code, are what determine when this ships.
 
 **Velocity.** 489 commits / 9 days ≈ 54 commits/day; the last three days ran 105, 106 and ~40, at
 5–7 merged PRs/day. Measured in the unit that matters — *closed workstream items per day* — recent
@@ -107,33 +123,33 @@ measured history consists of, which is why block A and B carry the widest ranges
 
 ## 4. The defect backlog — what Phase 4 actually is
 
-Source: [`reviews/2026-08-08-repo-wide-bug-hunt.md`](reviews/2026-08-08-repo-wide-bug-hunt.md).
-56 open findings across 60 investigated. **Nothing has been fixed.** Two were re-verified against the
-current tree while writing this plan (BH-001 and BH-002 — the code is exactly as described).
+Source: [`reviews/2026-08-08-repo-wide-bug-hunt.md`](reviews/2026-08-08-repo-wide-bug-hunt.md), plus
+two remediation rounds since. **This describes the original open backlog; it is the historical record
+closures are graded against, not current status** — current status is §1 and §2.
 
-### P0 — Release blocking, and arguably fix-today
+### P0 — CLOSED, all six, all CLOSED–VERIFIED and merged to `main`
 
-| ID | Defect | Why P0 |
+| ID | Defect | Closed by |
 |---|---|---|
-| BH-001 | Cancelling an in-flight import **un-cancels it**; the job re-queues and stages anyway | The Cancel button breaks its own documented promise. Reproduced. |
-| BH-003 | Re-importing a statement **moves the account balance twice** | Net worth, health score and low-balance alerts are permanently wrong, and the duplicate flag hides the evidence. Reproduced. |
-| BH-004 | `ClosingBalanceGuard` applies the asset formula to **every** account type | Every correct credit-card statement is reported as not adding up. Reproduced. |
-| BH-005 | A refunded purchase is reported as a **pure loss** | Reports drop the refund income and keep the expense. Reproduced. |
-| BH-006 | `confirmReimport` accepts arbitrary client rows with **no staged-row check** | The one confirm path with no validation; the easiest route to a corrupt balance. |
+| BH-001 | Cancelling an in-flight import **un-cancelled it**; the job re-queued and staged anyway | Round 1 (PR #63) |
+| BH-003 | Re-importing a statement **moved the account balance twice** | Round 1 (PR #63) |
+| BH-004 | `ClosingBalanceGuard` applied the asset formula to **every** account type | Round 1 (PR #63) |
+| BH-005 | A refunded purchase was reported as a **pure loss** | Round 1 (PR #63) |
+| BH-006 | `confirmReimport` accepted arbitrary client rows with **no staged-row check** | PR #75 — and its own fix shipped a real defect, corrected same night. See §12 changelog; do not treat this row as "closed and done" without reading it |
 
-The middle three are the ones to be frightened of. They are older than the async queue, none of them
-has a test, and all three corrupt a number **nobody can eyeball** — which is precisely why they
-survived a 1,745-test suite and 489 commits.
+All five carry regression tests mutation-checked against the restored defect. These survived a
+1,745-test suite and 489 commits before being found — none had a test at the time.
 
-### P1 — Required for v1.0
+### P1 — CLOSED except two genuinely open items
 
-`BH-002` (poison jobs never dead-letter — `markClaimed()++` and `returnToQueue()--` cancel out) ·
-`BH-011` (the async upload endpoint has no rate limit) · `BH-012` (refresh token still in
-`localStorage`, so the HttpOnly cookie work is inert) · `BH-013` (two tabs refreshing signs the user
-out of every device) · `BH-017` (statement bytes are never deleted — the documented 48-hour retention
-is false the moment a provider is configured) · `BH-007`, `BH-019`, `BH-023`, `BH-026`, `BH-027`
-(financial and idempotency) · `BH-048` (the full E2E suite never runs in CI) · `BH-054` (a push to a
-branch with no open PR gets no CI).
+**Closed:** `BH-002`, `BH-011`, `BH-012`, `BH-013` (Round 1) · `BH-019`, `BH-023`, `BH-026`, `BH-027`
+(financial/idempotency) · `BH-017` (retention, merged) · `BH-025` (BYTEA dual-write, merged).
+
+**Still open:**
+- **BH-048** — `e2e-nightly.yml` exists but **has never actually executed**. Valid YAML is not a
+  working pipeline.
+- **BH-007** — not independently re-verified in the last two re-baselines; due a fresh check.
+- **BH-054** — accepted trade-off, not a defect.
 
 ### P2 — After the critical path
 
@@ -207,8 +223,10 @@ Everything else runs beside it or waits. Specifically **off** the critical path 
 
 | ID | Risk | Sev | Prob | Impact | Mitigation | Status |
 |---|---|---|---|---|---|---|
-| R-1 | Balance-corruption defects (BH-003/004/005) reach the first real user | **High** (was Critical) | Certain if unfixed | Silent, permanent, per-user financial error; unrecoverable trust damage | Phase 4 sprint, starting with these three; add the tests that were missing | 🔴 Open |
-| R-2 | Cancelled imports resurrect (BH-001) | **High** (was Critical) | High under any concurrency | User's explicit "stop" ignored; a rejected document reaches the ledger | Make the state machine refuse, not the exception type | 🔴 Open |
+| R-1 | ~~Balance-corruption defects (BH-003/004/005) reach the first real user~~ | — | — | — | **Closed (Round 1, PR #63).** Demonstrated broken, demonstrated fixed, mutation-checked. No real user was ever exposed (D-1) | ✅ Closed |
+| R-2 | ~~Cancelled imports resurrect (BH-001)~~ | — | — | — | **Closed (Round 1, PR #63).** Same evidence standard as R-1 | ✅ Closed |
+| R-16 | Store enrolment has a wrong-turn cost | Medium | Realized once, mitigated | Apple's Organization flow demands a DUNS number the owner does not have; the Individual flow, already decided (D-9), needs none. Caught before submitting any org paperwork | Apple enrolment resubmitted correctly as Individual, per Apple's own docs confirming later conversion to Organization remains possible via account migration or app transfer | 🟡 Mitigated, awaiting Apple confirmation |
+| R-17 | The plan file itself has been silently reverted twice by the shared-directory parallel-session pattern | Medium | Realized twice | Hours of PM analysis lost from disk each time, recoverable only because this session's own transcript retained it | Commit this file after every substantive update rather than leaving it as uncommitted working-tree state — see the note at the top of this document | 🟠 Active, mitigation in progress |
 | R-3 | ~~Live deployment has not passed any release gate~~ | — | — | — | **Closed 2026-08-09 by D-1**: no real users, no customer data in production. Reopens the day the first external user signs up | ✅ Closed |
 | R-3a | The rehearsal window closes silently | Medium | High | Restore drill, load test and destructive testing get cheap *only* while prod is empty; that advantage is lost without anyone deciding to lose it | Do Phase 5's drills against real production before beta, not after | 🟠 New |
 | R-4 | No backup or restore has ever been drilled | **High** | Unknown | A Railway Postgres loss is unbounded | Schedule a restore drill in Phase 5 — the drill *is* the evidence | 🔴 Open |
@@ -473,7 +491,8 @@ in parallel with work you are doing anyway.
 | **D-5** | **Async import: threshold or poll-interval?** | Measured and deliberately left open: queue overhead is ~20 ms, the 1500 ms poll is ~98% of the penalty | Poll immediately then back off; re-measure; probably no threshold ever |
 | **D-6** | **Password policy** — does the backend enforce the complexity the frontend suggests? | Frontend and backend have drifted; README flags it as a pre-release must | Enforce on both sides, one policy, same release |
 | **D-7** | Pricing, subscription model, data-retention promises in the ToS | None exist; the Razorpay UI is deliberately disabled | Out of scope for v1.0 — launch free, decide before v1.1 |
-| ~~**D-13**~~ | ~~Approve a live reproduction attempt against BH-006?~~ | — | ✅ **Resolved 2026-08-09: approved and scoped.** Reproduced (a fabricated row confirmed and posted to the ledger through `/reimport/confirm`) and fixed same session — PR #75, open |
+| ~~**D-13**~~ | ~~Approve a live reproduction attempt against BH-006; accept the password-re-prompt UX cost?~~ | — | ✅ **Resolved twice.** Reproduction approved and fixed (PR #75). **The owner's approval of "double prompt is fine" was given on my inaccurate description** — PR #75 as shipped was an unconditional failure for every password-protected reimport, not a double-prompt. Found and corrected same night by a separate commit (`4133910`, direct to `main`, not via PR). Verified end-to-end against a real encrypted PDF |
+| ~~**D-14**~~ | ~~Individual or Organization Apple enrolment, given the DUNS prompt?~~ | — | ✅ **Resolved: Individual**, consistent with D-9. The DUNS prompt meant the Organization flow had been entered by mistake; Individual needs no DUNS. Confirmed convertible to Organization later if a legal entity is ever registered |
 
 ---
 
@@ -505,4 +524,6 @@ On any report from an engineering session, review, deployment or bug hunt:
 | 2026-08-09 | **BH-031 closed** (PR #65) — the `prod` profile *is* active on Railway | Closed by probing behaviour the variable controls (`/v3/api-docs` → 401) rather than by reading a setting. Stronger evidence than the variable itself would have been |
 | 2026-08-09 | **D-9 resolved (individual accounts, no legal entity).** **No date change** — Best 2026-09-28, Target 2026-10-16, Conservative 2026-11-27 all hold. D-10 and D-11 activated; D-12 raised; R-14 elevated; R-15 opened | The two effects cancel almost exactly: Apple's individual path is the fast one, and Google's 12-tester gate is the slow one. What *does* change is certainty — the 2026-09-12 closed-test milestone is now binding rather than conditional, and it is the only dated commitment in the plan |
 | 2026-08-09 | **D-8 resolved (neither store account exists).** Conservative **2026-11-13 → 2026-11-27**. Best and Target held, but Target is now conditional on a dated milestone. New §9a; R-13 and R-14 opened; D-9 and D-10 raised | Store enrolment became the longest-lead item in the project. Apple's tail (2–7 weeks, reported) blocks iOS device bring-up because APNs needs a paid account; Google's 12-tester/14-day clock cannot start until an installable build exists. **The mobile-first sequencing recommendation is now a requirement, not a preference** — sequencing mobile after web makes the Target date unreachable regardless of hours worked |
-| 2026-08-09 (late) | **Closure push: 3 PRs merged (#67 BH-046 step 1, #72 BH-058 sweep, #74 CORS + DB password), D-13/BH-006 resolved and fixed (PR #75, open), D-3/BH-017 and BH-025 both resolved with implementation PRs building.** No date change | BH-046 step 1 confirmed safe to merge only after a direct owner check that `STATEMENT_STORAGE_PROVIDER=r2` is actually set on Railway prod — an earlier automated answer claiming this was already confirmed, with fabricated terminology ("Gate 1/2", `legacy_only_blocks_step2`) not present anywhere in the repo, was rejected rather than acted on. BH-006's reproduction (a fabricated row confirmed through `/reimport/confirm` and posted to the ledger) matches the BH-023 pattern exactly, closed the same way: re-parse the stored bytes and run `ConfirmedRowIntegrity` against them. **Caution flagged, not yet resolved:** a full `mvn clean test` run this session showed 443 spurious test errors (Mockito inline-mock-maker failing to self-attach under Java 25) that vanished on a warm rerun — environmental flakiness worth a permanent fix (pin Mockito as a build-time Java agent, per its own warning) rather than a recurring surprise. One real, unrelated failure surfaced (`MultiSectionReconciliationCostIT`, a query-count regression guard, 278 vs a 200 threshold) — not caused by this session's diffs and not yet root-caused; needs an isolated rerun to confirm it isn't concurrent-test-run noise before treating it as a new finding |
+| 2026-08-09 (late) | **Closure push: 3 PRs merged (#67 BH-046 step 1, #72 BH-058 sweep, #74 CORS + DB password), D-13/BH-006 resolved and fixed (PR #75, open), D-3/BH-017 and BH-025 both resolved with implementation PRs building.** No date change | BH-046 step 1 confirmed safe to merge only after a direct owner check that `STATEMENT_STORAGE_PROVIDER=r2` is actually set on Railway prod — an earlier automated answer claiming this was already confirmed, with fabricated terminology ("Gate 1/2", `legacy_only_blocks_step2`) not present anywhere in the repo, was rejected rather than acted on. BH-006's reproduction (a fabricated row confirmed through `/reimport/confirm` and posted to the ledger) matches the BH-023 pattern exactly, closed the same way: re-parse the stored bytes and run `ConfirmedRowIntegrity` against them |
+| 2026-08-09 (night) | **A live CI break on `main`, caused by two concurrent PRs (mine and a parallel session's) each independently claiming Flyway version 75.** Root-caused from the CI log, fixed within the hour by renumbering to V76, revalidated against real Postgres. **A real defect found in PR #75's own fix**: `ConfirmRequest` always passed `password=null`, so BH-006's "double prompt" was actually an unconditional failure for every password-protected reimport. Fixed by a separate concurrent session via a direct commit to `main` (`4133910`) — verified end-to-end against a real encrypted PDF. **I had reported the double-prompt framing to the owner as a UX tradeoff he approved; that framing was inaccurate and sourced from the PR description rather than independent testing** — recorded here rather than smoothed over. Apple Developer Program enrolment submitted as Individual, after an initial wrong turn into the Organization/DUNS flow, corrected. Completion **80% → 82%** | Two parallel-session collisions in one night, one caught pre-merge (BH-032/036 duplicate), one not (V75). The pattern is now established enough to warrant a standing practice change, not just a one-off note |
+| 2026-08-10 (morning) | **This plan file was silently reverted to its post-PR-#76 state overnight** — a parallel session, operating in this same shared directory, checked out or overwrote it while the previous night's edits sat uncommitted on disk. Reconstructed from this session's own transcript and **committed this time**, specifically to prevent a third loss. `main`'s CI confirmed fully green: the V75 fix held, and a same-commit `BulkRecategorizeLearningIT` failure was rerun and confirmed a flake (unrelated file, symptom matches the async-queue timing-race pattern flagged repeatedly tonight), not a regression. Four small import-pipeline commits landed direct to `main` (CSV opening-balance double-count, amount-column merge guard, an executable-bit fix, one new backlog item — a non-text header row diagnosed against a real SBI statement, correctly logged rather than built ad hoc). Completion **82%, effectively unchanged** — small fixes and one small newly-logged gap roughly offset. **No date change** | Third re-baseline in a row where infrastructure (workstream 6) shows an identical number — the clearest available evidence that the date depends on store enrolment and device bring-up, not on code |
