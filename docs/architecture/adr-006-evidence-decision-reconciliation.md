@@ -4,6 +4,22 @@
 previously left open in §4b is now resolved as an explicit architectural decision (see §4b) — the
 *decision* is approved; the *implementation* of that routing change is not yet built, and nothing in
 this ADR should be implemented until the detailed technical design is also approved.
+
+**Implementation note (added during Phase C, not a revision to the decision above):** everywhere
+below that says `FieldCandidate` and describes it as also carrying structural provenance,
+corroboration, financial validation, contradictions, and a combined decision (§3's pseudocode, §5's
+enforcement point, §5a's explanation example) — that combined type shipped as **two** types, not
+one: `FieldCandidate` (value + supporting `FieldFact`s + a narrower, fact-only `status`) and
+`FieldAssessment` (a `FieldCandidate` plus the three `DimensionResult`s, `contradictions`, and the
+*real* three-dimension `status` this ADR's §3 describes). This was a deliberate detailed-design
+decision, not an oversight: keeping `FieldCandidate` narrow avoids one type answering two different
+questions at two different grains. **The consequence that matters for anyone implementing this ADR
+further: every reference below to "`FieldCandidate.status`" as the confirm-time signal (§5's
+enforcement point, §5a's explanation, §6 if it exists in a later revision) means
+`FieldAssessment.status()`, never `FieldCandidate.status()`.** The latter is real and used, but it
+answers a narrower question (do this field's own facts agree) than this ADR's §3 status (do enough
+independent dimensions support this value) — checking it alone at the confirm gate would silently
+implement a weaker rule than this ADR specifies.
 **Extends** [ADR-005](adr-005-document-intelligence-contract.md), which established the shared
 `PositionedText` representation and the entity-level Document Intelligence Contract. This narrows to
 exactly the three gaps ADR-005 does not cover.
@@ -300,7 +316,9 @@ Impact assessment — does the implicated scope include a load-bearing field?
 Import decision, scoped to what was actually called into question
 ```
 
-Proposed enforcement point, revised: before `persistSection()` commits, check `FieldCandidate.status`
+Proposed enforcement point, revised: before `persistSection()` commits, check the combined
+three-dimension status (`FieldAssessment.status` in the implementation — see the note under
+"Status" at the top of this document; NOT the narrower `FieldCandidate.status`)
 for fields designated materially load-bearing (opening/closing balance, account identity,
 per-transaction amount and direction, at minimum). Separately, map each section-level `FAILED`
 verification finding to the field(s) or transaction(s) its `suspectedCause` (or equivalent scoping
@@ -326,8 +344,9 @@ define — the requirement that every material decision this ADR makes is *expla
 enforced. Proposed as an explicit requirement on the detailed design that follows this ADR, not a new
 architectural layer of its own.
 
-For every `FieldCandidate` a confirm decision (§5) acts on, Finora must be able to produce, from data
-already specified above and nothing further invented:
+For every `FieldCandidate` a confirm decision (§5) acts on (in the implementation: the
+`FieldAssessment` wrapping it — see the implementation note at the top of this document), Finora
+must be able to produce, from data already specified above and nothing further invented:
 
 ```
 Field:                  Closing Balance
