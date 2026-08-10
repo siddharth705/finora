@@ -938,11 +938,22 @@ public class PdfTableLocator {
             // had parsed perfectly well a moment earlier. Text that would break an already-valid
             // date or amount is narration, so it goes to the description column instead of
             // overwriting real data (and is never simply discarded).
+            // Bug fix: this used to only redirect when the MERGED text failed to re-parse, on the
+            // theory that a merge which still parses cleanly must be safe. It isn't -- a bare
+            // numeric fragment (a stray reference-number digit run, a fee subtotal) landing in an
+            // already-populated amount column merges into a DIFFERENT, still-perfectly-valid
+            // number ("45" + " " + "6" -> "456" once CsvParser.parseNumeric strips the space),
+            // silently corrupting a real transaction's amount with no error, no flag, and no
+            // diagnostic. A real amount is always printed once, on one line, in every layout this
+            // file has ever seen documented -- unlike a description, there is no legitimate case
+            // where a continuation row's numeric fragment is meant to extend an amount cell's
+            // value. So this is now unconditional, exactly like the date guard immediately above
+            // it: any already-valid amount is authoritative and is never merged into, full stop,
+            // regardless of whether the merged text would still happen to parse.
             boolean wouldBreakValidDate = isDateColumn(e.getKey()) && existing != null
                     && CsvParser.parseDate(existing.trim()) != null;
             boolean wouldBreakValidAmount = isAmountColumn(e.getKey()) && existing != null
-                    && CsvParser.parseNumeric(existing.trim()) != null
-                    && CsvParser.parseNumeric((existing + " " + e.getValue()).trim()) == null;
+                    && CsvParser.parseNumeric(existing.trim()) != null;
             if (wouldBreakValidDate || wouldBreakValidAmount) {
                 String descriptionColumn = descriptionColumnIn(target, headerNames);
                 if (descriptionColumn == null) {
@@ -1073,8 +1084,13 @@ public class PdfTableLocator {
         if (isDateColumn(column) && CsvParser.parseDate(existing.trim()) != null) {
             return CsvParser.parseDate((value + " " + existing).trim()) == null;
         }
+        // Bug fix: same gap as mergeInto's wouldBreakValidAmount -- re-parsing the prepended text
+        // only catches a merge that becomes unparseable, not one that silently becomes a
+        // DIFFERENT valid number (e.g. a stray digit fragment prepended to "45" becoming "645").
+        // An already-valid amount is authoritative and is never merged into, unconditionally, the
+        // same as an already-valid date immediately above.
         if (isAmountColumn(column) && CsvParser.parseNumeric(existing.trim()) != null) {
-            return CsvParser.parseNumeric((value + " " + existing).trim()) == null;
+            return true;
         }
         return false;
     }
