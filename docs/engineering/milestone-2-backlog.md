@@ -91,6 +91,34 @@ Of everything on this list, this is the one that was arguably a latent defect ra
 enhancement. Delivered as item 3 of Milestone 2; see that charter for what was built and for the
 audit confirming no other synchronous batch learning path exists.
 
+### Header row rendered as non-text (observed on a real SBI savings statement)
+
+Diagnosed 2026-08-10 via `PdfPipelineDiagnostic` against a real SBI statement: native extraction
+produces 174 text runs, and every transaction row's own data — both dates, both debit/credit cells,
+the balance, the narration — extracts as complete, readable text. The header row does not. Only two
+isolated fragments extract anywhere near the top of the table ("Balance" at the rightmost column
+position, one short label far to the left); nothing extracts where the Date / Description / Debit /
+Credit column headers should be. `looksLikeHeaderRow` correctly reports no header found — there is
+no coherent row of column names to detect, recognized or not.
+
+This is a different failure class from anything the pipeline currently distinguishes. Not
+`IMPORT_SCANNED_OCR_REQUIRED` — the document has real text throughout, not zero. Not a `HEADER_HINTS`
+vocabulary gap — there is no header text present to fail to match against. Most likely the header
+row's labels are rendered as a graphic/styled banner, or use a header-specific font PDFBox cannot
+decode, while the data rows below use an ordinary text font.
+
+Recognizing this layout would mean inferring column identity positionally from the data rows
+themselves (this statement's rows have a stable shape: two dates, two debit/credit cells, a balance,
+then narration) rather than from a header row at all — a genuinely new acquisition/table-location
+capability, not an extension of `HEADER_HINTS` or `WRAPPED_HEADER`. Left here rather than built ad
+hoc: one real document is one data point, and per the evidence-first principle already governing the
+OCR/extraction work, a positional-inference capability needs more than one observed case before its
+column-order assumptions can be trusted.
+
+No redacted trace fixture exists for this yet. `trace-capture.sh` refuses to write one — a trace
+preserves structure a table *did* locate, and this document has none to preserve. The next occurrence
+of this pattern (same bank or another) is what turns this from an anecdote into evidence.
+
 ---
 
 ## Testing and tooling
