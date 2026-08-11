@@ -91,6 +91,30 @@ public class ImportVerificationRecorder {
     /** {@code reason} explains why a rule could not run. Our own prose, but bounded on principle. */
     private static final int MAX_REASON_LENGTH = 200;
 
+    /**
+     * The keys one C-9 shadow-mode evidence observation may carry -- see
+     * {@link #evidenceShadowDetailsOf}, and {@code ClosingBalanceEvidenceShadowObserver} for what
+     * writes them.
+     *
+     * <p>The five axes the design requires kept apart are five separate keys here and are never
+     * combined into one: {@code evidenceAvailable} (did an assessment happen at all),
+     * {@code statementTotalsOutcome} + {@code suspectedCause} (the validator's own verdict and its
+     * attribution), {@code evidenceComparison} + the three grouping counts (the correlation axis),
+     * and {@code evidenceStatus} (the assessment's own three-valued verdict, which is also the
+     * {@code outcome} column). Collapsing any pair of them would destroy the one distinction the
+     * observation exists to measure.
+     */
+    private static final Set<String> EVIDENCE_SHADOW_KEYS = Set.of(
+            "evidenceAvailable", "failureType",
+            "statementTotalsOutcome", "suspectedCause",
+            "structuralStatus", "corroborationStatus", "financialValidationStatus",
+            "evidenceComparison", "sameFactGroupSize", "excludedAsUncertainCount",
+            "excludedAsDifferentCount", "contradictionCount",
+            "evidenceStatus", "elapsedMs");
+
+    /** Enum constants and exception class names, all far shorter than this. Bounded anyway. */
+    private static final int MAX_VOCABULARY_LENGTH = 64;
+
     private final ImportVerificationFindingRepository repository;
     private final StatementAnalysisSessionRepository analysisRepository;
     private final ObjectMapper objectMapper;
@@ -136,6 +160,93 @@ public class ImportVerificationRecorder {
                     + "this import is now unanswerable", analysisReference, e);
             return 0;
         }
+    }
+
+    /**
+     * Records one shadow-mode evidence observation against the analysis session of the import
+     * session it was observed for -- C-9.
+     *
+     * <p><b>Why the import session id and not an analysis reference.</b> The confirm path holds an
+     * {@code ImportSession} id and nothing else; the analysis reference is minted at staging time
+     * and never travels with the session. The link between the two already exists in the schema --
+     * {@code statement_analysis_sessions.import_session_id} is written by
+     * {@code StatementAnalysisRecorder.recordParsed} on every staging path -- and is already
+     * navigated in production by {@code ImportTraceService} through the very repository method used
+     * here. So this resolves an existing owner; it does not invent one. An import session with no
+     * analysis row (the analysis write failed, which is logged there) is a no-op, exactly as an
+     * unknown reference is in {@link #recordForAnalysis}: a finding with no owner is not worth
+     * inventing one for, and the CHECK constraint on the table says so too.
+     *
+     * <p>Same {@code REQUIRES_NEW} + catch discipline as every other method here, for a stronger
+     * reason: this one is called from inside a customer's confirm transaction, and a telemetry
+     * insert must not be able to mark that transaction rollback-only.
+     *
+     * @return the number of rows written -- 0 when there is no analysis session to own the row, or
+     *         when the write failed (already logged)
+     */
+    public int recordEvidenceShadow(UUID importSessionId, int sectionIndex, String rule, String outcome,
+                                    Map<String, Object> details) {
+        if (importSessionId == null || rule == null || outcome == null) return 0;
+        try {
+            return inOwnTransaction(() -> {
+                UUID analysisSessionId = analysisRepository
+                        .findByImportSessionIdOrderByCreatedAtDesc(importSessionId).stream()
+                        .findFirst().map(StatementAnalysisSession::getId).orElse(null);
+                if (analysisSessionId == null) {
+                    log.debug("No analysis session for import session {} -- shadow evidence not recorded",
+                            importSessionId);
+                    return 0;
+                }
+                repository.save(ImportVerificationFinding.forAnalysis(analysisSessionId,
+                        Math.max(sectionIndex, 0), rule, outcome, writeShadowDetails(details, importSessionId)));
+                return 1;
+            });
+        } catch (RuntimeException e) {
+            log.error("Could not record shadow evidence for import session {} -- this observation is "
+                    + "lost, and the import it was observed for is unaffected", importSessionId, e);
+            return 0;
+        }
+    }
+
+    private String writeShadowDetails(Map<String, Object> details, UUID owner) {
+        Map<String, Object> safe = evidenceShadowDetailsOf(details);
+        if (safe.isEmpty()) return null;
+        try {
+            return objectMapper.writeValueAsString(safe);
+        } catch (RuntimeException | com.fasterxml.jackson.core.JsonProcessingException e) {
+            log.error("Could not serialise shadow evidence details for {} -- the observation is still "
+                    + "being recorded without them", owner, e);
+            return null;
+        }
+    }
+
+    /**
+     * Rebuilds a shadow observation's details from its own named allowlist.
+     *
+     * <p>A separate allowlist from {@link #STRUCTURAL_KEYS} on purpose: widening the validator
+     * allowlist to admit evidence keys would also admit them from every validator finding, which is
+     * the opposite of what an allowlist is for. Every key here holds an enum constant this codebase
+     * defines, a count of our own facts, a boolean, or an elapsed time -- none of them can hold a
+     * balance, an amount, a narration or a cell copied out of the document. Strings are bounded
+     * anyway, on the same principle as {@code reason}.
+     */
+    public static Map<String, Object> evidenceShadowDetailsOf(Map<String, Object> details) {
+        if (details == null || details.isEmpty()) return Map.of();
+        Map<String, Object> safe = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : details.entrySet()) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+            if (value == null || !EVIDENCE_SHADOW_KEYS.contains(key)) continue;
+            if (value instanceof String text) {
+                safe.put(key, text.length() <= MAX_VOCABULARY_LENGTH
+                        ? text : text.substring(0, MAX_VOCABULARY_LENGTH) + "…");
+            } else if (value instanceof Boolean || value instanceof Number) {
+                safe.put(key, value);
+            }
+            // Anything else -- a collection, a map, an arbitrary object -- is dropped rather than
+            // toString()'d: a type nobody anticipated is exactly the one that could carry content.
+        }
+        return java.util.Collections.unmodifiableMap(safe);
     }
 
     /** The same, for the asynchronous worker, which has an import job and no analysis session. */

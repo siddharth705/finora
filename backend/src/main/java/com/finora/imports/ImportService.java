@@ -102,6 +102,13 @@ public class ImportService {
     private final com.finora.imports.storage.StatementContentService statementContentService;
     private final com.finora.service.MerchantLearningEventPublisher learningEventPublisher;
     private final LayoutRegistryService layoutRegistryService;
+    /**
+     * C-9 shadow mode. Observes the closing-balance evidence at confirm time and records it;
+     * nothing in this class reads what it produced, and it returns void so nothing can. Nullable
+     * purely so the unit tests that construct this service by hand can leave it out -- Spring
+     * always injects the real one. See {@link #observeClosingBalanceEvidence}.
+     */
+    private final com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver evidenceShadowObserver;
 
     public ImportService(AccountRepository accountRepository, AccountService accountService,
                           TransactionRepository transactionRepository, MerchantRepository merchantRepository,
@@ -119,7 +126,9 @@ public class ImportService {
                           StatementAnalysisRecorder analysisRecorder,
                           com.finora.imports.analysis.ImportVerificationRecorder verificationRecorder,
                           com.finora.service.MerchantLearningEventPublisher learningEventPublisher,
-                          LayoutRegistryService layoutRegistryService) {
+                          LayoutRegistryService layoutRegistryService,
+                          com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver evidenceShadowObserver) {
+        this.evidenceShadowObserver = evidenceShadowObserver;
         this.layoutRegistryService = layoutRegistryService;
         this.analysisRecorder = analysisRecorder;
         this.verificationRecorder = verificationRecorder;
@@ -336,42 +345,19 @@ public class ImportService {
     }
 
     /**
-     * Stops offering a located table as a transaction ACCOUNT when it plainly isn't one, without
-     * throwing its contents away.
+     * Stops offering a located table as a transaction ACCOUNT when it plainly isn't one -- see
+     * {@link StagedAccountSectionFilter#onlySectionsThatAreActuallyAccounts} for the rule itself and
+     * for why it lives there rather than here.
      *
-     * INTERIM. A real HDFC combined statement carries a term-deposit summary and a recurring-deposit
-     * installment schedule alongside the savings account. Those are genuine financial products the
-     * customer holds, and the correct end state is that they become Investments -- see the planned
-     * product-classification stage, which will identify what each section IS (savings, current, FD,
-     * RD, loan, overdraft, credit card, demat) and route it to the matching Finora domain before
-     * anything is imported. Until that exists this method must not pretend to do it.
-     *
-     * What it fixes today is narrower and purely a defect: all three sections were presented as
-     * ACCOUNTS, so the user was offered two empty ones to confirm. That is the same failure as the
-     * repeated-account-banner bug by a different route -- asserting something is an account on
-     * evidence that only shows it is a table.
-     *
-     * So a section with no transactions stops being offered as an account, and its rows move onto
-     * the first surviving section as unparseable so the deposit details still surface for review
-     * ("never lose information"). Nothing is discarded, and nothing here encodes a guess about what
-     * those sections are -- that judgement belongs to product classification, not to a filter.
-     * When every section is empty, the caller's zero-transaction guard reports the failure instead.
+     * <p>Short version: the list this returns is what {@code createMultiSection} persists as
+     * {@code sectionsJson}, and every section index the system later speaks in -- the
+     * {@code confirmMultiSection} loop index, the implicit index 0 of a single-account
+     * {@code confirmSession} -- is an index into THIS list, not into the generator's raw output.
+     * Anything else that needs to resolve one of those indices back to a section must apply the
+     * same filter first, which is only possible if there is one filter to apply.
      */
     private List<StagedAccountSection> onlySectionsThatAreActuallyAccounts(List<StagedAccountSection> sections) {
-        if (sections.size() <= 1) return sections;
-
-        List<StagedAccountSection> accounts = sections.stream().filter(s -> !s.rows().isEmpty()).toList();
-        if (accounts.isEmpty() || accounts.size() == sections.size()) return accounts.isEmpty() ? sections : accounts;
-
-        List<UnparseableRow> carriedOver = new ArrayList<>(accounts.get(0).unparseableRows());
-        for (StagedAccountSection dropped : sections) {
-            if (dropped.rows().isEmpty()) carriedOver.addAll(dropped.unparseableRows());
-        }
-        StagedAccountSection first = accounts.get(0);
-        List<StagedAccountSection> merged = new ArrayList<>(accounts);
-        merged.set(0, new StagedAccountSection(first.detectedAccount(), first.rows(), first.totalParsed(),
-                first.flaggedDuplicates(), carriedOver));
-        return merged;
+        return StagedAccountSectionFilter.onlySectionsThatAreActuallyAccounts(sections);
     }
 
     /**
@@ -505,6 +491,19 @@ public class ImportService {
         if (request.sessionId() == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "sessionId is required.");
         }
+        // C-9 shadow mode, before the claim -- see observeClosingBalanceEvidence for why the order
+        // is forced. One observation per section, with the same section index the persist loop
+        // below uses. Records; decides nothing.
+        // Null-guarded rather than assumed: a null sections list currently fails AFTER the claim,
+        // and nothing here may change which failure a caller gets or when the session is claimed.
+        if (request.sections() != null) {
+            for (int i = 0; i < request.sections().size(); i++) {
+                SectionConfirm observed = request.sections().get(i);
+                observeClosingBalanceEvidence(userId, request.sessionId(), i,
+                        observed == null ? null : observed.statementClosingBalance());
+            }
+        }
+
         var session = importSessionService.claimForConfirmation(userId, request.sessionId());
         var stagedSections = importSessionService.readSections(session);
         if (stagedSections.size() != request.sections().size()) {
@@ -563,6 +562,12 @@ public class ImportService {
         // retried request racing a first, still-in-flight confirm for the same session gets
         // rejected right here, before any row validation or transaction-import work happens, not
         // after it's already inserted a duplicate batch of transactions.
+        //
+        // C-9 shadow mode runs one line above the claim, deliberately -- see
+        // observeClosingBalanceEvidence. Single-account session, so a null section index, exactly
+        // as the confirm() call below passes.
+        observeClosingBalanceEvidence(userId, request.sessionId(), null, request.statementClosingBalance());
+
         var session = importSessionService.claimForConfirmation(userId, request.sessionId());
 
         var stagedRows = importSessionService.readStagedRows(session);
@@ -574,6 +579,43 @@ public class ImportService {
         return confirm(userId, session.getFileName(), statementContentService.read(session), request, null,
                 session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
                 session.getUnparseableSummaryJson());
+    }
+
+    /**
+     * C-9 shadow mode: computes the closing-balance evidence assessment for this confirm and
+     * records it. <b>Observation only.</b> It returns void, it is called for its side effect on a
+     * telemetry table and for nothing else, and no branch in this class reads anything it produced
+     * -- {@code ClosingBalanceGuard} in {@code persistSection} remains the sole gate on whether a
+     * closing balance is written, unchanged.
+     *
+     * <p><b>Called before {@code claimForConfirmation}, and it has to be.</b> The re-derivation
+     * checks ownership through {@code ImportSessionService.getOwnedSession}, which rejects a
+     * session whose status is already {@code CONFIRMED}. Claiming first sets exactly that status,
+     * so an observation placed after the claim would fail with "already been confirmed" every
+     * single time and the shadow corpus would be uniformly empty. Before the claim, the confirm has
+     * written nothing at all, which is also the safest possible moment for it.
+     *
+     * <p>Consequence, stated rather than hidden: an observation is recorded for a confirm that
+     * subsequently fails its row-integrity check or loses the claim race. The observation describes
+     * the staged document, not the outcome of the import, and its {@code createdAt} plus its
+     * analysis session are enough to join it back to one -- so this is left as it is rather than
+     * deferred to after the persist, where a rolled-back confirm would silently lose the
+     * measurement instead.
+     *
+     * <p>The observer never throws (see its class doc: suspended transaction, {@link Throwable}
+     * caught at three separate levels). The null check is for the hand-constructed instances in
+     * unit tests; the guard below is belt-and-braces, so that even a future observer that broke its
+     * own contract could not fail an import from here.
+     */
+    private void observeClosingBalanceEvidence(UUID userId, UUID sessionId, Integer sourceSectionIndex,
+                                                java.math.BigDecimal closingBalanceClaim) {
+        if (evidenceShadowObserver == null) return;
+        try {
+            evidenceShadowObserver.observe(userId, sessionId, sourceSectionIndex, closingBalanceClaim);
+        } catch (Throwable t) {
+            log.warn("Shadow evidence observation failed for session {} -- the import continues "
+                    + "exactly as it would have", sessionId, t);
+        }
     }
 
     /**

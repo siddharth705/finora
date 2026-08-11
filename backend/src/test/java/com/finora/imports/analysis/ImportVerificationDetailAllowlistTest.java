@@ -180,6 +180,67 @@ class ImportVerificationDetailAllowlistTest {
         assertThat(((String) safe.get("reason")).length()).isLessThanOrEqualTo(201);
     }
 
+    // --- C-9 shadow evidence: a second allowlist, deliberately not the same one ---
+
+    @Test
+    void aShadowObservationKeepsItsFiveAxesAndDropsAnythingElse() {
+        Map<String, Object> observed = new LinkedHashMap<>();
+        observed.put("evidenceAvailable", true);
+        observed.put("statementTotalsOutcome", "FAILED");
+        observed.put("suspectedCause", "OPENING_BALANCE");
+        observed.put("evidenceComparison", "UNCONTESTED");
+        observed.put("sameFactGroupSize", 1);
+        observed.put("excludedAsUncertainCount", 0);
+        observed.put("evidenceStatus", "INSUFFICIENT");
+        observed.put("elapsedMs", 412L);
+        // Not on the allowlist. The first is the exact shape that must never reach this table.
+        observed.put("closingBalance", new BigDecimal("117209.50"));
+        observed.put("narration", "UPI/DR/402913/Coffee");
+
+        Map<String, Object> safe = ImportVerificationRecorder.evidenceShadowDetailsOf(observed);
+
+        assertThat(safe).containsKeys("evidenceAvailable", "statementTotalsOutcome", "suspectedCause",
+                "evidenceComparison", "sameFactGroupSize", "excludedAsUncertainCount", "evidenceStatus",
+                "elapsedMs");
+        assertThat(safe).doesNotContainKeys("closingBalance", "narration");
+    }
+
+    @Test
+    void aShadowObservationCannotSmuggleContentThroughAnUnexpectedType() {
+        // An allowlisted KEY carrying a value shape nobody anticipated is dropped rather than
+        // toString()'d -- a collection or a nested map is exactly where document text would hide.
+        Map<String, Object> safe = ImportVerificationRecorder.evidenceShadowDetailsOf(Map.of(
+                "suspectedCause", List.of("UPI/DR/402913/Coffee"),
+                "failureType", Map.of("message", "could not parse 117209.50"),
+                "evidenceStatus", "SUPPORTED"));
+
+        assertThat(safe).containsOnlyKeys("evidenceStatus");
+    }
+
+    @Test
+    void aShadowObservationsStringsAreBounded() {
+        Map<String, Object> safe = ImportVerificationRecorder.evidenceShadowDetailsOf(
+                Map.of("failureType", "x".repeat(500)));
+
+        assertThat(((String) safe.get("failureType")).length()).isLessThanOrEqualTo(65);
+    }
+
+    @Test
+    void theValidatorAllowlistAndTheShadowAllowlistDoNotLeakIntoEachOther() {
+        // Widening one must never widen the other: a validator finding cannot publish an
+        // evidenceStatus, and a shadow observation cannot publish rowsChecked.
+        assertThat(ImportVerificationRecorder.structuralDetailsOf(Map.of("evidenceStatus", "SUPPORTED")))
+                .isEmpty();
+        assertThat(ImportVerificationRecorder.evidenceShadowDetailsOf(Map.of("rowsChecked", 124)))
+                .isEmpty();
+    }
+
+    @Test
+    void anEmptyOrAbsentShadowDetailsMapIsNotAnError() {
+        assertThat(ImportVerificationRecorder.evidenceShadowDetailsOf(null)).isEmpty();
+        assertThat(ImportVerificationRecorder.evidenceShadowDetailsOf(Map.of())).isEmpty();
+    }
+
     @Test
     void anEmptyOrAbsentDetailsMapIsNotAnError() {
         // The bare case. observability.md calls this out specifically: a real NPE shipped here once

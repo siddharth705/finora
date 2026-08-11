@@ -950,6 +950,149 @@ public final class PdfFixtureBuilder {
         return render(List.of(page));
     }
 
+    // ==================== SECTION INDEX SPACE ====================
+
+    /**
+     * Deposit schedules printed ABOVE the transactional sections -- the shape that makes filtered
+     * and unfiltered section indices disagree.
+     *
+     * <p>Every other composite fixture in this file puts the transactional section first
+     * ({@link #buildSummaryWithOneTransactionalSectionSample},
+     * {@link #buildCompositeMultiProductStatementSample}), where a section index means the same
+     * thing before and after {@code StagedAccountSectionFilter} drops the non-account sections.
+     * That is exactly why they cannot catch an index-space defect, and why this fixture exists.
+     *
+     * <p>Four sections are located: a term-deposit schedule, a recurring-deposit schedule, a
+     * savings ledger, and a credit-card section. The two deposit schedules stage NO transactions --
+     * they are rows of figures about products, not payments -- so filtering drops them and the
+     * savings ledger, at raw index 2, becomes staged section 0. A reader that indexes the raw list
+     * with a staged index therefore lands on an empty deposit schedule while believing it is
+     * reading savings.
+     *
+     * <p>The savings figures are chosen so the two coordinate spaces produce visibly opposite
+     * answers rather than merely different ones: the ledger's balance chain is internally
+     * consistent and ends at 103000.00, so a closing-balance claim of 103000.00 is genuinely
+     * supported by the savings section and cannot be supported by an empty schedule that states no
+     * balances at all.
+     *
+     * <p>This is not an invented shape. A real HDFC combined statement prints its FD and RD
+     * schedules wherever the bank's template puts them, and above the savings ledger is an ordinary
+     * placement -- see {@code StagedAccountSectionFilter}'s own note on why that ordering is the
+     * common case rather than the exotic one.
+     */
+    public static byte[] buildDepositSchedulesBeforeCompositeAccountsSample() throws IOException {
+        float[] fdCol = {LEFT_MARGIN, 140f, 230f, 320f, 430f};
+        float[] rdCol = {LEFT_MARGIN, 110f, 190f, 300f, 390f, 490f};
+        float[] savingsCol = {LEFT_MARGIN, 130f, 300f, 380f, 460f};
+        float[] ccCol = {LEFT_MARGIN, 150f, 470f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Some Financial Institution")
+                .line("Combined Statement")
+                .blankLine()
+                .line("TERM DEPOSIT  - 20000000000002")
+                .row(fdCol, "Principal Amount", "Start Date", "Deposit(Mnth)", "Maturity Date", "Rate of Interest")
+                .row(fdCol, "100000.00", "12/03/2026", "0.00", "12/03/2027", "7.10")
+                .blankLine()
+                .line("RECURRING DEPOSIT  - 30000000000003")
+                .row(rdCol, "Number", "Due Date", "Installment Paid", "Maturity Date", "Rate of Interest", "Status")
+                .row(rdCol, "1", "05/05/2026", "5000.00", "05/05/2027", "6.75", "Paid")
+                .blankLine()
+                .line("SAVINGS ACCOUNT-RES  100-111111-002")
+                .row(savingsCol, "Date", "Transaction Details", "Deposits", "Withdrawals", "Balance")
+                .row(savingsCol, "05/07/2026", "Salary Credit", "55000.00", "", "105000.00")
+                .row(savingsCol, "10/07/2026", "Grocery Store", "", "2000.00", "103000.00")
+                .blankLine()
+                .line("CREDIT CARD ACCOUNT  4000 1111 2222 3333")
+                .line("Total Amount Due 1,817.00 Minimum Due 200.00 Credit Limit 50,000.00")
+                .row(ccCol, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                .row(ccCol, "15/07/2026", "UPI-Retailer One", "1,817.02 Dr");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * The same leading-deposit-schedule shape, but with only ONE transactional section -- so
+     * filtering collapses a multi-section document down to a single account.
+     *
+     * <p>This is the more common real-world shape, and the harder one to reason about: because the
+     * filtered list holds exactly one account, {@code ImportService} routes it down the
+     * SINGLE-account staging branch, and the confirm that follows carries no section index at all.
+     * "No section index" then has to mean staged section 0 -- which is raw section 2 here, not raw
+     * section 0. A reader that treats the absent index as raw index 0 assesses the term-deposit
+     * schedule.
+     *
+     * <p>The savings ledger is identical to {@link #buildDepositSchedulesBeforeCompositeAccountsSample}'s
+     * so the two cases can be asserted against the same expected figures, and any difference
+     * between them is attributable to the staging branch rather than to the data.
+     */
+    public static byte[] buildDepositSchedulesBeforeSingleAccountSample() throws IOException {
+        float[] fdCol = {LEFT_MARGIN, 140f, 230f, 320f, 430f};
+        float[] rdCol = {LEFT_MARGIN, 110f, 190f, 300f, 390f, 490f};
+        float[] savingsCol = {LEFT_MARGIN, 130f, 300f, 380f, 460f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Some Financial Institution")
+                .line("Combined Statement")
+                .blankLine()
+                .line("TERM DEPOSIT  - 20000000000002")
+                .row(fdCol, "Principal Amount", "Start Date", "Deposit(Mnth)", "Maturity Date", "Rate of Interest")
+                .row(fdCol, "100000.00", "12/03/2026", "0.00", "12/03/2027", "7.10")
+                .blankLine()
+                .line("RECURRING DEPOSIT  - 30000000000003")
+                .row(rdCol, "Number", "Due Date", "Installment Paid", "Maturity Date", "Rate of Interest", "Status")
+                .row(rdCol, "1", "05/05/2026", "5000.00", "05/05/2027", "6.75", "Paid")
+                .blankLine()
+                .line("SAVINGS ACCOUNT-RES  100-111111-002")
+                .row(savingsCol, "Date", "Transaction Details", "Deposits", "Withdrawals", "Balance")
+                .row(savingsCol, "05/07/2026", "Salary Credit", "55000.00", "", "105000.00")
+                .row(savingsCol, "10/07/2026", "Grocery Store", "", "2000.00", "103000.00");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * A deposit schedule BETWEEN two transactional sections -- the interspersed case, as opposed to
+     * the leading case the two fixtures above cover.
+     *
+     * <p>Staged section 0 (savings) is raw section 0, so it is right in BOTH coordinate spaces and
+     * proves nothing on its own. Staged section 1 (credit card) is raw section 2. A fix that only
+     * accounted for non-account sections at the FRONT of the document -- by offsetting indices by a
+     * leading count, say, instead of applying the real filter -- would be correct for section 0 and
+     * wrong for section 1, and nothing else in the corpus would catch it.
+     *
+     * <p><b>Both</b> transactional sections carry their own running balance, and DIFFERENT ones
+     * (103,000.00 and 20,500.00). That is what makes staged index 1 diagnostic: a reader that lands
+     * on the deposit schedule instead reports NOT_APPLICABLE, because a schedule states no balances
+     * to reconcile, while the current account reconciles and VERIFIES. Had the second section been a
+     * credit-card table -- which states no balances either -- the right answer and the wrong answer
+     * would have been the same word, and the test would have proved nothing.
+     */
+    public static byte[] buildDepositScheduleBetweenAccountsSample() throws IOException {
+        float[] savingsCol = {LEFT_MARGIN, 130f, 300f, 380f, 460f};
+        float[] fdCol = {LEFT_MARGIN, 140f, 230f, 320f, 430f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Some Financial Institution")
+                .line("Combined Statement")
+                .blankLine()
+                .line("SAVINGS ACCOUNT-RES  100-111111-002")
+                .row(savingsCol, "Date", "Transaction Details", "Deposits", "Withdrawals", "Balance")
+                .row(savingsCol, "05/07/2026", "Salary Credit", "55000.00", "", "105000.00")
+                .row(savingsCol, "10/07/2026", "Grocery Store", "", "2000.00", "103000.00")
+                .blankLine()
+                .line("TERM DEPOSIT  - 20000000000002")
+                .row(fdCol, "Principal Amount", "Start Date", "Deposit(Mnth)", "Maturity Date", "Rate of Interest")
+                .row(fdCol, "100000.00", "12/03/2026", "0.00", "12/03/2027", "7.10")
+                .blankLine()
+                .line("CURRENT ACCOUNT-RES  200-222222-003")
+                .row(savingsCol, "Date", "Transaction Details", "Deposits", "Withdrawals", "Balance")
+                .row(savingsCol, "02/08/2026", "Vendor Payment In", "12000.00", "", "22000.00")
+                .row(savingsCol, "09/08/2026", "Office Supplies", "", "1500.00", "20500.00");
+
+        return render(List.of(page));
+    }
+
     // ==================== SYNTHETIC GROUND TRUTH ====================
 
     /**

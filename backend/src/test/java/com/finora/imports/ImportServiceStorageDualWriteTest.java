@@ -126,7 +126,8 @@ class ImportServiceStorageDualWriteTest {
                 productIdentityResolver, statementContentService,
                 mock(com.finora.imports.analysis.StatementAnalysisRecorder.class),
                 mock(com.finora.imports.analysis.ImportVerificationRecorder.class),
-                mock(com.finora.service.MerchantLearningEventPublisher.class), mock(LayoutRegistryService.class));
+                mock(com.finora.service.MerchantLearningEventPublisher.class), mock(LayoutRegistryService.class),
+                mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class));
     }
 
     private ConfirmedRow confirmedRow() {

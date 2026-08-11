@@ -85,7 +85,8 @@ class ImportServiceSessionTest {
                 pdfPreviewGenerator, productIdentityResolver, new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), "", ""),
                 mock(com.finora.imports.analysis.StatementAnalysisRecorder.class),
                 mock(com.finora.imports.analysis.ImportVerificationRecorder.class),
-                learningEventPublisher, mock(LayoutRegistryService.class));
+                learningEventPublisher, mock(LayoutRegistryService.class),
+                mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class));
 
         Account account = new Account();
         ReflectionTestUtils.setField(account, "id", accountId);
