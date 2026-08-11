@@ -23,7 +23,7 @@ import {
 } from '../lib/importReview';
 import { toNewAccountPayload } from '../lib/newAccountPayload';
 import type { Account, DetectedAccountInfo, VerificationReport, ImportSummary, ReimportResult, StagedAccountSection, StagedRow, UnparseableRow } from '../types';
-import { formatDate } from '../utils/date';
+import { formatDate, formatDateDDMMMYYYY } from '../utils/date';
 
 type Step = 'upload' | 'review' | 'summary';
 type AccountChoice = 'existing' | 'new';
@@ -1231,7 +1231,7 @@ function TransactionPreviewTable({
       <thead>
         <tr className="text-left text-[10px] uppercase text-gray-500">
           <th className="p-1"></th><th className="p-1">Date</th><th className="p-1">Description</th>
-          <th className="p-1">Amount</th><th className="p-1">Category</th>
+          <th className="p-1 text-right">DR</th><th className="p-1 text-right">CR</th><th className="p-1">Category</th>
         </tr>
       </thead>
       <tbody>
@@ -1245,7 +1245,7 @@ function TransactionPreviewTable({
                 onChange={(e) => onToggleIncluded(i, e.target.checked)}
               />
             </td>
-            <td className="p-1">{r.date}</td>
+            <td className="p-1">{formatDateDDMMMYYYY(r.date)}</td>
             <td className="p-1">
               {r.description}
               {r.likelyDuplicate && <span className="text-danger text-[10px] uppercase ml-1">duplicate</span>}
@@ -1253,7 +1253,11 @@ function TransactionPreviewTable({
                 <span className="text-[10px] uppercase ml-1" style={{ color: '#d97706' }}>low confidence</span>
               )}
             </td>
-            <td className="p-1">₹{r.amount}</td>
+            {/* r.type is the backend's own authoritative direction signal (StagedRow.type,
+                'INCOME' | 'EXPENSE') -- amount itself is always the absolute value, never signed,
+                so direction must come from type, never inferred from the number's sign. */}
+            <td className="p-1 text-right">{r.type === 'EXPENSE' ? `₹${r.amount}` : '—'}</td>
+            <td className="p-1 text-right">{r.type === 'INCOME' ? `₹${r.amount}` : '—'}</td>
             <td className="p-1">
               <select
                 value={chosenCategory[i]}

@@ -46,3 +46,38 @@ export function formatDate(value: string | null | undefined,
   // An unparseable string would otherwise render as the literal "Invalid Date".
   return Number.isNaN(parsed.getTime()) ? '' : parsed.toLocaleDateString('en-IN', options);
 }
+
+const MONTH_ABBREVIATIONS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+/**
+ * The fixed `DD-MMM-YYYY` display format the transaction import review table standardizes on
+ * (e.g. `01-Jul-2026`), regardless of how the source statement printed its dates or what locale
+ * the browser is in.
+ *
+ * Deliberately NOT built on `toLocaleDateString`, unlike {@link formatDate} above: locale
+ * formatting is exactly right when the goal is "render this the way the viewer's own locale
+ * expects," which is `formatDate`'s job elsewhere in the app, but wrong here, where the whole
+ * point is one fixed, unambiguous shape regardless of locale or browser. Reuses `formatDate`'s
+ * same local-calendar y/m/d construction for a date-only value, so it inherits the identical fix
+ * for the UTC-midnight-shifts-a-day-behind bug documented above, without inheriting locale
+ * variance.
+ */
+export function formatDateDDMMMYYYY(value: string | null | undefined): string {
+  if (!value) return '';
+
+  let year: number, month: number, day: number;
+  const match = DATE_ONLY.exec(value);
+  if (match) {
+    [year, month, day] = value.split('-').map(Number);
+  } else {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return '';
+    year = parsed.getFullYear();
+    month = parsed.getMonth() + 1;
+    day = parsed.getDate();
+  }
+
+  return `${String(day).padStart(2, '0')}-${MONTH_ABBREVIATIONS[month - 1]}-${year}`;
+}
