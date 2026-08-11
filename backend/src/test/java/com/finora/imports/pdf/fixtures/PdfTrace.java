@@ -105,7 +105,8 @@ public final class PdfTrace {
      * <p>A 4-field row yields width 0, which is exactly what it meant before — those runs keep
      * their previous bucketing, and any capability guarded on a measured width stays unreachable
      * on them. That is a real limitation of the older traces, not a defect in this parser, and
-     * {@link TraceMetadata#hasNoWidths()} is how a caller asks about it.
+     * {@link TraceMetadata#hasNoWidths(List)} is how a caller asks about it -- of the parsed runs,
+     * since a file's version stamp and its actual width data are written independently.
      */
     public static List<PositionedText> parse(String content) {
         List<PositionedText> runs = new ArrayList<>();

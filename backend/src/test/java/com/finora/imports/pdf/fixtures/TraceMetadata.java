@@ -87,9 +87,26 @@ public record TraceMetadata(int traceVersion, int redactorVersion, String allowl
      *  merely out of date, since nothing about its provenance can be established. */
     public boolean hasNoProvenance() { return traceVersion < 2; }
 
-    /** True when the rows carry no measured width, so any capability guarded on {@code width() > 0}
-     *  is unreachable on this trace however good its content is. */
-    public boolean hasNoWidths() { return traceVersion < 3; }
+    /**
+     * True when the rows carry no measured width at all, so any capability guarded on
+     * {@code width() > 0} is unreachable on this trace however good its content is.
+     *
+     * <p>This is a question about the DATA, not about the format version, and it deliberately takes
+     * the parsed runs rather than reading {@code traceVersion}. The version stamp was only ever a
+     * proxy, and it is a proxy two files on disk already falsify: a capture stamps
+     * {@link #CURRENT_TRACE_VERSION} unconditionally, so a v3 trace whose widths were all dropped by
+     * the redactor reported "this trace has widths" while carrying 0 real widths in 1408 rows. The
+     * two facts are stamped independently, so only the rows can answer.
+     *
+     * <p>The condition is <b>all</b> widths zero, not <b>any</b>. Since
+     * {@link PdfTraceRedactor#redact} preserves width only for runs it left byte-identical, a healthy
+     * v3 trace legitimately carries width 0 on every masked run; "any zero width" would condemn every
+     * correctly captured trace. A trace with no runs at all likewise carries no width data, and
+     * reports true.
+     */
+    public static boolean hasNoWidths(List<com.finora.imports.pdf.PositionedText> runs) {
+        return runs.stream().noneMatch(run -> run.width() > 0f);
+    }
 
     /** True when this trace was captured under a different allowlist than the one in force now, so
      *  its redaction may have removed evidence the current allowlist would preserve. */

@@ -118,15 +118,26 @@ public final class TraceValidator {
                             + "cannot be shown to still contain its evidence"));
         }
 
-        if (metadata.hasNoWidths()) {
+        if (TraceMetadata.hasNoWidths(runs)) {
             // Separate from provenance on purpose: a trace can have impeccable provenance and still
             // be unable to exercise width-dependent bucketing, and reporting both as "legacy" hides
             // which of the two problems a recapture would fix.
+            //
+            // Read off the ROWS, not the version stamp. The two are written independently -- a
+            // capture stamps v3 unconditionally -- so a v3 trace can carry no widths at all, and
+            // telling that reader to "recapture at v3" would be advice they have already followed.
+            // The two states need different remedies, so they get different messages.
+            String remedy = metadata.traceVersion() < TraceMetadata.CURRENT_TRACE_VERSION
+                    ? "The format itself has no width column at trace v" + metadata.traceVersion()
+                            + ". Recapture at trace v" + TraceMetadata.CURRENT_TRACE_VERSION + " to fix."
+                    : "The format carries a width column and every value in it is 0.00, so the widths "
+                            + "were dropped during capture rather than absent by format. Recapturing "
+                            + "will not help until the redactor preserves them.";
             findings.add(new Finding(Finding.Severity.REVIEW, "widths",
                     "rows carry no width, so every run has endX == x. Any capability guarded on a "
                             + "measured width -- RIGHT_ALIGNED_AMOUNTS, and the column bucketing it "
                             + "corrects -- cannot activate on this trace however good its content "
-                            + "is. Recapture at trace v3 to fix."));
+                            + "is. " + remedy));
         }
 
         return new Result(traceName, metadata, findings, doc.sections().size(), doc.sections().size(),

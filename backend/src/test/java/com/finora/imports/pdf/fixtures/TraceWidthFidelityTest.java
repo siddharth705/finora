@@ -100,6 +100,97 @@ class TraceWidthFidelityTest {
     }
 
     /**
+     * "Does this trace carry widths" is a question about the rows, and it is asked of the rows.
+     *
+     * <p>It used to be answered by {@code traceVersion < 3}, which is backwards from what it claimed
+     * to check: the version stamp and the width column are written by independent pieces of the
+     * capture path, so a trace stamped v3 by {@code PdfTrace.format} could carry 0.00 in every width
+     * field because the redactor dropped them -- and it reported "has widths". Two such files sat in
+     * {@code src/test/resources/traces} looking like the corpus had been repaired.
+     */
+    @Test
+    void aV3TraceWhoseWidthsAreAllZeroIsReportedAsHavingNoWidths() {
+        String stampedV3ButBlind = PdfTrace.format(List.of(
+                new PositionedText("XXXX XXXXXXX", 50f, 700f, 0),
+                new PositionedText("99999999999999", 150f, 700f, 0)), META);
+
+        assertThat(TraceMetadata.parse(stampedV3ButBlind).traceVersion()).isEqualTo(3);
+        assertThat(TraceMetadata.hasNoWidths(PdfTrace.parse(stampedV3ButBlind))).isTrue();
+    }
+
+    /** The condition is ALL widths zero, not ANY. Under the redactor's unmasked-only rule a healthy
+     *  trace legitimately carries width 0 on every masked run, so "any zero" would condemn every
+     *  correctly captured trace in the corpus. */
+    @Test
+    void aTraceWithSomeRealWidthsHasWidths() {
+        String mixed = PdfTrace.format(List.of(
+                new PositionedText("XXXX XXXXXXX", 50f, 700f, 0),          // masked -> 0 by design
+                new PositionedText("24,462.00", 300f, 700f, 0, 41.02f)),   // unmasked -> real width
+                META);
+
+        assertThat(TraceMetadata.hasNoWidths(PdfTrace.parse(mixed))).isFalse();
+    }
+
+    /** Degenerate inputs answer rather than throw: no rows and one masked row both mean "no width
+     *  data here", which is the honest reading in each case. */
+    @Test
+    void anEmptyOrWhollyMaskedTraceReportsNoWidths() {
+        assertThat(TraceMetadata.hasNoWidths(List.of())).isTrue();
+        assertThat(TraceMetadata.hasNoWidths(
+                List.of(new PositionedText("XXXX XXXXXXX", 50f, 700f, 0, 0f)))).isTrue();
+    }
+
+    /**
+     * The corpus on disk, checked against the rows rather than the stamp.
+     *
+     * <p>Every trace that carries no real width must say so whatever version it declares. The v1
+     * traces answered this correctly before the fix by accident; the v3-stamped candidates answered
+     * it wrongly, and this loop is what would have caught them.
+     */
+    @Test
+    void everyTraceOnDiskReportsWidthPresenceFromItsRowsNotItsVersionStamp() {
+        List<String> names = PdfTrace.committedTraceNames();
+        assertThat(names).as("no traces found -- this check is testing nothing").isNotEmpty();
+
+        for (String name : names) {
+            List<PositionedText> runs = PdfTrace.load(name);
+            long realWidths = runs.stream().filter(r -> r.width() > 0f).count();
+            int version = PdfTrace.metadata(name).traceVersion();
+
+            assertThat(TraceMetadata.hasNoWidths(runs))
+                    .as("%s declares v%d and has %d/%d runs with a real width",
+                            name, version, realWidths, runs.size())
+                    .isEqualTo(realWidths == 0);
+        }
+    }
+
+    /**
+     * The two zero-width v3 recapture candidates, if they are still on this machine.
+     *
+     * <p>Skipped rather than failed when absent: they are uncommitted working-directory artefacts of
+     * a capture that needs the original customer PDF, which the build machine does not have. While
+     * they are present they are the real-data proof of the defect -- both declare v3, both carry
+     * 0.00 in every width field, and both reported "has widths" before this fix.
+     */
+    @Test
+    void theZeroWidthV3RecaptureCandidatesReportNoWidths() {
+        List<String> candidates = PdfTrace.committedTraceNames().stream()
+                .filter(name -> name.endsWith("-v3-candidate-1")).toList();
+        org.junit.jupiter.api.Assumptions.assumeFalse(candidates.isEmpty(),
+                "no v3 recapture candidates on disk -- nothing to check");
+
+        for (String name : candidates) {
+            List<PositionedText> runs = PdfTrace.load(name);
+            assertThat(PdfTrace.metadata(name).traceVersion())
+                    .as("%s is the version-stamp half of the defect", name).isEqualTo(3);
+            assertThat(runs).as("%s parsed to no rows at all", name).isNotEmpty();
+            assertThat(TraceMetadata.hasNoWidths(runs))
+                    .as("%s declares v3 but carries no measured width in %d rows", name, runs.size())
+                    .isTrue();
+        }
+    }
+
+    /**
      * Not asserted here: that the right-edge correction actually fires end to end.
      *
      * <p>It needs a table the locator will recognise — headers, an anchored date column, an amount

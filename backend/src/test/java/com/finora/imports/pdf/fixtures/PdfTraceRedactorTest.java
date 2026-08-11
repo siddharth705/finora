@@ -93,6 +93,75 @@ class PdfTraceRedactorTest {
         });
     }
 
+    /**
+     * A run redaction left byte-identical keeps its measured width.
+     *
+     * <p>This is the whole point of capturing width at all: {@code PdfTableLocator}'s right-edge
+     * correction is guarded on {@code width() > 0} and only ever reads pure numbers and header
+     * labels -- exactly the runs the allowlist preserves verbatim. Zeroing them made the capability
+     * unreachable from any trace, and the width discloses nothing, because the text it measures is
+     * printed in cleartext on the same line of the same file.
+     */
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', value = {
+            "24,462.00   | 41.02",   // amount -- the RIGHT_ALIGNED_AMOUNTS input
+            "0.00        | 15.57",   // the short amount that mis-bucketed on the real statement
+            "Narration   | 44.91",   // structural header label -- the headerEnds input
+            "Closing Balance | 72.34",
+            "10/07/2026  | 49.83",   // date
+            "Page 9 of 9 | 40.12",   // already-masked shape: unchanged by redaction, so width stays
+    })
+    void anUnmaskedRunKeepsItsMeasuredWidth(String text, float width) {
+        List<PositionedText> redacted = PdfTraceRedactor.redact(
+                List.of(new PositionedText(text.trim(), 300f, 100f, 0, width)));
+
+        assertThat(redacted).singleElement().satisfies(run -> {
+            assertThat(run.text()).as("this input must be preserved verbatim").isEqualTo(text.trim());
+            assertThat(run.width()).isEqualTo(width);
+            assertThat(run.endX()).isEqualTo(300f + width);
+        });
+    }
+
+    /**
+     * A run redaction changed loses its width, whatever it was measured at.
+     *
+     * <p>For digits this leaks nothing anyway (digit glyphs are uniform-width in every text font), but
+     * for letters a width constrains the multiset of masked characters, and nothing in the pipeline
+     * reads a masked run's geometry. An unnecessary disclosure is declined rather than priced.
+     */
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', value = {
+            "JANE EXAMPLE     | 61.34",   // a name
+            "50100999999999   | 77.84",   // an account number
+            "HDFC0001234      | 58.71",   // synthetic-ok invented IFSC -- prefix kept, branch code masked, so it CHANGED
+            "Zorbulax         | 44.02",   // an unrecognised word
+            "Flat No 404, Sample Gardens | 118.90",
+    })
+    void aMaskedRunLosesItsWidth(String text, float width) {
+        List<PositionedText> redacted = PdfTraceRedactor.redact(
+                List.of(new PositionedText(text.trim(), 300f, 100f, 0, width)));
+
+        assertThat(redacted).singleElement().satisfies(run -> {
+            assertThat(run.text()).as("this input must have been changed by redaction")
+                    .isNotEqualTo(text.trim());
+            assertThat(run.width()).isZero();
+            assertThat(run.endX()).isEqualTo(run.x());
+        });
+    }
+
+    /** A partially masked run is a masked run: one hidden character is enough to drop the width,
+     *  because the width describes the original glyphs and would no longer match the text beside it. */
+    @Test
+    void aRunWithOneMaskedTokenAmongStructuralOnesLosesItsWidth() {
+        List<PositionedText> redacted = PdfTraceRedactor.redact(List.of(
+                new PositionedText("UPI-JANE EXAMPLE-PAYMENT FROM PHONE", 50f, 100f, 0, 180.5f)));
+
+        assertThat(redacted).singleElement().satisfies(run -> {
+            assertThat(run.text()).isEqualTo("UPI-XXXX XXXXXXX-PAYMENT FROM PHONE");
+            assertThat(run.width()).isZero();
+        });
+    }
+
     private String redact(String text) {
         return PdfTraceRedactor.redact(List.of(new PositionedText(text.trim(), 0f, 0f, 0)))
                 .get(0).text();

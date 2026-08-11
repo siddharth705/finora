@@ -130,11 +130,38 @@ public final class PdfTraceRedactor {
             // generic connective words that carry no identity on their own
             "a", "an", "and", "or", "the", "for", "is", "not", "applicable", "yes", "y", "n"));
 
+    /**
+     * Redacts every run, preserving the measured width of runs redaction left byte-identical and
+     * dropping it (to 0) for every run it changed.
+     *
+     * <p>The discriminator is exact rather than heuristic: redaction is purely character-substituting
+     * ({@link #mask}, which preserves length and every non-alphanumeric character), so
+     * {@code redacted.equals(original)} is true if and only if nothing about the run was hidden.
+     *
+     * <p><b>Why width is kept at all.</b> {@code PdfTableLocator}'s right-edge correction
+     * (RIGHT_ALIGNED_AMOUNTS) and {@code StatementSummaryExtractor#valueUnder} are guarded on
+     * {@code width() > 0}; with every width zeroed, no trace at any version could reach them, and the
+     * corpus was structurally blind to the exact class of defect it exists to catch — a short
+     * right-aligned amount bucketing into the wrong column.
+     *
+     * <p><b>Why only for unmasked runs.</b> An unmasked run's width is a deterministic function of
+     * text this same file already publishes verbatim, so it discloses nothing new. A masked run's
+     * width would be a real-valued observation about hidden characters — for alphabetic tokens it
+     * constrains the letter multiset (~5–6 bits) — and nothing in the pipeline reads it: every width
+     * consumer takes either a pure number (preserved by {@code AMOUNT_LIKE}) or a structural header
+     * label (preserved by {@code STRUCTURAL_WORDS}). So the privacy cost buys no capability, and is
+     * declined. It also keeps the artefact internally consistent: a width in a trace is always the
+     * true width of the text printed next to it.
+     */
     public static List<PositionedText> redact(List<PositionedText> runs) {
         Set<String> vocabulary = vocabulary();
         List<PositionedText> out = new ArrayList<>(runs.size());
         for (PositionedText run : runs) {
-            out.add(new PositionedText(redactText(run.text(), vocabulary), run.x(), run.y(), run.pageIndex()));
+            String redacted = redactText(run.text(), vocabulary);
+            boolean unmasked = java.util.Objects.equals(redacted, run.text());
+            out.add(unmasked
+                    ? new PositionedText(redacted, run.x(), run.y(), run.pageIndex(), run.width())
+                    : new PositionedText(redacted, run.x(), run.y(), run.pageIndex()));
         }
         return out;
     }
