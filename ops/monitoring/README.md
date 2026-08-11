@@ -25,6 +25,26 @@ request and proven to work before it is relied upon.
 
 ---
 
+## External monitoring
+
+Production availability is monitored externally through **Better Stack**, using an HTTP(S) monitor
+against `https://api.finoratech.info/actuator/health`. The monitor expects HTTP `200` and a body
+containing `"status":"UP"` — a status-code-only check would pass against a misconfigured proxy or a
+maintenance page serving the wrong body, so it checks both.
+
+This is deliberately the only endpoint monitored externally. `/api/v1/**` requires authentication and
+`/actuator/prometheus` / `/swagger-ui.html` are intentionally not `permitAll` (see
+[Security](#security)) — pointing an unauthenticated external monitor at any of them would either
+need a credential it shouldn't hold or report a permanent false "down" against a control that is
+working exactly as designed.
+
+No Better Stack credentials, API keys, or other provider-specific configuration live in this
+repository — the monitor is configured directly in Better Stack's dashboard, not as code here. This
+closes the gap the rest of this document is honest about above: production Prometheus/Grafana don't
+exist yet, but production is no longer unwatched.
+
+---
+
 ## Running it locally
 
 The scrape endpoint is authenticated, so this needs a token. That is deliberate — see
