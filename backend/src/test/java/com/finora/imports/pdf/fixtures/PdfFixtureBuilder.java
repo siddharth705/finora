@@ -62,6 +62,11 @@ import java.util.List;
  * CREDIT_CARD_SUMMARY_SIGNAL
  *   -&gt; buildWrappedDescriptionCreditCardSample, buildMultiSectionCompositeStatementSample,
  *      buildGridMetadataFallbackSample
+ * CREDIT_CARD_SUMMARY_SIGNAL (negative evidence -- documents that must NOT be classified as one)
+ *   -&gt; buildIncidentalCardNumberSecurityNoticeSample, buildRepeatedCreditLimitColumnSummarySample,
+ *      buildOneDistinctCreditCardPhraseSample / buildTwoDistinctCreditCardPhrasesSample (the
+ *      distinct-phrase threshold, either side of it), buildCardNumberColumnOnlySample (the
+ *      independent row-header path), buildOverdraftTermsCurrentAccountSample (adversarial probe)
  * OFFSET_COLUMN_ANCHORS
  *   -&gt; buildOffsetColumnAnchorsSample, buildSingularDepositWithdrawalColumnsSample (via the
  *      leading-amount-in-balance split)
@@ -277,6 +282,11 @@ public final class PdfFixtureBuilder {
         PageBuilder page1 = new PageBuilder();
         page1.line("AXIS BANK")
                 .line("Neo Rupay Credit Card Statement")
+                // Verbatim the wording a real Axis credit-card statement prints. Kept exactly as
+                // captured: no "Credit Limit" clause has ever been committed on this line, and it
+                // stays that way on purpose. The phrase list now carries "minimum payment due",
+                // so this fixture proves the classifier works on Axis's ACTUAL vocabulary alone --
+                // which is the only version of this fixture that proves anything.
                 .line("Total Payment Due 27,665.16 Dr Minimum Payment Due 577.00 Dr")
                 .blankLine()
                 .row(col, "DATE", "TRANSACTION DETAILS", "MERCHANT CATEGORY", "AMOUNT (Rs.)")
@@ -378,6 +388,9 @@ public final class PdfFixtureBuilder {
         PageBuilder page = new PageBuilder();
         page.line("HDFC BANK")
                 .line("Tata Neu Plus HDFC Bank Credit Card Statement")
+                // Verbatim the wording a real HDFC credit-card statement prints -- see the note on
+                // buildDrCrSuffixAmountColumnSample: no "Credit Limit" clause has ever been
+                // committed on this line either, for the same reason.
                 .line("Total Amount Due 950.00 Minimum Due 100.00")
                 .blankLine()
                 .row(col, "DATE & TIME", "TRANSACTION DESCRIPTION", "Base NeuCoins", "AMOUNT", "PI")
@@ -413,6 +426,8 @@ public final class PdfFixtureBuilder {
                 .row(savingsCol, "10/07/2026", "Grocery Store", "", "2000.00", "103000.00")
                 .blankLine()
                 .line("CREDIT CARD ACCOUNT  4000 1111 2222 3333")
+                // Real HDFC-style card payment-summary wording, unmodified -- see the note on
+                // buildDrCrSuffixAmountColumnSample.
                 .line("Total Amount Due 1,817.00 Minimum Due 200.00")
                 .row(ccCol, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
                 .row(ccCol, "15/07/2026", "UPI-Retailer One", "1,817.02 Dr");
@@ -946,6 +961,187 @@ public final class PdfFixtureBuilder {
                 .line("01-07-2026 / by transfer / 40000.00 / 46098.10")
                 .line("03-07-2026 / to clearing / 1000.00 / 45098.10")
                 .line("07-07-2026 / to clearing / 4000.00 / 41098.10");
+
+        return render(List.of(page));
+    }
+
+    // ==================== CREDIT_CARD_SUMMARY_SIGNAL (negative evidence) ====================
+
+    /**
+     * A savings-account statement carrying the generic anti-phishing notice every Indian bank
+     * prints regardless of account type ("never share your card number, PIN, OTP ..."), and
+     * nothing else card-related at all.
+     *
+     * <p>This is the false-positive shape the credit-card text scan used to misclassify: one
+     * isolated "card number" hit, in a SECURITY INSTRUCTION rather than a labelled field, was
+     * enough on its own to prefill the review form's account type as CREDIT_CARD for a plainly
+     * ordinary savings account. Observed on real Bank of Baroda and SBI savings statements; the
+     * notice's wording below is generic on purpose, since the point is that every bank prints
+     * some version of it and none of them mean "this is a card statement".
+     *
+     * <p>Deliberately contains NO phrase from the free-text signal list and NO card-number
+     * COLUMN, so anything that classifies this section as a credit card did so off the notice.
+     */
+    public static byte[] buildIncidentalCardNumberSecurityNoticeSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 130f, 300f, 380f, 460f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Some Financial Institution")
+                .line("Savings Account Statement")
+                .line("Security notice: bank officials never ask for your card number, PIN, OTP or password.")
+                .line("Please do not share these details with anyone, including over phone or email.")
+                .blankLine()
+                .row(col, "Date", "Narration", "Withdrawals", "Deposits", "Balance")
+                .row(col, "05/07/2026", "Salary Credit", "", "55000.00", "105000.00")
+                .row(col, "10/07/2026", "Grocery Store", "2000.00", "", "103000.00")
+                .row(col, "18/07/2026", "Electricity Bill", "1404.91", "", "101595.09");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * A savings-account statement opening with a multi-account relationship SUMMARY whose shared
+     * column header line ("... Credit Limit ...") is reprinted once per account category --
+     * Deposits and Investments, then Borrowings -- so the SAME single phrase occurs several
+     * times over while no second distinct phrase ever appears.
+     *
+     * <p>Modeled on a real HSBC combined statement, but the shape is a summary-table convention
+     * rather than that bank's alone. It is the reason the credit-card text scan counts DISTINCT
+     * phrases rather than occurrences: a naive occurrence count would read this document's
+     * repeated column header as three times the evidence, when it is a single piece of evidence
+     * printed three times -- and evidence about the customer's OTHER products at that, not about
+     * the savings ledger this section actually is.
+     */
+    public static byte[] buildRepeatedCreditLimitColumnSummarySample() throws IOException {
+        float[] col = {LEFT_MARGIN, 130f, 300f, 380f, 460f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Some Financial Institution")
+                .line("Relationship Summary")
+                .line("Deposits and Investments      Balance      Credit Limit")
+                .line("Savings Account                101,595.09   Not Applicable")
+                .line("Borrowings                    Balance      Credit Limit")
+                .line("Personal Loan                  0.00         Not Applicable")
+                .line("Total Relationship Value      Balance      Credit Limit")
+                .blankLine()
+                .row(col, "Date", "Narration", "Withdrawals", "Deposits", "Balance")
+                .row(col, "05/07/2026", "Salary Credit", "", "55000.00", "105000.00")
+                .row(col, "10/07/2026", "Grocery Store", "2000.00", "", "103000.00")
+                .row(col, "18/07/2026", "Electricity Bill", "1404.91", "", "101595.09");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * The lower half of the distinct-signal boundary: a ledger whose free text carries EXACTLY
+     * ONE phrase from the credit-card signal list ("Total Payment Due", here a bill-payment
+     * reminder printed on an ordinary account statement) and no others.
+     *
+     * <p>Byte-for-byte identical to {@link #buildTwoDistinctCreditCardPhrasesSample} apart from
+     * the one added line there, so a test pairing the two isolates the threshold itself rather
+     * than any other difference between two documents.
+     */
+    public static byte[] buildOneDistinctCreditCardPhraseSample() throws IOException {
+        return oneOrTwoDistinctPhraseLedger(false);
+    }
+
+    /**
+     * The upper half of the same boundary: the identical ledger, plus a second DISTINCT phrase
+     * ("Minimum Amount Due"). Two distinct phrases is where the credit-card text signal starts
+     * firing -- see {@code PdfPreviewGenerator}'s MIN_CREDIT_CARD_TEXT_SIGNALS.
+     */
+    public static byte[] buildTwoDistinctCreditCardPhrasesSample() throws IOException {
+        return oneOrTwoDistinctPhraseLedger(true);
+    }
+
+    private static byte[] oneOrTwoDistinctPhraseLedger(boolean secondPhrase) throws IOException {
+        float[] col = {LEFT_MARGIN, 130f, 300f, 380f, 460f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Some Financial Institution")
+                .line("Account Statement")
+                .line("Total Payment Due 1,500.00");
+        if (secondPhrase) page.line("Minimum Amount Due 200.00");
+        page.blankLine()
+                .row(col, "Date", "Narration", "Withdrawals", "Deposits", "Balance")
+                .row(col, "05/07/2026", "Salary Credit", "", "55000.00", "105000.00")
+                .row(col, "10/07/2026", "Grocery Store", "2000.00", "", "103000.00");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * A card statement whose only credit-card evidence is a labelled "Card Number" table COLUMN,
+     * with no payment-summary free text anywhere.
+     *
+     * <p>The row-level header check ({@code CsvParser.hasHeaderMatch}) and the free-text scan are
+     * two independent paths into the same signal; this fixture is the one that reaches the
+     * former with the latter silent, which is what makes it able to fail if the two are ever
+     * accidentally coupled -- narrowing the free-text list must not narrow the column check.
+     */
+    public static byte[] buildCardNumberColumnOnlySample() throws IOException {
+        float[] col = {LEFT_MARGIN, 130f, 300f, 470f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Some Financial Institution")
+                .line("Card Account Statement")
+                .blankLine()
+                .row(col, "Date", "Card Number", "Transaction Details", "Amount (Rs.)")
+                .row(col, "15/07/2026", "XXXX XXXX XXXX 3333", "UPI-Retailer One", "1,817.02 Dr")
+                .row(col, "16/07/2026", "XXXX XXXX XXXX 3333", "Test Merchant Purchase", "500.00 Dr");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * Adversarial probe, not a proven real document: an ordinary current account with an
+     * overdraft facility, whose terms block mentions the overdraft's own "credit limit" and the
+     * "minimum due" on it -- two hits in a document that is not a credit card.
+     *
+     * <p>This fixture used to clear the two-distinct-signal threshold and was pinned as a known
+     * unfixed false positive. It no longer does, and the wording below is unchanged from when it
+     * did: the credit-limit half is written the way an overdraft's terms actually read it, as
+     * PROSE ("your sanctioned credit limit is 2,00,000.00") rather than as a labelled field, so
+     * requiring the field shape drops it to a single signal. See the test that uses it.
+     */
+    public static byte[] buildOverdraftTermsCurrentAccountSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 130f, 300f, 380f, 460f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Some Financial Institution")
+                .line("Current Account Statement")
+                .line("Overdraft facility: your sanctioned credit limit is 2,00,000.00.")
+                .line("Interest on the overdraft is charged monthly; the minimum due is debited automatically.")
+                .blankLine()
+                .row(col, "Date", "Narration", "Withdrawals", "Deposits", "Balance")
+                .row(col, "05/07/2026", "Customer Receipt", "", "55000.00", "105000.00")
+                .row(col, "10/07/2026", "Vendor Payment", "2000.00", "", "103000.00");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * A genuine credit-card statement whose payment summary MIXES two issuers' spellings --
+     * "Total Amount Due" (HDFC's) and "Minimum Payment Due" (Axis's) -- neither of which was on
+     * the free-text signal list when this fixture was written. It exists because that combination
+     * was a real false negative: a card statement worded this way reached at most one listed
+     * phrase and was classified SAVINGS.
+     *
+     * <p>Kept now as the regression guard on the widened phrase list. It is the strictest of the
+     * card fixtures, because it carries no credit-limit field at all and no phrase that the older
+     * list would have matched twice -- so it can only pass on the two spellings that were added.
+     */
+    public static byte[] buildRealWorldPaymentSummaryLabelWordingSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 150f, 470f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Some Card Issuer")
+                .line("Credit Card Statement")
+                .line("Total Amount Due 27,665.16 Dr Minimum Payment Due 577.00 Dr")
+                .blankLine()
+                .row(col, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                .row(col, "24/06/2026", "UPI/SAMPLE VENDOR PRIVATE LT", "37.94 Dr")
+                .row(col, "30/06/2026", "BBPS PAYMENT RECEIVED", "10,081.99 Cr");
 
         return render(List.of(page));
     }

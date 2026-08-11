@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * The PDF equivalent of {@code com.finora.imports.PreviewGenerator} -- produces the exact same
@@ -557,9 +558,36 @@ public class PdfPreviewGenerator {
         // carry it only in a free-text payment-summary block ("Total Payment Due", "Minimum
         // Amount Due") that sits above the transaction table, i.e. in this section's own
         // auxiliaryText, not in any row. Checking both keeps this correct for either shape.
+        //
+        // Bug fix: a single free-text match is not enough evidence. Verified against 17 real
+        // statements: three savings/current accounts (Bank of Baroda, HSBC, SBI) each false
+        // -positived a credit-card classification off exactly ONE isolated hit -- a generic
+        // anti-phishing warning every bank prints regardless of account type ("please do not
+        // share your ... card number, PIN, OTP ..."), and, for HSBC, a multi-account SUMMARY
+        // TABLE's shared "Credit Limit" column header repeated once per account category
+        // (Deposits and Investments, Borrowings), not evidence that THIS section is a credit
+        // card. Every genuine credit-card statement tested (HDFC, ICICI, Axis), by contrast, hits
+        // several DISTINCT phrases, not just one, because the payment-summary block and MITC
+        // legal text repeat the concept from several angles. Requiring >= 2 distinct phrases
+        // (not occurrence count -- HSBC's repeated column header would still pass a naive count)
+        // reproduces every true positive tested and eliminates every false positive found.
+        //
+        // "card number" is dropped from this free-text scan entirely: every single occurrence
+        // observed across all 17 documents, false-positive or genuine credit-card statement
+        // alike, was "how to block your card" security instructions, never a labelled field --
+        // it never once contributed real signal, only noise.
+        //
+        // Two follow-ups, both driven by real documents the first pass had not yet been measured
+        // against (see CREDIT_CARD_TEXT_SIGNALS and CREDIT_LIMIT_LABELLED_FIELD for the detail):
+        // the phrase list now carries every spelling the observed issuers actually print, since
+        // substring matching does not collapse "Minimum Due" into "Minimum Amount Due" and whole
+        // issuers were being missed outright; and the credit limit is now required as a LABELLED
+        // FIELD with an amount rather than as a bare phrase, which is what separates AU's genuine
+        // "Total Credit Limit: 1,00,000.00" from HSBC's repeated summary column header and an
+        // overdraft's terms. The >= 2 threshold itself is unchanged.
         boolean creditCardSignals = section.rows().stream().anyMatch(row ->
                 CsvParser.hasHeaderMatch(row, "card number", "minimum due", "minimum amount due"))
-                || section.auxiliaryText().stream().anyMatch(this::containsCreditCardTextSignal);
+                || countDistinctCreditCardSignals(section.auxiliaryText()) >= MIN_CREDIT_CARD_TEXT_SIGNALS;
         if (ctx != null && creditCardSignals) ctx.record("CREDIT_CARD_SUMMARY_SIGNAL");
 
         return new SharedSectionFacts(metadata, bank, suggestedName, creditCardSignals);
@@ -615,10 +643,86 @@ public class PdfPreviewGenerator {
         return "SAVINGS";
     }
 
-    private boolean containsCreditCardTextSignal(String line) {
-        if (line == null) return false;
-        String lower = line.toLowerCase(Locale.ROOT);
-        return lower.contains("total payment due") || lower.contains("minimum amount due")
-                || lower.contains("minimum due") || lower.contains("credit limit") || lower.contains("card number");
+    /** At least this many DISTINCT signals -- phrases from {@link #CREDIT_CARD_TEXT_SIGNALS}, plus
+     *  the labelled credit-limit field, which counts as one more -- must appear somewhere in the
+     *  section's free text before it counts as a credit-card signal. See the bug-fix comment at
+     *  this constant's call site for the real statements that motivated it. */
+    private static final int MIN_CREDIT_CARD_TEXT_SIGNALS = 2;
+
+    /**
+     * Payment-summary labels, matched as free-text substrings.
+     *
+     * <p>Every entry is wording taken from a real statement rather than a guess, and the list
+     * covers all three spellings the observed issuers use for the same two concepts, because no
+     * two of them agree:
+     *
+     * <ul>
+     *   <li>Axis prints "Total Payment Due" and "Minimum Payment Due".</li>
+     *   <li>HDFC prints "Total Amount Due" and "Minimum Due".</li>
+     *   <li>AU prints "Total amount due" and "Minimum amount due".</li>
+     * </ul>
+     *
+     * <p>Substring matching does NOT collapse these into each other, which is the trap this list
+     * was previously falling into: "minimum due" is not a substring of "minimum amount due" or of
+     * "minimum payment due", and "total amount due" is not a substring of "total payment due". A
+     * list holding only some of the spellings therefore misses whole issuers outright -- an AU or
+     * Axis card statement reached at most ONE listed phrase and was classified SAVINGS. Each
+     * spelling has to be listed explicitly; none of them is redundant.
+     *
+     * <p>Note that no single label can inflate the count on its own: a line reading "Minimum
+     * Payment Due" matches exactly one entry, not two, precisely because of the same
+     * no-substring-overlap property.
+     */
+    private static final List<String> CREDIT_CARD_TEXT_SIGNALS = List.of(
+            "total payment due", "total amount due",
+            "minimum amount due", "minimum payment due", "minimum due");
+
+    /**
+     * The credit limit, required as a LABELLED FIELD -- "Credit Limit: 1,00,000.00", optionally
+     * prefixed with "Total"/"Available" -- rather than as a bare phrase anywhere in the text.
+     *
+     * <p>A bare "credit limit" substring was the weakest entry on the free-text list and the one
+     * doing the most damage at both ends. On HSBC's combined statement it is a SUMMARY TABLE's
+     * shared column header, printed once per account category with "Not Applicable" underneath it,
+     * and says nothing about the section it appears above; on a current account it turns up in an
+     * overdraft facility's terms ("your sanctioned credit limit is 2,00,000.00") describing a
+     * different product entirely. Meanwhile on AU's genuine card statement the real thing is
+     * printed as an actual labelled field with an actual amount ("Total Credit Limit:
+     * Rs.1,00,000.00") -- so requiring the FIELD SHAPE keeps every true positive observed while
+     * discarding both false-positive shapes, which no amount of tuning the threshold could
+     * separate.
+     *
+     * <p>This is the same idea as {@link CsvParser#hasHeaderMatch}'s exact-column-name check on the
+     * row path: structure, not the presence of a word. The currency symbol is optional because the
+     * text layer may or may not carry one (and a non-Latin glyph may not survive extraction), and
+     * the separator is optional because statements print both "Credit Limit: 1,00,000" and
+     * "Credit Limit 1,00,000". What is NOT optional is adjacency of "credit" and "limit" and an
+     * amount immediately after the label -- that is what makes it a field rather than a mention.
+     */
+    private static final Pattern CREDIT_LIMIT_LABELLED_FIELD = Pattern.compile(
+            "(?:total\\s+|available\\s+)?credit\\s+limit\\s*[:\\-]?\\s*(?:₹|rs\\.?|inr)?\\s*[\\d,]*\\d(?:\\.\\d{1,2})?",
+            Pattern.CASE_INSENSITIVE);
+
+    /**
+     * How many distinct credit-card signals this section's free text carries.
+     *
+     * <p>The labelled credit-limit field is folded in here as ONE more distinct signal rather than
+     * being OR'd in as an independent shortcut, deliberately: it is corroborating evidence of the
+     * same kind as a payment-summary label, not a stronger class of evidence, and the whole point
+     * of {@link #MIN_CREDIT_CARD_TEXT_SIGNALS} is that no single free-text hit may classify a
+     * document on its own. An OR would have handed exactly that power back to one hit.
+     *
+     * <p>Package-private so a test can assert the MARGIN a real document clears the threshold by,
+     * not merely that it clears it -- a true positive scraping through on exactly two signals and
+     * one comfortably over are very different states of this rule.
+     */
+    long countDistinctCreditCardSignals(List<String> auxiliaryText) {
+        long phraseSignals = CREDIT_CARD_TEXT_SIGNALS.stream()
+                .filter(signal -> auxiliaryText.stream().anyMatch(line -> line != null
+                        && line.toLowerCase(Locale.ROOT).contains(signal)))
+                .count();
+        boolean creditLimitField = auxiliaryText.stream()
+                .anyMatch(line -> line != null && CREDIT_LIMIT_LABELLED_FIELD.matcher(line).find());
+        return phraseSignals + (creditLimitField ? 1 : 0);
     }
 }

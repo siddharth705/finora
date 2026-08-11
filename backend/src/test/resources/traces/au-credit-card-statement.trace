@@ -1,0 +1,261 @@
+# finora-pdf-trace v3
+# traceVersion: 3
+# redactorVersion: 2
+# allowlistFingerprint: A3C0126B
+# capturedAt: 2026-08-12
+# generatedFrom: AU Small Finance Bank credit card statement
+# capabilities: COMPOSITE_STATEMENT, LEADING_NARRATION_CONTINUATION, PAGE_BOUNDARY_ISOLATION
+# regressions: 
+# requiredHeaders: Minimum amount due, Total Credit Limit, Total amount due, Card number, Payment due date, Statement date, Transaction Type, Opening balance
+# motivation: Credit-card payment-summary vocabulary from a real AU statement: independent validation of the >=2-distinct-phrase credit-card signal threshold (this document supplies 'Minimum amount due' + 'Total Credit Limit', and NOT 'total payment due' or 'minimum due'). Captured while a known Axis/HDFC false-negative gap in the same rule was being decided.
+# page	x	y	width	text
+0	17.60	80.51	0.00	Xxxxx, XXXXXX XXXXXXXXXXXXX XXXXXX
+0	17.60	103.04	0.00	999, XXXXXXX XXXXXXXXXX XXX XXXXXXX XXXXX XXXX NO. 9 XXXX99 XXXXXXXX XXXX XXXXXX, XX
+0	17.60	117.58	0.00	999999
+0	17.60	135.71	0.00	Statement for xxxx credit card xxxxxx xxxx 9999 (99 Xxx - 99 Xxx 9999)
+0	30.14	193.11	0.00	Xxxx Credit Card xxxx
+0	356.14	193.28	0.00	Xxxx summary
+0	30.98	224.53	0.00	Total xxxx amount
+0	178.13	224.53	93.41	Minimum amount due
+0	355.08	229.62	70.65	Opening balance
+0	518.22	228.18	46.21	₹62,407.40
+0	30.98	241.06	49.27	₹1,179.36
+0	178.13	241.06	40.08	₹100.00
+0	355.08	250.88	0.00	Total xxxxxx
+0	523.36	249.44	41.06	₹1,180.00
+0	31.83	262.25	139.53	     Total Credit Limit: ₹1,00,000.00
+0	355.08	272.14	0.00	Xxxxxxxx & Xxxxxxx
+0	518.22	270.70	46.21	₹62,408.04
+0	30.98	291.59	0.00	Payment due date 99 Xxx 9999
+0	265.68	290.70	0.00	Xxx Xxx
+0	355.08	293.40	0.00	XXXx
+0	541.32	291.96	23.10	₹0.00
+0	315.95	318.05	0.00	 Xxx & Xxxxxxx (Xxxxxxxxx
+0	541.32	314.69	23.10	₹0.00
+0	30.98	320.40	0.00	Xxxx to xxx
+0	355.08	326.62	0.00	Xxxxxxxxx)
+0	52.78	343.38	0.00	XX9999 xxx
+0	195.67	343.14	0.00	  Xxx xxxxxxx NEFT
+0	30.04	363.60	0.00	x
+0	35.39	364.87	0.00	Xxxxx to AU 9999
+0	177.29	363.60	0.00	x
+0	182.17	364.87	0.00	Xxx xxxxxx xx xxxxxxxx 99-xxxxx AU Credit
+0	355.08	363.23	74.11	Total amount due
+0	523.36	363.55	41.06	₹1,179.36
+0	30.04	376.68	0.00	x
+0	35.39	377.95	0.00	Xxxxxx 'Credit Card' and xxxx xxxxx on 'Xxx xxxx'
+0	182.17	375.35	42.70	Card number
+0	30.04	390.67	0.00	x
+0	35.39	391.94	0.00	Xxxxxx the amount xxx xxxx to xxx and xxxxx
+0	177.29	388.20	0.00	x
+0	182.17	389.47	0.00	Xxxxx IFSC code: AUBL0XXXXXX
+0	35.39	403.33	0.00	on Xxxxxxx
+0	177.29	401.63	0.00	x
+0	182.17	402.90	0.00	Xxxxx amount xxx xxxx to xxx
+0	30.04	414.88	0.00	x
+0	35.39	416.15	0.00	Xxxxx XXX for xxxxxxxxxxxx
+0	177.29	414.65	0.00	x
+0	182.17	415.92	0.00	Xxxxxx payment xxxx as IMPS/NEFT
+0	29.51	629.26	0.00	Xxxx Xxxxxxxxxxxx
+0	40.33	665.73	0.00	99
+0	69.77	662.87	0.00	PAYMENT XXXXXXXX - AU XXX XXXXXXX
+0	507.68	667.05	56.49	+₹61,000.00
+0	33.93	681.80	0.00	Xxx 99
+0	74.20	680.97	7.09	Cr
+0	40.33	717.00	0.00	99
+0	69.77	714.14	0.00	PAYMENT XXXXXXXX - AU XXX XXXXXXX
+0	513.34	718.32	50.83	+₹1,407.04
+0	33.93	733.06	0.00	Xxx 99
+0	74.20	732.24	7.09	Cr
+0	543.04	827.14	0.00	Page 9 of 9
+1	29.51	43.29	0.00	Xxxx Xxxxxxxxxxxx
+1	40.33	79.76	0.00	99
+1	69.77	76.90	0.00	PAYMENT XXXXXXXX - AU XXX XXXXXXX
+1	533.09	81.08	31.08	+₹1.00
+1	33.93	95.83	0.00	Xxx 99
+1	74.20	95.01	7.09	Cr
+1	40.33	131.03	0.00	99
+1	69.77	128.17	0.00	THE XXXXXXXXX OF XXXXX Xxx Xxxxx XX
+1	519.01	132.35	45.16	₹1,180.00
+1	33.93	147.10	0.00	Xxx 99
+1	74.20	146.27	7.76	Dr
+1	30.54	238.50	0.00	Xxxxxx Xxxxxx xxx xxxx xxxxxx xxxx xxxxx
+1	333.57	239.29	0.00	Xxx xxxxxxx / xxxxxxxx of xxxx card
+1	30.54	261.17	0.00	9999 xxx
+1	30.54	292.56	71.46	Opening balance
+1	260.40	292.63	0.00	9,999
+1	30.54	313.14	0.00	Xxxxxx
+1	278.36	313.22	0.00	9
+1	342.19	318.80	0.00	9 Xxxxxx Xxxxxx
+1	461.69	320.51	0.00	99% Xxx
+1	342.19	328.91	0.00	xxx Xx. 999 on xxxxxxxx of
+1	30.54	334.43	0.00	Xxxxx Xxxxxx
+1	255.43	334.51	0.00	+ 9999
+1	461.69	332.80	0.00	on XXXX Xxxxxxxxxxx Xxxx
+1	342.19	337.90	0.00	xxxxxxxx & xxx payment
+1	461.69	341.79	27.48	payment
+1	30.54	356.27	0.00	Xxxxxx
+1	278.36	356.34	0.00	9
+1	30.54	377.10	0.00	Xxxxxxxx
+1	278.36	377.18	0.00	9
+1	30.54	414.28	0.00	Total xxxxxx xxxxxx
+1	255.27	414.28	0.00	9,999
+1	342.14	433.11	0.00	9 Xxxxxxxxxx Xxx
+1	462.09	432.81	0.00	Xxxxxx xxxxxx
+1	342.14	443.22	0.00	Xxxxx 9 Xxxxxxxxxx xxx on
+1	462.09	444.82	0.00	9 Xxxxxxxx Xxxxxxx Xxxxxx
+1	342.14	452.21	0.00	Xxxxxx EMI Xxxxxxxxxxxx
+1	462.09	453.81	0.00	xxxxxx* xxx xxxxxxxx xxxxxxx
+1	29.51	519.42	0.00	Xxxx Xx Xxx Xxxx
+1	70.95	565.50	0.00	Xxxxxxx
+1	38.71	590.53	0.00	For xxxxxxx xxxxxxxx, card xxxx, or xxxxxxxxx xxxxxxxxxx, xxxxxx xxx xx to xxx xxxxxxxxxx/xxxxxx xxxxxxx or xxxx xxx 99-xxxx customer xxxx
+1	38.71	601.43	0.00	number 9999 9999 9999 or xxxxx to xx xx xxxxxxxxxx.xxxxxxx@xxxxxx.xx
+1	71.13	642.55	50.23	Repayment
+1	39.13	661.48	0.00	Xxxxxx payment of xxxx Minimum Amount Due xxxxx xxxxx xxxxx xxxxxx xx the repayment xxxxxxxxxx xxxx xxxxx xxxx xxxxxxxxxx interest
+1	39.13	672.66	0.00	payment on xxxx Outstanding Balance.
+1	39.13	689.33	0.00	Credit Xxxxxxxxxxx Xxxxxxxxx, as xxx xxxxxxxx xx Xxxxxxx Bank of India to xxxxxxxxxx an xxxxxxxxx & xxxxxxxx Credit Xxxx Xxxxxxxxxx. AU
+1	39.13	700.51	0.00	Small Finance Bank xxxxxxxx the xxxxx to xxxxxxx xxxx name xx the xxxx of xxxxxxxxxx and to xxxxx the xxxxxxx of xxxx credit card account
+1	39.13	711.69	0.00	xxxx xxxxx xxxxxxxxx or xxxxxxxxx xxxxxx xx xxxxxxxxxx xxxx the Credit Xxxxxxxxxxx Xxxxxxxxx Xxxxxxxxxxx Xxx 9999.
+1	543.04	827.15	0.00	Page 9 of 9
+2	29.51	43.22	0.00	Xxxx Xx Xxx Xxxx
+2	60.51	88.51	0.00	Xxxxxxxxx Details
+2	35.03	111.77	0.00	Xxxxxxx
+2	215.19	111.77	0.00	Xxxxxxxx
+2	407.75	111.77	49.02	Contact Details
+2	35.03	128.07	0.00	ICICI Xxxxxxx Xxxxxxx Xxxxxxxxx
+2	219.63	126.69	0.00	x
+2	228.80	128.07	0.00	Xxx Xxxxxxxx Xxxxx- Xx.99 Xxxxx
+2	407.75	128.07	0.00	Xxxx Xxxx Number- 99999999
+2	407.75	139.11	0.00	xxx.xxxxxxxxxxxx.xxx
+2	38.83	163.48	0.00	Xxx a xxxxxxxx xxxxxxxx of xxxx xxxxxxxxx Xxxxx xxxx
+2	254.16	163.48	0.00	Xxxx to xxxxxx xxxx nominee details? Xxxxxx xxx
+2	30.96	196.39	0.00	Xxxxx xxxxx
+2	35.49	225.17	0.00	Xxxx Xxxxxxxxx Xxxxx and xxxxxxxxxx
+2	237.72	225.17	0.00	Xxxxxxxx Xxxxxx Xxxxxx
+2	390.91	225.17	0.00	Xxxxxxxxx Xxxxxxxxx Xxxxxxxxx
+2	31.21	260.29	0.00	Xxxxxxxxxxxx for xxxxxxxxxxx Interest & Xxxx Payment Xxxxxxx
+2	31.21	276.34	0.00	Interest Xxxxxxx
+2	31.21	291.32	0.00	Interest xxxx xx xxxxxxx xx the Total Amount Due (XXX) is not paid xx the payment due date. Interest xxxx xx xxxxxxx from the date of
+2	31.21	302.22	0.00	transaction on the outstanding amount (xxxxxxxx for xxxxxxxx/ xxxxxxx/ xxxxxxxx xxxxxxxxxxxx as and xxxx xxxxxxxx) and on xxx xxx
+2	31.21	313.12	0.00	xxxxxxxxxxxx xxxxxx Xxxx/xxxxxxx and XXX/Xxxxx. For xxx xxxx xxxxxxxx, interest xxxx xx xxxxxxx from the date of the transaction xxxxx the
+2	31.21	324.01	0.00	credit card outstanding is paid xx xxxx.
+2	30.96	344.76	0.00	The xxxxxxxxx xxxxxxxxxxxx xxxx xxxxxxxx the xxxxxx of xxxxxxxxxxx interest xxxxxxx:
+2	35.49	372.72	20.80	Date
+2	92.10	372.72	88.20	Transaction/ Details
+2	213.04	372.72	35.45	Amount
+2	264.48	372.72	34.66	Balance
+2	318.88	372.72	75.16	Transaction Type
+2	438.08	372.72	38.66	Remarks
+2	35.49	386.51	0.00	99- Xxx
+2	92.10	386.51	0.00	Xxxxxxx Xxxxxxxx
+2	213.04	386.51	0.00	₹99,999
+2	264.48	386.51	0.00	₹99,999
+2	318.88	386.51	20.22	Debit
+2	35.49	400.68	0.00	99- Xxx
+2	92.10	400.68	0.00	Xxxxxxxxxxx Xxxx Payment
+2	213.04	400.68	0.00	₹9,999
+2	264.48	400.68	0.00	₹99,999
+2	318.88	400.68	20.22	Debit
+2	35.49	414.85	0.00	99- Xxx
+2	92.10	414.85	0.00	Xxxx Xxxxxxxx
+2	213.04	414.85	0.00	₹999
+2	264.48	414.85	0.00	₹99,999
+2	318.88	414.85	20.22	Debit
+2	92.10	439.61	0.00	Statement date: 99- Xxx- 99
+2	92.10	450.51	0.00	Total Amount Due: ₹99,999
+2	35.49	455.96	0.00	99- Xxx
+2	92.10	461.40	112.37	Minimum amount due: ₹761.8
+2	92.10	472.30	0.00	Payment due date: 99- Xxx- 99
+2	438.08	496.08	0.00	Xxxxxxx Payment xxxx xxxxxx due
+2	35.49	506.98	0.00	99- Xxx
+2	144.90	506.98	2.58	-
+2	213.04	506.98	0.00	₹ -99,999
+2	264.48	506.98	0.00	₹999
+2	318.88	506.98	22.74	Credit
+2	438.08	506.98	0.00	date. Payment is xxxx xxxx Total
+2	438.08	517.88	48.18	amount due.
+2	179.35	532.34	0.00	Interest xxxx credit period xxxx, Xxxx Interest xxxxxxx applicable
+2	244.66	560.52	0.00	Interest Xxxxxxx Xxxxxxxxxxx
+2	35.49	576.66	20.80	Date
+2	83.96	576.66	33.79	To Date
+2	149.74	576.66	72.45	Balance Amount
+2	254.59	576.66	0.00	No. of Xxxx
+2	331.74	576.66	0.00	Interest Xxxxxxx
+2	447.97	576.66	38.66	Remarks
+2	35.49	590.44	0.00	99- Xxx
+2	83.96	590.44	0.00	99- Xxx
+2	149.74	590.44	0.00	₹99,999
+2	254.59	590.44	0.00	9
+2	331.74	590.44	0.00	₹99
+2	35.49	604.62	0.00	99- Xxx
+2	83.96	604.62	0.00	99- Xxx
+2	149.74	604.62	0.00	₹99,999
+2	254.59	604.62	0.00	9
+2	331.74	604.62	0.00	₹99
+2	35.49	618.79	0.00	99- Xxx
+2	83.96	618.79	0.00	99- Xxx
+2	149.74	618.79	0.00	₹99,999
+2	254.59	618.79	0.00	99
+2	331.74	618.79	0.00	₹999
+2	35.49	632.96	0.00	99- Xxx
+2	83.96	632.96	0.00	99- Xxx
+2	149.74	632.96	0.00	₹999
+2	254.59	632.96	0.00	99
+2	331.74	632.96	0.00	₹9
+2	447.97	645.07	0.00	Xx the xxxx statement
+2	447.97	655.42	0.00	99- Xxx- 9999 (xxxxxxxx no
+2	35.49	660.60	0.00	Total Interest to xx Xxxxxxx
+2	331.74	660.60	0.00	₹999
+2	447.97	665.77	0.00	xxxxxxxxxx xxxxxx xx xxxx
+2	447.97	676.12	0.00	xxxxx)
+2	224.96	689.80	0.00	TOTAL XXXXXXX = ₹999 (xxxxxxxxx XXX)
+2	46.78	717.25	0.00	The xxxxx xxxxxxxxxxxx xxxxxxx xxxx customer is not xxxxxxxxxx xxxxx to the statement xxxxxxxxx on Xxx 99, 9999. Xxxxxx xxxxx to Credit Card Xxxx Xxxxxxxxx Xxxxx
+2	46.78	726.24	0.00	and Xxxxxxxxxx for xxxx details.
+2	30.96	762.96	0.00	Xxxx payment Xxxxxxx
+2	543.04	827.15	0.00	Page 9 of 9
+3	29.51	43.22	0.00	Xxxx Xx Xxx Xxxx
+3	30.96	74.39	0.00	The Xxxx Payment xxxxxxx on xxxx card xxxx xx a xxxxxxxx of the Total Amount Due xxxxx xxx payment xxxxxxxx xxxxxx payment due date
+3	30.96	85.29	0.00	and xxxx xx as xxxxxxx:
+3	30.96	105.15	0.00	Xxxx Payment Xxxxxxx = 99% of Total Outstanding* Balance Amount (Xxx Xx. 99 & Xxx Xx. 9999).
+3	30.96	115.50	0.00	*Outstanding = Total Amount due (as of xxxxxxxx statement) – Payment/Xxxxxxxx Xxxxxxxx xxxxxx payment due date.
+3	30.96	149.58	0.00	The xxxxxxxxx xxxxxxxxxxxx xxxx xxxxxxxx the xxxxxx of xxxxxxxxxxx Xxxx Payment xxxxxxx:
+3	35.49	178.47	0.00	XX. No.
+3	83.96	178.47	51.90	Transaction
+3	398.02	177.35	5.45	₹
+3	39.18	192.25	0.00	9
+3	83.96	192.25	0.00	Xxxxxxxx on 99xx Xxx 9999
+3	398.02	192.25	40.90	₹10,000.00
+3	39.18	206.42	0.00	9
+3	83.96	206.42	0.00	Xxxxxxxx on 99xx Xxx 9999
+3	398.02	206.42	36.32	₹5,000.00
+3	39.18	220.60	0.00	9
+3	83.96	220.60	0.00	Xxxxxxxx on 99xx Xxx 9999
+3	398.02	220.60	29.60	₹236.00
+3	39.18	234.77	0.00	9
+3	83.96	234.77	0.00	Total Amount Due on statement xxxxx 99xx Xxx 9999
+3	398.02	234.77	40.90	₹15,236.00
+3	39.18	248.94	0.00	9
+3	83.96	248.94	0.00	Minimum Amount due on Statement xxxxx 99xx Xxx 9999 (9% XXX)
+3	398.02	248.94	29.60	₹761.80
+3	39.18	263.12	0.00	9
+3	83.96	263.12	0.00	Payment due date - 99xx Xxx 9999
+3	39.18	277.29	0.00	9
+3	83.96	277.29	0.00	Payment on 9xx Xxx 9999
+3	398.02	277.29	29.60	₹750.00
+3	39.18	292.22	0.00	9
+3	83.96	292.22	0.00	Xxxx Payment xxx on Xxx 99, 9999 (xxxxx on xxxxx xxxxxx)
+3	398.02	292.22	36.32	₹1,300.00
+3	39.18	306.45	4.58	9
+3	83.96	306.45	0.00	XXX on Xxxx payment xxx
+3	398.02	306.45	29.60	₹234.00
+3	21.80	760.11	0.00	Xxxxx xx xx
+3	203.32	760.11	35.31	Address
+3	419.12	760.11	0.00	XXX Number
+3	21.80	773.68	0.00	Xxxx xxxx no.- 9999 9999 9999
+3	203.32	773.68	0.00	XXX-9, XX-9/999, Xxxxxxx Xxxx, XXXXX Xxxxxxxxxx Xxxx Xxxxxxxx,
+3	419.12	773.54	0.00	99XXXXX9999X9XX
+3	21.80	782.67	0.00	Email address: xxxxxxxxxx.xxxxxxx@xxxxxx.xx
+3	203.32	782.67	0.00	Xxxxx Xxxx, Xxxxxxxxx, Xxxxxx, Xxxxxxxxx - 999999
+3	21.80	794.37	0.00	Xxxxxxxx xxxxxxx- +99 9999999999
+3	21.80	816.72	0.00	Principal Xxxxx Xxxxxxx Name: Xx. Xxxxxx Xxxxx AU SMALL FINANCE BANK LIMITED, XX9-999, Xxxxxxxxxx Xxxx, Xxxxxxx Xxxx, Xxxxx Xxxx, Xxxxxxxxx, Xxxxxx, Xxxxxxxxx – 999999 Contact
+3	21.80	825.57	0.00	Number: 9999-9999999 Email ID: xxx@xxxxxx.xx
