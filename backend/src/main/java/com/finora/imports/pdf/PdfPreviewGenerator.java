@@ -125,7 +125,15 @@ public class PdfPreviewGenerator {
     /** @param password see {@link PdfTextExtractor#extract(byte[], String)}; null when none was given. */
     public StagingResponse generate(UUID userId, String filename, byte[] fileBytes, String password) throws IOException {
         StagedAccountSection first = generateSectionsWithContext(userId, filename, fileBytes, password).sections().get(0);
-        return new StagingResponse(first.rows(), first.totalParsed(), first.flaggedDuplicates(), first.detectedAccount(), first.unparseableRows());
+        // first.verification() is passed explicitly because the five-argument StagingResponse
+        // overload defaults it to null, and this wrapper used to take that default -- discarding
+        // the report buildLedgerSection had just computed for this very section. Same failure as
+        // the one surfaceUnrecognizedText documents below, at the other end of the same method.
+        // Reachable in production via ImportService.parseAndStageAnyFormat, i.e. the "Re-import
+        // Statement" action on a single-account PDF. See
+        // docs/architecture/system-design/pdfpreviewgenerator-verification-loss-investigation.md.
+        return new StagingResponse(first.rows(), first.totalParsed(), first.flaggedDuplicates(),
+                first.detectedAccount(), first.unparseableRows(), first.verification());
     }
 
     /** Detects and stages every account section in the document. Always returns at least one

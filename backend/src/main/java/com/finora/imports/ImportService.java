@@ -384,8 +384,22 @@ public class ImportService {
         ExtractionCheck.rejectIfNothingWasExtracted(staged, ctx);
     }
 
+    /**
+     * <p><b>{@code section.verification()} is the whole reason this method is not a five-argument
+     * call.</b> It used to be one, and the five-argument {@link StagingResponse} overload defaults
+     * verification to null -- so the four rules ran on every single-account PDF, produced findings,
+     * and had them discarded one line later. This is the conversion the LIVE upload endpoint uses
+     * ({@code POST /import/pdf/stage} -> the {@code sections.size() <= 1} branch above, the common
+     * case), and the section-indexed re-import uses it too. The user saw nothing: the review screen
+     * renders no panel at all for an absent report, so a statement with a broken balance chain and
+     * one that verified cleanly produced a byte-identical screen. Nothing was persisted either --
+     * {@code recordPdfParsed} forwards this same field, and the recorder skips a null report, so
+     * {@code import_verification_findings} held zero rows for the most common PDF shape there is.
+     * See docs/architecture/system-design/pdfpreviewgenerator-verification-loss-investigation.md.
+     */
     private StagingResponse toStagingResponse(StagedAccountSection section) {
-        return new StagingResponse(section.rows(), section.totalParsed(), section.flaggedDuplicates(), section.detectedAccount(), section.unparseableRows());
+        return new StagingResponse(section.rows(), section.totalParsed(), section.flaggedDuplicates(),
+                section.detectedAccount(), section.unparseableRows(), section.verification());
     }
 
     /**

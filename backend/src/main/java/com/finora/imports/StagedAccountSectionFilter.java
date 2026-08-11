@@ -81,8 +81,17 @@ public final class StagedAccountSectionFilter {
         }
         StagedAccountSection first = accounts.get(0);
         List<StagedAccountSection> merged = new ArrayList<>(accounts);
+        // Only unparseableRows is being replaced here; everything else must arrive on the other
+        // side of this rebuild exactly as it went in, and verification is the field that did not.
+        // The five-argument StagedAccountSection constructor defaults it to null, and this rebuild
+        // took that default -- so a combined statement whose deposit tables were filtered out
+        // reached the review screen with no verification, even though the surviving account's rules
+        // had all run. That is the same loss as the two conversion sites in ImportService and
+        // PdfPreviewGenerator, one step earlier: fixing only those two leaves this shape (savings
+        // account plus a term-deposit table, a very ordinary combined statement) still silent.
+        // See docs/architecture/system-design/pdfpreviewgenerator-verification-loss-investigation.md.
         merged.set(0, new StagedAccountSection(first.detectedAccount(), first.rows(), first.totalParsed(),
-                first.flaggedDuplicates(), carriedOver));
+                first.flaggedDuplicates(), carriedOver, first.verification()));
         return merged;
     }
 }
