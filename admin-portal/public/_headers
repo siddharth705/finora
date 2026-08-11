@@ -12,6 +12,31 @@
 # HTML, so no cache header on any file can help. src/lib/staleChunk.ts is what handles that. This
 # is a straightforward performance change that happens to live next door to it.
 
+/*
+  # Security headers for every response (production-readiness audit finding: this file only had
+  # a caching rule, so the SPA shipped with none of Cloudflare Pages' security-header handling
+  # doing anything meaningful -- Pages does not set a CSP or HSTS on your behalf).
+  #
+  # Mirrors the policy SecurityConfig.java sets for the API (default-src 'self'; frame-ancestors
+  # 'none'; base-uri 'self'), widened only where this app genuinely needs it as a browser-rendered
+  # SPA. Same reasoning as frontend/public/_headers (this app shares the same Firebase Phone Auth
+  # flow, Google Fonts link, and Sentry monitoring setup -- see src/lib/phoneAuth.ts,
+  # index.html, src/lib/monitoring.ts) except it has no Brandfetch usage, so img-src stays 'self'
+  # data: with no third-party host added.
+  #   - script-src adds https://www.gstatic.com -- Firebase Phone Auth's invisible reCAPTCHA.
+  #   - style-src adds https://fonts.googleapis.com and 'unsafe-inline' (style={{...}} usage).
+  #   - font-src adds https://fonts.gstatic.com, where the Google Fonts stylesheet points its
+  #     @font-face src at.
+  #   - connect-src adds api.finoratech.info (VITE_API_BASE_URL -- see src/api/client.ts),
+  #     identitytoolkit.googleapis.com and securetoken.googleapis.com (Firebase Auth's REST
+  #     endpoints), and Sentry's ingest hosts (no-ops unless VITE_SENTRY_DSN is set).
+  #   - frame-src allows https://www.google.com -- the reCAPTCHA challenge iframe.
+  #   - frame-ancestors 'none' takes over X-Frame-Options' job (both do the same thing; setting
+  #     both would just be two places to keep in sync).
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://api.finoratech.info https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io; frame-src https://www.google.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Referrer-Policy: strict-origin-when-cross-origin
+
 /assets/*
   # Safe to cache forever because the filename IS the content hash: Vite emits a new name whenever
   # the bytes change, so a cached copy can never be wrong -- it can only be unreferenced. Pages
