@@ -123,8 +123,15 @@ class ClosingBalanceEvidenceShadowObserverTest {
 
     @Test
     void aFailedStatementTotalsCheck_recordsItsSuspectedCause_notJustThatItFailed() throws Exception {
-        // The distinction the whole first corpus exists to measure: a FAILED check blamed on the
-        // OPENING_BALANCE is evidence FOR the closing balance, one blamed on TRANSACTIONS is not.
+        // The distinction the whole first corpus exists to measure: the validator's outcome and
+        // its attribution are recorded as two separate axes, never collapsed into the dimension
+        // they produce.
+        //
+        // C-10 correction: an OPENING_BALANCE-attributed failure is NOT evidence for the closing
+        // balance, which is what this comment used to say and what the dimension used to record.
+        // The attribution is produced by comparing the closing-balance claim against the same row
+        // the claim was derived from, so financialValidationStatus is now INSUFFICIENT here. The
+        // point of this test is unchanged: the raw axes survive into the telemetry either way.
         when(rederivationService.rederiveClosingBalanceEvidenceDetailed(userId, sessionId, 2, claim))
                 .thenReturn(evidenceWith(totals("FAILED", Map.of("suspectedCause", "OPENING_BALANCE"))));
 
@@ -133,7 +140,7 @@ class ClosingBalanceEvidenceShadowObserverTest {
         Map<String, Object> details = captureDetails(EvidenceStatus.INSUFFICIENT.name());
         assertThat(details).containsEntry("statementTotalsOutcome", "FAILED");
         assertThat(details).containsEntry("suspectedCause", "OPENING_BALANCE");
-        assertThat(details).containsEntry("financialValidationStatus", EvidenceStatus.SUPPORTED.name());
+        assertThat(details).containsEntry("financialValidationStatus", EvidenceStatus.INSUFFICIENT.name());
         verify(recorder).recordEvidenceShadow(any(), org.mockito.ArgumentMatchers.eq(2), anyString(),
                 anyString(), any());
     }

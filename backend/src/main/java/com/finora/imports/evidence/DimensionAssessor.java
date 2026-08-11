@@ -170,13 +170,56 @@ public final class DimensionAssessor {
                             provenance);
                 }
                 if (field == MaterialField.CLOSING_BALANCE && "OPENING_BALANCE".equals(suspectedCause)) {
-                    // The transactions' own running balance independently reaches the stated
-                    // closing balance (that agreement is exactly what attributed the failure to
-                    // the opening balance instead) -- this is corroborating evidence FOR the
-                    // closing balance, not against it.
+                    // C-10: this branch used to return SUPPORTED, on the reasoning that "the
+                    // transactions' own running balance independently reaches the stated closing
+                    // balance". That reasoning is FALSE on every acquisition path this system
+                    // currently has, and the word that made it false was "independently".
+                    //
+                    // The predicate that produces suspectedCause=OPENING_BALANCE is
+                    // StatementTotalsValidator:83-85, which compares lastStatedBalance(rows) to the
+                    // closing-balance claim. On the native PDF path the claim IS that same cell:
+                    // PdfPreviewGenerator:528 sets closingBalance = trueLastOfDay.balance(), i.e.
+                    // the chronologically last row's own running balance. So the comparison is
+                    // x == x, it cannot fail, and a verdict derived from it carries zero bits.
+                    // C-10 §E4 traces all five FAILED documents in the C-9 corpus and finds the
+                    // agreement is by construction in all five -- including
+                    // buildSingleTrailingBalanceDiscrepancySample, where the closing balance is
+                    // provably the wrong figure and this branch nevertheless reported SUPPORTED.
+                    //
+                    // The precondition the old branch needed is that the closing-balance CLAIM has
+                    // an origin independent of the ledger rows the validator checks it against.
+                    // C-10 §"Existing independent-source paths" establishes that no such origin
+                    // exists today: StatementSummaryExtractor.PrintedSummary carries totals and
+                    // counts but no balance, PdfMetadataExtractor.ExtractedMetadata carries no
+                    // balance, the review UI renders the detected closing balance read-only, and
+                    // RoutingTextAcquirer makes native and OCR mutually exclusive so there is never
+                    // a second acquisition. With no independent origin obtainable, the branch has
+                    // no reachable input for which it would be sound, so it resolves to
+                    // INSUFFICIENT unconditionally rather than testing a precondition that no
+                    // caller can currently satisfy.
+                    //
+                    // FORWARD COMPATIBILITY -- the shape required to restore a SUPPORTED here.
+                    // Do not re-add the blanket promotion. It would be sound only once the claim's
+                    // ORIGIN is representable and can be shown to differ from the rows the
+                    // validator reconciles against. Concretely, that means both of:
+                    //   (1) an independently-acquired closing balance actually exists (e.g. C-10 R2:
+                    //       PrintedSummary grows a closing-balance field read from the bank's own
+                    //       printed summary block, or a user-entered value, or a second
+                    //       acquisition), AND
+                    //   (2) that origin is carried down to here -- e.g. FinancialValidationContext
+                    //       gains a claim-origin component, or the claim arrives as a FieldFact
+                    //       whose ProvenanceNode set can be compared against this dimension's own
+                    //       via EvidenceAssessor.shareAnUpstreamFailureMode, the mechanism this
+                    //       package already uses for exactly this question at other grains.
+                    // Only then may this branch return SUPPORTED, and only when that check passes.
+                    // ClosingBalanceCircularFinancialValidationTest#financialValidationContext
+                    // CarriesNoIndependentOriginForTheClaim_yet pins (2)'s absence, so adding such a
+                    // component is a deliberate, visible act rather than a silent one.
                     return new DimensionResult(DimensionResult.Dimension.FINANCIAL_VALIDATION,
-                            EvidenceStatus.SUPPORTED,
-                            "the last row's own running balance independently matches the stated closing balance",
+                            EvidenceStatus.INSUFFICIENT,
+                            "statement totals mismatch attributed to the opening balance, but that "
+                                    + "attribution compares the closing-balance claim against the same "
+                                    + "row it was derived from -- no independent origin for the claim",
                             provenance);
                 }
                 // TRANSACTIONS-caused failure, or a failure with no determinable cause: does not

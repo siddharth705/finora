@@ -238,14 +238,21 @@ class DimensionAssessorTest {
     }
 
     @Test
-    void assessFinancialValidation_closingBalance_failedWithOpeningBalanceCause_isSupported() {
-        // The last row's own running balance independently matches the stated closing balance --
-        // that agreement is precisely what attributed the failure to the opening balance instead.
+    void assessFinancialValidation_closingBalance_failedWithOpeningBalanceCause_isInsufficient() {
+        // C-10: this used to assert SUPPORTED. The "independently matches" reasoning it encoded is
+        // circular -- suspectedCause=OPENING_BALANCE is produced by comparing the closing-balance
+        // claim against the very row the claim is derived from (StatementTotalsValidator:83-85 vs
+        // PdfPreviewGenerator:528), so the predicate is x == x. With no independent origin for the
+        // claim available anywhere in the system, the dimension must not treat it as support.
         FinancialValidationContext context = new FinancialValidationContext(
                 null, statementTotals("FAILED", "OPENING_BALANCE"), 0, TextSource.NATIVE_PDF);
 
-        assertThat(DimensionAssessor.assessFinancialValidation(MaterialField.CLOSING_BALANCE, null, context).status())
-                .isEqualTo(EvidenceStatus.SUPPORTED);
+        DimensionResult result =
+                DimensionAssessor.assessFinancialValidation(MaterialField.CLOSING_BALANCE, null, context);
+
+        assertThat(result.status()).isEqualTo(EvidenceStatus.INSUFFICIENT);
+        assertThat(result.status()).isNotEqualTo(EvidenceStatus.SUPPORTED);
+        assertThat(result.explanation()).contains("no independent origin for the claim");
     }
 
     @Test

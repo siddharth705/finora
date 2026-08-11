@@ -1093,6 +1093,37 @@ public final class PdfFixtureBuilder {
         return render(List.of(page));
     }
 
+    /**
+     * Phase C-8.2 negative-case fixture -- a running-balance statement that is correct everywhere
+     * except the LAST row's printed balance, which is off by 5.00. Modeled on the same layout as
+     * {@link #buildReverseChronologicalRunningBalanceSample} (Date/Instrument ID/Amount/Type
+     * (DR/CR)/Balance/Remarks), but forward-chronological and with no same-day rows, so the
+     * derived opening-balance anchor ({@code PdfPreviewGenerator.buildDetectedAccountInfo}) lines
+     * up with hand-computed arithmetic exactly, with no marker-row or same-day-ordering surprises.
+     *
+     * <p>The error is placed on the LAST row specifically so it cannot cascade into a second
+     * discrepancy: every prior row's printed balance is exactly what the chain expects, so the
+     * mismatch is confined to one row out of four checked pairs -- a single, scattered
+     * discrepancy, not a systematic misread. This is the shape
+     * {@link com.finora.imports.BalanceChainValidator}'s own anti-noise guards
+     * ({@code MIN_DISCREPANCIES_FOR_FAILED}, {@code FAILED_THRESHOLD}) exist to tell apart from a
+     * whole-column misread, and it is reported {@code WARNING}, not {@code FAILED}.
+     */
+    public static byte[] buildSingleTrailingBalanceDiscrepancySample() throws IOException {
+        float[] col = {LEFT_MARGIN, 130f, 230f, 320f, 400f, 480f};
+
+        PageBuilder page = new PageBuilder();
+        page.row(col, "Date", "Instrument ID", "Amount(INR)", "Type (DR/CR)", "Balance", "Remarks")
+                .row(col, "01/07/2026", "", "500.00", "DR", "9500.00", "UPI/DR/Sample One")
+                .row(col, "05/07/2026", "", "300.00", "DR", "9200.00", "UPI/DR/Sample Two")
+                .row(col, "10/07/2026", "", "700.00", "DR", "8500.00", "UPI/DR/Sample Three")
+                // Correct printed balance would be 8300.00 (8500.00 - 200.00) -- off by 5.00,
+                // deliberately, and only here.
+                .row(col, "15/07/2026", "", "200.00", "DR", "8305.00", "UPI/DR/Sample Four");
+
+        return render(List.of(page));
+    }
+
     // ==================== SYNTHETIC GROUND TRUTH ====================
 
     /**
