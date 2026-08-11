@@ -2,7 +2,7 @@
 
 **Status:** Proposal, for review. Nothing here is implemented.
 
-**Depends on:** [`import-side-effect-idempotency-audit.md`](import-side-effect-idempotency-audit.md),
+**Depends on:** [`import-side-effect-idempotency-audit.md`](../../engineering/import/import-side-effect-idempotency-audit.md),
 which supplies the evidence for where checkpoints belong.
 
 ---

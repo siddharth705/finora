@@ -115,7 +115,7 @@ Before changing an existing endpoint or DTO:
    A second DTO (`MobileAccountDto` alongside `AccountDto`) is warranted only when there's a
    *measured* constraint — payload size, a genuinely different aggregation, offline shape — driving
    it, not as a way to make an incompatible change without calling it one. See the same document's
-   [Deliberate divergences from web](mobile-architecture.md#deliberate-divergences-from-web) table
+   [Deliberate divergences from web](../../engineering/mobile/mobile-architecture.md#deliberate-divergences-from-web) table
    for what an actually-justified, evidenced divergence looks like.
 
 ## Worked examples

@@ -76,7 +76,7 @@ clear message (see Global Error Codes below for the structured version of this).
 - Admin endpoints under `/api/v1/admin/<resource>`, matching the `Admin*Controller` split.
 - One route tree for every client — web, admin, and mobile all call the same `/api/v1/*` routes;
   no `/mobile/*` or `/web/*` namespace. See
-  [ADR-001: One Backend, One Database, Three Clients](../architecture/adr-001-client-architecture.md)
+  [ADR-001: One Backend, One Database, Three Clients](../../architecture/adr/adr-001-client-architecture.md)
   for why, and [api-compatibility-policy.md](api-compatibility-policy.md) for what counts as a
   breaking change to a route already in use.
 

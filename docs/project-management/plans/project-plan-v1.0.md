@@ -123,7 +123,7 @@ measured history consists of, which is why block A and B carry the widest ranges
 
 ## 4. The defect backlog — what Phase 4 actually is
 
-Source: [`reviews/2026-08-08-repo-wide-bug-hunt.md`](reviews/2026-08-08-repo-wide-bug-hunt.md), plus
+Source: [`reviews/2026-08-08-repo-wide-bug-hunt.md`](../../quality/bug-reports/2026-08-08-repo-wide-bug-hunt.md), plus
 two remediation rounds since. **This describes the original open backlog; it is the historical record
 closures are graded against, not current status** — current status is §1 and §2.
 

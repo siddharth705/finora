@@ -105,6 +105,6 @@ and a wrong balance a user acts on is an integrity failure, not a cosmetic one. 
 category as an access-control failure, and it is why `PARSED_COMPLETE`, ground truth and per-section
 verification sit alongside masking and rate limiting here rather than in a separate quality backlog.
 
-See [ADR-004](../architecture/adr-004-document-pipeline-scope.md) §3: partial data under a success
+See [ADR-004](../architecture/adr/adr-004-document-pipeline-scope.md) §3: partial data under a success
 label is the one categorically unacceptable outcome, because refusal is visible and silent
 misattribution is not.

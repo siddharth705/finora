@@ -11,7 +11,7 @@ commit you are reading, not as of the last time somebody remembered to update it
 **Read this instead of the tests.** The tests carry the reasoning in their Javadoc, which is where
 the detail belongs; this is the index. A rule's `Source` column is the thing to argue with if you
 disagree with a rule — the Guardian enforces standards, it does not author them
-([repository-guardian.md §3.3](../engineering/repository-guardian.md)).
+([repository-guardian.md §3.3](repository-guardian.md)).
 
 ---
 
@@ -51,7 +51,7 @@ revealed that.
 
 **Known gap:** the 23 rules introduced on 2026-08-05 are `MANUAL_FALSIFICATION`; the six older ones
 are `SELF_TEST`. Upgrading them is tracked in
-[repository-guardian.md](../engineering/repository-guardian.md).
+[repository-guardian.md](repository-guardian.md).
 
 ---
 
@@ -185,5 +185,5 @@ python3 scripts/guardian-report.py
 
 Joins this registry against the surefire results from the last backend run and prints pass/fail per
 category. It reports a **rule pass rate**, not a "repository health" percentage — see
-[repository-guardian.md §4.3](../engineering/repository-guardian.md) for why that distinction is
+[repository-guardian.md §4.3](repository-guardian.md) for why that distinction is
 deliberate.

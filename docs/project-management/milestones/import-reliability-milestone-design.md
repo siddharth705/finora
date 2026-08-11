@@ -9,12 +9,12 @@ bug-hardening phase merged in `31d3f91` (33 of 38 reported findings plus 4 newly
 two product decisions resolved on review: **no global merchant registry in this milestone**, and
 **password reset and password change get different session policies**.
 
-**Relationship to other docs.** [import-flow.md](import-flow.md) documents the pipeline as it is
+**Relationship to other docs.** [import-flow.md](../../engineering/import/import-flow.md) documents the pipeline as it is
 today — stage, review, confirm — and this milestone changes that pipeline, so the two will disagree
 until this ships; import-flow.md stays authoritative until then and must be updated as the last
-step of WI5. [financial-document-intelligence-principles.md](financial-document-intelligence-principles.md)
+step of WI5. [financial-document-intelligence-principles.md](../../architecture/system-design/financial-document-intelligence-principles.md)
 governs how the engine reads a document and is unaffected: this milestone is about what the
-surrounding system may *write*. [import-engine-improvement-proposal.md](import-engine-improvement-proposal.md)
+surrounding system may *write*. [import-engine-improvement-proposal.md](../../proposals/import-engine-improvement-proposal.md)
 is superseded where the two overlap.
 
 ---
@@ -298,7 +298,7 @@ high duplicate rate is unusable without it.
 Confidence and reason-for-match must come from the detector rather than being composed in the UI,
 so the explanation shown to the user is the one the system actually used.
 
-Update [import-flow.md](import-flow.md) as the closing step.
+Update [import-flow.md](../../engineering/import/import-flow.md) as the closing step.
 
 **As built.** `DuplicateDetector.findMatch` returns the matched transaction as evidence; the flag
 is now derived from it rather than the other way round. `confidence` is hardcoded `"EXACT"` because

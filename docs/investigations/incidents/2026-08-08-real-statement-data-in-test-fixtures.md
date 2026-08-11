@@ -3,8 +3,8 @@
 **Date:** 2026-08-08 · **Severity:** high (customer financial data in a tracked repository)
 **Exposure:** private repository; no evidence of external access. Not a breach; a control failure.
 **Related:** [2026-08-03-customer-pii-in-git-history.md](2026-08-03-customer-pii-in-git-history.md),
-[security-control-audit.md](../security-control-audit.md),
-[ADR-004](../../architecture/adr-004-document-pipeline-scope.md)
+[security-control-audit.md](../../security/security-control-audit.md),
+[ADR-004](../../architecture/adr/adr-004-document-pipeline-scope.md)
 
 **No value from this incident is reproduced in this document.** Categories and locations only. That
 is not squeamishness — see §4, where explaining the leak was itself one of the ways it recurred.

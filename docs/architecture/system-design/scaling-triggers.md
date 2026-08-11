@@ -2,7 +2,7 @@
 
 When to add Redis, background workers, or split the backend into services — as observable
 conditions to watch for, not a roadmap with dates on it. Companion to
-[api-compatibility-policy.md](api-compatibility-policy.md), which covers the same "don't build
+[api-compatibility-policy.md](../../project-management/standards/api-compatibility-policy.md), which covers the same "don't build
 ahead of evidence" discipline for API contracts specifically.
 
 ## Contents
@@ -252,7 +252,7 @@ package feels self-contained enough to be its own service."
 
 The backend is a single Spring Boot modular monolith serving three clients (`frontend/`,
 `admin-portal/`, `mobile/`) against one shared database — see
-[mobile-architecture.md](mobile-architecture.md) for how those clients already share one backend
+[mobile-architecture.md](../../engineering/mobile/mobile-architecture.md) for how those clients already share one backend
 without a mobile-specific namespace or fork. Splitting `com.finora.imports` (or any
 other package) into its own deployable service is a real option someday, but only once one of these
 is actually true:

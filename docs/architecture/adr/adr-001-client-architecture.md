@@ -29,7 +29,7 @@ Concretely:
   a porting rule: "Types and endpoints port verbatim. They're plain TypeScript over axios."
   (`docs/engineering/mobile-architecture.md`). A `MobileDashboardDto` alongside `DashboardDto` is
   not introduced speculatively; see the same principle applied to API changes generally in
-  [api-compatibility-policy.md](../engineering/api-compatibility-policy.md).
+  [api-compatibility-policy.md](../../project-management/standards/api-compatibility-policy.md).
 - Admin capability lives behind permission checks (`@PreAuthorize`, e.g. `RELATIONSHIP_MANAGE`,
   `PLATFORM_ANALYTICS_VIEW`), not behind a separate deployable. `admin-portal/` is a client with
   more permissions, not a different backend.
@@ -77,7 +77,7 @@ The candidates that come up when this question is reopened — and why none appl
 - **Splitting the backend into microservices by domain** (imports, accounts, budgets, ...): no
   domain currently has an independent scaling need, an independent deployment cadence, distinct
   ownership, or a genuine isolation requirement that the existing package structure can't satisfy.
-  See [scaling-triggers.md](../engineering/scaling-triggers.md)'s "Service extraction" section for
+  See [scaling-triggers.md](../system-design/scaling-triggers.md)'s "Service extraction" section for
   the exact conditions that would change this answer.
 
 ## Consequences
@@ -88,7 +88,7 @@ The candidates that come up when this question is reopened — and why none appl
   (a measured payload-size constraint, a genuinely different aggregation, an offline requirement) —
   not "mobile might need this differently someday."
 - This decision is revisited only when one of the concrete triggers in
-  [scaling-triggers.md](../engineering/scaling-triggers.md) actually fires (replicas > 1 for Redis,
+  [scaling-triggers.md](../system-design/scaling-triggers.md) actually fires (replicas > 1 for Redis,
   a measured synchronous bottleneck for workers, a demonstrated independent-scaling/deployment/
   ownership/isolation need for service extraction) — not on a schedule, and not because the
   codebase has grown larger in the meantime.

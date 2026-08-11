@@ -9,7 +9,7 @@ Not another linter. An engineering safety net that protects Finora's architectur
 maintainability as the codebase and team grow.
 
 **The enforced rules are listed in
-[docs/architecture/repository-guardian-rules.md](../architecture/repository-guardian-rules.md).**
+[docs/architecture/repository-guardian-rules.md](repository-guardian-rules.md).**
 That registry is generated from the code and verified against it on every build — this document is
 the initiative and its reasoning; that one is the current, guaranteed-accurate list.
 
@@ -149,7 +149,7 @@ be a rule.**
 Every rule carries a permanent `FG-NNN` id and lifecycle metadata — intent, source, introduction
 date, owning area, verification level, accepted exceptions — as a `@GuardianRule` annotation on the
 rule itself. `GuardianRegistryTest` derives
-[the published registry](../architecture/repository-guardian-rules.md) from those annotations and
+[the published registry](repository-guardian-rules.md) from those annotations and
 fails the build when the document and the code disagree **in either direction**: a rule added
 without a row, a row left behind by a retired rule, a reworded intent, a wrong count.
 

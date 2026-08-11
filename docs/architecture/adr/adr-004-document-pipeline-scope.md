@@ -2,7 +2,7 @@
 
 **Status:** accepted. Scope-setting; no implementation follows directly from it.
 **Supersedes nothing.** Constrains the observability/regression milestone and
-[persistence-boundary-design.md](../engineering/persistence-boundary-design.md).
+[persistence-boundary-design.md](../system-design/persistence-boundary-design.md).
 
 ---
 
@@ -151,7 +151,7 @@ the *behaviour* it verifies — reporting a shortfall rather than reporting succ
 generalises to a document we have never seen.
 
 **Step 5, RD/FD extraction and zero-transaction persistence.** Land together (see
-[persistence-boundary-design.md §6](../engineering/persistence-boundary-design.md)). Success is "RD
+[persistence-boundary-design.md §6](../system-design/persistence-boundary-design.md)). Success is "RD
 and FD survive **and** the savings section's 75 rows are unchanged", which is exactly the
 proposition Step 3 exists to check.
 

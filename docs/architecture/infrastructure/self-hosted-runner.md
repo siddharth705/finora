@@ -291,7 +291,7 @@ The two are separate controls and only one of them is enforced by anything.
 
 **No credential is stored in GitHub for a compromised job to read.** There are zero Actions secrets,
 zero Dependabot secrets and zero environment secrets on this repository — see
-[`../engineering/secrets-and-iam-audit.md`](../engineering/secrets-and-iam-audit.md). That is worth
+[`../engineering/secrets-and-iam-audit.md`](../../security/secrets-and-iam-audit.md). That is worth
 preserving deliberately: adding a deploy token to CI would put a production credential on this
 machine, inside a job that dependabot pull requests also run.
 

@@ -1,7 +1,7 @@
 # Queue Overhead — 2026-08-08
 
 Measurement, not a proposal. This supplies the evidence
-[`milestone-2-import-at-scale.md`](../milestone-2-import-at-scale.md) §5 asked for before the last
+[`milestone-2-import-at-scale.md`](../../project-management/milestones/milestone-2-import-at-scale.md) §5 asked for before the last
 open question in that item is answered:
 
 > **When async applies.** Every import, or only above a threshold? A 3-row CSV routed through a queue

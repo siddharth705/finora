@@ -2,11 +2,11 @@
 
 Not a Git changelog — a record of what the **engine learned**, in the vocabulary this project
 uses to talk about that (see
-[financial-document-intelligence-principles.md](financial-document-intelligence-principles.md)'s
+[financial-document-intelligence-principles.md](../../architecture/system-design/financial-document-intelligence-principles.md)'s
 "Capability lifecycle"). A Git log tells you which files changed; this tells you which real-world
 document shapes the engine now understands, which it deliberately doesn't yet, and why. Each
 version corresponds to one Evidence Cycle (see the
-[Evidence Registry](evidence-registry.md)'s per-document entries and metrics snapshot for that
+[Evidence Registry](../../architecture/system-design/evidence-registry.md)'s per-document entries and metrics snapshot for that
 cycle's full detail) — this file is the compressed, skimmable summary of the same underlying work.
 
 **Categories**, consistently:

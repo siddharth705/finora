@@ -201,7 +201,7 @@ matters, because doing step 3 first is what breaks the password-change flow.
    takes a **session id** instead of a raw token, and `PasswordChangeService.complete` prefers it,
    reading `JwtAuthFilter.SESSION_ID_ATTRIBUTE` from the request. `CompleteRequest.currentRefreshToken`
    relaxes from `@NotBlank` to optional and stays supported: installed mobile builds keep sending it,
-   and per [api-compatibility-policy.md](../engineering/api-compatibility-policy.md) loosening a
+   and per [api-compatibility-policy.md](../../project-management/standards/api-compatibility-policy.md) loosening a
    validation constraint is non-breaking while removing the field is not. Needs a test that a
    password change with **no** `currentRefreshToken` still leaves the calling device signed in —
    that is the assertion the whole sequence rests on.

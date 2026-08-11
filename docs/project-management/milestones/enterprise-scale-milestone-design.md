@@ -1,7 +1,7 @@
 # Enterprise-Scale Import Milestone — Design Package
 
 **Date:** 2026-08-07 · **Status:** design only, nothing implemented
-**Governing decision:** [ADR-003](../architecture/adr-003-transactional-outbox-and-messaging.md)
+**Governing decision:** [ADR-003](../../architecture/adr/adr-003-transactional-outbox-and-messaging.md)
 
 ---
 
@@ -308,7 +308,7 @@ audited; this is configuration plus a backfill of existing DB-resident statement
 
 ## 7. Database optimization strategy
 
-Evidence: [`performance/import-pipeline-profile-2026-08-07.md`](performance/import-pipeline-profile-2026-08-07.md).
+Evidence: [`performance/import-pipeline-profile-2026-08-07.md`](../../investigations/performance/import-pipeline-profile-2026-08-07.md).
 Measured at 200 and 400 rows, every per-row count doubling exactly.
 
 | Pattern | Per row | Fix | Risk |

@@ -15,9 +15,9 @@ document rules out). If the two ever conflict, this document reflects what's act
 Two companion documents track evidence over time rather than current rules: the
 [Evidence Registry](evidence-registry.md) (what each real document taught the engine, plus a
 per-cycle metrics snapshot) and the
-[Financial Document Intelligence Changelog](financial-document-intelligence-changelog.md) (the
+[Financial Document Intelligence Changelog](../../project-management/milestones/financial-document-intelligence-changelog.md) (the
 same history, compressed into a skimmable Learned/Improved/Protected/Observed/Deferred/Open
-summary per cycle). Separately, [import-flow.md](import-flow.md) documents the *pipeline* rather
+summary per cycle). Separately, [import-flow.md](../../engineering/import/import-flow.md) documents the *pipeline* rather
 than the engine — stage/review/confirm, the endpoints and error codes, password-protected PDFs,
 re-import, and what each client does. This document is about what the engine understands inside a
 document; that one is about how a document travels through the system. A third,
@@ -106,7 +106,7 @@ document; "it parsed" has never been evidence that "it parsed correctly".
 
 Nor is it the "evidence before capability" discipline in
 [scaling-triggers.md](scaling-triggers.md) and
-[api-compatibility-policy.md](api-compatibility-policy.md). That one is about **when to build**:
+[api-compatibility-policy.md](../../project-management/standards/api-compatibility-policy.md). That one is about **when to build**:
 do not add infrastructure ahead of a condition that makes it necessary. This one is about **what
 to assert**: do not report correctness you cannot demonstrate. A codebase can follow either while
 violating the other.
@@ -119,7 +119,7 @@ compared its output to anything, so nothing could have noticed. The user found i
 **What makes it achievable here.** Bank statements are self-proving documents: the ground truth
 ships inside the file. Every row prints the balance after it; most statements print their own
 debit and credit totals. That evidence was sitting unused. See
-[import-verification-framework.md](import-verification-framework.md) for the framework this rule
+[import-verification-framework.md](../../engineering/import/import-verification-framework.md) for the framework this rule
 produced, and for why it reports rather than gates — a verification that refuses an import turns
 any false positive into "Finora cannot read my statement", which is worse than the failure it
 prevents.
@@ -1133,7 +1133,7 @@ real document, with an honest evidence count; it graduates to the Capability Reg
 | `VALUE` → trailing label → trailing value (composite account-holder line) | 1 statement (HDFC: `"<card number> Credit Card No. <NAME>"`) | Low | Genuinely a structural pattern, not an HDFC quirk — could recur as `"Loan Number XXXXXXXX Borrower Name"` or similar on another institution's export. Documented as an observed shape to watch for (see the deferred-evidence test in `PdfMetadataExtractorTest`), not built on one document's strength. |
 | Scrambled / split multi-row credit-summary grid | 1 statement (same HDFC file) | Low | The specific column/row scrambling in this one document isn't yet known to generalize; a naive fix was verified to produce a *wrong* value (₹200 instead of ₹78,000), which is worse than the current null — see that same deferred-evidence test's doc comment for the full reasoning. |
 | Embedded narration reference numbers | 1 statement (Canara — reference number embedded inside free-text transaction narration, not a dedicated column) | Medium | Would need free-text mining rather than column-based extraction — a materially different mechanism from every existing capability, not a small extension of one. |
-| Column Anchor Alignment Consistency (`PdfTableLocator`) | 1 statement (Union Bank — see Evidence Cycle 2 in the [Changelog](financial-document-intelligence-changelog.md)) | Medium | The `TransactionNormalizer.DESCRIPTION_HINTS` fallback added this cycle fixes the *symptom* (an empty description reaching the user), not the *cause*: the header row correctly detects a `"Remarks"` column, but the corresponding data values bucket under `"Transaction Id"` instead — a column-anchor mismatch between where a header token and its own column's data land. Investigate why `PdfTableLocator`'s bucketing can disagree with its own header detection for a document's data rows, and improve table reconstruction so values land under the correct semantic column without needing downstream recovery logic like this cycle's fallback. Single-document evidence so far — a Financial Document Engine improvement, not a Union-Bank-specific one; watch for a second real document before designing a specific mechanism. |
+| Column Anchor Alignment Consistency (`PdfTableLocator`) | 1 statement (Union Bank — see Evidence Cycle 2 in the [Changelog](../../project-management/milestones/financial-document-intelligence-changelog.md)) | Medium | The `TransactionNormalizer.DESCRIPTION_HINTS` fallback added this cycle fixes the *symptom* (an empty description reaching the user), not the *cause*: the header row correctly detects a `"Remarks"` column, but the corresponding data values bucket under `"Transaction Id"` instead — a column-anchor mismatch between where a header token and its own column's data land. Investigate why `PdfTableLocator`'s bucketing can disagree with its own header detection for a document's data rows, and improve table reconstruction so values land under the correct semantic column without needing downstream recovery logic like this cycle's fallback. Single-document evidence so far — a Financial Document Engine improvement, not a Union-Bank-specific one; watch for a second real document before designing a specific mechanism. |
 
 #### Excel, Scanned PDFs / OCR, Images, Handwritten Statements — Planned
 - **Purpose:** additional document formats, each requiring a new implementation of the early

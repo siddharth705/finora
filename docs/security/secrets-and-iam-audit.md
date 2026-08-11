@@ -3,7 +3,7 @@
 **Date:** 2026-08-08
 **Scope:** where every credential lives, who can reach it, and whether it is scoped and rotated.
 
-This is a different question from [`deployment-guide.md`](deployment-guide.md)'s environment-variable
+This is a different question from [`deployment-guide.md`](../operations/deployment/deployment-guide.md)'s environment-variable
 table, which answers *what to set*. This one asks *whether what is set is safe* — the half that no
 amount of reading `application.yml` can settle.
 
@@ -137,4 +137,4 @@ nobody has executed is a guess, and it should be produced by doing the first rot
   from a question to the highest-severity item here, because it becomes the credential guarding
   customer statement bytes.
 - **The repository goes public** → every assumption in this document is re-opened, along with the
-  self-hosted runner's (see [`../infrastructure/self-hosted-runner.md`](../infrastructure/self-hosted-runner.md)).
+  self-hosted runner's (see [`../infrastructure/self-hosted-runner.md`](../architecture/infrastructure/self-hosted-runner.md)).

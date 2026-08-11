@@ -6,9 +6,9 @@ allowed to assume about the one before it.
 This is the **pipeline and its contract** — endpoints, states, error codes, what each client does.
 It is deliberately not about *parsing*: which document layouts the engine understands, and how that
 set grows, is
-[financial-document-intelligence-principles.md](financial-document-intelligence-principles.md), with
+[financial-document-intelligence-principles.md](../../architecture/system-design/financial-document-intelligence-principles.md), with
 the running record in
-[financial-document-intelligence-changelog.md](financial-document-intelligence-changelog.md).
+[financial-document-intelligence-changelog.md](../../project-management/milestones/financial-document-intelligence-changelog.md).
 
 ---
 

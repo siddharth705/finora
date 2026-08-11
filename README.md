@@ -23,18 +23,18 @@ rather than an earlier internal prototype look.
 - Transaction CRUD with filtering/sorting/pagination (backs the Ledger page)
 - CSV and PDF statement import: auto-detects column name variants, opens password-protected PDFs,
   stages rows for review, commits on confirm — see
-  [docs/engineering/import-flow.md](docs/engineering/import-flow.md)
+  [docs/engineering/import-flow.md](docs/engineering/import/import-flow.md)
 - **Merchant learning as an independent subsystem** — an import never blocks on learning and a
   learning failure never costs an import. Confirmations are queued to a durable table and applied
   after commit by a worker that claims with `FOR UPDATE SKIP LOCKED`, backs off exponentially, and
   recovers rows abandoned by a dead process. Failures land in an operator queue rather than
   disappearing. See
-  [import-reliability-milestone-design.md](docs/engineering/import-reliability-milestone-design.md)
+  [import-reliability-milestone-design.md](docs/project-management/milestones/import-reliability-milestone-design.md)
 - **Duplicate review** — a row that looks like something already on the books is not silently
   dropped. It arrives with the transaction it appears to repeat, and the import stays blocked until
   every one has an explicit answer. The decision travels with the row so reconciliation cannot
   later overrule it — see the "Duplicate review" section of
-  [import-flow.md](docs/engineering/import-flow.md)
+  [import-flow.md](docs/engineering/import/import-flow.md)
 - **Read-only staging** — previewing a statement writes nothing: no merchant, no alias, no learning,
   no transaction. Asserted by counting rows before and after, not by verifying a mock went uncalled
 - Self-learning categorization: keyword rules + a per-user learned-mapping table that improves as you correct categories

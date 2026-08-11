@@ -22,7 +22,7 @@ preserve. Both were failures of process, not of anyone's attention.
 > from.
 
 This is the trace-corpus form of "Evidence before capability" from
-[`financial-document-intelligence-principles.md`](financial-document-intelligence-principles.md).
+[`financial-document-intelligence-principles.md`](../../architecture/system-design/financial-document-intelligence-principles.md).
 A capability is justified by a real document; a trace is how that document keeps justifying it after
 the document itself is deleted.
 
@@ -152,4 +152,4 @@ the damage that motivated this document.
 | `bob-repeated-account-banner` | v1, provenance unknown | No known damage; unverifiable. |
 
 Re-capturing these needs the original PDFs and is tracked as item 1 of
-[`import-engine-improvement-proposal.md`](import-engine-improvement-proposal.md).
+[`import-engine-improvement-proposal.md`](../../proposals/import-engine-improvement-proposal.md).

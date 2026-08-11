@@ -2,7 +2,7 @@
 
 **Status:** design and test specification. No implementation, and none should follow until this
 contract is agreed — that ordering is the point, not a formality.
-**Implements** [ADR-005](../architecture/adr-005-document-intelligence-contract.md) §5 and §7.
+**Implements** [ADR-005](../adr/adr-005-document-intelligence-contract.md) §5 and §7.
 **Precedes** RD/FD extraction and zero-transaction persistence, which land together
 ([persistence-boundary-design.md](persistence-boundary-design.md) §6).
 

@@ -241,7 +241,7 @@ security control.
 > the backend, because the import pipeline makes many round-trips inside one transaction. Neon is
 > reconsidered only if point-in-time recovery, per-branch databases, or a reason to separate
 > database from application hosting becomes real — see
-> [statement-storage-migration.md](statement-storage-migration.md) §7, which also records the
+> [statement-storage-migration.md](../../architecture/data/statement-storage-migration.md) §7, which also records the
 > HikariCP caution that would apply. Cloudflare's role today is **Pages for both frontends**;
 > **R2 for uploaded statement files** is proposed but not built — statements currently live in
 > PostgreSQL as `BYTEA`.

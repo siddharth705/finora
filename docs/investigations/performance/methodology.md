@@ -39,8 +39,8 @@ problem, then build a measurement you can afford to run forever.
 Profile when you have a **symptom**, not a suspicion:
 
 - A measured latency or throughput number that misses a target
-- An alert that fired (see [`observability.md`](../observability.md))
-- A scaling trigger from [`scaling-triggers.md`](../scaling-triggers.md)
+- An alert that fired (see [`observability.md`](../../engineering/observability.md))
+- A scaling trigger from [`scaling-triggers.md`](../../architecture/system-design/scaling-triggers.md)
 - A concrete plan that depends on an unproven assumption
 
 **Do not profile because code looks slow.** The standing rule is evidence before optimization, and

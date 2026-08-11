@@ -71,7 +71,7 @@ Most of `frontend/src` transfers directly. When porting a screen:
 1. **Types and endpoints port verbatim.** They're plain TypeScript over axios. This isn't a
    shortcut — it's the architecture: mobile is a client of the same `/api/v1/*` surface web uses,
    not a system with its own contract. See
-   [ADR-001: One Backend, One Database, Three Clients](../architecture/adr-001-client-architecture.md).
+   [ADR-001: One Backend, One Database, Three Clients](../../architecture/adr/adr-001-client-architecture.md).
 2. **Keep the query keys identical to web.** `invalidateFinancialData` depends on it, and so does
    anyone reasoning about both apps at once.
 3. **Port the comments too.** The web codebase documents *why* — the bug behind a fix, the reason

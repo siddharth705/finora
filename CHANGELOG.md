@@ -20,7 +20,7 @@ The short version, for anyone scanning. Each line is expanded under Changed or F
   and the pre-commit hook. On a current macOS or Ubuntu the bare command does not exist.
 - The backend jar is no longer referenced by a pinned, version-coupled filename.
 - Test suites made to run on Node 22 and later, which they previously could not.
-- New: [`docs/infrastructure/self-hosted-runner.md`](docs/infrastructure/self-hosted-runner.md),
+- New: [`docs/infrastructure/self-hosted-runner.md`](docs/architecture/infrastructure/self-hosted-runner.md),
   covering host requirements, a health-check sequence, and rebuilding on a new machine.
 
 ### Changed
@@ -39,7 +39,7 @@ The short version, for anyone scanning. Each line is expanded under Changed or F
   because of a GitHub account billing block. The `smoke` job's Postgres `services:` container
   became an explicit `docker run` (service containers do not run on macOS runners) with a readiness
   gate and teardown, and `playwright install` dropped `--with-deps` (apt-get only). See
-  [`docs/infrastructure/self-hosted-runner.md`](docs/infrastructure/self-hosted-runner.md).
+  [`docs/infrastructure/self-hosted-runner.md`](docs/architecture/infrastructure/self-hosted-runner.md).
 - **CI triggers on pushes to `main` only**, plus `pull_request` and `workflow_dispatch`. Triggering
   on every branch push produced two full runs per pull-request update, which the `concurrency`
   group cannot collapse because it keys on `github.ref` and the two events differ there. Invisible

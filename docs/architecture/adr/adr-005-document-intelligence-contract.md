@@ -4,8 +4,8 @@
 the ground-truth model exists (see §10).
 **Extends** [ADR-004](adr-004-document-pipeline-scope.md), which set the document *space* and the
 graceful-failure promise. This adds the *representation* that space requires.
-**Builds on** [persistence-boundary-design.md](../engineering/persistence-boundary-design.md) and
-[security-control-audit.md](../engineering/security-control-audit.md) §"document integrity".
+**Builds on** [persistence-boundary-design.md](../system-design/persistence-boundary-design.md) and
+[security-control-audit.md](../../security/security-control-audit.md) §"document integrity".
 
 ---
 

@@ -1,6 +1,6 @@
 # Priority 2 (IAM) — Implementation Notes
 
-Companion to [`engineering-directive-phase1.md`](engineering-directive-phase1.md). This tracks
+Companion to [`engineering-directive-phase1.md`](../project-management/plans/engineering-directive-phase1.md). This tracks
 what's actually landed for Priority 2 against what the directive asked for, so the gap is visible
 rather than implied.
 

@@ -259,7 +259,7 @@ worker already holds stops at its next stage boundary — interrupting PDFBox mi
 cooperative cancellation the parser does not have. Either way no session is created, which is the
 promise the button actually makes.
 
-**The threshold, measured:** [`performance/queue-overhead-2026-08-08.md`](performance/queue-overhead-2026-08-08.md).
+**The threshold, measured:** [`performance/queue-overhead-2026-08-08.md`](../../investigations/performance/queue-overhead-2026-08-08.md).
 The queue's server-side overhead is a constant ~20 ms and is unmeasurable past ~50 rows. The client's
 1500 ms poll interval is ~98% of the penalty for queueing a small statement, so **the lever is the
 poll interval, not a row-count threshold** — and a threshold would need the row count, which needs
@@ -301,7 +301,7 @@ The name matters: **completing** observability, not building it. Close two gaps 
 over what is already recorded. Anything scoped as a new diagnostics subsystem would be building
 two-thirds of it twice.
 
-> The [diagnostics rule](../../CLAUDE.md) applies here as everywhere: a diagnostic earns its place
+> The [diagnostics rule](../../../CLAUDE.md) applies here as everywhere: a diagnostic earns its place
 > by being able to prove a proposed capability *unnecessary*. Per-stage timing qualifies — it can
 > show that a stage everyone assumed was slow is not, and stop an optimisation being built. A
 > counter that only ever goes up does not.

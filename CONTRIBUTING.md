@@ -1,7 +1,7 @@
 # Contributing to Finora
 
 This is the day-to-day reference for the workflow defined in
-[`docs/engineering-directive-phase1.md`](docs/engineering-directive-phase1.md), Priority 1. Read
+[`docs/engineering-directive-phase1.md`](docs/project-management/plans/engineering-directive-phase1.md), Priority 1. Read
 that doc for the *why*; this one is the *how*.
 
 ## Prerequisites
@@ -67,7 +67,7 @@ CI does not use GitHub-hosted runners. It runs on a single self-hosted machine, 
 unavailable when that machine is offline, and jobs serialise rather than running in parallel. If a
 job sits queued and never starts, that is the first thing to check.
 
-Maintainers: see [`docs/infrastructure/self-hosted-runner.md`](docs/infrastructure/self-hosted-runner.md)
+Maintainers: see [`docs/infrastructure/self-hosted-runner.md`](docs/architecture/infrastructure/self-hosted-runner.md)
 for the runner's identity, host requirements, a health-check sequence, and how to rebuild it on a
 new machine.
 

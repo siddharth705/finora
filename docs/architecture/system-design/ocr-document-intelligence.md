@@ -4,7 +4,7 @@ How character recognition enters this pipeline, what each milestone is entitled 
 the current ground truth cannot yet establish.
 
 Deliberately separate from
-[ground-truth-model-design.md](../engineering/ground-truth-model-design.md). That document is the
+[ground-truth-model-design.md](ground-truth-model-design.md). That document is the
 contract for the ground-truth matcher and should stay one thing; this one is about acquisition, and
 would otherwise accumulate concerns the matcher does not have.
 

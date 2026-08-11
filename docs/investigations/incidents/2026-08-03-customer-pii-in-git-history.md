@@ -141,7 +141,7 @@ Only once all four are confirmed should the rewrite be executed.
 - Hygiene scan is **extension-based, not location-based** (`74a3d76`) — main source, migrations and
   docs are now scanned, not just tests and fixtures. Verified to actually block.
 - Trace capture now **validates before writing** and refuses on unmasked PII, rather than relying on
-  the capturer reading the file (see [`trace-lifecycle.md`](../trace-lifecycle.md)).
+  the capturer reading the file (see [`trace-lifecycle.md`](../../engineering/import/trace-lifecycle.md)).
 - `TraceCorpusHealthTest` fails the build on unmasked PII in any committed trace.
 
 ## 8. Remaining items to close this incident

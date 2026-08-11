@@ -41,9 +41,9 @@ name until the curated registry exists.
 Backlog live in
 [financial-document-intelligence-principles.md](financial-document-intelligence-principles.md);
 what the engine has actually learned per cycle lives in
-[financial-document-intelligence-changelog.md](financial-document-intelligence-changelog.md); how a
+[financial-document-intelligence-changelog.md](../../project-management/milestones/financial-document-intelligence-changelog.md); how a
 document travels through stage/review/confirm is
-[import-flow.md](import-flow.md). This document covers only one question: what the engine should do
+[import-flow.md](../../engineering/import/import-flow.md). This document covers only one question: what the engine should do
 with the fact that it has seen a document's *structure* before.
 
 ---
