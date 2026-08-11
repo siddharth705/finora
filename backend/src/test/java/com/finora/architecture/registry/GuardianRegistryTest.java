@@ -32,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>A list of architecture rules kept in a markdown file is worth exactly as much as the last
  * person's discipline in updating it, which over a few years is nothing. So the registry is
  * derived from {@link GuardianRule} annotations on the rules themselves, and this test fails the
- * build whenever {@code docs/architecture/repository-guardian-rules.md} and the code disagree --
+ * build whenever {@code docs/security/repository-guardian-rules.md} and the code disagree --
  * in either direction. Adding a rule without publishing it fails. Publishing a rule that no longer
  * exists fails. Editing a rule's intent in one place and not the other fails.
  *
@@ -49,7 +49,7 @@ class GuardianRegistryTest {
 
     private static final Pattern ID_FORMAT = Pattern.compile("FG-\\d{3}");
     private static final Path REGISTRY_DOC =
-            Paths.get("..", "docs", "architecture", "repository-guardian-rules.md");
+            Paths.get("..", "docs", "security", "repository-guardian-rules.md");
 
     private record Rule(String id, GuardianRule annotation, Method method) {}
 
@@ -257,7 +257,7 @@ class GuardianRegistryTest {
     @Test
     void thePublishedRegistryMatchesTheEnforcedRules() throws IOException {
         assertThat(REGISTRY_DOC)
-                .as("The rule registry must exist at docs/architecture/"
+                .as("The rule registry must exist at docs/security/"
                         + "repository-guardian-rules.md.")
                 .exists();
 
@@ -272,7 +272,7 @@ class GuardianRegistryTest {
                 .as("""
                         The published registry no longer matches the enforced rules. Each row above \
                         is the canonical text -- paste it into the table in \
-                        docs/architecture/repository-guardian-rules.md. This fails when a rule is \
+                        docs/security/repository-guardian-rules.md. This fails when a rule is \
                         added, retired, recategorised or reworded without the registry following in \
                         the same commit, which is the only way a hand-maintained list stays true.""")
                 .isEmpty();
