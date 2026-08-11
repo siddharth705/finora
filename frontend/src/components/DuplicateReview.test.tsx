@@ -71,6 +71,16 @@ describe('DuplicateReview', () => {
     expect(screen.getByText(/· imported/)).toBeInTheDocument();
   });
 
+  /** Both dates in the pair use the same fixed display format as the import review table
+   *  (formatDateDDMMMYYYY) rather than the raw ISO value or a locale-dependent rendering. */
+  it('renders both dates as DD-MMM-YYYY', () => {
+    render(
+      <DuplicateReview rows={[row()]} decisions={['unresolved']} onDecide={vi.fn()} onApplyToSimilar={vi.fn()} />
+    );
+
+    expect(screen.getAllByText(/10-Jul-2026/)).toHaveLength(2);
+  });
+
   it('says how many decisions are still outstanding', () => {
     render(
       <DuplicateReview

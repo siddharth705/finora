@@ -1,5 +1,6 @@
 import type { StagedRow } from '../types';
 import { unresolvedCount, type DuplicateDecision } from '../lib/importReview';
+import { formatDateDDMMMYYYY } from '../utils/date';
 
 /**
  * The last decision point before Finora writes anything into a user's ledger (WI5).
@@ -75,14 +76,14 @@ function DuplicatePair({
           <p className="text-[10px] uppercase text-muted tracking-wide">In this statement</p>
           <p className="text-sm font-medium">{row.description}</p>
           <p className="text-xs text-muted">
-            {row.date} · {formatMoney(row.amount)}
+            {formatDateDDMMMYYYY(row.date)} · {formatMoney(row.amount)}
           </p>
         </div>
         <div className="rounded-md bg-surface p-2">
           <p className="text-[10px] uppercase text-muted tracking-wide">Already in your ledger</p>
           <p className="text-sm font-medium">{match.existingDescription}</p>
           <p className="text-xs text-muted">
-            {match.existingDate} · {formatMoney(match.existingAmount)} · imported{' '}
+            {formatDateDDMMMYYYY(match.existingDate)} · {formatMoney(match.existingAmount)} · imported{' '}
             {formatWhen(match.existingImportedAt)}
           </p>
         </div>
