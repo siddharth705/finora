@@ -107,7 +107,43 @@ public class PreviewGenerator {
 
             StagedRow parsed = transactionNormalizer.normalize(userId, row, ctx, rules, duplicateIndex);
             if (parsed != null) {
-                staged.add(parsed);
+                // RowKind.BALANCE_MARKER rows (see that enum's doc comment) are excluded from
+                // `staged` -- the same fix, and the same reasoning, as PdfPreviewGenerator's
+                // ledger-section loop: a structural balance-only row must never become an
+                // importable transaction candidate. `parsed` is still passed to scanRow below
+                // regardless of kind, so its date/amount/balance still feed opening/closing
+                // balance derivation -- nothing about that derivation depended on the row being
+                // staged as a transaction.
+                if (parsed.kind() == RowKind.TRANSACTION) {
+                    staged.add(parsed);
+                } else if (transactionNormalizer.hasUnrecognizedNonBlankColumn(row)) {
+                    // Not a CONFIDENT balance-marker classification -- see
+                    // TransactionNormalizer.hasUnrecognizedNonBlankColumn's own doc comment and
+                    // PdfPreviewGenerator's identical guard. A row with a non-blank value under a
+                    // column name this class doesn't recognize at all must not silently vanish
+                    // from `staged` just because that same gap made it classify as
+                    // BALANCE_MARKER; route it to the existing unparseable diagnostic instead.
+                    // `parsed` is still passed to scanRow below regardless, so balance derivation
+                    // is unaffected.
+                    unparseable.add(new UnparseableRow(row,
+                            "Row has a value in an unrecognized column and no recognized transactional "
+                                    + "amount column, so it could not be confidently classified as a transaction "
+                                    + "or excluded as a balance marker"));
+                } else if (transactionNormalizer.hasUnparseableRecognizedAmount(row)) {
+                    // Third fix pass -- see TransactionNormalizer.hasUnparseableRecognizedAmount's
+                    // own doc comment. This row's column NAMES are all recognized, but a real
+                    // transactional column (Debit/Credit/Amount/etc.) holds a non-blank value that
+                    // CsvParser.parseNumeric still couldn't parse (e.g. "1500/-", or a bank Dr/Cr
+                    // format variant not yet covered) -- that value never resolves, so the row
+                    // classified BALANCE_MARKER purely because its real amount column came up
+                    // empty, not because it genuinely lacks transactional data. Excluding it
+                    // unconditionally would silently vanish it with zero trace. Route it to the
+                    // unparseable diagnostic instead, same as the unrecognized-column case above.
+                    unparseable.add(new UnparseableRow(row,
+                            "Row has a value in a recognized transactional amount column that could not be "
+                                    + "parsed as a number, so it could not be confidently classified as a "
+                                    + "transaction or excluded as a balance marker"));
+                }
             } else {
                 unparseable.add(new UnparseableRow(row, transactionNormalizer.explainFailure(row)));
             }

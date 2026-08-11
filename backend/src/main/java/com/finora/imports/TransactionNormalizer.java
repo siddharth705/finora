@@ -49,6 +49,20 @@ public class TransactionNormalizer {
     // transaction -- including genuine UPI credits -- staged as an EXPENSE, since "deposit"/
     // "withdrawal" weren't recognized as amount OR credit signals at all. Not a dropped-row bug
     // (which would have been obvious) -- a silently-wrong-data bug, worse in kind.
+    // Split out of AMOUNT_HINTS specifically so RowKind classification can ask "did any REAL
+    // debit/credit/amount column have a value" without touching how amountRaw itself is resolved
+    // (AMOUNT_HINTS below is still exactly this list followed by BALANCE_HINTS, same order, same
+    // behavior). This is the structural signal RowKind.BALANCE_MARKER is built on: a statement's
+    // OPENING BALANCE/CLOSING BALANCE row (or "Beginning Balance"/"Balance Forward"/whatever a
+    // given bank calls it) never has a value in any of these columns -- only in a Balance-style
+    // column, which is exactly why AMOUNT_HINTS needed the fallback in the first place. See
+    // RowKind's own doc comment: the classification reads which COLUMN produced the amount, never
+    // the row's description text, so it does not depend on -- or need to enumerate -- how any
+    // particular bank phrases its balance rows.
+    private static final String[] TRANSACTION_AMOUNT_HINTS = {"amount", "debit", "credit",
+            "dr amount", "cr amount", "debit amount", "credit amount",
+            "withdrawal amt", "withdrawal amount", "deposit amt", "deposit amount",
+            "deposit", "withdrawal", "deposits", "withdrawals"};
     private static final String[] AMOUNT_HINTS = {"amount", "debit", "credit",
             "dr amount", "cr amount", "debit amount", "credit amount",
             "withdrawal amt", "withdrawal amount", "deposit amt", "deposit amount",
@@ -197,6 +211,71 @@ public class TransactionNormalizer {
             }
         }
         return null;
+    }
+
+    /**
+     * True when this row carries a non-blank value under a column name none of this class's hint
+     * lists (date/amount/credit/type/description/category/reference/balance --
+     * {@link #recognizedColumnNames()}) recognize at all.
+     *
+     * <p>Used only to gate confidence in a {@link RowKind#BALANCE_MARKER} classification. A
+     * genuine balance-marker row's entire non-blank content is accounted for by recognized
+     * columns (e.g. a real {@code OPENING BALANCE} row: a description column and a Balance
+     * column, with its debit/credit columns present but blank) -- that is a confident marker. A
+     * row that instead has a non-blank value under some column name this class simply does not
+     * know yet (e.g. a bank whose transactional-amount column is headed "Txn Amount", which
+     * TRANSACTION_AMOUNT_HINTS does not list) is a different situation entirely: the
+     * BALANCE_MARKER classification only happened because that column went unrecognized, not
+     * because the row genuinely lacks transactional data. Callers must not silently drop such a
+     * row from the review screen -- see {@code PdfPreviewGenerator}/{@code PreviewGenerator}'s
+     * staging loops, which route it to the unparseable-row diagnostic instead.
+     */
+    public boolean hasUnrecognizedNonBlankColumn(Map<String, String> row) {
+        Set<String> recognized = recognizedColumnNames();
+        for (Map.Entry<String, String> e : row.entrySet()) {
+            String v = e.getValue();
+            if (v == null || v.isBlank()) continue;
+            String key = e.getKey() == null ? "" : CsvParser.normalizeHeaderCell(e.getKey());
+            if (!recognized.contains(key)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * True when this row carries a non-blank value under a RECOGNIZED transactional-amount column
+     * ({@link #TRANSACTION_AMOUNT_HINTS} -- Amount/Debit/Credit/Withdrawals/Deposits/etc.) that
+     * still fails to parse as a number at all.
+     *
+     * <p>Third fix pass on the marker-row-pollution bug: {@link #hasUnrecognizedNonBlankColumn}
+     * only catches the case where the column NAME is unknown. It says nothing about a row whose
+     * column name is perfectly recognized but whose VALUE {@link CsvParser#parseNumeric} chokes
+     * on -- e.g. a stray {@code "1500/-"} in a Debit cell, or any of the real bank formats
+     * {@code CsvParser.parseNumeric}'s own javadoc documents fixing (Union Bank's parenthesized
+     * {@code "50000.00(Cr)"}, HDFC's rupee-glyph-as-"C" artifact, Axis's bare {@code "37.94 Dr"}
+     * suffix) on a statement whose export happens to use a variant not yet covered. Such a row's
+     * transactional column never resolves a value at all (parseNumeric returns null), so it falls
+     * out of {@link #firstNonZeroAmount}/{@link #firstParseableAmount} exactly like a genuinely
+     * blank cell would -- the row classifies {@link RowKind#BALANCE_MARKER} by the same structural
+     * logic a real OPENING BALANCE row does, and {@code hasUnrecognizedNonBlankColumn} finds
+     * nothing wrong because every column name IS recognized. Left unguarded, the row silently
+     * vanishes: not staged (wrong kind), not reported unparseable (no unrecognized column). That
+     * is worse than the pre-Track-B behavior of staging with a wrong-but-visible amount -- see
+     * docs/architecture/system-design/marker-row-pollution-scope-investigation.md.
+     *
+     * <p>Used the same way as {@code hasUnrecognizedNonBlankColumn}: only to gate confidence in a
+     * {@code BALANCE_MARKER} classification. Callers route a row where either check is true to the
+     * unparseable diagnostic instead of silently excluding it.
+     */
+    public boolean hasUnparseableRecognizedAmount(Map<String, String> row) {
+        for (String hint : TRANSACTION_AMOUNT_HINTS) {
+            for (Map.Entry<String, String> e : row.entrySet()) {
+                if (e.getKey() != null && CsvParser.normalizeHeaderCell(e.getKey()).equalsIgnoreCase(hint)) {
+                    String v = e.getValue();
+                    if (v != null && !v.isBlank() && CsvParser.parseNumeric(v) == null) return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -397,7 +476,62 @@ public class TransactionNormalizer {
             if (CsvParser.hasTrailingDrCrMarker(balanceRaw)) ctx.record("DR_CR_SUFFIX");
         }
 
+        // RowKind classification (see RowKind's own doc comment for the full reasoning): does any
+        // REAL transactional amount column (TRANSACTION_AMOUNT_HINTS) have a NON-ZERO parseable
+        // value on this row at all? If so, this is an ordinary transaction, full stop -- it does
+        // not matter whether the row's description ALSO happens to mention "balance" (e.g. a
+        // genuine "Balance transfer to savings account" narration on a real debit).
+        String transactionAmountRaw = firstNonZeroAmount(row, TRANSACTION_AMOUNT_HINTS);
+        RowKind kind;
+        if (transactionAmountRaw != null) {
+            kind = RowKind.TRANSACTION;
+        } else {
+            // No transactional column had a non-zero value. Two structurally different shapes
+            // land here, and they must not be classified the same way:
+            //
+            //  (a) No transactional column had ANY value at all (blank/absent on this row) --
+            //      amountRaw above could only have come from BALANCE_HINTS' last-resort fallback.
+            //      Unambiguous: this is a balance-marker row.
+            //
+            //  (b) A transactional column DID resolve, but to exactly zero -- e.g. a separate
+            //      debit/credit-columns layout that prints "0.00" on BOTH sides of a balance-only
+            //      row instead of leaving them blank (see firstNonZeroAmount's own doc comment,
+            //      verified against a real HDFC statement for the single-zero-side case; a
+            //      balance-marker row is the same layout convention applied to both sides at
+            //      once). This is genuinely ambiguous by the zero value alone -- it is the same
+            //      column shape a real zero-value transaction (a waived fee, a reversed/voided
+            //      charge that nets to zero) would also produce. Zero itself is deliberately NOT
+            //      the signal (a blanket "amount == 0 => not a transaction" rule would misclassify
+            //      those legitimate rows).
+            //
+            //      The structural tiebreaker: is a Balance-style column PRESENT on this row at all
+            //      -- i.e. did it resolve ANY value, whatever that value is -- making it the row's
+            //      defining content? A row whose transactional side is explicitly, deliberately
+            //      zeroed AND that also carries a Balance-style column (even a legitimately zero
+            //      one, e.g. a closed/emptied account's CLOSING BALANCE row reading
+            //      Withdrawals=0.00/Deposits=0.00/Balance=0.00) is structurally a balance-report
+            //      row. A genuine zero-value transaction that has no accompanying balance figure
+            //      at all (no Balance-style column on this row/layout -- balanceAfter is null
+            //      because the column is absent or itself unparseable) has no such competing
+            //      "real" numeric content, so it stays TRANSACTION.
+            //
+            //      Deliberately NOT "balance value is non-zero" (a prior version of this fix used
+            //      balanceAfter.signum() != 0): that treats a genuinely zero account balance as if
+            //      the Balance column weren't there at all, which misclassified an all-zero
+            //      CLOSING BALANCE row (a closed/emptied account) as an ordinary zero-value
+            //      TRANSACTION. Presence -- balanceAfter != null -- not magnitude, is the
+            //      structural signal; this is still not the blanket "amount == 0 => marker" rule
+            //      the earlier comment above warns against, since a zero transactional amount with
+            //      NO balance column at all still stays TRANSACTION.
+            String zeroTransactionRaw = firstParseableAmount(row, TRANSACTION_AMOUNT_HINTS);
+            boolean transactionalColumnExplicitlyZero = zeroTransactionRaw != null;
+            boolean balanceColumnPresent = balanceAfter != null;
+            kind = (transactionalColumnExplicitlyZero && !balanceColumnPresent)
+                    ? RowKind.TRANSACTION
+                    : RowKind.BALANCE_MARKER;
+        }
+
         return new StagedRow(date, description, amount, type, suggestedCategory, source, ruleId,
-                likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch);
+                likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind);
     }
 }

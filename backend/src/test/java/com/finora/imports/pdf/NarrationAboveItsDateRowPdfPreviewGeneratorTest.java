@@ -106,16 +106,27 @@ class NarrationAboveItsDateRowPdfPreviewGeneratorTest {
                 .contains("two@bank").doesNotContain("one@bank");
     }
 
+    /**
+     * Updated for the marker-row pollution fix (docs/architecture/system-design/
+     * marker-row-pollution-scope-investigation.md): the fixture's "Opening Balance" row now
+     * classifies as RowKind.BALANCE_MARKER (no debit/credit column value -- see RowKind's own doc
+     * comment) and is excluded from {@code response.rows()} entirely, so it is no longer possible
+     * -- or necessary -- to look the row up there and check its description in isolation. What
+     * this test originally protected against (the opening-balance row's OWN label getting
+     * overwritten by the first transaction's narration, because it sits immediately above it) is
+     * now protected more strongly: the row cannot surface a corrupted label to the user because it
+     * cannot surface at all. {@code generate_attachesEachNarrationToTheTransactionItIsPrintedAgainst}
+     * already pins "firstmerchant" onto the 06-02 transaction and nowhere else among the rows that
+     * ARE visible, which is what remains to check once the marker row itself is out of scope.
+     */
     @Test
-    void generate_leavesTheOpeningBalanceRowWithItsOwnLabelOnly() throws Exception {
-        // The row that used to swallow the first transaction's narration, because it is the anchor
-        // immediately above it. A summary row's description must stay a summary row's description.
+    void generate_excludesTheOpeningBalanceRow_soItsLabelCanNeverBeCorruptedInTheReviewTable() throws Exception {
         StagingResponse response = generate();
 
-        StagedRow opening = response.rows().stream()
-                .filter(r -> r.description() != null && r.description().contains("Opening Balance"))
-                .findFirst().orElseThrow();
-        assertThat(opening.description()).doesNotContain("firstmerchant");
+        assertThat(response.rows()).noneMatch(r ->
+                r.description() != null && r.description().contains("Opening Balance"));
+        // The three real transactions -- and only them -- remain staged.
+        assertThat(response.rows()).hasSize(3);
     }
 
     @Test

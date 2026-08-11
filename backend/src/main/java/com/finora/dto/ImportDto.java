@@ -1,6 +1,7 @@
 package com.finora.dto;
 
 import com.finora.accounts.AccountDto;
+import com.finora.imports.RowKind;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -50,7 +51,21 @@ public class ImportDto {
              * fact, and every existing client already reads it. This adds WHY, which is what turns
              * a filter into a decision the user can actually make.
              */
-            DuplicateMatch duplicateMatch
+            DuplicateMatch duplicateMatch,
+            /**
+             * Structural classification from {@link com.finora.imports.TransactionNormalizer} --
+             * see {@link RowKind}'s own doc comment for exactly what decides it (never the
+             * description text). {@code TRANSACTION} for every row normalized before this field
+             * existed and for every caller that does not care about the distinction (both
+             * constructors below default it), so nothing that already treats a {@code StagedRow}
+             * as an importable transaction candidate needs to change. Only
+             * {@code TransactionNormalizer.normalize} and the two staging loops
+             * ({@code PdfPreviewGenerator}, {@code PreviewGenerator}) need to look at it: the
+             * former sets it honestly, the latter two must exclude a {@code BALANCE_MARKER} row
+             * from the list offered to the user as a transaction, while still reading the row's
+             * own date/amount/description to derive the statement's opening/closing balance.
+             */
+            RowKind kind
     ) {
         /**
          * The shape every caller used before WI5 added {@code duplicateMatch}.
@@ -66,9 +81,24 @@ public class ImportDto {
          */
         public StagedRow(LocalDate date, String description, BigDecimal amount, String type,
                           String suggestedCategory, String categorySource, UUID ruleId,
+                          boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
+                          DuplicateMatch duplicateMatch) {
+            this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, RowKind.TRANSACTION);
+        }
+
+        /**
+         * The shape every caller used before {@code duplicateMatch} AND before {@link RowKind}.
+         * Every existing test/caller that constructs a {@code StagedRow} directly (rather than via
+         * {@code TransactionNormalizer.normalize}) keeps compiling unchanged, and defaults to
+         * {@code TRANSACTION} -- correct for all of them, since none are exercising marker-row
+         * classification.
+         */
+        public StagedRow(LocalDate date, String description, BigDecimal amount, String type,
+                          String suggestedCategory, String categorySource, UUID ruleId,
                           boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter) {
             this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
-                    likelyDuplicate, referenceNumber, balanceAfter, null);
+                    likelyDuplicate, referenceNumber, balanceAfter, null, RowKind.TRANSACTION);
         }
     }
 

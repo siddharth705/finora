@@ -11,6 +11,7 @@ import com.finora.entity.CategoryRule;
 import com.finora.imports.CsvParser;
 import com.finora.imports.pdf.StatementSummaryExtractor.PrintedSummary;
 import com.finora.imports.DocumentContext;
+import com.finora.imports.RowKind;
 import com.finora.imports.TransactionNormalizer;
 import com.finora.imports.product.ProductAttributeExtractor;
 import com.finora.imports.product.ProductAttributes;
@@ -317,7 +318,47 @@ public class PdfPreviewGenerator {
                 unparseable.add(new UnparseableRow(row, transactionNormalizer.explainFailure(row)));
                 continue;
             }
-            staged.add(parsed);
+            // RowKind.BALANCE_MARKER (see that enum's doc comment): a row whose only recognizable
+            // amount came from a Balance-style column, not a real debit/credit/amount column --
+            // structurally a statement's own OPENING BALANCE/CLOSING BALANCE label, not a
+            // transaction. It must never become an importable ledger candidate (never added to
+            // `staged`, so it never reaches ImportVerifier, the review screen, or a confirm
+            // request), but it is NOT discarded: `parsed` is still read below, same as any other
+            // row, to derive the statement's opening/closing balance -- that derivation has always
+            // worked from the row's own date/amount, never from whether the row made it into
+            // `staged`.
+            if (parsed.kind() == RowKind.TRANSACTION) {
+                staged.add(parsed);
+            } else if (transactionNormalizer.hasUnrecognizedNonBlankColumn(row)) {
+                // Not a CONFIDENT balance-marker classification: this row also has a non-blank
+                // value under a column name TransactionNormalizer doesn't recognize at all, so
+                // the BALANCE_MARKER verdict rests on a hint-list gap, not on the row genuinely
+                // lacking transactional data (see hasUnrecognizedNonBlankColumn's own doc
+                // comment). Excluding it from `staged` unconditionally would silently vanish a
+                // row that may well be a real transaction -- worse than the pre-existing
+                // wrong-amount bug this row shape used to hit, because at least that left the row
+                // visible for the user to notice. Surface it via the existing unparseable
+                // diagnostic instead; it is still used for balance-point derivation below exactly
+                // like any other row.
+                unparseable.add(new UnparseableRow(row,
+                        "Row has a value in an unrecognized column and no recognized transactional "
+                                + "amount column, so it could not be confidently classified as a transaction "
+                                + "or excluded as a balance marker"));
+            } else if (transactionNormalizer.hasUnparseableRecognizedAmount(row)) {
+                // Third fix pass -- see TransactionNormalizer.hasUnparseableRecognizedAmount's own
+                // doc comment and PreviewGenerator's identical guard. This row's column NAMES are
+                // all recognized, but a real transactional column (Debit/Credit/Amount/etc.) holds
+                // a non-blank value CsvParser.parseNumeric couldn't parse (e.g. "1500/-", or a
+                // bank Dr/Cr format variant not yet covered) -- it never resolves, so the row
+                // classified BALANCE_MARKER purely because its real amount column came up empty,
+                // not because it genuinely lacks transactional data. Excluding it unconditionally
+                // would silently vanish it with zero trace. Route it to the unparseable diagnostic
+                // instead, same as the unrecognized-column case above.
+                unparseable.add(new UnparseableRow(row,
+                        "Row has a value in a recognized transactional amount column that could not be "
+                                + "parsed as a number, so it could not be confidently classified as a "
+                                + "transaction or excluded as a balance marker"));
+            }
 
             BigDecimal balance = CsvParser.parseNumeric(
                     CsvParser.firstNonBlank(row, "balance", "running balance", "closing balance"));

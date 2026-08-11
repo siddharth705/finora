@@ -66,14 +66,22 @@ class PdfPreviewGeneratorTest {
     }
 
     @Test
-    void generate_extractsAllSixRowsFromTheGoldenFixture() throws Exception {
+    void generate_excludesTheBalanceMarkerRows_stagingOnlyTheFourRealTransactions() throws Exception {
         StagingResponse response = realGenerator().generate(UUID.randomUUID(), "separate_debit_credit_balance_statement.pdf", fixtureBytes());
 
-        // OPENING BALANCE, 4 real transactions, CLOSING BALANCE -- all 6 rows have a parseable
-        // date and amount (the balance column, for the two balance-only rows), so all 6 should
-        // survive TransactionNormalizer.normalize() the same way a CSV opening/closing-balance
-        // row would.
-        assertThat(response.rows()).hasSize(6);
+        // The fixture's 6 table rows are OPENING BALANCE, 4 real transactions, CLOSING BALANCE.
+        // All 6 still normalize (the balance column, for the two balance-only rows, is what makes
+        // TransactionNormalizer.normalize() return non-null for them -- see AMOUNT_HINTS' own
+        // fallback comment), but the two balance-only rows classify as RowKind.BALANCE_MARKER
+        // (neither has a value in a real debit/credit column -- see RowKind's doc comment), so
+        // PdfPreviewGenerator now excludes them from `staged`: this is the marker-row pollution fix
+        // (docs/architecture/system-design/marker-row-pollution-scope-investigation.md). Before the
+        // fix this asserted hasSize(6) and documented that both marker rows survived into the
+        // review table and were confirmable as ordinary transactions -- that was the bug, not a
+        // spec this test was protecting.
+        assertThat(response.rows()).hasSize(4);
+        assertThat(response.rows()).noneMatch(r ->
+                r.description() != null && r.description().toLowerCase(java.util.Locale.ROOT).contains("balance"));
     }
 
     @Test
@@ -112,6 +120,34 @@ class PdfPreviewGeneratorTest {
 
         assertThat(detected.openingBalance()).isEqualByComparingTo("50000.00");
         assertThat(detected.closingBalance()).isEqualByComparingTo("117209.50");
+    }
+
+    /**
+     * Regression test for the marker-row pollution bug (docs/architecture/system-design/
+     * marker-row-pollution-scope-investigation.md, "Finding A"): with the two balance-only rows
+     * fed into ImportVerifier as if they were ordinary transactions, BALANCE_CHAIN reported
+     * WARNING and STATEMENT_TOTALS reported FAILED on this exact, perfectly-correct statement --
+     * the two label rows' huge signed amounts (50000.00 and 117209.50, read as ordinary EXPENSE
+     * transactions) broke the arithmetic both rules check. Now that PdfPreviewGenerator excludes
+     * RowKind.BALANCE_MARKER rows from the list handed to ImportVerifier, neither rule sees them,
+     * and neither should report a discrepancy that was never real.
+     */
+    @Test
+    void generate_reportsNoFalseBalanceDiscrepancy_nowThatMarkerRowsAreExcludedFromVerification() throws Exception {
+        // generateSections(), not generate(): the single-section generate() wrapper drops the
+        // verification report entirely (a pre-existing gap in that conversion, unrelated to this
+        // fix) -- generateSections() returns the StagedAccountSection that actually carries it.
+        var section = realGenerator().generateSections(UUID.randomUUID(),
+                "separate_debit_credit_balance_statement.pdf", fixtureBytes()).get(0);
+
+        var balanceChain = section.verification().findings().stream()
+                .filter(f -> "BALANCE_CHAIN".equals(f.rule())).findFirst().orElseThrow();
+        assertThat(balanceChain.outcome()).isNotEqualTo("WARNING");
+        assertThat(balanceChain.outcome()).isNotEqualTo("FAILED");
+
+        var statementTotals = section.verification().findings().stream()
+                .filter(f -> "STATEMENT_TOTALS".equals(f.rule())).findFirst().orElseThrow();
+        assertThat(statementTotals.outcome()).isNotEqualTo("FAILED");
     }
 
     @Test

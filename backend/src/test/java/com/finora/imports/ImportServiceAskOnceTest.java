@@ -752,4 +752,154 @@ class ImportServiceAskOnceTest {
         assertThat(response.rows().get(1).type()).isEqualTo("EXPENSE");
         assertThat(response.rows().get(1).amount()).isEqualByComparingTo("18000");
     }
+
+    /**
+     * The real production bug the test above did NOT cover, per
+     * docs/architecture/system-design/marker-row-pollution-scope-investigation.md: that test's
+     * OPENING/CLOSING BALANCE rows only got excluded because their Date cell happened to be blank
+     * -- a property of that one fixture, not a real guard. A real bank statement whose marker rows
+     * DO carry a date (as the project's own PDF golden fixture's do) used to sail straight through
+     * staging, verification, and confirm as ordinary transactions.
+     *
+     * <p>This proves the full path end-to-end with a DATED marker row: parseAndStage() must not
+     * offer it as a staged row at all, and confirm() -- fed every staged row with include=true,
+     * exactly the frontend's default for a non-duplicate row
+     * ({@code frontend/src/lib/importReview.ts}'s {@code beginReview}) -- must persist only the
+     * two real transactions, never a fake 50000.00/28885.75 EXPENSE for the balance labels.
+     */
+    @Test
+    void confirm_neverPersistsADatedBalanceMarkerRow_evenWhenTheClientIncludesEveryStagedRow() throws Exception {
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
+
+        String csv = String.join("\n",
+                "Date,Description,Debit,Credit,Balance",
+                "2026-07-01,OPENING BALANCE,,,50000.00",
+                "2026-07-01,Salary Credit - ABC Pvt Ltd,,85000,135000.00",
+                "2026-07-02,UPI Rent Payment,18000,,117000.00",
+                "2026-07-31,CLOSING BALANCE,,,117000.00"
+        ) + "\n";
+        MockMultipartFile file = new MockMultipartFile("file", "dated_balance_markers.csv", "text/csv",
+                csv.getBytes(StandardCharsets.UTF_8));
+
+        StagingResponse response = importService.parseAndStage(userId, file.getOriginalFilename(), file.getInputStream());
+
+        // Staging itself must already exclude the two marker rows, dated or not -- checked by the
+        // marker rows' own exact amounts (50000.00/117000.00), not a size threshold: a real
+        // transaction is allowed to be large too, which is exactly why this fix cannot be "drop
+        // big amounts".
+        assertThat(response.rows()).hasSize(2);
+        assertThat(response.rows()).extracting(com.finora.dto.ImportDto.StagedRow::amount)
+                .doesNotContain(new BigDecimal("50000.00"), new BigDecimal("117000.00"));
+
+        // Simulate the frontend's beginReview() default: every staged row (there is no duplicate
+        // here) arrives back as a ConfirmedRow with include=true -- confirm() must still not
+        // persist anything the balance markers would have produced, because they were never
+        // offered as staged rows to begin with.
+        List<ConfirmedRow> confirmedRows = response.rows().stream()
+                .map(r -> new ConfirmedRow(r.date(), r.description(), r.amount(), r.type(),
+                        r.suggestedCategory(), true, r.categorySource(), r.ruleId(),
+                        r.likelyDuplicate(), r.referenceNumber(), r.balanceAfter()))
+                .toList();
+        ConfirmRequest request = new ConfirmRequest(null, confirmedRows, accountId, null, null, null, null);
+
+        importService.confirm(userId, dummyFile(), request);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Transaction>> captor = ArgumentCaptor.forClass(List.class);
+        verify(transactionRepository).saveAll(captor.capture());
+        List<Transaction> persisted = captor.getValue();
+
+        assertThat(persisted).hasSize(2);
+        assertThat(persisted).extracting(Transaction::getAmount)
+                .doesNotContain(new BigDecimal("50000.00"), new BigDecimal("117000.00"));
+        assertThat(persisted).noneMatch(t -> t.getDescription() != null
+                && t.getDescription().toUpperCase(java.util.Locale.ROOT).contains("BALANCE"));
+        assertThat(persisted).extracting(Transaction::getAmount)
+                .containsExactlyInAnyOrder(new BigDecimal("85000"), new BigDecimal("18000"));
+    }
+
+    /**
+     * Second fix pass, Item 1: the zero-padded variant of the test above. A separate-columns
+     * layout that prints "0.00" on BOTH the Debit and Credit side of a balance-marker row instead
+     * of leaving them blank (see TransactionNormalizer.firstNonZeroAmount's own doc comment, and
+     * RowKind classification's zero-padding tiebreaker) used to still classify TRANSACTION and
+     * persist as a fake 50000.00/117000.00 EXPENSE. Proves the fix end-to-end through
+     * parseAndStage() and confirm(), exactly like the dated-marker test above.
+     */
+    @Test
+    void confirm_neverPersistsAZeroPaddedBalanceMarkerRow_evenWhenTheClientIncludesEveryStagedRow() throws Exception {
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
+
+        String csv = String.join("\n",
+                "Date,Description,Debit,Credit,Balance",
+                "2026-07-01,OPENING BALANCE,0.00,0.00,50000.00",
+                "2026-07-01,Salary Credit - ABC Pvt Ltd,0.00,85000,135000.00",
+                "2026-07-02,UPI Rent Payment,18000,0.00,117000.00",
+                "2026-07-31,CLOSING BALANCE,0.00,0.00,117000.00"
+        ) + "\n";
+        MockMultipartFile file = new MockMultipartFile("file", "zero_padded_balance_markers.csv", "text/csv",
+                csv.getBytes(StandardCharsets.UTF_8));
+
+        StagingResponse response = importService.parseAndStage(userId, file.getOriginalFilename(), file.getInputStream());
+
+        assertThat(response.rows()).hasSize(2);
+        assertThat(response.rows()).extracting(com.finora.dto.ImportDto.StagedRow::amount)
+                .doesNotContain(new BigDecimal("50000.00"), new BigDecimal("117000.00"));
+
+        List<ConfirmedRow> confirmedRows = response.rows().stream()
+                .map(r -> new ConfirmedRow(r.date(), r.description(), r.amount(), r.type(),
+                        r.suggestedCategory(), true, r.categorySource(), r.ruleId(),
+                        r.likelyDuplicate(), r.referenceNumber(), r.balanceAfter()))
+                .toList();
+        ConfirmRequest request = new ConfirmRequest(null, confirmedRows, accountId, null, null, null, null);
+
+        importService.confirm(userId, dummyFile(), request);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Transaction>> captor = ArgumentCaptor.forClass(List.class);
+        verify(transactionRepository).saveAll(captor.capture());
+        List<Transaction> persisted = captor.getValue();
+
+        assertThat(persisted).hasSize(2);
+        assertThat(persisted).extracting(Transaction::getAmount)
+                .doesNotContain(new BigDecimal("50000.00"), new BigDecimal("117000.00"));
+        assertThat(persisted).extracting(Transaction::getAmount)
+                .containsExactlyInAnyOrder(new BigDecimal("85000"), new BigDecimal("18000"));
+    }
+
+    /**
+     * Second fix pass, Item 3: a row whose transactional-amount column uses a header name
+     * TransactionNormalizer's hint lists don't recognize ("Txn Amount") but which also has a
+     * recognized Balance column. Before this fix, such a row classified BALANCE_MARKER (no
+     * TRANSACTION_AMOUNT_HINTS column matched at all) and was silently excluded from `staged`
+     * with nowhere else to go -- worse than the pre-existing behavior of staging it with the
+     * wrong amount (the balance figure), because the row disappeared entirely instead of being
+     * visibly wrong. It must now surface via the unparseable-row diagnostic instead of vanishing.
+     */
+    @Test
+    void parseAndStage_routesUnrecognizedColumnRowToUnparseable_insteadOfSilentlyDroppingIt() throws Exception {
+        when(categorizationService.suggestReadOnly(anyList(), eq(userId), anyString(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Other", "default", null, Transaction.DecisionSource.MERCHANT_DEFAULT, null));
+
+        // Withdrawal/Deposit are included, blank, purely so CsvParser.findHeaderRowIndex (a
+        // separate, pre-existing header-detection pass with its own narrower AMOUNT_HEADER_HINTS
+        // list that does not include "balance" at all) recognizes this as a transaction table to
+        // begin with -- unrelated to the bug this test targets, which is entirely about
+        // TransactionNormalizer's per-row column recognition once the header IS found.
+        String csv = String.join("\n",
+                "Date,Description,Withdrawal,Deposit,Txn Amount,Balance",
+                "2026-07-05,Some Real Transaction,,,2000.00,52000.00"
+        ) + "\n";
+        MockMultipartFile file = new MockMultipartFile("file", "unrecognized_amount_column.csv", "text/csv",
+                csv.getBytes(StandardCharsets.UTF_8));
+
+        StagingResponse response = importService.parseAndStage(userId, file.getOriginalFilename(), file.getInputStream());
+
+        // Not staged as a (wrongly-amounted) transaction, and not silently gone either.
+        assertThat(response.rows()).isEmpty();
+        assertThat(response.unparseableRows()).hasSize(1);
+        assertThat(response.unparseableRows().get(0).raw()).containsEntry("Txn Amount", "2000.00");
+    }
 }
