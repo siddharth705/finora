@@ -1,6 +1,6 @@
 # Finora — Project Plan to v1.0 GA
 
-**Baselined:** 2026-08-09 · **Re-baselined:** 2026-08-10, morning
+**Baselined:** 2026-08-09 · **Re-baselined:** 2026-08-11 (production-readiness audit + remediation pass)
 **Owner:** Siddharth Tiwari · **Maintained by:** the PM role
 **Status:** On Track (see §7)
 
@@ -28,18 +28,19 @@ comes out is right, and stays right. The two share a name and almost nothing els
 
 | | |
 |---|---|
-| **Overall completion toward v1.0 GA** | **82%** (weighted — see §2). Was 80% at 20:49 on 08-09, 65% at 00:42 the same day |
-| **Current phase** | Phase 4 — Hardening & Defect Remediation, **effectively finished as engineering work** |
+| **Overall completion toward v1.0 GA** | **83%** (weighted — see §2). Was 82% on 08-10, 65% at 00:42 on 08-09 |
+| **Current phase** | Phase 4 complete; **production-readiness audit + remediation pass complete** (2026-08-11) |
 | **Health** | **On Track**, with one warning — see §8 |
 | **v1.0 scope** | Web + admin portal + **mobile** (D-2, 2026-08-09) |
-| **Open bug-hunt findings** | **0 Critical, 0 High.** All six original P0s and BH-006 merged. BH-017/025/032/036/044/050/053 also closed since. Genuinely still open: BH-042/043/045 (owned by a parallel session), a fresh full tally against the original 61 is a named next action rather than an estimate |
-| **Baselined against** | `origin/main` @ `e44bf54`. `main` fully green — the V75 Flyway collision from overnight is fixed and confirmed, and a `BulkRecategorizeLearningIT` CI failure on an unrelated commit was rerun and confirmed a flake, not a regression |
-| **Commits** | 591+ across 10 days (first commit 2026-07-31) |
-| **Backend** | 1936+ tests green as of the last confirmed run |
+| **Open bug-hunt findings** | **0 Critical, 0 High**, confirmed twice now — once by the original bug-hunt closures, once independently by a fresh 11-domain audit that re-derived evidence from scratch rather than trusting prior claims. **0 P0/P1 IDOR or auth-bypass found** across an exhaustive resource sweep. BH-042/043/045 still owned by a parallel session |
+| **Baselined against** | `origin/main` @ `cc17716`. `main` fully green — confirmed on the real CI (not just local runs): backend 2191/2191, frontend 322/322, admin-portal 302/302 |
+| **Commits** | 600+ across 11 days (first commit 2026-07-31) |
+| **Backend** | 2191 tests green, real CI run confirmed (not estimated) |
 | **Clients** | frontend 122 files · admin-portal 105 · mobile 88 · e2e 12 specs / 112 cases |
 | **CI** | green on `main`, self-hosted macOS runner, smoke E2E blocking on every PR |
 | **Deployed** | Yes — `app.finoratech.info` (Cloudflare Pages) + Railway backend + Railway Postgres |
-| **Store enrolment** | **Apple: submitted as Individual overnight, not yet confirmed complete** — first attempt hit the Organization/DUNS flow by mistake, corrected. **Google Play: not yet started** |
+| **Store enrolment** | **Unchanged since 08-10 — no fresh update received.** Apple: submitted as Individual, still not confirmed complete. Google Play: still not started. This is now the single most stagnant item on the entire plan |
+| **Production-readiness audit** | **Complete.** 11 domains, independent adversarial verification on every P0/P1. 6 real fixes merged (broken test, CSP/HSTS/X-Frame-Options, admin-portal token storage, 5 new admin test suites, V73/V74 confidence, forgot-password boot-proof). 3 items need Sid directly — see §11 |
 
 **The deployment is real but unpopulated.** `app.finoratech.info` is live, and the 2026-08-08
 stale-chunk incident happened on it — but **D-1 is resolved: the only user is the owner, testing.**
@@ -551,6 +552,7 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-11 (audit) | **Full production-readiness audit completed and remediated.** 11 independent domains (auth, IDOR/BOLA, financial correctness, statement import, infra/network, database/migrations, admin RBAC, broader security, reliability/observability, test execution, product completeness), every P0/P1 finding put through independent adversarial verification before being accepted. Result: **0 P0/P1 security or IDOR defects found** — real corrections landed on roughly half the findings sent to verification, narrowing or refuting several rather than confirming them as first reported. Six real fixes implemented, each independently verified, all merged: a broken `main`-branch test (self-inflicted, from the earlier docs reorg — fixed same day); CSP/HSTS/X-Frame-Options added to both Cloudflare Pages frontends; admin-portal migrated off `localStorage` onto the same HttpOnly-cookie flow the user frontend already uses (live-verified against production CORS config); 5 previously-untested admin controllers now covered by 38 new integration tests; V73/V74 migration confidence built via 7+3 adversarial synthetic scenarios against real Postgres (no bug found, self-coherent by construction); a full-Spring-context boot test proving the forgot-password mitigation actually prevents the app from serving traffic, not just that a method throws. Completion **82% → 83%**. No date change — this work ran parallel to, not on, the critical path | Requested explicitly by the owner as a conservative, evidence-based launch audit distinguishing Verified/Code-confirmed/Not verified/Not applicable, specifically to avoid the failure mode of an agent trusting its own first-pass findings. Three items remain that need the owner directly, not more engineering: Railway config confirmation (`JWT_SECRET` strength, `STATEMENT_STORAGE_PROVIDER=r2`, `TRUST_PROXY_HEADERS`), a real database restore drill, and standing up external uptime monitoring — all require dashboard/account access this session doesn't have |
 | 2026-08-11 | **§8a extended: Fino V2 readiness contract added (`docs/roadmap/fino-v2-readiness.md`).** NOW scope limited to opportunistic-only foundation work riding inside existing bug-hunt/release-gate fixes; provenance, event/audit trail, and admin analytics expansion moved to V1.0.1. No date change, no new §9 line items | Owner proposed a broader "Fino Readiness" workstream with several P1/P2 items marked build-now. The table's own later section resolved its internal inconsistency (admin analytics/audit trail listed both NOW and V1.0.1); adopted the disciplined split — nothing enters v1.0 as dedicated, scheduled work; only refactors that are already justified on their own merit and already touching in-scope code |
 | 2026-08-11 | **New §8a: Fino (AI financial intelligence layer) recorded and explicitly parked as post-v1.0.** No date change, no scope change | Owner proposed a well-formed AI-assistant architecture (controlled backend tools, model never touches Postgres directly, reuse `DashboardService` logic). Captured as a V2 discovery/product proposal rather than started now, to avoid adding AI-dependency, schema, and UI scope to an already at-risk GA. Third option applied: commit to the product direction without committing engineering capacity |
 | 2026-08-09 | Initial baseline. 65% complete, Target 2026-09-19, health **At Risk** | First PM baseline, derived from the repository at `661edce` |
