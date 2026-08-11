@@ -46,9 +46,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p><b>Every declared capability is exercised by a committed trace.</b> Measured by running the
  * locator over the trace and reading what actually fired — not by reading the trace's own metadata
- * claim, which would let the corpus grade its own homework. It also has to work today: every
- * committed trace is v1 and declares no capabilities at all, so a metadata-based gate would report
- * perfect coverage of nothing.
+ * claim, which would let the corpus grade its own homework. The v3 traces do declare capabilities
+ * now, which makes the distinction sharper rather than moot: a declaration is what the capture
+ * intended, and this gate reports what the locator actually did. The one v1 trace left declares
+ * nothing at all, so a metadata-based gate would still report perfect coverage of nothing.
  *
  * <p>Both use an explicit named accept-list rather than a tolerated count, following
  * {@code LayerDependencyDirectionTest} and {@code check-dependency-advisories.py}. The property
@@ -89,7 +90,9 @@ class CapabilityCorpusCoverageTest {
     /**
      * Declared capabilities that no committed trace exercises yet.
      *
-     * <p>This is the corpus shortfall, named. Eleven of eighteen, from three traces.
+     * <p>This is the corpus shortfall, named. Ten of nineteen, from three traces --
+     * RIGHT_ALIGNED_AMOUNTS came off this list when the two HDFC documents were re-captured with
+     * widths intact.
      *
      * <p>It has corrected me twice, in both directions, which is the argument for measuring rather
      * than listing. First run: three capabilities I had listed as uncovered were in fact exercised,
@@ -113,12 +116,15 @@ class CapabilityCorpusCoverageTest {
         DECLARED_WITHOUT_A_TRACE.put("GRID_METADATA_TRAILING_LABEL", "no trace");
         DECLARED_WITHOUT_A_TRACE.put("FINANCIAL_PRODUCT_CLASSIFICATION", "no trace");
         DECLARED_WITHOUT_A_TRACE.put("PRINTED_SUMMARY_TOTALS", "no trace; newly registered");
-        DECLARED_WITHOUT_A_TRACE.put("RIGHT_ALIGNED_AMOUNTS",
-                "no trace; newly registered. Worth a second look rather than just a capture -- I "
-                        + "assumed this was among the most exercised capabilities and the gate says "
-                        + "no committed trace activates it at all. Either the three traces genuinely "
-                        + "avoid right-aligned amount columns, or the recording sits on a path they "
-                        + "do not take. Measure before capturing.");
+        // RIGHT_ALIGNED_AMOUNTS was here, with the note "either the three traces genuinely avoid
+        // right-aligned amount columns, or the recording sits on a path they do not take. Measure
+        // before capturing." It was measured, and the answer was a third thing: the two HDFC
+        // traces DO carry right-aligned amount columns and DO take the path, but every committed
+        // trace was width-blind -- v1 has no width column, and the v3 captures made before the
+        // redactor fix zeroed every width -- so the guard at PdfTableLocator's right-edge redirect
+        // (`t.width() > 0`) could never be true on the corpus. The capability was unreachable on
+        // the evidence, not unexercised by it. Recapturing both documents with the width-preserving
+        // redactor activates it on both.
         DECLARED_WITHOUT_A_TRACE.put("LEADING_PLUS_CREDIT",
                 "no trace, and nothing records it -- see DECLARED_BUT_UNRECORDED. A trace cannot "
                         + "cover a capability nothing emits, so this one is blocked on that first.");
@@ -276,8 +282,9 @@ class CapabilityCorpusCoverageTest {
      * fired.
      *
      * <p>Deliberately not the traces' own {@code capabilities} metadata. A corpus that grades itself
-     * on what it claims to cover is not a gate, and every committed trace is v1 today — no metadata
-     * at all — so a metadata-based measure would report perfect coverage of nothing.
+     * on what it claims to cover is not a gate. The two v3 traces now carry capability metadata and
+     * the remaining v1 carries none, so a metadata-based measure would grade the corpus on its own
+     * claims for two documents and report nothing at all for the third.
      */
     private static Set<String> capabilitiesTheCorpusExercises() {
         Set<String> covered = new LinkedHashSet<>();

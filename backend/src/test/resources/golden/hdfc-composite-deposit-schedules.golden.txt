@@ -13,36 +13,36 @@ sections: 4
   mayCreateAutomatically: true
 
 [section 1]
-  columns: [Xxxxxxxx Xxxxxxxxx, Open/Xxxx Xxxxx Date]
+  columns: [Xxxxxxxx Principal, Open/Xxxx Xxxxx Date]
   rows: 9
   auxLines: 28
   accountNumberMasked: ••••9999
-  accountHolderName: Xxxxxxxx Xxxxxxx
+  accountHolderName: Interest Xxxxxxx
   ifscCode: HDFC0XXXXXX
   statementPeriod: null .. null
   product: UNKNOWN (34%, UNIDENTIFIED)
   mayCreateAutomatically: false
 
 [section 2]
-  columns: [Account No, Xxxxxxxxxxx Amount(Xx), Deposit Xxxxx Date, Period Of Deposit(Xxxx), XXX, Deposit Xxxxxxxx Date, Xxxxxxxx Amount(Xx)*]
+  columns: [Account No, Installment Amount(Xx), Deposit Start Date, Period Of Deposit(Mnth), ROI, Deposit Maturity Date, Maturity Amount(Xx)*]
   rows: 2
   auxLines: 0
   accountNumberMasked: null
   accountHolderName: null
   ifscCode: null
   statementPeriod: null .. null
-  product: UNKNOWN (26%, UNIDENTIFIED)
-  mayCreateAutomatically: false
+  product: RECURRING_DEPOSIT (95%, VALIDATED)
+  mayCreateAutomatically: true
 
 [section 3]
-  columns: [Number, Due Date, Amount Xxxx, Due, Status, Xxxxxxx balance**]
+  columns: [Number, Due Date, Amount Paid, Due, Status, Running balance**]
   rows: 7
-  auxLines: 5
+  auxLines: 4
   accountNumberMasked: null
   accountHolderName: null
   ifscCode: null
   statementPeriod: null .. null
-  product: UNKNOWN (49%, UNIDENTIFIED)
+  product: UNKNOWN (0%, UNIDENTIFIED)
   mayCreateAutomatically: false
 
-capabilities: [COMPOSITE_STATEMENT, LEADING_NARRATION_CONTINUATION, OFFSET_COLUMN_ANCHORS, PAGE_BOUNDARY_ISOLATION, REPEATED_HEADER, WRAPPED_DESCRIPTION, WRAPPED_HEADER]
+capabilities: [COMPOSITE_STATEMENT, LEADING_NARRATION_CONTINUATION, OFFSET_COLUMN_ANCHORS, PAGE_BOUNDARY_ISOLATION, REPEATED_HEADER, RIGHT_ALIGNED_AMOUNTS, WRAPPED_DESCRIPTION, WRAPPED_HEADER]

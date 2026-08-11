@@ -2,14 +2,14 @@ trace: hdfc-txn-date-narration-header
 sections: 1
 
 [section 0]
-  columns: [Txn Date, Narration, Deposits, Closing Balance]
+  columns: [Txn Date, Narration, Withdrawals, Deposits, Closing Balance]
   rows: 5
   auxLines: 44
   accountNumberMasked: ••••9999
   accountHolderName: Xxxxx Xxxxxxxxxx
   ifscCode: HDFC0XXXXXX
   statementPeriod: null .. null
-  product: SAVINGS (79%, VALIDATED)
+  product: SAVINGS (92%, VALIDATED)
   mayCreateAutomatically: true
 
-capabilities: [LEADING_NARRATION_CONTINUATION, OFFSET_COLUMN_ANCHORS, WRAPPED_DESCRIPTION]
+capabilities: [LEADING_NARRATION_CONTINUATION, OFFSET_COLUMN_ANCHORS, PAGE_BOUNDARY_ISOLATION, RIGHT_ALIGNED_AMOUNTS, WRAPPED_DESCRIPTION]
