@@ -119,6 +119,65 @@ No redacted trace fixture exists for this yet. `trace-capture.sh` refuses to wri
 preserves structure a table *did* locate, and this document has none to preserve. The next occurrence
 of this pattern (same bank or another) is what turns this from an anecdote into evidence.
 
+### Boilerplate disclaimer text merged into a transaction's description (observed on a real HDFC credit-card statement)
+
+Diagnosed 2026-08-10 via `PdfPipelineDiagnostic` against a real HDFC credit-card statement: the
+last transaction on the page is immediately followed, a few points below, by a "Note:"-led
+rewards-program disclaimer paragraph (several lines explaining how bonus reward points are
+calculated). `PAGE_FOOTER` and `STATEMENT_CLOSING_MARKER` correctly exclude page-number footers and
+"end of statement" banners from ever being folded into the last real transaction — this disclaimer
+matches neither pattern, so it flows through the ordinary trailing-continuation merge and ends up
+appended, in full, onto that transaction's own description.
+
+Traced precisely: the disclaimer's first line ("Note:") sits far enough below the transaction's date
+row (34pt) that `continuesTheBlock`'s learned `blockPitch` is set from that gap — but the disclaimer's
+own internal line spacing is much tighter (~7.3pt), so `separatesItsBlocks` correctly refuses to let
+`continuesTheBlock` extend the merge past the free two-row count cap on pitch grounds alone. The merge
+still happens because the count-cap branch's `isNarrationOnly`/`belongsToTheRowAbove` fallback admits
+each of the first rows on its own terms, and once inside the block, `continuesTheBlock` measures the
+disclaimer's own (tight, self-consistent) internal pitch against `blockSeparation` freshly rather than
+against the original anchor gap — passing a check it was never actually being asked here.
+
+Not a one-line pattern-exclusion fix like `PAGE_FOOTER`/`STATEMENT_CLOSING_MARKER`, both of which
+match and discard a single self-contained line. This disclaimer is a multi-line block whose *later*
+lines carry no marker at all ("The 'Base NeuCoins' are calculated as...", "a) Base NeuCoins on
+eligible...") — excluding only the "Note:" line would leave `trailingCountSinceLastAnchor` reset to 0
+at that point, and the block would still merge starting from the very next line, just without the
+word "Note" attached. A real fix needs a *stateful* "currently inside an excluded footnote block, stop
+admitting continuations until the next dated anchor" flag — genuinely new state in the continuation
+merge loop, not an addition to an existing regex list. Left here rather than built under time
+pressure: this is exactly the kind of change that risks a second, harder-to-notice bug if rushed
+through the same session that found it, and the existing continuation-merge tests already pin a lot of
+adjacent, carefully-balanced behavior that deserves a full regression pass once this is designed
+properly, not squeezed in alongside it.
+
+### Genuine credit limit is architecturally unreachable on at least one real layout (observed on a real ICICI credit-card statement)
+
+Diagnosed 2026-08-10 against a real ICICI credit-card statement, ground truth confirmed by the
+cardholder: the real credit limit is ₹1,40,000.00. `PdfMetadataExtractor` reported 1,15,000.00 --
+neither figure it was choosing between was real. Both matched lines came from the Most Important
+Terms and Conditions section's worked example of how Minimum Amount Due is calculated ("Credit Limit
+35,000.00" ... later "Credit Limit 1,15,000.00", two different hypothetical scenarios in the same
+generic walkthrough every cardholder's statement prints), and -- a separate, now-fixed bug -- the
+`CREDIT_LIMIT` same-line match had no `creditLimit == null` guard, so whichever of the two the scanner
+reached *last* silently won. That ordering bug is fixed (see the commit that guards all seven primary
+label extractions in this file the same way): the result is now deterministic, always the *first*
+matching line. On this document that's "35,000.00" -- still wrong, just consistently so.
+
+The real value genuinely does appear in the document text (confirmed directly: `` `1,40,000.00
+`1,32,637.30 `14,000.00 `0.00 `` -- a Rupee-glyph font-encoding artifact prefixes each figure with a
+backtick, the same class of issue `CsvParser`'s own "C" -- glyph workaround exists for elsewhere in
+this codebase -- three lines below its own genuine "Credit Limit (Including cash) Available Credit
+(Including cash) Cash Limit Available Cash" grid header, well within `GRID_VALUE_SEARCH_WINDOW`. But
+neither the header nor the value row reaches `PdfMetadataExtractor` at all: they are not in either of
+this document's two `LocatedSection`s' `auxiliaryText`. `PdfTableLocator` has already misrecognized an
+unrelated, garbled header ("PAYMENT DUE DATE" merged with surrounding prose) as section 0's own table
+before ever reaching this grid, and the grid itself ends up attributed to neither section. This is a
+`PdfTableLocator` section/table-boundary bug wearing a `PdfMetadataExtractor` symptom, not a metadata-
+parsing bug at all -- the real fix is upstream of where this was first diagnosed. Needs its own
+investigation into why this specific header is misread, not a patch to the metadata scanner, which
+never had a chance to see the right text in the first place.
+
 ---
 
 ## Testing and tooling
@@ -147,7 +206,7 @@ comment above the test.
 Recorded because the temptation is real and naming it is the cheapest defence:
 
 - More diagnostics, counters, metrics or admin graphs. The [diagnostics
-  rule](../../CLAUDE.md) applies — a diagnostic earns its place by being able to prove a proposed
+  rule](../../../CLAUDE.md) applies — a diagnostic earns its place by being able to prove a proposed
   capability *unnecessary*, and the ones that exist have not yet been used in anger.
 - More verification validators. Four rules ship (L3/L4/L5/L7) and the next move is corpus-driven,
   not another rule written from imagination.
