@@ -160,7 +160,10 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
       throw new AdminAccessError(err?.response?.data?.message ?? 'Sign in failed. Check your credentials and try again.');
     }
 
-    persistAdminSession(response.token, response.refreshToken);
+    // BH-012: response.refreshToken is deliberately not passed through to persistAdminSession --
+    // see that function's own comment in client.ts. The same token already arrived as an
+    // HttpOnly cookie the browser attaches itself.
+    persistAdminSession(response.token);
     safeStorage.setItem('finora_admin_email', response.email);
     safeStorage.setItem('finora_admin_name', response.fullName);
     setToken(response.token);
@@ -206,9 +209,17 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
   }
 
   function logout() {
-    const refreshToken = safeStorage.getItem('finora_admin_refresh_token');
-    if (refreshToken) {
-      authApi.logout(refreshToken).catch(() => {});
+    // Best-effort: revoke the refresh token server-side so it can't be used again even if
+    // someone captured it. Don't block clearing local state on this succeeding -- if the
+    // network call fails, the admin still expects to be logged out locally.
+    // BH-012: the cookie is what identifies the session to revoke, and the browser attaches it
+    // automatically -- there is nothing for this call to carry. Still gated on believing there IS
+    // a session, using the access token as that proxy (client.ts's interceptor uses the same
+    // one), where this used to gate on holding a readable refresh token. Logging out when nobody
+    // is logged in should stay a local no-op rather than a pointless request. Mirrors
+    // frontend/src/context/AuthContext.tsx's logout() exactly.
+    if (getAdminToken()) {
+      authApi.logout().catch(() => {});
     }
     clearAdminSession();
     safeStorage.removeItem('finora_admin_email');

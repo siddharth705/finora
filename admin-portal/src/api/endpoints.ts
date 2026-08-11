@@ -40,10 +40,15 @@ export const authApi = {
   login: (identifier: string, password: string) =>
     api.post<{ token: string; refreshToken: string; email: string; fullName: string; phoneVerified: boolean }>(
       '/auth/login', { identifier, password, scope: PORTAL_SCOPE }).then((r) => r.data),
-  refresh: (refreshToken: string) =>
-    rawApi.post<ApiEnvelope<{ token: string; refreshToken: string }>>('/auth/refresh', { refreshToken }).then((r) => r.data.data),
-  logout: (refreshToken: string) =>
-    api.post('/auth/logout', { refreshToken }),
+  // BH-012: no body token, on either call. The refresh token travels as the HttpOnly cookie and
+  // this app cannot read it to put one in a request body even if it wanted to -- withCredentials
+  // on `rawApi`/`api` is what gets it attached. RefreshTokenCookie.resolve() on the backend would
+  // still accept a body token as a fallback (mobile has no cookie jar and needs it), but there is
+  // nothing here to send. Mirrors frontend/src/api/endpoints.ts's identical authApi.refresh().
+  refresh: () =>
+    rawApi.post<ApiEnvelope<{ token: string; refreshToken: string }>>('/auth/refresh').then((r) => r.data.data),
+  logout: () =>
+    api.post('/auth/logout'),
   // Same /auth/forgot-password and /auth/reset-password endpoints the user app (frontend/)
   // already calls -- there's no separate admin-specific password reset mechanism, just one
   // shared implementation, same reasoning as login() above and the phone verification endpoints.

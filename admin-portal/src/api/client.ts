@@ -28,6 +28,17 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL
 // frontend/src/api/client.ts. Axios defaults it to false, so the HttpOnly refresh cookie the
 // backend sets was neither stored nor sent on this app's cross-origin deployment, and
 // CorsConfig's allowCredentials(true) had nothing to permit.
+//
+// BH-012 (admin portal): this app used to ALSO keep its own copy of the refresh token in
+// localStorage (finora_admin_refresh_token) and send it explicitly on every refresh/logout call,
+// even though withCredentials was already true and the backend was already issuing the same token
+// as an HttpOnly cookie. That meant the durable, 30-day credential existed in two places at once
+// -- one an XSS on this origin cannot read, and one it can read with a single `localStorage.
+// getItem()` call. The user-facing frontend (frontend/src/api/client.ts) was fixed for exactly
+// this reason; the admin portal, which is at least as sensitive, was never brought in line with
+// it. The localStorage copy is now gone -- see clearAdminSession()/persistAdminSession() below --
+// so this withCredentials flag is what the refresh token's transport actually depends on now, not
+// merely benefits from.
 export const api = axios.create({ baseURL: BASE_URL, withCredentials: true });
 
 // A separate, interceptor-free instance for the /auth/refresh call itself -- same reasoning as
@@ -51,7 +62,6 @@ export interface ApiEnvelope<T> {
 // session you're looking at, and avoid any confusion if the two apps are ever served from the
 // same origin in a future deployment.
 const TOKEN_KEY = 'finora_admin_token';
-const REFRESH_TOKEN_KEY = 'finora_admin_refresh_token';
 
 const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password'];
 
@@ -68,7 +78,10 @@ api.interceptors.request.use((config) => {
 
 export function clearAdminSession() {
   safeStorage.removeItem(TOKEN_KEY);
-  safeStorage.removeItem(REFRESH_TOKEN_KEY);
+  // BH-012: no refresh-token key to remove here anymore -- it is never written (see
+  // persistAdminSession() below), and any leftover 'finora_admin_refresh_token' from a
+  // pre-migration session is inert going forward since nothing reads it. Left alone rather than
+  // explicitly cleaned up, matching frontend/src/api/client.ts's equivalent clear function.
 }
 
 /**
@@ -95,13 +108,12 @@ function endSessionAndRedirect(reason?: string) {
   window.location.href = '/login';
 }
 
-export function persistAdminSession(token: string, refreshToken: string) {
+export function persistAdminSession(token: string) {
   safeStorage.setItem(TOKEN_KEY, token);
-  safeStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
-}
-
-export function getAdminRefreshToken(): string | null {
-  return safeStorage.getItem(REFRESH_TOKEN_KEY);
+  // BH-012: the refresh token is deliberately NOT stored here. It arrives as an HttpOnly cookie
+  // the browser keeps out of script's reach (see the withCredentials comment above); writing a
+  // second copy into storage any XSS can read is what made that cookie decorative. The field
+  // stays on the response because mobile clients, which have no cookie jar, genuinely need it.
 }
 
 export function getAdminToken(): string | null {
@@ -120,15 +132,20 @@ function unwrapEnvelope(response: any) {
 // already-rotated one is treated as a THEFT signal that revokes every active session for the
 // admin, everywhere. Without this shared promise, N requests 401'ing around the same moment (the
 // access token expiring while idle, then several widgets refetching at once) each independently
-// called authApi.refresh() with the SAME refresh token -- only the first succeeds; the rest trip
-// the backend's theft response over a client-side race, not actual theft.
+// called authApi.refresh() -- only the first succeeds; the rest trip the backend's theft response
+// over a client-side race, not actual theft.
 let refreshInFlight: Promise<{ token: string; refreshToken: string }> | null = null;
 
-function refreshAccessToken(refreshToken: string): Promise<{ token: string; refreshToken: string }> {
+// BH-012: takes no refresh token argument -- there is nothing left for a caller to pass. The
+// cookie travels with the request automatically (withCredentials: true); authApi.refresh() sends
+// no body at all now (see endpoints.ts). Matches frontend/src/api/client.ts's
+// refreshAccessToken() exactly, minus that app's cross-tab Web Locks coordination, which is a
+// separate concern (BH-013) out of scope for this migration.
+function refreshAccessToken(): Promise<{ token: string; refreshToken: string }> {
   if (!refreshInFlight) {
     refreshInFlight = (async () => {
       const { authApi } = await import('./endpoints');
-      return authApi.refresh(refreshToken);
+      return authApi.refresh();
     })().finally(() => {
       refreshInFlight = null;
     });
@@ -149,12 +166,16 @@ api.interceptors.response.use(
 
     if (error.response?.status === 401 && !originalRequest._retried && !isAuthEndpoint) {
       originalRequest._retried = true;
-      const refreshToken = getAdminRefreshToken();
+      // BH-012: no refresh token to read from storage anymore -- what is checked here is whether
+      // this browser believes it has a session at all. With no access token there is nothing to
+      // refresh, and attempting one would turn every anonymous request into a pointless round
+      // trip. Mirrors frontend/src/api/client.ts's identical staleToken check.
+      const staleToken = getAdminToken();
 
-      if (refreshToken) {
+      if (staleToken) {
         try {
-          const refreshed = await refreshAccessToken(refreshToken);
-          persistAdminSession(refreshed.token, refreshed.refreshToken);
+          const refreshed = await refreshAccessToken();
+          persistAdminSession(refreshed.token);
           originalRequest.headers.Authorization = `Bearer ${refreshed.token}`;
           return api(originalRequest);
         } catch (refreshError: any) {
