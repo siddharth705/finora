@@ -265,6 +265,45 @@ Recorded as R-7. The decision is the owner's; making it unconsciously is the fai
 
 ---
 
+## 8a. Fino — AI Financial Intelligence Layer (V2 discovery / product proposal)
+
+**Status: parked. Post-v1.0. No implementation, no schema changes, no OpenAI integration, no new UI.**
+The September 19 GA target is independent of this item.
+
+Proposed direction, captured so the idea isn't lost while engineering capacity stays on GA:
+
+- **What it is:** an AI assistant layer on top of Finora's existing financial data — not a generic
+  chatbot. The model never queries PostgreSQL directly; it calls controlled backend tools
+  (`get_monthly_spending`, `get_category_spending`, `get_net_worth`, `search_transactions`, etc.) and
+  the backend returns exact figures for the model to explain.
+- **Stack fit:** React + TypeScript → Spring Boot / Java 21 → PostgreSQL, using the official OpenAI
+  Java SDK (Responses API, function calling) — integrated inside the existing backend, not a separate
+  service.
+- **Reuse, don't duplicate:** extract the analytical logic already in `DashboardService` into a shared
+  `FinancialAnalyticsService` so Dashboard, Reports, and Fino compute from the same financial truth.
+- **Rough milestone shape (not scheduled, not estimated):** basic chat loop → financial data read
+  tools → comparative/trend analysis → proactive insights → controlled actions with explicit
+  confirmation (budget creation, categorization). Actions are always confirm-before-execute; no
+  personalized investment advice.
+- **Explicitly deferred:** conversation-memory schema, tool definitions, UI design, and the "get that
+  one loop working end-to-end first" build order all stay proposals until scoped as a real v2
+  engineering plan after GA — informed by what production users actually use Finora for, rather than
+  designed from assumptions now.
+
+**Why parked:** the v1.0 date is already at-risk against 15 confirmed-open bug-hunt findings and 2
+owner decisions; adding AI-dependency scope, schema changes, and a new UI surface to the release
+candidate now would compound that risk for a feature not on the critical path to GA. See [[pm-role-for-finora]].
+
+**Readiness contract:** `docs/roadmap/fino-v2-readiness.md` defines what v1.0 engineering may do now
+without it being Fino work — opportunistic-only foundation (shared `FinancialAnalyticsService`,
+clean service boundaries, consistent transaction typing, standardized analytics DTOs) done *only*
+when a bug-hunt or release-gate fix is already touching that code, never as a scheduled task, never
+moving §9's dates. Provenance, the event/audit trail, and admin analytics expansion are explicitly
+deferred to V1.0.1 (post-GA, dedicated work). The acceptance test: every readiness item must be
+justifiable as valuable even if Fino were cancelled.
+
+---
+
 ## 9. Timeline
 
 Single contributor at **~10 h/day**, which is the pace the velocity baseline was measured from. Mobile
@@ -512,6 +551,8 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-11 | **§8a extended: Fino V2 readiness contract added (`docs/roadmap/fino-v2-readiness.md`).** NOW scope limited to opportunistic-only foundation work riding inside existing bug-hunt/release-gate fixes; provenance, event/audit trail, and admin analytics expansion moved to V1.0.1. No date change, no new §9 line items | Owner proposed a broader "Fino Readiness" workstream with several P1/P2 items marked build-now. The table's own later section resolved its internal inconsistency (admin analytics/audit trail listed both NOW and V1.0.1); adopted the disciplined split — nothing enters v1.0 as dedicated, scheduled work; only refactors that are already justified on their own merit and already touching in-scope code |
+| 2026-08-11 | **New §8a: Fino (AI financial intelligence layer) recorded and explicitly parked as post-v1.0.** No date change, no scope change | Owner proposed a well-formed AI-assistant architecture (controlled backend tools, model never touches Postgres directly, reuse `DashboardService` logic). Captured as a V2 discovery/product proposal rather than started now, to avoid adding AI-dependency, schema, and UI scope to an already at-risk GA. Third option applied: commit to the product direction without committing engineering capacity |
 | 2026-08-09 | Initial baseline. 65% complete, Target 2026-09-19, health **At Risk** | First PM baseline, derived from the repository at `661edce` |
 | 2026-08-09 | **D-1 resolved (no real users).** Health **At Risk → On Track**. R-3 closed, R-3a opened | The defect backlog is pre-launch, not live. Nothing is being harmed while it is open, and no data repair is needed |
 | 2026-08-09 | **D-2 resolved (mobile in v1.0).** Target **2026-09-19 → 2026-10-16**; best case 2026-09-28, conservative 2026-11-13 | Mobile joins the critical path. +13–19 working days, of which the externally-gated items (enrolment, device bring-up, store review) set the floor. R-9 elevated; R-9a and R-9b opened |
