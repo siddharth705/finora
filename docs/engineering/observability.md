@@ -267,7 +267,7 @@ A worker is not production-ready without:
 | Event | Reported? | Why |
 |---|---|---|
 | Retry scheduled | **No** — breadcrumb + counter | A transient failure the next attempt resolves is normal. Paging on it is how alerting gets muted. Alert on the *rate*. |
-| Dead-lettered | **Yes** | The user's action silently did not take effect. |
+| Dead-lettered | **Depends on severity** | Always counted (`finora.worker.dead_letters`/`finora.worker.failures`). Whether it also reaches Sentry depends on `AlertSeverity`: `ERROR`/`WARNING` capture (matching every caller before `AlertSeverity` existed — e.g. `MerchantLearningEventWorker`, always `ERROR`), `NONE` does not. `ImportJobWorker` passes a severity derived from `ErrorCode.RetryPolicy` (Premium Import Reliability v1, §5.6): a `FAIL_FAST` dead-letter (a corrupt PDF, a locked document — an expected, customer-caused failure already visible via the failure UX and failure-analytics query) is `NONE` and never reaches Sentry; `RETRY`-exhausted is `WARNING`; `RETRY_ONCE_THEN_ALERT` is `ERROR`. The counter is the reliable signal regardless of severity — see `WorkerDeadLettersRising` below. |
 | Failure not recorded | **Yes** | Double fault — the row is stranded. |
 | Abandoned rows recovered | **Yes** | A worker process died. |
 
@@ -410,6 +410,13 @@ confirmed a category and it silently did not take effect.
 **Check first.** The Sentry event, tagged `outcome=dead-letter`. It carries `jobId`, `worker` and the
 redacted exception. The exception *type* is usually enough to classify it: a constraint violation and
 a missing merchant need different responses.
+
+For the import worker specifically, a `FAIL_FAST`-classified dead-letter (a corrupt PDF, a locked
+document — an expected, customer-caused failure, not an engineering one) deliberately produces no
+Sentry event at all (Premium Import Reliability v1, §5.6 — see the severity table above). If the
+metrics below show a spike with no matching Sentry event, that is very likely a batch of routine
+import failures, not a missing alert — go straight to logs/the admin failure queue instead of
+searching Sentry for an event that was never sent.
 
 **Metrics.** `finora_worker_dead_letters_total` by `worker` — one job or a pattern? Compare with
 `finora_worker_retries_total`: a spike in both suggests a dependency degraded, then failed outright.

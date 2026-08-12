@@ -7,10 +7,12 @@ import com.finora.imports.ImportService;
 import com.finora.imports.storage.ContentAddress;
 import com.finora.imports.storage.StatementStorage;
 import com.finora.imports.storage.StatementStorageException;
+import com.finora.observability.AlertSeverity;
 import com.finora.observability.WorkerObservability;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.io.IOException;
 import java.time.Instant;
@@ -133,6 +135,32 @@ class ImportJobWorkerTest {
                 .as("second occurrence must dead-letter -- not the 5-attempt RETRY budget")
                 .isEqualTo(ImportJob.Status.FAILED);
         assertThat(job.getAttemptCount()).isEqualTo(2);
+    }
+
+    /**
+     * Premium Import Reliability v1, §5.6. Exhaustive over every current {@code RetryPolicy}
+     * constant, so a future 4th value fails this test rather than silently falling through to no
+     * severity mapping at all. No Sentry test double exists in this suite (see the class's own
+     * comment on {@link WorkerObservabilityTest} for why -- Sentry calls are no-ops-when-unconfigured
+     * and this codebase asserts what's provable without one), so this proves the pure
+     * policy-to-severity mapping directly rather than trying to observe a Sentry call that never
+     * happens in a test JVM.
+     */
+    @Test
+    void severityForMapsEveryRetryPolicyToTheDecidedAlertSeverity() {
+        assertThat(severityFor(ErrorCode.RetryPolicy.FAIL_FAST))
+                .as("a known, expected, customer-caused failure must never page anyone")
+                .isEqualTo(AlertSeverity.NONE);
+        assertThat(severityFor(ErrorCode.RetryPolicy.RETRY))
+                .as("an infrastructure dependency failing for the full backoff window is worth knowing, not worth waking someone")
+                .isEqualTo(AlertSeverity.WARNING);
+        assertThat(severityFor(ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT))
+                .as("the one case that is plausibly a genuine, unclassified Finora bug")
+                .isEqualTo(AlertSeverity.ERROR);
+    }
+
+    private AlertSeverity severityFor(ErrorCode.RetryPolicy policy) {
+        return (AlertSeverity) ReflectionTestUtils.invokeMethod(worker, "severityFor", policy);
     }
 
     /**

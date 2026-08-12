@@ -123,15 +123,39 @@ public final class WorkerExecution implements AutoCloseable {
     }
 
     /**
-     * Retries are exhausted; the job will not run again without a human.
+     * Retries are exhausted; the job will not run again without a human. Alerts at {@link
+     * AlertSeverity#ERROR}, matching every caller before {@link #deadLettered(UUID, int, Throwable,
+     * AlertSeverity)} existed.
      *
-     * <p>Always reported. The user's action silently did not take effect, and without this the only
-     * signal is a log line plus a row in a screen somebody has to think to open.
+     * <p>The user's action silently did not take effect, and without an alert the only signal is a
+     * log line plus a row in a screen somebody has to think to open.
+     *
+     * @see #deadLettered(UUID, int, Throwable, AlertSeverity)
      */
     public void deadLettered(UUID jobId, int attempts, Throwable cause) {
+        deadLettered(jobId, attempts, cause, AlertSeverity.ERROR);
+    }
+
+    /**
+     * Retries are exhausted; the job will not run again without a human -- reported at a severity
+     * the caller chooses, because "gave up" does not always mean the same thing. Premium Import
+     * Reliability v1, §5.6: a known, expected failure (a corrupt PDF, a locked document) giving up
+     * immediately is not an engineering problem, and paging on every one of them buries the alerts
+     * that are.
+     *
+     * <p>The counters below are unconditional regardless of severity -- alerting and analytics are
+     * separate questions. "How often do we give up" still needs to count an {@link
+     * AlertSeverity#NONE} dead-letter; "should a human be paged for this one" is the only thing
+     * severity decides.
+     */
+    public void deadLettered(UUID jobId, int attempts, Throwable cause, AlertSeverity severity) {
         meters.deadLetters(worker, jobKind).increment();
         meters.failures(worker, jobKind).increment();
-        capture(jobId, "apply", "dead-letter", cause);
+        switch (severity) {
+            case NONE -> { /* expected, not actionable -- counted above, never paged */ }
+            case WARNING -> capture(jobId, "apply", "dead-letter", cause, SentryLevel.WARNING);
+            case ERROR -> capture(jobId, "apply", "dead-letter", cause, SentryLevel.ERROR);
+        }
     }
 
     /**
@@ -186,12 +210,20 @@ public final class WorkerExecution implements AutoCloseable {
     // ------------------------------------------------------------------ internals
 
     private void capture(UUID jobId, String phase, String outcome, Throwable cause) {
+        capture(jobId, phase, outcome, cause, null);
+    }
+
+    /** @param level null keeps Sentry's own default level for an exception capture -- explicit only
+     *               where a caller (currently only {@link #deadLettered(UUID, int, Throwable,
+     *               AlertSeverity)}) needs to say otherwise. */
+    private void capture(UUID jobId, String phase, String outcome, Throwable cause, SentryLevel level) {
         Sentry.withScope(scope -> {
             scope.setTag("phase", phase);
             scope.setTag("outcome", outcome);
             // Safe under SentryScrubber's tag allowlist: a queue row's own id identifies a row in
             // our database and nothing about the person it belongs to.
             if (jobId != null) scope.setTag("jobId", jobId.toString());
+            if (level != null) scope.setLevel(level);
             Sentry.captureException(cause);
         });
     }

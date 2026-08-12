@@ -6,6 +6,7 @@ import com.finora.imports.ImportService;
 import com.finora.imports.StatementUpload;
 import com.finora.imports.storage.ContentAddress;
 import com.finora.imports.storage.StatementStorage;
+import com.finora.observability.AlertSeverity;
 import com.finora.observability.WorkerExecution;
 import com.finora.observability.WorkerObservability;
 import org.slf4j.Logger;
@@ -323,7 +324,7 @@ public class ImportJobWorker {
                 case DEAD_LETTERED -> {
                     log.error("Import job {} failed {} times and will not be retried automatically",
                             jobId, attempts[0], cause);
-                    execution.deadLettered(jobId, attempts[0], cause);
+                    execution.deadLettered(jobId, attempts[0], cause, severityFor(policy));
                 }
                 case RETRY_SCHEDULED -> {
                     log.warn("Import job {} failed (attempt {}), will retry", jobId, attempts[0]);
@@ -353,5 +354,29 @@ public class ImportJobWorker {
      *  and "unparseable statement" need different responses from whoever reads the admin queue. */
     private static String describe(Exception e) {
         return e.getClass().getSimpleName() + ": " + e.getMessage();
+    }
+
+    /**
+     * How loudly a dead-letter of this policy should reach a human -- Premium Import Reliability
+     * v1, §5.6. The translation from {@code ErrorCode.RetryPolicy} (the import domain) to {@link
+     * AlertSeverity} (the platform observability contract every worker shares) belongs here, at the
+     * one place that already knows both: {@code WorkerExecution}/{@code WorkerObservability} stay
+     * generic rather than depending on this worker's own failure vocabulary.
+     */
+    private static AlertSeverity severityFor(ErrorCode.RetryPolicy policy) {
+        return switch (policy) {
+            // A known, permanent, expected failure -- a corrupt PDF, a locked document. Already
+            // visible to the customer (Sprint 1's failure UX) and to support (the failure-analytics
+            // query); paging an engineer for every one of them buries the alerts that are actually
+            // theirs to act on.
+            case FAIL_FAST -> AlertSeverity.NONE;
+            // An infrastructure dependency failed for the full backoff window. Usually not Finora's
+            // own code -- check the dependency's health -- so worth knowing, not worth waking
+            // someone.
+            case RETRY -> AlertSeverity.WARNING;
+            // Nothing recognized this exception, it was retried once anyway, and it failed again.
+            // The one case that is plausibly a genuine, unclassified Finora bug.
+            case RETRY_ONCE_THEN_ALERT -> AlertSeverity.ERROR;
+        };
     }
 }

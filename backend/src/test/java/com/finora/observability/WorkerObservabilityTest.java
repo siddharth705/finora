@@ -199,6 +199,50 @@ class WorkerObservabilityTest {
         assertThat(counter("finora.worker.failures")).isEqualTo(1.0);
     }
 
+    /**
+     * Premium Import Reliability v1, §5.6. The 3-arg form used above is a delegating wrapper for
+     * {@code AlertSeverity.ERROR} -- this proves that by construction, not by re-implementation:
+     * every metric assertion the ERROR-severity path produces matches the 3-arg form exactly.
+     */
+    @Test
+    void the3ArgDeadLetterDelegatesToErrorSeverity() {
+        try (WorkerExecution execution = observability.begin(WORKER, KIND)) {
+            execution.deadLettered(UUID.randomUUID(), 5, new IllegalStateException("gave up"),
+                    AlertSeverity.ERROR);
+        }
+
+        assertThat(counter("finora.worker.dead_letters")).isEqualTo(1.0);
+        assertThat(counter("finora.worker.failures")).isEqualTo(1.0);
+    }
+
+    /**
+     * Alerting and analytics are different questions. A FAIL_FAST-classified failure (§5.6) never
+     * pages anyone -- {@link AlertSeverity#NONE} -- but "how often do we give up" still has to count
+     * it, or the failure-analytics query undercounts every expected, customer-caused dead-letter.
+     */
+    @Test
+    void aNoneSeverityDeadLetterStillCountsTowardBothCounters() {
+        try (WorkerExecution execution = observability.begin(WORKER, KIND)) {
+            execution.deadLettered(UUID.randomUUID(), 1, new IllegalStateException("expected"),
+                    AlertSeverity.NONE);
+        }
+
+        assertThat(counter("finora.worker.dead_letters")).isEqualTo(1.0);
+        assertThat(counter("finora.worker.failures")).isEqualTo(1.0);
+    }
+
+    /** Same as the NONE case: severity changes who gets paged, never what gets counted. */
+    @Test
+    void aWarningSeverityDeadLetterAlsoCountsTowardBothCounters() {
+        try (WorkerExecution execution = observability.begin(WORKER, KIND)) {
+            execution.deadLettered(UUID.randomUUID(), 5, new IllegalStateException("infra blip"),
+                    AlertSeverity.WARNING);
+        }
+
+        assertThat(counter("finora.worker.dead_letters")).isEqualTo(1.0);
+        assertThat(counter("finora.worker.failures")).isEqualTo(1.0);
+    }
+
     @Test
     void aFailureThatCouldNotBeRecordedCountsAsAFailureButNotADeadLetter() {
         // The row is stranded, not abandoned-by-policy. Filing it as a dead letter would overstate
@@ -289,6 +333,9 @@ class WorkerObservabilityTest {
             execution.started(id, null);
             execution.retryScheduled(id, 1);
             execution.deadLettered(id, 3, new IllegalStateException("x"));
+            execution.deadLettered(id, 1, new IllegalStateException("none"), AlertSeverity.NONE);
+            execution.deadLettered(id, 5, new IllegalStateException("warning"), AlertSeverity.WARNING);
+            execution.deadLettered(id, 2, new IllegalStateException("error"), AlertSeverity.ERROR);
             execution.failureNotRecorded(id, new IllegalStateException("x"));
             execution.deadLettered(null, 3, new IllegalStateException("no id"));
             execution.recovered(1);
