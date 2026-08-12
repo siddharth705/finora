@@ -9,7 +9,6 @@ import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.pdfbox.text.TextPosition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -112,7 +111,7 @@ public class PdfTextExtractor {
             // this boundary at all. The cause is logged and kept out of the response.
             log.warn("Could not read an uploaded PDF -- treating as a damaged file rather than a "
                     + "server fault. PDFBox said: {}", e.getMessage());
-            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,
+            throw new ApiException(ErrorCode.IMPORT_CORRUPT_PDF,
                     "This PDF could not be read -- the file appears to be damaged or incomplete. "
                             + "Downloading it again from your bank usually fixes this.");
         }

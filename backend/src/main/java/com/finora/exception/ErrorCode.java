@@ -65,6 +65,16 @@ public enum ErrorCode {
             "This statement is password protected. Enter the password your bank uses for it."),
     IMPORT_PDF_PASSWORD_INVALID("IMPORT_009", HttpStatus.UNPROCESSABLE_ENTITY,
             "That password did not open this statement. Check it and try again."),
+    // A structurally broken PDF -- truncated by a failed download, corrupted in transit, or saved
+    // by something that produced not-quite-valid output. Previously thrown as a codeless
+    // ApiException (PdfTextExtractor.loadOrExplain's IOException branch), which meant
+    // StatementAnalysisRecorder recorded failureCode = null for it -- indistinguishable from any
+    // other codeless failure in the failure_code histogram, the customer-facing failures list, and
+    // any future retry classification. The user-facing message is unchanged by adding this code;
+    // the throw site's own message stays richer than this default (see that method's doc comment
+    // for why a codeless response was actively wrong, not just imprecise).
+    IMPORT_CORRUPT_PDF("IMPORT_011", HttpStatus.UNPROCESSABLE_ENTITY,
+            "This PDF could not be read -- the file appears to be damaged or incomplete"),
 
     // Accounts
     ACCOUNT_NOT_FOUND("ACC_001", HttpStatus.NOT_FOUND, "Account not found"),
