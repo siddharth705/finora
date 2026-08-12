@@ -1,0 +1,497 @@
+# finora-pdf-trace v3
+# traceVersion: 3
+# redactorVersion: 2
+# allowlistFingerprint: A3C0126B
+# capturedAt: 2026-08-12
+# generatedFrom: ICICI Bank credit card statement
+# capabilities: WRAPPED_HEADER, WRAPPED_DESCRIPTION, LEADING_NARRATION_CONTINUATION, PAGE_BOUNDARY_ISOLATION
+# regressions: 
+# requiredHeaders: Total Amount due, Minimum Amount due, Credit Limit, STATEMENT DATE, PAYMENT DUE DATE
+# motivation: real-world validation sweep for credit-card classifier evidence, PM-requested
+# page	x	y	width	text
+0	-72.70	-47.49	0.00	99999999_9
+0	37.50	56.16	124.80	CREDIT CARD STATEMENT
+0	72.05	87.51	0.00	99999999_9
+0	38.25	95.28	0.00	XX XXXXXXXXX XXXXXX
+0	276.18	94.04	0.00	Xxxxxxxx the xXxxxxx Xxx xxx to -
+0	38.25	103.76	0.00	XXXXX,XXXXX XXXX NO 9
+0	284.77	102.01	0.00	Xxxx statement xxxxxxxxx
+0	38.25	112.23	0.00	XXXX,XXXXXX,,XXXX XXXXXX,XXXXXXXX
+0	284.77	109.22	0.00	Xxxxx/xxxxxxx ATM withdrawal, xxxxxx xxxxxxxxxxxx &
+0	284.77	116.44	0.00	xxxxxxxxxxxxx xxxxxxxxxxxx xx a xxxxxx xxxxx
+0	38.25	120.70	0.00	Xxxxxxxxxx 
+0	276.70	123.91	0.00	XXX xXxxxxx to 9999999 to xxx the xxxxxxxx xxxx or xxxx a xxxxxx xxxx on 9999999999
+0	38.25	129.17	0.00	MAHARASHTRA, XXX 999999
+0	276.70	129.34	0.00	to xxxxxxxxxx on xxxx.
+0	276.70	144.43	0.00	Xxx xxxx Xxxxxxx Xxxxxxx, xxxx xXxxx xxxxxx
+0	276.70	154.84	0.00	Xxxx the OR Code, to xxxx xxxxx the Credit Card xxxxxxxx,
+0	276.70	161.50	0.00	on ICICI Bank’x xXxxxxx Xxx.
+0	234.58	177.80	0.00	Xxxx to xxxxx xXxxx xxxxx
+0	442.93	177.05	0.00	X&X Xxxxx
+0	79.48	193.39	69.65	STATEMENT DATE
+0	215.30	196.34	0.00	Xxx xxxxxxxxxxxxxx xxx xxxxx xxxx to xxxx registered x-xxxx ID and xxxxxx number
+0	81.19	205.27	0.00	Xxxx 99, 9999
+0	213.34	205.71	0.00	x
+0	221.84	205.71	0.00	To xxxxxx email ID and registered xxxxxxx address, xxxxx xxx.xxxxx.xxxx.xx > Xxxxx > Customer Xxxxxxx >
+0	221.84	214.18	0.00	Xxxxxxx Xxxxxxxx > Credit Card > Xxxxxxx for address xxxxxx or xxxxx the xxxxxxx ICICI Bank branch
+0	74.93	223.94	0.00	PAYMENT DUE DATE x
+0	221.84	223.06	0.00	To xxxxxx xxxxxx number, xxxxx the xxxxxxx branch
+0	80.33	235.58	0.00	Xxxx 99, 9999
+0	213.34	231.94	0.00	x
+0	221.84	231.94	0.00	Xxxxx xxxx to xxxxxx xxxx Credit Card Xxx Xxxx Statement
+0	439.50	236.15	0.00	Xxxx to Xxx xxxxx
+0	439.50	245.81	0.00	xxx UPI Xxxxxxxxxxx
+0	205.45	254.88	113.71	STATEMENT SUMMARY
+0	82.54	274.13	62.70	Total Amount due
+0	146.64	274.13	0.00	             Xxxxxxxx Balance
+0	305.95	275.26	0.00	Xxxxxxxxx / Xxxxxxx
+0	403.67	275.26	0.00	Xxxx Xxxxxxxx
+0	488.17	275.26	0.00	Xxxxxxxx / Credits
+0	189.39	282.99	4.20	=
+0	285.33	282.54	5.00	+
+0	377.72	282.58	5.00	+
+0	470.51	283.23	4.19	-
+0	89.86	288.99	44.87	`7,362.70
+0	238.81	292.49	19.71	`0.00
+0	320.69	292.49	35.42	`7,362.70
+0	418.39	292.49	19.71	`0.00
+0	507.14	292.36	21.81	`0.00
+0	75.53	313.88	76.33	Minimum Amount due
+0	205.45	315.84	89.78	CREDIT SUMMARY
+0	95.78	328.26	36.45	`370.00
+0	208.02	334.04	0.00	Credit Limit (Xxxxxxxxx xxxx)
+0	290.82	334.04	0.00	Available Credit (Xxxxxxxxx xxxx)
+0	411.99	334.04	0.00	Xxxx Limit
+0	495.87	334.04	0.00	Available Xxxx
+0	71.02	343.74	0.00	Interest xxxx xx xxxxxxx xx xxxx
+0	73.93	350.94	79.32	total amount due is not paid
+0	221.61	354.82	46.50	`1,40,000.00
+0	311.24	354.82	46.50	`1,32,637.30
+0	408.68	354.82	40.04	`14,000.00
+0	509.80	354.82	19.71	`0.00
+0	89.08	373.87	0.00	XXXXXX XXXXXXXX
+0	207.83	376.16	13.17	Date
+0	262.36	376.16	0.00	XxxXx.
+0	305.25	376.16	52.84	Transaction Details
+0	443.19	376.16	0.00	Xxxxxx
+0	485.70	376.16	0.00	Xxxx.#
+0	521.86	376.16	0.00	Amount (xx`)
+0	445.43	383.44	0.00	Xxxxxx
+0	481.19	383.44	20.99	amount
+0	207.83	398.30	0.00	9999XXXXXXXX9999
+0	102.99	404.39	0.00	99%
+0	207.83	411.72	31.31	17/06/2026
+0	252.29	411.72	0.00	99999999999
+0	305.25	411.72	0.00	Xxxxxxxxxx Xxxxxxx XX
+0	450.47	411.72	0.00	99
+0	533.25	411.72	23.66	1,652.00
+0	207.83	424.67	31.31	24/06/2026
+0	252.29	424.67	0.00	99999999999
+0	305.25	424.67	0.00	XXXXXXXXXX xxxxxxxxxx XX
+0	450.47	424.67	0.00	99
+0	533.25	424.67	23.66	2,999.00
+0	207.83	437.62	31.31	06/07/2026
+0	252.29	437.62	0.00	99999999999
+0	305.25	437.62	0.00	Xxxxxxxx Xxxx Xxxxxxxx Xxxxxx XX
+0	450.47	437.62	0.00	99
+0	533.25	437.62	23.66	2,711.70
+0	205.00	445.82	0.00	# Xxxxxxxxxxxxx Xxxxxx
+0	111.17	507.70	0.00	99%
+0	52.19	523.62	0.00	 Xxxxxxx/Xxxxxxx-99%
+0	125.57	523.62	0.00	 Xxxxxx-99%
+0	66.52	646.25	0.00	XXXXx Bank Xxxxxxx
+0	48.42	664.10	0.00	Total Xxxxxx xxxxxx*
+0	158.28	662.89	0.00	999
+0	47.84	680.46	0.00	Xxxxxx xxxxxx on xXxxx
+0	205.00	690.87	0.00	For xxxxxxx xxxxxxxxxxx, 'xxx xXxx' on xxx xxxxxxx and xxxxxx xxx. Xxx xxx xxxx contact xxx Customer Xxxx, xxxx
+0	48.51	696.48	0.00	*The total xxxxxx xxxxxx xxx XX or xxxxx xxx ICICI Bank Branch.
+0	48.51	706.08	0.00	xxxxxxxxx of xxxxxx xxxxxx on xXxxx
+0	211.12	716.11	0.00	XXXXXXXXX XXXXXXXX
+0	208.50	731.20	0.00	x
+0	222.67	731.20	0.00	Xxxx Xxxxxxx Xxxx -
+0	41.00	737.99	0.00	ICICI Bank Credit Card XXX Number: 99XXXXX9999X9XX
+0	208.50	740.08	0.00	x
+0	222.67	740.08	0.00	Xxx registered xxxxxx address: ICICI Bank Xxxxx, Xxxx Xxxxxx Xxxxxx, Xxx Xxxxx Xxxx, Xxxxxxxx, 999 999.
+0	41.00	746.85	0.00	XXX Code: 999999 Credit Xxxxxxxx Xxxxxxxx xxxxxxxxx
+0	208.50	748.96	0.00	x
+0	222.67	748.96	0.00	Xxxxxx xxxx minimum payment xxxxx xxxxx xxx xxxx to repayment xxxxxxxxxx xxxx xxxxx xxxx xxxxxxxxxx interest payment on
+0	41.00	752.87	0.00	                    xxxxx-xx xxxxxxxxxx, xxxxxxxxxx & xxxxxxxxxx
+0	222.67	756.17	54.31	outstanding balance.
+0	41.00	761.73	0.00	Statement period : Xxxx 99, 9999 to Xxxx 99, 9999
+0	208.50	764.74	0.00	x
+0	222.67	764.74	0.00	Xxxxxx xxx xxxx Credit Card outstanding xxxxxx the payment due date to xxxxx xxxxx xxxx and interest xxxxxxx.
+0	41.00	770.59	0.00	Xxxxx of xxxxxx: Maharashtra
+0	208.50	773.62	0.00	x
+0	222.67	773.62	0.00	For xxx xxxxxxxxxxxxx or xxxx xxxxxxxxxxx, xxx xxx contact xx xxxxxxx the ‘Xxx xx Xxxxx’ xxxxxx xx xxx.xxxxx.xxxx.xx
+0	41.00	779.45	0.00	State Code: 99
+0	208.50	782.50	0.00	x
+0	222.67	782.50	0.00	Xxxx-xx xxx and xxxxxxxxxxxxx XXX xxxxxx is xxxxxxxx xx the transaction amount xxxxxxxxx.
+0	208.50	791.38	0.00	x
+0	222.67	791.38	0.00	For XxXxx/Xxxxxxxx Xxxxxxx/ Xxxx/Xxxxxxxxxx Credit Xxxxx: Xxxx xxxxxxxxx and xxxxxxxxxxxxx Xxxxx and Xxxxxxxx Xxx (XXX)
+0	36.67	799.86	0.00	Xxxxxx Xxxxxx xxxxxx on xxxxxxxxxx xxxxxxxxxxx on xxxx ICICI Bank Credit
+0	222.67	798.59	0.00	xxxxxx is xxxxxxxx xx the transaction amount xxxxxxxxx.
+0	36.67	805.50	0.00	Card xxxx xx xxxxx to xxxx Xxxxxxx account xxxxxx 9 Xxxxxxxx Xxxx of
+0	208.50	807.16	0.00	x
+0	222.67	807.16	0.00	Payment xxxxxxx UPI is xxxxxxx to the xxxxxx xxx xx xxxxxxxxxx payment xxxxxxx xxxxxxxxx.
+0	36.67	811.15	0.00	monthly Credit Card statement xxxxxxxxxx as xxx the xxxxxxxx xxxxx, xx
+0	36.67	816.80	0.00	xxxx account is not xxxxxxxxxx or xxxxxxxxx xx the xxxx of xxxx credit.
+0	39.58	827.45	0.00	Xxxxxxx No: 9999999999999999
+0	204.83	827.12	0.00	XXX No. X99999XX9999XXX999999
+0	524.67	827.22	0.00	Page 9 of 9
+0	82.34	581.28	0.00	9/9
+1	39.65	65.86	0.00	XXXX XXXXXXXXX XXXXX AND XXXXXXXXXX (XXXX)
+1	36.82	95.20	0.00	To xxx the xxxxxxxx xxxxxxx of Credit Xxxxx – Xxxx Xxxxxxxxx Xxxxx and Xxxxxxxxxx (XXXX), xxxxxx xxxxx:
+1	36.82	112.33	0.00	ICICI Bank Xxxxxxx>Xxxxxxxx>Credit Xxxxx>Xxxxx and Xxxxxxxxxx and XXXx>Xxxx Xxxxxxxxx Xxxxx and Xxxxxxxxxx
+1	36.82	130.16	0.00	Or xxxxx the xxxx: xxxxx://xxx.xxxxx.xxxx.xx/xxxxxxx-xxxxxx/xxxx/xxxxxxxx/xxxxx/xxxx_xx.xxx
+1	158.55	195.11	0.00	XXXXX XXXXXX ON XXXX CARD
+1	524.67	827.22	0.00	Page 9 of 9
+1	82.33	581.28	0.00	9/9
+2	93.14	644.32	0.00	XXXXXXXXX XXXXXXXXXXX ON XXXX CREDIT CARD
+2	60.28	663.90	0.00	Xx a No Xxxx EMI xxxxx is xxxxxxxxxxxx xx the xxxxxxxx xxxxxx the xxxxxxxx, the interest xxxxxxx 
+2	60.29	676.16	0.00	xxxxxxxxxx to xxxx xxxxx xxxx xx xxxxxx on to the card holder xxxxxxx an xxxxxxx xxxxxxxx xxxx or xxxxxxxx 
+2	60.30	688.43	0.00	xxxx, as xxx the xxxxx details xxxxxxx xx the xxxxxxxx. Bank xxxxxxx interest on xxxxx EMI transaction.
+2	60.31	714.66	0.00	Xxxxxxxxxx Xxxxxxxxx/Xxxxxxxxxx/ Xxxxxxxxxxx: Xx the xxxxx xxxx xxx xxx not xxxxxxxxx xxxx xxx 
+2	60.32	726.93	0.00	xxxxxxxx, xxx xxx xxxxxxxx xxxx xxxxxxxxx xx (x) xxxxxxxx “Xxxxxxxxx Xxxx” xx xxx.xxxxx.xxxx.xx or 
+2	60.28	739.20	0.00	(xx) xxxxxxx xx xxx Customer Xxxx number or xxxxxxx to Xx. Xxxxxxx Xxxxxxxxx, The Principal Xxxxx 
+2	60.29	751.47	0.00	Xxxxxxx,  ICICI Bank Ltd Xxxxxx Xxxxx Xxxxxxx Xxxxxx 999999, (Xxxxxx Address), Xxxxxxxxx No.: 
+2	60.30	763.74	0.00	999-99999999 (Xxxxxx to Xxxxxx, 99:99 x.x. to 9:99 x.x. xxxxxxxxx Bank xxxxxxxx), Email: 
+2	60.31	776.00	0.00	xxx@xxxxxxxxx.xxx.
+2	76.71	800.96	0.00	Xxxx is an xxxxxxxxxxxxx xxxxxxxxxx/statement. Xxxxxxxxx xxx xxxxxxxxx to xxxxxxxxxxx xxxxxx the Bank of xxx xxxxxxxxxxx xx the statement.
+2	524.67	827.22	0.00	Page 9 of 9
+2	82.33	581.28	0.00	9/9
+3	28.35	89.42	0.00	To xxxxxx the xxxx, xxxxx or xxxxxxxxxxxx xxx of card or XXX of credit card, xxx xxx xxx xxx of the xxxxx xxxxxxxxx
+3	28.35	101.97	0.00	xxxxx xxxxxxx to xxxxx the card
+3	46.20	117.35	0.00	x
+3	64.35	117.35	0.00	Xxxx XXX XXXXX xxxxx <xxxx 9 xxxxx of card number> to 9999999999 from xxxx registered xxxxxx number
+3	46.20	132.74	0.00	x
+3	64.35	132.74	0.00	Xx xxx xxx xxxxxx India, xxxx on 99999999 and xx xxx xxx xxxxxxx India, xxxx on 99999999999
+3	46.20	148.12	0.00	x
+3	64.35	148.12	0.00	Xx to xxxxxx xxxxxxx xxx to xxxxx the card (xxxxx xxxxxx card)
+3	28.35	163.51	0.00	Xx xxxx xxx xxxxxxx xxx xxxxxxx xxxxxxxxxxx, xxx xxx xxxx xxx Customer Xxxx (9999 9999) or xxxxx to xx xx
+3	28.35	176.06	0.00	xxxxxxxx.xxxx@xxxxxxxxx.xxx
+3	28.35	206.83	0.00	Xxxxxx of Payment : Xxxxxxxx xxxxxxx the Credit Card Account to xx xxxx xxxxxxx xxx of the xxxxx xxxxx:
+3	28.35	222.21	0.00	    9. Xxxx to Xxx
+3	28.35	237.60	0.00	    9. UPI
+3	28.35	252.98	0.00	    9. National Xxxxxxxxxx Xxxxx Xxxxxxxx (NEFT)
+3	28.35	268.37	0.00	    9. Xxxx
+3	28.35	283.75	0.00	    9. Xxxxxxxx Xxxxxxx
+3	28.35	299.14	0.00	    9. Xxxx Debit
+3	28.35	314.52	0.00	    9. Xxxxx to Xxx
+3	28.35	329.91	0.00	    9. xXxxxxx Xxx xxx
+3	28.35	345.29	0.00	    9. ICICI Bank XXXx
+3	28.35	376.06	0.00	To xxxx xxxx Credit Card Account xxxxxx and to xxxxxxx xxxxxxxxx xxxxxxx, xxxxxx xxxxxx xxxx xxxx xxxxxx number
+3	28.35	388.61	0.00	and x-xxxx ID xxx xxxxxxxxx xxxxxxx.
+3	28.35	403.99	0.00	Xxxxxxxx of xxxxxxxx xxxxxx number and x-xxxx ID: 
+3	46.20	419.38	0.00	x
+3	64.35	419.38	0.00	Xxxxxxx xxxxxxx xxxxxx of xxx xxxxxxxxxx or xxxxxxxxxxxx xxxxxxxxxxxx xxxx xxx carried xxx xxxxx xxxx Credit
+3	64.35	431.93	22.78	Card
+3	46.20	447.31	0.00	x
+3	64.35	447.31	0.00	Xxx xxxx-xxxx xxxxxxx for xxx xxxx xxxxxxxxxxxx
+3	46.20	462.70	0.00	x
+3	64.35	462.70	0.00	Xxxxxxx on xxxxxxxxxxxx xxxxxx, xxxxxxxx xxx.
+3	46.20	478.08	0.00	x
+3	64.35	478.08	0.00	Xxxxxxx xxxxxx from the Bank xxxxxxxx xxxxxxxxxxx xxxxxxxxx xxxx xxxxxxxx account is xxxxxxxx xx the
+3	64.35	490.63	0.00	Bank to the Credit Xxxxxxxxxxx Xxxxxxxxx (XXXx).
+3	28.35	521.40	0.00	XXXx xxxx xxxx xxxxxx xxxxxxx XXX/ x-xxxx xxxx xxxx Credit Xxxxxxxxxxx Xxxxxx (XXX) is xxxxxxxx.
+3	28.35	552.17	0.00	Interest xxxxxxxxxxx
+3	28.35	567.56	0.00	Interest xxxxxxxxxxx Interest xxxx xx xxxxxxx xx the Total Amount Due (XXX) is not paid xx the payment due date.
+3	28.35	580.11	0.00	Interest xxxx xx xxxxxxx on the Total Amount Due and on xxx xxx xxxxxxxxxxxx xxxxxx Xxxx/xxxxxxx and XXX/Xxxxx
+3	28.35	592.66	0.00	(from the transaction date) xxxx xxxx xxxx as the xxxxxxxx outstanding xxxxxxx xxx paid xx xxxx. Xx xxxxxxxx, interest
+3	28.35	605.21	0.00	xxxx xx xxxxxx on xxx xxxx xxxxxxxx from the date of the transaction xxxxx the date of payment.
+3	28.35	630.31	0.00	The xxxxxxxxx xxxxxxxxxxxx xxxx xxxxxxxx the xxxxxx of xxxxxxxxxxx interest xxxxxxx:
+3	28.35	659.66	0.00	Xx the xxxxx xxxxx xxxxx, xx xxx xxxx xxxxxxx xxxx the Total Amount Due of the xxxxxxxx xxxxx statement xxx
+3	28.35	672.21	0.00	xxxx paid xx the payment due date and xxxxx is no outstanding amount. The statement date is 9xx of xxxxx xxxxx.
+3	28.35	684.76	0.00	Xxxxx xxxxx xxxxxxxxxxx, interest xxxx xx xxxxxxxxxx as xxxxx:
+3	41.82	712.09	0.00	XX. No
+3	267.90	712.09	59.47	Transaction
+3	534.45	712.09	6.00	₹
+3	34.02	729.09	0.00	9
+3	87.31	729.09	0.00	Xxxxxxxx on Xxx 99, 9999
+3	520.46	729.09	40.80	2,000.00
+3	34.02	746.10	0.00	9
+3	87.31	746.10	0.00	Total Amount Due on statement xxxxx Xxx 99, 9999
+3	520.46	746.10	40.80	2,000.00
+3	34.02	763.11	0.00	9
+3	87.31	763.11	0.00	Minimum Amount Due on statement xxxxx Xxx 99, 9999
+3	528.86	763.11	32.40	100.00
+3	34.02	780.12	0.00	9
+3	87.31	780.12	0.00	Payment due date - Xxx 99, 9999
+3	34.02	797.13	0.00	9
+3	87.31	797.13	0.00	Xxxxxxxx on Xxx 99, 9999, Xxxx Xxx
+3	520.46	797.13	40.80	2,000.00
+3	524.67	827.22	0.00	Page 9 of 9
+4	34.02	91.65	0.00	9
+4	87.31	91.65	0.00	Xxxxxxxxxxx Xxx on Xxxx Xxx on Xxx 99, 9999
+4	534.86	91.65	26.40	20.00
+4	34.02	108.66	0.00	9
+4	87.31	108.66	0.00	Xxx on Xxxxxxxxxxx Xxx
+4	540.86	108.66	20.40	3.60
+4	34.02	125.66	0.00	9
+4	87.31	125.66	0.00	XXX xxxxxxx on Xxx 99, 9999
+4	528.86	125.66	32.40	600.00
+4	34.02	142.67	6.00	9
+4	87.31	142.67	0.00	Xxx on XXX
+4	528.86	142.67	32.40	108.00
+4	34.02	159.68	0.00	99
+4	87.31	159.68	0.00	On statement xxxxx Xxx 99, 9999, xxxxxxxxx interest xxxxxxx xxxx xx xxxxxx:
+4	87.31	176.69	0.00	a) Interest on 99xx Xxx 9999 Transaction
+4	528.86	176.69	32.40	123.29
+4	87.31	193.70	0.00	x) Interest on 99xx Xxx 9999 Transaction
+4	534.86	193.70	26.40	61.65
+4	34.02	210.70	0.00	99
+4	87.31	210.70	0.00	Total Interest xxxxxxx (a + x)
+4	528.86	210.70	32.40	184.94
+4	34.02	227.71	0.00	99
+4	87.31	227.71	0.00	XXX on Interest
+4	534.86	227.71	26.40	33.29
+4	28.35	256.46	0.00	XXX xxxx xx applicable on interest xxxxxxx.
+4	28.35	284.39	0.00	** The xxxxx xxxxxxxxxxxx xxx xxxx xxxxxxxx xxxxxxxx xxxx customer is not xxxxxxxxxx xxxxx to the statement
+4	28.35	296.94	0.00	xxxxxxxxx on Xxx 99, 9999
+4	524.67	827.22	0.00	Page 9 of 9
+5	28.35	89.42	0.00	Minimum Amount Due Xxxxxxxxxxx
+5	28.35	104.80	0.00	The Minimum Amount Due (XXX) xxxxx xx 9% of the outstanding amount or xxxx xxxxx amount as xxx xx
+5	28.35	117.35	0.00	xxxxxxxxxx xx ICICI Bank xx xxx xxxx xxxxxxxxxx. The installment amount due xxxxxx the statement period xxxx xx
+5	28.35	129.90	0.00	xxxxx to the Minimum Amount Due. Xx the total outstanding is xxxx xxxx the credit or xxxx limit, xxxx the amount
+5	28.35	142.45	0.00	xx xxxxx the credit or xxxx limit xxx xxxx xxxxxxxx xxxx xxxx xx xxxxxxxx xx the Minimum Amount Due. Xxx Xxx
+5	28.35	155.00	0.00	xxxxxxx xx the statement xxxx the credit limit xxxx xx xxxxxxxxxx xxxxx xx Minimum Amount Due xxxxxxxxxxx. Xxx &
+5	28.35	167.55	0.00	XXX on customer’x statement xxxx xxxx xx xxxxxxxx xx the Minimum Amount Due. Minimum Amount Due xxxxx xxxx
+5	28.35	180.10	0.00	xxxxxxx xxxxxx Minimum Amount Due of the xxxxxxxx xxxxxxxxxx, xx xxx
+5	28.35	205.20	0.00	Xxxxxxxxx xxx the xxx xxxxxxxxx for XXX xxxxxxxxxxx
+5	28.35	230.30	0.00	Xxxxxxxx A:
+5	28.35	242.85	0.00	Xx 9% of (Finance Xxxxxx + Xxxxxx Xxxxxx + Xxxx Xxxxxxx) is xxxxxx xxxx the Finance Xxxxxx, xxxx:
+5	28.35	255.40	0.00	XXX = XXX + EMI Principal + EMI Interest + Xxxx & Xxxxxxx (xxxxxxxxx XXX) + Xxxxxxxxx Amount + Xxxxxx XXX
+5	28.35	267.95	0.00	from the xxxxxxxx statement + 9% of (Xxxxxx Xxxxxx + Xxxx Xxxxxxx + Finance Xxxxxx).
+5	28.35	293.05	0.00	The xxxxxxxxx xxxxxxxxxxxx xxxx xxxxxxxx the xxxxxx of xxxxxxxxxxx the Minimum Amount Due (XXX) xx xxxx xxxxxxxx:
+5	134.33	320.38	54.66	Particulars
+5	316.96	320.38	0.00	Amount xx ₹
+5	31.18	337.39	53.92	Credit Limit
+5	349.96	337.39	46.80	35,000.00
+5	118.29	367.05	86.32	Transaction Type
+5	315.76	367.05	0.00	Amount xx ₹
+5	418.64	367.05	0.00	XXX %
+5	486.91	367.05	0.00	XXX Amt xx ₹
+5	31.18	384.06	0.00	Xxxxxx Xxxxxx + Xxxx Xxxxxxx
+5	347.97	384.06	46.80	30,000.00
+5	429.43	384.06	0.00	9%
+5	523.29	384.06	40.80	1,500.00
+5	31.18	401.06	0.00	Finance Xxxxxx (xx xxx) xxxxxxxxx XXX
+5	353.97	401.06	40.80	1,000.00
+5	429.43	401.06	0.00	9%
+5	537.69	401.06	26.40	50.00
+5	31.18	418.07	127.33	EMI Principal + EMI Interest
+5	353.97	418.07	40.80	5,500.00
+5	423.43	418.07	0.00	999%
+5	523.29	418.07	40.80	5,500.00
+5	31.18	435.08	0.00	Xxxx & Xxxxxxx xxxxxxxxx XXX (99%)
+5	353.97	435.08	40.80	1,180.00
+5	423.43	435.08	0.00	999%
+5	523.29	435.08	40.80	1,180.00
+5	31.18	452.09	0.00	Xxxxxx XXX from the xxxxxxxx statement*
+5	362.37	452.09	32.40	150.00
+5	423.43	452.09	0.00	999%
+5	531.69	452.09	32.40	150.00
+5	31.18	469.10	0.00	Xxxxxxxxx Amount
+5	353.97	469.10	40.80	2,830.00
+5	423.43	469.10	0.00	999%
+5	523.29	469.10	40.80	2,830.00
+5	31.18	486.10	0.00	Total Amount Due (XXX) (A)+(X)+(X)+(X)+(X)
+5	347.97	486.10	46.80	37,830.00
+5	31.18	503.11	0.00	XXX (<9%> of (A+X)) + (X)+(X)+(X)+(X)
+5	517.29	503.11	46.80	11,210.00
+5	28.35	517.89	0.00	*Xxxxxx Minimum Amount Due is as xxx the xxxxxxxx statement, xxxxx is xxxxxxx xx current statement.
+5	28.35	542.99	0.00	Finance Xxxxxx is xxxxxx xx the xxxx of ATM xxxxxxxxxxxx, xxxx withdrawal xxxxxxx Credit Card and
+5	28.35	555.54	0.00	xxxxxxx/xxx-payment of xxxx, as applicable.
+5	28.35	580.64	0.00	Xx the xxxxxxxxxxxx xxxxx 9% of (Finance Xxxxxx + Xxxxxx Xxxxxx + Xxxx Xxxxxxx) = ₹9,999 xxxxx is xxxxxx xxxx the
+5	28.35	593.19	0.00	Finance Xxxxxx (xxxxxxxxx XXX) = ₹9,999.
+5	28.35	605.74	0.00	Xxxxx, XXX = XXX + EMI Principal + EMI Interest + Xxxx & Xxxxxxx (xxxxxxxxx XXX) + Xxxxxxxxx Amount + Xxxxxx
+5	28.35	618.29	0.00	XXX from the xxxxxxxx statement + 9% of (Xxxxxx Xxxxxx + Xxxx Xxxxxxx + Finance Xxxxxx) = 999 + 9,999 +
+5	28.35	630.84	0.00	9,999 + + 9,999 + 999 + 9,999 = ₹99,999
+5	28.35	655.94	0.00	Xxxxxxxx X:
+5	28.35	668.49	0.00	Xx 9% of (Finance Xxxxxx + Xxxxxx Xxxxxx + Xxxx Xxxxxxx) is xxxx xxxx the Finance Xxxxxx, xxxx:
+5	28.35	681.04	0.00	XXX = XXX + EMI Principal + EMI Interest + Xxxx & Xxxxxxx + Finance Xxxxxx + Xxxxxxxxx Amount + Xxxxxx XXX
+5	28.35	693.59	0.00	from the xxxxxxxx statement + 9% of (Xxxxxx Xxxxxx + Xxxx Xxxxxxx).
+6	28.35	89.42	0.00	The xxxxxxxxx xxxxxxxxxxxx xxxx xxxxxxxx the xxxxxx of xxxxxxxxxxx the XXX xx xxxx xxxxxxxx
+6	134.33	116.75	54.66	Particulars
+6	316.96	116.75	0.00	Amount xx ₹
+6	31.18	133.76	53.92	Credit Limit
+6	341.56	133.76	55.20	1,15,000.00
+6	118.29	163.41	86.32	Transaction Type
+6	315.76	163.41	0.00	Amount xx ₹
+6	418.64	163.41	0.00	XXX %
+6	486.91	163.41	0.00	XXX Amt xx ₹
+6	31.18	180.42	0.00	Xxxxxx Xxxxxx + Xxxx Xxxxxxx
+6	339.57	180.42	55.20	1,00,000.00
+6	429.43	180.42	0.00	9%
+6	523.29	180.42	40.80	5,000.00
+6	31.18	197.43	0.00	Finance Xxxxxx (xx xxx) xxxxxxxxx XXX
+6	353.97	197.43	40.80	7,800.00
+6	423.43	197.43	0.00	999%
+6	523.29	197.43	40.80	7,800.00
+6	31.18	214.44	127.33	EMI Principal + EMI Interest
+6	353.97	214.44	40.80	5,500.00
+6	423.43	214.44	0.00	999%
+6	523.29	214.44	40.80	5,500.00
+6	31.18	231.45	0.00	Xxxx & Xxxxxxx xxxxxxxxx XXX (99%)
+6	353.97	231.45	40.80	2,360.00
+6	423.43	231.45	0.00	999%
+6	523.29	231.45	40.80	2,360.00
+6	31.18	248.45	0.00	Xxxxxx XXX from the xxxxxxxx statement*
+6	362.37	248.45	32.40	150.00
+6	423.43	248.45	0.00	999%
+6	531.69	248.45	32.40	150.00
+6	31.18	265.46	0.00	Xxxxxxxxx Amount
+6	362.37	265.46	32.40	810.00
+6	423.43	265.46	0.00	999%
+6	531.69	265.46	32.40	810.00
+6	31.18	282.47	0.00	Total Amount Due (XXX) (A)+(X)+(X)+(X)+(X)
+6	339.57	282.47	55.20	1,15,810.00
+6	31.18	299.48	0.00	XXX (<9%> of (A+X)) + (X)+(X)+(X)+(X)
+6	517.29	299.48	46.80	21,620.00
+6	28.35	314.26	0.00	*Xxxxxx Minimum Amount Due is as xxx the xxxxxxxx statement, xxxxx is xxxxxxx xx current statement.
+6	28.35	339.36	0.00	Finance Xxxxxx is xxxxxx xx the xxxx of ATM xxxxxxxxxxxx, xxxx withdrawal xxxxxxx Credit Card and
+6	28.35	351.91	0.00	xxxxxxx/xxx-payment of xxxx, as applicable.
+6	28.35	377.01	0.00	Xx the xxxxxxxxxxxx xxxxx 9% of (Finance Xxxxxx + Xxxxxx Xxxxxx + Xxxx Xxxxxxx) = ₹9,999 xxxxx is xxxx xxxx the
+6	28.35	389.56	0.00	Finance Xxxxxx = ₹9,999. Xxxxx, Finance Xxxxxx is xxxxxxxxxx xx 999% xx the XXX xxxxxxxxxxx.
+6	28.35	414.66	0.00	XXX = (9% of Xxxxxx Xxxxxx + Xxxx Xxxxxxx) + Finance Xxxxxx + EMI Principal + EMI Interest + Xxxx and Xxxxxxx
+6	28.35	427.21	0.00	+ Xxxxxx XXX from xxxxxxxx statement + Xxxxxxxxx Amount = (9% of 9,99,999) + 9,999 + 9,999 + 9,999 + 999 +
+6	28.35	439.76	0.00	999 = ₹99,999
+6	28.35	464.86	0.00	Minimum Amount Due xxxxxxx-xx to xxxxxxx xxxxx xxxxx, xxxxxxxx the Total Amount Due is not xxxxx to the
+6	28.35	477.41	107.09	Minimum Amount Due.
+6	28.35	502.51	0.00	The xxxxxxxxx xxxxxxxxxxxx xxxx xxxxxxxx the xxxxxx of xxxxxxxxxxx XXX as xxx Xxxxxxxx A:
+6	39.27	529.84	0.00	XX. No
+6	254.44	529.84	59.47	Transaction
+6	523.54	529.84	6.00	₹
+6	52.28	546.84	0.00	9
+6	85.04	546.84	53.92	Credit Limit
+6	517.29	546.84	46.80	26,000.00
+6	52.28	563.85	0.00	9
+6	85.04	563.85	0.00	Xxxxxxxx on Xxx 99, 9999
+6	517.29	563.85	46.80	24,000.00
+6	52.28	580.86	0.00	9
+6	85.04	580.86	0.00	Total Amount Due on statement xxxxx Xxx 99, 9999
+6	517.29	580.86	46.80	24,000.00
+6	52.28	597.87	0.00	9
+6	85.04	597.87	0.00	Minimum Amount Due on statement xxxxx Xxx 99, 9999
+6	523.29	597.87	40.80	1,200.00
+6	52.28	614.88	0.00	9
+6	85.04	614.88	0.00	Payment due date: Xxx 99, 9999
+6	52.28	631.88	0.00	9
+6	85.04	631.88	0.00	Xxxxxxxx on Xxx 99, 9999
+6	523.29	631.88	40.80	2,000.00
+6	52.28	648.89	0.00	9
+6	85.04	648.89	0.00	EMI Xxxxxxxxxx of Xxxxxxxx on Xxx 99, 9999
+6	518.96	648.89	45.13	-2,000.00
+6	52.28	665.90	0.00	9
+6	85.04	665.90	60.66	EMI Principal
+6	531.69	665.90	32.40	200.00
+6	52.28	682.91	6.00	9
+6	85.04	682.91	55.33	EMI Interest
+6	537.69	682.91	26.40	20.00
+6	49.28	699.91	0.00	99
+6	85.04	699.91	0.00	Xxx on EMI Interest
+6	543.69	699.91	20.40	3.60
+6	49.28	716.92	0.00	99
+6	85.04	716.92	0.00	Xxxxxxxxxx Xxx
+6	537.69	716.92	26.40	20.00
+6	49.28	733.93	0.00	99
+6	85.04	733.93	0.00	Xxx on Xxxxxxxxxx Xxx
+6	543.69	733.93	20.40	3.60
+6	49.28	750.94	0.00	99
+6	85.04	750.94	0.00	Xxxx Payment Xxx on Xxx 99, 9999
+6	531.69	750.94	32.40	900.00
+6	49.28	767.95	0.00	99
+6	85.04	767.95	0.00	Xxx on Xxxx Payment Xxx
+6	531.69	767.95	32.40	162.00
+6	49.28	784.95	0.00	99
+6	85.04	784.95	0.00	Xxxxxxxx on Xxx 99, 9999
+6	523.29	784.95	40.80	1,000.00
+6	49.28	801.96	0.00	99
+6	85.04	801.96	0.00	Xxxx limit Xxx
+6	531.69	801.96	32.40	550.00
+7	39.27	91.65	0.00	XX. No
+7	254.44	91.65	59.47	Transaction
+7	523.54	91.65	6.00	₹
+7	49.28	108.66	0.00	99
+7	85.04	108.66	0.00	Xxx on Xxxx-limit Xxx
+7	537.69	108.66	26.40	99.00
+7	49.28	125.66	0.00	99
+7	85.04	125.66	75.21	Closing Balance
+7	517.29	125.66	46.80	26,958.20
+7	49.28	142.67	0.00	99
+7	85.04	142.67	0.00	On statement xxxxx Xxx 99, 9999, xxxxxxxxx Minimum Amount Due is xxxxxxxxxx:
+7	85.04	159.68	0.00	a) Xxxxxxx of xxxxxxxx statement
+7	523.29	159.68	40.80	1,200.00
+7	85.04	176.69	0.00	x) EMI Instalment (Principal + Interest)
+7	531.69	176.69	32.40	220.00
+7	85.04	193.70	0.00	x) XXX on EMI Interest
+7	543.69	193.70	20.40	3.60
+7	85.04	210.70	0.00	x) Amount xxxxx Credit Limit  
+7	531.69	210.70	32.40	958.20
+7	85.04	227.71	0.00	x) Xxxx Payment Xxx - Xxxx xxxxxxxxxx
+7	531.69	227.71	32.40	900.00
+7	85.04	244.72	0.00	x) XXX on Xxxx Payment Xxx - Xxxx xxxxxxxxxx
+7	531.69	244.72	32.40	162.00
+7	85.04	261.73	0.00	x) Xxxx limit Xxx Transaction - Xxxx xxxxxxxxxx
+7	531.69	261.73	32.40	550.00
+7	85.04	278.74	0.00	x) XXX on Xxxx limit Xxx Transaction - Xxxx xxxxxxxxxx
+7	537.69	278.74	26.40	99.00
+7	85.04	295.74	0.00	x) Xxxxxxxxxx Xxx - Xxxx xxxxxxxxxx
+7	537.69	295.74	26.40	20.00
+7	85.04	312.75	0.00	x) XXX on Xxxxxxxxxx Xxx - Xxxx xxxxxxxxxx
+7	543.69	312.75	20.40	3.60
+7	85.04	329.76	0.00	x) 9% on xxxxxxxxx Balance
+7	523.29	329.76	40.80	1,142.09
+7	85.04	346.77	0.00	x) Total Minimum Amount Due
+7	523.29	346.77	40.80	5,258.49
+7	49.28	363.78	0.00	99
+7	85.04	363.78	109.25	Minimum Amount Due*
+7	523.29	363.78	40.80	5,260.00
+7	28.35	378.55	0.00	* Xxxxxxx-xx to xxxxxxx xxxxx xxxxx xxxxxxxx total amount due is not xxxxx to minimum amount due
+8	28.35	89.42	0.00	** The xxxxx xxxxxxxxxxxx xxx xxxx xxxxxxxx xxxxxxxx xxxx customer is not xxxxxxxxxx xxxxx to the statement
+8	28.35	101.97	0.00	xxxxxxxxx on Xxx 99, 9999 and interest xxxxxxx xxx xxxx applicable xx Xxx 99, 9999 statement.
+8	28.35	127.07	0.00	Xxxx payment Xxxxxxx Xxxxxxxxxxx
+8	28.35	142.45	0.00	The Xxxx Payment xxxxxxx on xxxx card is xx a xxxxxxxx of the Total Amount Due xxxxx xxx payment xxxxxxxx
+8	28.35	155.00	0.00	xxxxxx payment due date and xxxx xx as xxxxxxx:
+8	28.35	180.10	0.00	Outstanding = Total Amount due (as of xxxxxxxx statement) – Payment Xxxxxxxx xxxxxx payment due date
+8	59.78	207.43	98.71	Outstanding Amount
+8	217.12	207.43	0.00	Xxxx Payment Xxxxxxx
+8	73.20	224.44	0.00	Xxxx xxxx ₹999
+8	258.36	224.44	0.00	Xxxx
+8	76.41	241.45	0.00	 ₹999 to ₹999
+8	257.37	241.45	0.00	₹ 999
+8	42.33	258.46	0.00	Xxxxxxx xxxx ₹999 to ₹9,999
+8	257.37	258.46	0.00	₹ 999
+8	39.33	275.47	0.00	Xxxxxxx xxxx ₹9999 to ₹9,999
+8	257.37	275.47	0.00	₹ 999
+8	35.13	292.47	0.00	Xxxxxxx xxxx ₹9,999 to ₹99,999
+8	257.37	292.47	0.00	₹ 999
+8	32.13	309.48	0.00	Xxxxxxx xxxx ₹99,999 to ₹99,999
+8	257.37	309.48	0.00	₹ 999
+8	32.13	326.49	0.00	Xxxxxxx xxxx ₹99,999 to ₹99,999
+8	253.17	326.49	0.00	₹ 9,999
+8	58.72	343.50	0.00	Xxxxxxx xxxx ₹99,999
+8	253.17	343.50	0.00	₹ 9,999
+8	28.35	370.83	0.00	The xxxxxxxxx xxxxxxxxxxxx xxxx xxxxxxxx the xxxxxx of xxxxxxxxxxx Xxxx Payment xxxxxxx:
+8	39.27	399.57	0.00	XX. No
+8	254.44	399.57	59.47	Transaction
+8	523.54	399.57	6.00	₹
+8	52.28	419.41	0.00	9
+8	85.04	419.41	0.00	Xxxxxxxx on Xxx 99, 9999
+8	510.15	419.41	0.00	99,999
+8	52.27	439.26	0.00	9
+8	85.04	439.26	0.00	Total Amount Due on statement xxxxx Xxx 99, 9999 (9)
+8	510.15	439.26	0.00	99,999
+8	52.28	459.10	0.00	9
+8	85.04	459.10	0.00	Minimum Amount Due on statement xxxxx Xxx 99, 9999 (9% of XXX)
+8	513.16	459.10	0.00	9,999
+8	52.28	478.94	0.00	9
+8	85.04	478.94	0.00	Payment due date - Xxx 99, 9999
+8	52.28	498.78	0.00	9
+8	85.04	498.78	0.00	Payment on Xxx 99, 9999
+8	513.34	498.78	0.00	9,999
+8	52.28	518.63	0.00	9
+8	85.04	518.63	0.00	Xxxx Payment Xxx on Xxx 99, 9999 (xxxxx on 9 - 9)
+8	517.54	518.63	0.00	999
+8	52.28	538.47	0.00	9
+8	85.04	538.47	0.00	XXX on Xxxx Payment Xxx
+8	517.54	538.47	0.00	999

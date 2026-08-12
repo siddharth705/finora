@@ -111,6 +111,29 @@ public class PdfTableLocator {
     private static final int HEADER_WRAP_MAX_LINES = 3;
     private static final float HEADER_WRAP_MAX_COLUMN_JOIN = 40.0f;
 
+    // P-001 Fix B. The two bounds that admit a wrap merge onto a line that ALREADY scores as a
+    // header on its own -- a case the merge used to be forbidden from touching at all. See
+    // refinesRatherThanRedefines for the whole admission rule and wrappedHeaderAt's doc comment for
+    // the real statement that needed it.
+    //
+    // STRICT_COLUMN_JOIN -- how far a lower cell may sit from an UPPER-LINE anchor and still be
+    // that column's second line. Deliberately NOT the 40pt MAX_COLUMN_JOIN above: that bound exists
+    // to let a CENTER-aligned continuation label sit off its column's left edge, and at 40pt it is
+    // far too loose to be a discriminator when the alternative reading ("this is the table's first
+    // data row") is already a working one. Measured across every trace in the corpus that has a
+    // scoring header with a dateless line within 12pt below it: the genuine wraps sit at 3.89pt
+    // (Central Bank of India) and 4.51pt (ICICI credit card), and the next-closest non-wrap is a
+    // BoB narration line at 36.92pt. 5.0 sits inside a 32pt empty band, so it is a separating
+    // value rather than a fitted one.
+    //
+    // STRICT_MIN_LOWER_CELLS -- 2. One stray token below a header is not a wrapped heading; it is a
+    // footnote, a unit annotation or a narration fragment, and the corpus is full of them
+    // (HSBC's "(DR=Debit)", AU's "amount due.", HDFC credit card's "(Xxxxxxxxx Xxxx)"). A second
+    // line has to carry at least two column names before "these two lines are one header" is a
+    // claim about the table's structure rather than about one label.
+    private static final float HEADER_WRAP_STRICT_COLUMN_JOIN = 5.0f;
+    private static final int HEADER_WRAP_STRICT_MIN_LOWER_CELLS = 2;
+
 
     // Column-name hints for locating "the date column" within an already-bucketed row -- used by
     // the continuation-row merge in locateAll() below, kept in sync with
@@ -498,12 +521,16 @@ public class PdfTableLocator {
             // whether it is half a header.
             List<PositionedText> headerRow = row;
             int wrappedHeaderLines = 0;
-            if (!looksLikeHeaderRow(row)) {
-                WrappedHeader wrapped = wrappedHeaderAt(rows, rowIndex);
-                if (wrapped != null) {
-                    headerRow = wrapped.row();
-                    wrappedHeaderLines = wrapped.extraLines();
-                }
+            // Asked on BOTH sides of "does this line already score as a header on its own" -- see
+            // wrappedHeaderAt. On a line that does not score, the merge is the only way a table is
+            // found at all and runs under the original 40pt admission rule. On a line that already
+            // scores, the merge can only RENAME columns that were going to exist anyway, so it runs
+            // under a much stricter one (P-001 Fix B, measured on a real Central Bank of India
+            // statement whose header's second band was otherwise consumed as a data row).
+            WrappedHeader wrapped = wrappedHeaderAt(rows, rowIndex, looksLikeHeaderRow(row));
+            if (wrapped != null) {
+                headerRow = wrapped.row();
+                wrappedHeaderLines = wrapped.extraLines();
             }
             if (looksLikeHeaderRow(headerRow)) {
                 row = headerRow;
@@ -1143,9 +1170,31 @@ public class PdfTableLocator {
      * comment for the real statement this was measured on and why neither half of a wrapped
      * header is recognizable on its own.
      *
-     * <p>Only ever called on a line that is NOT already a header by itself. That restriction is
-     * load-bearing, not caution: it means no document whose header is recognized today can have
-     * its header changed, so this can only turn "no table found" into "table found".
+     * <p>Was only ever called on a line that is NOT already a header by itself. That restriction
+     * was load-bearing, not caution: it meant no document whose header is recognized today could
+     * have its header changed, so this could only turn "no table found" into "table found".
+     *
+     * <p><b>P-001 Fix B</b> lifts it, under a strictly narrower admission rule -- see
+     * {@link #refinesRatherThanRedefines}. It had to be lifted, and no threshold change reaches
+     * the document that needed it. The real Central Bank of India savings statement
+     * ({@code central-bank-savings-ledger-validation}) has a genuine two-band header whose bands
+     * are 11.64pt apart -- already INSIDE {@link #HEADER_WRAP_MAX_GAP}. The merge was refused only
+     * because band 1 alone scores: token-aware matching sees {@code date} inside "Post Date", plus
+     * Debit/Credit/Balance. Band 2 -- "Date | Code | Number" -- therefore fell through and was
+     * consumed as the table's first data row ({@code {Value=Date, Branch=Code, Cheque=Number}}),
+     * and the date column stayed named "Value" rather than "Value Date".
+     *
+     * <p>That is not a cosmetic loss. {@code TransactionNormalizer} resolves its date column by
+     * WHOLE-CELL comparison against {@code DATE_HINTS}, and neither "value" nor "post date"
+     * is in it. Measured on that trace: of 224 located rows, <b>0</b> carried a column the
+     * normalizer could read as a date, so all 222 of its transactions were rejected downstream --
+     * while the locator recorded a successful single-section parse. It is the only 100% row loss
+     * in the committed corpus, and it is silent.
+     *
+     * <p>The general safety property above is preserved in a different form: on an
+     * already-scoring line the merge cannot change WHETHER a table is found, cannot change how
+     * many columns it has, and is admitted only when it demonstrably improves how many of them
+     * the normalizer can name.
      *
      * <p>Correction (P-001 investigation): this comment used to cite the real Canara Bank
      * statement's LEADING_NARRATION_CONTINUATION layout as the layout this guard protects. It is
@@ -1161,7 +1210,7 @@ public class PdfTableLocator {
      * cells faster than it adds recognized column names, so a paragraph merged with its
      * neighbour scores strictly LESS dense than either line did, not more.
      */
-    private WrappedHeader wrappedHeaderAt(List<List<PositionedText>> rows, int index) {
+    private WrappedHeader wrappedHeaderAt(List<List<PositionedText>> rows, int index, boolean alreadyScores) {
         List<PositionedText> first = rows.get(index);
         if (first.isEmpty()) return null;
         if (!carriesNoDataValue(first)) {
@@ -1188,6 +1237,12 @@ public class PdfTableLocator {
             List<PositionedText> candidate = mergeHeaderLines(block);
             if (candidate == null) break; // mergeHeaderLines has already explained which cell refused
             if (looksLikeHeaderRow(candidate)) {
+                // The strict admission rule applies ONLY when the upper line already scores on its
+                // own. Kept as a `continue` rather than a `break` so a refused two-line span can
+                // still be re-offered as a three-line one -- the extra line can only add lower
+                // cells and column names, which is the direction that makes gates 1 and 4 easier
+                // while gate 2 stays exactly as strict.
+                if (alreadyScores && !refinesRatherThanRedefines(block, candidate)) continue;
                 found = new WrappedHeader(candidate, span);
                 int lines = span + 1;
                 explainWrap(first, () -> "MERGED across " + lines + " lines: every lower cell joined a"
@@ -1202,6 +1257,136 @@ public class PdfTableLocator {
             }
         }
         return found;
+    }
+
+    /**
+     * P-001 Fix B's admission rule: whether merging these lines REFINES the header the upper line
+     * already states, rather than REDEFINING it into a different table.
+     *
+     * <p>Asked only when the upper line already scores as a header on its own -- the case
+     * {@link #wrappedHeaderAt} used to refuse outright. When it does not score, the merge is the
+     * only way a table is found at all and none of this applies: nothing can regress, because
+     * today there is nothing there.
+     *
+     * <p>When it DOES score, the alternative reading -- "the upper line is the header and the lower
+     * line is the table's first data row" -- is already a working one on most documents, so the
+     * merge has to clear a much higher bar than "these two lines are close together". Four gates,
+     * every one of them measured against the whole committed trace corpus:
+     *
+     * <ol>
+     *   <li><b>At least {@link #HEADER_WRAP_STRICT_MIN_LOWER_CELLS} lower cells.</b> A single token
+     *       under a header is a footnote, not a second heading band.</li>
+     *   <li><b>Every lower cell within {@link #HEADER_WRAP_STRICT_COLUMN_JOIN} of an UPPER-LINE
+     *       anchor.</b> Measured against the upper line's own left edges, not against the merged
+     *       columns' anchors, which {@code mergeHeaderLines} moves as it joins. This is the gate
+     *       that separates a printed second band from a line that merely sits nearby.</li>
+     *   <li><b>No new columns.</b> The merged row must have exactly as many cells as the upper line
+     *       has non-blank runs. A genuine wrapped band renames the columns above it; it never
+     *       introduces one. {@code mergeHeaderLines} already refuses a cell that joins no column,
+     *       so today this is an invariant rather than a filter -- stated here anyway, because it is
+     *       the property that makes "one header over two lines" mean something, and the half-named
+     *       heading documented on {@code mergeHeaderLines} shows the pressure to relax it.</li>
+     *   <li><b>Strictly more WHOLE-CELL hint matches than the upper line alone.</b> The safety
+     *       valve. {@code TransactionNormalizer} resolves its date and amount columns by whole-cell
+     *       comparison, not by the token-aware matching {@link #looksLikeHeaderRow} scores with, so
+     *       this counts what the normalizer can actually name. Requiring a strict increase means a
+     *       merge is admitted only where it demonstrably improves that count -- a merge that merely
+     *       shuffles names, or makes them worse, is refused and the document keeps exactly today's
+     *       behaviour. On Central Bank of India this goes 4 -> 5 ("Value" + "Date" -> "Value Date",
+     *       which {@link #DATE_HINTS} lists and "value" alone is not).</li>
+     * </ol>
+     *
+     * <p>Gate 4's other half -- that the merged row still scores as a header at all -- is the
+     * caller's {@code looksLikeHeaderRow(candidate)} check, which is why it is not repeated here.
+     *
+     * <p>Taken together these give back the safety property the old {@code !looksLikeHeaderRow}
+     * guard provided, in a different form: on an already-scoring line the merge cannot change
+     * WHETHER a table is found, cannot change how many columns it has, and is admitted only when it
+     * demonstrably improves how many of them the normalizer can name.
+     */
+    private boolean refinesRatherThanRedefines(List<List<PositionedText>> block, List<PositionedText> merged) {
+        List<PositionedText> upper = block.get(0);
+
+        // Gate 1 -- the lower band has to contribute more than one stray token.
+        int lowerCells = 0;
+        for (int line = 1; line < block.size(); line++) {
+            for (PositionedText t : block.get(line)) {
+                if (!t.text().isBlank()) lowerCells++;
+            }
+        }
+        if (lowerCells < HEADER_WRAP_STRICT_MIN_LOWER_CELLS) {
+            int counted = lowerCells;
+            explainWrap(upper, () -> "NO_MERGE (strict): the upper line already scores as a header on"
+                    + " its own, and the lower line(s) contribute only " + counted + " cell(s) -- fewer"
+                    + " than " + HEADER_WRAP_STRICT_MIN_LOWER_CELLS + ", so this is a footnote, not a"
+                    + " second heading band");
+            return false;
+        }
+
+        // Gate 2 -- every lower cell sits under a column the upper line actually established.
+        for (int line = 1; line < block.size(); line++) {
+            for (PositionedText t : block.get(line)) {
+                if (t.text().isBlank()) continue;
+                float nearest = Float.MAX_VALUE;
+                for (PositionedText anchor : upper) {
+                    if (anchor.text().isBlank()) continue;
+                    nearest = Math.min(nearest, Math.abs(t.x() - anchor.x()));
+                }
+                if (nearest > HEADER_WRAP_STRICT_COLUMN_JOIN) {
+                    float distance = nearest;
+                    explainWrap(upper, () -> "NO_MERGE (strict): the upper line already scores as a"
+                            + " header on its own, and lower cell \"" + t.text().trim() + "\" at x="
+                            + t.x() + " is " + distance + "pt from the nearest column above it (limit "
+                            + HEADER_WRAP_STRICT_COLUMN_JOIN + "pt) -- not a printed second band");
+                    return false;
+                }
+            }
+        }
+
+        // Gate 3 -- refinement, not redefinition: the merge renames columns, never adds one.
+        int upperColumns = 0;
+        for (PositionedText t : upper) {
+            if (!t.text().isBlank()) upperColumns++;
+        }
+        if (merged.size() != upperColumns) {
+            int defined = upperColumns;
+            explainWrap(upper, () -> "NO_MERGE (strict): merging would leave " + merged.size()
+                    + " columns where the upper line alone defines " + defined
+                    + " -- a wrapped band renames columns, it does not introduce them");
+            return false;
+        }
+
+        // Gate 4 -- and it has to be an improvement the normalizer can actually see.
+        int before = wholeCellHintMatches(upper);
+        int after = wholeCellHintMatches(merged);
+        if (after <= before) {
+            explainWrap(upper, () -> "NO_MERGE (strict): merging does not increase the number of"
+                    + " columns nameable by whole-cell comparison (" + before + " -> " + after
+                    + "), so it is a rename rather than an improvement -- the unmerged reading stands");
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * How many of this row's cells name a known column by WHOLE-CELL comparison -- the way
+     * {@code TransactionNormalizer} resolves its columns, and deliberately NOT the way
+     * {@link #matchesAnyHint} scores a header row.
+     *
+     * <p>The difference is the entire point of gate 4. Token-aware matching sees {@code date}
+     * inside "Post Date" and calls the column found; the normalizer compares "post date" against
+     * its hint list and finds nothing. Counting the token-aware way would make Central Bank of
+     * India's merge look like no improvement at all -- both readings score a date column -- when in
+     * fact the merge is the difference between 0 and 222 importable transactions.
+     */
+    private int wholeCellHintMatches(List<PositionedText> row) {
+        int matches = 0;
+        for (PositionedText t : row) {
+            String normalized = CsvParser.normalizeHeaderCell(t.text());
+            if (normalized.isBlank()) continue;
+            if (DATE_HINTS.contains(normalized) || HEADER_HINTS.contains(normalized)) matches++;
+        }
+        return matches;
     }
 
     /**

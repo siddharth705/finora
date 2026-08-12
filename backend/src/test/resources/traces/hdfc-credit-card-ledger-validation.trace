@@ -1,0 +1,215 @@
+# finora-pdf-trace v3
+# traceVersion: 3
+# redactorVersion: 2
+# allowlistFingerprint: A3C0126B
+# capturedAt: 2026-08-12
+# generatedFrom: HDFC Bank credit card statement
+# capabilities: 
+# regressions: 
+# requiredHeaders: Date
+# motivation: real-world validation sweep, PM-requested
+# page	x	y	width	text
+0	25.23	63.42	0.00	Xxxx Xxx Xxxx HDFC Bank Credit Card Statement
+0	25.23	75.07	0.00	XXX Code: 999999        HDFC Bank Credit Xxxxx XXXXX: 99XXXXX9999X9X9
+0	26.65	98.97	0.00	XXXXXXXX XXXXXX
+0	193.75	97.94	43.63	Credit Card No.
+0	318.45	97.94	0.00	999999XXXXXX9999
+0	26.93	115.04	0.00	999 Xxxx xxx xxxxxxxx xxxxxx xxxx
+0	193.75	112.60	0.00	Xxxxxxxxx Account Number
+0	309.65	112.60	0.00	9999999999999999999
+0	26.93	123.58	0.00	xxxx xxxxxx xxxxx xxxxx xxxxx
+0	193.75	127.25	44.91	Statement Date
+0	343.02	127.25	0.00	99 Xxx, 9999
+0	26.93	132.13	0.00	XXXXXX 999999 XX
+0	193.75	141.90	0.00	Xxxxxxx Period
+0	301.61	141.90	0.00	99 Xxx, 9999 - 99 Xxx, 9999
+0	26.65	145.24	0.00	Email : xxxxxxxxxxxxxxx999@xxxxx.xxx
+0	26.65	153.78	0.00	 XXXX ID
+0	327.40	156.55	0.00	99999999999999
+0	26.36	176.29	0.00	To xxxxxx xxxxxxxx details : Xxxxxx of Address: xxxxx xxxx           |           Xxxxxx of email-id: xxxxx xxxx           |           Xxxxxx of Xxxxxx number: xxxxx xxxx
+0	26.36	184.84	0.00	To xxxxxx xxx xxxxx xxxxxxxx details, xxxxxx xxxxx a xxxxxx to : The Xxxxxxx, HDFC Bank Xxxxx Xxxxxxxx, Xxxx No 99 XX, Xxxxxx Xxx Xxxxx, Xxxxx Xxxx Xxxx, Xxxxxxxxx Xxxx, Xxxxxxx - 999999
+0	155.65	222.27	0.00	XXXXXXXX/CREDITS
+0	258.42	222.27	0.00	XXXXXXXXX/DEBIT
+0	39.69	226.55	0.00	XXXXXXXX STATEMENT XXXX
+0	353.52	226.55	0.00	FINANCE XXXXXXX
+0	445.95	227.13	62.17	TOTAL AMOUNT DUE
+0	171.33	230.82	0.00	XXXXXXXX
+0	254.41	230.82	0.00	(Current Xxxxxxx Xxxxx)
+0	132.89	245.61	4.98	_
+0	68.55	250.16	0.00	X999.99
+0	172.30	250.16	0.00	X999.99
+0	232.87	249.81	4.98	+
+0	269.55	250.16	0.00	X9,999.99
+0	334.20	249.81	4.98	+
+0	371.76	250.16	0.00	X9.99
+0	423.78	249.81	4.98	=
+0	445.95	250.23	0.00	X9,999.99
+0	64.56	273.88	59.12	TOTAL CREDIT LIMIT
+0	182.66	278.16	72.25	AVAILABLE CREDIT LIMIT
+0	317.79	278.16	0.00	AVAILABLE XXXX LIMIT
+0	70.99	282.43	0.00	(Xxxxxxxxx Xxxx)
+0	445.95	279.88	45.26	MINIMUM DUE
+0	512.08	279.88	29.51	DUE DATE
+0	445.95	297.73	0.00	X999.99
+0	512.08	297.73	0.00	99 Xxx, 9999
+0	80.97	301.77	0.00	X99,999
+0	205.64	301.77	0.00	X99,999
+0	338.20	301.77	0.00	X99,999
+0	23.81	342.46	0.00	Xxxx Xxxx
+0	102.55	341.50	0.00	XXXX LIMIT
+0	182.71	341.50	0.00	9 XXXXXX +
+0	262.87	341.50	0.00	9 XXXXXX
+0	343.03	341.50	0.00	9 XXXXX
+0	423.19	341.50	0.00	CURRENT XXXX
+0	504.77	341.50	0.00	MINIMUM XXXX
+0	23.81	350.49	0.00	(xx xxx)
+0	102.55	349.95	0.00	X9.99
+0	182.71	349.95	0.00	X9.99
+0	262.87	349.95	0.00	X9.99
+0	343.03	349.95	0.00	X9.99
+0	423.19	349.95	0.00	X999.99
+0	504.77	349.95	0.00	X999.99
+0	20.41	371.62	0.00	Xxxxxxxx on xxxx card
+0	175.18	385.47	0.00	XXXXXXXXX XXXXXXXXXXX
+0	175.18	403.93	0.00	9.
+0	185.10	403.93	0.00	XXXX - MINIMUM AMOUNT DUE(XXX) XXXXXXXXXXX ON XXXX HDFC BANK CREDIT CARD XXXXXXXXXX XXXX 9999 XXXX REF XXXX FOR
+0	185.10	412.48	23.10	DETAILS
+0	175.18	421.03	0.00	9.
+0	185.10	421.03	0.00	XXXXXX PAYMENT OF MINIMUM AMOUNT DUE XXXXXX 9 XXXXX XXXX OF DUE DATE XXXX XX XXXXXXXX TO CREDIT XXXXXXXXXXX
+0	185.10	429.57	0.00	XXXXXXXXX
+0	175.18	438.12	0.00	9.
+0	185.10	438.12	0.00	X.X.X 99XXX99, XXXXX XX.99,999 OR XXXX XX A XXXXXXXX XXXXXXX TO XXXXX XXXXXXXX XXXXXXX XXXXXX XXXXXXX XXX XXXXXXX.
+0	185.10	446.67	0.00	X&XX
+0	197.90	477.67	0.00	XxxXxxxx xxxx Bank
+0	299.55	475.16	0.00	Opening XxxXxxxx xxxx
+0	370.32	475.16	0.00	XxxXxxxx Xxxxxx
+0	437.04	475.16	0.00	XxxXxxxx Xxxxxxxxxxx
+0	513.25	475.16	0.00	Xxxxxxxx/Xxxxxx
+0	299.55	482.49	12.55	Bank
+0	370.32	482.49	0.00	(Xxxx+Xxxxx)
+0	437.04	482.49	0.00	to Xxxx Xxx
+0	299.55	491.41	0.00	9
+0	370.32	491.41	0.00	9
+0	437.04	491.41	0.00	9
+0	513.25	491.41	0.00	9
+0	197.90	504.52	0.00	9
+0	162.75	536.19	0.00	Xxxx:
+0	162.75	543.51	0.00	9. 'XxxXxxxx xxxxxxxxxxx to Xxxx Xxx' xxxx xxxxxxx xxxx xxxxxxxxxxx and xxx xx xxxxxxxx on Xxxx Xxx.
+0	162.75	550.84	0.00	9. 'XxxXxxxx xxxx Bank' xxxx xx xxxxxxxx xxxxxx 9 xxxxxxx xxxx xx xxxx Xxxx Xxx account, Xxxxxxx to Xxxxx and Xxxxxxxxxx.
+0	162.75	558.17	0.00	9. To xxxx xxxx xxxxx Xxxx XxxXxxxx xxxxxx xxxxx: xxxxx://xxx.xxxxxxx.xxx/xxxxx-xxxxxxx.
+0	162.75	565.49	0.00	9. Xxx xxxxxxxx of the statement xxxx xx xxxxxx to xx xxxxxxx and xxxxxxxx xx xxx, xxxxxx xxx xxxxxx xx of xxx xxxxxxxxxxxxx xxxxxx 99 xxxx from the date of xxxx
+0	162.75	572.82	0.00	    statement. The available credit limit xxxxxx xxxxxx xxxxx xxxx account xxxxxxx xxxxxxxx xxx not xxxxxx.
+0	169.62	597.27	0.00	Xxxx Card Xxxxxxx Xxxxxxx    As on :  99 Xxx, 9999
+0	169.43	610.57	0.00	Xxxxxxxx Transaction
+0	320.54	610.57	0.00	Xxxxxxxxxxxxx Transaction
+0	186.30	625.31	0.00	  Xxxxxx
+0	239.34	625.31	12.74	  POS
+0	281.80	625.31	0.00	  Xxx & Xxx
+0	335.97	625.31	0.00	  Xxxxxx
+0	389.00	625.31	12.74	  POS
+0	431.47	625.31	0.00	  Xxx & Xxx
+0	520.97	625.18	0.00	XXXXXX ON XxXxxxx
+0	178.83	642.63	0.00	XXXXXXX
+0	228.72	642.63	0.00	XXXXXXX
+0	278.04	642.63	0.00	XXXXXXXX
+0	327.93	642.63	0.00	XXXXXXXX
+0	377.82	642.63	0.00	XXXXXXXX
+0	427.71	642.63	0.00	XXXXXXXX
+0	478.65	642.88	0.00	  Card Xxxxxxx
+0	543.08	642.88	0.00	  Xxx Xxx
+0	169.51	676.65	0.00	Xxxxxxxx Xxxxxxxxxxxx
+0	169.51	691.61	0.00	DATE & XXXX
+0	250.74	691.61	82.83	TRANSACTION DESCRIPTION
+0	453.78	691.66	0.00	Xxxx XxxXxxxx*
+0	530.30	691.61	27.74	AMOUNT
+0	568.05	691.61	0.00	XX
+0	250.74	706.20	0.00	XXXXXXXX XXXXXX [XXXX ID : 99999999999999 ]
+0	250.74	717.20	0.00	XXXX XX PAYMENT XX999999999999XXXxX (Ref#
+0	169.51	721.47	0.00	30/06/2026| 99:99
+0	526.84	721.47	0.00	+  X 440.00
+0	568.23	722.13	0.00	x
+0	250.74	725.74	0.00	XX999999999999999999999)
+0	169.51	736.33	0.00	11/07/2026| 99:99
+0	250.74	736.33	0.00	UPI-Xxxxxx India
+0	526.61	736.33	0.00	 X 1,817.02
+0	568.23	736.99	0.00	x
+0	162.43	771.33	0.00	Xxxx:
+0	162.43	778.66	0.00	The ‘Xxxx XxxXxxxx’ xxx xxxxxxxxxx as 9% of xxxxxx xxxxxxx the xxxxxxxx xxxxxxxxxxxx, and the 'Xxxxx XxxXxxxx Summary' xxxx xxxx xxxxxxxxx Xxxx/Xxxxxxxxxx XxxXxxxx:
+0	162.43	785.98	0.00	a) Xxxx XxxXxxxx on xxxxxxxx Xxxxxxxxx/Xxxxxxx/Xxxxxxx/Xxxxxxx/UPI xxxxxxxxxxxx xxxxxxx xx the current statement. Xxxxxxx, for the xxxxxxxxxxxx xxxxxxx on the statement
+0	162.43	793.31	0.00	date xxxxxxxx XxxXxxxx xxxx xx xxxxxxxx xx the xxxxxxxxxx
+0	162.43	800.63	0.00	     statement xxxxx.
+0	162.43	807.96	0.00	x) Xxxxxxxxxx 9% XxxXxxxx on xxxxxxxx xxxxxxx Xxxx Xxxxxx xxxxxxxxxxxx xxxxxxx xx the current statement. Xxxxxxx, for the xxxxxxxxxxxx xxxxxxx on the statement date
+0	162.43	815.29	0.00	xxxxxxxx XxxXxxxx xxxx xx xxxxxxxx xx the xxxxxxxxxx
+0	26.65	835.05	0.00	Page 9 of 9
+1	508.78	29.70	0.00	XXX Code: 999999
+1	29.76	35.59	0.00	Xxxx Xxx Xxxx HDFC Bank Credit Card Statement
+1	402.22	39.47	0.00	HDFC Bank Credit Xxxxx XXXXX: 99XXXXX9999X9X9
+1	22.68	58.82	0.00	Xxxxxx on xxxx card
+1	18.43	251.11	0.00	     statement xxxxx.
+1	18.43	258.44	0.00	Xxxxx and Xxxxxxxxxx xxxxx.
+1	25.51	280.91	0.00	Xxxxx XxxXxxxx Summary
+1	25.51	295.87	0.00	XX NO.
+1	77.68	295.87	0.00	XXXXXXXX
+1	520.98	295.87	0.00	Xxxxx XxxXxxxx
+1	25.51	310.05	0.00	9
+1	77.68	310.05	0.00	XxxXxxxx_on_UPI_Xxx
+1	564.66	310.05	0.00	9
+1	77.68	324.22	14.84	Total
+1	564.66	324.22	0.00	9
+1	22.68	349.20	0.00	Xxxxxxxxx Xxxxxxxxxxx
+1	21.26	362.83	0.00	x
+1	32.60	362.83	0.00	The "Available Credit Limit" xxxxx xx xxxx statement xxxxx xxxx account xxxxxxx xxxxxxxx xxx not due. Xxxxxx xxxxxx xxxx xx xxxxx the "Minimum Amount Due" xxxxxxx xx xx the "Due Date".
+1	21.26	375.04	0.00	x
+1	32.60	375.04	0.00	Xxxxxxxx a xxxxxxx credit status: Xxx xxxxxxx minimum amount xx the due date, or xxxxxx 9 xxxx xxxxx, to xxxxx Xxxxxxxxx status xxxx Credit Xxxxxxxxxxx Xxxxxxxxx.
+1	21.26	387.25	0.00	x
+1	32.60	387.25	0.00	Xx the minimum amount due or xxxx amount xxxx xxxx the total amount due is paid, interest xxxxxxx xxx applicable (xxxxxxxxx xxxxx xxxxxxxxx, xx xxx) on an xxxxxxx xxxxx xxxxxxxx balance xxxxxx.
+1	21.26	399.46	0.00	x
+1	32.60	399.46	0.00	Xx xxx xxxx xxxxxx the xxxxxxxxxx minimum amount due xxxxxx  9 xxxxx xxxx from the due date the bank xxxx  xxxxxx the xxxxxxx to credit xxxxxxxxxxx xxxxxxxxx and xxxxx xxxxxxxxxx / xxxxxxxxx
+1	32.60	409.04	0.00	xxxxxxxxxxx  as xxx xxxxxxxxx xxxxxxxxxx xxxxxxxxxxxx, xxxx and xxxxxxxxxx.
+1	21.26	419.61	0.00	x
+1	32.60	419.61	0.00	Xxxxxxxxx 99xx Xxx 9999, Xxxxxxx Xxxxxxxx, Xxxx & Xxxxxxx on xxxx credit card xxxx xx xxxxxxx. Xxxxxx xxxxx to the XXXX / xxxxxxx xxxxxxx for details.
+1	21.26	431.82	0.00	x
+1	32.60	431.82	0.00	To Xxxxxxx xxxx credit card, xxxxx xxxx Xxxxxxxxxx, xxxxxx xxxxx xxxx or xxxx xxx phone xxxxxxx xxxxxxx.
+1	21.26	444.03	0.00	x
+1	32.60	444.03	0.00	Xxxxxx xxxx the minimum payment xxxxx xxxxx xxxxx xxxxxx xx the repayment xxxxxxxxxx xxxx xxxxxx/xxxxx xxxx xxxxxxxxxxxxx xxxxxxxxxx interest payment on xxxx outstanding balance. The xxxxx
+1	32.60	453.61	0.00	of xxxxxx amount of the xxxx x.x., xxxx payment xxxxxx 'minimum amount due', xx xxxxx the interest-xxxx credit period xxxxxxxx xxxxx not xx available to xxxxxxxxxxx.
+1	21.26	464.17	0.00	x
+1	32.60	464.17	0.00	Xxxx the card xxxxxx xxxxxxxx xxxxxxxxxxxxx from Bank xxxxxxxxx a xxxxxx from the xxxxxxxx for a transaction xxxxxxxx xxxxxx xxxx Phone-Xxxxxxx @ 9999 9999 / 9999 9999 to xxxxx XX or to xxxxxx an
+1	32.60	473.76	0.00	xxxxxx on the xxxxxx. Xxxxxxxxx xxxxxxxxxx xxxxxxxx xxx xxxxx xxx to +9999 99999999.
+1	21.26	484.32	0.00	x
+1	32.60	484.32	0.00	To xxxx the Xxxxxxxxx Xxxxx as xxxxxxxxxx xx the "The Xxxxxxx Xxxxx and Xxxxxxxxx Xxxxx of India (XXXXX)", xxxxxx xxxxx xxxx
+1	21.26	496.53	0.00	x
+1	32.60	496.53	0.00	Xxx to xxxx XXX xxxxx xx xxxx Credit Card statement:
+1	163.39	511.50	0.00	XXX Xxxxx
+1	291.05	508.95	0.00	XXX
+1	381.80	508.95	0.00	XXX
+1	416.81	508.95	14.07	State
+1	317.53	512.92	0.00	Xxxxxxx Number
+1	289.74	516.89	13.06	Type
+1	377.72	516.89	18.60	Rate %
+1	416.99	516.89	13.70	Code
+1	161.97	530.06	0.00	XXXX-XXX *********** - Rate 9.0  - 99****
+1	289.65	530.06	0.00	XXXX
+1	312.96	530.06	0.00	XXX*************
+1	382.91	530.06	8.23	9.0
+1	420.55	530.06	0.00	99
+1	24.09	547.72	0.00	“X/Xx xxxxxx xxxxxxx xxxx xxxxxx xxx xxxxxxxxx xxxxxxxx xx xxx xxxxxxxxx xxxxxxxxx xxxx from 9999-99 xxxxxxx is xxxx xxxx the xxxxxxxxx xxxxxxxx xxxxxxxx xxxxx xxx-xxxx (9) of xxxx 99, xx xxx not xxxxxxxx to
+1	24.09	555.66	0.00	xxxxxxx an xxxxxxx xx xxxxx of the xxxxxxxxxx of the xxxx xxx-xxxx.”
+1	28.35	590.74	0.00	Xxxxxx Xxxxx
+1	29.75	617.38	83.35	                        Statement & Payment
+1	164.36	617.38	0.00	                        XXXX (Xxxx Xxxxxxxxx
+1	302.34	621.04	0.00	                         Payment Xxxxxxx
+1	441.49	621.04	0.00	                         Customer Xxxxxx Xxxxxx
+1	29.75	627.37	0.00	                        xxxxxxx xxxxxxxxxxx
+1	164.36	627.37	0.00	                        Xxxxx and Xxxxxxxxxx)
+1	527.63	764.17	0.00	Xxxxxxxxx
+1	527.63	776.38	0.00	xxxxxx xx
+1	477.00	788.59	0.00	XX HDFC
+1	527.63	788.59	0.00	XX HDFC
+1	477.00	800.80	22.89	BANK
+1	527.63	800.80	22.89	BANK
+1	477.00	813.01	0.00	LIMITED 9
+1	527.63	813.01	0.00	LIMITED 9
+1	26.65	823.71	0.00	Page 9 of 9
+1	527.63	825.22	21.95	Date:
+1	527.63	837.43	45.60	2026.07.21

@@ -1,0 +1,724 @@
+# finora-pdf-trace v3
+# traceVersion: 3
+# redactorVersion: 2
+# allowlistFingerprint: A3C0126B
+# capturedAt: 2026-08-12
+# generatedFrom: Kotak Mahindra Bank credit card statement
+# capabilities: 
+# regressions: 
+# requiredHeaders: Date
+# motivation: real-world validation sweep, PM-requested
+# page	x	y	width	text
+0	55.00	106.00	0.00	Xxxxxxxxx
+0	96.19	106.00	0.00	Xxxxxx
+0	280.00	104.00	37.39	Statement
+0	319.68	104.00	17.32	Date
+0	435.00	104.00	0.00	99-Xxx-9999
+0	55.00	117.00	0.00	999
+0	69.16	117.00	0.00	xxxx
+0	82.50	117.00	0.00	xxx
+0	97.04	117.00	0.00	xxxxxxxx
+0	280.00	118.00	32.73	Minimum
+0	314.86	118.00	27.81	Amount
+0	344.82	118.00	14.86	Due
+0	361.80	118.00	0.00	(XXX)
+0	435.00	118.00	0.00	Xx.
+0	447.86	118.00	22.19	100.00
+0	55.00	128.00	0.00	xxxxxx
+0	83.27	128.00	0.00	xxxx
+0	99.25	128.00	0.00	xxxxx
+0	114.80	128.00	0.00	xxxxxx
+0	139.38	128.00	0.00	xxxxx
+0	280.00	132.00	18.38	Total
+0	300.69	132.00	28.45	Amount
+0	331.51	132.00	15.11	Due
+0	348.98	132.00	0.00	(XXX)
+0	435.00	132.00	0.00	Xx.
+0	447.85	132.00	28.19	5,178.69
+0	55.00	139.00	0.00	xxxx
+0	71.48	139.00	0.00	xxxxxx
+0	95.59	139.00	0.00	xxxxx
+0	115.30	139.00	0.00	xxxxx
+0	55.00	150.00	0.00	Xxxxxx
+0	78.16	150.00	2.45	-
+0	82.61	150.00	0.00	999999
+0	280.00	146.00	0.00	Xxxxxxxx
+0	323.32	146.00	6.89	to
+0	332.55	146.00	0.00	xxx
+0	348.24	146.00	0.00	xx
+0	435.00	146.00	0.00	99-Xxx-9999
+0	280.00	159.00	18.86	Total
+0	301.36	159.00	45.83	Outstanding
+0	349.81	159.00	0.00	Xxxxxxxxx
+0	435.00	158.50	0.00	Xx.
+0	447.85	158.50	28.19	5,178.69
+0	286.00	173.63	16.23	Total
+0	304.24	173.63	25.21	Amount
+0	331.40	173.63	13.44	Due
+0	346.81	173.63	0.00	(Xxxxxxx)
+0	435.00	173.63	0.00	Xx.
+0	447.85	173.63	28.19	5,178.69
+0	286.00	189.13	0.00	Xxxxx,
+0	310.18	189.13	0.00	XXXx
+0	329.01	189.13	30.69	(Principal
+0	361.75	189.13	42.20	Outstanding)
+0	408.00	189.50	17.00	0.00
+0	435.00	189.13	0.00	Xx.
+0	447.89	189.13	14.16	0.00
+0	56.00	195.00	0.00	XXXXX
+0	75.65	195.00	1.90	-
+0	80.88	195.00	0.00	99XXXXX9999X9XX
+0	55.00	206.00	24.74	Customer
+0	81.29	206.00	0.00	Xxxxxxxxxxxx
+0	114.25	206.00	23.77	Number:-
+0	145.00	206.00	0.00	999999999
+0	270.00	207.50	0.00	9999-X9x9x-x9x9x9x9X:9xx9x:9x9xxx-99
+0	354.46	204.13	0.00	xxxx
+0	407.00	204.50	17.00	0.00
+0	443.87	209.63	2.05	.
+0	447.89	209.63	14.16	0.00
+0	55.00	216.00	0.00	Xxxxxxx
+0	76.43	216.00	12.46	Card
+0	90.51	216.00	20.46	Number
+0	145.00	216.00	0.00	9999
+0	159.62	216.00	15.47	XXXX
+0	176.81	216.00	15.47	XXXX
+0	194.00	216.00	0.00	9999
+0	286.00	215.13	30.70	(Principal
+0	318.75	215.13	42.21	Outstanding)
+0	435.00	209.63	0.00	Xx
+0	59.00	236.00	0.00	Xx
+0	75.08	236.00	43.67	Summary
+0	428.64	236.00	0.00	Xx
+0	444.46	236.00	0.00	Xxxxxxx
+0	65.50	263.00	0.00	Xxxxxxxx
+0	152.00	265.00	0.00	Xxxxxxxx
+0	231.00	260.00	0.00	Xxxxxxxxx
+0	272.48	260.00	5.46	&
+0	345.50	263.00	18.62	Total
+0	426.00	261.00	32.33	Opening
+0	460.92	261.00	30.95	Balance
+0	539.50	262.00	0.00	9999
+0	60.00	276.00	28.49	Amount
+0	90.82	276.00	15.13	Due
+0	231.00	273.00	0.00	Xxxxx
+0	254.73	273.00	0.00	Xxxxxxx
+0	333.00	276.00	28.49	Amount
+0	363.82	276.00	15.13	Due
+0	426.00	281.00	0.00	Xxxxxx
+0	455.33	281.00	0.00	xxxx
+0	470.71	281.00	0.00	xxxxx
+0	541.50	282.00	0.00	999
+0	60.50	296.50	0.00	Xx.
+0	73.34	296.50	32.20	12,306.85
+0	127.00	297.00	2.72	-
+0	151.50	296.50	0.00	Xx.
+0	164.34	296.50	32.20	12,306.85
+0	217.00	297.00	4.79	+
+0	243.50	296.50	0.00	Xx.
+0	256.35	296.50	28.19	5,178.69
+0	308.00	297.00	4.79	=
+0	335.50	296.50	0.00	Xx.
+0	348.35	296.50	28.19	5,178.69
+0	426.00	301.00	0.00	Xxxxxxxx
+0	469.33	301.00	0.00	xxxx
+0	484.70	301.00	0.00	xxxxx
+0	545.50	302.00	0.00	9
+0	43.00	317.00	20.25	Total
+0	65.84	317.00	24.29	Credit
+0	92.72	317.00	19.24	Limit
+0	115.00	316.00	0.00	(xxxx.
+0	130.42	316.00	0.00	xxxx):
+0	168.00	316.50	0.00	Xx.
+0	180.84	316.50	32.20	60,000.00
+0	224.00	317.00	20.63	Total
+0	247.33	317.00	0.00	Xxxx
+0	271.70	317.00	22.28	Limit:
+0	335.00	316.50	0.00	Xx.
+0	347.84	316.50	32.20	12,000.00
+0	426.00	321.00	0.00	Xxxxxxx
+0	456.99	321.00	0.00	xxxx
+0	472.50	321.00	0.00	xxxxx
+0	543.50	321.00	0.00	99
+0	43.00	335.00	0.00	Xxxx
+0	61.22	335.00	0.00	Xxx
+0	77.42	335.00	24.23	Credit
+0	104.23	335.00	21.75	Limit:
+0	168.00	334.50	0.00	Xx.
+0	180.84	334.50	32.20	60,000.00
+0	224.00	335.00	38.11	Available
+0	264.86	335.00	0.00	Xxxx
+0	289.48	335.00	22.50	Limit:
+0	335.00	334.50	0.00	Xx.
+0	347.84	334.50	32.20	12,000.00
+0	426.00	341.00	28.52	Closing
+0	456.99	341.00	30.81	Balance
+0	539.50	340.00	0.00	9999
+0	43.00	354.00	37.61	Available
+0	83.36	354.00	24.67	Credit
+0	110.76	354.00	22.19	Limit:
+0	168.00	353.50	0.00	Xx.
+0	180.84	353.50	32.20	54,821.31
+0	40.00	368.00	0.00	Xx
+0	47.65	368.00	0.00	xxxx
+0	64.08	368.00	5.61	of
+0	71.72	368.00	0.00	xxxxxxx
+0	92.35	368.00	0.00	xx
+0	99.61	368.00	0.00	xxxxxx
+0	121.78	368.00	9.40	the
+0	133.24	368.00	27.45	minimum
+0	163.03	368.00	22.59	amount
+0	187.87	368.00	11.23	due
+0	201.25	368.00	0.00	xxxxxx
+0	222.65	368.00	9.40	the
+0	234.12	368.00	11.23	due
+0	247.50	368.00	13.19	date
+0	262.79	368.00	9.40	the
+0	274.26	368.00	0.00	xxxx
+0	292.98	368.00	0.00	xxxx
+0	304.43	368.00	0.00	xx
+0	313.98	368.00	0.00	xxxxxxxx
+0	341.48	368.00	5.61	to
+0	349.13	368.00	0.00	xxxxxx(x)
+0	380.43	368.00	7.07	as
+0	389.60	368.00	0.00	xxx
+0	401.44	368.00	9.40	the
+0	40.00	378.00	16.55	credit
+0	58.49	378.00	0.00	xxxxxxxxxxx
+0	93.98	378.00	0.00	xxxxxxxxx
+0	128.72	378.00	0.00	xxxxxxxxxx
+0	160.43	378.00	0.00	xxx
+0	171.38	378.00	5.58	of
+0	178.94	378.00	0.00	9999
+0	195.94	378.00	11.15	and
+0	209.16	378.00	7.03	as
+0	218.23	378.00	0.00	xxx
+0	229.93	378.00	9.33	the
+0	241.26	378.00	0.00	xxxxxxxxxx
+0	272.21	378.00	0.00	XXX
+0	285.41	378.00	0.00	xxxxxxxxxx
+0	54.50	498.50	19.00	Date
+0	100.00	498.50	47.92	Transaction
+0	152.86	498.50	26.86	details
+0	182.14	498.50	18.64	from
+0	211.00	498.50	0.00	99-Xxx-9999
+0	268.00	498.50	8.00	to
+0	285.00	498.50	0.00	99-Xxx-9999
+0	424.00	498.50	0.00	Xxxxxx
+0	457.09	498.50	0.00	Xxxx
+0	512.00	498.50	31.20	Amount
+0	545.59	498.50	0.00	(Xx.)X
+0	94.00	514.00	0.00	Xxxxxxxx
+0	131.95	514.00	13.33	and
+0	147.55	514.00	0.00	Xxxxx
+0	169.88	514.00	26.07	Credits
+0	40.00	527.00	36.00	28/02/2026
+0	94.00	527.00	0.00	XX999999999999XXXXX9
+0	525.00	527.00	32.00	12,306.85
+0	566.00	527.00	7.00	Cr
+0	95.00	541.00	0.00	Xxxxxxx
+0	125.49	541.00	17.18	Card
+0	144.96	541.00	0.00	Xxxxxxxxxxxx-
+0	199.13	541.00	0.00	999999XXXXXX9999
+0	94.00	552.00	0.00	Xxxxxx
+0	116.97	552.00	0.00	Xxxxxxxxx
+0	157.81	552.00	13.40	and
+0	173.54	552.00	0.00	Xxxx
+0	194.38	552.00	0.00	Xxxxxxxxxxxx
+0	40.00	565.00	36.00	15/02/2026
+0	94.00	565.00	0.00	XXXXXX
+0	187.86	565.00	0.00	999
+0	535.00	565.00	22.00	304.00
+0	40.00	579.00	36.00	16/02/2026
+0	94.00	579.00	0.00	XXXXXX
+0	187.86	579.00	0.00	999
+0	535.00	579.00	22.00	689.00
+0	40.00	593.00	36.00	17/02/2026
+0	94.00	593.00	0.00	XXX-999999999999-XXXXXX
+0	404.00	593.00	0.00	Xxxxxxxxxxx
+0	535.00	593.00	22.00	315.25
+0	40.00	607.00	36.00	17/02/2026
+0	94.00	607.00	0.00	Xxxxxx
+0	172.92	607.00	0.00	999
+0	404.00	607.00	0.00	Xxxxxxx
+0	529.00	607.00	28.00	1,178.82
+0	40.00	621.00	36.00	18/02/2026
+0	94.00	621.00	0.00	XXX-999999999999-XXXXXXXXX
+0	205.03	621.00	0.00	XXX
+0	404.00	621.00	0.00	Xxxxxxxxxxx
+0	535.00	621.00	22.00	350.00
+0	40.00	635.00	36.00	26/02/2026
+0	94.00	635.00	0.00	XXX-999999999999-XX
+0	172.07	635.00	0.00	XXXXXX
+0	204.56	635.00	0.00	XX
+0	404.00	635.00	0.00	Xxxxxxxxxxx
+0	535.00	635.00	22.00	175.00
+0	40.00	649.00	36.00	01/03/2026
+0	94.00	649.00	0.00	XXX-999999999999-XXXXXXXXX
+0	203.09	649.00	0.00	XXX
+0	404.00	649.00	0.00	Xxxxxxx
+0	539.00	649.00	18.00	80.00
+0	40.00	663.00	36.00	01/03/2026
+0	94.00	663.00	0.00	XXX-999999999999-XXXXX
+0	404.00	663.00	0.00	Xxxxxxxxxxx
+0	535.00	663.00	22.00	120.00
+0	37.00	691.00	0.00	Xxx
+0	48.46	691.00	0.00	xxxx
+0	61.20	691.00	15.28	Credit
+0	78.06	691.00	11.15	card
+0	90.80	691.00	0.00	xxxxx
+0	102.26	691.00	0.00	xxxxx
+0	117.55	691.00	7.97	the
+0	127.12	691.00	0.00	xxxxxxxxx:
+0	418.50	695.00	0.00	Xxxx
+0	444.57	695.00	0.00	xxx
+0	464.27	695.00	0.00	xxxx
+0	489.83	695.00	0.00	xxxx!
+0	38.00	791.00	0.00	Xxx
+0	49.88	791.00	0.00	xxx
+0	60.80	791.00	18.61	contact
+0	81.04	791.00	0.00	xx
+0	88.75	791.00	0.00	xx
+0	95.17	791.00	3.52	:-
+0	100.30	791.00	0.00	Xxxxxxxxxxxxx
+0	133.70	791.00	0.00	+99
+0	145.11	791.00	0.00	9999999999
+0	178.84	791.00	1.90	(
+0	182.37	791.00	0.00	XXX
+0	193.59	791.00	0.00	xxxxxx
+0	212.86	791.00	26.00	applicable
+0	240.48	791.00	3.52	).
+0	37.00	829.00	0.00	XXX:
+0	56.00	829.00	0.00	999999999
+0	318.00	828.00	0.00	999
+0	536.00	828.00	16.05	Page
+0	554.39	828.00	0.00	9
+0	560.26	828.00	5.72	of
+0	568.09	828.00	0.00	9
+1	54.50	106.50	19.00	Date
+1	100.00	106.50	47.92	Transaction
+1	152.86	106.50	26.86	details
+1	182.14	106.50	18.64	from
+1	211.00	106.50	0.00	99-Xxx-9999
+1	268.00	106.50	8.00	to
+1	285.00	106.50	0.00	99-Xxx-9999
+1	424.00	106.50	0.00	Xxxxxx
+1	457.09	106.50	0.00	Xxxx
+1	512.00	106.50	31.20	Amount
+1	545.59	106.50	0.00	(Xx.)X
+1	40.00	122.00	36.00	02/03/2026
+1	94.00	122.00	0.00	XXX-999999999999-XXXXX
+1	188.09	122.00	0.00	XXXX
+1	404.00	122.00	0.00	Xxxxxxx
+1	539.00	122.00	18.00	55.00
+1	40.00	136.00	36.00	03/03/2026
+1	94.00	136.00	0.00	XXX-999999999999-XXXXXXXX
+1	200.51	136.00	0.00	XXXX
+1	404.00	136.00	0.00	Xxxxxxx
+1	539.00	136.00	18.00	80.00
+1	40.00	150.00	36.00	04/03/2026
+1	94.00	150.00	0.00	XXX-999999999999-XXXXX
+1	188.02	150.00	0.00	XXXX
+1	404.00	150.00	0.00	Xxxxxxx
+1	539.00	150.00	18.00	90.00
+1	40.00	164.00	36.00	04/03/2026
+1	94.00	164.00	0.00	XXX-999999999999-XXXXXX
+1	191.29	164.00	13.79	LTD
+1	404.00	164.00	0.00	Xxxxxxxxxxx
+1	535.00	164.00	22.00	186.00
+1	40.00	178.00	36.00	05/03/2026
+1	94.00	178.00	0.00	XXX-999999999999-XXXXX
+1	184.52	178.00	0.00	XXXXXXX
+1	404.00	178.00	0.00	Xxxxxxx
+1	535.00	178.00	22.00	100.00
+1	40.00	192.00	36.00	06/03/2026
+1	94.00	192.00	0.00	XXX-999999999999-XXXXXX
+1	404.00	192.00	0.00	Xxxxxxxxxxx
+1	535.00	192.00	22.00	878.18
+1	40.00	206.00	36.00	08/03/2026
+1	94.00	206.00	0.00	XXX-999999999999-XXXXXX
+1	193.38	206.00	0.00	XXXXXX
+1	404.00	206.00	0.00	Xxxxxxxxxxx
+1	535.00	206.00	22.00	222.44
+1	40.00	220.00	36.00	10/03/2026
+1	94.00	220.00	0.00	XXX-999999999999-XXXXXXX
+1	194.01	220.00	0.00	XXXXX
+1	404.00	220.00	0.00	Xxxxxxxxxxx
+1	539.00	220.00	18.00	30.00
+1	40.00	234.00	36.00	11/03/2026
+1	94.00	234.00	0.00	XXX-999999999999-XXX
+1	176.52	234.00	0.00	XXXXX
+1	404.00	234.00	0.00	Xxxxxxx
+1	539.00	234.00	18.00	25.00
+1	40.00	248.00	36.00	12/03/2026
+1	94.00	248.00	0.00	XXX-999999999999-XXXXXXX
+1	193.94	248.00	0.00	XXXXX
+1	404.00	248.00	0.00	Xxxxx
+1	424.15	248.00	0.00	Xxxxxxxxx
+1	539.00	248.00	18.00	20.00
+1	40.00	262.00	36.00	12/03/2026
+1	94.00	262.00	0.00	XXX-999999999999-XXXXX
+1	185.32	262.00	0.00	XXXX
+1	207.22	262.00	0.00	XX
+1	404.00	262.00	0.00	Xxxxxxx
+1	535.00	262.00	22.00	120.00
+1	40.00	276.00	36.00	14/03/2026
+1	94.00	276.00	0.00	XXX-999999999999-XXXXX
+1	404.00	276.00	0.00	Xxxxxxxxxxx
+1	535.00	276.00	22.00	160.00
+1	94.00	290.00	18.37	Total
+1	114.61	290.00	0.00	Xxxxxxxx
+1	151.57	290.00	5.32	&
+1	159.30	290.00	0.00	Xxxxx
+1	182.07	290.00	0.00	Xxxxxxx
+1	529.00	290.00	28.00	5,178.69
+1	37.00	303.00	0.00	*XXX
+1	56.25	303.00	11.89	EMI
+1	70.23	303.00	6.29	to
+1	78.52	303.00	0.00	9999999
+1	106.89	303.00	6.29	to
+1	115.19	303.00	0.00	xxxxxxx
+1	141.62	303.00	0.00	xxxx
+1	158.22	303.00	0.00	xxxxxxxxxxxx
+1	200.51	303.00	0.00	xxxx
+1	214.84	303.00	11.89	EMI
+1	228.82	303.00	6.66	or
+1	237.50	303.00	0.00	xxxxx
+1	252.99	303.00	0.00	xxx.xxxxx.xxx
+1	306.27	303.00	6.29	to
+1	314.56	303.00	0.00	xxxxxxx
+1	340.99	303.00	0.00	xxxxxx
+1	37.00	313.00	28.10	Payment
+1	67.27	313.00	6.31	of
+1	75.58	313.00	0.00	xxxx
+1	91.47	313.00	29.55	Minimum
+1	123.26	313.00	0.00	Xxxx
+1	141.80	313.00	0.00	xxxxx
+1	164.48	313.00	8.13	on
+1	174.68	313.00	0.00	xxxxx
+1	197.36	313.00	0.00	xxxxx
+1	214.78	313.00	0.00	xxxx
+1	230.30	313.00	6.31	to
+1	238.61	313.00	34.18	repayment
+1	274.94	313.00	0.00	xxxxxxxxx
+1	308.98	313.00	6.31	to
+1	317.29	313.00	3.65	a
+1	322.97	313.00	0.00	xxxxxx
+1	345.66	313.00	20.66	tenure
+1	368.34	313.00	0.00	xxxx
+1	383.85	313.00	0.00	xxxxxxxxxx
+1	423.94	313.00	0.00	xxxxxxxxxx
+1	468.56	313.00	24.57	Interest
+1	495.03	313.00	0.00	Xxxxxxx
+1	524.16	313.00	9.73	(as
+1	37.00	323.00	35.90	applicable)
+1	74.88	323.00	0.00	xxxxxxx
+1	103.19	323.00	8.17	on
+1	113.51	323.00	0.00	xxxx
+1	130.34	323.00	39.13	outstanding
+1	171.61	323.00	0.00	xxxxxxxx.
+1	38.00	821.00	0.00	XXX:
+1	57.00	821.00	0.00	999999999
+1	318.00	821.00	0.00	999
+1	537.00	821.00	16.05	Page
+1	555.39	821.00	0.00	9
+1	561.26	821.00	5.72	of
+1	569.09	821.00	0.00	9
+2	38.00	821.00	0.00	XXX:
+2	57.00	821.00	0.00	999999999
+2	318.00	821.00	0.00	999
+2	537.00	821.00	16.05	Page
+2	555.39	821.00	0.00	9
+2	561.26	821.00	5.72	of
+2	569.09	821.00	0.00	9
+3	210.02	22.91	0.00	XXXX XXXXXXXXX XXXXX & XXXXXXXXXX
+3	11.34	40.94	0.00	To xxx the xxxxxx xxxxxxx of XXXX and the Xxxxxxxxxx Xxxxxxxxx of the Bank, xxxxxx xxxxx xxx.xxxxx.xxxx.xx
+3	303.31	40.94	0.00	 # Xxxxxx xxxxx to the xxxx and xxxxxxx of Xxxxxxx Xxxxxxxx Credit Card for xxxxxxx applicable to Xxxxx Xxxxxx Xxxxxxx Xxxxxxxx Credit Card. ##Xxxxx card xxxxxxx is available xxxx on xxxxxx xxxxx. ###For 
+3	11.34	47.94	0.00	9. Xxxx and Xxxxxxx
+3	314.65	45.84	0.00	applicable xxxxxxxxxx for xxxx of xxxxxxx xxxxxxxx transaction xxx, xxxxx XXXX xxxxxxx on the xxxxxxx.
+3	11.34	53.94	0.00	 A. The xxxxxxxx of xxxxxxx as applicable is xxxxxxxx xxxxx:
+3	303.31	52.24	0.00	 **Xxxxxxxxx for xxxx xxxxxxxxx xxxxxx is:
+3	20.96	61.04	0.00	Kotak Mahindra Bank Card Xxxxxxx Xxxxxxx xxxx Xxxxxx xxxx Xxxxxxxxx for Xxxxxx of Xxx-on Card Xxxx Xxxxxx Xxxx
+3	303.31	58.64	0.00	 Kotak Xxxxxxxxx Credit Card - Xxxx transaction xxxxxxx ₹999 to ₹9,999. Xxx Xxxxxx xx an xxxxxxxxxxx xxxx is ₹99,999. Xxxxx Xxxxxxx, Kotak Xxxxxxxx, Kotak Xxx+ Credit Card, Xxxxx Xxxxxx Xxxxxxxxx (xxxx xxxxxxx), 
+3	314.65	63.54	0.00	Xxxxx Xxxxxx Xxxxxxxxx (paid xxxxxxx) - Xxxx transaction xxxxxxx ₹999 to ₹9,999. Xxx Xxxxxx xx an xxxxxxxxxxx xxxx is ₹9,999. For Xxxxx Xxxxxx Xxxxxxxxx (paid xxxxxxx), Xxx Xxxxxx: ₹999 xx a xxxxxxxx xxxxx. 
+3	20.96	67.53	0.00	Xxxxx Xxxx^ XXX ₹999 XX ₹999
+3	314.64	68.44	0.00	Xxxxx Credit Card - Xxxx transaction xxxxxxx ₹999 to ₹9,999. Xxx Xxxxxx xx an xxxxxxxxxxx xxxx is ₹9,999. Xxxx Xxxxxxxx, Xxx Xxxxxxxxx, Xxxxxx Kotak Xxxxxxxxx, XXX Xxxxxx Xxxxxxxxx, Kotak Xxxxxxxxx, Kotak 
+3	20.96	74.03	0.00	999#XxxxxXxxxxxxxx Credit Card XXX XXX XX Xxxxxx
+3	314.64	73.34	0.00	XXX - Xxxx transaction xxxxxxx ₹999 to ₹9,999. Xxx Xxxxxx xx an xxxxxxxxxxx xxxx is ₹9,999. For Kotak XXX, Xxx Xxxxxx is ₹9,999. Xxxxxx Xxxxxxxx, 999 #Xxxxx Xxxxxxxxx, Kotak 999 Credit Card, Kotak Xxxxxxxx+ 
+3	20.96	80.53	0.00	Kotak Xxxxxxxxx Credit Card XXX ₹99,999 Xxxx of Kotak Xxxxxxxxx Xxxxxxxxx Xxxxxx
+3	314.64	78.24	0.00	Credit Card - Xxxx transaction xxxxxxx ₹999 to ₹9,999. Xxx Xxxxxx xx an xxxxxxxxxxx xxxx is ₹9,999. Indian Xxx Kotak Credit Card - Xxxx transaction xxxxxxx ₹999 - ₹9,999 xxxx xx XXXX xxxx xxxxx. Xxx Xxxxxx: 
+3	314.64	83.14	0.00	₹999 xxx statement xxxxx. Xxxxxxx Xxxxxxxx - Xxxx transaction xxxxxxx ₹999 to ₹9,999. Xxx Xxxxxx xx an xxxxxxxxxxx xxxx is ₹9,999. Xxxx Xxxxxxxx, Xxxx Xxxxxx, Xxxxxxx - Xxxx transaction xxxxxxx ₹999 to 
+3	20.96	87.03	0.00	Xxxxxx Xxxx  XXX ₹999 ₹99,999 xxxxxx xxxxxx xxx xxxxx Xxxxxx
+3	314.64	88.04	0.00	₹9,999. Xxx Xxxxxx xx an xxxxxxxxxxx xxxx is ₹9,999. 
+3	20.96	93.53	0.00	XXX Xxxx/ XXX XXXX/ XXX Xxxxxxxx XXX ₹999 / ₹999 / ₹999  XX ₹999   X. Interest Xxxx period:
+3	20.97	100.02	0.00	Xxxx Xxxxxxxx ₹9999* ₹9999 ₹9 Xxxx xxxxxx xxxxxx xxx xxxxx ₹999
+3	303.30	101.35	0.00	  Interest xxxx period xxx xxxxx xx to 99 xxxx xxxxxxxxx on the Payment Due Date. Payment Due Date xxx xx xxxxxxx 99 and 99 xxxx xxxxx the Statement Date. To xxxxx for xxxxx Payment Due Date, xxxxx monthly 
+3	20.96	106.52	0.00	Xxxxxx Xxxxxxxxx ₹9999 / XXX ₹999 ₹9 Xxxx xxxxxx xxxxxx xxx xxxxx Xxxxxx
+3	314.64	106.25	0.00	credit card statement. Xxxxxxxxx on the Payment Due Date, credit xxxx period xxx xxxxx from 99-99 xxxx or 99-99 xxxx. Interest-xxxx period is not applicable xx Total Amount Due is not paid xx xxxx.
+3	20.96	113.02	0.00	Xxx Xxxxxxxxx ₹9999 ₹9999 ₹1.5 Xxxxx xxxxxx xxxxxx xxx xxxxx ₹999
+3	303.30	112.15	0.00	  Xxxxxxxxxxxx Xxxxxxx for Interest Xxxx Period Xxxxxxxxxxx:
+3	20.96	119.52	0.00	Xxxxx Xxxxxxxxx ₹9999 ₹9999 ₹9 Xxxxx xxxxxx xxxxxx xxx xxxxx Xxxxxx
+3	303.31	118.04	0.00	  For a statement for the period 99xx Xxxxx to 99xx Xxx the payment due date xxxx xx 99xx Xxx. Xxxxxxxx xxx xxxx paid xxxx Total Amount Due of the xxxxxxxx xxxxx statement xx the payment due date, the interest 
+3	314.65	122.94	0.00	xxxx period xxxxx xx:
+3	20.96	126.02	0.00	Xxxxxx Xxxxxxxx ₹999 / XXX ₹999 ₹99,999 xxxxxx xxxxxx xxx xxxxx Xxxxxx
+3	303.31	128.84	0.00	  For a xxxxxxxx xxxxx 99xx Xxxxx, the interest xxxx xxxxx period is from 99xx Xxxxx to 99xx Xxx xxxxx xxxxxx to 99 xxxx and for a xxxxxxxx xxxxx 9xx Xxx, the interest xxxx xxxxx period is from 9xx Xxx to 99xx Xxx 
+3	20.97	132.51	0.00	XXX Xxxxxx Xxxxxxxxx XXX ₹9999 XX ₹999
+3	314.65	133.74	0.00	xxxxx xxxxxx to 99 xxxx. Xxxxxxx, xx xxx xxxx not paid the xxxxxxxx xxxxx'x balance xx xxxx xxxxxx due date, xxxx xxxxx xxxx xx no interest xxxx period.
+3	20.97	139.01	0.00	Xxxxx Xxxxxx Xxxxxxxxx (Paid Xxxxxxx) XXX ₹9999 ₹9 Xxxxx xxxxxx xxxxxx xxx xxxxx XX
+3	303.31	140.64	0.00	 X.  Finance Xxxxxxx (Interest Xxxxxxx):
+3	20.97	145.51	0.00	Xxxxx Xxxxxx Xxxxxxxxx (Xxxx Xxxxxxx) XXX XXX XX XX
+3	303.31	146.54	0.00	  Interest xxxx xx xxxxxxx as xxx Xxxxx X; on a xxxxx xxxxxxx xxxxx xx the Total Amount Due of the xxxxxxxx statement is not paid xx xxxx on or xx the payment due date. Interest xxxx xx xxxxxxx on the Total Amount 
+3	20.97	152.01	0.00	Xxxxxxx Xxxxxxxx# ₹9,999 ₹999 XX ₹999
+3	314.65	151.44	0.00	Due and on xxx xxx xxxxxxxxxxxx xxxxxx Xxxx/xxxxxxx and XXX/Xxxxx (from the transaction date) xxxx xxxx xxxx as the xxxxxxxx outstanding xxxxxxx xxx paid xx xxxx. Xx xxxxxxxx, interest xxxx xx xxxxxx on xxx xxxx 
+3	20.97	158.51	0.00	Xxxxxxxx Xxxxxxxx ₹9,999 ₹999 XX ₹999
+3	314.65	156.34	0.00	xxxxxxxx from the date of the transaction xxxxx the date of payment xxxxxxxxx Kotak Xxxxxxxxx Credit Card, Xxxx Xxxxxxx and 999 #Xxxxx Xxxxxxxxx Xxxxxxxxxxx, as xxxx xxxxx interest xxxx period for xxx Xxxx 
+3	314.65	161.24	0.00	Xxxxxxxx. Interest xxxxx xxxx xx xxxxxxx xx the xxxx payment is xxxxxxxx xxxxx the due date xxx xxxxxx the xxxx statement date. Xx xxx xxxx xxxx xxxxxx a xxxxxxx payment xxx xxx xxxx paid the current statement 
+3	20.97	165.00	0.00	Kotak Xxxxxxxxx/ Xxxxxxxx XXX XXX XX XX
+3	314.65	166.14	0.00	outstanding xx xxxx on or xxxxxx Payment Due Date xxxx Interest xxxx not xx xxxxxxx. X.x. 99xx Xxxx statement total balance is ₹9999. Payment Due Date is 99xx Xxxx. Payment of ₹9999 is xxxx on 9xx Xxxx. No 
+3	20.97	171.50	0.00	Kotak XXX ₹999 ₹999 XX XX
+3	314.65	171.04	0.00	interest xxxx xx xxxxxxx xx 99xx Xxxx statement. 
+3	20.97	178.00	0.00	Xxxx - Xxxxxxxx XXX ₹999 XX Xxxxxx
+3	303.31	177.94	0.00	 X.  Xxxxxxxxxxxx of Interest Xxxxxxxxxxx:
+3	20.97	184.50	0.00	Xxxx - Xxxxxx XXX ₹999 XX Xxxxxx
+3	303.31	183.84	0.00	  Xxxxxxx for Interest xxxxxxxxxxx = Amount*rate of interest xxx xxxxx*no of xxxx*99xxxxxx/999
+3	20.97	191.00	0.00	9X Xxxxxxx - XxxxXx Kotak Credit Card ₹999 ₹999 XX XX
+3	303.31	189.74	0.00	  Xxxxxx xxxx xxx xxxx paid xxx xxxxxxxx xxxx xx xxxx, and xxxxx is no outstanding due on xxxx Credit Card Account. Xxxx monthly statement is xxxxxxxxx on the 99xx of xxxxx xxxxx. Xxx xxxx xxxxxxxxx xxxxxxxxx 
+3	314.65	194.64	0.00	xxxxx for ₹99999 on 99xx Xxx and xxxxxxxxx xxxx from an ATM for ₹9,999 on 99xx Xxx. Statement on 99xx Xxx xxxx xx xxxxxxxxx xxxx Total Amount Due of ₹12,617.16 and XXX amount of ₹737.16 xxxxxxxxxx of 
+3	20.97	197.49	0.00	9X Xxxxxxx XX - XxxxXx Kotak Credit Card ₹9999 ₹9999 XX XX
+3	314.65	199.54	0.00	total of Xxxxxx Xxxxxxxx and Xxxx Xxxxxxx, Xxxx Xxxxxxx Xxx of ₹999, Interest on Xxxx Xxxxxxx, XXX on Xxxx Xxxxxxx Xxx & Interest Xxxxxxx. Xxxxxxxx interest rate is 3.50% monthly (42.00% xxxxxxxxxx), 
+3	20.97	203.99	0.00	XxxxXx Kotak XX Credit Card ₹9999 ₹9999 XX XX
+3	314.65	204.44	0.00	Interest on Xxxx Xxxxxxx of ₹9,999 xxxx xx xxxxxxxxxx from 99xx Xxx to 99xx Xxx (x.x. for 99 xxxx) = ₹9999*3.50%*99*99/999 = ₹23.01. XXX is xxxxxxxxxx as 9% of Xxxxxx Xxxxxxxx & Xxxx Xxxxxxx = ₹120.00 
+3	20.97	210.49	0.00	XxxxXx Kotak Credit Card ₹9999 ₹9999 XX XX
+3	314.65	209.34	0.00	(9% of 99,999) xxxx 999% of xxx xxxx and xxxxxxx = ₹617.16 (₹23.01+₹4.14+₹999+₹99). XXX @ 99% is xxxxxxx on Xxxx Xxxxxxx Xxx of ₹999 and Interest of ₹23.01 xxxxxxxxxxxx.
+3	20.97	216.99	0.00	Kotak Xxxxxxxx+ Credit Card ₹999 ₹999 ₹9 Xxxxx xxxxxx xxxxxx xxx xxxxx XX
+3	303.31	215.24	0.00	  Xxxxxxxx xx the xxxxx xxxxxxx, the Payment Due Date is 99xx Xxxx and xxx xxxx xxxxxxx payment of xxxx the XXX amount of ₹737.16 on 99xx Xxxx xxxx no xxx xxxxx xxxxxxxxx. Xxxx, payment of ₹737.16 xxxx 
+3	314.65	220.14	0.00	xx xxxxxxxx first xxxxxxx xxxx and xxxxxx xxxxxxx xxxxxxxx to ₹ 617.16 and balance ₹999 xxxxxxx Xxxx Xxxxxxx.
+3	20.98	223.49	0.00	Kotak Xxx+ Credit Card ₹9999 ₹9999 XX XX
+3	303.31	226.04	0.00	  Xxxxxxxx xx the xxxxx xxxxxxx, the Payment Due Date is 99xx Xxxx and xxx xxxx xxxx the XXX amount payment of ₹737.16 on 99xx Xxxx xxxx no xxx xxxxx xxxxxxxxx. Xx xxxx xxxx, payment of ₹737.16 is xxxxxxxx 
+3	20.98	229.98	0.00	Kotak 999 Credit Card ₹999 ₹999 ₹99,999 xxxxxx xxxxxx xxx xxxxx ₹999
+3	314.65	230.94	0.00	first xxxxxxx xxxx and xxxxxx xxxxxxx xxxxxxxx to ₹617.16, balance ₹999 xxxxxxx Xxxx Xxxxxxx. 
+3	20.98	236.48	0.00	Xxxxx Xxxxxxx ₹99999 ₹99999 ₹99 Xxxxx xxxxxx xxxxxx xxx xxxxx Xxxxxx
+3	303.31	236.84	0.00	  Interest xxxxxx xx statement xxxxxxxxx on 99xx Xxxx xxxx xx xxxxxxxxxx as xxxxxxx:
+3	20.99	242.98	0.00	XxxxxxXxx Kotak Credit Card ₹999 ₹999 ₹99,999 xxxxxx xxxxxx xxx xxxxx XXX
+3	318.64	243.44	0.00	a. Interest on Xxxx Xxxxxxx of ₹9999 @ 3.5%xx from 99xx Xxx to 99xx Xxxx (x.x. 99 xxxx) (₹9999*3.5%*99*99/999) ₹41.42
+3	20.99	249.48	0.00	Xxxxx Kotak Credit Card XXX XXX XX XX
+3	318.64	249.93	0.00	x. Interest on Xxxxxxxx of ₹99999 @ 3.5%xx from 99xx Xxx to 99xx Xxxx (x.x. 99 xxxx) (₹99999*3.5%*99*99/999) ₹540.82
+3	20.99	255.98	0.00	Xxxxxx Kotak Credit Card ₹999 ₹999 ₹9 Xxxxx xxxxxx xxxxxx xxx xxxxx ₹999
+3	318.64	256.43	0.00	x. Interest on balance Xxxx Xxxxxxx of ₹9999 xxxxx payment xxxxxxxxxxx @ 3.5%xx from
+3	20.99	262.47	0.00	Kotak UPI XxXxx Xxxxxxx Credit Card XXX XXX XX XX
+3	324.31	261.43	0.00	99xx Xxxx to 99xx Xxxx (x.x. 99 xxxx) (₹9999*3.5%*99*99/999) ₹28.12
+3	20.99	268.97	0.00	Xxxxx999 Xxxxx Xxxxx Credit Card ₹999 / XXX XXX XX XX
+3	325.87	267.93	0.00	Total Interest xxxxxx xx 99xx Xxxx statement xxxx xx a+x+x ₹610.37
+3	11.34	276.56	0.00	 *₹9999 Xxxxxxx xxx xxxx xx xxxxxxxx xx xxxx ₹99,999 xxxxx xxxxxx 99 xxxx of card xxxxxxxxxx.   Total Xxxxxxx for 99xx Xxxx statement = (Xxxxxxxx Statement Total Due – Payment Xxxx + Total Interest & XXX of current Xxxxxxx statement). Total Amount Due = (₹12,617.16 – ₹737.16 + ₹610.37 + ₹109.87) = 
+3	11.34	283.05	0.00	 Xxxx:  The xxxxx xxxxxxxxx xxxx xxx xxxx from Xxxxxxxxxx to Xxxxxxxxxx and for xxxxxxxxx card xxxxxxxx. The card xxxx is not xxxxxxxxx on the xxxxxxx xxxxxxx xxxxx for, xxxxxx xxxxxx xxxxxxxxx. The applicable ₹12600.23. Minimum Amount Due = ₹839.04 (9% of balance Xxxxxx xxxxxxxx and Xxxx Xxxxxxx & 999% of interest and XXX). Xxxxx xxxxxxxxx xxxxxxxxxxxx is applicable for a xxxxxxxxx interest rate of 3.5% x.x. 
+3	17.01	288.05	0.00	xxxxxxx/xxxx xxxx xx xxxxxxxxxxxx to the customer xx the xxxx of xxxxxxxxxxx. Xxxxxxx xxxx is xxxxxx xxxxxx 99 xxxx of card xxxxxxxx and xxxx xx xxxxxx xx the xxxxxxxxxx xxxxxxx statement. For 999#XxxxxXxxxxxxxx & interest xxx xxxx xxxxxxxxx on the card xxxxxxx. Xxxxxx interest xxxxxxxxxxx and Due Date xxxxx xxxx xxxxx on the xxxxxxxxxx xxxxxxxx and xxxxxxx xxxxxxxx. 
+3	17.01	293.05	0.00	Credit Xxxxx, xx applicable, xxxx xx xxxxxx on the xxx of xxxxxxxxxx of the card and for Xxxxx999 Xxxxx Xxxxx Credit Xxxxx, xxxx xx xxxxxx xx first xxxxxxx statement.^^^Xxxxxx of xxxx for Credit Xxxxx xxxxxx to Xxxxxxxxx   Xxxx: Xx xxx xxxxx ₹9,999 and xxx xxx xxxx xxxxxxx the Minimum Amount Due ("XXX") xxxxx xxxxx, xxxx xx xxx xxxxxx xx repayment xxxxxxxxxx xxxx 99 xxxxxx (xxxxxxxxxxx xxxx xxxx XXX as 9% xxxxxxx to 
+3	17.01	298.05	0.00	is xxxxxxx to xxxxxxxxxxx xxxxxxxxxxx of xxxxxxxxxx Xxxxxxxxx. Xxxxxxxxx xxxxxx to Kotak Bank and Xxxxx xxxxxxx xxxxxxxxxxxx xxxx Xxxxxxxxx xxxxxxxxx / Xxxxx Xxxxxx Xxxxx / Xxxxx Xxxxxx Xxxxxxxx / Xxxxx Xxxxxx minimum xxxxxxx of ₹999) xxxx xxxxxxxxxx interest payment on the outstanding amount. Xx is xxxxxxxxx xxxxxxxxx xxxx xxxxxxxx xxxx xxxx is available xxxx xxx, xxxxxxxxxxx amount xxxx xxxx XXX xx paid to 
+3	17.01	303.05	0.00	Xxxx xxxxxxxxx / Xxxxxxx Xxxxxxx / Xxxxxxxxx Xxxxxx xxxxxxxxx. For details on the xxxxxxxxx xxxxxxxxxxx and xxxxx xxxxxxx, xxxxxx xxxxx xxx.xxxxx.xxxx.xx. Xx xxxx, xxxxxxxxx xxxxxxxxxxx is not xxx or xx customer the Bank.
+3	17.01	308.05	0.00	is xxxxxxxx from xxxxxx xxxxxxx xxxxxxxxx to xxxxx xxxxxxx, customer xxxx not xx xxxxx xxxxxxxxx xxxxxx xxx xxxxxx and xxxx xx xxxxxxxx to xxx Xxxxxxx/Xxxxxx xxxx. Xxxxxxx xxx xx xxxxxxx from xxxx to xxxx xx the   Interest & Xxxx Payment Xxxxxxx xxxx xx applicable as xxxxxxxxx xx xxxxxxxx of xxxxxxx xx no payment or payment xxxx is xxxx xxxx XXX amount.
+3	17.01	313.05	0.00	xxxx xxxxxxxxxx of the bank. Xxxx xxxxxxx xx xxx, xxxx xx xxxxxxxxxxxx xxxx xxxxx xxxxxx.
+3	303.31	313.42	0.00	9.  Credit and Xxxx Withdrawal Xxxxxx
+3	11.34	320.55	0.00	 X. Finance xxxxxxx:
+3	303.31	319.32	0.00	 Credit Limit xxxxx the xxxxxxx limit xx to xxxxx xxx xxx xxxxxxxxxx to xxxxx on xxxx Credit Card. Xxxx Limit xxxxx a xxxxxx of xxxx Credit Limit and is xxxxx xxxx the Total Credit Limit. Bank xxxx xxxx the xxxx limit 
+3	308.98	324.22	0.00	available to the Xxxxxxxxxx xx xxx xxxx xxxxxxxxxx and on xxxx xxxxx as xxx xx xxxxxxxxxxxx xx the Bank from xxxx to xxxx. Xxx-On xxxxxxxxxxx xxxxx the xxxx xxxxxx as xxxx of the Xxxxxxx Account Holder. The Credit 
+3	67.70	327.40	0.00	                                           Interest Xxxxxxx
+3	24.57	330.08	0.00	Kotak Mahindra Bank Card Xxxxxxx
+3	308.98	329.12	0.00	Limit and Xxxx Withdrawal Limit xxxx xxxx for xxxx Xxxxxxxxxx and is xxxxxxxxxxxx xx the xxxx of xxxxxxxx of the Card. Xx is xxxx xxxxxxxxx xx the monthly xxxxxxxxxx. The available Credit Limit xx xxx xxxx is the 
+3	24.56	333.36	0.00	 Monthly Rate Xxxxxx Rate (XXX)
+3	308.98	334.02	0.00	xxxxxxxxxx xxxxxxx xxxxxxxx Credit Limit & Outstanding balance on the Card xx xxxx xxxxx of xxxx. The available Credit Limit xx the xxxx of xxxxxxxxxx of xxxx monthly statement is xxxxxxxx as a xxxx of the xxxx 
+3	24.56	339.32	0.00	Xxxxx Xxxx/Xxxxxx Xxxx/XXX Xxxx/XXX Xxxxxxxx/ XXX XXXX /Xxxx Xxxxxxxx/ Xxxxxx Xxxxxxxx/Xxxxxxx Xxxxxxxx/Xxxxxxxx Xxxxxxxx/Xxxxxxx Xxxx/Xxxx Xxxxxxx statement. The Xxxxxxxxxx xxxx not xxxxxx xxx Credit Limit/Xxxx Limit xxxxx xxx xxxxxxxxxxxxx. Xxxxxxx, as xxx xxxxxxxxxx'x xxxxxxxx xxxxxxx, the Bank xxx xxxxx the xxxxxxxx to xxxxxxxx xxxxx xxxxxxxx credit limit, 
+3	24.56	344.29	0.00	Xxxxxxxx/Kotak XXX/ Xxxx - Xxxxxxxx/ Xxxxxx/ Xxxxxx Xxxxxxxxx/Xxx Xxxxxxxxx/ Kotak 999 Credit Card/XxxxxxXxx Kotak Credit Card/ Xxxxx Kotak Credit Card/ 3.75% 45.00%
+3	308.98	343.82	0.00	and xxxxxxxxxxx xxxx limit xxx/xxxxxxx as applicable xxxx xx xxxxxx. Xx xxxx xxx hold xxxxxxxx Credit Xxxxx xxxx the Bank, total xxxxxx on xxx xxxx xxxxx xxxx xx xxxxxxxxxx to the xxxxxxx credit limit xxxxxxxx on xxx of 
+3	24.56	349.25	0.00	999 #Xxxxx Xxxxxxxxx/ 9X Xxxxxxx –XxxxXx Kotak Credit Card/ 9X Xxxxxxx XX – xxxXx Kotak Credit Card/ XxxxXx Kotak Credit Card / XxxxXx Kotak XX
+3	308.98	348.72	0.00	the xxxxx. Xxx transaction(x) xxxx xx xxxxxx of the credit limit xxxxx xx xxxxxxxx (xxxxxx xx xxxxx xxxxx xxxxxxxx xxxxxxx is xxxxxxxx for xxxx-limit xxxxxxxx and xxxxxxx to xxxxxxxxxxx as xxx Bank xxxxxx). Xx xxx xxx for 
+3	24.56	354.22	0.00	Credit Card /  Kotak Xxxxxxxx+ Credit Card / Kotak UPI XxXxx Xxxxxxx Credit Card/ XXX Xxxxxx Xxxxxxxxx Credit Card
+3	308.98	353.62	0.00	xxxxxxxx xxxxxxxxxxxxx xxxxxxxxxxxx xx the xxxx of xxxxxxxx for the Card, the Credit Limit for xxxxxxxxxxxxx xxxxxxxxxxxx xxxx xx the xxxx as the xxxxxxx limit. Xx xxx xxxx to xxxxxxx Xxxxxxxxxxxxx xxxxxxxxxxxx or 
+3	24.56	360.68	0.00	Xxxxx Xxxxxxx Credit Card/ Kotak Xxxxxxxxx Credit Card/ Xxxxx999 Xxxxx Xxxxx Credit Card/ Kotak Xxx+ Credit Card/ Xxxxx Xxxxxx Xxxxxxxxx Credit Card/  3.50% 42.00%
+3	308.98	358.52	0.00	xxxxxxxx/xxxxxxxx the Credit Limit for xxxxxxxxxxxxx xxxxxxxxxxxx xxxx xxx xxx xx xx xxxxxxx Xxx Xxxxxxx/Xxxxxx Xxxxxxx. Bank xxxxx xxxxxx the credit limit xxxxxxxx to customer'x card account from xxxx to xxxx and 
+3	24.56	365.65	0.00	Kotak Xxxxxxxxx Credit Card/ Kotak Xxxxxxxx Credit Card/ Xxxxx Xxxxxxxxx Credit Card
+3	308.98	363.42	0.00	xx xxx xxxx xxxxxxxxxx xxxxx limit xxxxxxxxxxx (xxxx xxxxxxxx xxxxxxxx period). Xxxxx xxxxxxxx customer xxxxxxx, Bank xxxx xxxxxxx the limit xxxxxxxxxxx xxxxxxx xxxxxx xxx xxxxxx Credit Card(x) xxxx xxxxx the xxxx 
+3	308.98	368.32	0.00	xxxxxxxxxxxx xx the customer, xxxxxxx to xxxxxxxxxxx xx the xxxx of xxxxxxxxxx. Bank xxxxxxxx the xxxxx to xxxxxxxx the xxxxx to the customer xx xxx xxxxx xxxx. Xx the Xxxxxxxxxx xxxxx to xxxxxxxx xxx credit limit, Bank 
+3	11.41	374.34	0.00	  Xxxx Xxxxxxx Xxx:
+3	308.98	373.22	0.00	as xxx xxxxxxxxxxx xxx xxxxxx to xxxxxxx Xxxxxxxxxx to xxxxxxx xxxxxxx xxxxxxxxx xxxxxxxxx xxxxxxxxx xxx/xxx xxxxxx as applicable to xxxxxx the Credit Limit and xxxxx limit xxxxxxxxxxx. Xxxxxxxxxx of xxxx xxxxxxx is 
+3	308.98	378.12	0.00	xx the xxxx xxxxxxxxxx of the Bank.
+3	24.70	381.61	0.00	 Xxxxxxx Xxxx Xxxxxxx Xxx
+3	303.31	384.02	0.00	9. Xxxx xxxxx to Xxxx Payment
+3	24.71	388.07	0.00	 Kotak Xxxxxxxxx Credit Card 9% on xxxxxxx amount
+3	303.31	390.92	0.00	 A. Xxxx Statement 
+3	24.70	394.53	0.00	 999 #Xxxxx Xxxxxxxxx / Xxxxx999 Xxxxx Xxxxx Credit Card ₹999 for xxxxx xxxxxxxx of ATM withdrawal and Xxxx xxxxxxxx
+3	303.31	396.82	0.00	  Bank xxxx xxxx xxx a monthly statement, x-xxxx and/or xxxxxxxx, xxxxxxx the xxxxxxxx xxxx as xxxxxxxxx xx the Bank for xxxx xxxxxxx period xxxxxx xxxxx xxxxx is xxx transaction/payment or xxx amount 
+3	24.70	400.98	0.00	 Kotak UPI XxXxx Xxxxxxx Credit Card/ Kotak Xxxxxxxx+ Credit Card XX (Xxxxxxxx not available on xxxx credit card)
+3	314.65	401.72	0.00	outstanding on the Card account. No statement xxxx xx xxxx/xxxxxxxxx xxxxx the outstanding due is xxxx xxxx ₹999 and no transaction is xxxx on the Card Account. Kotak XXX Credit Xxxxxxxxxxx & Kotak UPI 
+3	24.71	407.45	0.00	 Xxx Xxxxx Credit Xxxxx 2.5% on xxxxxxx amount, xxxxxxx to minimum of ₹999
+3	314.65	406.62	0.00	XxXxx Xxxxxxx Credit Xxxxxxxxxxx xxxx xxxxxxx xxxxxxxxxx xxx x-xxxx xxxx. Xxx- xxxxxxx of statement xxxxx not xxxxxx xxxx xxxxxxxxxxx and xxxxxxxxxxx xxxxx the Xxxxxxxxxx Xxxxxxxxx and xxx xxxxx xx xxxxxx to xxxxxx 
+3	314.65	411.52	0.00	xx xxxxx the Minimum Amount Due xxxxxx the payment due date.
+3	11.41	417.32	0.00	 X. Xxxxx Xxxxxxx:
+3	303.31	418.42	0.00	 X. Xxxxxx xxxx amount xxx xxxxxx to xxx
+3	159.65	424.78	0.00	Xxxx 9xx Xxxxxxxx, 9999
+3	236.03	424.78	0.00	Xxxxxxxxx 9xx Xxxxxxxx, 9999
+3	303.31	424.32	0.00	  Xx xxxx payment of xx xxxxx the XXX amount is xxxxxxxx on or xxxxxx the payment due date, xxx xxxxx Xxxx Payment Xxxxxxx. Minimum Amount due (XXX) as xxxxxxxxx xx xxxxxxx statement xxxxxx xx xxxxx paid on 
+3	151.59	431.23	0.00	For 999 #XxxxxXxxxxxxxx Credit Card
+3	242.19	431.23	0.00	For Xxx Credit Xxxxx or xxxxxx Payment Due date to xxxxx xxx Xxxx payment xxxxxxx. Minimum Amount Due is xxxxxxxxxx as 9% of xxx xxxxxxxx xxxxxxxxxxxx and xxxx xxxxxxxx & 999% of EMI, Xxxx/Xxxxxxx & Xxx, as applicable. Xxx 
+3	314.65	434.12	0.00	finance xxxxxx (interest xxxxxx), xx xxxxxx, 999% of xxxx amount xxxxx xxxx xxxx of Minimum Amount Due. Xx as on the xxxxxxx date the total outstanding is xxxx xxxx the credit limit xxxxxxxxxx, xxxx xxx xxxx 
+3	141.91	437.60	0.00	Outstanding Balance Xxxx Payment Xxxxxxx
+3	219.26	437.60	0.00	Outstanding Balance Xxxx Payment Xxxxxxx
+3	314.65	439.02	0.00	amount xx xxxxx the outstanding xxxxxxx credit limit, xxxxx xx xxxxx xx xxxx to Minimum Amount due. Xxxx xxxxx xx xxxx & xxxxx the Minimum Amount due as xxxxxxxxxx xxxxx. Xx xxxxx is xxx xxxxxx Minimum 
+3	150.65	444.06	0.00	<₹999
+3	191.52	444.06	0.00	₹ 9
+3	227.71	444.06	0.00	<=₹999
+3	270.34	444.06	0.00	₹ 9
+3	314.65	443.92	0.00	Amount Due for xxxxxxxx xxxxx, xx xxxxx xxxx xx xxxxx xx the current xxxxx XXX. Xxxx xxxxx forward xxxx not xxxxxx xx xxx xxxx limit amount for xxxxxxxx xxxxx. Minimum Amount Due = 9% of Xxxxxxxx 
+3	149.75	450.52	0.00	>=₹999
+3	189.98	450.52	0.00	₹ 999
+3	224.41	450.52	0.00	>₹999-₹999
+3	268.67	450.52	0.00	₹ 999
+3	314.65	448.82	0.00	Transaction & Xxxx xxxxxxxx + 999% of EMI + 999% of Xxxx/Xxxxxxx (xxxxxxxxx finance or interest xxxxxxx + 999% of Xxx, as applicable + 999% of xxxx limit amount as on xxxxxxx date + Xxx xxxxxx XXX for 
+3	26.21	454.55	0.00	Xxxx Payment Xxxxxxx ("XXX")
+3	314.65	453.72	0.00	xxxxxxxx xxxxx (xxxxxxxxx the xxxx limit amount for xxxxxxxx xxxxx). 
+3	157.49	457.00	0.00	For xxx xxxxx Credit Xxxxx -
+3	223.58	456.98	0.00	>₹999-₹9999
+3	268.67	456.98	0.00	₹ 999
+3	303.31	459.62	0.00	  On payment of total outstanding on or xxxxxx payment due date, no finance xxxxxx (interest) xxxx xx xxxxxxx on customer. Customer xxxxxx xxxxxx xxxxxxx to xxx total amount outstanding to xxxxx interest 
+3	141.91	463.37	0.00	Outstanding Balance Xxxx Payment Xxxxxxx
+3	222.75	463.44	0.00	>₹9999-₹9999
+3	268.67	463.44	0.00	₹ 999
+3	314.65	464.52	0.00	xxxxxxx. Xx customer xxxx xxx amount xxxx xxxx total outstanding on or xxxxxx payment due date, interest xxxx credit period for the xxxxx xxxx xx xxxxxxxxx. Xxxxxx xxxx the minimum payment xxxxx xxxxx xxxxx 
+3	149.75	469.84	0.00	<=₹999
+3	191.52	469.84	0.00	₹ 9
+3	314.65	469.42	0.00	xxxxxx xx the repayment xxxxxxxxxx xxxx xxxxxx/xxxxx xxxx xxxxxxxxxxxxx xxxxxxxxxx interest payment on xxxx outstanding balance.  
+3	221.02	473.37	0.00	>₹9,999-₹99,999
+3	268.67	473.37	0.00	₹ 999
+3	146.69	476.29	0.00	>₹999-₹999
+3	189.98	476.29	0.00	₹ 999
+3	303.31	476.32	0.00	 X.  Xxxxxxxx
+3	145.92	482.75	0.00	>₹999-₹9999
+3	189.98	482.75	0.00	₹ 999
+3	220.18	482.81	0.00	>₹99,999-₹99,999
+3	268.67	482.81	0.00	₹ 999
+3	303.31	482.22	0.00	  Xxxxxxxx xxxxxxxx from xxx xxxxxxx the Card outstanding xxxx xx xxxxxxxx xxxxxxx xxx xxxxx, xxxx and xxxxx xxxxxxx, interest xxxxxxx, XXXx, xxxx xxxxxxxx, xxxxxxxxx and balance xxxxxxxx xx xxxx xxxxx. Xxx 
+3	143.54	489.21	0.00	>₹9,999-₹99,999
+3	189.98	489.21	0.00	₹ 999
+3	314.65	487.12	0.00	xxxxxx xxxx xxx xxxxxxxx xx Indian Xxxxxx xxxx.
+3	220.18	492.75	0.00	>₹99,999-₹99,999
+3	267.39	492.75	0.00	₹ 9,999
+3	142.77	495.67	0.00	>₹99,999-₹99,999
+3	189.98	495.67	0.00	₹ 999
+3	303.31	494.02	0.00	 X.  Xxxxxxx of Payment 
+3	142.77	502.13	0.00	>₹99,999-₹99,999
+3	188.79	502.13	0.00	₹ 9,999
+3	303.31	499.92	0.00	  9. Xxxxxx Xxxx: a. Xxxxx Kotak Bank Account: Xxx xxx Xxxxxx & Xxx Xxxxxxx xxxxx Xxxxx Xxxxxxxx for xxxxxxx or xxxx xxx credit to xxxx card account. x. Xxx xxxxxxx xxxxxxxx xxxxxxxxxxxx (Xxxx Debit): Xxx xxx 
+3	226.56	505.67	0.00	>₹99,999
+3	267.39	505.67	0.00	₹ 9,999
+3	314.65	504.82	0.00	xxx-xx xxxxxxxx xxxxxxxxxxxx to debit xxxx Kotak Bank Account xxxxx xxxxx for Total amount due or Minimum Amount due on the payment due date. x. Xxxxx Xxx Kotak Bank Account: XxxXxx / NEFT / IMPS. 
+3	148.69	508.59	0.00	>₹99,999
+3	188.79	508.59	0.00	₹ 9,999
+3	314.65	509.72	0.00	Payment xxxxxxx XxxXxx xxxx xx xxxxxxxx xxxxxx 9 xxxxxxx xxxx (xxxxxxxxx xxxxxxxx and bank xxxxxxxx). Payment xxx IMPS is xxxxxxxx xxxxxxxxx xxxxx NEFT xxx xxxx 99 xxxxxxx xx to 9 xxxxxxx xxxx. Xxx Kotak 
+3	26.21	514.56	0.00	Cheque Xxxxxx Xxx
+3	137.96	515.03	0.00	2.0% on xxxxxx amount, xxxxxxx to minimum of ₹999
+3	314.65	514.62	0.00	Credit Card as xxxxx and xxx IFSC code KKBK0XXXXXX for NEFT/IMPS. x. Xxxxx Xxxx Payment: Xxx xxx xxx xxxx monthly Kotak Credit Card xxxx xx xxxxxxxxxxxx xxxxx from xxxx XXXX Debit Card. Xxxxxx xxxx xxxx 
+3	26.21	521.85	0.00	Xxxx limit xxxxxxx (xx xxxx limit amount is xxxxx to or xxxxxxx xxxx ₹999)
+3	314.65	519.52	0.00	the xxxxxxxx xxxx xxxxxxxxx xx xxxxxxxxx xx 9-9 xxxxxxx xxxx. x. Xxxxx Xxxxxx Xxxxxxx – Xxx xxx xxx xxxxx Xxxxxx Xxxxxxx xxxxxxx on xxxxxxx bank xxx/xxxxxxx, Xxxxxx Xxxxxxx xxxxxxxx, xxxxxxxx xxxx payment xxxxxxx 
+3	137.96	522.86	0.00	₹999 for xxx xxxxx Xxxxx. or xxxxx xxxxx xxxxx payment xxxxxxxxxxxx. Xxx xxx xxxxxx payment xxxxx of xxxx xxxxxx xxxx as UPI, Xxx xxxxxxx or debit card. 9. Xxxxx Xxxxx: a. Xxx xxx xxxx xxxxxx Kotak Mahindra Branch xxxxxxx. Payment 
+3	137.96	528.82	0.00	Xxxxxx for Kotak Xxxxxxxx, Xxxxx Xxxxxxx, Kotak Xxxxxxxxx Credit Card, Xxxxx999 Xxxxx Xxxxx Credit Card and 999 xxxx xx xxxxxxxx xxxxxx 99 xxxxx. For applicable xxxxxxx, xxxxxx xxxxx the xxxxxxxx of xxxxxxx xxxxxxxxx xxxxx. x. Xxx xxx Cheque xxxxxxxx Kotak Credit Card <99 xxxxx Credit Card no>. Xxxxx xxxx name & contact 
+3	137.96	533.79	0.00	#XxxxxXxxxxxxxx Credit Card
+3	314.65	534.22	0.00	no on the xxxxxxx of the cheque and xxxx the cheque xx xxxx xxxxxxx branch xx ATM xxxxxxxxx. Payment xxxx xx xxxxxxxx xxxxxx 9 xxxxxxx xxxx. Xxx-Xxxxxxxx Kotak Mahindra Bank Credit Card holders xxx xxxx 
+3	26.21	541.70	0.00	Xxxxxxxx Xxxxxxxxxxx Xxxxxxx / Xxxx-debit xxxxxx xxx (xxxxxxxx NACH, ECS, Xxxx Debit)
+3	137.96	541.70	0.00	2.0% on xxxxxx amount, xxxxxxx to minimum of ₹999 and Xxxxxxx xxx of ₹
+3	314.65	539.12	0.00	xxx xxxxxxxx xxxx from xxxxx XXX account. For xxxxxxxx xxxxxxxxxxx on xxx to xxxx xxxxxxxx xxxxx xxx.xxxxx.xxxx.xx
+3	236.64	541.70	0.00	9999
+3	303.31	545.02	0.00	  Xxxxxx xxxx; xx is xxxxxxxxxxx xxx xxx xxxx Credit Card xxxx xxxx xxxxxxx the payment xxxxx xxxxxxxxx xxxxx. Xxx credit card payment xxxx xxx xxxxx xxxxxxxx xxxxxxxxx xxxxx xxxxx xxxx xxx-xxxxxxxxxx xxxx 
+3	137.96	549.45	0.00	Minimum Amount Due is xxxxxxxxxx as 9% of xxx xxxxxxxx xxxxxxxxxxxx & xxxx xxxxxxxx & 999% of EMI, Finance Kotak Bank, xxx xxxx a xxxxxx XXX for xxxxxxxxx. Xxxxx xxxxxxx as applicable xxxx xx xxxxxx xx payment is not xxxxxxxx xx the due date.
+3	26.21	553.44	0.00	Minimum Amount Due (“XXX”)
+3	137.96	554.42	0.00	Xxxxxxx, Xxxx/Xxxxxxx & Xxx as applicable, xxxxxxx to a minimum of ₹999 xxxx xx to the XXX amount xxxxxxxxx is 
+3	137.96	559.38	0.00	xxxxx. Xx xxxx xxxxxxx xx xxxx monthly statement xx the summary xxxxxxx.
+3	303.31	556.82	0.00	 X.  Xxxxxxx xxxxxxxx xxxxxxxxxx
+3	303.31	562.72	0.00	  Xx the xxxxx the Xxxxxxxxxx xxxxxxxxx xxxx the xxxxxxx xxxxxxxxx xx the statement, xx xxxxxx xx xxxxxxxxxxxx xx xxxxxxx to the xxxxxxxxxxxxxx address of Kotak Mahindra Bank xxxxxx 99 (Xxxxx) xxxx of xxxxxxx 
+3	137.96	567.02	0.00	3.50% for xxx xxxxx Xxxxx
+3	314.65	567.62	0.00	of the statement, xxxxxxx xxxxx xx xxxxx xx xxxxxxxxx xxxx xxx xxxxxxx xxxxxxxxx xx the statement xxx xx xxxxx and xxxxxxxxxx to xxx.  Xx xxxx of xxxxxxxxxxxx / xxxxxx transaction, as xxx Xxxxxxxxxxxxx of XXX 
+3	26.21	572.41	0.00	Xxxxxxx Currency Transaction Xxxx xx
+3	137.96	571.99	0.00	9% for Xxxxx Xxxxxx Xxxxxxxxx(Paid Xxxxxxx), Kotak Xxx+ Credit Card, Kotak Xxxxxxxx card, Xxxxx999 Xxxxx Xxxxx xxxxxxxxxx, the Bank xxxx xxxxxxx xxxxxxx amount as xxx the xxxxxxxxx xxxxxxxxx xx the xxxxxxxx. Xx xxxx xx the xxxxxxxx xxxxxx xxxx transaction, the xxxxxxx xxxxxxx xxxxxxx xxxx xx xxxxxxxx as xxx xxxxxxxxx 
+3	137.96	576.96	0.00	Credit Card and Xxxxx Xxxxxxx and 999#XxxxxXxxxxxxxx Credit Card
+3	314.65	577.42	0.00	xxxxxxxxxx xxxxx is xxxxxxx xx the xxxxxxxxxxxx xxxxxx. Xxxxxx xxxx xxxx xx xxxx xxx xxxx a xxxxxxx xx xxxxxxxx to an xxxxxxxxxxxxx transaction, xxx xxxx xxxxxxx xx xxxx a xxxx of xxxx xxxxxxxx. Xx xxxx of xxxxxx 
+3	137.96	581.93	0.00	Xxxxxx for Kotak Xxxxxxxxx Credit Card
+3	314.65	582.32	0.00	payment xxxxxxx Credit Card xxxxxxxxx xx the Xxxxxxxxxx, xxxxxx xxxxx xx xxxxxxxxx xxxx xxxxxxx xxxxxxx to Bank’x xxxxxxxx xxxxxx
+3	137.96	588.92	0.00	3.5% for xxx xxxxx Xxxxx. 9. Customer Contact Xxxxxx
+3	26.21	595.58	0.00	Xxxxxxx Currency Xxxxxxxxxx Xxx 9% for Xxxxx Xxxxxx Xxxxxxxxx (Xxx Xxxxxx xxxxxxx), Kotak Xxx+ Credit Card, Xxxxx Xxxxxxx and Kotak Xxxxxxxx and  Xx xxx xxxx xxxxxxxxxxxxx xxxx xx, xxxxxx xxxxxxxx xxxx 99-xxxxx Kotak Credit Card number. Xxx xxx contact the Bank xx xxx of the xxxxxxxxx xxxx.
+3	137.96	598.86	0.00	Xxxxx999 Xxxxx Xxxxx Credit Card.
+3	303.31	600.02	0.00	 (a) Xx xxxxxxx xxx 99-Xxxx Customer Xxxxxxx Xxxxxx – 9999 999 9999 (xxxxx xxxx xxxxx xxxxx). Xxxxx Xxxxxx Xxxxxxxxx xxx xxxx on 9999 999 9999 (Xxxx - xxxx). The xxxxxxxx xxxx of phone xxxxxxx is available on 
+3	137.96	603.83	0.00	Xxxxxx for Kotak Xxxxxxxxx Credit Card
+3	314.65	604.92	0.00	xxx.xxxxx.xxxx.xx (x) Xxxxxxx xxxxxxx – The Xxxxxxx Xxxxxxx, Kotak Mahindra Bank Limited, 9xx Xxxxx, Xxxxxxx Xxxxxxx, Xxxx no:99,Xxxxx Xxxxxx, Xxxxx Xxxx, Maharashtra- 999999, India.
+3	137.96	610.74	0.00	Xxxxxxxx Xxxxxxxx for Xxxxxxx Xxxxxxxxx Xxxxxx: 999 #Xxxxx Xxxxxxxxx/ Xxxxxx Kotak Xxxxxxxxx / Kotak Xxxxxxxx / Kotak  Xxxxxxxxx xxxxxxxx of Card Xxxxxxxxx Xxxxx (xx to ₹99,999) and 9 xxxxxx xxxxxxx xxxxxx (xxxx xx to ₹99,999) xxx xxxxxxx on Kotak XXX card. Xxxxx xxxxxxxxx xxx to xx xxxxxxxxx xx Xxxxxxxxxx xxxxxx 99 xxxx from the 
+3	137.96	615.71	0.00	Xxxxxxxxx/Xxxxx Xxxxxx Xxxxxxxxx/ Xxxx Xxxxxxxx / Xxxxxx Xxxxxxxx / XXX Xxxxxx Xxxxxxxxx /Xxx Xxxxxxxxx/ Xxxxx date of xxxxxxxxxx to the Xxxxxx Kotak Mahindra Xxxxxxx Xxxxxxxxx. For xxx xxxxxx xxxxxxxxxx xxxxxx - Xxxx on xxxx xxxx number 9999 999 9999 or email xx xxxx@xxxxxxxxxxx.xxx xxxx the xxxxx xxxxxxx xxxx for the 
+3	137.96	620.67	0.00	Xxxxxxxxx/ Xxxxxxx Xxxxxxxx# / Kotak XXX/ Xxxx - Xxxxxxxx/ Xxxxxx/ Kotak 999 Credit Card. (No Xxxxxxx xxxx xx xxxxxxx for email: “Kotak Xxxxxxxx Xxxxxxx//XXXX xxxxx// 9999999999 // {customer name}”. Xxxxx to XXXX available on the xxxxxxx for xxxx details.
+3	137.96	625.64	0.00	xxxxxxxxxxxx xxxxx Xxxxxxx Xxxxxxxxx xxxxxx is xxxxx. Xxxxxxx Xxxxxxx xxxxxxxxx xxxxxx of ₹999 xx an xxxxxxxxxxx xxxx)
+3	303.31	626.52	0.00	9. Xxxxxxxxxx Xxxxxxxxx / Xxxxxxxxxx / Xxxxxxxxxx
+3	26.21	629.57	0.00	Xxxxxxx Xxxxxxx Xxxxxxxxx (As xxx Applicable Rate)
+3	137.96	632.10	0.00	Xxxxxxxx Not Xxxxxxxx for Xxxxxxx Xxxxxxxxx Xxxxxx: Xxxxxxxx Xxxxxxxx / Xxxx Xxxxxxx Xxxxxxxx / Xxxxx Xxxx / Xxxxxxx Xxxx  Xx the xxxxxxxx xxxxx of not xxxxx xxxxxxxxx xxxx xxx xxxxxxxx, xxx xxx xxxxxxxx xxxx xxxxxxxxx xx xxxxx xxxxxxxxx Xxxxxxxxx xxxxxxxxx.               
+3	137.96	637.07	0.00	/ Xxxxxx Xxxx / XXX (Xxxx & Xxxxxxxx)/ XXX XXXX / 9X Xxxxxxx XX XxxxXx Kotak Credit Card/ 9X Xxxxxxx XxxxXx Kotak Credit  (x) Xxxxx 9 – Branch/Customer Xxxxxxxxxx Xxxxxx/Xxxxxx xxxxxxx (xx) Xxxxx 9 – Xxxxx Xxxxxxx* (xxx) Xxxxx 9 – Principal Xxxxx Xxxxxxx**   
+3	137.96	642.03	0.00	Card / Xxxxx Xxxxxxx/Indian Xxx Kotak Credit Card/Xxxxx Kotak Credit Card / Kotak UPI XxXxx Xxxxxxx Credit Card / Kotak   *Xx xxx xxxx not xxxxxxxx a xxxxxxxxxxxx xxxxxxxx xx xxxxx 9, xxxx an email to xxx Xxxxx xxxxxxx, A. Xxxxxx xx xxxxxxxxxxxx@xxxxx.xxx or xxxx 999-99999999 or xxxxx xx Kotak Mahindra Bank Ltd, 9xx Xxxxx, Kotak 
+3	137.96	647.00	0.00	Xxxxxxxxx Credit Card/ XxxxXx Kotak Credit Card / XxxxXx Kotak XX Credit Card / Kotak Xxxxxxxx+ Credit Card / Kotak Xxx+ Xxxxxxxx, xxxxxxxx no 99, Xxxxxxxx Xxxx, xxx xxxxxxx Xxxxxxx Xxxxxxx, Xxxxxxx XX Xxxxxx Xxxx, Xxxxx X, Xxxxxx 999999 ** Xx xxx xxxx not xxxxxxxx a xxxxxxxxxxxx xxxxxxxx xxxxxx 9 xxxxxxx xxxx xx xxxxx 9, xxxx an 
+3	137.96	651.97	0.00	Credit Card/ Xxxxx999 Xxxxx Xxxxx Credit Card
+3	314.65	654.02	0.00	email to xxx Principal Xxxxx Xxxxxxx, A Xxxx xx xxx@xxxxx.xxx. Xx xxxx xxxxxxxxx is not xxxxxxxx xxxxxx 99 xxxx of xxxxxxx xx the Bank xxxx the xxxx xxxxxxxxx xxx xx xxxxxxxxx to Xxxxxxx Xxxxxxxxx. The details 
+3	137.96	658.98	0.00	**Xxxxxxxx Xxxxxxxx for Xxxx Xxxxxxxxx Xxxxxx: Xxxxxxx Xxxx/ 999 #Xxxxx Xxxxxxxxx/ Xxxxxx Xxxxxxxxx/Xxx Xxxxxxxxx/ of xxxxxxx xxxxxxxxx for xxxx xxxxxxxx xxx xxxxxxxxx xx the xxxxxxxx. Xx xxxx of xxxxx xx xxxxxxxxx a xxxxxxxxxx xxxxxx the xxxxxxxxxx xxxx, Bank xx xxx xxxx xxxxxxxxxx xxxx xxxxxx xx xxxxxxxxxx is xxxxxxxx to xxx 
+3	137.96	663.95	0.00	Xxxxx Xxxxxxxxx /Kotak Xxxxxxxxx/Kotak Xxxxxxxx/Xxxxx Xxxxxx Xxxxxxxxx/Xxxx Xxxxxxxx/ Xxxxxx Xxxxxxxx/XXX Xxxxxx xxxxxxxxxxxx.
+3	137.96	668.92	0.00	Xxxxxxxxx/Xxxxxxx Xxxxxxxx#/Xxxx Xxxxxxx Xxxxxxxx/ Kotak XXX/ Xxxx - Xxxxxxxx/ Xxxxxx/ Kotak 999 Credit Card /Xxxxx 9. Xxxxxxx
+3	137.96	673.88	0.00	Xxxxxxx/XxxxxxXxx Kotak Credit Card /Kotak Xxxxxxxxx Credit Card / Kotak Xxxxxxxx+ Credit Card / Kotak Xxx+ Credit Card  Xx Xxxxxxxxxx xxxx not xxx xx xxxxx the Minimum Amount Due, Xxxxxxxxxx(x) xxxx xx xxxxxxxx xx xxxx xxxxxxxxxx statement to xxx xxxxx xxxx. Xx xxxx of xxxxxxx xx xxxxxx the minimum amount due xxxxxx the xxxxx 
+3	26.21	680.33	0.00	Xxxx Xxxxxxxxx (xxxxxxx to a minimum of ₹99) on transaction amount
+3	137.96	678.85	0.00	(No Xxxxxxx or Xxx Xxxxx xxxx xx xxxxxxx for xxxxxxxxxxxx xxxxx Xxxx Xxxxxxxxx xxxxxx is xxxxx xxxxxx for Kotak period xxxxx the payment due date xxxx xxxxxx xx xxxxxxxxx to Credit Xxxxxxxxxxx Xxxxxxx xxxxxx a period of 9 xxxx. Xxxxxxx payment xxxx xxxxxx xx the xxxxxxxxxx xxxxx xxxxxxxx as xxxxxxxxx. The xxxxxxxxxx of xxxxxxxxx 
+3	137.96	683.82	0.00	Xxxxxxxx+ Credit Card)
+3	26.21	686.78	0.00	(As xxx Applicable Rate)
+3	308.98	685.42	0.00	xxx xx xxxxxxx to xxxxxxx as xxxxxxx xx XXX. Xx the xxxxx of xxxxxxx , xxxxxx - xxx xxx xx xxxx xx xxxx, and xxxxxxxxx, xxxxxxxxxx xxxx, XXX xxxxxxxxx and / or xxxxxxxx xxxxx xxxxxxx to xxxxxx xxxxxx xx and xxxxxxx 
+3	137.96	690.28	0.00	Xxxxxxxx Not Xxxxxxxx for Xxxx Xxxxxxxxx Xxxxxx: Xxxxxxxx Xxxxxxxx / Xxxxx Xxxx/Xxxxxx Xxxx/XXX (Xxxx & Xxxxxxxx)/ xxxx. The Bank and xxx xxxxx xxxxx xx xxxxxxxxx xxxxx xxxxxx to the Bank'x Xxxx Xxxxxxxx Code for Credit Card Xxxxxxxxxx and Xxxxxxxxxx of Xxxx and Xxxxxxxxxxxx of Xxxxxxxx Xxxxxx as xxxxxxxx from xxxx to xxxx. Xx 
+3	137.96	695.24	0.00	XXX XXXX / 9X Xxxxxxx XX XxxxXx Kotak Credit Card/ 9X Xxxxxxx XxxxXx Kotak Credit Card/Xxxxx
+3	308.98	695.22	0.00	the xxxxx the customer xxxxxxx xxx/xxx xxxx xxxxx xxxxxx xxxx xxxxxxxx as xxxxxxxxx, the Bank xxxxx xxxxxx the status xxxxxx 99 xxxx. The Bank xxxxx xx xxxxxxxx to xxxxxxxx xxx xxxxxxx xxxxxxxx xxxxx xx xxxx: The 
+3	137.96	701.21	0.00	Kotak Credit Card/Kotak UPI XxXxx Xxxxxxx Credit Card/XxxxXx Kotak Credit Card / XxxxXx Kotak XX Credit Card / xxxxxxxxx xx xxxxxxxx xxx xxxxxxxxxx xxx xxxxxx outstanding xxxx xxxx the Bank or xxxxxxx xxx xxxx xxxx the Bank. A xxxxx xxxxx / xxxxxxx xxx xxxx xxxxxxxx xxxxxxxxxxx the Bank to xx - xxxx the Xxxxxxxxxx xxxxxxx the 
+3	137.96	706.17	0.00	Xxxxx999 Xxxxx Xxxxx Credit Card.
+3	308.98	705.03	0.00	Bank xx a xxxxx xxxx xxxxx xx or xxxxxxx the Bank. Xxxxxxxxx xxx xxxxx on a xxxx - to - xxxx xxxxx xxxx xxxxxxxxxx xxxxxxx. Xx the xxxxx - xxxxxxxxx xxxxxxxxx Xxxxxxxxxxx xxxxxx xxxx xx xxxxxxx as 'current' xx the xxxx 
+3	26.21	712.55	0.00	Xxx for Xxxx Payment xx xxxxxxxx
+3	137.96	712.48	0.00	₹999 / Xxxxxx for Kotak Xxxxxxxx, Xxxxx Xxxxxxx and Kotak Xxxxxxxxx Credit Card
+3	308.98	709.93	0.00	monthly xxxxxxx to the credit xxxxxx. Xx the xxxxx of xxxxx or xxxxxxxxx xxxxxxxxxx of a Xxxxxxxxxx, the Bank xxxxxxxx the xxxxx to xxxxxx xxx xxxxxxx available to xx xxxxx xxx and xxxxxx xx xxx xxxxxxxxxx, to xxxxxxx xxx 
+3	308.98	714.83	0.00	card account ( x ) outstanding, xxxxxxxxx xxxxxxxx of the Card outstanding from xxx applicable xxxxxxxxx xxxxx or from the xxxxx / xxxxxxxxx / xxxxxxxxxxxxxx of the Xxxxxxxxxx.
+3	26.21	719.32	0.00	Card Xxxxxxxxxxx Xxxx (Xxxx & Xxxxxxx Xxxxx)
+3	137.96	719.43	0.00	₹999 xxx card / XXX for Kotak UPI XxXxx Xxxxxxx Credit Card, Kotak Xxxxxxxx, Kotak Xxxxxxxxx Credit Card and Xxxxx Xxxxxxx
+3	303.31	720.73	0.00	9. Xxxxxxxxxxx / Xxxxxxxxxx of Xxxxxxxxxxxxxx
+3	26.21	726.80	0.00	Xxxxx Card Xxx##
+3	137.96	726.77	0.00	₹ 99 or ₹ 999 xxx xxxxx card xxxxx xxxxxxxx card xxxxxx xx xxxxxxxx to standard card xxxxxxxxxxx xxxx
+3	303.31	726.63	0.00	 Xxx xxx xxxxxx to xxxxxxxxx xxxx Credit Card xxxxxxxx xx xxx xxxx xx xxxxxxx the Bank'x Customer Contact Xxxxxx (99999999999) or xxxxxxx Xxx Xxxxxxx and xxxxxxx the card xxxxxxxxxx xxxx xxxxxx. Bank xxxx xxxxx the 
+3	137.96	733.69	0.00	9% of the Transaction Amount + XXX for xxx xxxxxxxxxxxx xxxx on XXX 9999 card xxxxxx the xxxxxxxxxx xxxx xx xxxxx is no outstanding on the card account. Xx xxxx Bank xxxxx to xx xx a xxxxxxx of ₹999 xxx xxx xxxxx xx xxxxxxx to the Xxxxxxxxxx. Xxxxx the Credit Card is not xxxx for xxxx xxxx 
+3	137.96	738.66	0.00	9% of the Transaction Amount + XXX xxxx xx applicable on Xxxxx Credit Card, Kotak 999 Xxxxx Xxxxx Credit Card and xxx xxxx, the card xxxx xx xxxxxx xxxx xxxxxxxxx 99 xxxx’ xxxxxx to the Xxxxxxxxxx. Kotak Mahindra Bank xxx xxxx xxxxxx the xxx of the Card xx xxx xxxx xxxxxxx xxxxx xxxxxx, xx xx xxxxxxxxxx xxxxxxxx xx xxxxxxxxx for 
+3	26.21	742.99	0.00	Xxxx Xxxxxxxx (xxxxxxx for xxxxxxxxxxxx xxxx on XXX 9999)
+3	137.96	743.62	0.00	999 #XxxxxXxxxxxxxx Credit Card
+3	308.98	741.33	0.00	the xxxxxxxx or xxxxxxxx xxxxxxx, xxxxxxxxx xx xxx xxxxx xxxxxxxx, xxxxxx the Credit Limit or xx Xxxxxxx xxx xxxxxxxx.
+3	137.96	748.59	0.00	Not applicable on Xxxxx Xxxxxxx and Kotak Xxxxxxxxx Credit Xxxxx
+3	303.31	747.23	0.00	9.  Xxxx/Xxxxx of the Card
+3	303.31	753.13	0.00	 To xxxxxx xxxx or xxxxxx Credit Card, Xxxxxxxxxx xxxx xxxxxxxxxxx xxxxxx the Bank xx xxxxxxx 9999 999 9999 or xxx xxxxxxx xxxxxxxx – Kotak Xxxxxx Xxxxxxx Xxx, Xxxxxxx or Xxx-Xxxxxxx to xxxxx the card xxxxxxxxx. The 
+3	26.21	758.22	0.00	Xxx on Xxxxxxx Xxxxxx
+3	137.96	756.66	0.00	9% on xxxxxxxxxx xxxxxxx xxxxxx xxxxxxxxx xxxxxxxxx### xxx statement xxxxx.
+3	308.98	758.03	0.00	Xxxxxxxxxx xxxx xxxx a First Xxxxxxxxxxx Xxxxxx (“XXX”) xxxx the xxxxx xxxxxx. The Xxxxxxxxxx xxxx, xxxxxxx xx xxxxxx for xxx xxxxxx xxxx xxxxxxx xxxxxxx and xxxxxxx the Card or XXX xxxx/xxxxxxx – Xxxxxxxxxx’x 
+3	137.96	761.63	0.00	Not applicable on Xxxxx Xxxxxxx, Kotak Xxxxxxxxx, Kotak Xxxxxxxx and Kotak Xxxxxxxxx xxxxxxx, or xxxxxxx of an Xxx-On Xxxxxxxxxx or xx the Xxxxxxxxxx xxx xxxxx xxxxxxxxxxxx or xxxx xxxxxxx xxxxxxxxxx xxxx, the Xxxxxxxxxx xxxx xx xxxxxx for xxx xxxxxx. Xx the xxxxx xxx amount is xxxxxxx xx the xxxxxxxx, 
+3	26.21	770.19	0.00	Xxx on Xxxxxxxxx Payment
+3	137.96	768.44	0.00	9% transaction xxx xxxx xx applicable on xxx xxxxxxxxx xxxxxxxx xxxx xxx xxxxx-xxxxx xxxx.
+3	308.98	767.83	0.00	xxxxx is due and xxxxxxx xx the customer, xxxxxxx xxxxxxxx or not, the customer is xxxxxx to xxxx the payment to the Bank as xxx the xxxxxxx xxxxx as applicable to the customer. Xx xxxxxxxx, xxxxxxx, xxxxx the Bank 
+3	137.96	773.41	0.00	Not applicable on Xxxxx Xxxxxxx, Kotak Xxxxxxxxx, Kotak Xxxxxxxx and Kotak Xxxxxxxxx xxx xxxx the payment, the bank is xxxxxxxx to xxxxxxx the xxxx amount from the customer. Xxxxxxx, xxxxx the amount is xx xxxxxxx, the customer xxxxx xx xxxxxxxx to xxxx the payment of the xxxx as xxx the xxxxxxx 
+3	308.98	777.63	0.00	xxxxx and xxxxx not xxxx for the xxxxxxx/xxxxxxxx of the xxxxxxx. The xxxx xxxxx of the Bank to xxxxxxx and the xxxxxxxxx of the Customer to xxxx payment xxxxx xx xxxxx and xxxxxxxxxx xxxxxxxxxxxx of the xxxx xxxx the 
+3	137.96	780.52	0.00	9% xxx on xxxxxxxxxx xxxxxx xxxxxxx xxxxxx xxxxxxxxx ₹99,999 xxx statement xxxxx
+3	26.21	783.95	0.00	Xxx on Xxxxxx Xxxxxxx
+3	308.98	782.53	0.00	xxxxxxxx xxxxxxxxxxxx of the customer xxx xxxxxx xxxx Bank and/or the card xxx xxxx xxxxxxxxx / xxxxxx for xxx xxxxxx xxxxxxxxxx.
+3	137.96	785.48	0.00	Not applicable on Xxxxx Xxxxxxx, Kotak Xxxxxxxxx, Kotak Xxxxxxxx and Kotak Xxxxxxxxx 
+3	303.31	788.43	0.00	9.  Xxxxxxxxxx
+3	26.21	793.97	0.00	Xxx on Xxxxxx Xxxxx-Xxxxx Xxxxxx
+3	137.96	792.79	0.00	9% xxx on xxxxxxxxxx xxxxxx xxxxx-xxxxx xxxxxx xxxxxx xxxxxxxxx ₹99,999 xxx statement xxxxx
+3	303.31	794.33	0.00	 The Xxxxxxxxxx xxxxxxxxxxxx xxxx as xxx xxxxxxxx xxxxxxxx xxxxxxxxx, the Bank is xxxxxxxxxx to xxxxxxxx from xxxx to xxxx xxx xxxxxxxxxxx xxxxxxxx to the Credit Card (x), to xxx credit xxxxxx (Xxxxxxxx or Xxxxxx) xxxxx 
+3	137.96	797.75	0.00	Not applicable on Xxxxx Xxxxxxx, Kotak Xxxxxxxxx, Kotak Xxxxxxxx and Kotak Xxxxxxxxx xxxxxxxxx the customer. The credit Xxxxxxxxxxx XXXXXX India Ltd (XXXXX) and xxxxx credit xxxxxxx is an xxxxxxxxxx of the Xxxxxxxxxx of India and Xxxxxxx Bank of India to xxxxxxx the xxxxxxxxxxxxx and xxxxxxxxx of the 
+3	26.21	805.12	0.00	Xxx on Xxxx Xxxxxxxxxxxx
+3	137.96	804.13	0.00	9% on xxxxxxxxxx xxxx xxxxxx xxxxxxxxx xxxxxxxxx### xxx statement xxxxx
+3	308.98	804.13	0.00	xxxxxxxxx xxxxxx. Xxx xxxxxxx / xxxxxxxx of xxxx on xxxxxxx of payment xxxxxxx xxxxxxx card accounts xxxx xxxxxxx xx XXXXX / xxxxx credit xxxxxxx xxxxxx a period of 99 xxxx from the date of xxxxxxx of payment xx the 
+3	137.96	810.09	0.00	Not applicable on Xxxxx Xxxxxxx, Kotak Xxxxxxxxx, Kotak Xxxxxxxx, Kotak Xxxxxxxxx and XxxxxxXxx Kotak Credit Card bank. Xx xxxx xxxx to xxxxxx the Xxxxxxxxxx xxxx the bank xxxx, xx xxx xxx xxxxxxxxxx, xxxxxx xxxxxxxx xxxxxxxxxxx xxxxxxx Xxxxxxxxxx and the xxxxxxxxxxxxxx of the Bank, xx xxxxx of xxxxxxxxx - xxxxxxx xxxxxxxxxx or 
+3	308.98	813.93	0.00	xxxxxxxx xxxxxxx xxxxxxx xxxxxxxxxxx or xxx xxxxx xxxxxxxxxx, xxxx Bank xxx xxxx xxx.
+3	26.21	817.95	0.00	Credit Limit Xxxxxxxx Xxxxxxxxxx Xxxx
+3	137.96	816.76	0.00	₹999 as applicable for xxx xxxxx Credit Xxxxx / XXX for 999 #XxxxxXxxxxxxxx, Xxxxx999 Xxxxx Xxxxx Credit Card and Kotak 
+3	137.96	821.73	0.00	Xxxxxxxxx Credit Card
+3	26.21	829.34	0.00	Xxxxx and Xxxxxxxx Xxx (XXX)
+3	137.96	829.10	0.00	Applicable on xxx xxxx and xxxxxxx xx the current rate, as xxxxxxxx xx Xxxxxxxx of Finance, Xxxxxxxxxx of India
+3	303.34	830.19	0.00	Kotak Xxxxxx Credit Xxxxx XXXX
+3	546.08	830.19	37.89	Kotak Mahindra Bank Limited

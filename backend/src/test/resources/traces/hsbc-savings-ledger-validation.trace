@@ -1,0 +1,249 @@
+# finora-pdf-trace v3
+# traceVersion: 3
+# redactorVersion: 2
+# allowlistFingerprint: A3C0126B
+# capturedAt: 2026-08-12
+# generatedFrom: HSBC India savings account statement
+# capabilities: 
+# regressions: 
+# requiredHeaders: Date, Balance
+# motivation: real-world validation sweep, PM-requested
+# page	x	y	width	text
+0	311.28	103.04	0.00	Xxxxxxxxx Statement
+0	311.28	120.80	0.00	Branch Name: XXXXX BRANCH
+0	311.28	131.36	0.00	Page 9 of 9
+0	389.04	162.80	79.09	Statement Details
+0	317.04	174.08	55.58	Statement Date
+0	504.48	174.08	0.00	99XXX9999
+0	317.04	185.36	65.34	Customer Number
+0	503.04	185.36	0.00	999-999999
+0	29.04	191.36	0.00	XXXXXXXXX XXXXXX
+0	317.04	196.64	0.00	Xxxxxxxx Code
+0	409.92	196.64	0.00	X - XXXX                                             N
+0	29.04	201.92	0.00	,999 XXXXXX XXXX
+0	29.04	212.48	0.00	XXXXXXX XX XXXX,XXXXXX,
+0	29.04	223.04	0.00	XXXXXX,XXXXX XXXXXXX,XXXXX
+0	317.04	229.04	0.00	Xxxx Xxxxxxxxx xx a Xxxxxx
+0	477.60	229.04	18.04	 INR
+0	499.68	229.04	0.00	Xxxxxxxxxx
+0	29.04	233.60	0.00	                         999999
+0	317.04	241.04	0.00	Total Deposits and Xxxxxxxxxxx
+0	501.60	241.04	31.14	7,277.40
+0	317.04	252.32	0.00	Total Xxxxxxxxxx
+0	517.20	252.32	15.57	0.00
+0	317.04	263.60	0.00	Xxx Xxxxxxxx
+0	502.08	263.60	31.14	7,277.40
+0	317.04	274.88	0.00	Xxxxxxxxx
+0	517.20	274.88	15.57	0.00
+0	34.80	339.92	0.00	Xxxxxx xxxx xxxx xxxxx Xxxxx and Xxxxxxxx Xxx (XXX) xxxxxxxxxxx and xxxxxxxx XXX xxxxx, Central XXX, State/Union Xxxxxxxxx 
+0	34.80	352.16	0.00	XXX, or Xxxxx-State XXX, as applicable, and Xxxx as applicable xxxxx xxxxx on xxx xxxx and xxxxxxx.
+0	34.80	364.40	0.00	XXX (Xxxxxxxxxx Xxxxxx Xxxxxxxxxxxx) Code: 9999- Xxxxxxxxx xxxxxxxx and xxxxxxx xxxxxxxx xxxxx xxxxxxxx 999999, 999999, 
+0	34.80	376.64	0.00	999999, 999999, 999999.
+0	34.80	388.88	0.00	HSBC State Xxxx and XXXX Details:
+0	34.80	401.12	53.13	Maharashtra:
+0	91.68	401.12	0.00	 99XXXXX9999X9XX Xxxx Xxxxxx: 99XXXXX9999X9XX Xxxxx Xxxx:
+0	410.40	401.12	0.00	 99XXXXX9999X9XX 
+0	34.80	413.36	0.00	Xxxxx:
+0	59.28	413.36	0.00	 99XXXXX9999X9XX Xxxxxxx:
+0	235.68	413.36	0.00	 99XXXXX9999X9XX Xxxxxxxxxx: 99XXXXX9999X9XX 
+0	34.80	425.60	0.00	Xxxxxxxxx: 99XXXXX9999X9XX Xxxxxxxxx:
+0	244.56	425.60	0.00	 99XXXXX9999X9XX Karnataka:
+0	405.36	425.60	0.00	 99XXXXX9999X9XX 
+0	34.80	437.84	0.00	Xxxxxx:
+0	65.28	437.84	0.00	 99XXXXX9999X9XX Xxxxxxx: 99XXXXX9999X9XX Xxxxx Xxxxxxx:
+0	421.20	437.84	0.00	 99XXXXX9999X9XX
+0	34.80	450.08	0.00	Xxxxxxx (XXXX city branch):
+0	150.48	450.08	0.00	 99XXXXX9999X9XX  Punjab: 99XXXXX9999X9XX  Xxxxxx Xxxxxxx:
+0	441.60	450.08	0.00	 99XXXXX9999X9XX
+0	218.16	476.72	0.00	Summary of Xxxx Xxxxxxxxx
+0	32.64	497.36	0.00	Deposits and Xxxxxxxxxxx
+0	208.80	497.36	32.51	Currency
+0	258.00	497.36	59.69	Account Number
+0	351.12	497.36	40.54	Credit Limit
+0	438.24	497.36	28.96	Balance
+0	497.28	497.36	0.00	INR Xxxxxxxxxx
+0	216.00	507.92	0.00	/ Xxxx
+0	426.24	507.92	40.30	(DR=Debit)
+0	510.96	507.92	40.30	(DR=Debit)
+0	219.60	517.52	13.78	INR
+0	261.12	517.52	0.00	999-999999-999
+0	425.52	517.52	31.14	7,277.40
+0	510.24	517.52	31.14	7,277.40
+0	32.64	518.24	59.58	Savings Account
+0	246.72	527.60	0.00	TOTAL DEPOSITS AND XXXXXXXXXXX
+0	510.24	527.60	31.14	7,277.40
+0	32.64	564.56	0.00	Xxxxxxxxxx
+0	208.80	564.56	32.51	Currency
+0	258.00	564.56	59.69	Account Number
+0	351.12	564.56	40.54	Credit Limit
+0	438.24	564.56	28.96	Balance
+0	497.28	564.56	0.00	INR Xxxxxxxxxx
+0	216.00	575.12	0.00	/ Xxxx
+0	426.24	575.12	40.30	(DR=Debit)
+0	510.96	575.12	40.30	(DR=Debit)
+0	219.60	584.72	13.78	INR
+0	251.76	584.72	0.00	9999 9999 9999 9999
+0	366.48	584.72	0.00	99,999
+0	440.64	584.72	15.57	0.00
+0	525.36	584.72	15.57	0.00
+0	32.64	585.44	40.90	Credit Card
+0	246.72	594.80	0.00	TOTAL XXXXXXXXXX
+0	525.36	594.80	15.57	0.00
+1	504.00	122.24	0.00	Page 9 of 9
+1	224.88	169.04	0.00	Details of Xxxx Accounts
+1	226.08	188.72	0.00	999-999999-999
+1	37.44	190.16	0.00	SAVINGS ACCOUNT-XXX
+1	34.56	206.00	87.41	 Nominee Registered:
+1	125.52	206.00	15.51	Yes
+1	37.20	218.24	0.00	MICR CODE: 999999999
+1	147.84	218.24	0.00	IFSC CODE: HSBC0XXXXXX
+1	36.72	234.32	16.93	Date
+1	102.96	234.32	68.62	Transaction Details
+1	335.28	234.32	31.18	Deposits
+1	408.72	234.32	43.65	Withdrawals
+1	522.96	234.32	28.96	Balance
+1	510.96	244.88	40.30	(DR=Debit)
+1	516.72	254.48	13.78	INR
+1	36.72	267.44	0.00	99Xxx9999
+1	102.72	267.44	123.12	BALANCE BROUGHT FORWARD
+1	510.96	267.44	31.14	7,277.40
+1	102.72	280.40	75.58	CLOSING BALANCE
+1	510.96	280.40	31.14	7,277.40
+1	102.72	294.08	0.00	Transaction Xxxxxxxx
+1	352.08	294.08	15.57	0.00
+1	436.56	294.08	15.57	0.00
+1	102.72	303.20	65.36	Transaction Count
+1	352.08	303.20	0.00	9
+1	436.56	303.20	0.00	9
+2	26.88	35.60	0.00	Xxxxxxxxx Xxxxx
+2	26.88	45.20	0.00	9.
+2	44.64	45.20	0.00	XXX (Xxxxx Currency) xxxxxxxxxx is an xxxxxxxxxx value xxxx for xxxxxxx xxxxxxxxxxx xx xxxxxxx xxxxxxxxxx.
+2	26.88	54.56	0.00	9.
+2	44.64	54.56	0.00	The xxxxxxxxxxxxx is xxxxxx to xxxx xxxxxxxx xxxx statement of account for the xxxxxxxxx xxxxx, xxxxxx on xxxxxx xxxxxxx of the statement of account or 99 xxxx from
+2	44.64	63.92	0.00	the date of the statement of account xx the Bank (xxxxxxxxxx period). Xxxx xxxxxxx of xxxx statement of account and xx xxx xxxxx not xxxx xxxx 99 (xxxxxx) xxxx from the
+2	44.64	73.28	0.00	xxxxxxxxxx period xxxxxxxxx xxxxx, the xxxxxxxxxxxxx xxxxxx to xxxxxxxxxxx xxxxxx the Bank xx xxxxxxx of xxx xxxxxx, xxxxxxxxx, xxxxxxxxxxxxxx, xxxxxxxxx xxx xxxxxxxxxx or
+2	44.64	82.64	0.00	xxxxxxxxxxxx xxxxxxxxxxxx or xxx xxxxx xxxxxxxxxx the xxxxxxxxxxxxx xxx to xxxx statement of account. Xx the xxxxxxxxxxxxx xxxxx to xxxxxx the Bank xxxxxx 99 (xxxxxx) xxxx,
+2	44.64	92.00	0.00	the statement of account and xxx xxxxxxx xxxxxxx, xxxx xx xxxxxxxxxx xxxxxxxx of the xxxxxxxxxxx of the xxxxxxxx and xxxxxxx xxxx the xxxxxxxxxxxxx and/or xxx xxxxxx
+2	44.64	101.36	0.00	xxxxxxxx xxxxx or xxxxxxx xxxx xxxxxxxxxxxxx xxxxxxx the xxxxxxxxxxx for xxx xxxxxxx xxxxx and the Bank xxxx xx xxxxxxxx from xxx xxx xxxxxxxxxxx for xxx transaction xxxxxxxxx
+2	44.64	110.72	0.00	xxx xxxxxxx, xxxxxxx and xxxxxx of xxx xxxx xxxxxxxxxx, xxxxx, xxxxxx, xxxxx, xxxx or xxxxxxxxx xxxxxxxx and/or xxxxxxxx xx the xxxxxxxxxxxxx or xxx xxxxxx xxxxxxxx
+2	44.64	120.08	0.00	xxxxxxx xxx, xxxxxxxxx xx to the date of the xxxx xxxxxx statement of account xxxxxx for xxxxxxxxxxxx the xxxxxxxxxxxxx xxxx xxxxxx of xx xxxxxxxxxx xxxx xxxx xxxxxxx.
+2	26.88	129.44	0.00	9.
+2	44.64	129.44	0.00	For xxxxx xxxxxxx xxx. xxxxxx to credit and xxxxxxxx for xxxxxxxxxx, xxxxx xxx not available xxxxx xxxxxxx.
+2	26.88	138.80	0.00	9.
+2	44.64	138.80	0.00	Xxxx xxxxxxxx xxxxxxxx is available x.x.x. 9 Xxxxxx 9999. Xx xxx xx xxxxxxxxx from the xxxxxxx branch and xxx xx xxxxxxx xxxxx the xxxxxxxxx 9 xxxxxx xx xxxxxxxxxxx xxx
+2	44.64	148.16	0.00	branch xx xxxxxx. Xxxxxxx of xxxxxxxxxxxx xxxxx to 9 xxxxxx xxxx xx xxxxxx on xxxxxxx and xxxxxxx as xxx the xxxxxxxx xxxxxx xxxxxxxxx.
+2	26.88	157.52	0.00	9.
+2	44.64	157.52	0.00	Xxxxxxxxxxx on 9) The Code of Xxxxx' Xxxxxxxxxx to Xxxxxxxxx (XXXXX Code), 9) Xxxxxxx Xxxxxxxxx Scheme, 9) Account Xxxxx, 9) Xxxxxxx Xxxxxxx and 9) Xxxxxx
+2	44.64	166.88	0.00	Interest Xxxxx xxx xx xxxxxxxx from the xxxxxxx (xxx.xxxx.xx.xx) or xx xxxxxxxx the xxxxxxx branch.
+2	44.64	176.24	0.00	Xx the xxxxx xxxx xxx xx not xxxxxxx xxx xxxxxxxx xxxxxx xxx xxxxx from the date, The Xxxxxxxx and Xxxxxxxx Xxxxxxx Xxxxxxxxxxx Limited, India (Bank) first xxxxxxxx
+2	44.64	185.60	0.00	xxxx xxxxxxxxxxxxxx, or xx xxx xxx xxxxxxxxxxxx xxxx the xxxxxxxx xxxxx xx the Bank, xxx xxx xxxxx to the Xxxxxxx Xxxxxxxxx, a xxxxxxxxx xxxx xxxxxxxxx xx the Xxxxxxx
+2	44.64	194.96	0.00	Bank of India, to xxxx xxxx the xxxxxxxxx of xxxxxxxxxxxx xxxxxxx xx xxxxx. Xxxxxx xxxxxx a xxxxxxxxx to the Xxxxxxx Xxxxxxxxx -
+2	44.64	204.32	0.00	- the xxxxxxxxxxx xxxx xxxx xxxx a xxxxxxx xxxxxxxxxxxxxx to the Bank
+2	44.64	213.68	0.00	- the xxxxxxxxx xxxx xxxx xxxx xxxx xxxxxx a xxxx of the xxxxxxxx xxxxxxxx from the Bank and xxxxxx xxx xxxx and xxx xxxxx of the date of xxxxxxxxxxxxxx to the Bank,
+2	44.64	223.04	0.00	xx xxxx the xxxxxxxx xxx not xxxxxxxx
+2	44.64	232.40	0.00	- the xxxxxxxxx xxxx not xxxx xxxx xxxxxxx xx the Xxxxxxx Xxxxxxxxx xx xxx xxxxxxxx xxxxxxxxxx
+2	44.64	241.76	0.00	- the xxxxxxxxx xxxx not xxxx xxxx the xxxxxxx xxxxxx of xxxxxxxxxxx xxxxxx xxx xxxxx, xxxxxxxx, xxxxxxxxxx or xxx xxxxx xxxxx
+2	26.88	251.12	0.00	9.
+2	44.64	251.12	0.00	Xxxxxx xxxxx xxxx branch for xxxxxxxxxxx on the nomination xxxxxxxx (for xxxxxxxxxx and xxxx xxxxxxxxxxxxxx accounts and xxxxxxx).
+2	26.88	260.48	0.00	9.
+2	44.64	260.48	0.00	Xxxxxxxxxxx xxxxxxxx is for reference xxxx. Xxxxxxxxxxxx xxxxxxxxx or xxxxxxxxxxxx xxxxxxxx on or xxxxx the statement date xxx not xx xxxxxxxxxx xx the statement.
+2	26.88	269.84	0.00	9.
+2	44.64	269.84	0.00	Xxxxxx xxxxxxxx a savings/current account for xxxxxxxxx of XXX (xx xxx) xxxxxxx interest payment on xxxx xxxxxxxx or xxx term deposits.
+2	26.88	279.20	5.84	9.
+2	44.64	279.20	0.00	Xxxxxx xxxx xxxx xxxxx Xxxxx and Xxxxxxxx Xxx (XXX) xxxxxxxxxxx and xxxxxxxx XXX xxxxx, Central XXX, State/Union Xxxxxxxxx XXX, or Xxxxx-State XXX, as applicable, and
+2	44.64	288.56	0.00	Xxxx as applicable xxxxx xxxxx on xxx xxxx and xxxxxxx.
+2	44.64	297.92	0.00	XXX (Xxxxxxxxxx Xxxxxx Xxxxxxxxxxxx) Code: 9999- Xxxxxxxxx xxxxxxxx and xxxxxxx xxxxxxxx xxxxx xxxxxxxx 999999, 999999, 999999, 999999, 999999.
+2	30.48	307.28	0.00	HSBC State Xxxx and XXXX Details:
+2	30.48	316.64	0.00	Maharashtra: 99XXXXX9999X9XX Xxxx Xxxxxx:
+2	186.24	316.64	0.00	 99XXXXX9999X9XX Xxxxx Xxxx:
+2	293.28	316.64	0.00	 99XXXXX9999X9XX Xxxxx:
+2	379.92	316.64	0.00	 99XXXXX9999X9XX Xxxxxxx:
+2	477.36	316.64	0.00	 99XXXXX9999X9XX
+2	30.48	326.00	0.00	Xxxxxxxxxx: 99XXXXX9999X9XX Xxxxxxxxx: 99XXXXX9999X9XX Xxxxxxxxx: 99XXXXX9999X9XX Karnataka: 99XXXXX9999X9XX Xxxxxx: 99XXXXX9999X9XX
+2	30.48	335.36	0.00	Xxxxxxx: 99XXXXX9999X9XX Xxxxx Xxxxxxx: 99XXXXX9999X9XX  Punjab: 99XXXXX9999X9XX  Xxxxxx Xxxxxxx:
+2	395.52	335.36	0.00	 99XXXXX9999X9XX 
+2	30.48	353.36	0.00	For xxxx xxxxxxxxxxx, xxxxxx contact xx xx:
+2	30.48	362.72	0.00	HSBC XxxxxXxxxxxx xxxxxxx xx India: 9999 999 9999 or 9999 999 9999
+2	30.48	372.08	0.00	HSBC XxxxxXxxxxxx xxxxxxx for XX xxxxxxxxx:
+2	30.48	381.44	0.00	Xxxxx to India from xxxxxxxx:
+2	125.52	381.44	0.00	 +91-22-4042 9999 Xxxxxxxxx: 9999 999 999 (Xxxxx Xxxxx) Xxxxxx: 9999 XXX HSBC (9999 999 9999) (Xxxx Xxxx)
+2	30.48	390.80	0.00	Xxxx Xxxx: 999 9999 9999/999 9999 9999 (Xxxx from xxxxxxxx) India: 9999 999 9999/9999 999 9999 (Xxxx Xxxx) Xxxxxxxxx: 99 9999 9999 (Xxxxx Xxxxx)
+2	30.48	400.16	0.00	Xxxxxx Xxxxxxx:
+2	84.96	400.16	0.00	 999 99999999/999 99999999/999 99999999 (Xxxxx Xxxxx)Xxxxxx Xxxx:
+2	309.36	400.16	0.00	 Xxxxxxx 999 9999 9999 (Xxxxx Xxxxx) Xxxxxx 999 9999 9999 (Xxxxx Xxxxx)
+2	30.48	409.52	0.00	Xxxx 999 9999 9999 (Xxxxx Xxxxx) Xxxxx 999 9999 9999 (Xxxxx Xxxxx) Xxxxx Xxxxxx 9999 999 9999 (Xxxxx Xxxxx - Xxxxxx, Xxxxxxxx, xxxxx and Xxxxxx)
+2	30.48	418.88	0.00	Xxxxxx Xxxx Xxxxxxxx 999 9999 (Xxxx Xxxx - Xxxxx, Xxxxxxx, Xxxxx, Xxxxxxxx, Xx Xxx, Xxx Xx Xxxxxxx, Xxx Xx Xxxxxx)
+2	30.48	428.24	0.00	Xxxxxx Xxxxxx of Xxxxxxx:
+2	114.96	428.24	0.00	 9999 XXX HSBC/9999 999 9999 (Xxxx Xxxx)
+2	30.48	437.60	2.45	•
+2	48.24	437.60	0.00	To xxxxx xxx XxxxxXxxxxxx xxxxxxx, xxx xxxx Account Number/XxxxxXxxxxxx Number (XXX)/Credit Card Number and Xxxxxxxx Xxxxxxxxxxxxxx Number (XXX).
+2	30.48	446.96	2.45	•
+2	48.24	446.96	0.00	XXX xxxxxxxx xxxxx xxx xxxxxxxxxxx and xxxx xxxx xxxxxx xxxxxx xxxx xxx XXX xxxxxxxx xxxxx. For xxxxxxx details on xxx xxxxxxxx Xxxxxxxxx XxxxxXxxxxxx xxxxxx,                     
+2	48.24	456.32	0.00	xxxxxx xxxxx xxx.xxxx.xx.xx       
+2	30.48	475.04	0.00	Branch Xxxxxxxxx:
+2	30.48	484.40	0.00	• Xxxxxxxxx: Xxxxxx Xxxxx, X. X. Xxxx, Xxxxxxxxx - 999 999 • Xxxxxxxxx: 9 Xxxxxxx Xxxxxx Xxxx, Xxxxxxxxx - 999 999 | Xxxxxxxxx Branch: HSBC, No. 99, Xxxxxx 
+2	30.48	493.76	0.00	Xxxxx Xxxx Xxxx, Xxxxxxxxxxxx, Xxxxxxxxx - 999 999 •Xxxxxxxxxx: XXX 9, Xxxxxx 9-X, Xxxxxxxxxx - 999 999 • Xxxxxxx: HSBC Limited , India "Xxxxxxxxxxx", Xx.9 & 9, 
+2	30.48	503.12	0.00	Xxxxxxxxx Xxxx, Xxxxxxx - 999 999 • Xxxxxxxxxx: Xxxxxxx Xxxxx Xxxxxx, 999, Xxxx Xxxxxx Xxxx, Xxxxxxxxxx - 999 999 • Xxxxxxx: XXX Xxxxxx Xxxxxx, XXX Xxxxx XX, 
+2	30.48	512.48	0.00	Xxxxxxx-Xxxxxxxx Xxxx, Xxxxxxx - 999 999 • Xxxxxxxxx: 6-3-1107 and 9999, Xxx Xxxxxx Xxxx, Xxxxxxxxxx, Xxxxxxxxx - 999 999 •Xxxxxx: 99-A, Xxxxxxx, Xxxxxx Xxxxx 
+2	30.48	521.84	0.00	Xxxx, X -Scheme, Xxxxxx - 999 999 • Xxxxx: Xxxxxxxx Xxxxxxx, X X Xxxx, (Xxxx Xxxxxxx Xxxxx Xxxxxxxx), Xxxxx - 999 999 •Xxxxxxx: Xxxxxxxxx Branch: 99 XXX Xxxx, 
+2	30.48	531.20	0.00	Xxxxxxxxx Xxxxxx, Xxxxxxx - 999 999 | Xxxxxxx Xxxx Branch: Xxxx Xxxxxxx, No. 9, Xxxxxx Xxxxxxxxxx Xxxx, Xxxxxxx - 999 999 • Xxxxxx: Xxxxxx Xxxx Branch: 99/99, 
+2	30.48	540.56	0.00	Xxxxxxx Xxxxxx Xxxx, Xxxxxx - 999 999 | Xxxxxxx Branch: Xxxx no 9 & 9 Xxxxxx Xxxxx, Xxxx Xxxx, Xxxxxxxxx Xxxxxx, Xxxx Xxx Xxxxxxxx Xxxx, Xxxxxxx Xxxxxxxxx Xxxx, 
+2	30.48	549.92	0.00	Xxxxxxx (Xxxx), Xxxxxx - 999 999 | Xxxxxx Branch: Xxxxxx, Dr. Xxxxxxxx Xxxx, Xxxxxx (Xxxx), Xxxxxx - 999 999 | Xxxxxxxx Branch: HSBC, Xxxxxx XXXX, Xxxxxx Xxxx, 
+2	30.48	559.28	0.00	Xxxxxx Xxxx, Xxxxxxxx Xxxx, Xxxxxx, Maharashtra – 999 999 | Xxxxxxx Branch: Xxxxxx Xxxxx, Xxxxxx Xxxxxxxxxx, Central Xxxxxx Xxxx, 99xx Xxxx Xxxxxx, Xxxxxxx (X), 
+2	30.48	568.64	0.00	Xxxxxx - 999 999 | Xxxx Branch: Xxxx Xxxxx, Xxxx Xxxx Xxxx, Xxxxxx - 999 999 | Xxxxxxxxxx Branch: Xxxxxx Xxxxxxxx, Xxxx Xx.9,Xxxxxx Xxxxx, Xxxx Number XX 9999 & 
+2	30.48	578.00	0.00	9999,X Xxxxxxxxx Xxxx, Xxxxxxxxx Xxxxxxx Xxxx,Xxxx Xxxxxxx Xxxxx,Xxxxxxxxxx, Xxxxxx - 999 999 | Xxxxxx Xxxx Branch: Xxxx Xxxxx, 99X Dr X Xxxxxxxx Xxxx, 
+2	30.48	587.36	0.00	Xxxxxx - 999 999 | Xxxxx Branch: Xxxxxxxxxx Xxxxx, Xxxxxx Xxxxx, Xxxxxxxxxxx Xxxxxxxx Xxxx, Xxxxx, Xxxxxx - 999 999 •Xxx Xxxxx:
+2	450.00	587.36	0.00	 99, Xxxxx Xxxxxx, Xxxxxxxxxx Xxxx, 
+2	30.48	596.72	0.00	Xxx Xxxxx - 999 999 | Xxxxxxx Xxxxxxx Branch: X-99, Xxxxxxx Xxxxxxx-X, Xxx Xxxxx - 999 999 | South Xxxxxxxxx Branch: X-99, South Xxxxxxxxx Xxxx 9, Xxx Xxxxx - 999 999 
+2	30.48	606.08	0.00	•  Xxxxx: X 99-99, Xxxxxx 99, Xxxxxx Xxxx Xxxxx, Xxxxx - 999 999 • Xxxx: Xxxx Xxxxxxx Xxxxxxxxx City, Xxxxxx Xx.99, Xxxx Xxxxxx Xxxx, Xxxx - 999 999 
+2	30.48	615.44	0.00	•  Xxxxxxxx: Xxxxxxxxx Xxxxxxxx Xxxxxxxx, Xxxxxx xxxxx, X.X. Xxxx Xxxx, Xxxxxxxx, Xxxxxxxx - 999999.  • Xxxxxxx:
+2	377.76	615.44	0.00	 Xxxxxx xxxxx, Xxxx 9, 9 & 9, Xxxxxx Xxxxx Xxxxx xxxxxxxx, 
+2	30.48	624.80	0.00	Xxxxxxx Xxxxx, Xxxxx Xxxxx, Xxxxxxx - 999999. •  Xxxxxxxx: Xxxxx Xxxxxx Xxxxx, Xxxx N Xxxxxxx, 99, Xxxx Xxxx, Xxxxxxxx – 999999. • X xxxxx: Xxxx 9, Xxxxxx Xxxxx, 
+2	30.48	634.16	0.00	Xxxxxxxxx Xxxxxxxx, 99, Xxx. Xxxxxxxx Xxxx, Xxxxxxx Xxxxxx, XX Xxxx, Xxxxxx – 999999. • Xxxxxx: HSBC, Xxxx 9, Xxxxxx Xxxx Xxxxxxx, Xxxx 999x & 999x, Xxxxx XX. 
+2	30.48	643.52	0.00	Xxxxx, Xxxxxxxxx Xxxxxx Xxxxx Xxxx Xxxxxxx Xxxx RD, Xxxxxxxxxx, Xxxxxx 999999. • Xxxxx: HSBC, Xxxxxx Xxxxx, Xxxxxxx Xxxxx Xxxx, Xxxxxx, Xxxxxxxx Xxxxxxx Xxxx 
+2	30.48	652.88	0.00	Xxxxxx, Xxxxx, Xxxxxxx - 999999.
+2	30.48	670.40	0.00	Xxxxxxx Xxxxxxxxx Details**
+2	30.48	679.76	0.00	Xxxxxxxxx: X/x XXX, Xx Xxxxxx Xxxxxxxx, Xxxxxx Xxxx, Xxxxxxxxx - 999 999. Xxx. No. 99999999/99999999, Xxx No. 999-99999999 (Xxxxxxx, Union Xxxxxxxxxxx of Xxxxx and Xxxxx Xxxxxx, Xxxxx and 
+2	30.48	689.12	0.00	Xxx), Xxxxxxxxx: X/x XXX 10/3/8, Xxxxxxxxxxx Xxxx, Xxxxxxxxx - 999 999. Xxx. No. 99999999/99999999, Xxx No. 999-99999999 (Karnataka), Xxxxxx: X/x XXX, Xxxxxxxxxxx Xxxx, Xxxx Xxx No. 99, 
+2	30.48	698.48	0.00	Xxxxxx - 999 999. Xxx. No. 9999999/9999999, Xxx No. 9999-9999999 (Xxxxxx Xxxxxxx and Xxxxxxxxxxx), Xxxxxxxxxxx: X/x XXX, Xx. Xxxxxxxxxx Xxxxx Xxxx, Xxxxxxxxxxx - 999 999. Xxx. No. 9999999/ 
+2	30.48	707.84	0.00	9999999, Xxx No. 9999-9999999 (Xxxxxx), Xxxxxxxxxx: X/x XXX, Xxx X
+2	227.04	707.84	0.00	xx Xxxxxxxx, Xxxxxx - 99, Central Xxxxx Xxxxxxxxxx - 999 999. Xxx. No. 9999999/9999999, Xxx No. 9999-9999999 (Xxxxxxxx 
+2	30.48	717.20	0.00	Xxxxxxx, Punjab, Union Xxxxxxxxx of Xxxxxxxxxx and Xxxxxxxxx, Xxxxxx Xxxxx and Xxxxxx Xxxxxxxxx of Xxxxxxx), Xxxxxxx: X/x XXX, Xxxx Xxxxxx, Xxxxxxx - 999 999. Xxx. No. 99999999/ 99999999/ 
+2	30.48	726.56	0.00	99999999, Xxx No. 999-99999999 (Xxxxx Xxxx, Union Xxxxxxxxxxx of Xxxxxxxxxx (xxxxxx Xxxx Xxxxxx) and Xxxxxxx and Xxxxxxx Xxxxxxx), Xxxxxxxx: X/x XXX, Xxxxxxx Xxxx, Xxx Xxxxx, Xxxxxxxx - 999 
+2	30.48	735.92	0.00	999. Xxx. No. 9999999/9999999, Xxx No. 9999-9999999 (Xxxxx, Xxxxxxxxx Xxxxxxx, Xxxxxxx, Xxxxxxxxx, Xxxxxxx, Xxxxxxxx and Xxxxxxx), Xxxxxxxxx: X/x XXX, 6-1-56, Xxxxxxxxxxx Xxxx, Xxxxxxxx, 
+2	30.48	745.28	0.00	Xxxxxxxxx - 999 999. Xxx. No. 99999999/99999999, Xxx No. 999-99999999 (Xxxxxx Xxxxxxx), Xxxxxx: X/x XXX, Xxx Xxxx Xxxxxx, Xxxx Xxxx, Xxxx Xxx Xx.99, Xxxxxx - 999 999. Xxx. No. 9999999/ 
+2	30.48	754.64	0.00	9999999, Xxx No. 9999-9999999 (Xxxxxxxxx), Xxxxxx: X/x XXX, X.X. Xxxx, Xxxx Xxx No. 99, Xxxxxx - 999 999. Xxx. No. 9999999/9999999, Xxx No. 9999-9999999 (Xxxxx Xxxxxxx (xxxxxxxxx Xxxxxxxxx of 
+2	30.48	764.00	0.00	Xxxxxxxxx and Xxxxxx Xxxx Xxxxx) and Xxxxxxxxxxx), Xxxxxxx: X/x XXX, 99, Xxxxxxx Xxxxxx Xxxx, Xxxxxxx - 999 999.Xxx. No. 99999999/99999999, Xxx No. 999-99999999 (Xxxx Xxxxxx and Xxxxxx), 
+2	30.48	773.36	0.00	Xxxxxx: X/x XXX, Xxxxxxx Xxxxx, Xxxxxx Xxxxx, Dr. Xxxxx Xxxxxx Xxxx, Xxxxx, Xxxxxx - 999 999. Xxx. No. 99999999/99999999, Xxx No. 999-99999999 (Maharashtra and Xxx), Xxx Xxxxx: X/x XXX, 
+2	30.48	782.72	0.00	Xxxxxx Xxxx, Xxx Xxxxx. Xxx. No. 99999999/99999999, Xxx No. 999-99999999 (Xxxxx, Xxxxx and Xxxxxxx and Xxxxxxxxx and Xxxxxx Xxxx Xxxxx xxxxxxxxx of Xxxxx Xxxxxxx, Xxxxxxx, (xxxxxx 
+2	30.48	792.08	0.00	Xxxxxxxxx, Xxxxxx Xxxxx and Xxxxxx Xxxxxxxxx), Xxxxx: X/x XXX, Xxxxx - 999 999. Xxx. No. 9999999/9999999, Xxx No. 9999-9999999 (Xxxxx and Xxxxxxxxx), Xxxxxxxxxxxxxxxxxx: X/x XXX, Xxxxxx 
+2	30.48	801.44	0.00	Xxxxxxxx, Xxxxxxxxxxxxxxxxxx - 999 999. Xxx. No. 9999999/9999999, Xxx No. 9999-9999999 (Xxxxxx, Union Xxxxxxxxx of Xxxxxxxxxxx and Union Xxxxxxxxx of Xxxxxxxxxx (xxxx Xxxx Xxxxxx)).
+2	30.48	820.16	0.00	**Xxx xxx xxxx xxxxx xxxx://xxx.xxxx.xx.xx/9/XX_XX_Xxxxxxx_Xxxx/xxxxxxx/xxxxxxx/xxx/xxxxxxxxx_9999.xxx for the xxxxxxx Xxxxxxx Xxxxxxxxx details.
+3	29.28	55.28	0.00	Xxxxxx of Xxxxxxxxx number and X-xxxx ID*
+3	29.28	64.64	0.00	Xxxxxx xxxxxx xx xxxxxxxxx number and/or x-xxxx ID on the Bank xxxxxxx as xxxxxxx:
+3	29.28	74.00	0.00	Xxxxxxxxx number: Xxxxxx: Xxxxxxxxx:
+3	416.64	74.00	0.00	Xxxxxx: 
+3	29.28	86.24	0.00	X-xxxx address: 
+3	29.28	104.96	0.00	Xxxxx details xxx applicable for: (xxxxxx xxxx xxxxxxxxx is applicable)         Credit Card Account        Bank Account           Xxxxxx Demat Account              Loan Account
+3	29.28	123.68	0.00	Xxxxxxxxx:  Customer Number:  Date: 
+3	29.28	135.92	0.00	Xxxxxx xxxxxx xxxx xxxxxxx and xxxxxx xx to the xxxxxxx HSBC branch.
+3	29.28	145.28	0.00	*For a xxxxxx of address on xxxx accounts xxxx the Bank, xxxxxx xxxxxxxx the xxxxxxx branch xxxx the address xxxxx xxxxxxxx xx xxxxxxxx.
+3	29.28	165.20	0.00	Xxxx
+3	29.28	174.56	0.00	Xxxxxxxxx Xxxxxxxxx Xxxxxxx Xxxxxxxx Debit Card Xxxxxxxxxx
+3	29.28	183.92	0.00	Xx Xxxxx Xxx
+3	29.28	193.28	0.00	The Xxxxxxxx and Xxxxxxxx Xxxxxxx Xxxxxxxxxxx Limited
+3	29.28	202.64	0.00	XXXXX - XX Xxxx Xxxx 9, 9xx Xxx, Xxxxx Xxxxxxx, Xxxxxxx Xxxxxxx Xxxxxxx, Xxxxxxxx (Xxxx), Xxxxxx – 999 999
+3	29.28	212.00	0.00	Contact number: [xxx:999-99999999|xxx:999-99999999] (Xxxxxx to Xxxxxx xxxxxxx 9:99 x.x. to 9:99 x.x.)
+3	29.28	221.36	0.00	Email Id : xxxxxxxxxx.xxxxx@xxxx.xx.xx
+3	29.28	241.28	0.00	Xxxx/Xxxxx/Xxxxxx of the card
+3	29.28	250.64	6.22	a)
+3	47.04	250.64	0.00	Xx the Debit Card is xxxx/xxxxxx, the xxxxxxxxxx xxxxxx xxxxxx xx to HSBC xxxxxxxxxxx xx xxxxxxx or xx xxxxxxx Phone Xxxxxxx Xxxxxxx. The Bank, is xxxxxx xxxxxx as a
+3	47.04	260.00	0.00	xxxxxxxxxxx xx xxxxxx xx the xxxxxxx xxxxxxx XXXX to the xxxxxxxxxx xxxxxxxx. The Bank is xxxx not xxxxxx for the xxxxxxx of the xxxxxxxxxxxxx.
+3	29.28	269.36	0.00	x)
+3	47.04	269.36	0.00	The xxxxxxxxxx xxxx not xx xxxx xxxxxx for xxx transaction xxxx on the Debit Card xxxxx xxxxxxxxx the xxxx/xxxxx/xxxxxx to HSBC.
+3	29.28	278.72	0.00	x)
+3	47.04	278.72	0.00	Xxxxxxxx xxxx or xxxxx xxx xx xxxxxxxx as xxxxxxxxx xx (a) xxxxx, the xxxxxxxxxx xxxx xxxxxxx to HSBC xx xxxxxxx. A xxxx of the xxxxxxxxxxxx XXX xxxx xxxxxxxxx the
+3	47.04	288.08	0.00	xxxxxxx xxxxxxxxxxxx.
+3	29.28	297.44	0.00	x)
+3	47.04	297.44	0.00	Xxxxxx the xxxxxxxxxx xxxxxxxxxxxx xxxxxxx the card, the xxxxxxxxx Debit Card xxxx not xx xxxx. Xxxxxx xxxxxxx the card xx xxxxxxx xx xxxx xxxxxxx xxxxxx xxxxxxx the
+3	47.04	306.80	0.00	xxxxxxxx xxxxx

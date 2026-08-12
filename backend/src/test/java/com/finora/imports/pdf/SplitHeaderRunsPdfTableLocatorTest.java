@@ -340,7 +340,12 @@ class SplitHeaderRunsPdfTableLocatorTest {
                 Map.entry("bob-repeated-account-banner", List.of(1, 58)),
                 Map.entry("bob-savings-ledger-validation", List.of(1, 58)),
                 Map.entry("canara-savings-ledger-validation", List.of(1, 60)),
-                Map.entry("central-bank-savings-ledger-validation", List.of(1, 224)),
+                // 224 before P-001 Fix B, 223 after. Not a Fix A regression: Fix B merges this
+                // document's second header band into its header instead of letting it stand as the
+                // table's first data row, which is the one row that went. See
+                // WrappedHeaderOnAScoringLinePdfTableLocatorTest. Every other entry here is
+                // untouched by both fixes.
+                Map.entry("central-bank-savings-ledger-validation", List.of(1, 223)),
                 Map.entry("hdfc-composite-deposit-schedules", List.of(4, 84, 9, 2, 7)),
                 Map.entry("hdfc-credit-card-ledger-validation", List.of(2, 2, 4)),
                 Map.entry("hdfc-txn-date-narration-header", List.of(1, 5)),

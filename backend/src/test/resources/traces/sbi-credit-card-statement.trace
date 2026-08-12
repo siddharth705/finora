@@ -1,0 +1,1106 @@
+# finora-pdf-trace v3
+# traceVersion: 3
+# redactorVersion: 2
+# allowlistFingerprint: A3C0126B
+# capturedAt: 2026-08-12
+# generatedFrom: SBI Card credit card statement
+# capabilities: WRAPPED_HEADER, RIGHT_ALIGNED_AMOUNTS, LEADING_NARRATION_CONTINUATION
+# regressions: 
+# requiredHeaders: Total Amount Due, Minimum Amount Due, Credit Limit, Available Credit Limit, Payment Due Date, Credit Card Number, Statement Date
+# motivation: real-world validation sweep for credit-card classifier evidence, PM-requested
+# page	x	y	width	text
+0	18.84	46.53	0.00	XXXXX of SBI Card : 99XXXXX9999X9XX                                  Xxxx/Debit Xxxx/Credit Xxxx/Xxx Xxxxxxx
+0	390.93	46.53	0.00	(XXXXXXXXX FOR XXXXXXXX)
+0	43.17	60.69	0.00	X X XXX
+0	324.08	61.48	71.58	Credit Card Number
+0	317.74	82.73	0.00	XXXX XXXX XXXX XX99
+0	322.96	103.98	85.77	*Total Amount Due ( ` )
+0	335.24	122.08	35.49	55,584.00
+0	384.44	126.01	0.00	xxxx. EMI
+0	49.46	137.03	0.00	XXXXX OF XXXXXX
+0	110.68	135.46	1.90	:
+0	116.96	137.03	0.00	XX/9/XXXXX XXXXXXX
+0	314.47	146.48	88.54	**Minimum Amount Due
+0	406.63	146.48	13.09	( ` )
+0	49.46	154.35	0.00	XXXX No.
+0	110.68	152.77	1.90	:
+0	116.96	154.35	0.00	X99999999999
+0	49.46	164.58	0.00	XXXX No.
+0	110.68	164.58	1.90	:
+0	116.96	164.58	0.00	99999999999999
+0	340.46	163.00	31.04	4,290.00
+0	386.23	168.51	0.00	Xxx Xxx
+0	43.25	190.55	41.34	Credit Limit
+0	87.14	190.55	13.09	( ` )
+0	103.72	188.97	0.00	(xxxxxxxxx xxxx)
+0	173.44	190.55	0.00	Xxxx Limit
+0	213.52	190.55	0.00	( ` )(as xxxx of credit limit)
+0	331.62	190.55	54.92	Statement Date
+0	63.03	207.08	42.11	1,00,000.00
+0	196.29	207.08	35.49	10,000.00
+0	333.62	206.29	0.00	99 Xxx 9999
+0	45.21	233.05	75.82	Available Credit Limit
+0	124.82	233.05	13.09	( ` )
+0	186.39	233.05	0.00	Available Xxxx Limit
+0	262.19	233.05	13.09	( ` )
+0	329.03	233.05	65.53	Payment Due Date
+0	66.77	248.00	35.49	26,089.88
+0	196.29	248.79	35.49	10,000.00
+0	331.12	248.00	0.00	99 Xxx 9999
+0	184.88	277.91	95.67	ACCOUNT SUMMARY
+0	250.11	300.73	0.00	Xxxxxxxxx
+0	124.25	305.45	0.00	Xxxxxxxx, 
+0	30.31	310.96	0.00	Xxxxxxxx Balance
+0	112.53	313.45	0.00	Xxxxxxxxx & xxxxx Xxxxxxxxx & Xxxxx Xxx, Xxxxx & Total Outstanding
+0	51.03	321.19	11.45	( ` )
+0	130.13	321.45	22.27	Credits
+0	156.21	322.76	11.45	( ` )
+0	212.02	322.89	19.77	Debits
+0	235.50	324.34	11.45	( ` )
+0	274.01	322.11	0.00	Interest Xxxxxxx
+0	328.13	323.55	11.45	( ` )
+0	379.94	321.19	11.45	( ` )
+0	36.15	341.65	35.49	90,653.62
+0	119.36	341.65	35.49	83,633.57
+0	203.36	341.65	35.49	66,566.24
+0	284.53	341.65	24.42	323.83
+0	368.21	340.87	35.49	73,910.00
+0	176.17	372.35	0.00	XXXX & XXXXX SUMMARY
+0	159.64	392.81	0.00	Xxxxxxxx/Xxxxxxx
+0	27.03	397.53	0.00	Xxxxxxxx Balance
+0	107.72	397.53	0.00	Xxxxxx
+0	171.04	398.81	0.00	/Xxxxxxxx
+0	229.05	397.53	41.93	Closing Balance
+0	325.71	397.53	0.00	Xxxxxx Xxxxxx Details
+0	36.56	413.27	0.00	99999
+0	105.36	413.27	0.00	9999
+0	178.83	413.27	0.00	9
+0	238.31	413.27	0.00	99999
+0	341.78	414.84	0.00	XXXX
+0	35.35	440.81	16.42	Date
+0	179.03	439.24	67.90	Transaction Details
+0	371.28	440.81	27.97	Amount
+0	402.70	440.03	13.09	( ` )
+0	157.00	447.90	0.00	for Statement Period: 99 Xxx 99 to 99 Xxx 99
+0	28.52	467.57	0.00	99 Xxx 99
+0	70.65	467.57	0.00	PAYMENT XXXXXXXX 999999999XXX9XXX9XXX9XX
+0	369.48	467.57	35.49	20,000.00
+0	414.88	467.57	0.00	X
+0	28.52	479.38	0.00	99 Xxx 99
+0	70.65	479.38	0.00	PAYMENT XXXXXXXX 999999999XXX99999XXXXXX
+0	373.93	479.38	31.04	7,830.00
+0	414.88	479.38	0.00	X
+0	28.52	491.18	0.00	99 Xxx 99
+0	70.65	491.18	0.00	XXXX XXXXXXXXX XXXXXX XXXX XXX
+0	385.00	491.18	19.97	26.59
+0	414.88	491.18	0.00	X
+0	28.52	502.99	0.00	99 Xxx 99
+0	70.65	502.99	0.00	XXX-99999999999999999999999999@XXXX9XXXX
+0	380.55	502.99	24.42	938.93
+0	414.88	502.99	0.00	X
+0	28.52	514.79	0.00	99 Xxx 99
+0	70.65	514.79	0.00	PAYMENT XXXXXXXX 999999999XXX99XX9XXXXXX
+0	369.48	514.79	35.49	53,000.00
+0	414.88	514.79	0.00	X
+0	25.85	526.60	0.00	99 Xxx 99
+0	70.65	526.60	0.00	UPI-Xxxxxx India
+0	373.93	526.60	31.04	1,838.05
+0	414.88	526.60	0.00	X
+0	25.85	538.40	0.00	99 Xxx 99
+0	70.65	538.40	0.00	XX EMI 99/99(XXXX XXX   49.40)
+0	373.93	538.40	31.04	3,194.00
+0	413.98	538.40	0.00	X
+0	25.85	550.21	0.00	99 Xxx 99
+0	70.65	550.21	61.10	INTEREST ON EMI
+0	380.55	550.21	24.42	274.43
+0	414.71	550.21	0.00	X
+0	70.65	562.01	0.00	XXXX XX @ 18.00%
+0	385.00	562.01	19.97	49.40
+0	414.71	562.01	0.00	X
+0	70.65	573.82	0.00	XXXXXXXXXXXX FOR X X XXX
+0	28.52	585.62	0.00	99 Xxx 99
+0	70.65	585.62	0.00	UPI-Xxxxxxx
+0	380.55	585.62	24.42	525.00
+0	414.71	585.62	0.00	X
+0	28.52	597.43	0.00	99 Xxx 99
+0	70.65	597.43	0.00	UPI-Xxxxxx Xxxxxxx  XxxXxxxxxxx
+0	380.55	597.43	24.42	405.19
+0	414.71	597.43	0.00	X
+0	28.52	609.23	0.00	99 Xxx 99
+0	70.65	609.23	0.00	UPI-XXXXXXX XXXXXXXXX
+0	380.55	609.23	24.42	300.00
+0	414.71	609.23	0.00	X
+0	28.52	621.04	0.00	99 Xxx 99
+0	70.65	621.04	0.00	UPI-Xxxxxxx
+0	373.93	621.04	31.04	1,197.00
+0	414.71	621.04	0.00	X
+0	28.52	632.84	0.00	99 Xxx 99
+0	70.65	632.84	0.00	UPI-Xxxxxxx
+0	380.55	632.84	24.42	565.00
+0	414.71	632.84	0.00	X
+0	28.52	644.65	0.00	99 Xxx 99
+0	70.65	644.65	0.00	UPI-XXXX XXXXX XXXXX XXX LIMITED
+0	380.55	644.65	24.42	600.00
+0	414.71	644.65	0.00	X
+0	28.52	656.45	0.00	99 Xxx 99
+0	70.65	656.45	0.00	UPI-XXXXXX LIMITED
+0	380.55	656.45	24.42	455.88
+0	414.71	656.45	0.00	X
+0	28.52	668.26	0.00	99 Xxx 99
+0	70.65	668.26	0.00	UPI-Xxxxxxx
+0	380.55	668.26	24.42	405.00
+0	414.71	668.26	0.00	X
+0	28.52	680.06	0.00	99 Xxx 99
+0	70.65	680.06	0.00	UPI-XXXXXXX XXXXXXXXX
+0	373.93	680.06	31.04	3,903.00
+0	414.71	680.06	0.00	X
+0	28.52	691.87	0.00	99 Xxx 99
+0	70.65	691.87	0.00	UPI-XXXXXXX XXXXXXXXX
+0	373.93	691.87	31.04	2,088.00
+0	414.71	691.87	0.00	X
+0	28.52	703.67	0.00	99 Xxx 99
+0	70.65	703.67	0.00	UPI-Xxxxxxxxxx
+0	380.55	703.67	24.42	430.00
+0	414.71	703.67	0.00	X
+0	28.52	715.48	0.00	99 Xxx 99
+0	70.65	715.48	0.00	UPI-Xxxxxxxx XX Xxxxxxxxxxxx Xxxxxxxxxx
+0	373.93	715.48	31.04	2,691.09
+0	414.71	715.48	0.00	X
+0	28.52	727.28	0.00	99 Xxx 99
+0	70.65	727.28	0.00	UPI-XXXXX XXXXX
+0	380.55	727.28	24.42	150.00
+0	414.71	727.28	0.00	X
+0	28.52	739.09	0.00	99 Xxx 99
+0	70.65	739.09	0.00	UPI-XXXX XXXXXXX
+0	380.55	739.09	24.42	120.00
+0	414.71	739.09	0.00	X
+0	28.52	750.89	0.00	99 Xxx 99
+0	70.65	750.89	0.00	UPI-Xxxxxxxx XX
+0	380.55	750.89	24.42	525.00
+0	414.71	750.89	0.00	X
+0	28.52	762.70	0.00	99 Xxx 99
+0	70.65	762.70	0.00	Xxxxxxx Xxxxxx                       XX
+0	389.45	762.70	15.52	2.00
+0	414.71	762.70	0.00	X
+0	28.52	774.50	0.00	99 Xxx 99
+0	70.65	774.50	0.00	UPI-Xxxxxxxx XX
+0	380.55	774.50	24.42	478.00
+0	414.71	774.50	0.00	X
+0	28.52	786.31	0.00	99 Xxx 99
+0	70.65	786.31	0.00	UPI-XXX INDIA XXXXXXX XXX
+0	373.93	786.31	31.04	2,750.00
+0	414.71	786.31	0.00	X
+0	28.52	798.11	0.00	99 Xxx 99
+0	70.65	798.11	0.00	UPI-XXXXXX XXXXXXXXXXX XXX LIMITED
+0	373.93	798.11	31.04	2,774.00
+0	414.71	798.11	0.00	X
+0	28.52	809.92	0.00	99 Xxx 99
+0	70.65	809.92	0.00	UPI-XXXXXX XXXXXXXXXXX XXX LIMITED
+0	373.93	809.92	31.04	1,416.00
+0	414.71	809.92	0.00	X
+0	28.52	821.72	0.00	99 Xxx 99
+0	70.65	821.72	0.00	UPI-XXXXX XXXXXXX - 9
+0	380.55	821.72	24.42	100.00
+0	414.71	821.72	0.00	X
+0	28.52	833.53	0.00	99 Xxx 99
+0	70.65	833.53	0.00	UPI-XXXX XXX 99
+0	380.55	833.53	24.42	390.00
+0	414.71	833.53	0.00	X
+0	21.19	863.43	0.00	Xxxxxxxxxxxx xxxxxxxxxxx xx xxxx xxxxx, xx xxx, xx not xxxx xxxx of Xxxxxxxxx & Xxxxx Debits; #Xxxxxxxxxxxx xxxxx/xxxxxxxxx xxxxxxxxx to Xxxxxxxx/Xxxxxx/Xxxxxxxx EMI.
+0	22.76	870.52	0.00	X=Credit  ;   X=Debit; XX=Xxxxxx; XX=Xxxxxxxx; XXX=Xxxx Xxxxx Xxxxx; XX=Balance Xxxxxxxx; X=Monthly Installments; XXX=Total Amount Due; X=Xxxxxxxxx Credit.
+0	266.38	883.11	0.00	Xxxxxxxxx Xxxxxxxx
+0	26.69	891.77	0.00	X.x.x. 9xx Xxx 9999, Xxxx Payment Xxxxxxx (XXX) xxxx xx xxxxxxx to Xx.999 for Outstanding Amount Due xxxxxxx xxxx Xx.999 xx to Xx.999, and Xx.999 for Outstanding Amount Due xxxxxxx xxxx Xx.999 xx to Xx.9,999.
+0	26.69	950.00	0.00	X.x.x. 9 Xxx'99, xxxxxxxxxx of Xxxxxx Xxxxxx for Statement Credit xxxx xx xxxxxx xx 99,999 Xxxxxx xxx xxxxx. Xxxxxxxxxxx xxx xx xxxx xxxx xx xxxxxxxxx of 9,999 Xxxxxx. X&X xxxxx
+0	20.41	968.10	0.00	*Total Amount Due (XXX) xxxxx to xx paid xx payment due date to xxxxx xxxx of finance xxxxxxx on xxx xxxxxxxxxxxx xxxx xxxxx the statement xxxx.Xxx xxxxxxxxxx,xx xxx, xxxxxxx the Total Amount
+0	20.41	974.10	0.00	Due and the Total Outstanding is the balance on the Xxxxxxxx/Xxxxxx/Installments as applicable.** To xxxx xxxx credit card xx xxxx xxxxxxxx,xxx xxxx the xxxxxx of xxxxxx xxxxxxx the minimum
+0	20.41	980.10	0.00	amount due on or xxxxxx the due xxxx.Xxx Minimum Amount Due xxxxxxxx the EMI on Xxxxxxxx/Xxxxxx/Installment xxxxxxx & 999% of xxx applicable xxxxx.Xxxxxxx of xxxx statement xxxx xx xxxxxxxxxx 
+0	20.41	986.10	0.00	xxxxxxx xx no xxxxx is xxxxxxxx xxxxxx 99 xxxx.Xxxxxxx to xxxxxxx the xxxxxxxx xxxxx xxxxxx,xxx Xxxxxx Xxx xxxxxxxx xxxx xxxxxxx xx xxxx SBI Card account xxxxxx 99 xxxx of the xxx xxxxx xxxxxx.
+1	181.63	106.34	67.90	Transaction Details
+1	40.84	114.21	16.42	Date
+1	154.02	117.36	0.00	for Statement Period: 99 Xxx 99 to 99 Xxx 99
+1	379.42	114.21	27.97	Amount
+1	412.91	115.00	13.09	( ` )
+1	32.52	133.10	0.00	99 Xxx 99
+1	73.79	133.10	0.00	UPI-XXXXXX
+1	394.42	133.10	19.97	25.00
+1	422.35	133.10	0.00	X
+1	32.52	144.90	0.00	99 Xxx 99
+1	73.79	144.90	0.00	UPI-XXXXXXX
+1	389.97	144.90	24.42	159.00
+1	422.35	144.90	0.00	X
+1	32.52	156.71	0.00	99 Xxx 99
+1	73.79	156.71	0.00	UPI-XXXXXX
+1	383.35	156.71	31.04	1,154.69
+1	422.35	156.71	0.00	X
+1	32.52	168.51	0.00	99 Xxx 99
+1	73.79	168.51	0.00	UPI-XXXXXX
+1	389.97	168.51	24.42	938.93
+1	422.35	168.51	0.00	X
+1	32.52	180.32	0.00	99 Xxx 99
+1	73.79	180.32	0.00	UPI-XXXXXX LIMITED
+1	383.35	180.32	31.04	1,204.58
+1	422.35	180.32	0.00	X
+1	32.52	192.12	0.00	99 Xxx 99
+1	73.79	192.12	0.00	UPI-Xxxxxx
+1	394.42	192.12	19.97	35.00
+1	422.35	192.12	0.00	X
+1	32.52	203.93	0.00	99 Xxx 99
+1	73.79	203.93	0.00	UPI-Xxxxxxxxx
+1	378.90	203.93	35.49	19,718.00
+1	422.35	203.93	0.00	X
+1	32.52	215.73	0.00	99 Xxx 99
+1	73.79	215.73	0.00	UPI-XXXXXXX XXXXXX
+1	383.35	215.73	31.04	2,296.00
+1	422.35	215.73	0.00	X
+1	32.52	227.54	0.00	99 Xxx 99
+1	73.79	227.54	0.00	UPI-THE XXX XX XXXXXXXX
+1	394.42	227.54	19.97	12.00
+1	422.35	227.54	0.00	X
+1	32.52	239.34	0.00	99 Xxx 99
+1	73.79	239.34	0.00	UPI-THE XXX XX XXXXXXXX
+1	389.97	239.34	24.42	399.00
+1	422.35	239.34	0.00	X
+1	32.52	251.15	0.00	99 Xxx 99
+1	73.79	251.15	0.00	UPI-XXXXXXX XXXXXX
+1	394.42	251.15	19.97	60.00
+1	422.35	251.15	0.00	X
+1	32.52	262.95	0.00	99 Xxx 99
+1	73.79	262.95	0.00	UPI-XXXXXXX
+1	383.35	262.95	31.04	5,063.00
+1	422.35	262.95	0.00	X
+1	32.52	274.76	0.00	99 Xxx 99
+1	73.79	274.76	0.00	UPI-XXX XX 999 XXXXXXX
+1	383.35	274.76	31.04	1,340.00
+1	422.35	274.76	0.00	X
+1	32.52	286.56	0.00	99 Xxx 99
+1	73.79	286.56	0.00	UPI-Xxxxx
+1	383.35	286.56	31.04	1,604.00
+1	422.35	286.56	0.00	X
+1	32.52	298.37	0.00	99 Xxx 99
+1	73.79	298.37	0.00	UPI-Xxxxxx Xxxxx
+1	389.97	298.37	24.42	439.00
+1	422.35	298.37	0.00	X
+1	32.52	310.17	0.00	99 Xxx 99
+1	73.79	310.17	0.00	UPI-Xx  XXXXX  XXXXXXXX
+1	389.97	310.17	24.42	140.00
+1	422.35	310.17	0.00	X
+1	32.52	321.98	0.00	99 Xxx 99
+1	73.79	321.98	0.00	UPI-XXXXX XXXXXXX
+1	389.97	321.98	24.42	300.00
+1	422.35	321.98	0.00	X
+1	32.52	333.78	0.00	99 Xxx 99
+1	73.79	333.78	0.00	UPI-XXXXX  XXXXXX
+1	394.42	333.78	19.97	90.00
+1	422.35	333.78	0.00	X
+1	32.52	345.59	0.00	99 Xxx 99
+1	73.79	345.59	0.00	UPI-XXXXX XXXXX
+1	389.97	345.59	24.42	450.00
+1	422.35	345.59	0.00	X
+1	32.52	357.39	0.00	99 Xxx 99
+1	73.79	357.39	0.00	UPI-Xxxxxxx Xxxxxx
+1	389.97	357.39	24.42	300.00
+1	422.35	357.39	0.00	X
+1	32.52	369.20	0.00	99 Xxx 99
+1	73.79	369.20	0.00	UPI-Xxxxxx Xxxxxxx  XxxXxxxxxxx
+1	383.35	369.20	31.04	1,193.01
+1	422.35	369.20	0.00	X
+1	32.52	381.00	0.00	99 Xxx 99
+1	73.79	381.00	0.00	UPI-Xxxx  XXXXXX  XXXXXXXXX
+1	389.97	381.00	24.42	645.00
+1	422.35	381.00	0.00	X
+1	32.52	392.81	0.00	99 Xxx 99
+1	73.79	392.81	0.00	UPI-Xxxxx Xxxxx Xxxxxxx
+1	389.97	392.81	24.42	349.00
+1	422.35	392.81	0.00	X
+1	29.85	404.61	0.00	99 Xxx 99
+1	73.79	404.61	0.00	UPI-Xxxxxx India
+1	383.35	404.61	31.04	3,354.00
+1	422.35	404.61	0.00	X
+1	29.85	416.42	0.00	99 Xxx 99
+1	73.79	416.42	0.00	UPI-Xxxxxx India
+1	383.35	416.42	31.04	1,838.05
+1	422.35	416.42	0.00	X
+1	29.85	428.22	0.00	99 Xxx 99
+1	73.79	428.22	0.00	UPI-Xxxxx Xxxxxx
+1	394.42	428.22	19.97	40.00
+1	422.35	428.22	0.00	X
+1	29.85	440.03	0.00	99 Xxx 99
+1	73.79	440.03	0.00	UPI-XXXXXX
+1	389.97	440.03	24.42	464.14
+1	422.35	440.03	0.00	X
+1	29.85	451.83	0.00	99 Xxx 99
+1	73.79	451.83	0.00	UPI-Xxxxxx Xxxxxx Xxxxx
+1	389.97	451.83	24.42	684.68
+1	422.35	451.83	0.00	X
+2	214.93	71.31	0.00	       SAVINGS AND XXXXXXXX XXXXXXX
+2	220.87	92.55	0.00	For xxxx statement
+2	354.88	92.55	0.00	For xxxx xxxx From the card xxxxx date
+2	37.55	105.93	0.00	Xxxx Xxxx
+2	75.36	105.93	18.61	( ` )#
+2	250.27	105.93	15.52	0.00
+2	369.45	105.93	15.52	0.00
+2	498.91	105.93	15.52	0.00
+2	39.04	116.95	0.00	Xxxxxx Xxxxxxxxx Xxxxxx
+2	127.96	116.95	18.61	( ` )#
+2	248.05	117.74	19.97	26.59
+2	365.01	117.74	24.42	485.91
+2	491.15	117.74	31.04	1,641.97
+2	38.05	128.76	0.00	Xxxxxx Xxxxxx
+2	249.13	128.76	0.00	9999
+2	366.10	128.76	0.00	99999
+2	493.33	128.76	0.00	999999
+2	43.17	141.35	0.00	# xxxx xxxxxx from xxxxxxxxxxxx xxxxx 99-Xxx-9999.
+2	248.95	194.86	0.00	VALUE XXXXX XXXXXXXX
+2	87.29	212.97	0.00	Xxxxxxx (Xxxxxxx Xxxxx)
+2	262.94	212.97	0.00	Loan Xxxxxx Date
+2	336.09	212.97	96.06	Total Outstanding Principal
+2	450.42	212.97	115.50	Current EMI(Principal + Interest)
+2	37.68	227.13	0.00	XXXXXXXX EMI(99 XXXXXX)(Xxx.'99)
+2	283.17	227.13	0.00	Xxx 99
+2	368.33	227.13	33.31	21246.18
+2	459.27	227.13	92.10	3194.00(2919.57+274.43)
+2	50.24	422.31	0.00	Xxxxxxxxx of EMI xxxxxxxx / xxxxxxxx xxxxxxx xx the xxxxxxxxxx Xxxxxxx xxxxxxxxxxx 99X9, xx xxxx xxxxxxx an XXX to 9999999
+2	50.24	432.31	0.00	xxxx the account xxxxx XXX :
+2	51.03	443.88	0.00	A xxx xxxxx the statement is xxxxxxxxx xxxx account Xxxxxx
+2	51.03	453.88	0.00	xxxxxxxxxxxxxx as XXX, xxx EMI xxxxx (xxxxxxxxx xxxxxxxxxxxx xxxxx)  XXX
+2	379.94	448.28	0.00	Balance Xxxxxxx:
+2	471.49	448.28	0.00	Available Credit & Xxxx limit:
+2	51.03	463.88	0.00	available on the account xxxxx xx xxxxxx & the principal     XXX XXXX
+2	471.00	460.08	0.00	           XXXXX XXXX
+2	51.03	473.88	0.00	outstanding xxxxx xxxx the outstanding interest xxxxxxx xxxx the Xxxxxxx Xxxx/Xxxxxx Card:
+2	486.53	472.68	0.00	Xxxx Payment Status:
+2	51.03	483.88	0.00	date of xxxx EMI xxxxx xxxxx xx xxxxxxx to the Credit Card     XXXXX XXXX
+2	471.00	486.05	78.59	           PAYMENT XXXX
+2	51.03	493.88	0.00	Account & xxxxxx xx the xxxxxxxxxx monthly statement. SBI Card Xxxxxx Xxxxx Summary:
+2	479.35	497.07	0.00	Xxxxxxxxx to Xxxxxxxxxx:
+2	51.03	503.88	0.00	xxxxx xx xxxxxxxx to xxxxxx xxxxxxxxx repayment of xxxx 
+2	51.03	513.88	0.00	xxxxxxxxxxxx outstanding xxxxxxx. As a xxxx of the Credit Card     XXXXXX XXXX
+2	471.00	508.88	0.00	           XXXXX XXXX
+2	51.03	523.88	0.00	Account, xxxx balance xxxx xxxxxxx xxx applicable xxxxxxx (xxxxxxxxx Xxxxxxxxx Statement:
+2	51.03	533.88	0.00	finance xxxxxxx xx applicable interest rate) as xxxxxxxx xx the            XXXXX XXXX Statement Period xx XXXX
+2	51.03	543.88	0.00	XXXX.
+2	427.78	543.51	0.00	           XXXX = Xxxx 9 Xxxxxx of the Card No.
+2	51.03	553.88	0.00	X.x.x. 99 Xxx 9999, a xxxxxxx ‘Cheque Xxxxxxxxxx Xxx’ of Xx. 
+2	51.03	563.88	0.00	999 xxxx xx applicable on outstanding xxxxxxxx xxxx xxx Xxxxxxxxx Xxxxxxxxxxx on Xxxxxxxx Transaction(x):
+2	51.03	573.88	0.00	Cheque. Xxxx xxxxxxxx is xxxxxxxxxx of the xxxxxxxxx xxxxxxxxxxx 
+2	51.03	583.88	0.00	xxxx xxxxxxxxxx xxxx xxxxxxx payment xxxxx. Xxxxxxxx xxxx •Xxxxxx xxxx xxxx xxxx xxxxxxxxx credit (X) xxx xxxx xxxxxxxx to 
+2	51.03	593.88	0.00	xxxxxxx xxxxxxx xxxxxxxx xxxx as UPI, XXXX, NEFT, xxx xxxx   xxx xx the xxxxxxx and xxxxxx the amount is xxxxxxxx xx xxxx 
+2	51.03	603.88	0.00	xxxxxxxx to xx xxxx of xxx xxxxxxxxxx xxxxxxx. Xx xxxxxxxxx xxx   available credit limit, xxx xxxx not xx xxxx to xxxxx the amount
+2	51.03	613.88	0.00	xxxxxxxxxxx to xxxxxxx xxxxxxx xxxxx for xxxxxx-xxxx xxxxxxxx &   xxxxx the xxxxxxx is  xxxxx xxxxx xxxxxxxxxxxxx.
+2	51.03	623.88	0.00	xxxxxx credits.
+2	316.36	618.92	0.00	•As xx xxx xxxxxxxxx on xxxxxxxx from xxxxxxxx xxxxxxx xxxx as 
+2	316.36	628.92	0.00	  xxxxxxxxx bank, xxxxxxx of xxxx xxxxxxxx xxx xxxx xx to a 
+2	316.36	638.92	0.00	  xxxxxxx of 999 xxxx from date of xxxxxxxxxx of xxxxxxxxxxxxx.
+2	139.90	646.60	0.00	 Xxxxxxxxx Xxxxx
+2	316.36	648.92	0.00	•Xxxx xxxxxxxxxx of the xxxxxxxxxxxxx, xx xxxx the xxxxxxx is 
+2	48.67	662.34	0.00	•Description of Xxxxxxxx :- Credit Card Xxxxxxxx
+2	316.36	658.92	0.00	  not xxxxxx xx xxxxxxxxxx’x xxxxx, the xxxxxxxxx credit xxxxx xx 
+2	48.67	672.34	0.00	•XXX Code : 999999
+2	316.36	668.92	0.00	  xxxxxxxx and xxxxxxxxxxxxx debit xxxxx xxxxx xxxxxxx on the 
+2	48.67	682.34	0.00	•Xxxxxxxxxxx : Xx xxxxxx xxxxxxx xxxx the xxx xx xxxxxxxx to xxxx
+2	316.36	678.92	0.00	  card account. Xxxxxxx, xx xxxx the xxxxxxx xxxx xxxxxxxx xx 
+2	48.67	692.34	0.00	  statement is not xxxxxxx xxxxx xxxxxxx xxxxxx xxxxxxxxx
+2	316.36	688.92	0.00	  xxxxx of the xxxxxxxxxx, the xxxxxxxxx credit xxxxx xx 
+2	48.67	702.34	0.00	•Name and the address of the xxxxxxxx : SBI Xxxxx and Payment
+2	316.36	698.92	0.00	  xxxxxxxxxxx and xxxxxxxx xx a xxxxxxxxx credit. Xxxxxx Xxxxxx
+2	48.67	712.34	0.00	  Xxxxxxxx Limited (SBI Card) , XXX Xxxxx City, Xxxxx X,
+2	316.36	708.92	0.00	  for the xxxxxxxx transaction xxxx xx xxxxxxx xx xxxx the xxxxxxx is 
+2	48.67	722.34	0.00	  Xxxxx 9, Xxxxxxxx 9 XXX Xxxxxxxx Xxxxxx,99xx Xxxxx, Xxxxxxxx,
+2	316.36	718.92	0.00	  xxxxxx xx xxxxxxxxxxx xxxxx. Xxxxxxx xxx xxxxxxx xxxxxx on the 
+2	48.67	732.34	0.00	  XX - 999999
+2	316.36	728.92	0.00	  xxxxxxxx transaction xxxxxx the period of xxxxxxxxxxxxx xxxx xx
+2	316.36	738.92	0.00	  xxxxxxxx,xxxxxxx xxxx xxxx xx xxxxxx xx the xxxxxxxxxx card
+2	316.36	748.92	0.00	  statement, xxxxxx the xxxxxxx is not xxxxxx xx xxxxxxxxxxx xxxxx.
+2	48.67	758.36	0.00	Xxx xxxx xxxxxxx.xxx to xxxx the “Xxxx Xxxxxxxxx Xxxxx &
+2	316.36	758.92	0.00	•Xxx transaction xxxxxxxx xxx xxxxxxxx as xxx the Xxxxxxx 
+2	48.67	768.36	0.00	Xxxxxxxxxx” & xxxxxxx xxxxxxxxxxx on xxx xxxxxxx xxxxxx.
+2	316.36	768.92	0.00	  (XXXX, XxxxxxXxxx, Xxxxx, Xxxx) Xxxxxxxxxx. Xxx xxxx xxxxxxx 
+2	316.36	778.92	0.00	  xxxxxxxxxx  xxxxxxx on status of the xxxxxxx. 
+2	48.67	785.11	0.00	SBI Card (XXXXXXX) is a Xxxxxxxxx Xxxxx of Xxxxx Xxxxxxxx
+2	48.67	795.11	0.00	Xxxxxxx Xxxxxxxxx Xx. Limited, SBI Xxxxxxx Xxxxxxxxx
+2	316.36	796.92	0.00	The interest amount xxxxxxxxxx xx the 9xx EMI xxxx xx xxxxxxxxxx 
+2	48.67	805.11	0.00	Xxxxxxx Limited and SBI Xxxx Xxxxxxxxx Xxxxxxx Limited
+2	316.36	806.92	0.00	for the period xxxxxxx Xxxx Open Date (Xxxxxx, Xxxxxx Xxxxxx, XX 
+2	48.67	815.11	0.00	Xxxx XXXXX Xxxxxxxxxxxx Code XX9999. Xxxxxxxxx is the on EMI & Xxxxxxxx)/Xxxxxxx Xxxxxxxxxxxx Date (Xxxxxxxx EMI) 
+2	48.67	825.11	0.00	xxxxxxx xxxxxx of xxxxxxxxxxxx.
+2	316.36	826.92	0.00	and the payment due date (XXX), as xxx the credit card statement 
+2	316.36	836.92	0.00	xxxxx. From 9xx EMI xxxxxxx, interest xxxx xx xxxxxx for a 99-xxx 
+2	316.36	846.92	0.00	period, from xxx XXX to the xxxx XXX. Xxxxx, the 9xx EMI amount 
+2	316.36	856.92	0.00	xxx xx xxxxxxxxx from xxxxxxxxxx XXXx.
+2	292.90	883.49	0.00	XXXXXX FIRST
+2	49.46	897.66	0.00	•SBI Card xxx xxx xxxxxxxxxx XXX for 9X xxxxxx xxxxxxxxxxxxxx of xxx Xxxxxx Credit Card xxxxxxxxxxxx
+2	49.46	907.66	0.00	•Xxxxxx xxxxxx xxxx current xxxxxx no. is registered xxxx xx
+2	49.46	917.66	0.00	•Xxxxxx xx not xxxxx xxxx 9 xxxxxx XXX xxxx xxxxxx. SBI Card xxxxx xxxx for xxxx xxxxxxxxxxx
+2	263.10	937.01	0.00	XXXXXXXXX XXXXXXXXXXX
+2	46.91	955.89	6.80	.
+2	193.71	955.89	6.80	.
+2	356.99	955.89	6.80	.
+2	436.27	955.89	6.80	.
+2	503.79	953.53	6.80	.
+2	56.80	959.04	0.00	Xxxxxxxxx Xxxxx & Xxxxxxxxxx
+2	205.88	959.04	0.00	Xxxxxxx & Xxxxxxxxxx Xxxxxxxxx
+2	366.56	959.04	0.00	Xxxxxxx Xxxxxx
+2	446.35	959.04	0.00	Xxxxx Xx
+2	516.34	957.47	0.00	Payment Xxxxxxx
+2	306.64	986.59	0.00	XXXX
+2	51.03	1000.75	0.00	XXXX (Central Xxxx Xxxx Customer) is a xxxxxxxxxxx xxxxxxxx of XXX xxxxxxx of xxxxxxxxx xxxxxx xxxxxxxxx xxxxxxxx from Xxxxx, 
+2	51.03	1010.75	0.00	XXXXx xxx. XXXX Xxxxxxxxxx is a xxxxxx number xxxxxxxxx for an xxxxxxxxxx on xxxxxxxxxx XXX xxxxxxxxxxx xx the xxxx of account 
+2	51.03	1020.75	0.00	opening/xxxxxxxx.
+2	49.46	1188.06	0.00	Xxxxxxxxxxxx xxxx xxxxxx xxxxxxxx on the statement date xxxx xxxxxxx xx the xxxx xxxxx. Xxx xxx xxxxx transaction status xx
+2	49.46	1198.06	0.00	xxxxx://xxxxxxx.xxx , Xxxxxx Xxx or xxxxx://xxx.xxxxxxx.xxx/.
+2	49.46	1217.18	0.00	X.x.x. 9xx Xxx’99, the xxxxxxxxx xxxxxxx xxxx xx xxxxxx on the xxxxx xxxxxxxxx xxxxxxxxxxxx. For xxxx details, xxxxxx xxxxx the Xxxx 
+2	49.46	1227.18	0.00	Xxxxxxxxx Xxxxx and Xxxxxxxxxx (XXXX) on xxx.xxxxxxx.xxx.
+2	49.46	1237.18	0.00	 • Xxx of 9% of the transaction amount applicable on Xxxxxxxxx Xxxxxxxx xxxx xxxxxxx xxxxx-xxxxx xxxx. Xxxxxxx, xxxxxxxx xxxx 
+2	49.46	1247.18	0.00	xxxxxxxx to xxxxxxxx or xxxxxxx xxx xxxxx xxxxxxxx or POS xxxxxxxx xxxx not xxxxxxx xxx xxx.
+2	49.46	1257.18	0.00	• Xxx of 9% of the transaction amount applicable on xxxxx xxxxxx xxxx transaction xxxxxxxxx Xx.9999.
+2	48.67	1287.22	0.00	•Xxxxxxxxxxx : X/Xx xxxxxx xxxxxxx xxxx xxxxxx xxx xxxxxxxxx xxxxxxxx xx xxx xxxxxxxxx xxxxxxxxx xxxx from 9999-99 xxxxxxx is xxxx 
+2	48.67	1297.22	0.00	  xxxx the xxxxxxxxx xxxxxxxx xxxxxxxx xxxxx xxx-xxxx (9) of xxxx 99, xx xxx not xxxxxxxx to xxxxxxx an xxxxxxx xx xxxxx of the xxxxxxxxxx 
+2	48.67	1307.22	0.00	  of the xxxx xxx-xxxx.
+2	530.66	1321.06	0.00	Xxxxxxx 1.1 / XXX, 9999
+2	47.88	1335.23	0.00	For SBI Xxxxx and Payment Xxxxxxxx Limited (SBI Card).
+2	46.31	1392.68	0.00	Xxxxxxxxxx Xxxxxxxxx
+5	241.26	13.45	0.00	Xxxxxxxx of Xxxxxxx
+5	225.44	29.19	0.00	Xxxxxx 
+5	59.24	37.84	101.35	Credit Card Name
+5	222.11	42.19	0.00	Xxx (Xx.)
+5	379.37	37.84	0.00	Renewal Xxx (Xx.)
+5	287.31	61.45	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 99 Xxxx or xxxx 
+5	18.06	71.68	0.00	XXXXX
+5	233.93	71.68	30.02	9,999
+5	287.31	74.45	0.00	xx the xxxxxxxxx xxxx)
+5	18.06	103.16	0.00	XxxxXxxxx SBI Card Xxxx
+5	233.93	103.16	30.02	9,999
+5	287.31	103.16	30.02	9,999
+5	18.84	142.51	0.00	XxxxXxxxx SBI Card 9,999
+5	287.31	141.73	0.00	9,999
+5	287.31	167.70	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	18.06	177.93	0.00	SBI Card XXXXX
+5	233.93	177.93	0.00	9,999
+5	287.31	180.70	0.00	xx the xxxxxxxxx xxxx)
+5	287.31	204.69	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	18.06	213.34	0.00	SBI Card XXXXX Xxxxxxxxx
+5	233.93	213.34	0.00	9,999
+5	287.31	217.69	0.00	xx the xxxxxxxxx xxxx)
+5	287.31	241.68	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	18.06	252.69	0.00	Xxxxxx'x SBI Card
+5	233.93	252.69	0.00	9,999
+5	287.31	254.68	0.00	xx the xxxxxxxxx xxxx)
+5	287.31	280.24	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 1.5 Xxxx or xxxx
+5	18.06	292.04	0.00	Xxxxxxx Xxxxxx SBI Card
+5	233.93	292.04	0.00	9,999
+5	287.31	293.24	0.00	xx the xxxxxxxxx xxxx)
+5	18.06	323.52	0.00	Xxxxxxx SBI Card
+5	244.92	323.52	0.00	999
+5	287.31	317.23	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of 99,999 or xxxx
+5	287.31	330.23	0.00	xx the xxxxxxxxx xxxx)
+5	287.31	354.22	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx xx 
+5	18.06	362.87	0.00	SBI Card XXXXX
+5	233.93	362.87	0.00	9,999
+5	287.31	367.22	0.00	the xxxxxxxxx xxxx)
+5	18.06	398.29	0.00	XXXXXXXX SBI Card
+5	244.92	394.35	20.02	999
+5	287.31	390.42	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	287.31	403.42	0.00	xx the xxxxxxxxx xxxx)
+5	287.31	425.83	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	18.06	437.64	0.00	XxxxxxXXXXX SBI Card
+5	244.92	437.64	0.00	999
+5	287.31	438.83	0.00	xx the xxxxxxxxx xxxx)
+5	18.06	469.12	0.00	XxxxxxXXXXX Xxxxxxxxx SBI Card
+5	244.92	469.12	0.00	999
+5	287.31	462.82	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx xx 
+5	287.31	475.82	0.00	the xxxxxxxxx xxxx)
+5	18.06	504.53	0.00	XxxxxxXXXX SBI Card
+5	243.35	504.53	0.00	999
+5	287.31	498.24	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	287.31	511.24	0.00	xx the xxxxxxxxx xxxx)
+5	18.06	539.95	0.00	XxxxxxXXXX Xxxxxxxxx SBI Card
+5	243.35	541.52	0.00	999
+5	287.31	536.01	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	287.31	549.01	0.00	xx the xxxxxxxxx xxxx)
+5	18.06	575.36	0.00	SBI Card Xxxxxx
+5	233.93	575.36	0.00	XXX
+5	287.31	575.36	0.00	999 (9xx Xxxx Xxxxxxx)
+5	18.06	602.12	0.00	Xxxxxxx Xxxxxx SBI Card
+5	233.93	601.33	0.00	XXX
+5	287.31	594.25	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of 99,999 or xxxx xx 
+5	287.31	607.25	0.00	the xxxxxxxxx xxxx)
+5	18.06	630.45	0.00	Xxxxxx Xxxxx SBI Card
+5	243.35	630.45	0.00	999
+5	287.31	630.45	0.00	999
+5	18.06	654.06	0.00	Xxxxxx Xxxxx SBI Card XXXXXX
+5	233.93	654.06	0.00	9,999
+5	287.31	654.06	0.00	9,999
+5	18.06	677.67	0.00	Xxx India SBI Xxxxxxxx Card
+5	233.93	679.25	0.00	9,999
+5	287.31	679.25	0.00	9,999
+5	18.06	701.28	0.00	Xxx India SBI Xxxxxxxxx Card
+5	233.93	701.28	0.00	9,999
+5	287.31	701.28	0.00	9,999
+5	18.06	727.25	0.00	Xxxxxx SBI  Card
+5	241.78	727.25	0.00	999
+5	287.31	720.96	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	287.31	733.96	0.00	xx the xxxxxxxxx xxxx)
+5	18.06	760.31	0.00	XXXX SBI Card
+5	241.78	760.31	0.00	999
+5	287.31	754.80	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx  xx 
+5	287.31	767.80	0.00	the xxxxxxxxx xxxx)
+5	18.06	793.36	0.00	XXXX SBI Card Xxxxxx
+5	233.93	793.36	0.00	9,999
+5	287.31	787.85	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx  or xxxx 
+5	287.31	800.85	0.00	xx the xxxxxxxxx xxxx)
+5	18.06	827.99	0.00	Xxxx Xxxxxxx SBI  Card XXXXX
+5	233.93	827.99	0.00	9,999
+5	287.31	827.99	0.00	9,999
+5	18.06	854.75	0.00	Xxxx Xxxxxxx SBI Card
+5	233.93	856.32	0.00	9,999
+5	287.31	854.75	0.00	9,999
+5	18.06	888.59	0.00	Xxxxx Xxxxx SBI Card
+5	243.35	888.59	0.00	999
+5	285.74	883.08	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx  or xxxx
+5	285.74	896.08	0.00	xx the xxxxxxxxx xxxx)
+5	18.06	925.58	0.00	Xxxxxxxx SBI Card
+5	243.35	927.94	0.00	999
+5	287.31	920.86	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	287.31	933.86	0.00	xx the xxxxxxxxx xxxx)
+5	18.06	965.72	0.00	Xxxxxxxx SBI Card XXXXXX
+5	233.93	966.50	0.00	9,999
+5	287.31	959.42	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx  or xxxx
+5	287.31	972.42	0.00	xx the xxxxxxxxx xxxx)
+5	18.06	1001.13	0.00	XXXXX SBI card
+5	243.35	1000.34	0.00	999
+5	287.31	999.56	0.00	999
+5	18.06	1041.27	0.00	XXXXX SBI Card Xxxxxxx
+5	233.93	1040.48	0.00	9,999
+5	287.31	1034.18	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx  or xxxx
+5	287.31	1047.18	0.00	xx the xxxxxxxxx xxxx)
+5	18.06	1071.96	0.00	"Xxxxxxxxx Xxxx Xxxxxx
+5	18.06	1084.96	0.00	SBI Card , XXX SBI
+5	243.35	1084.55	0.00	999
+5	287.31	1085.34	0.00	999
+5	18.06	1097.96	0.00	Card,  XXXX SBI Card"
+5	18.06	1123.12	0.00	"Xxxxxxxxx Xxxx Xxxxxx
+5	18.06	1136.12	0.00	SBI Card XXXXX,
+5	237.07	1141.22	0.00	9,999
+5	18.06	1149.12	0.00	XXX SBI Card XXXXX,
+5	287.31	1142.00	0.00	9,999
+5	18.06	1162.12	0.00	XXXX SBI Card XXXXX"
+5	18.06	1190.01	0.00	"Xxxxxxxxx Xxxx Xxxxxx
+5	18.06	1203.01	0.00	SBI Card XXXXXX,
+5	237.07	1204.96	0.00	9,999
+5	287.31	1205.75	0.00	9,999
+5	18.06	1216.01	0.00	XXX SBI Card XXXXXX,  
+5	18.06	1229.01	0.00	XXXX SBI Card XXXXXX"
+5	18.06	1267.14	0.00	Xxxxxx'x Xxxxxx SBI Card
+5	238.64	1267.14	0.00	9,999
+5	287.31	1260.05	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx  or xxxx
+5	287.31	1273.05	0.00	xx the xxxxxxxxx xxxx)
+5	18.06	1302.55	0.00	Xxxxxx'x Xxxxxx SBI Card XXXXX
+5	238.64	1302.55	0.00	9,999
+5	287.31	1298.62	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 99 Xxxx or xxxx
+5	287.31	1311.62	0.00	xx the xxxxxxxxx xxxx)
+5	18.06	1338.75	0.00	XXX Xxxxx SBI Card
+5	233.93	1337.97	0.00	XXX
+5	287.31	1331.67	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx xx 
+5	287.31	1344.67	0.00	the xxxxxxxxx xxxx)
+5	18.06	1375.74	0.00	Xxxxx SBI Card
+5	248.06	1377.32	0.00	999
+5	287.31	1376.53	0.00	999
+5	18.06	1414.31	0.00	Xxxxx SBI Card XXXXXX
+5	238.64	1409.58	0.00	9,999
+5	287.31	1407.22	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx xx 
+5	287.31	1420.22	0.00	the xxxxxxxxx xxxx)
+5	18.06	1450.51	0.00	City Union Bank SBI Card XXXXX
+5	238.64	1450.51	0.00	9,999
+5	285.74	1444.21	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	285.74	1457.21	0.00	xx the xxxxxxxxx xxxx)
+5	18.06	1476.48	0.00	City Union Bank XxxxxxXXXX SBI 999
+5	284.95	1476.48	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	18.06	1489.48	26.00	Card
+5	284.95	1489.48	0.00	xx the xxxxxxxxx xxxx)
+5	18.06	1515.04	0.00	Karnataka Bank SBI Card XXXXX
+5	238.64	1512.68	0.00	9,999
+5	284.95	1508.75	0.00	9999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	284.95	1521.75	0.00	xx the xxxxxxxxx xxxx)
+5	15.70	1544.95	0.00	Karnataka Bank XxxxxxXXXX SBI 999
+5	285.74	1541.80	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	15.70	1557.95	26.00	Card
+5	285.74	1554.80	0.00	xx the xxxxxxxxx xxxx)
+5	285.74	1574.85	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	17.27	1583.51	0.00	PSB SBI Card XXXXX
+5	238.64	1582.72	0.00	9,999
+5	285.74	1587.85	0.00	xx the xxxxxxxxx xxxx)
+5	16.49	1613.42	0.00	PSB SBI Card XXXXX
+5	237.85	1613.42	0.00	9,999
+5	284.17	1608.69	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 99 Xxxx or xxxx
+5	284.17	1621.69	0.00	xx the xxxxxxxxx xxxx)
+5	15.70	1645.68	0.00	PSB XxxxxxXXXX SBI Card
+5	248.06	1647.26	0.00	999
+5	281.82	1640.17	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	281.82	1653.17	0.00	xx the xxxxxxxxx xxxx)
+5	15.70	1680.31	0.00	UCO Bank XxxxxxXXXX SBI Card
+5	248.06	1677.16	0.00	999
+5	282.60	1675.59	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	282.60	1688.59	0.00	xx the xxxxxxxxx xxxx)
+5	15.70	1714.94	0.00	UCO Bank SBI Card XXXXX
+5	237.85	1711.79	0.00	9,999
+5	284.17	1707.86	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	284.17	1720.86	0.00	xx the xxxxxxxxx xxxx)
+5	16.49	1745.63	0.00	UCO Bank SBI Card XXXXX
+5	237.07	1744.85	0.00	9,999
+5	284.17	1742.48	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 99 Xxxx or xxxx
+5	284.17	1755.48	0.00	xx the xxxxxxxxx xxxx)
+5	14.91	1782.62	0.00	XxxxxxXXXX Xxxxxxxx SBI Card
+5	232.36	1781.83	0.00	XXX
+5	284.17	1781.83	0.00	XXX
+5	16.49	1815.68	0.00	Xxxxxxxx SBI Card
+5	244.13	1816.46	0.00	999
+5	284.17	1809.38	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	284.17	1822.38	0.00	xx the xxxxxxxxx xxxx)
+5	16.49	1850.30	0.00	Xxxxxxxx SBI Card XXXXX
+5	233.93	1848.73	0.00	9,999
+5	284.17	1843.22	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	284.17	1856.22	0.00	xx the xxxxxxxxx xxxx)
+5	17.27	1879.42	0.00	Xxxxx SBI card
+5	233.93	1879.42	0.00	9,999
+5	285.74	1875.49	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	285.74	1888.49	0.00	xx the xxxxxxxxx xxxx)
+5	16.49	1911.69	0.00	SBI Card XXXXX
+5	233.15	1912.48	0.00	9,999
+5	288.10	1906.97	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 Xxxx or xxxx
+5	288.10	1919.97	0.00	xx the xxxxxxxxx xxxx)
+5	14.91	1942.38	0.00	SBI Card XXXXX XXXXX
+5	232.36	1943.96	0.00	9,999
+5	284.95	1938.45	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 99 Xxxx or xxxx
+5	284.95	1951.45	0.00	xx the xxxxxxxxx xxxx)
+5	286.52	1969.93	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 99 Xxxx or xxxx
+5	14.91	1978.58	0.00	SBI Card XXXXX XXXXX
+5	231.57	1975.44	0.00	9,999
+5	286.52	1982.93	0.00	xx the xxxxxxxxx xxxx)
+5	16.49	2007.70	0.00	Xxxxxxx Xxxxxx
+5	226.87	2010.06	0.00	XXX
+5	295.16	2009.28	0.00	XXX
+5	16.49	2036.04	0.00	South Indian Bank SBI Xxxxxxxx 
+5	16.49	2049.04	61.34	Credit Card
+5	230.79	2043.12	0.00	9,999
+5	288.10	2041.54	0.00	9,999
+5	14.91	2068.30	0.00	South Indian Bank XxxxxxXXXX SBI 999
+5	286.52	2068.30	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of Xx. 9 xxxx or xxxx 
+5	14.91	2081.30	26.00	Card
+5	286.52	2081.30	0.00	xx the xxxxxxxxx Xxxx)
+5	14.91	2103.72	0.00	KVB SBI Xxxxxxxxx Card
+5	230.79	2105.29	0.00	9,999
+5	284.95	2104.50	0.00	9,999
+5	14.91	2127.33	0.00	Karur Vysya Bank SBI Xxxxxxxx 9,999
+5	286.52	2131.26	0.00	9,999
+5	14.91	2140.33	61.34	Credit Card
+5	14.91	2162.74	148.06	Karur Vysya Bank SBI Card
+5	240.21	2165.10	0.00	999
+5	285.74	2158.81	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of Xx. 9 xxxx or xxxx 
+5	285.74	2171.81	0.00	xx the xxxxxxxxx Xxxx)
+5	14.91	2192.65	0.00	Central SBI Xxxxxx Card
+5	240.99	2192.65	0.00	999
+5	289.67	2193.44	0.00	999
+5	14.13	2216.26	0.00	Central SBI Xxxxxx+ Card
+5	233.93	2216.26	0.00	9999
+5	289.67	2216.26	0.00	9999
+5	17.27	2246.16	0.00	XXX SBI Xxxxxxx Card
+5	240.21	2245.38	0.00	999
+5	288.88	2246.16	0.00	999
+5	16.49	2274.50	0.00	XXXXX SBI Xxxxxxxx Card
+5	240.99	2275.28	0.00	999
+5	289.67	2276.86	0.00	999
+5	15.70	2303.62	0.00	South Indian Bank SBI Card XXXXX
+5	284.17	2298.89	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 xxxx or xxxx xx 
+5	231.57	2307.55	0.00	9,999
+5	284.17	2311.89	0.00	the xxxxxxxxx Xxxx)
+5	18.06	2336.67	0.00	KVB SBI Card XXXXX
+5	231.57	2335.10	0.00	9,999
+5	284.17	2330.37	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 99 xxxx or xxxx 
+5	284.17	2343.37	0.00	xx the xxxxxxxxx Xxxx)
+5	18.06	2364.21	0.00	KVB SBI Card XXXXX
+5	230.79	2365.00	0.00	9,999
+5	284.95	2360.28	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 xxxx or xxxx xx 
+5	284.95	2373.28	0.00	the xxxxxxxxx Xxxx)
+5	15.70	2394.91	0.00	KVB XxxxxxXXXX SBI Card
+5	241.78	2392.55	0.00	999
+5	284.17	2392.55	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of 9 xxxx or xxxx 
+5	284.17	2405.55	0.00	xx the xxxxxxxxx Xxxx)
+5	17.27	2426.39	0.00	SBI Card XXXXX
+5	231.57	2430.32	0.00	9,999
+5	284.17	2424.81	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 99 xxxx or xxxx 
+5	284.17	2437.81	0.00	xx the xxxxxxxxx Xxxx)
+5	16.49	2458.65	0.00	SBI Card XXXXX Xxxxxxxxx 9,999
+5	284.17	2456.29	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of 99 xxxx or xxxx 
+5	284.17	2469.29	0.00	xx the xxxxxxxxx Xxxx)
+5	17.27	2490.13	0.00	SBI Card XXXXX XXX Xxxxxxx
+5	232.36	2490.13	0.00	9,999
+5	287.31	2490.13	0.00	9,999
+5	15.70	2517.68	0.00	Xxxx Xxx Xxxx SBI Credit Card
+5	242.57	2514.53	0.00	999
+5	283.39	2512.17	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of Xx.9 Xxxx or xxxx 
+5	283.39	2525.17	0.00	xx the xxxxxxxxx xxxx)
+5	230.79	2550.73	0.00	9,999
+5	284.95	2543.65	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of Xx.9 Xxxx or 
+5	14.91	2555.46	0.00	Xxxx Xxx Xxxxxxxx SBI Credit Card
+5	284.95	2556.65	0.00	xxxx xx the xxxxxxxxx xxxx)
+5	17.27	2586.94	0.00	Xxxxxx SBI Card XXXXXX
+5	230.79	2583.00	0.00	9,999
+5	282.60	2580.64	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of Xx. 9 xxxx or
+5	282.60	2593.64	0.00	 xxxx xx the xxxxxxxxx xxxx)
+5	17.27	2615.27	0.00	Bank of Maharashtra SBI Card 9,999
+5	281.82	2614.48	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of Xx.99 Xxxx or 
+5	17.27	2628.27	0.00	XXXXX
+5	281.82	2627.48	0.00	xxxx xx the xxxxxxxxx xxxx)
+5	16.49	2649.90	0.00	Bank of Maharashtra SBI Card 9,999
+5	282.60	2650.68	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of Xx.9 Xxxx or xxxx 
+5	16.49	2662.90	0.00	XXXXX
+5	282.60	2663.68	0.00	xx the xxxxxxxxx xxxx)
+5	15.70	2684.52	0.00	Bank of Maharashtra XxxxxxXXXX 999
+5	284.17	2684.52	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of Xx.9 Xxxx or xxxx
+5	15.70	2697.52	48.68	SBI Card
+5	284.17	2697.52	0.00	xx the xxxxxxxxx xxxx)
+5	15.70	2728.60	0.00	XxxxxXx SBI Card XXXXXX
+5	239.43	2726.23	0.00	999
+5	284.95	2722.30	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of Xx.9 Xxxx or xxxx
+5	284.95	2735.30	0.00	xx the xxxxxxxxx xxxx)
+5	18.06	2760.08	0.00	XxxxxXx SBI Card XXXXXX 9,999
+5	283.39	2760.08	0.00	9,999 (Xxxxxx xxx on xxxxxx xxxxxx of Xx.9 Xxxx or xxxx 
+5	18.06	2773.08	0.00	XXXXX
+5	283.39	2773.08	0.00	xx the xxxxxxxxx xxxx)
+5	17.27	2804.93	0.00	Xxxxxxxx SBI Card
+5	239.43	2800.21	0.00	999
+5	284.95	2796.28	0.00	999 ( Xxxxxx xxx on Xxxxxx Xxxxxx of Xx 3.5 Xxxx or 
+5	284.95	2809.28	0.00	xxxx xx the xxxxxxxxx xxxx )
+5	17.27	2839.56	0.00	XxxxXx SBI Card XXXXX
+5	230.79	2837.99	0.00	9,999
+5	287.31	2837.99	0.00	9,999
+5	18.06	2865.53	0.00	XxxxXx SBI Card
+5	230.79	2866.32	0.00	9,999
+5	284.95	2865.53	0.00	9,999
+5	17.27	2889.93	0.00	Xxxxxx Xxx Xxxx SBI Credit Card
+5	240.99	2890.72	0.00	999
+5	281.03	2888.36	0.00	999 (Xxxxxx xxx on xxxxxx xxxxxx of Xx.9 Xxxx or xxxx xx 
+5	281.03	2901.36	0.00	the xxxxxxxxx xxxx)
+6	15.70	22.58	0.00	Xxxxxxxx Credit
+6	15.70	36.75	0.00	Interest Xxxx Credit Period
+6	249.63	35.17	0.00	99-99 xxxx (applicable xxxx on xxxxxx xxxxxxxxx and
+6	15.70	49.34	0.00	 xx xxxxxxxx xxxxx’x outstanding balance is paid xx xxxx)
+6	15.70	63.50	0.00	Finance Xxxxxxx
+6	249.63	63.50	0.00	3.75% x.x. (99% x.x.) for Xxxxxxxxx Xxxxx; 2.75% x.x.
+6	249.63	77.67	0.00	(99% x.x.) for Xxxxxxx, Xxxxxxx Xxxxx and Xxxxxxx xxxxx
+6	15.70	108.36	0.00	Minimum Finance Xxxxxxx
+6	249.63	102.85	0.00	`99
+6	15.70	122.53	119.32	Minimum Amount Due
+6	249.63	117.02	0.00	999% of XXX + 999% of EMI amount + 999% of Xxxx/Xxxxxxx 
+6	249.63	131.19	0.00	+ 999% of finance xxxxxxx + Xxxxxxxxx Amount (xx xxx) + 9% of 
+6	249.63	145.35	0.00	xxxxxxxxx balance outstanding.
+6	15.70	157.94	0.00	Xxxx Xxxxxxx
+6	15.70	172.11	0.00	Xxxx Xxxxxxx Limit
+6	249.63	169.75	0.00	Xxxx Xxxxxxx Limit is a xxxx of the xxxxxxx Credit Limit. Xxxx 
+6	249.63	183.92	0.00	Xxxxxxx Limit is xxxxxxxxx xx the monthly card statement.
+6	249.63	198.08	0.00	Xxx. xxxx withdrawal limit is Xx.99,999 xxx xxx on XXX - 
+6	249.63	212.25	0.00	9999(ATM Withdrawals), xxxxxxx to Xxxx Xxxxxxx Limit 
+6	249.63	226.41	0.00	xxxxxxxxxxxx.Xxxx Xxxxxxx is not available for XXX - 9999 
+6	249.63	240.58	0.00	("xxxx-the-xxxxxxx" xxxx xxxxxxxxxxxx).
+6	15.70	268.12	0.00	Xxxx Credit Period
+6	249.63	264.98	0.00	Xxx
+6	15.70	282.29	0.00	Finance Xxxxxxx
+6	249.63	279.14	0.00	3.75% x.x. (99% x.x.) for Xxxxxxxxx Xxxxx; 2.75% x.x.
+6	249.63	293.31	0.00	(99% x.x.) for Xxxxxxx, Xxxxxxx Xxxxx and Xxxxxxx xxxxxXxx 
+6	15.70	301.97	0.00	        xxxxx-xxxxxxxxx xxxxxxx xxxx xx applicable from the date of 
+6	249.63	321.64	0.00	Xxxx withdrawal.
+6	15.70	346.82	0.00	Minimum Finance Xxxxxxx                           `99
+6	15.70	361.78	0.00	Xxxx Xxxxxxx Xxxx
+6	15.70	375.94	0.00	SBI XXXx/Xxxxx Xxxxxxxx XXXx
+6	249.63	372.01	0.00	2.5% of transaction amount (xxxxxxx to a minimum of `999)
+6	15.70	390.11	0.00	Xxxxxxxxxxxxx XXXx
+6	249.63	386.96	0.00	2.5% of transaction amount (xxxxxxx to a minimum of `999)
+6	15.70	405.06	0.00	Xxxxx Xxxxxxx & Xxxx
+6	15.70	419.23	0.00	Xxxx Payment xxx
+6	249.63	416.87	0.00	`999
+6	15.70	433.39	0.00	Payment Xxxxxxxx xxx
+6	249.63	431.82	0.00	9% of Payment amount (xxxxxxx to a minimum of `999)
+6	15.70	447.56	0.00	Cheque Payment Xxx
+6	249.63	446.77	0.00	`999
+6	15.70	462.51	0.00	Xxxx Payment
+6	249.63	462.51	0.00	Xxx for Outstanding Amount due from `9 -`999;                                     
+6	249.63	478.25	0.00	`999 for Outstanding Amount due xxxxxxx xxxx `999 &                      
+6	249.63	493.99	0.00	xxxx `999;
+6	249.63	509.73	0.00	`999 for Outstanding Amount due xxxxxxx xxxx `999 &                        
+6	249.63	525.47	0.00	xxxx `9,999;                                                                                                         
+6	249.63	541.21	0.00	`999 for Outstanding Amount due xxxxxxx xxxx `9,999 &                        
+6	15.70	555.38	0.00	 xxxx `99,999;                                                                                                    
+6	249.63	572.69	0.00	`999 for Outstanding Amount due xxxxxxx xxxx `99,999 &                    
+6	249.63	588.43	0.00	xxxx `99,999;                                                                                                     
+6	249.63	604.17	0.00	`9,999 for Outstanding Amount due xxxxxxx xxxx `99,999 
+6	249.63	619.91	0.00	& xxxx `99,999;                                                                                                   
+6	249.63	635.65	0.00	`9,999 for Outstanding Amount due xxxxxxx xxxx `99,999                     
+6	15.70	652.18	0.00	Xxxxxxxxxx xxxx payment xxxxxxx
+6	249.63	651.39	0.00	`999                                                                                                                    
+6	15.70	667.13	0.00	Xxxx Payment Xxxxxxx on XX
+6	249.63	667.13	0.00	`999 for Outstanding Amount due xxxxxxx xxxx `9,999                       
+6	15.70	681.30	0.00	Xxxxxxxxx Xxx
+6	249.63	681.30	0.00	2.5% of Xxxxxxxxx Amount (xxxxxxx to a minimum of Xx 999). 
+6	249.63	695.47	0.00	Xxxxxxxxx Xxx xxxx not xx xxxxxxxx xx xxxx of transaction 
+6	249.63	709.63	0.00	xxxxxxxx / xxxxxxxxxxxx /xxxxxx
+6	15.70	726.16	0.00	Card Xxxxxxxxxxx
+6	249.63	724.58	0.00	`999 - `999 (`9999 for Xxxxx)
+6	15.70	740.32	0.00	Xxxxxxxxx Card Xxxxxxxxxxx (Xxxx Xxxxxx xxxx (xxxxxxx to a minimum of $999 for XXXX and $ 999 
+6	15.70	754.49	0.00	Xxxxxx)
+6	249.63	752.92	0.00	for Xxxxxxxxxx)
+6	15.70	768.66	0.00	Xxxxxxx Currency Transaction Xxx
+6	249.63	767.08	0.00	3.5% (For xxx xxxxx Xxxxxx Xxxxx, Xxxxx and SBI Card Xxxxx. 
+6	249.63	781.25	0.00	SBI Card Xxxxx Xxxxx, SBI Card Xxxxx Xxxxx and Xxxx Xxx 
+6	249.63	795.41	0.00	Xxxxxxxx SBI Credit Card), 9% for SBI Card Xxxxx, 2.5% for SBI 
+6	249.63	809.58	0.00	Card Xxxxx Xxxxx and 1.99% (For XXXXX, Xxxxx, SBI Card 
+6	249.63	823.75	0.00	Xxxxx Xxxxx and Xxxx Xxx Xxxxxxxx SBI Credit Card)
+6	15.70	844.21	0.00	Xxxxxxx Currency Xxxxxxxxxx  Xxx
+6	249.63	837.91	0.00	3.5% (For xxx xxxxx Xxxxxx Xxxxx, Xxxxx and SBI Card Xxxxx. 
+6	249.63	852.08	0.00	SBI Card Xxxxx Xxxxx, SBI Card Xxxxx Xxxxx and Xxxx Xxx 
+6	249.63	866.24	0.00	Xxxxxxxx SBI Credit Card), 9% for SBI Card Xxxxx, 2.5% for SBI 
+6	249.63	880.41	0.00	Card Xxxxx Xxxxx and 1.99% (For XXXXX, Xxxxx, SBI Card 
+6	249.63	894.58	0.00	Xxxxx Xxxxx and Xxxx Xxx Xxxxxxxx SBI Credit Card).
+6	15.70	919.76	0.00	Xxxxxxx Xxxxxxxxxx Xxx
+6	249.63	919.76	0.00	`99. Applicable xxxx on xxxxxxxx xxxxxxx, Statement Xxx Credit 
+6	249.63	933.93	0.00	& on xxxxxxxx xxxx xxx xxxx xxxxxxxxxx as xxxxxxxxx xx the 
+6	249.63	948.09	0.00	xxxxxxxxxx xxxxxxx Xxxxx & Xxxxxxxxxx, for xxx xxxxx xxxxxx 
+6	249.63	962.26	0.00	XXXXX.
+6	249.63	976.42	0.00	x.x.x. 9xx Xxx 9999, 9% of total amount of Xxxxxxx Xxxxxxxx, xx 
+6	15.70	985.08	0.00	Xxxxxxx Xxxxxxxx Xxx****
+6	249.63	990.59	0.00	the total amount xxxxxxx Xx. 99,999 xx a xxxxxxx xxxxx.
+6	15.70	1009.48	0.00	Xxx on Xxxxxxxxx Payment Xxxxxxxxxxxx^
+6	249.63	1004.76	0.00	X.x.x. 9xx Xxx’99, 9% of the transaction amount applicable on 
+6	249.63	1018.92	0.00	Xxxxxxxxx Xxxxxxxx xxxx xxxxxxx xxxxx-xxxxx xxxx.^^ 
+6	249.63	1033.09	0.00	Xxxxxxx, xxxxxxxx xxxx xxxxxxxx to xxxxxxxx or xxxxxxx xxx 
+6	249.63	1047.25	0.00	xxxxx xxxxxxxx or POS xxxxxxxx xxxx not xxxxxxx xxx xxx.
+6	15.70	1064.57	0.00	Xxx on Xxxxxx Xxxx Xxxxxxxxxxxx^^^
+6	249.63	1061.42	0.00	X.x.x. 9xx Xxx’99, 9% of the transaction amount applicable on 
+6	249.63	1075.59	0.00	xxxxx xxxxxx xxxx transaction xxxxxxxxx Xx.9999.
+6	15.70	1088.97	0.00	Xxxxxxxxxx Xxx on xxx Xxxx Payment `999. Xxxxxxxxxx Xxx xxxx not xx xxxxxxxx xx xxxx of 
+6	15.70	1103.13	0.00	Xxxxxxxxxxxx***
+6	249.63	1104.71	0.00	transaction xxxxxxxx / xxxxxxxxxxxx / xxxxxx
+6	15.70	1117.30	0.00	Xxxxxx  Xxxxxxx
+6	249.63	1118.87	0.00	Xxx Xxxxxxx Xxxxxx xxxxxx xxxxxx India xxxxxxx Xxxxxxxxxxxxx 
+6	249.63	1133.04	0.00	Xxxxxx Xxxxxx Xxxxxxxx(xxxx Xxxxxxxx Xxxx xxxxxxx) xxxx xx 
+6	249.63	1147.20	0.00	xxxxxxx a xxxxx xxx of xx to XXX 99 xxx xxxxx + applicable 
+6	249.63	1161.37	0.00	xxxxx. For details, xxxxxx xxxxx xxxxxxx.xxx
+6	249.63	1175.54	0.00	Xxx Xxxxxxx Xxxxxx xxxxxx xxxxxxx India xxxxxxx Xxxxxxxxxxxxx 
+6	249.63	1189.70	0.00	Xxxxxx Xxxxxx Xxxxxxxx(xxxx Xxxxxxxx Xxxx xxxxxxx) , xxxxx 
+6	249.63	1203.87	0.00	xxxxxxxxxx the xxxxxxxxxxxxx xxxxxx, xxxx xx xxxxxxx xxxx a 
+6	249.63	1218.03	0.00	xxxxx xxx of xx to XXX 99 xxx xxxxx + applicable xxxxx. For 
+6	249.63	1232.20	0.00	details, xxxxxx xxxxx xxxxxxx.xxx
+6	15.70	1244.00	0.00	Xxxxx period
+6	249.63	1246.37	0.00	Xxxxx period of 9 xxxx is xxxxxxx from the payment due date 
+6	249.63	1260.53	0.00	on credit card accounts, xxxxx xxxxxxxx xxx not xxxxxxx from 
+6	249.63	1274.70	0.00	xxxxxxxx xxxxxxx xxxxx(x). The payment due date as xxxxxxxxx 
+6	249.63	1288.86	0.00	on the credit card statement is the date xx xxxxx xxxxx xxxxx 
+6	249.63	1303.03	0.00	xxxx xx xxxxxxxx to the credit card, xxxxxxx 9 xxxxx xxxx xxx 
+6	249.63	1317.20	0.00	xxxxxxxx to xxxxxxxxxxx for xxxxxxxxxx xxxx of xxxxxxxx.
+6	15.70	1330.57	0.00	Xxxxxxxxx
+6	15.70	1344.74	0.00	Xxxxxxx Xxxxxxx - xxx.xxxxx.xx.xx
+6	249.63	1341.59	0.00	As xxxxxxxxxx xx XXXXX / Indian Xxxxxxxx
+6	15.70	1358.91	0.00	Xxxxxx & xxx xxxxxxxx/xxxxxxxx xxxx
+6	249.63	1355.76	0.00	9% of transaction amount + xxx applicable xxxxx
+6	15.70	1373.07	0.00	xx xxxxxx xxxxx
+6	249.63	1369.92	0.00	Xxxx xxxxxxxxx is xxxxxx xx xxxxxxxxx bank xxxxxxxxx the 
+6	249.63	1384.09	0.00	xxxxxxxx to the xxxxxxxx.Xxx transaction value on xxxxxx xxxx 
+6	249.63	1398.26	0.00	xxxx xxxxxx from credit card statement xxxxx the xxxxxxxxx & XXX 
+6	249.63	1412.42	0.00	is xxxxxx xx xxxxxxxxx bank on the transaction value.
+6	15.70	1425.01	0.00	     9% xxxx xxxxxxxxx xxxxxx (xxxxxxxxx XXX) xxxxx xx xxxxxxxx for 
+6	249.63	1440.75	0.00	xxxxxxxx transaction value on xxxxxx xxxxx.Xxxx xxxxxxxxx xxxxxx 
+6	249.63	1454.92	0.00	xxxxx and xxxxxxxxxx xxx xxxx.Xxxxx xxxxxxx X&Xx for details.
+6	15.70	1533.62	0.00	For Xxxxxx Xxxxx xxxxxxxxxx, xxxx SBI Card xxxx not xx xxxxxxx, xxxxxxxxx, xxxxxxx,xxxxxxxxx or
+6	15.70	1547.79	0.00	xxxxxxxxxx xx XXXXXXX xx the xxxx of xxxxxxxxxx xxxxxxx.
+6	14.91	1562.74	0.00	**Applicable xxxxx xxxxx:- For the xxxxxxxxxxx xxxxxx state of xxxxxxxxx xx the xxxxxxx of SBI Card on the 
+6	14.91	1576.91	0.00	statement date as "Xxxxxxx" - Central Xxx @ 9% and State Xxx @ 9% 
+6	14.91	1591.07	0.00	- For the xxxxxxxxxxx xxxxxx state of xxxxxxxxx xx the xxxxxxx of SBI Card on the statement date as xxxxx 
+6	14.91	1605.24	0.00	xxxx "Xxxxxxx" - Xxxxxxxxxx Xxx @ 99%.***Xxx xxxxxxxxxxxx xxxxxxx payment of xxxx xxxxxxx xxx xxxxxxxx 
+6	14.91	1619.40	0.00	xxxx xx xxxxxx Xx.999+Applicable Xxxxx as xxxxxxxxxx xxx. Xxx the xxxxxxxxxxxx xxxxxxxxxx xxxxx Xxxxxxxx 
+6	14.91	1633.57	0.00	Xxxxxxxx Code (XXX) 9999 xxxx xx xxxxxxxxxx as xxxx payment xxxxxxxxxxxx.
+6	256.42	1652.46	0.00	Xxxxxxxxx Xxxxxx
+6	19.62	1666.62	0.00	"Payment of xxx amount xxxxxx xxxx the Total Amount Due xx xxx xxxxx xxxxxxx xx interest
+6	19.62	1681.58	0.00	xxxxxxx on the balance outstanding amount xxxxxxxxx xxx xxx xxxxxxxxx and xxxx xxxxxxxx.
+6	19.62	1696.53	0.00	To xxxxx the xxxxxxx of interest xxxx period, xxxxxx xxx the Total Amount Due (XXX) xxxxxx the
+6	19.62	1711.48	0.00	Payment Due Date (XXX). Xxxxxxx, xxxxxx xxxx the minimum payment xxxxx xxxxx xxxxx xxxxxx
+6	19.62	1726.44	0.00	xx the repayment xxxxxxxxxx xxxx xxxxxx/xxxxx xxxx xxxxxxxxxxxxx xxxxxxxxxx interest
+6	19.62	1741.39	0.00	payment on xxxx outstanding balance."
+6	19.62	1756.34	0.00	XXX & XXX
+6	19.62	1770.51	0.00	•Xxxxxxx Xxxxxxx Accounts (‘XXX’):
+6	19.62	1784.67	0.00	Xx xxxxxxxxxxx to Xxxxxxxxxx xxxxxxxxxxxx, SBI Card is xxxxxxxx to xxxxxxxx xxxxxxxxx xxxxxx xx the account xx
+6	19.62	1798.84	0.00	xxxxxxxx a xxx-xxxxx xxxxxxxx xxx. ‘Xxxxxxx Xxxxxxx Accounts (‘XXX’)" xxxx the xxxxx xxx-xxxxxxxxxx as
+6	19.62	1813.01	0.00	xxxxx xx the xxxxx xxxxx.
+6	19.62	1827.17	0.00	Credit xxxxx xxx xxxxxxx as "Xxxxx xxxxx xxxx xxxxxxxxx xxxxxxxxxx".
+6	20.41	1862.59	0.00	XXX Xxx-xxxxxxxxxx
+6	178.20	1857.86	0.00	Xxxxx for xxxxxxxxxxxxxx [Principal or interest payment or xxx xxxxx amount 
+6	178.20	1872.03	0.00	xxxxxx or xxxxxx xxxxxxx]
+6	20.41	1886.98	0.00	XXX – 9
+6	178.20	1886.20	0.00	Xxxx 99 xxxx from Payment Due Date (‘XXX’).
+6	20.41	1901.15	0.00	XXX – 9
+6	178.20	1900.36	0.00	Xxxx xxxx 99 xxxx &xxxx 99 xxxx from XXX
+6	20.41	1915.32	0.00	XXX – 9
+6	178.20	1914.53	0.00	Xxxx xxxx 99 xxxx &xxxx 99 xxxx from XXX
+6	19.62	1946.01	0.00	Xxxxxxx xxxxxxxxx xxxxxxxxxxxxxx of XXX:
+6	19.62	1960.17	0.00	Xx Payment Due Date (‘XXX’) of a Credit Card account is 99xx Xxxxx 9999, and ’Minimum Amount Due
+6	19.62	1974.34	0.00	(‘XXX’) is not xxxxxxxx xxxxxx xxxx date xxxx xxxxx the due date, the account xxxx xx xxxxxxxxx as XXX-9.
+6	19.62	1988.51	0.00	Xx the account xxxxxxxxx to xxxxxx xxxxxxx xxxxxx 99 xxxx from XXX x.x., xxxxxx 99xx Xxxxx 9999 xxxx xxxx
+6	19.62	2002.67	0.00	account xxxxx xxx xxxxxx as XXX-9.
+6	19.62	2016.84	0.00	Xxxxxxxxx, xx the account xxxxxxxxx to xxxxxx xxxxxxx, xxxxxx 99 xxxx from XXX x.x., xxxxxx 99xx Xxx
+6	19.62	2031.00	0.00	9999 xxxx xxxx account xxxxx xxx xxxxxx as XXX-9.
+6	19.62	2049.89	0.00	•Xxx-Xxxxxxxxxx Xxxxx (‘XXX’):
+6	19.62	2064.06	0.00	A credit card account xxxx xx xxxxxxx as xxx-xxxxxxxxxx xxxxx (‘XXX’) xx the Minimum Amount Due, as
+6	19.62	2078.22	0.00	xxxxxxxxx xx the statement, is not paid xxxxx xxxxxx xxxxxx (99) xxxx from the XXX xxxxxxxxx xx the
+6	19.62	2092.39	0.00	statement. Xxxxxxx, xxx account xxxxx a xxxxxxxxxx or xxxxxxxxxxxxx xxxxxxxxxxx xxx xxxx xxxxxxx xxxx xx
+6	19.62	2106.56	0.00	xxxxxxxxxx as XXX. An account xxxxxxxxx to xx xxxxxxxxxx as XXX xxxx the xxxxxx xxxxxxx of interest and
+6	19.62	2120.72	0.00	principal xxx paid. Xxxxxxxxxx and xxxxxxxxxxxx accounts xx not xxxxxxx for an xxxxxxx. Xxxxxxx, xx xxx
+6	19.62	2134.89	0.00	customer xxx xxxx xxx credit card xxxx XXXXxxx xxxxxx as XXX, xxx xxxxx of the customer xxxx xx
+6	19.62	2149.05	0.00	xxxxxxxxxx as XXX.
+6	19.62	2163.22	0.00	Xxxxxxx xxxxxxxxx xxxxxxxxxxxxxx of an account as XXX:
+6	19.62	2177.39	0.00	Xx Payment Due Date (‘XXX’) of a Credit Card account is 99xx Xxxxx 9999, and Minimum Amount Due as
+6	19.62	2191.55	0.00	xxxxxxxxx xx the statement xxx not xxxx xxxxx paid xx the customer xxxxxx a period of 99 xxxx from the
+6	19.62	2205.72	0.00	XXX x.x., xxxx 99xx Xxxx 9999, xxxx the xxxxxx xxxxx xxxxxxxx the credit card account as XXX.
+6	19.62	2224.61	0.00	As xxx xxxxxx XXX Xxxxxxxxxx, xxxxxxx xxxxxx xxxx no xxxxxxxxxxx on the xxxxx name, amount xxxxxx xx
+6	19.62	2238.77	0.00	xxxxx or xxxxxxx. Xxxxx, xx xxxxxxx xxx to xxxx xxxx xx the xxxx of xxxxxxx xxxxxxx xxxxxxx xxxx SBI Card
+6	19.62	2252.94	0.00	xxxx xx xxxxx to xxxxx xxx xxxxxxxxxxxxx / xxxxxxx.
+6	19.62	2267.10	0.00	Xxxxxx of xxx transaction xxxxxxx xxxxxx xxxx a xxxxxx xxxxxxx xxxx xxxxxx 99 xxxx from date of
+6	19.62	2282.06	0.00	transaction to xxxxxxxxxx@xxxxxxx.xxx
+6	19.62	2296.22	0.00	No xxx statement xxxx xx xxxx, xx xxxx of credit balance and no xxx transaction on the account xxxxxx 99
+6	19.62	2310.39	0.00	xxxx of the xxxx statement.
+6	19.62	2324.56	0.00	SBI Xxxxx xxx not xxxxxxx Xxxx Xxxx Xxxxxxxxxxxx (x.x. Xxxxxxxxx xxx.) to xxxxxxx xxxxxx or xxxxxxxxx
+6	19.62	2338.72	0.00	xxxxx on xxxx SBI Card.
+6	19.62	2352.89	0.00	SBI Card xxxxxxxxx xxxxxxxxxxx xxxxxxxxx xxxx account to credit xxxxxxxxxxx xxxxxxx / xxxxxxxx on a
+6	19.62	2367.05	0.00	xxxxxxx xxxxx, as xxxxxxxx xx XXX.
+6	19.62	2381.22	0.00	Xx the xxxxx of xxx-payment of xx xxxxx the Minimum Amount Due xx the Payment Due Date, xxxx card 
+6	19.62	2395.39	0.00	account xxxx xx xxxxxxxx as ‘Xxxxxxx’ to credit xxxxxxxxxxx xxxxxxx / xxxxxxxx.
+6	19.62	2409.55	0.00	Xxxxxxxxxxx xxxx xxxxxx credit xxxxx xxxx xxxxxxxxx xxxxxxx xxxxx xxxx xx xxxxxxxx the xxxx xxxxxxx xxxxx for 
+6	19.62	2423.72	0.00	xxx xxx card xxxxxxxx. Xxxxxxx xxxxx of xxx credit card(x), for xxxxxxxxxxx xxxx xxxx xxx xxxxxx credit card, 
+6	19.62	2437.88	0.00	xxxx xx xxxx as the xxxxxxxx card.
+7	21.19	17.25	0.00	      Xxx’x Xxxxxxx! Xxx’x Xxxxxxxx!
+7	21.19	40.07	0.00	         Xx Phone
+7	114.61	42.43	0.00	For Xxx Card (xxxxxx XXXXX) : 99 99 99 99 (xxxxxx xxxxx XXX code) or 9999 999 9999
+7	21.19	80.99	0.00	         Xx X-xxxx
+7	114.61	77.85	0.00	For Xxx Card (xxxxxx XXXXX) : xxxxxxxxxxxx@xxxxxxx.xxx
+7	114.61	113.26	0.00	For Xxx Card (xxxxxx XXXXX) : Xxx on to xxx.xxxxxxx.xxx and xxxxxxxx
+7	21.19	118.77	0.00	                   Xx Xxx
+7	21.19	149.46	0.00	         Xx Xxxxxx
+7	114.61	147.89	0.00	Xxxxx to xx xx Xxxxxxx, Customer Xxxxxxxxxxxxxx Xxxx XXX Xxxxxxxx Xxxxxx, XxxxxX,
+7	114.61	162.05	0.00	99xx Xxxxx, Xxxxx 9, Xxxxxxxx 9, XXX Xxxxx City, Xxxxxxxx – 999999 (Xxxxxxx)India or
+7	114.61	176.22	0.00	 Xxxx Xxx Xx.99, XXX, Xxx Xxxxx – 999999 
+7	114.61	191.17	0.00	CUSTOMER XXXXXXXXX XXXXXXXXX: Xxx xxxxxxxxx xxxxxxxxxxx xxxxxx xx xxxxxx
+7	114.61	205.34	0.00	 to Xx. Xxxxxxxxx Xxxx (Xxxxx Xxxxxxx), SBI Xxxxx xx xxxxx address or xxx
+7	114.61	219.51	0.00	 email xx xxxxxxxxxxxx@xxxxxxx.xxx. Xx xxxxxxx not xxxxxxxx xxxxxx 99 xxxx, xxx xxx 
+7	114.61	233.67	0.00	xxxxxxxx Xx. Xxxxxx Xxxxx - Xxxx, Customer Xxxxxxxx xx 
+7	114.61	247.84	0.00	XxxxxxxxXxxxxxxXxxx@xxxxxxx.xxx
+7	233.15	277.74	0.00	XXXXXXX AND STATEMENT
+7	19.62	291.12	0.00	XXXXXXX xxxx xxxx the Xxxxxxxxxx a monthly statement xxxxxxx the xxxxxxxx xxxxxxxx and the
+7	19.62	305.29	0.00	xxxxxxxxxxxx xxxxxxx to the Xxxxxxxxxx'x Account xxxxx the xxxx statement, xxxxxxxx the card xxx xxxx
+7	19.62	319.45	0.00	xxxxxx xxxxxx the xxxx period. XXXXXXX xxxx xxxxxx xxxx a statement of xxxxxxxxxxxx xx the card account to
+7	19.62	333.62	0.00	the xxxxxxx address xx xxx on xxxxxx, or xxxx a statement xxxxxxx email to the email id on xxxxxx, on a
+7	19.62	347.79	0.00	xxx-xxxxxxxxxx date.
+7	182.12	366.67	0.00	Xxxx to xxxx payment for xxxx SBI Credit Card
+7	69.08	382.41	0.00	Xxx xxx Xxxxxxxx Xxxxxxxxxxx (x-NACH)
+7	69.08	396.58	0.00	Xxxxxx for x-NACH for xxxxxxxxx and xxxxxx-xxxx xxxx xxxxxxxx, xxxxx xxxxx. Xxxx card xxxx xxxx 
+7	69.08	410.75	0.00	xx xxxxxxxx xxxxxxxx from xxxx bank account on the Payment Due Date. For xxxx details xxxxx 
+7	69.08	424.91	0.00	xxx.xxxxxxx.xxx
+7	69.08	450.10	0.00	Xxx xxx UPI
+7	69.08	464.26	0.00	Xxx xxx xxx xxxx xxxx xxxxxx xxx UPI payment xxxx on SBI Credit Card xxx or on xxxxxxx xxxxx XX 
+7	69.08	478.43	30.61	code.
+7	69.08	503.61	0.00	NEFT (National Xxxxxxxxxx Xxxxx Xxxxxxxx)
+7	69.08	517.78	0.00	Xxx xxxx SBI Credit Card outstanding xxxxx NEFT and xxx xxxxxxx credit to xxxx card account, 
+7	69.08	531.94	0.00	99X9. Xxx xxxx 99/99-xxxxx credit card number as Xxxxxxxxxxx A/x & IFSC Code SBIN0XXXXXX
+7	69.08	546.11	0.00	 to xxxxxxxx
+7	69.08	571.29	0.00	XXXX xx SBI
+7	69.08	585.46	0.00	Xxx xxxx SBI Credit Card xxxxx xxxx XXXX xx SBI Xxx and xxx xxxxxxx credit xx xxxx SBI Card 
+7	69.08	599.63	45.53	account.
+7	69.08	624.81	0.00	XxxXxx
+7	69.08	638.98	0.00	Xxxxx on XxxXxx xx xxx.xxxxxxx.xxx to xxxx xxxx payment xxxxxx xxxxxxx xxxxxxxxxx or
+7	69.08	653.14	0.00	xxxx SBI ATM xxx debit card. Payment xxxx xxxxxxx xxxxxxxxx on xxxx SBI Credit Card account.
+7	69.08	667.31	0.00	For bank details, xxxxxx xxx xxxx xxx.xxxxxxx.xxx
+7	69.08	712.95	119.32	Debit Card Payment
+7	69.08	727.12	0.00	Xxx xxxxxx xxxxx xxxxxxxx xxxxx debit card. Payment xxxx xxxxxxx xxxxxxxxx on xxxx SBI Credit Card 
+7	69.08	741.29	0.00	account. For xxxx details, xxxxx xxx.xxxxxxx.xxx
+7	69.08	766.47	0.00	XXXX Credit Card Xxx
+7	69.08	780.64	0.00	Xxx XXXX Credit Card Xxx to xxx xxxx SBI Credit Card xxxx. Xxxx payment xxxx xx xxxxxxxx xxxxxxxxx.
+7	69.08	805.82	0.00	Xxxx Debit
+7	69.08	819.99	0.00	Xxxxxxxxx SBI Card to debit xxxx bank account (savings/current) xx xxxxxxx the Xxxx Debit xxxxxxx 
+7	69.08	834.15	0.00	available xx xxxxxxxx xxxxx. For xxxx details, xxxxx xxx.xxxxxxx.xxx
+7	69.08	900.26	0.00	XXXX
+7	69.08	914.43	0.00	Xxxxx the SBI Xxxxxx xxxxxxx to xxx xxxx credit card xxxx xxxxxxxxxxxx and xxxxxxxx xxxxxxx Xxxxxx 
+7	69.08	928.59	0.00	Xxxx Payment Xxxxxx.
+7	69.08	953.78	0.00	XXX
+7	69.08	967.94	0.00	Xxx xxxx SBI Credit Card xxxx xxxx the xxxxxxx xx xxx SBI Branch xx India.
+7	69.08	993.13	25.90	ATM
+7	69.08	1007.29	0.00	Xxx xx xxx SBI ATM xxxx xxxx SBI Debit Card. Xxxx xxxxxxx is available xx xxx SBI XXXx xxxxxx 
+7	69.08	1021.46	29.05	India.
+7	69.08	1046.64	47.10	Cheque
+7	69.08	1060.81	0.00	Xxx xxxx SBI Credit Card xxxx xxxxxxx cheque. Xxx xxx xxxx xxxx cheque xx xxx of the SBI Card 
+7	69.08	1074.97	0.00	xxxx xxxxx available xxxxxx India.
+7	69.08	1100.16	30.62	IMPS
+7	69.08	1114.32	0.00	Xxx xxxx SBI Credit Card outstanding xxxxx IMPS and xxx xxxxxxx credit to xxxx card account, 
+7	69.08	1128.49	0.00	99X9. Xxx country code (99), Registered Xxxxxx Number xxxxx & xxxx 9-xxxxx of Card Number xxxx 
+7	69.08	1142.66	0.00	IFSC Code SBIN0XXXXXX
+7	69.08	1167.05	0.00	Xxxx: For xxxxxx xxxxxxxxxx of payment xxxx xxxxxxx xxxx card outstanding, xxxxxx xxxxx xxxxx 
+7	69.08	1181.22	0.00	payment xxxxx not xxxxxxx xx SBI Card. To xxxx xxxx xxxxx the xxxx to xxxx payment, xxxxxx 
+7	69.08	1195.39	0.00	xxxxx xxxxx://xxxxxxx.xxx/xx/xxxxxxxx/xxx.xxxx.
+7	69.08	1220.57	0.00	Xxxxxxxxx Xxxxxxxxxxxxx on Payment Xxxxxxx: As xxx SBI Card xxxxxxxx xxxxxx, xxxxxxxx 
+7	69.08	1234.74	0.00	xxxx xx customer xxxxxxx xxx xxxxxxx xxxxxxx (NEFT, Xxxx Xxxxx Xxxxxxxx, IMPS, XXXX, Xxxxxx, 
+7	69.08	1248.90	0.00	Debit Card or UPI) xxxx xx xxxxxxxx xx the amount paid is xxxx xxxx the current outstanding. Xxxxx, 
+7	69.08	1263.07	0.00	xxxxxxxxx xxx xxxxxxx not to xxxx xxxxxx payment xxxxxxx xxxxx credit card.
+7	19.62	1325.24	0.00	An xxxxxxxxxxxx of the Finance Xxxxxx Xxxxxxxxxxx:
+7	19.62	1339.41	0.00	•Statement Date is 9xx of xxxxx Xxxxx and Payment Due Date is 99xx of xxxxx xxxxx.
+7	19.62	1353.57	0.00	•The interest xxxx period is from the 9xx of xxxxx xxxxx to 99xx of the xxxx xxxxx xxxxxxxx the xxxxxxxx 
+7	19.62	1367.74	0.00	outstanding balance is paid xx xxxx. Xxxxxx xxxx the minimum payment xxxxx xxxxx xxxxx xxxxxx xx the 
+7	19.62	1381.90	0.00	repayment xxxxxxxxxx xxxx xxxxx xxxx xxxxxxxxxx interest payment on xxxx outstanding balance.
+7	19.62	1396.86	0.00	•Xxxxxxxxxx xxxxx a xxxxxx xxxxxxxx of `9,999 on 99xx Xxxxx, xxxxxxxxx the Total Amount Due on the 
+7	19.62	1411.81	0.00	statement xxxxx 9xx Xxx is ` 9,999 to xx paid xxxxxx 99xx Xxx.
+7	19.62	1426.76	0.00	•On 99xx Xxx, the Xxxxxxxxxx xxxx Minimum Amount Due of ` 999.
+7	19.62	1441.72	0.00	•On 99xx Xxx, Xxxxxxxxxx xxxxx a xxxxx xxxxxxxx of ` 9,999.
+7	19.62	1455.88	0.00	Statement xxxxx 9xx Xxxx xxxxx xxxx the xxxxxxxxx xxxxxxxxxx
+7	19.62	1470.84	0.00	A) Finance Xxxxxx xxxxxxxxxx= (Outstanding Amount X 3.75% X 99 Xxxxxx X No. of Xxxx) /999
+7	18.84	1497.59	0.00	Finance Xxxxxx on `9,999 from 99xx Xxxxx to 99xx Xxx (99 Xxxx)
+7	542.43	1498.38	41.61	` 31.07
+7	18.84	1512.55	0.00	Finance Xxxxxx on `9,999 from 99xx Xxx to 9xx Xxxx (99 Xxxx)
+7	542.43	1513.33	41.61	` 16.03
+7	18.84	1527.50	0.00	Finance Xxxxxx on `9,999 of xxxxx xxxxxxxx from 99xx Xxx to 9xx Xxxx ( 9 Xxxx)
+7	543.22	1528.29	40.81	` 11.10
+7	18.84	1541.67	0.00	Total Finance Xxxxxx for 9xx Xxxx xxxxx
+7	542.43	1543.24	41.61	` 58.19
+7	19.62	1570.00	0.00	X) Total Principal Amount Outstanding = `9,999
+7	19.62	1584.95	0.00	(Balance `9,999 outstanding from xxxx xxxxx’x xxxxxxx period + `9,999 xxxxx xxxxxxxx)
+7	19.62	1599.12	0.00	Xxxxx Total Amount Due = (A) + (X) + Applicable xxxxx
+7	19.62	1614.07	0.00	Xx Minimum Amount Due of ` 999 is not paid xx due date of 99xx Xxx, Xxxx Payment xxxxxxx as applicable 
+7	19.62	1628.24	0.00	xxxxx xx xxxxxx
+7	16.49	1651.06	0.00	*Xxxxxxx Xxxxxx SBI Card xxxxxxxxx, xxxxxx xxxxx to xxxxx Xxxxx
+7	19.62	1670.73	0.00	• Xxxxxx xxxx xxxx the xxxxxxxxx xxxx and xxxxxxx xxx not applicable for Xxxxxxx Xxxxxx SBI Card:Xxxx
+7	19.62	1684.90	0.00	Xxxxxxx Xxx (No Xxxx Limit Xxxxxxxxx), Xxxxx Xxxxxx (Xxxxxxxxxxxxx xxxxx not xxxxxxx),Xxxx Payment
+7	19.62	1699.07	0.00	Xxx, Finance Xxxxxxx, Xxxx Payment Xxxxxxx, Payment Xxxxxxxx Xxx, Card Xxxxxxxxxxx Xxx, Cheque
+7	19.62	1713.23	0.00	Xxx, Cheque Xxxxxx Xxx, Statement Xxxxxxxxx Xxx, Xxxxxxxxx Xxx,Xxxxxx Xxxxxxxxxx Xxx. Xxxxxxxxxx
+7	19.62	1727.40	0.00	and xxxxx xxxxxx (xxxxx xxxx applicable xxxxx) xxxx xx applicable. • Xxxx Card xxxx not xxxxx Xxxxxxxxxx a
+7	19.62	1741.56	0.00	xxxxxxxxx credit xxxxxxxx. Xxxxxxxxxx xxx to xxx Total Amount Due xxxxxxx on the Statement.
+7	18.84	1769.90	0.00	• XxxxxxXXXX Xxxxxxxx SBI Card is a xxxxxx Card.
+7	18.84	1784.06	0.00	• Xxxx card xxxx not xxxxx Xxxxxxxxxx a xxxxxxxxx credit xxxxxxxx.Xxxxxxxxxx xxx to xxx Total Amount Due
+7	18.84	1798.23	0.00	   Xxxxxxx on the Statement.
+7	18.84	1812.39	0.00	• For the xxxxxxxx of XxxxxxXXXX Xxxxxxxx SBI Card xxxx,xxx Total Amount Due (XXX) xxxx xx xxxxxxxxx to
+7	18.84	1826.56	0.00	   xx xxxxx to the Minimum Amount Due (XXX).
+7	19.62	1857.25	0.00	Xxxxx of payment xxxxxxxxxx -Payment xxxxxxxx xxxxxxx the Xxxxxxxxxx'x outstanding xxxx xx xxxxxxxx 
+7	19.62	1871.42	0.00	xxxxxxx 999% of XXX, 999% of EMI amount, 999% of Xxxx/Xxxxxxx, 999% of Finance xxxxxxx, Balance 
+7	19.62	1885.58	0.00	xxxxxxxx, Xxxxxx Xxxxxx and Xxxx Xxxxxxx, xx xxxx xxxxx.
+7	21.19	1923.36	0.00	**** Xxxxxxx xxxxxxxx xxxxx xx xxxxxxxxxx xxxxx Xxxxxxxx Xxxxxxxx Code (XXX) 9999, on xxxx xxxxxx xxxxx. 
+7	21.19	1937.53	0.00	The XXXx xxx xxxxxxx xx the xxxxxxx xxxxxxxx and xxx xxxxxxx to xxxxxx xxxxx xxxxx xxxxxxxxxx and xxxx 
+7	21.19	1951.69	0.00	xxxxxxx xxxxx xx xxxxxxxxxxx xxxxx xxxxxxxxxxxxx from the xxxxxxxx xxxxxxx xxx xxxxxxxxxxx for 
+7	21.19	1965.86	0.00	xxxxxxxxxx/xxxxxxxxxxx to the xxxxxxxxx.
+7	21.98	1993.40	0.00	^ Xxxxxxxxxx xxxxx Xxxxxxxx Xxxxxxxx Code (XXX) 9999, 9999, 9999, 9999, 9999 and 9999, on xxxx xxxxxx 
+7	21.98	2007.57	0.00	xxxxx.
+7	21.98	2021.74	0.00	^^Xxxxx Xxxxx Xxxx xxxx (xxx not limited to) XXXX, Xxxx, XxxxXxxx xxx. 
+7	21.98	2035.90	0.00	^^^Xxxxxxxxxx xxxxx Xxxxxxxx Xxxxxxxx Code (XXX) 9999 and 9999, on xxxx xxxxxx xxxxx.
+7	21.98	2050.07	0.00	The XXXx xxx xxxxxxx xx the xxxxxxx xxxxxxxx and xxx xxxxxxx to xxxxxx xxxxx xxxxx xxxxxxxxxx and xxxx 
+7	21.98	2064.23	0.00	xxxxxxx xxxxx xx xxxxxxxxxxx xxxxx xxxxxxxxxxxxx from the xxxxxxxx xxxxxxx xxx xxxxxxxxxxx for 
+7	21.98	2078.40	0.00	xxxxxxxxxx/xxxxxxxxxxx to the xxxxxxxxx.
+7	22.76	2109.09	0.00	Xxxxxxxx and Xxxxxxxx Credit Limit:
+7	22.76	2123.26	0.00	Xx a customer xxxxx xxxxxxxx SBI Credit Xxxxx, the credit limit xxx xx xxxxxx xxxxxx xxxxx xxxxx xx the 
+7	22.76	2137.42	0.00	customer xxxxx, as xxxxxxxx xx the SBI Card xx xxx xxxx xxxxxxxxxx and xx xxxxxxxxxx xxxx xxx xxxxxxxx 
+7	22.76	2151.59	0.00	xxxxxxxx.Xxx xxxxxxxx xxxxx xxxxxx xxx SBI Card Credit Xxxxx xxxx xx xxxxxxxxxx to the xxxxxx credit limit 
+7	22.76	2165.76	0.00	xxxxxxxx.Xxxxxxxx xxxxxxx the Monthly Card Statement xxxx xx xxxx xxxxxxxxxx for xxxx card xxxxx on 
+7	22.76	2179.92	0.00	the amount xxxxxxxxx xx the xxxxxxxxxx statement.
+7	22.76	2194.09	0.00	Xx xxx card xxx a credit balance (xxxxxx payment), xx xxxx not xx xxx xxx xxxxxxx the outstanding balance on 
+7	22.76	2208.25	0.00	xxxxx card(x).Xxx-payment of the outstanding amount xx the payment due date xxxx xxxxxxx applicable 
+7	22.76	2222.42	0.00	xxxxxxx xx xxxxxxxxxx xxxx the Xxxx Xxxxxxxxx Xxxxx and Xxxxxxxxxx (XXXX).
