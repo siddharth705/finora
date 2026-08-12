@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { importApi, statementImportsApi, type ImportFailureSummary } from '../api/endpoints';
 import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../api/errorCodes';
-import { IMPORT_FAILURE_MESSAGES } from '../api/importFailureMessages';
+import { importFailureMessage } from '../api/importFailureMessages';
 import { BankLogo } from '../components/BankLogo';
 import type { AccountStatementGroup, StatementSummary, Transaction } from '../types';
 import { formatDate } from '../utils/date';
@@ -14,10 +14,10 @@ import { formatDate } from '../utils/date';
 // Reused from the same failure UX contract Import.tsx's live upload flow already draws on
 // (Premium Import Reliability v1, §6) -- a failure a user comes back to later reads the same way
 // one they hit live does. A code the contract doesn't own (or none at all) gets one safe,
-// generic fallback rather than "undefined" or an internal code.
+// generic fallback rather than "undefined" or an internal code -- unlike Import.tsx's fallback,
+// there is no server `message` available for a historical record to fall back to first.
 function messageFor(failureCode: string | null): string {
-  return (failureCode && IMPORT_FAILURE_MESSAGES[failureCode])
-    || "Finora couldn't complete this import.";
+  return importFailureMessage(failureCode) ?? "Finora couldn't complete this import.";
 }
 
 function fmt(n: number | null) {

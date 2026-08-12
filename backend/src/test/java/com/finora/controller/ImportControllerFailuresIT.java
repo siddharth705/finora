@@ -96,7 +96,12 @@ class ImportControllerFailuresIT extends AbstractIntegrationTest {
         JsonNode failures = mapper.readTree(response.getBody()).get("data");
         assertThat(failures).hasSize(1);
         assertThat(failures.get(0).get("fileName").asText()).isEqualTo("unreadable-statement.csv");
-        assertThat(failures.get(0).get("failureCode").asText()).isNotBlank();
+        // The WIRE code ("IMPORT_001"), not the Java enum name ("IMPORT_NO_HEADER_DETECTED") the
+        // entity actually stores -- StatementAnalysisRecorder.recentCustomerFailures translates at
+        // this boundary specifically so this value matches what the frontend's failure-UX contract
+        // (importFailureMessages.ts) is keyed by. Bug fix: this test originally only asserted
+        // isNotBlank() here, which passed even while every real code was silently wrong.
+        assertThat(failures.get(0).get("failureCode").asText()).isEqualTo("IMPORT_001");
         assertThat(failures.get(0).get("reference").asText()).startsWith("SA-");
         assertThat(failures.get(0).get("createdAt").asText()).isNotBlank();
     }

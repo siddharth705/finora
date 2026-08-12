@@ -130,14 +130,49 @@ public class StatementAnalysisRecorder {
      * entity-to-DTO mapping in the one place that also writes the row is what guarantees that
      * field can never leak into a customer response by a future caller forgetting to re-apply the
      * same narrow projection.
+     *
+     * <p>Bug fix, caught by a post-commit review rather than by any test at the time: {@code
+     * failureCode} on the entity is {@link ImportService#recordParseFailure}'s {@code
+     * ApiException.getCode().name()} -- the Java enum IDENTIFIER ({@code "IMPORT_NO_HEADER_DETECTED"},
+     * {@code "IMPORT_CORRUPT_PDF"}) -- not the wire code ({@code "IMPORT_001"}, {@code "IMPORT_011"})
+     * the frontend's failure-UX contract (importFailureMessages.ts) is keyed by. Handing the raw
+     * enum name to a customer response meant every single row in the failures list fell through to
+     * that contract's generic fallback, silently, since the lookup never threw -- it just never
+     * matched. {@link #wireCodeOf} translates at this one boundary, so the customer-facing DTO
+     * carries what a customer-facing consumer actually expects, while the entity/database keep
+     * recording the enum name unchanged (every existing admin histogram and analytics query is
+     * already built on that value and must not move out from under them).
      */
     public List<ImportFailureSummaryDto> recentCustomerFailures(UUID userId, int limit) {
         return repository.findByUserIdAndSourceAndOutcomeOrderByCreatedAtDesc(userId,
                         StatementAnalysisSession.Source.CUSTOMER_IMPORT, StatementAnalysisSession.Outcome.FAILED,
                         PageRequest.of(0, limit))
                 .stream()
-                .map(s -> new ImportFailureSummaryDto(s.getReference(), s.getFileName(), s.getFailureCode(), s.getCreatedAt()))
+                .map(s -> new ImportFailureSummaryDto(s.getReference(), s.getFileName(), wireCodeOf(s.getFailureCode()), s.getCreatedAt()))
                 .toList();
+    }
+
+    /**
+     * The wire code ({@code "IMPORT_001"}) for a stored {@code failureCode} that is really an
+     * {@link com.finora.exception.ErrorCode} enum name ({@code "IMPORT_NO_HEADER_DETECTED"}) --
+     * see {@link #recentCustomerFailures}'s doc comment for why this translation exists at all.
+     *
+     * <p>Not every stored value is a valid enum name: {@link ImportService#recordParseFailure}
+     * falls back to {@code failure.getClass().getSimpleName()} (e.g. {@code
+     * "NullPointerException"}) for a failure that never carried an {@code ApiException} in the
+     * first place. {@link com.finora.exception.ErrorCode#valueOf} would throw on that input, and a
+     * raw Java exception class name is not something a customer response should carry regardless
+     * -- both are handled by returning {@code null}, which the frontend already treats as "no
+     * curated copy for this one" and falls back to a generic message for, the same as it does for
+     * a null code today.
+     */
+    private static String wireCodeOf(String storedFailureCode) {
+        if (storedFailureCode == null) return null;
+        try {
+            return com.finora.exception.ErrorCode.valueOf(storedFailureCode).code();
+        } catch (IllegalArgumentException notAnErrorCodeName) {
+            return null;
+        }
     }
 
     /**

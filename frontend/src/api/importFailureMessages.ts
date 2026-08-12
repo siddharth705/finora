@@ -8,7 +8,7 @@
  * dictionary of import error codes, not two that can silently drift apart.
  */
 
-import { NO_HEADER_DETECTED, NO_TRANSACTIONS_FOUND, SCANNED_OCR_REQUIRED } from './errorCodes';
+import { NO_HEADER_DETECTED, NO_TRANSACTIONS_FOUND, SCANNED_OCR_REQUIRED, CORRUPT_PDF } from './errorCodes';
 
 export const IMPORT_FAILURE_MESSAGES: Record<string, string> = {
   [NO_HEADER_DETECTED]:
@@ -21,4 +21,19 @@ export const IMPORT_FAILURE_MESSAGES: Record<string, string> = {
   [SCANNED_OCR_REQUIRED]:
     'This PDF appears to be a scanned image rather than text. Statements exported directly from ' +
     "your bank's website usually work best.",
+  [CORRUPT_PDF]:
+    'This file appears to be damaged or incomplete. Downloading it again from your bank usually ' +
+    'fixes this.',
 };
+
+/**
+ * The one lookup step every consumer of the contract needs, shared rather than each page
+ * reimplementing `code ? IMPORT_FAILURE_MESSAGES[code] : undefined`. Deliberately does NOT take a
+ * fallback string: Import.tsx's live-upload fallback (the server's own `message`, then a PDF/CSV-
+ * specific generic string) and a historical record's fallback (no server message available, one
+ * fixed generic string) are genuinely different, not two spellings of the same thing -- each call
+ * site decides its own fallback from whatever `undefined` means to it.
+ */
+export function importFailureMessage(code: string | null | undefined): string | undefined {
+  return code ? IMPORT_FAILURE_MESSAGES[code] : undefined;
+}

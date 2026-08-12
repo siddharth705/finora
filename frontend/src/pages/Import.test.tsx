@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Import from './Import';
 import { importApi, importJobsApi, categoriesApi, accountsApi, type ImportJobProgress } from '../api/endpoints';
 import type { StagedAccountSection } from '../types';
-import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, NO_HEADER_DETECTED, NO_TRANSACTIONS_FOUND, SCANNED_OCR_REQUIRED } from '../api/errorCodes';
+import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, NO_HEADER_DETECTED, NO_TRANSACTIONS_FOUND, SCANNED_OCR_REQUIRED, CORRUPT_PDF } from '../api/errorCodes';
 import { IMPORT_FAILURE_MESSAGES } from '../api/importFailureMessages';
 import type { DetectedAccountInfo } from '../types';
 
@@ -297,6 +297,7 @@ describe('Import — failure UX contract', () => {
     ['no transaction table found', NO_HEADER_DETECTED],
     ['a table was found but nothing staged', NO_TRANSACTIONS_FOUND],
     ['a scanned/image-only PDF', SCANNED_OCR_REQUIRED],
+    ['a corrupt/truncated PDF', CORRUPT_PDF],
   ])('shows the contract message, not the server message, for %s', async (_label, code) => {
     vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue(rejectWithCode(code));
     const user = userEvent.setup();

@@ -165,6 +165,56 @@ class StatementAnalysisRecorderIT extends AbstractIntegrationTest {
         assertThat(reference == null || reference.startsWith("SA-")).isTrue();
     }
 
+    /**
+     * Bug fix, caught by post-commit review rather than by any test at the time this method was
+     * added: {@code recentCustomerFailures} used to hand back the entity's raw {@code
+     * failureCode}, which is {@code ApiException.getCode().name()} -- the Java enum identifier --
+     * not the wire code the frontend's failure-UX contract is keyed by. Every real failure in the
+     * customer-facing failures list silently fell through to the contract's generic fallback.
+     */
+    @Test
+    void recentCustomerFailures_returnsTheWireCodeNotTheStoredEnumName() {
+        UUID userId = UUID.randomUUID();
+        recorder.recordFailed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT,
+                "no-header.pdf", "PDF", 1L, "FP-WIRE-1",
+                ErrorCode.IMPORT_NO_HEADER_DETECTED.name(), "No transaction table found", 1L, ParseDiagnostics.NONE);
+
+        var failures = recorder.recentCustomerFailures(userId, 10);
+
+        assertThat(failures).hasSize(1);
+        assertThat(failures.get(0).failureCode())
+                .as("the wire code (\"IMPORT_001\"), not the stored enum name (\"IMPORT_NO_HEADER_DETECTED\")")
+                .isEqualTo(ErrorCode.IMPORT_NO_HEADER_DETECTED.code());
+    }
+
+    @Test
+    void recentCustomerFailures_returnsNullRatherThanThrowingForAnUnrecognizedStoredCode() {
+        // ImportService.recordParseFailure falls back to failure.getClass().getSimpleName() for a
+        // failure that was never an ApiException in the first place -- not a valid ErrorCode name,
+        // and not something a customer response should carry regardless.
+        UUID userId = UUID.randomUUID();
+        recorder.recordFailed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT,
+                "crashed.pdf", "PDF", 1L, "FP-WIRE-2",
+                "NullPointerException", "boom", 1L, ParseDiagnostics.NONE);
+
+        var failures = recorder.recentCustomerFailures(userId, 10);
+
+        assertThat(failures).hasSize(1);
+        assertThat(failures.get(0).failureCode()).isNull();
+    }
+
+    @Test
+    void recentCustomerFailures_returnsNullWhenTheStoredCodeIsAlreadyNull() {
+        UUID userId = UUID.randomUUID();
+        recorder.recordFailed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT,
+                "no-code.pdf", "PDF", 1L, null, null, "some IOException message", 1L, ParseDiagnostics.NONE);
+
+        var failures = recorder.recentCustomerFailures(userId, 10);
+
+        assertThat(failures).hasSize(1);
+        assertThat(failures.get(0).failureCode()).isNull();
+    }
+
     @Test
     void adminAnalysisAndCustomerImportAreDistinguishable() {
         // Both sources share one pipeline on purpose -- a customer hitting an unknown layout is at
