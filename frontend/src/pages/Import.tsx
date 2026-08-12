@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { CheckCircle2, UploadCloud, AlertTriangle, Clock, FileText, FileSpreadsheet } from 'lucide-react';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { CheckCircle2, UploadCloud, AlertTriangle, Clock, FileText, FileSpreadsheet, Trash2 } from 'lucide-react';
 import { importApi, importJobsApi, statementImportsApi, categoriesApi, accountsApi, type StagingResult } from '../api/endpoints';
 import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID } from '../api/errorCodes';
 import { importFailureMessage } from '../api/importFailureMessages';
@@ -196,6 +196,17 @@ export default function Import() {
   // path staged this session, same spirit as the "Detected {bank}" callout below.
   const [fileFormat, setFileFormat] = useState<'CSV' | 'PDF' | null>(null);
 
+  // "Continue previous import" (Premium Import Reliability v1, §3) -- a staged session the user
+  // never confirmed, e.g. a closed tab or a lost connection between upload and confirm. The
+  // backend already scopes this to the caller's own, active (not expired, not yet confirmed)
+  // sessions (ImportSessionService.listActiveSessions), so there is no ownership check to add
+  // here -- only whether to show what it returns.
+  const [discardingSessionId, setDiscardingSessionId] = useState<string | null>(null);
+  const { data: unfinishedSessions } = useQuery({
+    queryKey: ['import-sessions'],
+    queryFn: () => importApi.listSessions(),
+  });
+
   useEffect(() => {
     // Non-critical background loads -- a failure here (e.g. a network blip, an expired token
     // mid-session) shouldn't crash this effect as an unhandled rejection; the page still works
@@ -314,6 +325,41 @@ export default function Import() {
     } catch {
       setJobId(null);
       setError('Your statement was imported, but the review could not be loaded. Open it from your unfinished imports.');
+    }
+  }
+
+  /**
+   * "Continue previous import" -- the same getSession -> hydrateReviewFrom -> step='review'
+   * sequence openReviewedJob above already proves works, for a different arrival route: an
+   * abandoned staged session rather than a completed queued job. No upload, no re-selecting a
+   * file -- the bytes and staged rows are already server-side from the original upload.
+   */
+  async function resumeSession(id: string) {
+    setError(null);
+    try {
+      const session = await importApi.getSession(id);
+      setSessionId(session.sessionId);
+      hydrateReviewFrom(session.staging);
+      setStep('review');
+    } catch {
+      // The session most likely expired between the list loading and this click (the 48h window
+      // can lapse mid-visit) -- refetch so the now-stale entry disappears rather than staying in
+      // the list as a button that will fail again the same way.
+      void queryClient.invalidateQueries({ queryKey: ['import-sessions'] });
+      setError('This staged import is no longer available -- it may have expired. Please upload the statement again.');
+    }
+  }
+
+  async function discardStagedSession(id: string) {
+    if (!confirm('Discard this unfinished import? You can upload the statement again later.')) return;
+    setDiscardingSessionId(id);
+    try {
+      await importApi.discardSession(id);
+      await queryClient.invalidateQueries({ queryKey: ['import-sessions'] });
+    } catch {
+      setError('Could not discard this staged import.');
+    } finally {
+      setDiscardingSessionId(null);
     }
   }
 
@@ -632,6 +678,51 @@ export default function Import() {
             </div>
           )}
         </form>
+      )}
+
+      {step === 'upload' && !jobId && !pendingPdf && !!unfinishedSessions?.length && (
+        <div className="bg-card rounded-xl2 shadow-card border border-border overflow-hidden">
+          <div className="px-5 py-4 border-b border-border">
+            <h2 className="font-semibold text-ink text-sm">Continue previous import</h2>
+            <p className="text-xs text-muted">
+              You started importing these statements but didn't finish reviewing them.
+            </p>
+          </div>
+          <div className="divide-y divide-border">
+            {unfinishedSessions.map((s) => (
+              <div key={s.id} className="px-5 py-3.5 flex items-center justify-between gap-4 flex-wrap">
+                <div className="min-w-0 flex items-center gap-2.5">
+                  <FileText size={16} className="text-muted flex-shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-ink truncate">{s.fileName}</p>
+                    <p className="text-xs text-muted">
+                      Uploaded {formatDate(s.createdAt)} · {s.rowCount} row{s.rowCount === 1 ? '' : 's'}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => void resumeSession(s.id)}
+                    disabled={discardingSessionId === s.id}
+                    className="bg-primary text-white text-xs font-semibold rounded-lg px-3 py-1.5 disabled:opacity-40"
+                  >
+                    Continue Import
+                  </button>
+                  <button
+                    type="button"
+                    title="Discard Unfinished Import"
+                    onClick={() => void discardStagedSession(s.id)}
+                    disabled={discardingSessionId === s.id}
+                    className="w-8 h-8 rounded-lg border border-border flex items-center justify-center text-muted hover:bg-danger-bg hover:text-danger disabled:opacity-40"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {step === 'upload' && !jobId && !pendingPdf && (

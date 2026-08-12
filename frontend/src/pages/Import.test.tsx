@@ -110,6 +110,10 @@ beforeEach(() => {
   vi.mocked(importJobsApi.submit).mockReset();
   vi.mocked(importJobsApi.progress).mockReset();
   vi.mocked(importJobsApi.cancel).mockReset();
+  // No unfinished sessions by default -- this query fires unconditionally on every mount, and the
+  // suites in this file are about the upload/review/confirm flow, not the "continue previous
+  // import" section, which has its own describe block below.
+  vi.mocked(importApi.listSessions).mockReset().mockResolvedValue([]);
 });
 
 function renderImport() {
@@ -1111,5 +1115,117 @@ describe('Import — queued imports', () => {
 
     expect(await screen.findByText('No transactions could be read from this statement.'))
       .toBeInTheDocument();
+  });
+});
+
+/**
+ * "Continue previous import" -- Premium Import Reliability v1, §3. The backend already scopes
+ * GET/DELETE /import/sessions to the caller's own, active sessions (ImportSessionService); this
+ * suite is about whether the UI correctly lists what that endpoint returns, resumes into the same
+ * review step the synchronous upload flow lands on, and discards with confirmation -- not about
+ * re-proving ownership isolation the frontend has no way to violate (it never has another user's
+ * session id to ask for).
+ */
+describe('Import — continuing an unfinished import', () => {
+  function unfinishedSession(overrides: Partial<{ id: string; fileName: string; rowCount: number; createdAt: string; expiresAt: string }> = {}) {
+    return {
+      id: 'sess-1',
+      fileName: 'hdfc-july.pdf',
+      rowCount: 42,
+      createdAt: '2026-08-12T10:00:00Z',
+      expiresAt: '2026-08-14T10:00:00Z',
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    // Reset call history, not just behaviour -- these tests assert stageCsv/stagePdf were NEVER
+    // called, which would be a false pass (or, as first written, a false failure) against
+    // whatever call count an earlier describe block in this file left behind.
+    vi.mocked(importApi.stageCsv).mockReset();
+    vi.mocked(importApi.stagePdf).mockReset();
+  });
+
+  it('lists unfinished sessions and does not show the section when there are none', async () => {
+    vi.mocked(importApi.listSessions).mockReset().mockResolvedValue([]);
+    renderImport();
+
+    // Give the query a chance to resolve before asserting absence, so this isn't just "the query
+    // hasn't finished yet" passing for the wrong reason.
+    await screen.findByTestId('statement-dropzone');
+    expect(screen.queryByText('Continue previous import')).not.toBeInTheDocument();
+  });
+
+  it('resumes a session into the same review step the upload flow uses, with no re-upload', async () => {
+    vi.mocked(importApi.listSessions).mockReset().mockResolvedValue([unfinishedSession()]);
+    vi.mocked(importApi.getSession).mockReset().mockResolvedValue(stagingResultWith({ sessionId: 'sess-1' }));
+    const user = userEvent.setup();
+    renderImport();
+
+    await screen.findByText('hdfc-july.pdf');
+    await user.click(screen.getByRole('button', { name: /continue import/i }));
+
+    expect(importApi.getSession).toHaveBeenCalledWith('sess-1');
+    expect(await screen.findByText(/which account is this statement for/i)).toBeInTheDocument();
+    // No staging call of any kind -- the whole point is that the bytes and rows are already
+    // server-side from the original upload.
+    expect(importApi.stageCsv).not.toHaveBeenCalled();
+    expect(importApi.stagePdf).not.toHaveBeenCalled();
+  });
+
+  it('shows a clear message and refreshes the list when a session expired before it was resumed', async () => {
+    vi.mocked(importApi.listSessions).mockReset().mockResolvedValue([unfinishedSession()]);
+    vi.mocked(importApi.getSession).mockReset().mockRejectedValue(new Error('expired'));
+    const user = userEvent.setup();
+    renderImport();
+
+    await screen.findByText('hdfc-july.pdf');
+    await user.click(screen.getByRole('button', { name: /continue import/i }));
+
+    expect(await screen.findByText(/no longer available/i)).toBeInTheDocument();
+    // Re-listed so a now-stale entry doesn't sit there as a button that will fail the same way
+    // again -- called once on mount, once after the failed resume.
+    await waitFor(() => expect(importApi.listSessions).toHaveBeenCalledTimes(2));
+  });
+
+  it('discards a session after confirmation and removes it from the list', async () => {
+    vi.mocked(importApi.listSessions).mockReset()
+      .mockResolvedValueOnce([unfinishedSession()])
+      .mockResolvedValueOnce([]);
+    vi.mocked(importApi.discardSession).mockReset().mockResolvedValue(undefined as never);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const user = userEvent.setup();
+    renderImport();
+
+    await screen.findByText('hdfc-july.pdf');
+    await user.click(screen.getByTitle('Discard Unfinished Import'));
+
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(importApi.discardSession).toHaveBeenCalledWith('sess-1');
+    await waitFor(() => expect(screen.queryByText('hdfc-july.pdf')).not.toBeInTheDocument());
+  });
+
+  it('does not discard without confirmation', async () => {
+    vi.mocked(importApi.listSessions).mockReset().mockResolvedValue([unfinishedSession()]);
+    vi.mocked(importApi.discardSession).mockReset();
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const user = userEvent.setup();
+    renderImport();
+
+    await screen.findByText('hdfc-july.pdf');
+    await user.click(screen.getByTitle('Discard Unfinished Import'));
+
+    expect(importApi.discardSession).not.toHaveBeenCalled();
+    expect(screen.getByText('hdfc-july.pdf')).toBeInTheDocument();
+  });
+
+  it('fails closed when the sessions list itself cannot be loaded -- the rest of the page still works', async () => {
+    vi.mocked(importApi.listSessions).mockReset().mockRejectedValue(new Error('network error'));
+    renderImport();
+
+    expect(await screen.findByTestId('statement-dropzone')).toBeInTheDocument();
+    expect(screen.queryByText('Continue previous import')).not.toBeInTheDocument();
   });
 });
