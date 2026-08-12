@@ -1,15 +1,21 @@
 package com.finora.controller;
 
 import com.finora.dto.ApiResponse;
+import com.finora.dto.ImportDto.FailureCountDto;
+import com.finora.dto.ImportDto.ImportFailureSummaryDto;
+import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
 import com.finora.imports.AdminAnalysisService;
 import com.finora.imports.ImportConcurrencyLimiter;
+import com.finora.imports.analysis.StatementAnalysisRecorder;
 import com.finora.imports.analysis.StatementAnalysisReportService;
 import com.finora.security.CurrentUser;
 import com.finora.imports.analysis.StatementAnalysisReportService.AnalysisDetail;
 import com.finora.imports.analysis.StatementAnalysisReportService.AnalysisSummary;
 import com.finora.imports.analysis.StatementAnalysisReportService.AnalysisView;
+import com.finora.service.IdentityLookup;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -19,6 +25,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.Instant;
 import java.util.List;
 
 /**
@@ -31,9 +38,12 @@ import java.util.List;
  *
  * <h2>Gating and privacy</h2>
  * PLATFORM_DIAGNOSTICS_VIEW, same as its sibling: engineering telemetry about pipeline
- * performance, granting no ability to change anything. Responses carry no file name and no user
- * id — see {@link StatementAnalysisReportService} for why the {@code reference} is the handle
- * instead.
+ * performance, granting no ability to change anything. The engine-diagnostics endpoints below
+ * (recent/summary/byReference) carry no file name and no user id — see
+ * {@link StatementAnalysisReportService} for why the {@code reference} is the handle instead. The
+ * two failure-analytics endpoints (Premium Import Reliability v1, §4) are a deliberate, narrower
+ * exception to that: {@code failuresByUser} exists specifically to look up ONE identified
+ * customer's own file names, because that is what a support investigation is for.
  */
 @RestController
 @RequestMapping("/api/v1/admin/imports/analyses")
@@ -46,15 +56,21 @@ public class AdminStatementAnalysisController {
     private final AdminAnalysisService adminAnalysisService;
     private final ImportConcurrencyLimiter concurrencyLimiter;
     private final CurrentUser currentUser;
+    private final StatementAnalysisRecorder recorder;
+    private final IdentityLookup identityLookup;
 
     public AdminStatementAnalysisController(StatementAnalysisReportService reportService,
                                             AdminAnalysisService adminAnalysisService,
                                             ImportConcurrencyLimiter concurrencyLimiter,
-                                            CurrentUser currentUser) {
+                                            CurrentUser currentUser,
+                                            StatementAnalysisRecorder recorder,
+                                            IdentityLookup identityLookup) {
         this.reportService = reportService;
         this.adminAnalysisService = adminAnalysisService;
         this.concurrencyLimiter = concurrencyLimiter;
         this.currentUser = currentUser;
+        this.recorder = recorder;
+        this.identityLookup = identityLookup;
     }
 
     /**
@@ -126,5 +142,44 @@ public class AdminStatementAnalysisController {
     public ApiResponse<AnalysisDetail> byReference(@PathVariable String reference) {
         return ApiResponse.ok(reportService.detailByReference(reference)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND)));
+    }
+
+    /**
+     * How many customer imports failed, by reason, since {@code since} -- Premium Import
+     * Reliability v1, §4. "How many imports failed today", made answerable without opening a SQL
+     * client: {@code since=2026-08-12T00:00:00Z} for today, an arbitrary window for "since this
+     * release", "since parser version X" -- whatever the caller means by it, they have to say so.
+     *
+     * <p>No default window on purpose: an unbounded scan of a table that only grows is a cost this
+     * endpoint should never silently absorb just because a caller omitted a parameter.
+     */
+    @GetMapping("/failures/summary")
+    public ApiResponse<List<FailureCountDto>> failureSummary(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since) {
+        return ApiResponse.ok(reportService.failureCounts(since));
+    }
+
+    /**
+     * One customer's own recent failed imports, looked up by email -- the support half of Premium
+     * Import Reliability v1, §4. A support conversation starts with an email address, essentially
+     * never the internal user id, so this resolves the email first (scoped to {@code SCOPE_USER}
+     * -- support is investigating a customer, not an admin account) and then reuses {@link
+     * StatementAnalysisRecorder#recentCustomerFailures} exactly as the customer's own {@code GET
+     * /import/failures} does -- same DTO, same {@code CUSTOMER_IMPORT}-only/{@code failureDetail}
+     * -excluded boundary, so this view can never show support anything the customer endpoint's own
+     * privacy rules wouldn't already allow.
+     *
+     * <p>{@link IdentityLookup#byEmail} already fails closed to "no match" on a case-duplicate
+     * row rather than throwing, so the only not-found case reaching this method's own
+     * {@code orElseThrow} is a genuinely absent account.
+     */
+    @GetMapping("/failures/by-user")
+    public ApiResponse<List<ImportFailureSummaryDto>> failuresByUser(
+            @RequestParam String email,
+            @RequestParam(required = false, defaultValue = "" + DEFAULT_LIMIT) int limit) {
+        User user = identityLookup.byEmail(email, User.SCOPE_USER)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND,
+                        "No customer account matches that email."));
+        return ApiResponse.ok(recorder.recentCustomerFailures(user.getId(), limit));
     }
 }

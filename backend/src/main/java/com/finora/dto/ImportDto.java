@@ -363,6 +363,16 @@ public class ImportDto {
             String reference, String fileName, String failureCode, java.time.Instant createdAt
     ) {}
 
+    /** One failure reason's tally, admin-only -- GET /admin/imports/analyses/failures/summary
+     *  (Premium Import Reliability v1, §4). {@code failureCode} here is the raw stored value (the
+     *  Java ErrorCode enum name, or an exception's simple class name for a codeless failure -- see
+     *  StatementAnalysisRecorder's own doc comment on {@code wireCodeOf}), not the customer-facing
+     *  wire code {@link ImportFailureSummaryDto} translates to: this is an internal
+     *  engineering/support view, and the more precise internal identifier is more useful here than
+     *  the wire code would be. A null stored value groups under the literal
+     *  {@code "UNKNOWN_FAILURE"} rather than disappearing from the count. */
+    public record FailureCountDto(String failureCode, long count, java.time.Instant lastSeen) {}
+
     /** What the frontend sends back after the user reviews/edits staged rows. A statement import
      *  is for exactly one account — either an existing one (existingAccountId) or a new one
      *  Finora should create from the reviewed/edited detection (newAccount). Exactly one of the

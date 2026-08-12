@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finora.AbstractIntegrationTest;
 import com.finora.entity.User;
+import com.finora.imports.analysis.StatementAnalysisSession;
+import com.finora.imports.analysis.StatementAnalysisSessionRepository;
 import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
@@ -15,8 +17,11 @@ import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.*;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.web.util.UriComponentsBuilder;
 
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,6 +39,7 @@ class AdminStatementAnalysisControllerIT extends AbstractIntegrationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private JwtService jwtService;
     @Autowired private RefreshTokenRepository refreshTokens;
+    @Autowired private StatementAnalysisSessionRepository analysisRepository;
     private final ObjectMapper mapper = new ObjectMapper();
 
     /** Wholly invented merchants and reference numbers -- see check-fixture-hygiene.sh. */
@@ -160,5 +166,102 @@ class AdminStatementAnalysisControllerIT extends AbstractIntegrationTest {
                 HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), String.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    // ---------------------------------------------------------------- failure analytics (§4)
+
+    private URI failureSummaryUri(Instant since) {
+        return UriComponentsBuilder.fromPath("/api/v1/admin/imports/analyses/failures/summary")
+                .queryParam("since", since.toString())
+                .build(true).toUri();
+    }
+
+    private URI failuresByUserUri(String email) {
+        return UriComponentsBuilder.fromPath("/api/v1/admin/imports/analyses/failures/by-user")
+                .queryParam("email", email)
+                .build(true).toUri();
+    }
+
+    @Test
+    void plainUser_isForbiddenFromTheFailureSummary() {
+        User user = createUser("USER");
+        ResponseEntity<String> response = restTemplate.exchange(
+                failureSummaryUri(Instant.now().minusSeconds(60)), HttpMethod.GET,
+                new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void admin_canSeeTheFailureSummary() {
+        User admin = createUser("ADMIN");
+        ResponseEntity<String> response = restTemplate.exchange(
+                failureSummaryUri(Instant.now().minusSeconds(60)), HttpMethod.GET,
+                new HttpEntity<>(bearerFor(admin)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+
+    /** {@code since} has no default -- omitting it entirely is a client error, not an unbounded
+     *  scan the endpoint silently absorbs. */
+    @Test
+    void admin_omittingSinceOnTheFailureSummary_isRejected() {
+        User admin = createUser("ADMIN");
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/imports/analyses/failures/summary", HttpMethod.GET,
+                new HttpEntity<>(bearerFor(admin)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void plainUser_isForbiddenFromTheFailuresByUserLookup() {
+        User user = createUser("USER");
+        ResponseEntity<String> response = restTemplate.exchange(
+                failuresByUserUri("someone@example.com"), HttpMethod.GET,
+                new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void admin_lookingUpANonexistentEmail_returnsNotFound() {
+        User admin = createUser("ADMIN");
+        ResponseEntity<String> response = restTemplate.exchange(
+                failuresByUserUri("no-such-customer-" + UUID.randomUUID() + "@example.com"),
+                HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void admin_canLookUpACustomersOwnFailuresByEmail() {
+        User admin = createUser("ADMIN");
+        User customer = createUser("USER");
+        // reference is VARCHAR(24) -- "SA-" plus 20 hex chars from a UUID (dashes stripped) stays
+        // comfortably under that while remaining unique per call.
+        String reference = "SA-" + UUID.randomUUID().toString().replace("-", "").substring(0, 20);
+        // The stored value is the ErrorCode enum NAME, not the wire code -- recentCustomerFailures
+        // translates name -> wire code via StatementAnalysisRecorder.wireCodeOf. Storing the wire
+        // code here directly would reproduce the exact enum-name/wire-code bug this initiative
+        // already fixed once (c44f417): the lookup wouldn't throw, it would just silently return
+        // null and this assertion would fail confusingly.
+        var failedSession = StatementAnalysisSession.failed(reference,
+                customer.getId(), StatementAnalysisSession.Source.CUSTOMER_IMPORT,
+                "statement.pdf", "PDF", 1L, "FP-SUPPORT",
+                com.finora.exception.ErrorCode.IMPORT_CORRUPT_PDF.name(),
+                "this must never reach the response", 1L, 0, null);
+        analysisRepository.save(failedSession);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                failuresByUserUri(customer.getEmail()), HttpMethod.GET,
+                new HttpEntity<>(bearerFor(admin)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody())
+                .contains(com.finora.exception.ErrorCode.IMPORT_CORRUPT_PDF.code())
+                .as("failureDetail must never reach an admin/support response through this endpoint "
+                        + "either -- it reuses the same customer-facing DTO and boundary")
+                .doesNotContain("this must never reach the response");
     }
 }

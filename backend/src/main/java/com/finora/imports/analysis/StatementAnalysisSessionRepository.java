@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -60,6 +61,29 @@ public interface StatementAnalysisSessionRepository extends JpaRepository<Statem
             ORDER BY COUNT(s) DESC
             """)
     List<Object[]> failureCountsByLayout();
+
+    /**
+     * How many customer imports failed, by reason, since some point in time -- Premium Import
+     * Reliability v1, §4's failure analytics. Deliberately narrower than
+     * {@link #failureCountsByLayout}: that answers "which LAYOUT defeats the parser", grouped
+     * across every source; this answers "how many real customers hit each failure reason", which
+     * is why {@code source} is filtered to {@code CUSTOMER_IMPORT} here and isn't there -- an
+     * admin's own diagnostic probing (source {@code ADMIN_ANALYSIS}) must not inflate a count that
+     * is meant to represent customer experience.
+     *
+     * <p>{@code since} has no default and no caller-side fallback: an unbounded scan of a table
+     * that only grows is a cost this method should never silently absorb on a caller's behalf.
+     */
+    @Query("""
+            SELECT s.failureCode, COUNT(s), MAX(s.createdAt)
+            FROM StatementAnalysisSession s
+            WHERE s.outcome = com.finora.imports.analysis.StatementAnalysisSession$Outcome.FAILED
+              AND s.source = com.finora.imports.analysis.StatementAnalysisSession$Source.CUSTOMER_IMPORT
+              AND s.createdAt >= :since
+            GROUP BY s.failureCode
+            ORDER BY COUNT(s) DESC
+            """)
+    List<Object[]> failureCodeCounts(@Param("since") Instant since);
 
     long countByOutcome(StatementAnalysisSession.Outcome outcome);
 

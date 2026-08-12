@@ -2,6 +2,7 @@ package com.finora.imports.analysis;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.finora.dto.ImportDto.FailureCountDto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
@@ -146,6 +147,35 @@ public class StatementAnalysisReportService {
                     repository.countByLayoutFingerprintAndOutcome(fingerprint,
                             StatementAnalysisSession.Outcome.FAILED));
         });
+    }
+
+    /**
+     * How many customer imports failed, by reason, since {@code since} -- Premium Import
+     * Reliability v1, §4. Fits this service's own charter exactly: no file name, no user id,
+     * a platform-wide count rather than a per-customer one. The support half of failure analytics
+     * (one customer's own recent failures) is deliberately NOT here -- it's
+     * {@code StatementAnalysisRecorder.recentCustomerFailures}, which carries a {@code userId} and
+     * belongs with the class that already owns that per-user boundary.
+     *
+     * <p>{@code failureCode} is left untranslated -- the raw stored value ({@code
+     * ErrorCode.valueOf(...).name()}, or an exception's simple class name for a codeless failure),
+     * not the wire code the customer-facing DTO translates to. This is an internal
+     * engineering/support view, and the more precise internal identifier is more useful here than
+     * the wire code would be. A null stored value groups under the literal
+     * {@code "UNKNOWN_FAILURE"} rather than silently vanishing from the count, since a failure that
+     * could not even be classified is exactly the kind this report should not let disappear.
+     *
+     * <p>{@code since} has no default and no fallback -- an unbounded scan of a table that only
+     * grows is a cost this method should never silently absorb on a caller's behalf.
+     */
+    @Transactional(readOnly = true)
+    public List<FailureCountDto> failureCounts(Instant since) {
+        return repository.failureCodeCounts(since).stream()
+                .map(row -> new FailureCountDto(
+                        row[0] == null ? "UNKNOWN_FAILURE" : (String) row[0],
+                        (long) row[1],
+                        (Instant) row[2]))
+                .toList();
     }
 
     @Transactional(readOnly = true)
