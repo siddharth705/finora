@@ -4,6 +4,7 @@ import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { CheckCircle2, UploadCloud, AlertTriangle, Clock, FileText, FileSpreadsheet } from 'lucide-react';
 import { importApi, importJobsApi, statementImportsApi, categoriesApi, accountsApi, type StagingResult } from '../api/endpoints';
 import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID } from '../api/errorCodes';
+import { IMPORT_FAILURE_MESSAGES } from '../api/importFailureMessages';
 import { BankLogo } from '../components/BankLogo';
 import { MaskedAccountNumber } from '../components/MaskedAccountNumber';
 import { VerificationPanel } from '../components/VerificationPanel';
@@ -380,6 +381,13 @@ export default function Import() {
         // Focus after the panel has re-rendered with the new state, so the user can type straight
         // away instead of hunting for the field they were just asked to fill in.
         setTimeout(() => passwordInput.current?.focus(), 0);
+      } else if (code && IMPORT_FAILURE_MESSAGES[code]) {
+        // Premium Import Reliability v1 failure UX contract: for a code we have curated copy for,
+        // that copy is what the user reads, not the server's `message` -- the whole point of the
+        // contract is that Finora controls the wording, even though the server's own message is
+        // already reasonable prose (see ExtractionCheck.java). Only a code with no curated entry
+        // falls through to the server message / generic fallback below.
+        setError(IMPORT_FAILURE_MESSAGES[code]);
       } else {
         setError(e.response?.data?.message ?? (isPdf ? 'Could not parse this PDF.' : 'Could not parse this CSV.'));
       }

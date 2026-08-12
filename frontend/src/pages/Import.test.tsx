@@ -6,7 +6,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Import from './Import';
 import { importApi, importJobsApi, categoriesApi, accountsApi, type ImportJobProgress } from '../api/endpoints';
 import type { StagedAccountSection } from '../types';
-import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID } from '../api/errorCodes';
+import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, NO_HEADER_DETECTED, NO_TRANSACTIONS_FOUND, SCANNED_OCR_REQUIRED } from '../api/errorCodes';
+import { IMPORT_FAILURE_MESSAGES } from '../api/importFailureMessages';
 import type { DetectedAccountInfo } from '../types';
 
 // Only the upload step's file-routing logic is under test here (stagePdf vs stageCsv, and the
@@ -275,6 +276,48 @@ describe('Import — file-type routing', () => {
 
     expect(await screen.findByText(/unable to reach the import service/i)).toBeInTheDocument();
     expect(screen.queryByText(/could not parse this pdf/i)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Premium Import Reliability v1, Sprint 1 item 1: the failure UX contract. Finora's own curated
+ * copy, not the server's `message`, is what a user reads for a code the contract owns -- see
+ * importFailureMessages.ts. A code the contract does NOT own falls through to exactly today's
+ * behaviour, unchanged (covered by the two generic-fallback tests above, not repeated here).
+ */
+describe('Import — failure UX contract', () => {
+  function rejectWithCode(errorCode: string) {
+    // The server message is deliberately different from the contract copy in every case below --
+    // if a test passed while actually showing this string, it would mean the contract lookup was
+    // never consulted, not that the two happened to agree.
+    return { response: { data: { errorCode, message: 'server-only wording that must not appear' } } };
+  }
+
+  it.each([
+    ['no transaction table found', NO_HEADER_DETECTED],
+    ['a table was found but nothing staged', NO_TRANSACTIONS_FOUND],
+    ['a scanned/image-only PDF', SCANNED_OCR_REQUIRED],
+  ])('shows the contract message, not the server message, for %s', async (_label, code) => {
+    vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue(rejectWithCode(code));
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+
+    expect(await screen.findByText(IMPORT_FAILURE_MESSAGES[code])).toBeInTheDocument();
+    expect(screen.queryByText(/server-only wording/i)).not.toBeInTheDocument();
+  });
+
+  it('falls back to the server message for a code the contract does not own', async () => {
+    // A real, valid ErrorCode (account-not-found, IMPORT_005) that simply isn't part of this
+    // narrow first cut of the contract -- the safe-fallback path, not an error condition.
+    vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue(rejectWithCode('IMPORT_005'));
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+
+    expect(await screen.findByText(/server-only wording/i)).toBeInTheDocument();
   });
 });
 

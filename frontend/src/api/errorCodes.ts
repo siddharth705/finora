@@ -15,3 +15,11 @@
 // the app had lost the file.
 export const PDF_PASSWORD_REQUIRED = 'IMPORT_008';
 export const PDF_PASSWORD_INVALID = 'IMPORT_009';
+
+// Added for the Premium Import Reliability v1 failure UX contract (Sprint 1, item 1). The backend
+// already writes good, specific prose into `message` for each of these, but the contract exists so
+// Finora controls the exact wording a user reads rather than depending on it -- see
+// importFailureMessages.ts, the only module that reads these three.
+export const NO_HEADER_DETECTED = 'IMPORT_001';
+export const NO_TRANSACTIONS_FOUND = 'IMPORT_007';
+export const SCANNED_OCR_REQUIRED = 'IMPORT_010';
