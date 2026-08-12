@@ -536,7 +536,7 @@ public class PdfTableLocator {
                 headerNames = new ArrayList<>();
                 headerAnchors = new ArrayList<>();
                 headerEnds = new ArrayList<>();
-                for (PositionedText t : row) {
+                for (PositionedText t : coalesceHeaderRuns(row)) {
                     headerNames.add(t.text().trim());
                     headerAnchors.add(t.x());
                     headerEnds.add(t.endX());
@@ -1145,12 +1145,16 @@ public class PdfTableLocator {
      *
      * <p>Only ever called on a line that is NOT already a header by itself. That restriction is
      * load-bearing, not caution: it means no document whose header is recognized today can have
-     * its header changed, so this can only turn "no table found" into "table found". It also
-     * protects the one layout that would otherwise be at risk --
-     * LEADING_NARRATION_CONTINUATION, where a real Canara Bank statement prints a dateless,
-     * amountless narration line directly beneath the header, which is exactly the shape
-     * {@link #wrapsOnto} accepts. There the header alone already scores as a header, so nothing
-     * is merged and that narration line stays the data row it is.
+     * its header changed, so this can only turn "no table found" into "table found".
+     *
+     * <p>Correction (P-001 investigation): this comment used to cite the real Canara Bank
+     * statement's LEADING_NARRATION_CONTINUATION layout as the layout this guard protects. It is
+     * not. Measured on {@code canara-savings-ledger-validation}, the line below that header sits
+     * <b>24pt</b> down -- outside {@link #HEADER_WRAP_MAX_GAP} (12.0) -- and carries a parseable
+     * number ("1,15,238.60"), which {@link #carriesNoDataValue} refuses on its own. Canara is
+     * doubly protected by the gap bound and the numeric check, and would be safe with this guard
+     * removed. The guard's real value is the general one stated above; no known corpus document
+     * depends on it alone.
      *
      * <p>Merging is also the SAFE direction for the prose false-positive that
      * {@link #MAX_HEADER_ROW_CELLS} and the density check exist to reject: joining lines adds
@@ -1399,6 +1403,97 @@ public class PdfTableLocator {
         float left = anchorOf(column);
         return new PositionedText(text.toString(), left, y, first.pageIndex(),
                 anyMeasured ? endOf(column) - left : 0f);
+    }
+
+    // How much horizontal space may sit between two runs of the SAME header cell. Bug fix (P-001),
+    // measured on three real HDFC savings statements: PDFBox emits a genuine 7-column header
+    // "Date | Narration | Chq./Ref.No. | Value Dt | Withdrawal Amt. | Deposit Amt. | Closing Balance"
+    // as ELEVEN runs, splitting every multi-word cell at its space ("Withdrawal" and "Amt." arrive
+    // separately). looksLikeHeaderRow already accepts that row (its own density check exists for
+    // exactly this document) -- what broke is what the columns are CALLED: one column per run gave
+    // TWO columns literally named "Amt.", which collide on the same key in bucketRow's map, and
+    // "amt" matches nothing in TransactionNormalizer's hint lists, so every amount fell through to
+    // its last-resort "balance" entry. Measured on the three traces: 230 / 343 / 7 rows staged with
+    // the running BALANCE as their amount, and every deposit staged as an EXPENSE -- the same
+    // silently-wrong-data failure already documented for Kotak's "Deposit (Cr.)" in
+    // TransactionNormalizer, arriving through a different door.
+    //
+    // 6pt is a midpoint with margin on both sides, not a fitted value. On the HDFC header the
+    // intra-cell gaps are 2.00 / 2.00 / 2.00 / 2.01 pt (one space at that font size); the smallest
+    // genuine INTER-column gap anywhere in the committed corpus is 7.99pt ("Txn Date" -> "Type" on
+    // the Axis credit-card fine-print line) and the smallest on any accepted header row is 13.38pt
+    // ("Dt" -> "Withdrawal", same HDFC header). Nothing in the corpus sits between 2.01 and 7.99.
+    private static final float HEADER_RUN_JOIN_MAX_GAP = 6.0f;
+
+    /**
+     * An accepted header row with each multi-word cell's runs put back together -- see
+     * {@link #HEADER_RUN_JOIN_MAX_GAP} for the real statements this was measured on.
+     *
+     * <p>Called at exactly one place: where {@code headerNames}/{@code headerAnchors}/
+     * {@code headerEnds} are built in {@code locateAll}, which is strictly AFTER
+     * {@link #looksLikeHeaderRow} has already accepted the row and AFTER any
+     * {@link #wrappedHeaderAt} merge. Both halves of that placement are load-bearing and were
+     * measured, not assumed:
+     *
+     * <ul>
+     *   <li>Joining runs SHRINKS {@code row.size()} while leaving the hint count unchanged or
+     *       higher, so it makes {@code looksLikeHeaderRow}'s density test
+     *       ({@code matches * 3 >= row.size()}) strictly easier to pass -- the opposite direction
+     *       from the vertical merge in {@link #wrappedHeaderAt}, which is safe precisely because it
+     *       adds cells faster than names. Applied to every line rather than only to an
+     *       already-accepted header, it invented a bogus section out of an Axis credit-card
+     *       statement's fine print, which is the exact false-positive class
+     *       {@link #MAX_HEADER_ROW_CELLS} and the density check exist to stop. Running it only on
+     *       a row that ALREADY scored as a header means this can never change WHETHER a row is a
+     *       header -- only what its columns are named.</li>
+     *   <li>{@code mergeHeaderLines} seeds its columns from the first line's RUNS and joins later
+     *       lines by nearest anchor, so coalescing before it changes which columns exist and
+     *       therefore which joins are made -- in simulation that shifted section boundaries on the
+     *       SBI credit-card statement, a WRAPPED_HEADER document. After the merge, nothing it
+     *       decided can be revisited.</li>
+     * </ul>
+     *
+     * <p>Both runs must carry a MEASURED width. With {@code width == 0}, {@code endX() == x} and
+     * the "gap" degenerates into the raw x-delta between two left edges, which says nothing about
+     * whether they touch -- it could join two genuinely separate columns. Older v1/v2 traces and
+     * some redacted runs are exactly that shape, and they keep today's behaviour, the same
+     * precedent RIGHT_ALIGNED_AMOUNTS and {@link #asOneCell} already set.
+     *
+     * <p>Neither run may parse as a date or a number. Header cells are words; a pair of adjacent
+     * VALUES that happen to sit close together (two amounts in narrow neighbouring columns) must
+     * never be glued into one fabricated column name.
+     */
+    private List<PositionedText> coalesceHeaderRuns(List<PositionedText> row) {
+        List<PositionedText> cells = new ArrayList<>();
+        for (PositionedText run : row) {
+            PositionedText previous = cells.isEmpty() ? null : cells.get(cells.size() - 1);
+            if (previous != null && joinsOntoHeaderCell(previous, run)) {
+                // Left run's x stays the anchor and the right run's endX becomes the end -- the same
+                // convention asOneCell uses for a vertically merged cell.
+                cells.set(cells.size() - 1, new PositionedText(
+                        previous.text().trim() + " " + run.text().trim(),
+                        previous.x(), previous.y(), previous.pageIndex(),
+                        run.endX() - previous.x()));
+                continue;
+            }
+            cells.add(run);
+        }
+        return cells;
+    }
+
+    /** Whether {@code right} is the continuation of the same header cell {@code left} begins. */
+    private boolean joinsOntoHeaderCell(PositionedText left, PositionedText right) {
+        if (left.pageIndex() != right.pageIndex()) return false;
+        if (left.width() <= 0 || right.width() <= 0) return false;
+        float gap = right.x() - left.endX();
+        // Negative means the runs overlap, which is not the one-space adjacency this looks for.
+        if (gap < 0 || gap > HEADER_RUN_JOIN_MAX_GAP) return false;
+        return !carriesAValue(left) && !carriesAValue(right);
+    }
+
+    private boolean carriesAValue(PositionedText run) {
+        String text = run.text().trim();
+        return CsvParser.parseDate(text) != null || CsvParser.parseNumeric(text) != null;
     }
 
     private float anchorOf(List<PositionedText> column) {

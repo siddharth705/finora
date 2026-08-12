@@ -267,13 +267,23 @@ class WrappedHeaderPdfTableLocatorTest {
      * <p>The damage is worse than a bad column name: the table came out with "Page Date" and
      * "1 of 5 Amount Balance", putting the amount and the balance in ONE cell. A mislabelled
      * column can be read; two values merged into one cell have lost one of them.
+     *
+     * <p>Fixture note (P-001 Fix A): "Amount" was originally given a width of 30, which left its
+     * right edge 2pt short of "Balance" -- the same gap a single space occupies at this font size,
+     * and therefore indistinguishable from one cell split into two runs, which is exactly what the
+     * horizontal run-join in {@code PdfTableLocator.coalesceHeaderRuns} now reunites. The
+     * fabricated geometry was also self-inconsistent: the data value under "Amount" was 38 wide
+     * and so overran the "Balance" heading's own anchor by 6pt, which no real statement does. The
+     * width is now 23, leaving a 9pt gap. Only that one number changed -- every x, every y and the
+     * 34pt column pitch this test is actually about are untouched. For reference, the smallest
+     * inter-column gap on any accepted header row in the real committed corpus is 13.38pt.
      */
     @Test
     void aPageFooterAboveAHeadingIsNotAbsorbedIntoIt() {
         List<PositionedText> runs = new java.util.ArrayList<>(List.of(
                 run("Page", 50f, 22f, 100f), run("1 of 5", 80f, 26f, 100f),
 
-                run("Date", 52f, 20f, 108f), run("Amount", 86f, 30f, 108f),
+                run("Date", 52f, 20f, 108f), run("Amount", 86f, 23f, 108f),
                 run("Balance", 118f, 33f, 108f),
 
                 run("12/01/2026", 50f, 45f, 130f), run("1,250.00", 86f, 38f, 130f),
