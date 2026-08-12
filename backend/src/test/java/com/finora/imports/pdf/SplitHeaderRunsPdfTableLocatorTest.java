@@ -250,11 +250,14 @@ class SplitHeaderRunsPdfTableLocatorTest {
         // mergeHeaderLines seeds its columns from the first line's RUNS: joining them first changes
         // which columns exist and therefore which joins are made, which moved section boundaries on
         // SBI in simulation. Both committed WRAPPED_HEADER documents are asserted structurally.
+        // P-002 Fix 2 (commit pending): SBI's fifth section was a 221-char/31-word EMI-legal-text
+        // paragraph misread as a header. It no longer opens a section, so SBI drops from 5 sections
+        // to 4 -- the remaining four are exactly the four this test already covered.
         PdfTableLocator.LocatedDocument sbi = new PdfTableLocator()
                 .locateAll(PdfTrace.load("sbi-credit-card-statement"), null);
-        assertThat(sbi.sections()).hasSize(5);
+        assertThat(sbi.sections()).hasSize(4);
         assertThat(sbi.sections().stream().map(s -> s.rows().size()).toList())
-                .isEqualTo(List.of(1, 2, 2, 2, 2));
+                .isEqualTo(List.of(1, 2, 2, 2));
 
         DocumentContext ctx = new DocumentContext("PDF", "SplitHeaderRunsPdfTableLocatorTest");
         PdfTableLocator.LocatedDocument composite = new PdfTableLocator()
@@ -350,12 +353,17 @@ class SplitHeaderRunsPdfTableLocatorTest {
                 Map.entry("hdfc-credit-card-ledger-validation", List.of(2, 2, 4)),
                 Map.entry("hdfc-txn-date-narration-header", List.of(1, 5)),
                 Map.entry("hsbc-savings-ledger-validation", List.of(1, 2)),
-                Map.entry("icici-credit-card-statement", List.of(3, 0, 2, 6)),
+                // icici, kotak, sbi: post P-002 Fix 2 (commit pending). Each document's spurious
+                // prose-header sections (a fee/EMI paragraph misread as a header) no longer open a
+                // section; every genuine section here is the same section, with the same rows, it
+                // always was. See HeaderProseRejectionTest for the full before/after and the
+                // pollution checks proving the rejected prose didn't leak into these rows.
+                Map.entry("icici-credit-card-statement", List.of(1, 6)),
                 Map.entry("icici-savings-ledger-validation", List.of(1, 2)),
-                Map.entry("kotak-credit-card-ledger-validation", List.of(8, 1, 2, 1, 2, 0, 2, 2, 2)),
+                Map.entry("kotak-credit-card-ledger-validation", List.of(0)),
                 Map.entry("kotak-savings-ledger-validation", List.of(1, 2)),
                 Map.entry("pnb-savings-ledger-validation", List.of(1, 62)),
-                Map.entry("sbi-credit-card-statement", List.of(5, 1, 2, 2, 2, 2)),
+                Map.entry("sbi-credit-card-statement", List.of(4, 1, 2, 2, 2)),
                 Map.entry("union-bank-savings-ledger-validation", List.of(1, 20)));
 
         for (Map.Entry<String, List<Integer>> e : expected.entrySet()) {

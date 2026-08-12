@@ -67,41 +67,71 @@ class MultiSectionZeroExtractionTest {
     // ---------------------------------------------------------------- the bug
 
     /**
-     * The primary reproduction. Eight located sections, every one of them a fragment of the card's
-     * fee schedule or MITC prose, zero transactions in the document -- which reached the review
-     * screen as eight accounts. The rejection is the ordinary one, not a new one.
+     * The primary reproduction, updated for P-002 Fix 2. Before Fix 2, eight located sections --
+     * every one of them a fragment of the card's fee schedule or MITC prose -- reached the review
+     * screen as eight accounts, and Fix 1 alone caught that with {@code IMPORT_NO_TRANSACTIONS_FOUND}
+     * (a table was "located", just unreadable). Fix 2 stops those prose paragraphs from being
+     * accepted as headers in the first place ({@code PdfTableLocator.looksLikeHeaderRow}'s
+     * {@code MAX_HEADER_CELL_WORDS} guard), so {@link PdfTableLocator#locateAll} now locates ZERO
+     * sections on this document -- asserted directly against {@code PdfTableLocator}, not inferred.
+     * {@link PdfTableLocator#locate} folds that into a single {@code preTableLines}-only table
+     * (see {@link com.finora.imports.pdf.PdfPreviewGenerator#generateSectionsWithContext}, which is
+     * why the GENERATOR still reports one section -- an all-unparseable one -- rather than zero),
+     * and that located table carries no header, so the rejection this test asserts changes CODE too:
+     * {@code IMPORT_NO_HEADER_DETECTED} rather than {@code IMPORT_NO_TRANSACTIONS_FOUND}. That is a
+     * more honest answer for this document -- Finora genuinely never found a table on it -- not a
+     * weaker one, and it is exactly what {@link ExtractionCheck}'s own doc comment says the
+     * distinction is for.
      */
     @Test
-    void kotak_eightSectionsAndNoTransactionAnywhere_isRejectedRatherThanStagedAsEightAccounts() {
-        assertThat(stagedSectionCountOf("kotak-credit-card-ledger-validation"))
-                .as("the shape of the bug: eight sections survive the filter, all empty")
-                .isEqualTo(8);
+    void kotak_zeroLocatedSectionsAndNoTransactionAnywhere_isRejectedRatherThanStagedAsEightAccounts() {
+        PdfTableLocator.LocatedDocument located = new PdfTableLocator()
+                .locateAll(PdfTrace.load("kotak-credit-card-ledger-validation"));
+        assertThat(located.sections())
+                .as("P-002 Fix 2: the prose-header guard rejects every one of Kotak's eight phantom "
+                        + "headers, so PdfTableLocator locates no sections at all -- not eight, zero")
+                .isEmpty();
+
+        // The generator still reports ONE section for this document -- not zero -- because with no
+        // located sections at all, PdfPreviewGenerator folds every line into a single
+        // preTableLines-only section reported as entirely unparseable. That single section is what
+        // the zero-extraction rejection below actually sees.
+        assertThat(rawSectionCountOf("kotak-credit-card-ledger-validation"))
+                .as("PdfPreviewGenerator's fallback: zero located sections becomes one all-unparseable section")
+                .isEqualTo(1);
 
         assertThatThrownBy(() -> stage("kotak-credit-card-ledger-validation"))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> {
                     ApiException api = (ApiException) e;
-                    assertThat(api.getCode()).isEqualTo(ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND);
+                    assertThat(api.getCode())
+                            .as("no table was located anywhere in the document post-Fix-2, which is "
+                                    + "the more specific and more honest of the two zero-extraction codes")
+                            .isEqualTo(ErrorCode.IMPORT_NO_HEADER_DETECTED);
                     assertThat(api.getMessage())
-                            .as("the message the single-section path has always produced, reused verbatim")
-                            .startsWith("Finora found a transaction table in this statement but could "
-                                    + "not read any transactions from it.")
-                            // "Never lose information": the recovered text is counted across the
-                            // WHOLE document, not just its first section.
-                            .contains("12 line(s) of text were recovered");
+                            .startsWith("Finora could not find a transaction table anywhere in this statement.")
+                            // "Never lose information": every line of the document, prose included,
+                            // is still recovered and offered for review -- a bigger number than
+                            // before Fix 2, because the whole document is now one section instead of
+                            // eight, and every one of its lines counts as recovered text.
+                            .contains("213 line(s) of text were recovered");
                 });
     }
 
     /**
-     * The same failure at five sections. Measured, not assumed: every one of SBI's five sections
-     * stages zero transactions (§3 of the investigation), including the two genuine transaction
-     * blocks the parser cannot yet read -- so the honest outcome is the same rejection. Making
-     * those blocks parse is a separate problem; presenting them as five empty accounts was never
-     * the right answer to it.
+     * The same failure, now at four sections rather than five. Measured, not assumed: SBI's fifth
+     * section (a 221-character/31-word EMI-legal-text paragraph, per the investigation) no longer
+     * scores as a header post-Fix-2 and its two rows fall to auxiliary text instead of opening a
+     * section -- every one of SBI's remaining four sections still stages zero transactions,
+     * including the two genuine transaction blocks the parser cannot yet read, so the honest
+     * outcome is still the same rejection, unchanged in code. Making those blocks parse is a
+     * separate problem; presenting them as accounts was never the right answer to it.
      */
     @Test
-    void sbi_fiveSectionsAndNoTransactionAnywhere_isRejected() {
-        assertThat(stagedSectionCountOf("sbi-credit-card-statement")).isEqualTo(5);
+    void sbi_fourSectionsAndNoTransactionAnywhere_isRejected() {
+        assertThat(rawSectionCountOf("sbi-credit-card-statement"))
+                .as("P-002 Fix 2: five sections before, four after -- the fifth was prose")
+                .isEqualTo(4);
 
         assertThatThrownBy(() -> stage("sbi-credit-card-statement"))
                 .isInstanceOf(ApiException.class)
@@ -198,16 +228,20 @@ class MultiSectionZeroExtractionTest {
     }
 
     /**
-     * The four documents this fix changes, and the three that were ALREADY rejected before it
-     * (single-section documents whose every row failed to normalise). Listing both together is the
-     * point: the rejected set grew by exactly the four the investigation measured, and by nothing
-     * else.
+     * The four documents Fix 1 changed, and the ERROR CODE each is rejected with today. Three keep
+     * {@code IMPORT_NO_TRANSACTIONS_FOUND} (a table was located, just unreadable). Kotak does not:
+     * P-002 Fix 2 additionally removes every one of its located sections (all eight were prose), so
+     * post-Fix-2 no table is located anywhere in the document at all, and {@link ExtractionCheck}
+     * correctly reports the more specific {@code IMPORT_NO_HEADER_DETECTED} instead. This is a
+     * genuine, deliberate difference from Fix 1's original shape, not an oversight -- see
+     * {@link #kotak_zeroLocatedSectionsAndNoTransactionAnywhere_isRejectedRatherThanStagedAsEightAccounts()}.
      */
-    private static final List<String> REJECTED_BY_THIS_FIX = List.of(
-            "au-credit-card-statement",
-            "hdfc-credit-card-ledger-validation",
-            "kotak-credit-card-ledger-validation",
-            "sbi-credit-card-statement");
+    private static final Map<String, ErrorCode> REJECTED_BY_FIX_1 = new LinkedHashMap<>() {{
+        put("au-credit-card-statement", ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND);
+        put("hdfc-credit-card-ledger-validation", ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND);
+        put("kotak-credit-card-ledger-validation", ErrorCode.IMPORT_NO_HEADER_DETECTED);
+        put("sbi-credit-card-statement", ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND);
+    }};
 
     private static final List<String> ALREADY_REJECTED_BEFORE_THIS_FIX = List.of(
             "hsbc-savings-ledger-validation",
@@ -229,12 +263,13 @@ class MultiSectionZeroExtractionTest {
 
     @Test
     void everyRejectedCorpusDocument_isRejectedForTheSameReasonWithTheSameCode() {
-        for (String trace : REJECTED_BY_THIS_FIX) {
-            assertThatThrownBy(() -> stage(trace))
-                    .as("%s stages nothing anywhere", trace)
+        for (Map.Entry<String, ErrorCode> expected : REJECTED_BY_FIX_1.entrySet()) {
+            assertThatThrownBy(() -> stage(expected.getKey()))
+                    .as("%s stages nothing anywhere", expected.getKey())
                     .isInstanceOf(ApiException.class)
                     .satisfies(e -> assertThat(((ApiException) e).getCode())
-                            .isEqualTo(ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND));
+                            .as("rejection code for %s", expected.getKey())
+                            .isEqualTo(expected.getValue()));
         }
         for (String trace : ALREADY_REJECTED_BEFORE_THIS_FIX) {
             assertThatThrownBy(() -> stage(trace))
@@ -252,7 +287,7 @@ class MultiSectionZeroExtractionTest {
         assertThat(PdfTrace.committedTraceNames())
                 .containsExactlyInAnyOrderElementsOf(
                         java.util.stream.Stream.of(STAGES_TRANSACTIONS.keySet().stream(),
-                                        REJECTED_BY_THIS_FIX.stream(), ALREADY_REJECTED_BEFORE_THIS_FIX.stream())
+                                        REJECTED_BY_FIX_1.keySet().stream(), ALREADY_REJECTED_BEFORE_THIS_FIX.stream())
                                 .flatMap(s -> s).toList());
     }
 

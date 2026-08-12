@@ -4,7 +4,7 @@
 # allowlistFingerprint: A3C0126B
 # capturedAt: 2026-08-12
 # generatedFrom: SBI Card credit card statement
-# capabilities: WRAPPED_HEADER, RIGHT_ALIGNED_AMOUNTS, LEADING_NARRATION_CONTINUATION
+# capabilities: RIGHT_ALIGNED_AMOUNTS, LEADING_NARRATION_CONTINUATION
 # regressions: 
 # requiredHeaders: Total Amount Due, Minimum Amount Due, Credit Limit, Available Credit Limit, Payment Due Date, Credit Card Number, Statement Date
 # motivation: real-world validation sweep for credit-card classifier evidence, PM-requested

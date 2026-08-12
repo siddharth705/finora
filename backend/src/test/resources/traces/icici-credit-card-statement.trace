@@ -4,7 +4,7 @@
 # allowlistFingerprint: A3C0126B
 # capturedAt: 2026-08-12
 # generatedFrom: ICICI Bank credit card statement
-# capabilities: WRAPPED_HEADER, WRAPPED_DESCRIPTION, LEADING_NARRATION_CONTINUATION, PAGE_BOUNDARY_ISOLATION
+# capabilities: WRAPPED_DESCRIPTION, LEADING_NARRATION_CONTINUATION, PAGE_BOUNDARY_ISOLATION
 # regressions: 
 # requiredHeaders: Total Amount due, Minimum Amount due, Credit Limit, STATEMENT DATE, PAYMENT DUE DATE
 # motivation: real-world validation sweep for credit-card classifier evidence, PM-requested

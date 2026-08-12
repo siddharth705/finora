@@ -97,11 +97,19 @@ class TraceCorpusHealthTest {
                 .isEmpty();
     }
 
+    // P-002 Fix 2 (commit pending) makes zero located sections the CORRECT reading of this one
+    // trace: every one of its eight sections was a prose paragraph (a fee schedule, MITC text)
+    // misread as a table header, not a genuine layout. See HeaderProseRejectionTest. The general
+    // rule below -- a trace that yields no sections is corruption, not evidence -- still holds for
+    // every other trace in the corpus; this is a deliberate, named exception, not a loosened check.
+    private static final String ALL_PROSE_NO_GENUINE_TABLE = "kotak-credit-card-ledger-validation";
+
     @Test
     void everyTraceStillParsesIntoATable() {
         // A trace that yields no sections is a file, not evidence of a layout. Catches a trace
         // corrupted by an editor, a bad merge, or a line-ending rewrite.
         for (String name : PdfTrace.committedTraceNames()) {
+            if (name.equals(ALL_PROSE_NO_GENUINE_TABLE)) continue;
             TraceValidator.Result result = TraceValidator.validate(name, PdfTrace.read(name));
             assertThat(result.sections())
                     .as("%s parses into no sections at all", name)

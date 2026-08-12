@@ -1717,6 +1717,38 @@ public class PdfTableLocator {
     // not as the primary discriminator it used to be.
     private static final int MAX_HEADER_ROW_CELLS = 16;
 
+    // P-002 Fix 2 (root cause of section over-segmentation). MAX_HEADER_ROW_CELLS and the density
+    // check above were meant to keep prose paragraphs out of looksLikeHeaderRow, but both fail
+    // open on real MITC/fee-schedule/T&C text: matchesAnyHint tokenizes a WHOLE CELL into words and
+    // matches any one of them against HEADER_HINTS, so a paragraph containing the ordinary English
+    // words "date" and "amount" scores hasDate=true, matches>=2 -- and the density guard, computed
+    // in PDFBox RUNS rather than words, measures a 600-character paragraph that PDFBox happened to
+    // emit as two or three long runs as maximally "dense" (matches*3 >= row.size() is trivial when
+    // row.size() is 2 or 3). Measured against the 20-trace corpus: every genuine header cell across
+    // every genuine table in the corpus is <= 7 words; every spurious prose header cell is >= 19
+    // words. 12 sits in the middle of that gap with no corpus member inside it, so it is not a
+    // tuned/fragile fit to any one document.
+    //
+    // MUST be measured per CELL of coalesceHeaderRuns(row) output, not on the raw pre-coalesce runs
+    // and not as a total word count across the row. PDFBox splits a genuine multi-word header cell
+    // ("Withdrawal Amt.") into several short runs, so an uncoalesced word count is a different,
+    // meaningless quantity -- coalesceHeaderRuns (P-001, commit 2bcb21e) is what turns those runs
+    // back into the real column names, and a genuine 7-column HDFC header coalesces to cells of
+    // <= 3 words each. Summing words across the whole row would also be wrong: a genuine 7-column
+    // header can carry ~15-20 words in total while every individual cell stays a short column name.
+    private static final int MAX_HEADER_CELL_WORDS = 12;
+
+    /** Whether any cell of {@code row}, after {@link #coalesceHeaderRuns}, is long enough to be
+     *  prose rather than a column name -- see {@link #MAX_HEADER_CELL_WORDS}. */
+    private boolean hasProseLengthCell(List<PositionedText> row) {
+        for (PositionedText cell : coalesceHeaderRuns(row)) {
+            String text = cell.text().trim();
+            if (text.isEmpty()) continue;
+            if (text.split("\\s+").length > MAX_HEADER_CELL_WORDS) return true;
+        }
+        return false;
+    }
+
     /**
      * Bug fix, verified against two real HDFC Bank statements that each extracted ZERO
      * transactions while reporting a successful import. Two independent over-strictnesses here,
@@ -1744,6 +1776,10 @@ public class PdfTableLocator {
      */
     private boolean looksLikeHeaderRow(List<PositionedText> row) {
         if (row.size() > MAX_HEADER_ROW_CELLS) return false;
+        // P-002 Fix 2: a coalesced cell longer than MAX_HEADER_CELL_WORDS is a paragraph, not a
+        // column name -- see that constant's own comment. Checked before the hint/density scoring
+        // below so a prose paragraph that happens to contain "date" and "amount" never reaches it.
+        if (hasProseLengthCell(row)) return false;
         int matches = 0;
         for (PositionedText t : row) {
             if (matchesAnyHint(t.text(), HEADER_HINTS)) matches++;
