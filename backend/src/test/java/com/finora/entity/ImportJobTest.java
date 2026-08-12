@@ -1,5 +1,6 @@
 package com.finora.entity;
 
+import com.finora.exception.ErrorCode;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -174,6 +175,87 @@ class ImportJobTest {
         assertThat(failed.recordFailure("boom again", Instant.now()))
                 .as("a dead-lettered job must stay dead-lettered")
                 .isEqualTo(ImportJob.FailureOutcome.ALREADY_FINISHED);
+    }
+
+    /**
+     * Premium Import Reliability v1, §5.4. FAIL_FAST is a known, permanent failure -- retrying
+     * cannot help, so this dead-letters on the very first call regardless of how little of the
+     * attempt budget has been spent.
+     */
+    @Test
+    void aFailFastFailureDeadLettersImmediately() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+        assertThat(job.getAttemptCount())
+                .as("must be nowhere near MAX_ATTEMPTS -- FAIL_FAST does not care")
+                .isLessThan(ImportJob.MAX_ATTEMPTS);
+
+        ImportJob.FailureOutcome outcome =
+                job.recordFailure("locked PDF", ErrorCode.RetryPolicy.FAIL_FAST, Instant.now());
+
+        assertThat(outcome).isEqualTo(ImportJob.FailureOutcome.DEAD_LETTERED);
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.FAILED);
+        assertThat(job.getFinishedAt()).isNotNull();
+    }
+
+    /**
+     * The RETRY policy must reproduce the pre-existing 2-arg overload's schedule exactly --
+     * {@link #aFailureDeadLettersOnlyOnceTheBudgetIsSpent} proves the 2-arg form itself; this
+     * proves the 3-arg form gives the identical answer when passed RETRY explicitly, which is the
+     * whole point of the 2-arg form now delegating to it.
+     */
+    @Test
+    void aRetryPolicyFailureMatchesTheExistingBudget() {
+        ImportJob job = job();
+        for (int attempt = 1; attempt < ImportJob.MAX_ATTEMPTS; attempt++) {
+            job.markClaimed("worker", Instant.now());
+            assertThat(job.recordFailure("boom", ErrorCode.RetryPolicy.RETRY, Instant.now()))
+                    .as("attempt %d must not be terminal", attempt)
+                    .isEqualTo(ImportJob.FailureOutcome.RETRY_SCHEDULED);
+            assertThat(job.getStatus()).isEqualTo(ImportJob.Status.QUEUED);
+        }
+
+        job.markClaimed("worker", Instant.now());
+        assertThat(job.recordFailure("boom", ErrorCode.RetryPolicy.RETRY, Instant.now()))
+                .isEqualTo(ImportJob.FailureOutcome.DEAD_LETTERED);
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.FAILED);
+    }
+
+    /**
+     * Premium Import Reliability v1, §5.4. An unrecognized exception gets exactly one retry, not
+     * the full five -- spending all five is wasted on a genuine bug that will fail identically
+     * every time, but zero risks losing a real transient crash on its first occurrence.
+     */
+    @Test
+    void aRetryOnceThenAlertFailureDeadLettersOnTheSecondAttempt() {
+        ImportJob job = job();
+
+        job.markClaimed("worker", Instant.now());
+        assertThat(job.recordFailure("mystery", ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT, Instant.now()))
+                .as("first failure must still get one retry")
+                .isEqualTo(ImportJob.FailureOutcome.RETRY_SCHEDULED);
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.QUEUED);
+
+        job.markClaimed("worker", Instant.now());
+        assertThat(job.recordFailure("mystery again", ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT, Instant.now()))
+                .as("second failure must dead-letter -- explicitly not MAX_ATTEMPTS (5)")
+                .isEqualTo(ImportJob.FailureOutcome.DEAD_LETTERED);
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.FAILED);
+    }
+
+    /** The terminal-state refusal is policy-independent -- checked before any policy is consulted. */
+    @Test
+    void aTerminalJobRefusesEveryPolicy() {
+        ImportJob cancelled = job();
+        cancelled.markClaimed("worker", Instant.now());
+        cancelled.cancel(Instant.now());
+
+        for (ErrorCode.RetryPolicy policy : ErrorCode.RetryPolicy.values()) {
+            assertThat(cancelled.recordFailure("boom", policy, Instant.now()))
+                    .as("%s must not resurrect a cancelled job", policy)
+                    .isEqualTo(ImportJob.FailureOutcome.ALREADY_FINISHED);
+            assertThat(cancelled.getStatus()).isEqualTo(ImportJob.Status.CANCELLED);
+        }
     }
 
     @Test

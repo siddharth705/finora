@@ -1,5 +1,6 @@
 package com.finora.entity;
 
+import com.finora.exception.ErrorCode;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -247,10 +248,52 @@ public class ImportJob {
     }
 
     /**
-     * Records a failed attempt, either scheduling a retry or dead-lettering.
+     * How many attempts {@code RETRY_ONCE_THEN_ALERT} spends before dead-lettering -- deliberately
+     * much smaller than {@link #MAX_ATTEMPTS}. Premium Import Reliability v1, §5.4: the honest
+     * answer to "is an exception this unrecognized transient or permanent" is "not yet known", and
+     * one retry absorbs a real transient blip without spending the full 5-attempt/~31-minute
+     * budget on a genuine bug that will fail identically every time. See
+     * {@link com.finora.exception.ErrorCode.RetryPolicy} for the three-tier model this codifies.
+     */
+    public static final int RETRY_ONCE_THEN_ALERT_MAX_ATTEMPTS = 2;
+
+    /**
+     * Records a failed attempt, either scheduling a retry or dead-lettering -- {@link
+     * ErrorCode.RetryPolicy#RETRY}, matching every caller before this overload existed.
+     *
+     * @return what happened -- see {@link FailureOutcome}
+     * @see #recordFailure(String, ErrorCode.RetryPolicy, Instant)
+     */
+    public FailureOutcome recordFailure(String error, Instant now) {
+        return recordFailure(error, ErrorCode.RetryPolicy.RETRY, now);
+    }
+
+    /**
+     * Records a failed attempt, either scheduling a retry or dead-lettering, according to how the
+     * exception that caused it was classified -- Premium Import Reliability v1, §5.4
+     * ({@code ExceptionClassifier}, §5.3, is what produces the {@link ErrorCode.RetryPolicy} a
+     * caller passes in; not wired to anything yet as of this method, see {@code ImportJobWorker}).
      *
      * <p>Exponential backoff from one minute, capped: a job whose dependency is down should back
      * off, but a job that will succeed on the next attempt should not wait an hour to prove it.
+     * The backoff schedule itself does not change per policy -- only WHEN a policy gives up and
+     * dead-letters does:
+     * <ul>
+     *   <li>{@link ErrorCode.RetryPolicy#FAIL_FAST} dead-letters on this very call, unconditionally,
+     *       regardless of {@code attemptCount}. A known, permanent failure (a locked PDF, an
+     *       unreadable layout) cannot be fixed by retrying, so there is nothing to schedule.</li>
+     *   <li>{@link ErrorCode.RetryPolicy#RETRY} dead-letters at {@link #MAX_ATTEMPTS} -- unchanged
+     *       from before this overload existed.</li>
+     *   <li>{@link ErrorCode.RetryPolicy#RETRY_ONCE_THEN_ALERT} dead-letters at {@link
+     *       #RETRY_ONCE_THEN_ALERT_MAX_ATTEMPTS} -- one retry, not five. The alert half of the name
+     *       is not this method's job: nothing here calls an alert hook (§5.6, a separate, later
+     *       item, gated on the standing Sentry/{@code SENTRY_DSN} pre-launch gap) -- this method
+     *       only makes the STATE MACHINE stop early; a caller that wants to alert on this
+     *       particular kind of dead-letter has to tell {@link FailureOutcome#DEAD_LETTERED} apart
+     *       itself, which it cannot yet, since the outcome does not currently say which policy
+     *       produced it. Noted as a real, open gap this commit does not close, not silently
+     *       assumed to not matter.</li>
+     * </ul>
      *
      * <p><b>Refuses to move a job that has already finished.</b> This used to write
      * {@code status = QUEUED} unconditionally, which made every terminal state reversible by a
@@ -259,14 +302,15 @@ public class ImportJob {
      * {@code ImportJobWorker} catches it in its general handler and calls this, which put the
      * CANCELLED job back on the queue. It was then re-claimed, ran to completion, and handed the
      * user the staged session they had pressed Stop on. Same shape for a COMPLETED job whose
-     * post-completion bookkeeping fails.
+     * post-completion bookkeeping fails. This check is policy-independent -- a terminal job stays
+     * finished no matter what classification a caller passes.
      *
      * <p>The check lives here rather than in the worker for the reason {@link #complete}'s own
      * comment gives: the next caller would have to remember the same rule, and the one after that.
      *
      * @return what happened -- see {@link FailureOutcome}
      */
-    public FailureOutcome recordFailure(String error, Instant now) {
+    public FailureOutcome recordFailure(String error, ErrorCode.RetryPolicy retryPolicy, Instant now) {
         if (this.status.isTerminal()) {
             // Deliberately does not touch lastError either. A CANCELLED job's story is "the owner
             // stopped it", and overwriting that with the exception the worker happened to hit on
@@ -274,7 +318,7 @@ public class ImportJob {
             return FailureOutcome.ALREADY_FINISHED;
         }
         this.lastError = error;
-        if (attemptCount >= MAX_ATTEMPTS) {
+        if (shouldDeadLetter(retryPolicy)) {
             this.status = Status.FAILED;
             this.finishedAt = now;
             return FailureOutcome.DEAD_LETTERED;
@@ -283,6 +327,14 @@ public class ImportJob {
         this.nextAttemptAt = now.plus(backoffFor(attemptCount));
         this.startedAt = null;
         return FailureOutcome.RETRY_SCHEDULED;
+    }
+
+    private boolean shouldDeadLetter(ErrorCode.RetryPolicy retryPolicy) {
+        return switch (retryPolicy) {
+            case FAIL_FAST -> true;
+            case RETRY -> attemptCount >= MAX_ATTEMPTS;
+            case RETRY_ONCE_THEN_ALERT -> attemptCount >= RETRY_ONCE_THEN_ALERT_MAX_ATTEMPTS;
+        };
     }
 
     /** 1, 2, 4, 8, 16 minutes. Capped so a transient failure does not park work for an hour. */
