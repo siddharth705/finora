@@ -37,6 +37,17 @@ public interface StatementAnalysisSessionRepository extends JpaRepository<Statem
     List<StatementAnalysisSession> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
     /**
+     * A user's own recent failed imports — Premium Import Reliability v1, §2.1's durable failure
+     * record. {@code source} is filtered to {@code CUSTOMER_IMPORT} deliberately: {@code userId}
+     * on an {@code ADMIN_ANALYSIS} row is the admin who ran the probe, not a customer, but an
+     * admin is still a user, and this endpoint must not surface their own diagnostic probing back
+     * to them as if it were a real failed statement import.
+     */
+    List<StatementAnalysisSession> findByUserIdAndSourceAndOutcomeOrderByCreatedAtDesc(
+            java.util.UUID userId, StatementAnalysisSession.Source source,
+            StatementAnalysisSession.Outcome outcome, Pageable pageable);
+
+    /**
      * The question this table was built to answer: which layouts defeat the parser, and how often.
      * Grouped by fingerprint and failure code together, because "this layout fails" and "this
      * layout fails FOR THIS REASON" lead to different fixes.

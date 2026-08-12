@@ -351,6 +351,18 @@ public class ImportDto {
             UUID id, String fileName, int rowCount, java.time.Instant createdAt, java.time.Instant expiresAt
     ) {}
 
+    /** One entry in "your recent failed imports" -- GET /import/failures (Premium Import
+     *  Reliability v1, §2.1). Deliberately does NOT carry {@code failureDetail}: that field can
+     *  hold a fragment of the document that defeated the parser
+     *  (StatementAnalysisRecorder's own doc comment on why the table truncates it), so it is
+     *  admin/debug-only and must never reach a customer response. {@code failureCode} is the
+     *  lookup key the frontend's own curated failure-UX contract (importFailureMessages.ts)
+     *  already turns into a real sentence -- this DTO hands over the code, not a message to
+     *  display verbatim. */
+    public record ImportFailureSummaryDto(
+            String reference, String fileName, String failureCode, java.time.Instant createdAt
+    ) {}
+
     /** What the frontend sends back after the user reviews/edits staged rows. A statement import
      *  is for exactly one account — either an existing one (existingAccountId) or a new one
      *  Finora should create from the reviewed/edited detection (newAccount). Exactly one of the

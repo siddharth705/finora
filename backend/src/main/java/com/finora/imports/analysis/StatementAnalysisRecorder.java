@@ -1,9 +1,11 @@
 package com.finora.imports.analysis;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.finora.dto.ImportDto.ImportFailureSummaryDto;
 import com.finora.exception.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -11,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -112,6 +115,29 @@ public class StatementAnalysisRecorder {
                     + "defeated the parser is now unrecorded", fileName, failureCode, e);
             return null;
         }
+    }
+
+    /**
+     * A user's own recent failed imports -- Premium Import Reliability v1, §2.1's durable failure
+     * record. Lives here rather than in a new service because this class is already the one place
+     * that owns {@code StatementAnalysisSessionRepository} outside the admin-only
+     * {@link StatementAnalysisReportService}, and CODING_STANDARDS.md keeps repository access
+     * behind a service rather than letting a controller reach into it directly.
+     *
+     * <p>Filtered to {@code CUSTOMER_IMPORT} + {@code FAILED} and mapped straight to the
+     * customer-facing DTO here, not in the controller: {@code failureDetail} can carry a fragment
+     * of the document that defeated the parser (see {@link #truncate}), so keeping the
+     * entity-to-DTO mapping in the one place that also writes the row is what guarantees that
+     * field can never leak into a customer response by a future caller forgetting to re-apply the
+     * same narrow projection.
+     */
+    public List<ImportFailureSummaryDto> recentCustomerFailures(UUID userId, int limit) {
+        return repository.findByUserIdAndSourceAndOutcomeOrderByCreatedAtDesc(userId,
+                        StatementAnalysisSession.Source.CUSTOMER_IMPORT, StatementAnalysisSession.Outcome.FAILED,
+                        PageRequest.of(0, limit))
+                .stream()
+                .map(s -> new ImportFailureSummaryDto(s.getReference(), s.getFileName(), s.getFailureCode(), s.getCreatedAt()))
+                .toList();
     }
 
     /**

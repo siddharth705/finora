@@ -5,6 +5,7 @@ import com.finora.dto.ImportDto.*;
 import com.finora.entity.ImportSession;
 import com.finora.imports.ImportConcurrencyLimiter;
 import com.finora.imports.ImportSessionService;
+import com.finora.imports.analysis.StatementAnalysisRecorder;
 import com.finora.security.CurrentUser;
 import com.finora.imports.ImportService;
 import com.finora.imports.StatementUpload;
@@ -19,17 +20,26 @@ import java.util.UUID;
 @RequestMapping("/api/v1/import")
 public class ImportController {
 
+    // How many recent failures GET /failures returns. A fixed recent-window cap rather than real
+    // pagination -- Premium Import Reliability v1 §2.1 scopes this as "enough to render a list",
+    // the same bar ImportSessionSummaryDto's sibling endpoint already sets; a paginated failure
+    // history is a later, separate concern if it turns out to be needed.
+    private static final int RECENT_FAILURES_LIMIT = 20;
+
     private final ImportService importService;
     private final ImportSessionService importSessionService;
     private final ImportConcurrencyLimiter concurrencyLimiter;
     private final CurrentUser currentUser;
+    private final StatementAnalysisRecorder analysisRecorder;
 
     public ImportController(ImportService importService, ImportSessionService importSessionService,
-                             ImportConcurrencyLimiter concurrencyLimiter, CurrentUser currentUser) {
+                             ImportConcurrencyLimiter concurrencyLimiter, CurrentUser currentUser,
+                             StatementAnalysisRecorder analysisRecorder) {
         this.importService = importService;
         this.importSessionService = importSessionService;
         this.concurrencyLimiter = concurrencyLimiter;
         this.currentUser = currentUser;
+        this.analysisRecorder = analysisRecorder;
     }
 
     // ADR-0002: staging now persists the reviewed-later state server-side, so a dropped session
@@ -117,6 +127,18 @@ public class ImportController {
     public ApiResponse<Void> deleteSession(@PathVariable UUID id) {
         importSessionService.deleteSession(currentUser.id(), id);
         return ApiResponse.ok(null, "Import session discarded");
+    }
+
+    // Premium Import Reliability v1, §2.1: "your recent failed imports" -- a document that never
+    // got far enough to become an ImportSession at all (a scanned PDF, no header found, zero
+    // transactions extracted) previously left no trace the customer who uploaded it could ever see
+    // again. ImportService.recordParseFailure already writes this row on every sync-path failure,
+    // customer and admin; this endpoint is the first thing that reads it back for the customer who
+    // owns it, filtered to their own CUSTOMER_IMPORT failures only -- never another user's rows,
+    // and never an ADMIN_ANALYSIS probe even if the same user happens to also be an admin.
+    @GetMapping("/failures")
+    public ApiResponse<List<ImportFailureSummaryDto>> listFailures() {
+        return ApiResponse.ok(analysisRecorder.recentCustomerFailures(currentUser.id(), RECENT_FAILURES_LIMIT));
     }
 
     private ImportSessionSummaryDto toSummary(ImportSession session) {
