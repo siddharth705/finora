@@ -1,6 +1,7 @@
 package com.finora.imports.jobs;
 
 import com.finora.entity.ImportJob;
+import com.finora.exception.ErrorCode;
 import com.finora.imports.ImportService;
 import com.finora.imports.StatementUpload;
 import com.finora.imports.storage.ContentAddress;
@@ -106,6 +107,7 @@ public class ImportJobWorker {
     private final Optional<StatementStorage> storage;
     private final WorkerObservability observability;
     private final ImportStageRecorder stageRecorder;
+    private final ExceptionClassifier exceptionClassifier;
 
     @Value("${app.import.queue.enabled:false}")
     private boolean enabled;
@@ -114,12 +116,14 @@ public class ImportJobWorker {
                             ImportService importService,
                             Optional<StatementStorage> storage,
                             WorkerObservability observability,
-                            ImportStageRecorder stageRecorder) {
+                            ImportStageRecorder stageRecorder,
+                            ExceptionClassifier exceptionClassifier) {
         this.jobStore = jobStore;
         this.importService = importService;
         this.storage = storage;
         this.observability = observability;
         this.stageRecorder = stageRecorder;
+        this.exceptionClassifier = exceptionClassifier;
 
         observability.publishQueueDepth(WORKER, JOB_KIND, jobStore::queueDepth);
         observability.publishOldestPendingAge(WORKER, JOB_KIND, jobStore::oldestQueuedAt);
@@ -305,10 +309,14 @@ public class ImportJobWorker {
 
     private void recordFailure(WorkerExecution execution, UUID jobId, Exception cause) {
         try {
+            // Classified once, outside the update lambda: classification reads nothing from the
+            // database and doesn't need the job's own transaction, and the lambda may not even run
+            // (jobStore.update is a no-op if the job was deleted between claim and failure).
+            ErrorCode.RetryPolicy policy = exceptionClassifier.classify(cause);
             ImportJob.FailureOutcome[] outcome = {ImportJob.FailureOutcome.RETRY_SCHEDULED};
             int[] attempts = {0};
             jobStore.update(jobId, job -> {
-                outcome[0] = job.recordFailure(describe(cause), Instant.now());
+                outcome[0] = job.recordFailure(describe(cause), policy, Instant.now());
                 attempts[0] = job.getAttemptCount();
             });
             switch (outcome[0]) {
