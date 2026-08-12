@@ -113,17 +113,66 @@ public enum ErrorCode {
     NOT_FOUND("GEN_001", HttpStatus.NOT_FOUND, "No such endpoint"),
     INTERNAL_ERROR("GEN_002", HttpStatus.INTERNAL_SERVER_ERROR, "Unexpected error");
 
+    /**
+     * How {@code ImportJobWorker}'s retry loop should treat an exception carrying this code --
+     * Premium Import Reliability v1, §5 ("Retry classification and failure handling"). Lives on
+     * {@code ErrorCode} because it is exactly the same kind of per-code metadata {@code
+     * defaultStatus}/{@code defaultMessage} already are, scoped deliberately to what {@code
+     * ErrorCode} already owns: KNOWN, named failures. Infrastructure exceptions
+     * ({@code StatementStorageException}, a {@code DataAccessException}) and unclassified
+     * application exceptions are not {@code ErrorCode}s at all and are not this enum's concern --
+     * that dispatch belongs to a separate {@code ExceptionClassifier} (not yet built), which defers
+     * to this field only for the one exception type that has an opinion of its own,
+     * {@code ApiException}.
+     */
+    public enum RetryPolicy {
+        /** A known, permanent failure -- retrying cannot succeed. Dead-letter on the first
+         *  attempt rather than spending the existing 5-attempt/31-minute backoff on something
+         *  that will fail identically every time. */
+        FAIL_FAST,
+        /** A transient condition worth the existing backoff schedule. Not assigned to any
+         *  {@code ErrorCode} today -- infrastructure exceptions aren't {@code ErrorCode}s, they're
+         *  classified by type, not by code (see the class doc above). Exists so a future code that
+         *  genuinely is retryable (should one ever need to be) has somewhere to say so without a
+         *  new field. */
+        RETRY,
+        /** Retry once, then dead-letter and alert -- the honest answer to "is this transient or
+         *  permanent" when neither is known yet. Not assigned to any {@code ErrorCode} today for
+         *  the same reason as {@code RETRY}; a code this deliberate is unlikely to exist, since a
+         *  named {@code ErrorCode} is by definition already a KNOWN failure. */
+        RETRY_ONCE_THEN_ALERT,
+    }
+
     private final String code;
     private final HttpStatus defaultStatus;
     private final String defaultMessage;
+    private final RetryPolicy retryPolicy;
 
+    /**
+     * Every existing call site uses this overload, and every one of them defaults to
+     * {@link RetryPolicy#FAIL_FAST}. For the ~15 {@code IMPORT_*} codes that is a real, reasoned
+     * default: each one is a known, permanent, user-input failure (a locked PDF, an unreadable
+     * layout, damaged bytes) that retrying cannot fix -- see the reliability plan's §5 for the
+     * full three-tier model this codifies. For every other code (TXN/ACC/AUTH/the generic
+     * fallbacks) it is a safe default rather than a reasoned one: nothing reads this field on
+     * those paths today, and {@code ExceptionClassifier} (not yet built) is only ever planned to
+     * consult it from {@code ImportJobWorker}'s catch site -- but "don't retry an exception this
+     * enum has no opinion about" is the conservative choice regardless, since retrying an
+     * unclassified failure five times is worse than dead-lettering it once.
+     */
     ErrorCode(String code, HttpStatus defaultStatus, String defaultMessage) {
+        this(code, defaultStatus, defaultMessage, RetryPolicy.FAIL_FAST);
+    }
+
+    ErrorCode(String code, HttpStatus defaultStatus, String defaultMessage, RetryPolicy retryPolicy) {
         this.code = code;
         this.defaultStatus = defaultStatus;
         this.defaultMessage = defaultMessage;
+        this.retryPolicy = retryPolicy;
     }
 
     public String code() { return code; }
     public HttpStatus defaultStatus() { return defaultStatus; }
     public String defaultMessage() { return defaultMessage; }
+    public RetryPolicy retryPolicy() { return retryPolicy; }
 }
