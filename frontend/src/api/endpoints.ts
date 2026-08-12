@@ -283,6 +283,17 @@ export interface ImportSessionSummary {
   expiresAt: string;
 }
 
+// Premium Import Reliability v1, §2.1 -- mirrors backend ImportDto.ImportFailureSummaryDto
+// exactly, including its deliberate omission of failureDetail (admin/debug-only, can carry a
+// fragment of the document that defeated the parser). failureCode is a lookup key for
+// importFailureMessages.ts, not a message to show verbatim.
+export interface ImportFailureSummary {
+  reference: string;
+  fileName: string;
+  failureCode: string | null;
+  createdAt: string;
+}
+
 export interface StagingResult {
   rows: StagedRow[];
   totalParsed: number;
@@ -375,6 +386,10 @@ export const importApi = {
   getSession: (id: string) =>
     api.get<{ sessionId: string; staging: StagingResult }>(`/import/sessions/${id}`).then((r) => r.data),
   discardSession: (id: string) => api.delete(`/import/sessions/${id}`),
+  // "Your recent failed imports" -- Premium Import Reliability v1, §2.1. A document that never got
+  // far enough to become an ImportSession (no header found, zero transactions, a scanned PDF)
+  // previously left no trace its owner could see again; this is that trace, read back.
+  listFailures: () => api.get<ImportFailureSummary[]>('/import/failures').then((r) => r.data),
 };
 
 /**

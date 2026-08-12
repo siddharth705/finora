@@ -4,8 +4,9 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import StatementHistory from './StatementHistory';
-import { statementImportsApi } from '../api/endpoints';
-import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../api/errorCodes';
+import { statementImportsApi, importApi } from '../api/endpoints';
+import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED, NO_HEADER_DETECTED } from '../api/errorCodes';
+import { IMPORT_FAILURE_MESSAGES } from '../api/importFailureMessages';
 import type { AccountStatementGroup } from '../types';
 
 // Scoped to re-importing a password-protected statement -- the one flow on this page where the
@@ -18,6 +19,9 @@ vi.mock('../api/endpoints', () => ({
     remove: vi.fn(),
     downloadFile: vi.fn(),
     transactions: vi.fn(),
+  },
+  importApi: {
+    listFailures: vi.fn(),
   },
 }));
 
@@ -100,6 +104,9 @@ describe('StatementHistory — re-importing a password-protected statement', () 
     navigate.mockReset();
     vi.mocked(statementImportsApi.listGroupedByAccount).mockReset().mockResolvedValue(groups);
     vi.mocked(statementImportsApi.reimport).mockReset().mockResolvedValue(reimportResult());
+    // No failed imports by default -- these tests are about the re-import flow, not the failures
+    // section, which has its own describe block below.
+    vi.mocked(importApi.listFailures).mockReset().mockResolvedValue([]);
   });
 
   it('re-imports in one click when no password is needed', async () => {
@@ -203,5 +210,79 @@ describe('StatementHistory — re-importing a password-protected statement', () 
     await clickReimport(user);
 
     expect(await screen.findByLabelText(/statement password/i)).toHaveAttribute('autocomplete', 'off');
+  });
+});
+
+/**
+ * Premium Import Reliability v1, §2.1's frontend slice: GET /import/failures displayed as its own
+ * section, independent of the account-groups list a failed import never joined. Reuses the same
+ * failure UX contract (importFailureMessages.ts) Import.tsx's live upload flow already draws on --
+ * a failure a user comes back to later reads the same way one they hit live does.
+ */
+describe('StatementHistory — failed imports', () => {
+  beforeEach(() => {
+    navigate.mockReset();
+    vi.mocked(statementImportsApi.listGroupedByAccount).mockReset().mockResolvedValue(groups);
+  });
+
+  function aFailure(overrides: Partial<{ reference: string; fileName: string; failureCode: string | null; createdAt: string }> = {}) {
+    return {
+      reference: 'SA-20260812-0001',
+      fileName: 'unreadable-statement.pdf',
+      failureCode: NO_HEADER_DETECTED,
+      createdAt: '2026-08-12T10:00:00Z',
+      ...overrides,
+    };
+  }
+
+  it('shows the curated contract message for a known failure code', async () => {
+    vi.mocked(importApi.listFailures).mockReset().mockResolvedValue([aFailure()]);
+    renderPage();
+
+    expect(await screen.findByText('unreadable-statement.pdf')).toBeInTheDocument();
+    expect(screen.getByText(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED])).toBeInTheDocument();
+  });
+
+  it('falls back to a safe generic message for an unmapped or missing failure code', async () => {
+    vi.mocked(importApi.listFailures).mockReset()
+      .mockResolvedValue([aFailure({ fileName: 'mystery-failure.csv', failureCode: null })]);
+    renderPage();
+
+    expect(await screen.findByText('mystery-failure.csv')).toBeInTheDocument();
+    expect(screen.getByText(/couldn't complete this import/i)).toBeInTheDocument();
+  });
+
+  it('shows no Failed Imports section at all when there are no failures', async () => {
+    vi.mocked(importApi.listFailures).mockReset().mockResolvedValue([]);
+    renderPage();
+
+    // Give the successful-imports list (which always renders) a chance to land first, so this
+    // isn't just "the failures query hasn't resolved yet".
+    await screen.findByText('HDFC Savings');
+    expect(screen.queryByText('Failed Imports')).not.toBeInTheDocument();
+  });
+
+  it('does not affect the account-groups list, re-import, or delete flows', async () => {
+    vi.mocked(importApi.listFailures).mockReset().mockResolvedValue([aFailure()]);
+    renderPage();
+
+    await screen.findByText('Failed Imports');
+    // The statement history this page exists to show is completely unaffected by a failure
+    // appearing alongside it.
+    expect(screen.getByText('HDFC Savings')).toBeInTheDocument();
+    expect(screen.getByTitle('Re-import Statement')).toBeInTheDocument();
+  });
+
+  it('fails closed: a broken failures query never blanks or blocks the rest of the page', async () => {
+    // React Query does not throw or surface a query's own error to the page without an explicit
+    // opt-in this call never makes -- this proves that stays true rather than just asserting it in
+    // a comment. The account-groups list is the far more important thing on this page and must
+    // render normally even when this secondary panel's own request fails outright.
+    vi.mocked(importApi.listFailures).mockReset().mockRejectedValue(new Error('network error'));
+    renderPage();
+
+    expect(await screen.findByText('HDFC Savings')).toBeInTheDocument();
+    expect(screen.getByTitle('Re-import Statement')).toBeInTheDocument();
+    expect(screen.queryByText('Failed Imports')).not.toBeInTheDocument();
   });
 });

@@ -2,13 +2,23 @@ import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ChevronDown, ChevronRight, FileText, Download, RefreshCw, Trash2, Eye, ListChecks, X,
+  ChevronDown, ChevronRight, FileText, Download, RefreshCw, Trash2, Eye, ListChecks, X, AlertTriangle,
 } from 'lucide-react';
-import { statementImportsApi } from '../api/endpoints';
+import { importApi, statementImportsApi, type ImportFailureSummary } from '../api/endpoints';
 import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../api/errorCodes';
+import { IMPORT_FAILURE_MESSAGES } from '../api/importFailureMessages';
 import { BankLogo } from '../components/BankLogo';
 import type { AccountStatementGroup, StatementSummary, Transaction } from '../types';
 import { formatDate } from '../utils/date';
+
+// Reused from the same failure UX contract Import.tsx's live upload flow already draws on
+// (Premium Import Reliability v1, §6) -- a failure a user comes back to later reads the same way
+// one they hit live does. A code the contract doesn't own (or none at all) gets one safe,
+// generic fallback rather than "undefined" or an internal code.
+function messageFor(failureCode: string | null): string {
+  return (failureCode && IMPORT_FAILURE_MESSAGES[failureCode])
+    || "Finora couldn't complete this import.";
+}
 
 function fmt(n: number | null) {
   if (n === null || n === undefined) return '—';
@@ -47,6 +57,19 @@ export default function StatementHistory() {
   const { data: groups, isLoading } = useQuery({
     queryKey: ['statement-imports'],
     queryFn: () => statementImportsApi.listGroupedByAccount(),
+  });
+
+  // Independent of the query above on purpose -- a failed statement never became an account group
+  // at all, so there is nothing to join them on, and this section must not gate or be gated by the
+  // successful-imports list. Failures rarely happen and this call is cheap, so no explicit loading
+  // state: the section simply appears once the query resolves rather than reserving space for it.
+  // React Query does not throw or surface this query's own errors to the page by default (that
+  // needs an explicit opt-in this call never makes) -- fails closed, on purpose: a broken failures
+  // panel must never block or blank the statements a user DID successfully import, the far more
+  // important thing on this page.
+  const { data: failures } = useQuery({
+    queryKey: ['import-failures'],
+    queryFn: () => importApi.listFailures(),
   });
 
   function toggleAccount(accountId: string) {
@@ -141,6 +164,8 @@ export default function StatementHistory() {
       </div>
 
       {error && <p className="text-danger text-sm">{error}</p>}
+
+      {!!failures?.length && <FailedImportsSection failures={failures} />}
 
       {accountGroups.length === 0 ? (
         <div className="bg-card rounded-xl2 shadow-card border border-border p-8 text-center">
@@ -328,6 +353,38 @@ function ReimportPasswordModal({
         </form>
       </div>
     </>
+  );
+}
+
+/**
+ * "Your recent failed imports" -- Premium Import Reliability v1, §2.1. Deliberately no retry
+ * action here yet: a failed sync import has no bytes retained, so there is nothing to retry
+ * against until §2's byte-retention work lands. This is visibility only -- what happened, and
+ * what to do about it in plain language -- which is still a real improvement over a failure that
+ * left no trace at all.
+ */
+function FailedImportsSection({ failures }: { failures: ImportFailureSummary[] }) {
+  return (
+    <div className="bg-card rounded-xl2 shadow-card border border-danger/30 overflow-hidden">
+      <div className="px-5 py-4 border-b border-border flex items-center gap-2">
+        <AlertTriangle size={16} className="text-danger" />
+        <div>
+          <h2 className="font-semibold text-ink text-sm">Failed Imports</h2>
+          <p className="text-xs text-muted">Statements Finora could not import.</p>
+        </div>
+      </div>
+      <div className="divide-y divide-border">
+        {failures.map((f) => (
+          <div key={f.reference} className="px-5 py-3.5">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <p className="text-sm font-medium text-ink truncate">{f.fileName}</p>
+              <p className="text-xs text-muted flex-shrink-0">{fmtDate(f.createdAt)}</p>
+            </div>
+            <p className="text-xs text-muted mt-1">{messageFor(f.failureCode)}</p>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
