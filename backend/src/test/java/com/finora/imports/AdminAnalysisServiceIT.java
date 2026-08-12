@@ -3,6 +3,7 @@ package com.finora.imports;
 import com.finora.AbstractIntegrationTest;
 import com.finora.imports.analysis.StatementAnalysisSession;
 import com.finora.imports.analysis.StatementAnalysisSessionRepository;
+import com.finora.imports.pdf.fixtures.PdfFixtureBuilder;
 import com.finora.repository.MerchantRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -131,5 +132,35 @@ class AdminAnalysisServiceIT extends AbstractIntegrationTest {
         var analysis = analysisRepository.findByReference(reference).orElseThrow();
         assertThat(analysis.getOutcome()).isEqualTo(StatementAnalysisSession.Outcome.FAILED);
         assertThat(analysis.getFailureCode()).isNotNull();
+    }
+
+    /**
+     * The section count this method records must be the one a customer's own import would produce
+     * -- not the locator's raw, pre-filter count.
+     *
+     * <p>{@link PdfFixtureBuilder#buildSummaryWithOneTransactionalSectionSample()} locates 3
+     * sections (a savings ledger that stages transactions, plus a term-deposit and a
+     * recurring-deposit schedule that stage none) but {@code StagedAccountSectionFilter} -- the
+     * same filter {@code ImportService} applies before it ever counts a section -- drops the two
+     * deposit schedules, leaving 1. Before this test existed, {@code AdminAnalysisService} recorded
+     * the raw count (3) here despite its own comment claiming to mirror {@code ImportService}
+     * exactly, which does not: an engineer reading this analysis for a customer's composite
+     * statement would see a different section count than the one the customer's own review screen
+     * showed for the identical file.
+     */
+    @Test
+    void recordedSectionCountIsTheFilteredAccountCountNotTheRawLocatedCount() throws Exception {
+        byte[] pdfBytes = PdfFixtureBuilder.buildSummaryWithOneTransactionalSectionSample();
+        var upload = new MockMultipartFile("file", "composite-summary.pdf", "application/pdf", pdfBytes);
+
+        String reference = adminAnalysisService.analyze(anAdmin(), upload, null);
+
+        var analysis = analysisRepository.findByReference(reference).orElseThrow();
+        assertThat(analysis.getOutcome()).isEqualTo(StatementAnalysisSession.Outcome.PARSED);
+        assertThat(analysis.getSectionCount())
+                .as("the filtered account count (1) a customer importing this file would see, not "
+                        + "the locator's raw section count (3) before the term-deposit and "
+                        + "recurring-deposit schedules are dropped as non-accounts")
+                .isEqualTo(1);
     }
 }

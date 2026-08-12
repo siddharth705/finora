@@ -107,17 +107,28 @@ public class AdminAnalysisService {
             if ("PDF".equals(format)) {
                 var result = pdfPreviewGenerator.generateSectionsWithContext(adminUserId, fileName, content, password);
                 fingerprint = result.documentContext().buildFingerprint();
-                List<StagedAccountSection> sections = result.sections();
+                // Filtered the same way ImportService filters before it ever counts or checks a
+                // section (StagedAccountSectionFilter.onlySectionsThatAreActuallyAccounts) -- not
+                // just before the zero-extraction check below. Reading result.sections() directly
+                // here recorded the raw located-section count (e.g. 4 for a composite deposit-
+                // schedule statement) where ImportService's diagnostics and the customer's own
+                // review screen already report the filtered account count (1) for the same file:
+                // the admin workbench and the customer would disagree about how many sections/
+                // accounts this document has, for a reason that has nothing to do with the
+                // zero-extraction question this method also asks.
+                List<StagedAccountSection> sections =
+                        StagedAccountSectionFilter.onlySectionsThatAreActuallyAccounts(result.sections());
                 diagnostics = ParseDiagnostics.of(
                         sections.stream().mapToInt(section -> section.rows().size()).sum(),
                         result.documentContext().unanchoredReasons());
-                // Mirrors ImportService exactly -- which, since P-002 Fix 1, means asking the
-                // question of the WHOLE document rather than only of documents that located a
-                // single section. The old gate here carried the same mistaken reading ("more than
-                // one detected section means the engine plainly found something"); left in place it
-                // would have recorded a zero-transaction multi-section statement as PARSED while
-                // the customer uploading it got IMPORT_NO_TRANSACTIONS_FOUND, which is the exact
-                // divergence this shared check exists to prevent (see ExtractionCheck).
+                // Mirrors ImportService exactly, now including the filter above: since P-002 Fix 1,
+                // this also means asking the zero-extraction question of the WHOLE document rather
+                // than only of documents that located a single section. The old gate here carried
+                // the same mistaken reading ("more than one detected section means the engine
+                // plainly found something"); left in place it would have recorded a zero-transaction
+                // multi-section statement as PARSED while the customer uploading it got
+                // IMPORT_NO_TRANSACTIONS_FOUND, which is the exact divergence this shared check
+                // exists to prevent (see ExtractionCheck).
                 ExtractionCheck.rejectIfNothingWasExtracted(sections, result.documentContext());
                 return required(analysisRecorder.recordParsed(adminUserId,
                         StatementAnalysisSession.Source.ADMIN_ANALYSIS, fileName, format, content.length,
