@@ -296,13 +296,31 @@ public class ImportService {
                     sections.stream().mapToInt(section -> section.rows().size()).sum(),
                     result.documentContext().unanchoredReasons());
 
+            // P-002 Fix 1. Hoisted out of the single-section branch below, where it used to live and
+            // where it only ever saw documents that located one table. A document that staged NO
+            // transaction in ANY section is the same failed extraction whether the locator cut it
+            // into one section or eight, but only the one-section shape was ever refused: the
+            // multi-section branch had no zero-extraction guard at all, and
+            // StagedAccountSectionFilter deliberately returns every section unfiltered when none of
+            // them has rows (it defers the verdict to "the caller's zero-transaction guard", which
+            // on this path was not being called). The result on real documents was a review screen
+            // offering eight zero-transaction accounts to confirm -- e.g. the committed
+            // kotak-credit-card-ledger-validation trace, whose eight located sections are prose
+            // fragments -- where the identical content in one section is cleanly rejected.
+            //
+            // The check itself is unchanged and shared, so the multi-section rejection is the same
+            // error code and the same message the single-section path has always produced. It only
+            // fires when the WHOLE document is empty; a multi-section document with transactions
+            // anywhere still proceeds, and its individual empty sections are still dropped by the
+            // filter above rather than newly rejected here.
+            ExtractionCheck.rejectIfNothingWasExtracted(sections, result.documentContext());
+
             if (sections.size() <= 1) {
                 // The common case (and the only case a CSV upload can ever produce): behaves exactly
                 // as this method always has, just wrapped in the new response envelope.
                 StagingResponse staged = sections.isEmpty()
                         ? new StagingResponse(List.of(), 0, 0, null, List.of())
                         : toStagingResponse(sections.get(0));
-                rejectIfNothingWasExtracted(staged, result.documentContext());
                 var session = importSessionService.createSession(userId, fileName, fileContent, staged.rows(), staged.detectedAccount(),
                         result.documentContext());
                 recordPdfParsed(userId, fileName, fileContent.length, fingerprint, sections.size(), startedAtMs,

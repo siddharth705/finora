@@ -1,8 +1,14 @@
 package com.finora.imports;
 
+import com.finora.dto.ImportDto.StagedAccountSection;
+import com.finora.dto.ImportDto.StagedRow;
 import com.finora.dto.ImportDto.StagingResponse;
+import com.finora.dto.ImportDto.UnparseableRow;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * The one rule that decides whether the engine got anything usable out of a document.
@@ -18,6 +24,53 @@ import com.finora.exception.ErrorCode;
 final class ExtractionCheck {
 
     private ExtractionCheck() {
+    }
+
+    /**
+     * The whole-document form: throws when NO section of a document staged a transaction.
+     *
+     * <p>P-002 Fix 1. Both callers used to ask this question only of documents that located a
+     * single section, and both said so in a comment ("more than one detected section means the
+     * engine plainly found something"). That reading is wrong on real statements: a credit-card
+     * statement whose fee schedule and MITC paragraphs are each mistaken for a table header
+     * produces eight located sections and not one transaction, and {@link
+     * StagedAccountSectionFilter} passes every one of them through precisely because none has rows
+     * -- it defers the verdict to this check. Gated on section count, this check never saw the
+     * document, and the user was offered eight empty accounts to confirm. The number of sections
+     * says how the page was cut up; it says nothing about whether anything was read.
+     *
+     * <p>Summed across sections rather than asked per section, deliberately: one empty section
+     * inside a document that parsed elsewhere is a non-account (the filter's job, and it already
+     * does it), whereas an empty document is a failed extraction (this check's job). The recovered
+     * line count quoted in the message is whole-document for the same reason.
+     *
+     * <p>For a one-section document this is exactly the argument the single-section call site used
+     * to build by hand, so that long-standing rejection keeps its code, its message and its count.
+     */
+    static void rejectIfNothingWasExtracted(List<StagedAccountSection> sections, DocumentContext ctx) {
+        rejectIfNothingWasExtracted(wholeDocumentView(sections), ctx);
+    }
+
+    /**
+     * Every section's rows and recovered text as one {@link StagingResponse}, built only to be read
+     * by the check above and then dropped -- nothing receives it.
+     *
+     * <p>{@code detectedAccount} is null on purpose. A document's sections can have detected
+     * different accounts, and choosing one of them here would be inventing an answer to a question
+     * nobody asked; the check reads only {@code rows()} and the SIZE of {@code unparseableRows()}.
+     */
+    private static StagingResponse wholeDocumentView(List<StagedAccountSection> sections) {
+        List<StagedRow> rows = new ArrayList<>();
+        List<UnparseableRow> recovered = new ArrayList<>();
+        int totalParsed = 0;
+        int flaggedDuplicates = 0;
+        for (StagedAccountSection section : sections) {
+            if (section.rows() != null) rows.addAll(section.rows());
+            if (section.unparseableRows() != null) recovered.addAll(section.unparseableRows());
+            totalParsed += section.totalParsed();
+            flaggedDuplicates += section.flaggedDuplicates();
+        }
+        return new StagingResponse(rows, totalParsed, flaggedDuplicates, null, recovered);
     }
 
     /**

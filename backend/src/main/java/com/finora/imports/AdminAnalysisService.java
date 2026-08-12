@@ -1,7 +1,6 @@
 package com.finora.imports;
 
 import com.finora.dto.ImportDto.StagedAccountSection;
-import com.finora.dto.ImportDto.StagingResponse;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
 import com.finora.imports.analysis.ParseDiagnostics;
@@ -112,16 +111,14 @@ public class AdminAnalysisService {
                 diagnostics = ParseDiagnostics.of(
                         sections.stream().mapToInt(section -> section.rows().size()).sum(),
                         result.documentContext().unanchoredReasons());
-                // Mirrors ImportService exactly, including only applying to the single-section
-                // case: more than one detected section means the engine plainly found something.
-                if (sections.size() <= 1) {
-                    ExtractionCheck.rejectIfNothingWasExtracted(sections.isEmpty()
-                            ? new StagingResponse(List.of(), 0, 0, null, List.of())
-                            : new StagingResponse(sections.get(0).rows(), sections.get(0).totalParsed(),
-                                    sections.get(0).flaggedDuplicates(), sections.get(0).detectedAccount(),
-                                    sections.get(0).unparseableRows()),
-                            result.documentContext());
-                }
+                // Mirrors ImportService exactly -- which, since P-002 Fix 1, means asking the
+                // question of the WHOLE document rather than only of documents that located a
+                // single section. The old gate here carried the same mistaken reading ("more than
+                // one detected section means the engine plainly found something"); left in place it
+                // would have recorded a zero-transaction multi-section statement as PARSED while
+                // the customer uploading it got IMPORT_NO_TRANSACTIONS_FOUND, which is the exact
+                // divergence this shared check exists to prevent (see ExtractionCheck).
+                ExtractionCheck.rejectIfNothingWasExtracted(sections, result.documentContext());
                 return required(analysisRecorder.recordParsed(adminUserId,
                         StatementAnalysisSession.Source.ADMIN_ANALYSIS, fileName, format, content.length,
                         fingerprint, sections.size(), elapsed(startedAtMs), diagnostics), fileName);
