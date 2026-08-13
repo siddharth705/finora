@@ -1,0 +1,4 @@
+Contact: mailto:security@finoratech.info # synthetic-ok
+Expires: 2027-08-13
+Preferred-Languages: en
+Canonical: https://finoratech.info/.well-known/security.txt
