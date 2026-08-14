@@ -1,5 +1,8 @@
 package com.finora.imports.storage;
 
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+
 /**
  * Where a statement's original bytes live. The only place in the codebase that knows.
  *
@@ -39,14 +42,40 @@ package com.finora.imports.storage;
 public interface StatementStorage {
 
     /**
-     * Stores content and returns its address. Idempotent: storing identical bytes twice yields the
-     * same address and does not duplicate the object.
+     * Stores content, read as a stream, and returns its address. Idempotent: storing identical
+     * content twice yields the same address and does not duplicate the object.
      *
+     * <p>BH-018. This is the real entry point every implementation provides -- {@code
+     * store(byte[])} below is a convenience built on top of it, not a second implementation to
+     * keep in sync. Use this overload directly whenever the content doesn't already need to be
+     * fully resident in memory for some other reason: {@code ImportJobService.accept()} is the
+     * motivating case, an upload endpoint that used to call {@code MultipartFile.getBytes()}
+     * purely to satisfy this interface, holding up to 10 MB on the heap per concurrent upload for
+     * no reason connected to what accept() itself does with it.
+     *
+     * @param contentLength the exact byte count {@code content} will yield. Implementations that
+     *         need it upfront (an S3-compatible {@code PutObject} call, for one) rely on this
+     *         being accurate -- it is not re-derived by counting, since that would mean reading
+     *         the stream twice.
      * @throws StatementStorageException if the content could not be durably stored. Callers must
      *         treat this as fatal for the request and must NOT persist a row -- a row referencing
      *         an object that was never written is the one failure this design cannot recover from.
      */
-    ContentAddress store(byte[] content);
+    ContentAddress store(InputStream content, long contentLength);
+
+    /**
+     * Convenience for the two callers ({@code ImportService.persistSection},
+     * {@code ImportSessionService.storeContent}) that already hold the full content in memory for
+     * reasons of their own -- parsing needed it long before either reaches this call, so a stream
+     * would buy them nothing. Delegates to {@link #store(InputStream, long)}; adds nothing beyond
+     * wrapping the array, and every implementation gets it for free rather than reimplementing it.
+     *
+     * @throws StatementStorageException if the content could not be durably stored. Same contract
+     *         as the streaming overload.
+     */
+    default ContentAddress store(byte[] content) {
+        return store(new ByteArrayInputStream(content), content.length);
+    }
 
     /**
      * Reads content back.

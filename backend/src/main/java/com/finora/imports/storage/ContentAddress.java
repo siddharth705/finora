@@ -1,5 +1,9 @@
 package com.finora.imports.storage;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -94,6 +98,44 @@ public record ContentAddress(String hash, String key) {
      */
     public static ContentAddress forContent(byte[] content) {
         String hash = hashOf(content);
+        return new ContentAddress(hash, "statements/" + hash.substring(0, 2) + "/" + hash.substring(2, 4) + "/" + hash + ".bin");
+    }
+
+    /**
+     * BH-018. The streaming twin of {@link #forContent}: copies {@code content} to {@code out}
+     * while computing its SHA-256 incrementally, so the caller never needs the whole upload
+     * resident in memory at once to learn its address -- only whatever buffer size the copy loop
+     * uses (a few KB), regardless of whether the source is a 10 KB CSV or a 10 MB PDF.
+     *
+     * <p>The address can only be known once every byte has been read, so this is necessarily a
+     * two-phase operation for any caller that also needs to place the content somewhere permanent
+     * (a content-addressed path or object key derived from the hash): copy-and-hash to a temporary
+     * location first via this method, then move or upload from there once the address is known.
+     * Each {@link StatementStorage} implementation owns that second phase itself, because where a
+     * safe temporary location is differs by backend -- see
+     * {@code FilesystemStatementStorage#store(InputStream, long)}'s own comment on why its scratch
+     * file must share a filesystem with the final target, which {@code R2StatementStorage} has no
+     * equivalent constraint for.
+     *
+     * @throws IOException if reading {@code content} or writing {@code out} fails. Callers must
+     *         treat this as fatal for the request, the same as {@link StatementStorageException}
+     *         from the store methods this feeds -- partial content written to {@code out} must
+     *         never be promoted to a permanent location.
+     */
+    public static ContentAddress copyAndAddress(InputStream content, OutputStream out) throws IOException {
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance(ALGORITHM);
+        } catch (NoSuchAlgorithmException e) {
+            // Same reasoning as hashOf(byte[]) above: SHA-256 is JDK-mandated, so absence means a
+            // broken runtime, not a case to handle.
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
+        // DigestInputStream updates the digest as each read() is served, so transferTo's internal
+        // copy loop -- a fixed-size buffer, not the whole stream at once -- is what actually
+        // performs both the hash and the copy in the same pass.
+        new DigestInputStream(content, digest).transferTo(out);
+        String hash = HexFormat.of().formatHex(digest.digest());
         return new ContentAddress(hash, "statements/" + hash.substring(0, 2) + "/" + hash.substring(2, 4) + "/" + hash + ".bin");
     }
 }

@@ -2,7 +2,12 @@ package com.finora.imports.storage;
 
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Random;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -90,5 +95,57 @@ class ContentAddressTest {
     void rejectsAnEmptyIdentityOrKey() {
         assertThatThrownBy(() -> new ContentAddress("", "statements/x")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new ContentAddress("abc", " ")).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // --- copyAndAddress (BH-018) -------------------------------------------------------------
+
+    @Test
+    void copyAndAddressProducesTheSameAddressAsForContent_forTheSameBytes() throws IOException {
+        byte[] content = bytes("a statement, streamed instead of held whole");
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+
+        ContentAddress streamed = ContentAddress.copyAndAddress(new ByteArrayInputStream(content), out);
+
+        assertThat(streamed).isEqualTo(ContentAddress.forContent(content));
+        assertThat(out.toByteArray()).isEqualTo(content);
+    }
+
+    @Test
+    void copyAndAddressWritesIncrementallyAsContentArrives_neverBuffersTheWholeThingFirst() throws IOException {
+        // The actual property BH-018 is about: not that the numbers come out right (the test
+        // above already covers that), but that getting them right never requires the whole
+        // upload resident in memory as one array. The write side is what actually distinguishes
+        // this from a naive "fix" -- InputStream.readAllBytes() *also* reads in bounded chunks
+        // internally (so tracking read() request sizes proves nothing; that mutation was tried
+        // and the test below did not catch it), but it always hands the OutputStream one single
+        // write of the complete array at the end. Real streaming writes the same small chunks it
+        // read, as it reads them. Tracking write() sizes is what actually tells the two apart.
+        byte[] large = new byte[5 * 1024 * 1024]; // 5 MB, larger than any single JDK copy buffer
+        new Random(42).nextBytes(large);
+
+        var maxSingleWriteSize = new int[]{0};
+        var writeCount = new int[]{0};
+        var out = new ByteArrayOutputStream() {
+            @Override
+            public synchronized void write(byte[] b, int off, int len) {
+                maxSingleWriteSize[0] = Math.max(maxSingleWriteSize[0], len);
+                writeCount[0]++;
+                super.write(b, off, len);
+            }
+        };
+
+        ContentAddress streamed = ContentAddress.copyAndAddress(new ByteArrayInputStream(large), out);
+
+        assertThat(streamed).isEqualTo(ContentAddress.forContent(large));
+        assertThat(out.toByteArray()).isEqualTo(large);
+        // JDK InputStream.transferTo's own copy buffer is 8 KB (DEFAULT_BUFFER_SIZE) -- generous
+        // headroom at 1 MB so this pins the property ("bounded, not file-sized"), not the JDK's
+        // private implementation constant, which this class has no business depending on exactly.
+        assertThat(maxSingleWriteSize[0])
+                .as("a single write() must never carry anywhere near the whole 5 MB content")
+                .isLessThan(1024 * 1024);
+        assertThat(writeCount[0])
+                .as("many small writes, not one write of everything")
+                .isGreaterThan(1);
     }
 }

@@ -7,6 +7,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -37,33 +39,65 @@ public class FilesystemStatementStorage implements StatementStorage {
         this.root = Path.of(root).toAbsolutePath().normalize();
     }
 
+    /**
+     * BH-018. The address can only be known once every byte has been read (see
+     * {@link ContentAddress#copyAndAddress}), so this is necessarily two phases: spool first,
+     * learn the address, then move into place. The scratch file is created directly under
+     * {@link #root} -- not the system temp directory -- specifically so the {@code ATOMIC_MOVE}
+     * below is guaranteed to land on the same filesystem as the final target. {@code root} always
+     * exists by construction; the hash-prefixed subdirectory the target itself lives under may not
+     * yet, which is why the scratch file can't simply be created there instead.
+     */
     @Override
-    public ContentAddress store(byte[] content) {
-        ContentAddress address = ContentAddress.forContent(content);
+    public ContentAddress store(InputStream content, long contentLength) {
+        Path scratch;
+        try {
+            scratch = Files.createTempFile(root, ".spool-", ".tmp");
+        } catch (IOException e) {
+            throw new StatementStorageException("Could not create a scratch file to spool an upload into", e);
+        }
+
+        ContentAddress address;
+        try {
+            try (OutputStream out = Files.newOutputStream(scratch)) {
+                address = ContentAddress.copyAndAddress(content, out);
+            }
+        } catch (IOException e) {
+            deleteQuietly(scratch);
+            throw new StatementStorageException("Could not spool statement content before storing it", e);
+        }
+
         Path target = resolve(address);
 
         // Identical content is already stored under this exact address -- that is what
         // content-addressing buys, and rewriting it would be pure cost. Returning early also makes
-        // a retry after a partial failure a no-op rather than a duplicate.
-        if (Files.exists(target)) return address;
+        // a retry after a partial failure a no-op rather than a duplicate. The scratch file was
+        // needed only to learn that; it carries nothing this address doesn't already have stored.
+        if (Files.exists(target)) {
+            deleteQuietly(scratch);
+            return address;
+        }
 
         try {
             Files.createDirectories(target.getParent());
-            // Write to a temp file and move: a crash mid-write must not leave a half-written object
-            // at an address that then reports as present. ATOMIC_MOVE keeps that guarantee on the
-            // same filesystem, which the temp file is on by construction (same parent directory).
-            Path temp = Files.createTempFile(target.getParent(), ".partial-", ".tmp");
-            try {
-                Files.write(temp, content);
-                Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE);
-            } catch (IOException e) {
-                Files.deleteIfExists(temp);
-                throw e;
-            }
+            // A crash mid-write must not leave a half-written object at an address that then
+            // reports as present. ATOMIC_MOVE keeps that guarantee, same as before this fix --
+            // only where the temp file was written and when its content became known have changed.
+            Files.move(scratch, target, StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException e) {
+            deleteQuietly(scratch);
             throw new StatementStorageException("Could not store statement " + address.hash(), e);
         }
         return address;
+    }
+
+    private static void deleteQuietly(Path path) {
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException e) {
+            log.warn("Could not clean up scratch file {} after a failed or superseded store -- "
+                    + "harmless, but it will sit in the storage root until removed by hand.", path, e);
+        }
     }
 
     @Override

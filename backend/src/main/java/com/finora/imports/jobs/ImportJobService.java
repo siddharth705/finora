@@ -151,7 +151,14 @@ public class ImportJobService {
         //
         // The repository's rule is that a comment asserting a guarantee the code lacks is worse
         // than silence. The guarantee was the correct one; the code now provides it.
-        ContentAddress address = active.store(file.getBytes());
+        //
+        // BH-018's other half. file.getBytes() used to materialise the whole upload -- up to
+        // 10 MB -- on the heap here, held for the whole store() call, with nothing gating how
+        // many concurrent uploads could each be doing that at once. getInputStream()+getSize()
+        // instead: StatementStorage.store(InputStream, long) spools through a fixed-size buffer
+        // regardless of file size, so a burst of concurrent uploads costs buffer-sized memory
+        // each, not file-sized.
+        ContentAddress address = active.store(file.getInputStream(), file.getSize());
 
         // Step 3, and everything that touches the database is inside it.
         //
