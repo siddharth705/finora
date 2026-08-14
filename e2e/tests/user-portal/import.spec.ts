@@ -139,9 +139,10 @@ test.describe('Phase 1 — statement upload', () => {
       // Anchored on the merged heading: the dates and amounts land in the right columns, which
       // they only can if the columns came from both lines. Read one line at a time, this table is
       // not found at all and none of these rows exist.
+      // Review table renders dates as DD-MMM-YYYY (formatDateDDMMMYYYY), not the raw ISO value.
       const review = userPage.getByRole('table');
-      await expect(review.getByText('2026-01-12')).toBeVisible();
-      await expect(review.getByText('2026-01-16')).toBeVisible();
+      await expect(review.getByText('12-Jan-2026')).toBeVisible();
+      await expect(review.getByText('16-Jan-2026')).toBeVisible();
       await expect(review.getByText('₹45000')).toBeVisible();
 
       /**
