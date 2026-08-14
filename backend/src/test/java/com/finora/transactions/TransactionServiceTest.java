@@ -23,6 +23,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
@@ -1005,5 +1006,33 @@ class TransactionServiceTest {
         assertThat(result.totalPages()).isEqualTo(5);
         assertThat(result.page()).isEqualTo(0);
         assertThat(result.size()).isEqualTo(10);
+    }
+
+    /**
+     * BH-009. {@code sortDir} went straight into {@code Sort.Direction.fromString} unvalidated,
+     * so a bogus value threw {@code IllegalArgumentException} and 500'd -- in the same method
+     * whose own comment explains that {@code page} and {@code size} are clamped precisely so a
+     * malformed param stops doing that. Two of three unvalidated inputs were fixed and the third
+     * was missed; this is the one that closes it. Not merely "does not throw" -- captures the
+     * {@code Pageable} the repository actually received and asserts the fallback direction is
+     * DESC, the documented behaviour, not just the absence of a crash.
+     */
+    @Test
+    void search_withAnUnrecognisedSortDir_fallsBackToDescendingRatherThanThrowing() {
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null, 0, 20, null, "bogus");
+        transactionService.search(userId, filter);
+
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), pageableCaptor.capture());
+        Sort.Order order = pageableCaptor.getValue().getSort().getOrderFor("txnDate");
+        assertThat(order)
+                .as("an unrecognised sortDir must still produce a real sort, not fail the search")
+                .isNotNull();
+        assertThat(order.getDirection())
+                .as("and the fallback must be the documented default, not an arbitrary one")
+                .isEqualTo(Sort.Direction.DESC);
     }
 }
