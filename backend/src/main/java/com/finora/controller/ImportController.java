@@ -103,7 +103,15 @@ public class ImportController {
     // yet-confirmed session instead of it silently existing only until it expires.
     @GetMapping("/sessions")
     public ApiResponse<List<ImportSessionSummaryDto>> listSessions() {
+        // toSummary() reads staged rows through readStagedRows(), which requireKind()s
+        // SINGLE_ACCOUNT (see ImportSessionService) -- a MULTI_ACCOUNT session (a composite PDF
+        // upload, e.g. HSBC's combined savings+card statement) stores its rows in sectionsJson
+        // instead and would throw there. The frontend's "Continue previous import" also has no
+        // resume flow for a multi-account session (resumeSession() only ever hydrates the
+        // single-account staging shape), so there's nothing useful to list it as anyway --
+        // filtered out here rather than surfaced as an entry whose "Continue" action would fail.
         List<ImportSessionSummaryDto> sessions = importSessionService.listActiveSessions(currentUser.id()).stream()
+                .filter(s -> ImportSession.KIND_SINGLE_ACCOUNT.equals(s.getSessionKind()))
                 .map(this::toSummary)
                 .toList();
         return ApiResponse.ok(sessions);
