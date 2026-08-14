@@ -229,11 +229,20 @@ sequencing below is a decision, not a scope cut — everything demoted stays tra
 **P1 — current, unchanged in priority:**
 1. **Bug-hunt findings closure** — still the highest priority, unaffected by this resequencing (§4).
 2. **Load testing baseline** — kept pre-Railway-Pro, because it doesn't depend on infrastructure that's
-   about to change. Measure API response times, database behavior, memory usage, and import
-   performance before claiming any capacity figure. **Caching evaluation is folded into this work**
-   rather than run as a separate item: the same instrumentation that measures load-test behavior is
-   what should surface slow endpoints and expensive queries. Do not add Redis speculatively — decide
-   only after this measurement exists (see the caching item in the architecture audit).
+   about to change. **Scope is deliberately narrow: measure reality, don't engineer for massive
+   scale.** Run at three tiers — 100, 500, 1,000 concurrent users — and at each tier record:
+   - API latency
+   - database usage (connection pool saturation, slow queries)
+   - import processing time
+   - memory usage
+
+   **Purpose: know the current limits, not push past them.** This is a baseline measurement, not a
+   scaling exercise — no infrastructure changes, no premature optimization, just numbers to replace
+   the current arithmetic-derived capacity estimate (§1, §7 R-11). **Caching evaluation is folded into
+   this same pass** rather than run separately: the same three tiers that surface API-latency and
+   database-usage numbers are what should also surface which specific endpoints/queries are slow. Do
+   not add Redis speculatively — decide only after this measurement exists (see the caching item in
+   the architecture audit).
 
 **P2 — after Railway Pro is purchased:**
 1. Backup + restore drill, retention policy, recovery runbook (R-4, release criterion 3).
@@ -576,8 +585,10 @@ in parallel with work you are doing anyway.
 2. Full E2E green in CI, cross-browser green, smoke blocking on every PR.
 3. ~~A restore from backup has been performed and timed, on a real database, at least once.~~
    **Moved to the post-Railway-Pro gate, not a v1.0 criterion — see §5a.**
-4. A load test at 10× expected launch volume with no error-rate regression, including a pass over
-   slow endpoints and expensive queries (the caching-evaluation measurement folds in here).
+4. A load-testing baseline at 100/500/1,000 concurrent users, recording API latency, database usage,
+   import processing time, and memory usage at each tier — measuring current limits, not clearing a
+   scale target (§5a). The same pass surfaces which endpoints/queries are slow, which is the
+   caching-evaluation measurement folded into this criterion.
 5. Uploads are scanned; PDFBox is current; the edge sets CSP and HSTS.
 6. Statement retention matches what the product says it does, enforced by a job with a test.
 7. A runbook exists for: stuck import job, dead-letter queue, failed deploy. **Database-restore
