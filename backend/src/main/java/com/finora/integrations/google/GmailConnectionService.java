@@ -155,24 +155,32 @@ public class GmailConnectionService {
      */
     private UUID consumeState(String state) {
         return transactionTemplate.execute(tx -> {
-            GmailOAuthState pending = states.findByStateHash(TokenHasher.sha256(state))
-                    .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST,
-                            "This Gmail connection link is not valid. Start again from Settings."));
-
+            String stateHash = TokenHasher.sha256(state);
             Instant now = Instant.now();
-            if (!pending.isRedeemable(now)) {
-                // Deliberately one message for both consumed and expired. A caller who did not start
-                // the flow learns nothing about whether a state existed and was already used; the
-                // user who did start it gets the same instruction either way.
-                log.warn("Rejected a Gmail OAuth callback: state was {} for user {}.",
-                        pending.isConsumed() ? "already used" : "expired", pending.getUserId());
+
+            // Strix security review, CWE-367. This used to read the row, check isRedeemable(), then
+            // save -- which two concurrent callbacks could both pass before either wrote, defeating
+            // the single-use guarantee this whole design rests on. The claim is one conditional
+            // UPDATE now: exactly one caller sees 1, everyone else sees 0 and stops here, before any
+            // outbound call and before anything is bound to a user. See the repository method's own
+            // doc comment for why an atomic claim rather than a pessimistic read lock.
+            if (states.claimForRedemption(stateHash, now) == 0) {
+                // Read only to say something useful in the log -- the decision is already made.
+                // Deliberately ONE message for every failure: a caller who did not start the flow
+                // learns nothing about whether a state existed, was already used, or expired.
+                states.findByStateHash(stateHash).ifPresentOrElse(
+                        s -> log.warn("Rejected a Gmail OAuth callback: state was {} for user {}.",
+                                s.isConsumed() ? "already used" : "expired", s.getUserId()),
+                        () -> log.warn("Rejected a Gmail OAuth callback: unknown state."));
                 throw new ApiException(HttpStatus.BAD_REQUEST,
                         "This Gmail connection link has expired or was already used. Start again from Settings.");
             }
-            pending.consume(now);
-            states.save(pending);
 
-            UUID userId = pending.getUserId();
+            GmailOAuthState claimed = states.findByStateHash(stateHash)
+                    .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST,
+                            "This Gmail connection link is not valid. Start again from Settings."));
+
+            UUID userId = claimed.getUserId();
             if (!userRepository.existsById(userId)) {
                 throw new ApiException(HttpStatus.BAD_REQUEST,
                         "The account this connection belongs to no longer exists.");

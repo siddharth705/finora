@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -105,6 +106,17 @@ class GmailConnectionServiceTest {
         return state;
     }
 
+    /** The atomic claim succeeds -- this caller won the race. */
+    private void stateIsClaimable() {
+        when(states.claimForRedemption(anyString(), any())).thenReturn(1);
+    }
+
+    /** The atomic claim affected no rows: unknown, already consumed, or expired -- indistinguishable
+     *  by design, and all rejected identically. */
+    private void stateIsNotClaimable() {
+        when(states.claimForRedemption(anyString(), any())).thenReturn(0);
+    }
+
     private void googleReturnsAValidGrant() {
         when(googleClient.exchangeCode(anyString())).thenReturn(
                 new GoogleOAuthClient.TokenResponse("access-token", REFRESH_TOKEN,
@@ -174,6 +186,7 @@ class GmailConnectionServiceTest {
     @DisplayName("a state cannot be redeemed twice")
     void completeConnect_rejectsAnAlreadyConsumedState() {
         GmailOAuthState consumed = pendingState(userId, Instant.now().plusSeconds(300), Instant.now());
+        stateIsNotClaimable();
         when(states.findByStateHash(anyString())).thenReturn(Optional.of(consumed));
 
         assertThatThrownBy(() -> service.completeConnect("some-state", "some-code"))
@@ -188,6 +201,7 @@ class GmailConnectionServiceTest {
     @Test
     void completeConnect_rejectsAnExpiredState() {
         GmailOAuthState expired = pendingState(userId, Instant.now().minusSeconds(1), null);
+        stateIsNotClaimable();
         when(states.findByStateHash(anyString())).thenReturn(Optional.of(expired));
 
         assertThatThrownBy(() -> service.completeConnect("some-state", "some-code"))
@@ -197,11 +211,42 @@ class GmailConnectionServiceTest {
 
     @Test
     void completeConnect_rejectsAnUnknownState() {
+        stateIsNotClaimable();
         when(states.findByStateHash(anyString())).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.completeConnect("forged", "some-code"))
                 .isInstanceOf(ApiException.class);
         verify(googleClient, never()).exchangeCode(anyString());
+    }
+
+    /**
+     * Strix security review, CWE-367 — the case an atomic claim exists for, and the one a
+     * read-then-check-then-save could not catch.
+     *
+     * <p>Here the row still LOOKS redeemable on a read: unconsumed, unexpired. The claim returns 0
+     * anyway, because a concurrent callback carrying the same state won the UPDATE a moment
+     * earlier. The loser must stop immediately — before exchanging the code, before binding
+     * anything to a user. Directly mirrors
+     * {@code ImportSessionServiceTest.claimForConfirmation_rejectsALostRace_whenTheAtomicUpdateAffectsZeroRows}.
+     *
+     * <p>This matters more than an ordinary double-submit: the callback is deliberately
+     * unauthenticated and the state is the only thing binding it to a Finora user, so a lost race
+     * that proceeded anyway would let someone holding a victim's callback URL bind their own mailbox
+     * to the victim's account.
+     */
+    @Test
+    @DisplayName("a state that loses the atomic claim is rejected, even though a read still shows it redeemable")
+    void completeConnect_rejectsALostRace_whenTheAtomicClaimAffectsZeroRows() {
+        GmailOAuthState stillLooksFine = pendingState(userId, Instant.now().plusSeconds(300), null);
+        when(states.claimForRedemption(anyString(), any())).thenReturn(0);
+        when(states.findByStateHash(anyString())).thenReturn(Optional.of(stillLooksFine));
+
+        assertThatThrownBy(() -> service.completeConnect("state", "code"))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("expired or was already used");
+
+        verify(googleClient, never()).exchangeCode(anyString());
+        verify(connections, never()).save(any());
     }
 
     /**
@@ -212,6 +257,7 @@ class GmailConnectionServiceTest {
     @Test
     void completeConnect_bindsTheConnectionToTheStatesOwner_notToAnyoneElse() {
         UUID stateOwner = UUID.randomUUID();
+        stateIsClaimable();
         when(states.findByStateHash(anyString()))
                 .thenReturn(Optional.of(pendingState(stateOwner, Instant.now().plusSeconds(300), null)));
         when(userRepository.existsById(stateOwner)).thenReturn(true);
@@ -231,6 +277,7 @@ class GmailConnectionServiceTest {
     @Test
     @DisplayName("the refresh token is stored encrypted, never in plaintext")
     void completeConnect_encryptsTheRefreshToken() {
+        stateIsClaimable();
         when(states.findByStateHash(anyString()))
                 .thenReturn(Optional.of(pendingState(userId, Instant.now().plusSeconds(300), null)));
         when(connections.findByGoogleUserIdAndStatusIn(anyString(), any())).thenReturn(Optional.empty());
@@ -259,6 +306,7 @@ class GmailConnectionServiceTest {
      */
     @Test
     void completeConnect_refusesAGrantWithNoRefreshToken() {
+        stateIsClaimable();
         when(states.findByStateHash(anyString()))
                 .thenReturn(Optional.of(pendingState(userId, Instant.now().plusSeconds(300), null)));
         when(userRepository.existsById(userId)).thenReturn(true);
@@ -278,6 +326,7 @@ class GmailConnectionServiceTest {
         // Two accounts ingesting the same receipts would attribute one person's spending to two.
         GmailConnection somebodyElses = new GmailConnection();
         somebodyElses.setUserId(UUID.randomUUID());
+        stateIsClaimable();
         when(states.findByStateHash(anyString()))
                 .thenReturn(Optional.of(pendingState(userId, Instant.now().plusSeconds(300), null)));
         when(connections.findByGoogleUserIdAndStatusIn(anyString(), any()))
@@ -289,16 +338,32 @@ class GmailConnectionServiceTest {
                 .hasMessageContaining("another Finora account");
     }
 
+    /**
+     * The state is claimed before Google is contacted at all.
+     *
+     * <p>Asserts the ORDER, not just that both happened: the claim is what makes the callback
+     * single-use, so an implementation that exchanged the code first and burned the state afterwards
+     * would leave a window where a replayed URL still reached Google.
+     *
+     * <p>Previously this asserted {@code pending.isConsumed()} on the in-memory entity. That check
+     * became meaningless once redemption moved into an atomic UPDATE — the row is consumed in the
+     * database and the loaded entity is never mutated, so the old assertion would fail on correct
+     * code and pass on code that mutated the object without persisting it. It was testing the
+     * mechanism rather than the property.
+     */
     @Test
-    void completeConnect_marksTheStateConsumedBeforeDoingAnythingElse() {
+    void completeConnect_claimsTheStateBeforeContactingGoogle() {
         GmailOAuthState pending = pendingState(userId, Instant.now().plusSeconds(300), null);
+        stateIsClaimable();
         when(states.findByStateHash(anyString())).thenReturn(Optional.of(pending));
         when(connections.findByGoogleUserIdAndStatusIn(anyString(), any())).thenReturn(Optional.empty());
         googleReturnsAValidGrant();
 
         service.completeConnect("state", "code");
 
-        assertThat(pending.isConsumed()).isTrue();
+        InOrder inOrder = inOrder(states, googleClient);
+        inOrder.verify(states).claimForRedemption(anyString(), any());
+        inOrder.verify(googleClient).exchangeCode(anyString());
     }
 
     // ---------- disconnect ----------
