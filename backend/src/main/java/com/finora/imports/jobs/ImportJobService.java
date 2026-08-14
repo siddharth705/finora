@@ -250,7 +250,16 @@ public class ImportJobService {
      * <p>{@link ImportJobStageRepository#findByJobIdOrderByRecordedAtAsc} already returns every
      * stage across every attempt in the right order -- this method's only job is the ownership
      * check and the entity-to-DTO assembly.
+     *
+     * <p>{@code @Transactional(readOnly = true)}, added by a post-ship review: this is two
+     * independent SELECTs (the job row, then its stage rows), and without a shared transaction a
+     * write landing between them -- a stage closing, or the job dead-lettering -- could hand back a
+     * response whose {@code status}/{@code failureCode} and {@code stages} describe two different
+     * moments. The window is narrow in practice (one worker owns a job's writes at a time), but
+     * costs nothing to close and matches {@link #cancel}'s own defensive use of the same annotation
+     * a few lines below.
      */
+    @Transactional(readOnly = true)
     public ImportJobDto.Timeline timeline(UUID userId, UUID jobId) {
         ImportJob job = repository.findByIdAndUserId(jobId, userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Import job not found."));

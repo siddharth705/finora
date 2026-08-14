@@ -64,6 +64,20 @@ const MONTH_ABBREVIATIONS = [
  * for the UTC-midnight-shifts-a-day-behind bug documented above, without inheriting locale
  * variance.
  */
+/**
+ * The time-of-day half of {@link formatDate} -- a real moment (an `Instant`, e.g. when an import
+ * stage ran), rendered in the viewer's own timezone, in the same `'en-IN'` locale every other
+ * formatter here uses. Bug fix: the import timeline (Premium Import Reliability v1, §3.1) first
+ * shipped calling `toLocaleTimeString()` with no locale argument, the one date/time display in the
+ * app that let the browser's default locale decide the format instead of matching every sibling
+ * call site's explicit `'en-IN'`.
+ */
+export function formatTime(value: string | null | undefined): string {
+  if (!value) return '';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toLocaleTimeString('en-IN');
+}
+
 export function formatDateDDMMMYYYY(value: string | null | undefined): string {
   if (!value) return '';
 

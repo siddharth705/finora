@@ -528,4 +528,37 @@ class ImportJobEndpointIT extends AbstractIntegrationTest {
                 .as("translated to the wire code, not the raw stored ErrorCode enum name")
                 .isEqualTo("IMPORT_001");
     }
+
+    /**
+     * Bug fix, caught by a post-ship review (V78): V77's {@code failure_code VARCHAR(32)} matched
+     * {@code StatementAnalysisSession.failure_code}'s existing column shape, but this column is
+     * written in the SAME transaction as {@code lastError}/{@code status}/{@code nextAttemptAt} --
+     * so a value too long to fit used to roll back the whole failure-recording write, stranding the
+     * job with no retry scheduled. {@code ErrorCode.failureCodeOf} falls back to an exception's
+     * simple class name for anything that isn't a coded {@code ApiException}, and this pipeline
+     * already anticipates real exception types longer than 32 characters (e.g. Spring's own
+     * {@code TransientDataAccessResourceException}, 36 characters) -- this proves the exact write
+     * this bug would have broken now succeeds and round-trips the full value, against real Postgres
+     * rather than the in-memory entity the unit tests already cover.
+     */
+    @Test
+    void aFailureCodeLongerThanTheOldThirtyTwoCharacterLimitPersistsWithoutError() {
+        User user = user();
+        ResponseEntity<String> accepted = restTemplate.exchange(
+                "/api/v1/import/jobs", HttpMethod.POST, upload(user, "statement.csv", CSV), String.class);
+        UUID jobId = UUID.fromString(read(accepted).get("data").get("jobId").asText());
+        String longFailureCode = "TransientDataAccessResourceException"; // 37 chars, > old VARCHAR(32)
+        assertThat(longFailureCode.length()).isGreaterThan(32);
+
+        ImportJob job = jobRepository.findById(jobId).orElseThrow();
+        job.markClaimed("worker", Instant.now());
+        job.recordFailure("TransientDataAccessResourceException: connection reset", longFailureCode,
+                com.finora.exception.ErrorCode.RetryPolicy.RETRY, Instant.now());
+        jobRepository.save(job);
+        jobRepository.flush();
+
+        assertThat(jobRepository.findById(jobId).orElseThrow().getFailureCode())
+                .as("must round-trip in full -- a silent truncation would be its own, quieter bug")
+                .isEqualTo(longFailureCode);
+    }
 }

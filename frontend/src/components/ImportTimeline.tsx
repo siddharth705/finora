@@ -3,6 +3,7 @@ import { CheckCircle2, AlertTriangle, Loader2, MinusCircle } from 'lucide-react'
 import { importJobsApi, type ImportJobTimeline as Timeline, type ImportTimelineStage } from '../api/endpoints';
 import { isSettled, stageLabel } from '../lib/importJob';
 import { importFailureMessage } from '../api/importFailureMessages';
+import { formatTime } from '../utils/date';
 import { POLL_SCHEDULE_MS } from './ImportProgress';
 
 /**
@@ -126,14 +127,14 @@ export function ImportTimeline({
   );
 }
 
-const OUTCOME_ICON: Record<ImportTimelineStage['outcome'], typeof CheckCircle2> = {
+const OUTCOME_ICON: Partial<Record<ImportTimelineStage['outcome'], typeof CheckCircle2>> = {
   COMPLETED: CheckCircle2,
   FAILED: AlertTriangle,
   RUNNING: Loader2,
   SKIPPED: MinusCircle,
 };
 
-const OUTCOME_COLOR: Record<ImportTimelineStage['outcome'], string> = {
+const OUTCOME_COLOR: Partial<Record<ImportTimelineStage['outcome'], string>> = {
   COMPLETED: 'text-success',
   FAILED: 'text-warning',
   RUNNING: 'text-primary',
@@ -141,9 +142,14 @@ const OUTCOME_COLOR: Record<ImportTimelineStage['outcome'], string> = {
 };
 
 function TimelineRow({ stage }: { stage: ImportTimelineStage }) {
-  const Icon = OUTCOME_ICON[stage.outcome];
-  const color = OUTCOME_COLOR[stage.outcome];
-  const time = stage.startedAt ? new Date(stage.startedAt).toLocaleTimeString() : null;
+  // Bug fix: a Record without a fallback here means a stage.outcome value the frontend's own type
+  // hasn't been updated for (drift from the backend's ImportJobStage.Outcome enum, which this
+  // union isn't compiler-checked against) would resolve to `undefined` and crash `<Icon />` with
+  // an invalid-element-type error -- unlike `stageLabel`, which already guards the identical class
+  // of lookup with `?? 'Working'`.
+  const Icon = OUTCOME_ICON[stage.outcome] ?? MinusCircle;
+  const color = OUTCOME_COLOR[stage.outcome] ?? 'text-muted';
+  const time = formatTime(stage.startedAt);
 
   return (
     <li className="flex items-center gap-3">

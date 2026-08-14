@@ -108,11 +108,18 @@ export function percent(job: ImportJobProgress): number | null {
 /**
  * The one line of detail under the label, or null when there is nothing honest to add.
  *
- * A failed job shows the server's message: `error` is only populated once the job has actually
- * FAILED, so anything here is final rather than a transient blip mid-retry.
+ * Bug fix, caught by a post-ship review: this used to return `job.error` for a FAILED job --
+ * `ImportJob.lastError`, raw `ExceptionClass: message` text `ErrorCode`'s own doc calls "never fit
+ * to show a customer directly." Before the import timeline (Premium Import Reliability v1, §3.1)
+ * existed, that raw string was still the ONLY account of the failure on screen, so showing it was
+ * the least-bad option. Now `ImportTimeline` renders alongside this component for the entire time
+ * a FAILED job stays mounted and owns a curated, translated failure reason -- so this returning
+ * `job.error` too meant a customer saw both at once, permanently, disagreeing with each other in
+ * tone and content for every failure without a curated `ErrorCode`. FAILED now has nothing to add
+ * here; the reason belongs to `ImportTimeline` alone.
  */
 export function detail(job: ImportJobProgress): string | null {
-  if (job.status === 'FAILED') return job.error;
+  if (job.status === 'FAILED') return null;
   if (job.rowsTotal === null) return null;
   if (job.status === 'COMPLETED') {
     return `${job.rowsTotal} ${job.rowsTotal === 1 ? 'transaction' : 'transactions'} found`;

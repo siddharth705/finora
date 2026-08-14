@@ -138,30 +138,24 @@ public class StatementAnalysisRecorder {
      * the frontend's failure-UX contract (importFailureMessages.ts) is keyed by. Handing the raw
      * enum name to a customer response meant every single row in the failures list fell through to
      * that contract's generic fallback, silently, since the lookup never threw -- it just never
-     * matched. {@link #wireCodeOf} translates at this one boundary, so the customer-facing DTO
-     * carries what a customer-facing consumer actually expects, while the entity/database keep
-     * recording the enum name unchanged (every existing admin histogram and analytics query is
-     * already built on that value and must not move out from under them).
+     * matched. {@link com.finora.exception.ErrorCode#wireCodeOrNull} translates at this one
+     * boundary, so the customer-facing DTO carries what a customer-facing consumer actually
+     * expects, while the entity/database keep recording the enum name unchanged (every existing
+     * admin histogram and analytics query is already built on that value and must not move out
+     * from under them). Extracted onto {@code ErrorCode} itself, rather than kept as a private
+     * method here, once a second table ({@code ImportJob.failureCode}, Premium Import Reliability
+     * v1, §3.1) needed the identical translation -- simplification, caught by a post-ship review:
+     * a private one-line pass-through with a single caller adds a hop with nothing left to explain
+     * that {@code ErrorCode.wireCodeOrNull}'s own doc comment doesn't already say.
      */
     public List<ImportFailureSummaryDto> recentCustomerFailures(UUID userId, int limit) {
         return repository.findByUserIdAndSourceAndOutcomeOrderByCreatedAtDesc(userId,
                         StatementAnalysisSession.Source.CUSTOMER_IMPORT, StatementAnalysisSession.Outcome.FAILED,
                         PageRequest.of(0, limit))
                 .stream()
-                .map(s -> new ImportFailureSummaryDto(s.getReference(), s.getFileName(), wireCodeOf(s.getFailureCode()), s.getCreatedAt()))
+                .map(s -> new ImportFailureSummaryDto(s.getReference(), s.getFileName(),
+                        com.finora.exception.ErrorCode.wireCodeOrNull(s.getFailureCode()), s.getCreatedAt()))
                 .toList();
-    }
-
-    /**
-     * The wire code ({@code "IMPORT_001"}) for a stored {@code failureCode} that is really an
-     * {@link com.finora.exception.ErrorCode} enum name ({@code "IMPORT_NO_HEADER_DETECTED"}) --
-     * see {@link #recentCustomerFailures}'s doc comment for why this translation exists at all.
-     * Delegates to {@link com.finora.exception.ErrorCode#wireCodeOrNull}, extracted there once a
-     * second table ({@code ImportJob.failureCode}, Premium Import Reliability v1, §3.1) needed the
-     * identical translation.
-     */
-    private static String wireCodeOf(String storedFailureCode) {
-        return com.finora.exception.ErrorCode.wireCodeOrNull(storedFailureCode);
     }
 
     /**

@@ -1112,7 +1112,15 @@ describe('Import — queued imports', () => {
     expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
   });
 
-  it('surfaces the server’s reason when an import fails for good', async () => {
+  /**
+   * Bug fix, caught by a post-ship review: this test used to assert the OPPOSITE of what it now
+   * asserts -- that ImportProgress showed the server's raw error text. It did, and once
+   * ImportTimeline started rendering alongside it for the same FAILED job (this same item), that
+   * raw text sat permanently next to ImportTimeline's curated reason, disagreeing with it. The raw
+   * text was never fit for a customer to read to begin with (`ImportJob.lastError` is `ExceptionClass:
+   * message`) -- ImportTimeline is now the only place a failure reason is shown at all.
+   */
+  it('does not show the raw server error once ImportTimeline owns the failure reason', async () => {
     vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({
       status: 'FAILED', error: 'No transactions could be read from this statement.',
     }));
@@ -1122,8 +1130,9 @@ describe('Import — queued imports', () => {
 
     await user.upload(screen.getByTestId('statement-file-input'), csvFile());
 
-    expect(await screen.findByText('No transactions could be read from this statement.'))
-      .toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Couldn't finish")).toBeInTheDocument());
+    expect(screen.queryByText('No transactions could be read from this statement.'))
+      .not.toBeInTheDocument();
   });
 
   /**

@@ -1,0 +1,20 @@
+-- Bug fix, caught by a post-ship review: V77's failure_code VARCHAR(32) matched
+-- statement_analysis_sessions.failure_code's existing column shape, but is written in the SAME
+-- REQUIRES_NEW transaction as last_error/status/next_attempt_at (ImportJobStore.update), unlike
+-- that sibling table's evidence-row write, which has its own local try/catch and only loses one
+-- row on failure. ErrorCode.failureCodeOf falls back to the exception's simple class name for
+-- anything that isn't a coded ApiException -- and several exception types this very pipeline
+-- already anticipates and classifies (ExceptionClassifier special-cases DataAccessException) have
+-- simple names longer than 32 characters: OptimisticLockingFailureException (33),
+-- TransientDataAccessResourceException (36), IncorrectResultSizeDataAccessException (38).
+--
+-- A genuinely transient infra blip -- exactly the case Sprint 2's RetryPolicy.RETRY exists to
+-- absorb gracefully -- would hit `value too long for type character varying(32)` on the UPDATE,
+-- rolling back the WHOLE failure-recording transaction: lastError, status, and nextAttemptAt never
+-- get written either. The job is left stranded in-flight with no retry scheduled, recoverable only
+-- via the 30-minute abandoned-job sweep -- strictly worse than before V77 existed, when this same
+-- code path only ever wrote the unbounded last_error TEXT column and could never fail this way.
+--
+-- Matches last_error's own column shape (TEXT, no length limit) rather than trying to guess a
+-- length that covers every current and future exception class name.
+ALTER TABLE import_jobs ALTER COLUMN failure_code TYPE TEXT;

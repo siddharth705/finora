@@ -107,9 +107,11 @@ describe('importJob — what the user is told', () => {
     expect(label(job({ status: 'QUEUED' }))).toBe('Waiting to start');
   });
 
-  it('shows the server’s reason on a failure', () => {
-    expect(detail(job({ status: 'FAILED', error: 'That PDF is password protected.' })))
-      .toBe('That PDF is password protected.');
+  it('has nothing to add on a failure -- ImportTimeline owns the reason now', () => {
+    // Bug fix: this used to return the raw job.error, which meant a customer saw it permanently
+    // disagreeing with ImportTimeline's curated reason for every failure without a curated
+    // ErrorCode. FAILED has nothing honest left to add here.
+    expect(detail(job({ status: 'FAILED', error: 'That PDF is password protected.' }))).toBeNull();
   });
 
   it('says nothing about counts it does not have', () => {

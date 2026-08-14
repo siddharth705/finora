@@ -105,6 +105,29 @@ describe('ImportTimeline', () => {
     expect(screen.getByText('(attempt 2)')).toBeInTheDocument();
   });
 
+  /**
+   * Bug fix: OUTCOME_ICON/OUTCOME_COLOR used to be plain Records with no fallback, unlike the
+   * sibling `stageLabel` lookup, which already guards the identical class of lookup with `??
+   * 'Working'`. An outcome value the frontend's hand-written union hasn't been updated for (drift
+   * from the backend's ImportJobStage.Outcome enum, which isn't compiler-checked against this
+   * union) would resolve `<Icon />` to `undefined` and crash the whole timeline instead of
+   * degrading gracefully.
+   */
+  it('renders a fallback rather than crashing for a stage outcome the frontend type has not seen', async () => {
+    api.timeline.mockResolvedValue(timeline({
+      stages: [
+        // Cast past the type system -- exactly the drift scenario this test guards against;
+        // TypeScript alone can't catch a backend enum value the frontend union wasn't updated for.
+        { stage: 'PARSING', attempt: 1, outcome: 'UNKNOWN_FUTURE_OUTCOME' as Timeline['stages'][number]['outcome'], startedAt: '2026-08-12T10:00:00Z', endedAt: null, durationMs: null },
+      ],
+    }));
+
+    expect(() => render(<ImportTimeline jobId="job-1" />)).not.toThrow();
+    await advance(100);
+
+    expect(screen.getByTestId('import-timeline')).toBeInTheDocument();
+  });
+
   it('shows the curated reason for a known failure code, not the raw code', async () => {
     api.timeline.mockResolvedValue(timeline({
       status: 'FAILED',

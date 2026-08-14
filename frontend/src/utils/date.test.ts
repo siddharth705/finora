@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { formatDate } from './date';
+import { formatDate, formatTime } from './date';
 
 describe('formatDate', () => {
   afterEach(() => {
@@ -48,5 +48,22 @@ describe('formatDate', () => {
 
   it('honours caller-supplied format options', () => {
     expect(formatDate('2027-03-12', { month: 'long', year: 'numeric' })).toContain('2027');
+  });
+});
+
+describe('formatTime', () => {
+  it('renders a real timestamp in the same en-IN locale every other formatter here uses', () => {
+    // Bug fix: the import timeline first shipped calling toLocaleTimeString() with no locale
+    // argument -- the one date/time display in the app that let the browser's default locale
+    // decide the format instead of matching every sibling call site's explicit 'en-IN'.
+    const withTime = '2027-03-12T18:30:00Z';
+    expect(formatTime(withTime)).toBe(new Date(withTime).toLocaleTimeString('en-IN'));
+  });
+
+  it('returns an empty string for null, undefined, or an unparseable value', () => {
+    expect(formatTime(null)).toBe('');
+    expect(formatTime(undefined)).toBe('');
+    expect(formatTime('')).toBe('');
+    expect(formatTime('not a date')).toBe('');
   });
 });
