@@ -83,6 +83,10 @@ public class GoogleOAuthProperties {
     private String revokeEndpoint = "https://oauth2.googleapis.com/revoke";
     private String authorizationEndpoint = "https://accounts.google.com/o/oauth2/v2/auth";
 
+    /** Gmail API base. Same reasoning as the OAuth endpoints above -- configurable so the client's
+     *  error classification can be executed in a test rather than only reasoned about. */
+    private String gmailApiBaseUrl = "https://gmail.googleapis.com";
+
     /** True when a client id, secret, and redirect URI are all present. Anything less cannot
      *  complete an authorization-code exchange, so the endpoints refuse rather than half-work. */
     public boolean isConfigured() {
@@ -107,6 +111,8 @@ public class GoogleOAuthProperties {
     public void setRevokeEndpoint(String revokeEndpoint) { this.revokeEndpoint = revokeEndpoint; }
     public String getAuthorizationEndpoint() { return authorizationEndpoint; }
     public void setAuthorizationEndpoint(String authorizationEndpoint) { this.authorizationEndpoint = authorizationEndpoint; }
+    public String getGmailApiBaseUrl() { return gmailApiBaseUrl; }
+    public void setGmailApiBaseUrl(String gmailApiBaseUrl) { this.gmailApiBaseUrl = gmailApiBaseUrl; }
     public String getPostConnectRedirect() { return postConnectRedirect; }
     public void setPostConnectRedirect(String postConnectRedirect) { this.postConnectRedirect = postConnectRedirect; }
 }

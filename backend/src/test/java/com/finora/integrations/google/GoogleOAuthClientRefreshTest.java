@@ -143,6 +143,27 @@ class GoogleOAuthClientRefreshTest {
     }
 
     /**
+     * Google's real token response carries fields this integration does not model — most notably
+     * {@code id_token}, which is returned whenever {@code openid} is among the requested scopes, and
+     * it always is here. If the client's deserializer ever rejected unknown properties, every real
+     * exchange would fail while every test that sends only the modelled fields kept passing.
+     *
+     * <p>This currently works because of a default. Pinned so it stays a decision rather than an
+     * accident.
+     */
+    @Test
+    @DisplayName("Google's real response shape, including fields we do not model, deserializes")
+    void refreshAccessToken_toleratesUnknownFieldsInGooglesResponse() {
+        status.set(200);
+        body.set("{\"access_token\":\"fresh-token\",\"expires_in\":3599,\"scope\":\"openid\","
+                + "\"token_type\":\"Bearer\",\"id_token\":\"eyJhbGciOi.PAYLOAD.SIG\","
+                + "\"refresh_token_expires_in\":604799}");
+
+        assertThat(client.refreshAccessToken("stored-refresh-token").access_token())
+                .isEqualTo("fresh-token");
+    }
+
+    /**
      * A dead grant must cost exactly one request. Retrying inside the client would multiply quota
      * burn against a credential that can never succeed, and would hide the reauth signal behind a
      * delay.

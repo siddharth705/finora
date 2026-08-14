@@ -94,6 +94,22 @@ public class GmailConnection {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt = Instant.now();
 
+    /**
+     * Whether Google actually granted the scope this integration cannot work without.
+     *
+     * <p>{@link #grantedScopes} was recorded from Phase B precisely because a consent screen can
+     * come back with less than was asked for — and until C2 nothing inspected it. A connection
+     * missing this scope is {@code CONNECTED}, has a working refresh token, and cannot read a
+     * single message.
+     */
+    public boolean hasGmailReadScope() {
+        if (grantedScopes == null || grantedScopes.isBlank()) return false;
+        for (String scope : grantedScopes.split(" ")) {
+            if (GmailApiClient.GMAIL_READONLY_SCOPE.equals(scope.trim())) return true;
+        }
+        return false;
+    }
+
     /** Reassembles the stored halves into the shape {@code EncryptionService.decrypt} takes.
      *  Returns null for a connection that no longer holds a credential. */
     public EncryptedValue credential() {
