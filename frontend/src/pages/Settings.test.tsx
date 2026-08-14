@@ -116,6 +116,32 @@ describe('Settings', () => {
     await waitFor(() => expect(userApi.update).toHaveBeenCalledWith({ lowBalanceThreshold: 5000, timezone: 'Asia/Kolkata' }));
   });
 
+  it('clears the pending "just saved" timer on unmount instead of leaking it past teardown', async () => {
+    // The "Saved" flash schedules a 2s setTimeout to clear itself. Left uncancelled, that timer
+    // outlives the component -- harmless mid-test, but fatal once Vitest tears down jsdom's
+    // `window` at the end of the file: the leaked timer fires into a torn-down environment and
+    // throws "ReferenceError: window is not defined" from inside React's setState path, failing
+    // the whole run despite every individual assertion passing. Regression test for that leak.
+    const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+    const user = userEvent.setup();
+    const { unmount } = renderSettings();
+
+    const saveButton = await screen.findByRole('button', { name: /save preferences/i });
+    const thresholdInput = screen.getByDisplayValue('2000');
+    await user.clear(thresholdInput);
+    await user.type(thresholdInput, '5000');
+    await user.click(saveButton);
+
+    // Confirms the timer was actually armed, not just that the save request fired.
+    await screen.findByText('Saved');
+
+    clearTimeoutSpy.mockClear();
+    unmount();
+    expect(clearTimeoutSpy).toHaveBeenCalled();
+
+    clearTimeoutSpy.mockRestore();
+  });
+
   it('disables "Save setting" until the confidence threshold actually changes', async () => {
     renderSettings();
 
