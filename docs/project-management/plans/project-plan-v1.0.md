@@ -32,7 +32,7 @@ comes out is right, and stays right. The two share a name and almost nothing els
 | **Current phase** | Phase 4 complete; **production-readiness audit + remediation pass complete** (2026-08-11) |
 | **Health** | **On Track**, with one warning — see §8 |
 | **v1.0 scope** | Web + admin portal + **mobile** (D-2, 2026-08-09) |
-| **Open bug-hunt findings** | **0 Critical** (security-audit severity scale — distinct from the bug-hunt's own P0/P1/P2/P3 buckets, see §4), confirmed twice now — once by the original bug-hunt closures, once independently by a fresh 11-domain audit that re-derived evidence from scratch rather than trusting prior claims. **0 P0/P1 IDOR or auth-bypass found** across an exhaustive resource sweep. Bug-hunt P1 bucket: 0 open. BH-048 CLOSED–VERIFIED 08-14 (PR #88 merged, real nightly run confirmed green) and BH-007 CLOSED–VERIFIED 08-14 (PR #89 merged, mutation-checked regression tests — see §4). BH-042/043/045 still owned by a parallel session |
+| **Open bug-hunt findings** | **0 Critical** (security-audit severity scale — distinct from the bug-hunt's own P0/P1/P2/P3 buckets, see §4), confirmed twice now — once by the original bug-hunt closures, once independently by a fresh 11-domain audit that re-derived evidence from scratch rather than trusting prior claims. **0 P0/P1 IDOR or auth-bypass found** across an exhaustive resource sweep. Bug-hunt P1 bucket: 0 open. BH-048 CLOSED–VERIFIED 08-14 (PR #88 merged, real nightly run confirmed green) and BH-007 CLOSED–VERIFIED 08-14 (PR #89 merged, mutation-checked regression tests — see §4). **P2 has no actionable engineering item left** — BH-014/029/032/036/037/046 were already fixed in code but never recorded closed until 08-14's plan-drift correction (see §4); BH-044's remainder needs an owner decision, not a PR. BH-042/043/045 still owned by a parallel session |
 | **Baselined against** | `origin/main` @ `cc17716`. `main` fully green — confirmed on the real CI (not just local runs): backend 2191/2191, frontend 322/322, admin-portal 302/302 |
 | **Commits** | 600+ across 11 days (first commit 2026-07-31) |
 | **Backend** | 2191 tests green, real CI run confirmed (not estimated) |
@@ -273,6 +273,46 @@ looks under-scoped" mistake the warning comment names), confirmed both this test
 pre-existing same-tenant `ImportSession` test fail, reverted, confirmed green (7/7). Committed
 directly to `main` (no PR). Both halves of the sweep's cross-tenant guard now have regression
 coverage.
+
+**Plan-drift correction, 2026-08-14.** Checking what the "next open item" actually was surfaced that
+this plan had been describing six already-fixed findings as open — the code was fixed (by prior
+sessions) but the closure was never recorded here. Re-verified each directly against current code and
+its test suite rather than trusting the 08-09 report forward:
+
+- **`BH-014`** (lockout leaked account existence, and then leaked it via timing after the status
+  code was fixed) — **closed.** A locked account now returns the same 401/"Invalid credentials" as a
+  wrong password, with a discarded `passwordEncoder.matches` call against a throwaway hash so the
+  ~4 ms lockout-check path costs the same as the ~260 ms BCrypt path. Dedicated suite
+  `LoginExistenceOracleIT`, 4/4 green.
+- **`BH-029`** (parser format decided twice — once at upload, once in the worker — agreeing only by
+  construction) — **closed.** Decided once at upload, written to `import_jobs.source_format`, read
+  from there by the worker. `ImportJobSourceFormatIT` + `StatementUploadTest`, green.
+- **`BH-032`** (prod DB-password validator only caught the literal string `"finora"`, despite its
+  own message claiming to catch "unset" too) — **closed.** Checks blank/unset separately, plus a
+  case-insensitive list of well-known default passwords. `ProductionConfigValidatorTest`, green.
+- **`BH-036`** (CORS listed `X-Request-Id` in neither `allowedHeaders` nor `exposedHeaders`, so
+  `CorrelationIdFilter`'s echo-back couldn't work cross-origin in either direction) — **closed.**
+  Added to both. `CorrelationIdCorsContractTest`, green.
+- **`BH-037`** (`docker-compose.yml` published Postgres on `0.0.0.0:5432` with `finora`/`finora`,
+  reachable on any network the host joined) — **closed.** Bound to `127.0.0.1:5432:5432` — no
+  regression test possible for a network-binding config change, verified by reading the compose file
+  directly.
+- **`BH-046`** (dual write to `file_content` had no trigger to ever stop, because the two phases that
+  were meant to end it — backfill, then column drop — both quietly never happened) — **closed**,
+  alongside BH-025: a new upload writes to object storage *or* `file_content`, never both.
+  `ProductionConfigValidatorTest`, `ImportSessionServiceTest`, `ImportServiceStorageDualWriteTest`,
+  green.
+- **`BH-044`** (`audit_logs` grows unbounded, and a `RECONCILIATION_RUN` row per write was a large
+  share of that growth) — **half closed.** The growth-rate half is fixed: no row is written for a
+  run that reclassified nothing. **The retention half is still genuinely open**, and stays that way
+  on purpose — it's a compliance/product decision (how long a financial audit trail must be kept,
+  whether a deletion request must remove it, truncate vs. redact vs. archive), not an engineering
+  task, per `AuditService`'s own SEAM doc comment. Needs owner input, not a PR.
+
+`BH-042`/`043`/`045` (the remaining performance cluster) untouched — still owned by a parallel
+session per §1. With this correction, **there is no actionable engineering item left in P2** other
+than what's already covered above: everything closeable by code has been closed, and BH-044's
+remainder is blocked on an owner decision.
 
 ### P3 — v1.1
 
@@ -780,6 +820,7 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-14 | **Plan-drift correction: six P2 findings (`BH-014`, `BH-029`, `BH-032`, `BH-036`, `BH-037`, `BH-046`) were already fixed in code and never recorded closed.** Checking "what's the next open bug-hunt item" against current code, not the stale 08-09 report, found each already fixed by a prior session — `LoginExistenceOracleIT`, `ImportJobSourceFormatIT`, `ProductionConfigValidatorTest`, `CorrelationIdCorsContractTest`, `ImportServiceStorageDualWriteTest` all green. `BH-044` is half closed (growth-rate fixed; retention explicitly blocked on an owner decision, not engineering). §1 and §4 updated; P2 now has no actionable engineering item left. No date change | The same discipline this plan already applies to line-number drift (BH-007) and status drift (BH-048) applies to closure drift too — a finding fixed in code but recorded as open is exactly as misleading as the reverse, and it was only caught by re-deriving status from the code and its tests rather than re-quoting the 08-09 report forward |
 | 2026-08-14 | **BH-039 coverage completed — the `ImportSessionRepository` half of the cross-tenant guard.** PR #96's regression test's surviving reference was a `StatementImport` row, so the sweep's `existsByObjectKey(...) || existsByObjectKey(...)` guard's first clause alone kept the object alive and the `ImportSessionRepository` half was never actually exercised. Added `sweep_doesNotReclaimAnObjectStillReferencedByAnotherTenantsLiveImportSession` (surviving reference is another tenant's still-staged `ImportSession`), mutation-checked the same way as the original, committed directly to `main` (`a5365dd`, no PR). No date change | A regression test that passes for the wrong reason (short-circuited by the other half of an OR) is the same failure mode BH-039 itself is about — closing "regression coverage added" without checking which branch it actually reaches would have left the exact gap it claimed to close |
 | 2026-08-14 | **BH-039 closed CLOSED–VERIFIED.** PR #96 merged (`8abfe074`). No live defect, confirmed against real generated SQL; missing cross-tenant regression coverage now in place. Full backend suite green with no recurrence of the `AcquisitionWiringIT` flake. No date change | Closes the day's sixth and last bug-hunt item (BH-048, BH-007, BH-053, BH-018, BH-058, BH-039) at the same VERIFIED bar throughout |
 | 2026-08-14 | **BH-039 investigated: no live defect, regression coverage added.** The finding's own "becomes a cross-tenant defect the moment the sweep is built" trigger already occurred (BH-017's sweep exists), but checked directly against the real generated SQL that its reference counting is already global, not per-tenant — the warned-about trap was avoided. Added the missing cross-tenant regression test plus explicit warning comments naming the exact future mistake that would reintroduce it, in [PR #96](https://github.com/siddharth705/finora/pull/96) (not yet merged). No date change | A "Low/Potential Risk" finding whose trigger condition occurred deserves the same re-verification discipline as anything else — confirming a warned-about defect did NOT materialize is itself real work worth recording, not something to silently assume from the finding's age |
