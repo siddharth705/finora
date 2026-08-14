@@ -14,7 +14,6 @@ import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.SpyBean;
-import org.springframework.dao.DataAccessException;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
@@ -28,30 +27,30 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.doAnswer;
 
 /**
- * BH-053. {@code MerchantLearningService.confirm}'s check-then-act race is described precisely by
- * two comments and asserted by nothing. This class is the missing assertion.
+ * BH-053. {@code MerchantLearningService.confirm}'s check-then-act race, closed. This class both
+ * proves the fix and pins the propagation contract any future fix here must keep honouring.
  *
- * <p>Two separate properties are pinned here, and they are separate on purpose:
+ * <p>Three properties are pinned, and they are separate on purpose:
  *
  * <ol>
- *   <li><b>The race is real and it takes the caller down.</b> {@code confirm()} reads the
- *       merchant's pairs, decides in Java whether one exists, and inserts if not — against V7's
- *       {@code UNIQUE(user_id, merchant_id, category_id)}. The first test drives two callers
- *       through that window and shows the loser's whole transaction failing, not just its
- *       learning write.</li>
+ *   <li><b>The race is closed: two concurrent first-ever confirmations both survive.</b> Neither
+ *       caller's transaction fails, and the merchant ends up with one pair at
+ *       {@code confirmationCount = 2} — not one winner and one lost update. See this test's own
+ *       history in git blame for what this class asserted before the fix landed: the loser's
+ *       whole transaction failing on V7's {@code UNIQUE(user_id, merchant_id, category_id)}. The
+ *       synchronization point below had to move for exactly that reason — the old check-then-act
+ *       window doesn't exist to pause inside anymore, because closing the race removed it. What
+ *       serializes the two callers now is a real Postgres row lock inside
+ *       {@code ensurePairExists}'s {@code INSERT ... ON CONFLICT}, not application code, so this
+ *       test proves it by holding one caller's transaction open past its insert and showing the
+ *       other's call — genuinely blocked at the database, not simulated — resolves correctly once
+ *       the first commits.</li>
  *   <li><b>{@code confirm()} joins the caller's transaction, and must keep doing so.</b> The
  *       remaining tests fail if anyone applies the {@code Propagation.REQUIRES_NEW} that the class
  *       comment used to prescribe and {@code confirm()}'s own Javadoc now warns against.</li>
  * </ol>
  *
- * <p><b>The first test asserts a defect, deliberately.</b> It is not a guard against a regression;
- * it is the reproduction the finding asked for, and it will need rewriting the day the race is
- * actually closed — at which point it should assert that the loser's confirmation is *not* lost,
- * which is the behaviour a fix has to produce. Its value until then is that the exposure is a
- * checked fact rather than a claim in a comment, and that anyone attempting a fix has something to
- * run against it.
- *
- * <p><b>Why the other two tests are the ones that catch the tempting wrong fix.</b>
+ * <p><b>Why the propagation tests are the ones that catch the tempting wrong fix.</b>
  * {@code REQUIRES_NEW} looks like it isolates the race. It does not — it converts a rare collision
  * into a constant failure, because {@code merchant_category_learning} carries {@code NOT NULL}
  * foreign keys into {@code merchants} and {@code categories}, and on the real call path
@@ -115,80 +114,92 @@ class MerchantLearningConfirmRaceIT extends AbstractIntegrationTest {
         return category;
     }
 
-    // --- 1. The race itself ------------------------------------------------------------------
+    // --- 1. The race, closed -----------------------------------------------------------------
 
     /**
-     * Two first-ever confirmations of the same (user, merchant, category), interleaved so that
-     * both read before either writes. One of them loses.
+     * Two first-ever confirmations of the same (user, merchant, category), genuinely overlapping.
+     * Both survive; the merchant ends up with one pair carrying both confirmations.
      *
-     * <p>The harm is not that a confirmation is dropped — it is *whose* failure it is.
-     * {@code confirm()} joins the caller's transaction, so the unique violation poisons everything
-     * the caller had done. On {@code ImportService.confirm} that is every transaction insert for a
-     * statement the user has already reviewed, discarded because two categorizations of one
-     * merchant happened to overlap.
+     * <p>The FIRST caller is parked with its {@code ensurePairExists} insert already issued but
+     * its transaction still open -- the row lock behind V7's
+     * {@code UNIQUE(user_id, merchant_id, category_id)} is held for real, not simulated. The
+     * SECOND caller is started on its own thread specifically because it is expected to block
+     * inside the database for as long as that lock is held; calling it on the test thread would
+     * hang the test on the same block. Releasing the first caller lets its transaction commit,
+     * which is what unblocks the second's {@code INSERT ... ON CONFLICT} to see the now-committed
+     * row and take the {@code DO NOTHING} branch -- at which point it reads the up-to-date count
+     * and increments it correctly, rather than colliding with it.
      */
     @Test
-    void twoCallersInsideTheCheckThenActWindowCollideAndTheLoserLosesItsWholeTransaction() throws Exception {
+    void twoCallersRacingOnTheSameBrandNewPairBothSucceed_confirmationCountEndsAtTwo() throws Exception {
         Fixture f = committedFixture();
 
-        CountDownLatch loserHasRead = new CountDownLatch(1);
-        CountDownLatch winnerHasCommitted = new CountDownLatch(1);
-        AtomicReference<Throwable> loserFailure = new AtomicReference<>();
+        CountDownLatch firstHasInsertedButNotCommitted = new CountDownLatch(1);
+        CountDownLatch releaseFirst = new CountDownLatch(1);
+        AtomicReference<Throwable> firstFailure = new AtomicReference<>();
+        AtomicReference<Throwable> secondFailure = new AtomicReference<>();
 
-        // Only the thread parked inside the window is held; the winner runs through the same spy
-        // untouched, so nothing about its path is simulated.
+        // topCategory is still the right hook -- still called right after ensurePairExists, just
+        // no longer before the write (there is no more check-then-act window to sit inside); this
+        // pauses the first caller after its write, before its transaction commits.
         doAnswer(invocation -> {
-            if (Thread.currentThread().getName().equals(LOSER_THREAD)) {
-                loserHasRead.countDown();
-                assertThat(winnerHasCommitted.await(30, TimeUnit.SECONDS)).isTrue();
+            if (Thread.currentThread().getName().equals(FIRST_THREAD)) {
+                firstHasInsertedButNotCommitted.countDown();
+                assertThat(releaseFirst.await(30, TimeUnit.SECONDS)).isTrue();
             }
             return invocation.callRealMethod();
         }).when(confidenceEngine).topCategory(anyList());
 
-        Thread loser = new Thread(() -> {
+        Thread first = new Thread(() -> {
             try {
                 learningService.confirm(f.user().getId(), f.merchant().getId(), f.category().getId());
             } catch (Throwable t) {
-                loserFailure.set(t);
+                firstFailure.set(t);
             }
-        }, LOSER_THREAD);
-        loser.start();
+        }, FIRST_THREAD);
+        first.start();
 
-        assertThat(loserHasRead.await(30, TimeUnit.SECONDS))
-                .as("the loser must actually be parked between its read and its write")
+        assertThat(firstHasInsertedButNotCommitted.await(30, TimeUnit.SECONDS))
+                .as("the first caller must actually be parked with its insert in place, uncommitted")
                 .isTrue();
 
-        // The winner runs start to finish and commits while the loser is still holding the empty
-        // answer its decision was based on.
-        learningService.confirm(f.user().getId(), f.merchant().getId(), f.category().getId());
-        winnerHasCommitted.countDown();
-        loser.join(TimeUnit.SECONDS.toMillis(30));
-        assertThat(loser.isAlive()).isFalse();
+        Thread second = new Thread(() -> {
+            try {
+                learningService.confirm(f.user().getId(), f.merchant().getId(), f.category().getId());
+            } catch (Throwable t) {
+                secondFailure.set(t);
+            }
+        }, SECOND_THREAD);
+        second.start();
 
-        assertThat(loserFailure.get())
-                .as("the lost race surfaces to the caller -- it is neither swallowed nor retried")
-                .isInstanceOf(DataAccessException.class);
-        assertThat(rootCauseOf(loserFailure.get()).getMessage())
-                .as("and it is V7's unique constraint that rejects it, not something else")
-                .contains("merchant_category_learning");
+        // No signal available from this side of the process for "the second caller is now
+        // blocked inside the database" -- give it a moment to actually reach and issue its
+        // INSERT before releasing the first caller, so the two genuinely overlap rather than
+        // running sequentially by accident.
+        Thread.sleep(500);
 
-        // The loser's confirmation is gone, not merged. This is the assertion that has to change
-        // when the race is closed: a fix must make this 2.
+        releaseFirst.countDown();
+        first.join(TimeUnit.SECONDS.toMillis(30));
+        second.join(TimeUnit.SECONDS.toMillis(30));
+        assertThat(first.isAlive()).as("the first caller must have finished, not hung").isFalse();
+        assertThat(second.isAlive()).as("the second caller must have finished, not hung").isFalse();
+
+        assertThat(firstFailure.get()).as("neither caller's transaction may fail").isNull();
+        assertThat(secondFailure.get()).as("neither caller's transaction may fail").isNull();
+
         List<MerchantCategoryLearning> distribution =
                 learningRepository.findByUserIdAndMerchantId(f.user().getId(), f.merchant().getId());
         assertThat(distribution).singleElement()
-                .satisfies(pair -> assertThat(pair.getConfirmationCount()).isEqualTo(1));
+                .as("one pair, both confirmations counted -- not a winner and a lost update")
+                .satisfies(pair -> assertThat(pair.getConfirmationCount()).isEqualTo(2));
+
+        List<MerchantLearningAudit> audit =
+                auditRepository.findByUserIdAndMerchantIdOrderByCreatedAtDesc(f.user().getId(), f.merchant().getId());
+        assertThat(audit).as("both confirmations produced their own audit entry").hasSize(2);
     }
 
-    private static final String LOSER_THREAD = "bh-053-loser";
-
-    private static Throwable rootCauseOf(Throwable t) {
-        Throwable current = t;
-        while (current.getCause() != null && current.getCause() != current) {
-            current = current.getCause();
-        }
-        return current;
-    }
+    private static final String FIRST_THREAD = "bh-053-first";
+    private static final String SECOND_THREAD = "bh-053-second";
 
     // --- 2. The propagation contract ---------------------------------------------------------
 
