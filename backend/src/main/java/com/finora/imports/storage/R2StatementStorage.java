@@ -23,8 +23,13 @@ import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 
 /**
@@ -175,33 +180,70 @@ public class R2StatementStorage implements StatementStorage {
         }
     }
 
+    /**
+     * BH-018. The address can only be known once every byte has been read (see
+     * {@link ContentAddress#copyAndAddress}), so this spools to a system temp file first, then
+     * uploads from it once the key is known. Unlike {@code FilesystemStatementStorage}'s scratch
+     * file, this one carries no same-filesystem constraint -- the destination is a network object
+     * store, not a sibling directory to move into -- so the platform default temp location is
+     * fine. {@code RequestBody.fromFile} also gives the SDK a re-readable source to retry from if
+     * the upload needs it, the same property {@code RequestBody.fromBytes} had.
+     */
     @Override
-    public ContentAddress store(byte[] content) {
-        ContentAddress address = ContentAddress.forContent(content);
+    public ContentAddress store(InputStream content, long contentLength) {
+        Path scratch;
+        try {
+            scratch = Files.createTempFile("r2-statement-upload-", ".tmp");
+        } catch (IOException e) {
+            throw new StatementStorageException("Could not create a scratch file to spool an upload into", e);
+        }
 
-        // Content-addressed, so identical bytes are already at this exact key and re-uploading
-        // them is pure cost. This is also what makes a retry after a partial failure a no-op
-        // rather than a duplicate, and what deduplicates a session against the import it becomes.
-        if (exists(address)) return address;
+        ContentAddress address;
+        try {
+            try (OutputStream out = Files.newOutputStream(scratch)) {
+                address = ContentAddress.copyAndAddress(content, out);
+            }
+        } catch (IOException e) {
+            deleteQuietly(scratch);
+            throw new StatementStorageException("Could not spool statement content before storing it", e);
+        }
 
         try {
-            client.putObject(
-                    PutObjectRequest.builder()
-                            .bucket(bucket)
-                            .key(address.key())
-                            .contentType(CONTENT_TYPE)
-                            .contentLength((long) content.length)
-                            .build(),
-                    RequestBody.fromBytes(content));
-        } catch (SdkException e) {
-            // The message deliberately carries the key and never the content. A caller that sees
-            // this must not persist a row: a row pointing at an object that was never written is
-            // the one failure this design cannot recover from.
-            throw new StatementStorageException(
-                    "Could not store statement content at " + address.key() + " in R2 bucket '"
-                    + bucket + "'. The row must not be saved.", e);
+            // Content-addressed, so identical bytes are already at this exact key and re-uploading
+            // them is pure cost. This is also what makes a retry after a partial failure a no-op
+            // rather than a duplicate, and what deduplicates a session against the import it becomes.
+            if (exists(address)) return address;
+
+            try {
+                client.putObject(
+                        PutObjectRequest.builder()
+                                .bucket(bucket)
+                                .key(address.key())
+                                .contentType(CONTENT_TYPE)
+                                .contentLength(contentLength)
+                                .build(),
+                        RequestBody.fromFile(scratch));
+            } catch (SdkException e) {
+                // The message deliberately carries the key and never the content. A caller that sees
+                // this must not persist a row: a row pointing at an object that was never written is
+                // the one failure this design cannot recover from.
+                throw new StatementStorageException(
+                        "Could not store statement content at " + address.key() + " in R2 bucket '"
+                        + bucket + "'. The row must not be saved.", e);
+            }
+            return address;
+        } finally {
+            deleteQuietly(scratch);
         }
-        return address;
+    }
+
+    private static void deleteQuietly(Path path) {
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException e) {
+            log.warn("Could not clean up scratch file {} after a store attempt -- harmless, but "
+                    + "it will sit in the platform temp directory until removed by hand.", path, e);
+        }
     }
 
     @Override
