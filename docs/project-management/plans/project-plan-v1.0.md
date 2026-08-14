@@ -199,13 +199,23 @@ both resolving correctly), mutation-checked against the pre-fix code (failed wit
 predicted `duplicate key value violates unique constraint`), and the two existing propagation-
 contract tests confirmed unchanged.
 
-**`BH-018`'s remaining half — in review, not yet merged.** The transaction-boundary claim closed
-earlier; the "Also here" memory-materialization note (`file.getBytes()` holding up to 10 MB on the
-heap per upload) is in [PR #93](https://github.com/siddharth705/finora/pull/93), not yet merged.
-Turned out larger than one call site — `StatementStorage.store(byte[])` is the whole interface,
-not just `ImportJobService.accept()`'s use of it — but scoped additively (a new streaming overload,
-the two callers that already hold content in memory for parsing reasons stay untouched) rather than
-a full interface conversion.
+**`BH-018` — CLOSED–VERIFIED, 2026-08-14. Both halves now closed.** The transaction-boundary claim
+closed earlier; the "Also here" memory-materialization note (`file.getBytes()` holding up to 10 MB
+on the heap per upload, ungated against concurrent uploads) closed in
+[PR #93](https://github.com/siddharth705/finora/pull/93) (merged `02d9d287`). Turned out larger
+than one call site — `StatementStorage.store(byte[])` is the whole interface, not just
+`ImportJobService.accept()`'s use of it — but scoped additively: a new `store(InputStream, long)`
+overload is now the one real implementation per backend (filesystem, R2), with `store(byte[])`
+becoming a default method wrapping the array, so the two callers that already hold content in
+memory for parsing reasons (`ImportService.persistSection`, `ImportSessionService.storeContent`)
+stay untouched rather than being converted for no benefit. **VERIFIED:** a new test proving the
+actual property (content never fully buffered before being written onward) went through its own
+mutation-check refinement — tracking `InputStream.read()` chunk sizes turned out not to
+distinguish real streaming from `readAllBytes()`, which also reads in bounded chunks internally;
+tracking `OutputStream.write()` sizes does, since a naive reimplementation still writes the whole
+buffered result in one call. Confirmed against a deliberately reverted mutation before restoring
+the fix. Full backend suite green both before and after rebasing onto unrelated same-day import
+work, with no line-level overlap.
 
 ### P3 — v1.1
 
@@ -713,6 +723,7 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-14 | **BH-018 closed CLOSED–VERIFIED — both halves now closed.** PR #93 merged (`02d9d287`): the remaining memory-materialization half (`file.getBytes()` holding up to 10 MB on the heap per upload). Turned out to be interface-wide (`StatementStorage.store(byte[])`, not just one call site) but scoped additively — a new streaming overload as the one real per-backend implementation, the two callers that already hold content in memory for parsing reasons left untouched. Regression test needed its own correction mid-flight: tracking read-chunk sizes didn't actually prove the property (`readAllBytes()` also chunks its reads), tracking write-chunk sizes did. No date change | Closes the last of today's four P1/P2 bug-hunt fixes (BH-048, BH-007, BH-053, BH-018) with the same VERIFIED bar throughout — demonstrated broken, then demonstrated fixed, not inferred from a green suite alone |
 | 2026-08-14 | **BH-053 closed CLOSED–VERIFIED.** PR #92 merged (`c8bc96a`): the check-then-act race in `MerchantLearningService.confirm()`, precisely self-documented by the class's own comments since it was written (including a pre-emptive warning against the tempting wrong fix), closed with a native atomic upsert that stays inside the caller's transaction. The existing regression test only proved the race existed; rewritten against real Postgres to prove it's closed, mutation-checked against the pre-fix code. BH-018's remaining half (memory materialization on upload) is in PR #93, not yet merged — turned out to be an interface-wide question, not one call site, scoped additively rather than as a full conversion. No date change | Same pattern as BH-048/BH-007 earlier today: close a finding the moment it's actually verified, not at the next scheduled re-baseline, and record status precisely (in-review vs. merged-and-verified are not the same thing) |
 | 2026-08-14 | **Remediation candidates scoped, deliberately not started.** Four levers from the bottleneck investigation — accounts N+1 fix, dashboard transaction narrowing, auth-overhead caching, import transaction redesign — each assessed for impact/risk/effort in §5a item 4. Owner's sequencing decision: wait behind Phase 4 (56 open bug-hunt findings), per this plan's own §8 rule that Phase 4 is serial with everything after it. Owner's correctness decision: when the import transaction redesign does start, it gets the same bar as the original BH-* fixes (mutation-checked regression tests, real-Postgres verification) since it touches the exact code area that produced BH-001/003/004/005/006. No date change — this is scoping, not scheduled work | Following the standard set right after the investigation itself: don't let a diagnostic's momentum turn into unscoped engineering work. Named the sequencing conflict (this plan's own §8 rule) explicitly rather than silently starting remediation, and got an explicit owner decision on both what order and what rigor, matching how every other cross-cutting decision in this plan has been recorded |
 | 2026-08-14 | **Railway Production Postgres connection ceiling checked: `max_connections = 500`.** Closes the one open item the HikariCP bottleneck investigation left unresolved. Checked directly against the real production database (`railway connect postgres`, `SHOW max_connections;`), not estimated — Railway CLI installed and authenticated this session, `psql` installed via `libpq` since neither was present locally. Result folded into both the plan (§5a item 3) and the investigation doc (§8): 500 is far above the pool of 10 in use today, so Railway was never the constraint the investigation's pool-size experiment ran into — that was local CPU contention. Does not change the investigation's core finding (raising the pool made things worse in the configurations tested); a larger pool remains available to try later, but only after the CPU-bound issues (auth overhead, broad transactions) are addressed, not before. No date change | Owner's follow-up request after the investigation flagged this as the one thing it couldn't answer locally. Production access was gated behind an explicit approval (the auto-mode classifier blocked the first attempt at a direct `psql` connection to production; the owner approved the specific read-only query before it ran) rather than proceeding automatically, consistent with treating production infrastructure access as requiring confirmation |
