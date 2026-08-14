@@ -34,3 +34,19 @@ app:
   statement-storage:
     sweep:
       enabled: false
+
+  # Gmail OAuth (Phase B). The client stays unconfigured under test -- the endpoints' behaviour
+  # WITHOUT a Google client is itself part of what GmailOAuthEndpointIT pins, and no test should
+  # depend on real Google credentials.
+  #
+  # post-connect-redirect is pointed at localhost deliberately: the callback answers with a 302, and
+  # anything that follows redirects (TestRestTemplate does, by default) would otherwise make a live
+  # request to the production frontend from the test suite.
+  integrations:
+    google:
+      post-connect-redirect: http://localhost/settings
+      # Same reasoning as import.session-cleanup above: a background thread deleting
+      # gmail_oauth_states mid-run is the cross-test pollution BH-058 was about. Tests call
+      # GmailConnectionService.sweepExpiredStates() directly, which ignores this flag.
+      state-cleanup:
+        enabled: false

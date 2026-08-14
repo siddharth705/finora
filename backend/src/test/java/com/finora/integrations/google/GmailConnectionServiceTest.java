@@ -1,0 +1,396 @@
+package com.finora.integrations.google;
+
+import com.finora.exception.ApiException;
+import com.finora.repository.UserRepository;
+import com.finora.security.crypto.CryptoProperties;
+import com.finora.security.crypto.EncryptedValue;
+import com.finora.security.crypto.EncryptionService;
+import com.finora.security.crypto.EnvironmentKeyProvider;
+import com.finora.service.AuditService;
+import com.finora.util.TokenHasher;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.time.Instant;
+import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.*;
+
+/**
+ * Phase B of the Gmail Transaction Sync design. These tests cover the properties the OAuth
+ * connection flow exists to guarantee rather than the plumbing: that a callback cannot be replayed,
+ * cannot be redeemed after expiry, cannot be pointed at another user, and that the refresh token is
+ * never persisted in a form anyone reading the database could use.
+ */
+class GmailConnectionServiceTest {
+
+    private GmailConnectionRepository connections;
+    private GmailOAuthStateRepository states;
+    private GoogleOAuthClient googleClient;
+    private GoogleOAuthProperties properties;
+    private EncryptionService encryptionService;
+    private UserRepository userRepository;
+    private AuditService auditService;
+    private GmailConnectionService service;
+
+    private final UUID userId = UUID.randomUUID();
+
+    private static final String REFRESH_TOKEN = "1//0g-a-real-looking-google-refresh-token";
+
+    @BeforeEach
+    void setUp() {
+        connections = mock(GmailConnectionRepository.class);
+        states = mock(GmailOAuthStateRepository.class);
+        googleClient = mock(GoogleOAuthClient.class);
+        userRepository = mock(UserRepository.class);
+        auditService = mock(AuditService.class);
+
+        properties = new GoogleOAuthProperties();
+        properties.setClientId("test-client-id");
+        properties.setClientSecret("test-client-secret");
+        properties.setRedirectUri("https://api.example.test/api/v1/integrations/google/gmail/callback");
+
+        // A real EncryptionService, not a mock -- the assertion that matters most here is that what
+        // lands in the entity is genuinely unreadable ciphertext, and a mock would happily "encrypt"
+        // by returning the input.
+        CryptoProperties crypto = new CryptoProperties();
+        crypto.setActiveKeyId("v1");
+        Map<String, String> keys = new LinkedHashMap<>();
+        byte[] raw = new byte[32];
+        java.util.Arrays.fill(raw, (byte) 11);
+        keys.put("v1", Base64.getEncoder().encodeToString(raw));
+        crypto.setKeys(keys);
+        encryptionService = new EncryptionService(new EnvironmentKeyProvider(crypto));
+
+        // A real TransactionTemplate would need a live transaction manager; these are unit tests,
+        // so the template is stubbed to run its callback inline. That keeps the assertions about
+        // BEHAVIOUR -- what gets saved, what is refused -- rather than about transaction plumbing,
+        // which GmailOAuthEndpointIT exercises for real against Postgres.
+        TransactionTemplate transactionTemplate = mock(TransactionTemplate.class);
+        when(transactionTemplate.execute(any())).thenAnswer(inv ->
+                ((TransactionCallback<?>) inv.getArgument(0)).doInTransaction(mock(TransactionStatus.class)));
+        doAnswer(inv -> {
+            ((java.util.function.Consumer<TransactionStatus>) inv.getArgument(0))
+                    .accept(mock(TransactionStatus.class));
+            return null;
+        }).when(transactionTemplate).executeWithoutResult(any());
+
+        service = new GmailConnectionService(connections, states, googleClient, properties,
+                encryptionService, userRepository, auditService, transactionTemplate);
+
+        when(connections.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(states.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    }
+
+    private GmailOAuthState pendingState(UUID owner, Instant expiresAt, Instant consumedAt) {
+        GmailOAuthState state = new GmailOAuthState();
+        state.setUserId(owner);
+        state.setStateHash("irrelevant-the-lookup-is-mocked");
+        state.setExpiresAt(expiresAt);
+        if (consumedAt != null) state.consume(consumedAt);
+        return state;
+    }
+
+    private void googleReturnsAValidGrant() {
+        when(googleClient.exchangeCode(anyString())).thenReturn(
+                new GoogleOAuthClient.TokenResponse("access-token", REFRESH_TOKEN,
+                        "openid https://www.googleapis.com/auth/gmail.readonly", "Bearer", 3599));
+        when(googleClient.fetchUserInfo(anyString())).thenReturn(
+                new GoogleOAuthClient.UserInfo("google-sub-12345", "connected-mailbox@example.test"));
+        when(googleClient.grantedScopes(any())).thenReturn(
+                List.of("openid", "https://www.googleapis.com/auth/gmail.readonly"));
+        when(userRepository.existsById(userId)).thenReturn(true);
+    }
+
+    // ---------- begin ----------
+
+    @Test
+    void beginConnect_returnsGooglesAuthorizationUrl_andStoresOnlyAHashOfTheState() {
+        when(connections.findByUserIdAndStatusIn(eq(userId), any())).thenReturn(Optional.empty());
+        when(googleClient.buildAuthorizationUrl(anyString())).thenReturn("https://accounts.google.com/o/oauth2/v2/auth?x=1");
+
+        String url = service.beginConnect(userId);
+
+        assertThat(url).startsWith("https://accounts.google.com/");
+
+        ArgumentCaptor<String> rawState = ArgumentCaptor.forClass(String.class);
+        verify(googleClient).buildAuthorizationUrl(rawState.capture());
+        ArgumentCaptor<GmailOAuthState> stored = ArgumentCaptor.forClass(GmailOAuthState.class);
+        verify(states).save(stored.capture());
+
+        // The raw state goes to Google; only its digest is persisted. It is a bearer value -- anyone
+        // holding it could complete a link for this user -- and Finora only ever needs to compare it.
+        assertThat(stored.getValue().getStateHash())
+                .isEqualTo(TokenHasher.sha256(rawState.getValue()))
+                .isNotEqualTo(rawState.getValue());
+        assertThat(stored.getValue().getUserId()).isEqualTo(userId);
+        assertThat(stored.getValue().getExpiresAt()).isAfter(Instant.now());
+    }
+
+    @Test
+    void beginConnect_isRefusedWhenAMailboxIsAlreadyConnected() {
+        GmailConnection existing = new GmailConnection();
+        existing.setUserId(userId);
+        existing.setGoogleEmail("existing-mailbox@example.test");
+        when(connections.findByUserIdAndStatusIn(eq(userId), any())).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.beginConnect(userId))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("already connected");
+        verify(states, never()).save(any());
+    }
+
+    @Test
+    void beginConnect_isUnavailableWhenGoogleIsNotConfigured() {
+        properties.setClientId(null);
+
+        assertThatThrownBy(() -> service.beginConnect(userId))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("not available");
+    }
+
+    // ---------- callback: the security properties ----------
+
+    /**
+     * The property the whole state table exists for. A callback URL lands in browser history,
+     * referrer headers, and anything the user pastes; without single-use redemption, replaying it
+     * re-runs the link.
+     */
+    @Test
+    @DisplayName("a state cannot be redeemed twice")
+    void completeConnect_rejectsAnAlreadyConsumedState() {
+        GmailOAuthState consumed = pendingState(userId, Instant.now().plusSeconds(300), Instant.now());
+        when(states.findByStateHash(anyString())).thenReturn(Optional.of(consumed));
+
+        assertThatThrownBy(() -> service.completeConnect("some-state", "some-code"))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("expired or was already used");
+
+        // Nothing was spent finding out what the code was worth.
+        verify(googleClient, never()).exchangeCode(anyString());
+        verify(connections, never()).save(any());
+    }
+
+    @Test
+    void completeConnect_rejectsAnExpiredState() {
+        GmailOAuthState expired = pendingState(userId, Instant.now().minusSeconds(1), null);
+        when(states.findByStateHash(anyString())).thenReturn(Optional.of(expired));
+
+        assertThatThrownBy(() -> service.completeConnect("some-state", "some-code"))
+                .isInstanceOf(ApiException.class);
+        verify(googleClient, never()).exchangeCode(anyString());
+    }
+
+    @Test
+    void completeConnect_rejectsAnUnknownState() {
+        when(states.findByStateHash(anyString())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.completeConnect("forged", "some-code"))
+                .isInstanceOf(ApiException.class);
+        verify(googleClient, never()).exchangeCode(anyString());
+    }
+
+    /**
+     * Identity comes from the state, never from the request. A caller who presents someone else's
+     * state links THAT user's account -- which is exactly why the state is 256 random bits and
+     * single-use rather than anything guessable.
+     */
+    @Test
+    void completeConnect_bindsTheConnectionToTheStatesOwner_notToAnyoneElse() {
+        UUID stateOwner = UUID.randomUUID();
+        when(states.findByStateHash(anyString()))
+                .thenReturn(Optional.of(pendingState(stateOwner, Instant.now().plusSeconds(300), null)));
+        when(userRepository.existsById(stateOwner)).thenReturn(true);
+        when(connections.findByGoogleUserIdAndStatusIn(anyString(), any())).thenReturn(Optional.empty());
+        when(googleClient.exchangeCode(anyString())).thenReturn(
+                new GoogleOAuthClient.TokenResponse("a", REFRESH_TOKEN, "openid", "Bearer", 3599));
+        when(googleClient.fetchUserInfo(anyString())).thenReturn(
+                new GoogleOAuthClient.UserInfo("google-sub-12345", "connected-mailbox@example.test"));
+        when(googleClient.grantedScopes(any())).thenReturn(List.of("openid"));
+
+        GmailConnection saved = service.completeConnect("state", "code");
+
+        assertThat(saved.getUserId()).isEqualTo(stateOwner);
+    }
+
+    /** The point of ADR-007 reaching this feature at all. */
+    @Test
+    @DisplayName("the refresh token is stored encrypted, never in plaintext")
+    void completeConnect_encryptsTheRefreshToken() {
+        when(states.findByStateHash(anyString()))
+                .thenReturn(Optional.of(pendingState(userId, Instant.now().plusSeconds(300), null)));
+        when(connections.findByGoogleUserIdAndStatusIn(anyString(), any())).thenReturn(Optional.empty());
+        googleReturnsAValidGrant();
+
+        GmailConnection saved = service.completeConnect("state", "code");
+
+        assertThat(saved.getEncryptedRefreshToken())
+                .as("what lands in the column must not be the token itself")
+                .isNotNull()
+                .isNotEqualTo(REFRESH_TOKEN)
+                .doesNotContain(REFRESH_TOKEN);
+        assertThat(saved.getEncryptionKeyId())
+                .as("the key id travels with the ciphertext so rotation can find it")
+                .isEqualTo("v1");
+
+        // And it is genuinely recoverable -- encrypted, not merely mangled.
+        EncryptedValue stored = new EncryptedValue(saved.getEncryptionKeyId(), saved.getEncryptedRefreshToken());
+        assertThat(encryptionService.decrypt(stored)).isEqualTo(REFRESH_TOKEN);
+    }
+
+    /**
+     * Google returns a refresh token only when it considers the grant new. Storing a connection
+     * without one produces something that works for about an hour and then cannot be renewed --
+     * a failure that would surface much later, far from its cause.
+     */
+    @Test
+    void completeConnect_refusesAGrantWithNoRefreshToken() {
+        when(states.findByStateHash(anyString()))
+                .thenReturn(Optional.of(pendingState(userId, Instant.now().plusSeconds(300), null)));
+        when(userRepository.existsById(userId)).thenReturn(true);
+        when(googleClient.exchangeCode(anyString())).thenReturn(
+                new GoogleOAuthClient.TokenResponse("access-only", null, "openid", "Bearer", 3599));
+        when(googleClient.fetchUserInfo(anyString())).thenReturn(
+                new GoogleOAuthClient.UserInfo("google-sub-12345", "connected-mailbox@example.test"));
+
+        assertThatThrownBy(() -> service.completeConnect("state", "code"))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("refresh token");
+        verify(connections, never()).save(any());
+    }
+
+    @Test
+    void completeConnect_refusesAMailboxAlreadyConnectedToADifferentFinoraAccount() {
+        // Two accounts ingesting the same receipts would attribute one person's spending to two.
+        GmailConnection somebodyElses = new GmailConnection();
+        somebodyElses.setUserId(UUID.randomUUID());
+        when(states.findByStateHash(anyString()))
+                .thenReturn(Optional.of(pendingState(userId, Instant.now().plusSeconds(300), null)));
+        when(connections.findByGoogleUserIdAndStatusIn(anyString(), any()))
+                .thenReturn(Optional.of(somebodyElses));
+        googleReturnsAValidGrant();
+
+        assertThatThrownBy(() -> service.completeConnect("state", "code"))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("another Finora account");
+    }
+
+    @Test
+    void completeConnect_marksTheStateConsumedBeforeDoingAnythingElse() {
+        GmailOAuthState pending = pendingState(userId, Instant.now().plusSeconds(300), null);
+        when(states.findByStateHash(anyString())).thenReturn(Optional.of(pending));
+        when(connections.findByGoogleUserIdAndStatusIn(anyString(), any())).thenReturn(Optional.empty());
+        googleReturnsAValidGrant();
+
+        service.completeConnect("state", "code");
+
+        assertThat(pending.isConsumed()).isTrue();
+    }
+
+    // ---------- disconnect ----------
+
+    @Test
+    void disconnect_revokesAtGoogle_thenClearsTheStoredCredential() {
+        GmailConnection connection = new GmailConnection();
+        connection.setUserId(userId);
+        connection.setGoogleUserId("google-sub-12345");
+        connection.setGrantedScopes("openid");
+        connection.storeCredential(encryptionService.encrypt(REFRESH_TOKEN));
+        when(connections.findByUserIdAndStatusIn(eq(userId), any())).thenReturn(Optional.of(connection));
+        when(googleClient.tryRevoke(anyString())).thenReturn(true);
+
+        service.disconnect(userId);
+
+        // Revoked with the real token, not the ciphertext.
+        verify(googleClient).tryRevoke(REFRESH_TOKEN);
+        assertThat(connection.getStatus()).isEqualTo(GmailConnection.Status.DISCONNECTED);
+        assertThat(connection.getEncryptedRefreshToken()).isNull();
+        assertThat(connection.getEncryptionKeyId()).isNull();
+    }
+
+    /**
+     * The user asked to disconnect. Refusing because a third party returned an error would leave a
+     * credential Finora was told to drop.
+     */
+    @Test
+    @DisplayName("disconnect still clears the credential when Google's revocation fails")
+    void disconnect_clearsTheCredentialEvenIfRevocationFails() {
+        GmailConnection connection = new GmailConnection();
+        connection.setUserId(userId);
+        connection.setGoogleUserId("google-sub-12345");
+        connection.setGrantedScopes("openid");
+        connection.storeCredential(encryptionService.encrypt(REFRESH_TOKEN));
+        when(connections.findByUserIdAndStatusIn(eq(userId), any())).thenReturn(Optional.of(connection));
+        when(googleClient.tryRevoke(anyString())).thenReturn(false);
+
+        service.disconnect(userId);
+
+        assertThat(connection.getStatus()).isEqualTo(GmailConnection.Status.DISCONNECTED);
+        assertThat(connection.getEncryptedRefreshToken()).isNull();
+    }
+
+    /**
+     * A credential encrypted under a key that is no longer configured (see the encryption runbook's
+     * lost-key section) must not trap the user in a connection they cannot remove.
+     */
+    @Test
+    void disconnect_succeedsEvenWhenTheStoredCredentialCannotBeDecrypted() {
+        GmailConnection connection = new GmailConnection();
+        connection.setUserId(userId);
+        connection.setGoogleUserId("google-sub-12345");
+        connection.setGrantedScopes("openid");
+        connection.storeCredential(new EncryptedValue("v1", "not-valid-ciphertext"));
+        when(connections.findByUserIdAndStatusIn(eq(userId), any())).thenReturn(Optional.of(connection));
+
+        service.disconnect(userId);
+
+        assertThat(connection.getStatus()).isEqualTo(GmailConnection.Status.DISCONNECTED);
+        assertThat(connection.getEncryptedRefreshToken()).isNull();
+        verify(googleClient, never()).tryRevoke(anyString());
+    }
+
+    /**
+     * Without a sweep, gmail_oauth_states only grows: every abandoned consent screen leaves a row
+     * and nothing on the connect/callback path ever removes one. Caught by the pre-commit gap
+     * check -- the repository method existed but nothing called it.
+     */
+    @Test
+    void sweepExpiredStates_removesExpiredRowsInABoundedBatch() {
+        GmailOAuthState stale = pendingState(userId, Instant.now().minusSeconds(60), null);
+        when(states.findByExpiresAtBeforeOrderByExpiresAtAsc(any(), any())).thenReturn(List.of(stale));
+
+        assertThat(service.sweepExpiredStates()).isEqualTo(1);
+        verify(states).deleteAll(List.of(stale));
+    }
+
+    @Test
+    void sweepExpiredStates_doesNothingWhenThereIsNothingToRemove() {
+        when(states.findByExpiresAtBeforeOrderByExpiresAtAsc(any(), any())).thenReturn(List.of());
+
+        assertThat(service.sweepExpiredStates()).isZero();
+        verify(states, never()).deleteAll(any());
+    }
+
+    @Test
+    void disconnect_whenNothingIsConnected_is404() {
+        when(connections.findByUserIdAndStatusIn(eq(userId), any())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.disconnect(userId))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("No Gmail account is connected");
+    }
+}

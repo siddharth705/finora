@@ -358,6 +358,26 @@ app:
       interval-ms: ${STATEMENT_STORAGE_SWEEP_INTERVAL_MS:21600000}
       initial-delay-ms: ${STATEMENT_STORAGE_SWEEP_INITIAL_DELAY_MS:300000}
 
+  # Gmail data integration (docs/proposals/gmail-transaction-sync-proposal.md, Phase B). NOT
+  # "Sign in with Google" -- a third-party data grant by an already-signed-in user.
+  #
+  # Unset is a supported state: the endpoints answer 503 and the UI hides the entry point. It is
+  # deliberately not a boot-time requirement the way the encryption key is -- a missing Gmail client
+  # disables one optional integration rather than risking a credential.
+  #
+  # redirect-uri must match a URI registered on the Google OAuth client EXACTLY (scheme, host, port,
+  # path -- a trailing slash is a different URI), and needs a separate registered entry per
+  # environment.
+  integrations:
+    google:
+      client-id: ${GOOGLE_OAUTH_CLIENT_ID:}
+      client-secret: ${GOOGLE_OAUTH_CLIENT_SECRET:}
+      redirect-uri: ${GOOGLE_OAUTH_REDIRECT_URI:}
+      # Where the callback returns the browser. Configuration rather than a request parameter --
+      # the callback is unauthenticated by necessity, so a request-supplied target would be an
+      # open redirect.
+      post-connect-redirect: ${GOOGLE_OAUTH_POST_CONNECT_REDIRECT:https://app.finoratech.info/settings}
+
 # Reversible encryption at rest for third-party credentials Finora must read back -- OAuth refresh
 # tokens first (ADR-007). NOT for passwords or Finora's own session tokens, which are hashed via
 # TokenHasher; see com.finora.security.crypto's package doc for why the two are not interchangeable.
