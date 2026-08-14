@@ -295,6 +295,32 @@ public class ReconciliationService {
         // just mutated some of these same objects' isTransfer() in place; a transaction that
         // just became a transfer must not also be considered for a refund pairing.
         List<Transaction> refundCandidates = candidates.stream().filter(t -> !t.isTransfer()).toList();
+
+        // BH-007. An expense's refund capacity is its own amount, shared across every income row
+        // that might match it -- not a per-pair check. Without this, two ₹500 INCOME rows at the
+        // same merchant within the window each independently satisfy "not more than the ₹500
+        // EXPENSE", and both get marked REFUND: ₹1,000 of real income silently excluded from every
+        // total on the strength of one ₹500 purchase.
+        //
+        // Seeded from already-resolved REFUND rows already sitting in refundCandidates (skipped by
+        // the `getReconciliationStatus() != OK` check below, same as a resolved duplicate is
+        // skipped in pass 1), not just accumulated fresh in this loop -- a prior run's match must
+        // count against this run's capacity too, not only matches made in the same pass.
+        //
+        // Correct across BOTH entry points without a new query: CANDIDATE_WINDOW_DAYS is
+        // Math.max(REFUND_WINDOW_DAYS, ...), so it is never smaller than REFUND_WINDOW_DAYS by
+        // construction. Any prior REFUND row that could compete for the same expense as a NEW
+        // income row in this run must itself sit within REFUND_WINDOW_DAYS of that expense --
+        // which means it is provably inside reconcileForImport's own fetch window too, so it is
+        // always present in `all`/`refundCandidates` here, never silently missing.
+        Map<UUID, BigDecimal> refundedSoFarByExpenseId = new HashMap<>();
+        for (Transaction t : refundCandidates) {
+            if (t.getReconciliationStatus() == Transaction.ReconciliationStatus.REFUND
+                    && t.getRefundOfTransactionId() != null) {
+                refundedSoFarByExpenseId.merge(t.getRefundOfTransactionId(), t.getAmount(), BigDecimal::add);
+            }
+        }
+
         for (Transaction income : refundCandidates) {
             if (income.getTxnType() != Transaction.Type.INCOME) continue;
             if (income.getReconciliationStatus() != Transaction.ReconciliationStatus.OK) continue;
@@ -325,7 +351,12 @@ public class ReconciliationService {
                         && expense.getMerchant().equalsIgnoreCase(income.getMerchant());
                 if (!refundKeyword && !sameMerchant) continue;
 
-                if (income.getAmount().compareTo(expense.getAmount()) > 0) continue; // can't refund more than was spent
+                // BH-007: capacity is what's LEFT of the expense, not its original amount -- an
+                // expense already fully claimed by an earlier match (this pass or a prior one) has
+                // nothing left to give, no matter how large it originally was.
+                BigDecimal remaining = expense.getAmount()
+                        .subtract(refundedSoFarByExpenseId.getOrDefault(expense.getId(), BigDecimal.ZERO));
+                if (remaining.signum() <= 0 || income.getAmount().compareTo(remaining) > 0) continue;
 
                 if (bestMatch == null || isCloserRefundMatch(expense, bestMatch, income)) {
                     bestMatch = expense;
@@ -344,6 +375,11 @@ public class ReconciliationService {
                         ReconciliationExplanation.refund(income, bestMatch, refundKeyword, bestMatchSameMerchant));
                 dirty.add(income);
                 newRefunds++;
+                // Claims this income's amount against the expense's capacity immediately, so the
+                // NEXT income row in this same pass sees the reduced remainder rather than the
+                // original amount -- this is what makes two ₹500 incomes against one ₹500 expense
+                // resolve to one REFUND and one OK, not two REFUNDs.
+                refundedSoFarByExpenseId.merge(bestMatch.getId(), income.getAmount(), BigDecimal::add);
             }
         }
 
