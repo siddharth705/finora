@@ -150,17 +150,23 @@ points at, with tradeoffs, not a decision.
   call outside the connection checkout where the code allows it; batch the accounts N+1
   (`bankRepository.findById` per account) into one query; reduce import's per-row chatter (already
   partially tracked as ongoing work per `ImportQueryCountIT`'s own ceiling).
-- **Pool size tuning** — §6 found this actively harmful in the two configurations tested. Any future
-  consideration needs Railway's actual Postgres connection ceiling as a hard constraint (still
-  pending — see the open item below) and should follow the above fixes, not substitute for them.
+- **Pool size tuning** — §6 found this actively harmful in the two configurations tested. Railway
+  Production's actual ceiling is **500 connections** (confirmed 2026-08-14 via `SHOW
+  max_connections;` against the real production database, `railway connect postgres`) — generous
+  headroom relative to the pool of 10 in use today, and relative to anything this investigation
+  tested (20, 30). **This changes what the constraint is, not the conclusion**: Railway was never
+  the wall here — §6's finding (raising the pool made things worse) was CPU contention on the local
+  test machine, not an approach toward any Railway-side limit. A larger pool remains available to
+  try in production *if* the CPU-bound issues above (auth overhead, broad transactions) are
+  addressed first — trying it before that, per §6's own evidence, would likely still make things
+  worse, just with more headroom before hitting Railway's ceiling rather than because of it.
 - **Do nothing yet and re-scope** — also a legitimate option. This document's job was diagnosis;
   which lever to pull, in what order, and on what timeline is a product/engineering-priority
   decision, not one this investigation makes.
 
-**Open item, not resolved here:** Railway's actual Postgres `max_connections` for the current plan
-— needed as a constraint before any pool-size discussion resumes, not gated on purchasing Railway
-Pro. Still needs to be checked directly (dashboard or `SHOW max_connections;` against the real
-`DATABASE_URL`).
+**Railway connection ceiling — resolved, 2026-08-14.** `max_connections = 500` on Production. No
+open item remains blocking a future pool-size discussion; the finding from §6 (raising pool size
+made the local test worse) stands regardless, since it was never gated on this number.
 
 ---
 
