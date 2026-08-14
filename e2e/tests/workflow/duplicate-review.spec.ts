@@ -57,7 +57,8 @@ test.describe('Phase 3 — duplicate review', () => {
       await expect(panel.getByText('In this statement', { exact: true })).toBeVisible();
       await expect(panel.getByText('Already in your ledger', { exact: true })).toBeVisible();
       await expect(panel).toContainText('METRO FARE');
-      await expect(panel).toContainText('2026-06-07');
+      // Rendered as DD-MMM-YYYY (formatDateDDMMMYYYY), not the raw ISO value -- see DuplicateReview.tsx.
+      await expect(panel).toContainText('07-Jun-2026');
       await expect(panel).toContainText('45');
       await expect(panel).toContainText(/Same date, amount and description/);
       // When the existing one was imported -- the strongest signal for "did I already load this?"
