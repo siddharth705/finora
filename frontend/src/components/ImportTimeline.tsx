@@ -115,18 +115,23 @@ export function ImportTimeline({
   }, [jobId, autoRefresh, refreshToken]);
 
   // Still nothing to poll with, or nothing recorded and nothing to explain -- both genuinely
-  // render nothing. A FAILED job is the one exception: even with an empty stage list (the stage
-  // recorder tolerates its own write failing without breaking the import, so this does happen),
-  // this must still render the failure reason and the dismiss action -- ImportProgress no longer
-  // offers a way back to the dropzone on its own, so this is the only path left once a job fails.
+  // render nothing IN POLLING MODE: a blip mid-poll is not a failed import, and the next
+  // scheduled poll will quietly recover. One-shot mode has no next poll coming, so the same
+  // silence would strand the person with no error and no hint that Refresh would fix it -- these
+  // two guards below both gate on `!autoRefresh` for exactly that reason. A FAILED job is the one
+  // exception to the "nothing recorded" rule regardless of mode: even with an empty stage list
+  // (the stage recorder tolerates its own write failing without breaking the import, so this does
+  // happen), this must still render the failure reason and the dismiss action -- ImportProgress no
+  // longer offers a way back to the dropzone on its own, so this is the only path left once a job
+  // fails.
+  //
+  // Bug fix, caught by review: both guards below used to fire regardless of mode, which leaked
+  // this fix into the pre-existing polling callers it was never meant to touch -- a transient
+  // blip on the live-upload screen's first poll started showing a duplicate "Lost contact with
+  // the server" card next to ImportProgress's own, something the deleted-by-that-same-diff
+  // comment explicitly said should never happen.
   if (!timeline) {
-    // A failed FIRST attempt (no successful fetch yet to fall back on) used to fall straight
-    // through to `return null` below, discarding pollError along with it -- silently: on the
-    // one-shot detail page, where nothing retries on its own, that meant the entire timeline
-    // section just didn't appear, with no error text and no hint that the page's Refresh button
-    // would fix it. Showing pollError here, in whatever shell would otherwise hold the timeline,
-    // is the minimum needed for the failure to be visible at all.
-    if (pollError) {
+    if (!autoRefresh && pollError) {
       return (
         <div className="bg-card rounded-xl2 shadow-card border border-border p-6 mt-4" data-testid="import-timeline">
           <p className="text-xs text-muted">{pollError}</p>
@@ -135,7 +140,7 @@ export function ImportTimeline({
     }
     return null;
   }
-  if (timeline.stages.length === 0 && timeline.status !== 'FAILED') return null;
+  if (timeline.stages.length === 0 && timeline.status !== 'FAILED' && !(!autoRefresh && pollError)) return null;
 
   const failureMessage = timeline.failureCode
     ? importFailureMessage(timeline.failureCode)
@@ -171,7 +176,17 @@ export function ImportTimeline({
         </div>
       )}
 
-      {pollError && <p className="text-xs text-muted mt-3">{pollError}</p>}
+      {pollError && (
+        <p className="text-xs text-muted mt-3">
+          {/* Bug fix: this used to show the raw one-shot-mode pollError text ("Couldn't load the
+              timeline...") here too, which is what a FIRST fetch failure says -- but reaching
+              this line at all means a fetch already succeeded once (the stages above rendered
+              from it), so the truth for a LATER failed refresh is "couldn't refresh", not
+              "couldn't load", and contradicts the timeline visibly sitting right above it.
+              Polling mode's text stays as-is: "still trying" is accurate there, since it will. */}
+          {autoRefresh ? pollError : "Couldn't refresh -- showing the last known status."}
+        </p>
+      )}
     </div>
   );
 }

@@ -8,7 +8,7 @@ import { importApi, importJobsApi, statementImportsApi, type ImportFailureSummar
 import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../api/errorCodes';
 import { importFailureMessage } from '../api/importFailureMessages';
 import { BankLogo } from '../components/BankLogo';
-import { label as jobLabel } from '../lib/importJob';
+import { recentImportsRefetchIntervalMs, label as jobLabel } from '../lib/importJob';
 import { navigateToReimport, navigateToRetryFailedImport } from '../lib/importNavState';
 import type { AccountStatementGroup, StatementSummary, Transaction } from '../types';
 import { formatDate } from '../utils/date';
@@ -80,9 +80,18 @@ export default function StatementHistory() {
   // Query does not surface this query's own error to the page without an explicit opt-in this
   // call never makes) rather than showing an error banner for a section that's allowed to just be
   // empty.
+  // Bug fix, caught by review: with the global 30s staleTime and refetchOnWindowFocus off, a job
+  // that finished or failed while the user was elsewhere kept showing its last-fetched in-flight
+  // status indefinitely -- even revisiting this page inside that 30s window served the stale
+  // cache. staleTime: 0 means every visit to this page re-checks; refetchInterval covers the
+  // "stayed on this page the whole time, watching, never remounted" case a revisit alone can't
+  // reach -- it only runs while at least one listed job is still non-terminal, so a page with
+  // nothing in flight (the common case) pays no ongoing cost.
   const { data: recentJobs } = useQuery({
     queryKey: ['import-jobs-recent'],
     queryFn: () => importJobsApi.recent(),
+    staleTime: 0,
+    refetchInterval: (query) => recentImportsRefetchIntervalMs(query.state.data ?? []),
   });
 
   // COMPLETED is deliberately excluded, not just de-emphasized: a completed queued job already has

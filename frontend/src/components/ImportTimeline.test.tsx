@@ -227,6 +227,22 @@ describe('ImportTimeline', () => {
     expect(api.timeline).toHaveBeenCalledTimes(2);
   });
 
+  /**
+   * Bug fix: the one-shot mode's "show pollError instead of rendering nothing" fix used to apply
+   * unconditionally, so it leaked into this default polling mode too -- a first-poll blip during
+   * a live upload started showing a duplicate "Lost contact with the server" card right next to
+   * ImportProgress's own near-identical one. Polling mode keeps its original silent behavior: a
+   * blip is not a failed import, and the next scheduled poll (asserted above) recovers on its own.
+   */
+  it('renders nothing (not an error card) while a first-poll blip is still retrying', async () => {
+    api.timeline.mockRejectedValueOnce(new Error('network')).mockResolvedValue(timeline());
+    render(<ImportTimeline jobId="job-1" />);
+
+    await advance(100);
+
+    expect(screen.queryByTestId('import-timeline')).not.toBeInTheDocument();
+  });
+
   it('leaves no timer behind when the user navigates away mid-import', async () => {
     api.timeline.mockResolvedValue(timeline());
     const { unmount } = render(<ImportTimeline jobId="job-1" />);
@@ -308,6 +324,43 @@ describe('ImportTimeline', () => {
       await advance(0);
 
       expect(screen.queryByText(/still trying/i)).not.toBeInTheDocument();
+    });
+
+    /**
+     * Bug fix: a REFRESH that fails after an earlier fetch already succeeded used to show the
+     * exact same "Couldn't load the timeline" text a first-ever failure shows -- misleading, since
+     * by definition a fetch already worked (the stages rendered from it are still on screen right
+     * above this line) and Refresh is what failed, not the initial load.
+     */
+    it('says the refresh failed, not that the timeline never loaded, once something already rendered', async () => {
+      api.timeline.mockResolvedValueOnce(timeline({ status: 'ANALYZING' })).mockRejectedValueOnce(new Error('network'));
+      const { rerender } = render(<ImportTimeline jobId="job-1" autoRefresh={false} refreshToken={0} />);
+      await advance(0);
+      expect(screen.getByTestId('import-timeline')).toBeInTheDocument();
+
+      rerender(<ImportTimeline jobId="job-1" autoRefresh={false} refreshToken={1} />);
+      await advance(0);
+
+      expect(screen.getByText(/couldn't refresh -- showing the last known status/i)).toBeInTheDocument();
+      expect(screen.queryByText(/couldn't load the timeline/i)).not.toBeInTheDocument();
+    });
+
+    /**
+     * Bug fix: the empty-stage-list early return (`if (timeline.stages.length === 0 ...) return
+     * null`) ran even when a refresh had just failed on top of an earlier empty-but-successful
+     * fetch, silently discarding pollError the same way the very-first-fetch case used to.
+     */
+    it('still shows a refresh failure even when the last successful fetch had no stages recorded yet', async () => {
+      api.timeline.mockResolvedValueOnce(timeline({ status: 'QUEUED', stages: [] })).mockRejectedValueOnce(new Error('network'));
+      const { rerender } = render(<ImportTimeline jobId="job-1" autoRefresh={false} refreshToken={0} />);
+      await advance(0);
+      expect(screen.queryByTestId('import-timeline')).not.toBeInTheDocument();
+
+      rerender(<ImportTimeline jobId="job-1" autoRefresh={false} refreshToken={1} />);
+      await advance(0);
+
+      expect(screen.getByTestId('import-timeline')).toBeInTheDocument();
+      expect(screen.getByText(/couldn't refresh -- showing the last known status/i)).toBeInTheDocument();
     });
   });
 });

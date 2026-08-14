@@ -24,3 +24,9 @@ export const NO_HEADER_DETECTED = 'IMPORT_001';
 export const NO_TRANSACTIONS_FOUND = 'IMPORT_007';
 export const SCANNED_OCR_REQUIRED = 'IMPORT_010';
 export const CORRUPT_PDF = 'IMPORT_011';
+
+// The UI must tell this apart from a genuinely expired/missing session -- reaching a completed
+// job's "Review this import" action after the same session was already reviewed and confirmed
+// through the normal flow used to show the generic expired-session message ("please upload the
+// statement again"), which is actively wrong: the import already succeeded.
+export const IMPORT_SESSION_ALREADY_CONFIRMED = 'IMPORT_012';

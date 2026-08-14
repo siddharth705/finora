@@ -64,6 +64,24 @@ export function isSettled(job: { status: ImportJobProgress['status'] }): boolean
 }
 
 /**
+ * How often StatementHistory's "Recent Imports" list should refetch, in ms, or `false` to stop --
+ * while ANY listed job hasn't reached a terminal state, since that's the only reason to keep
+ * polling at all. A page with nothing in flight (the common case) pays no ongoing cost.
+ *
+ * Bug fix, caught by review: without this, a job that finished or failed while the user stayed on
+ * this page the whole time (never remounting it) kept showing its last-fetched in-flight status
+ * indefinitely -- React Query's own `staleTime`/`refetchOnWindowFocus` only affect fetch-on-mount
+ * and focus events, neither of which happens for someone just sitting on an already-open page.
+ *
+ * A named, exported function rather than an inline callback passed to `useQuery`'s
+ * `refetchInterval` option so this decision has a direct unit test instead of only being
+ * exercisable by simulating React Query's own timer internals.
+ */
+export function recentImportsRefetchIntervalMs(jobs: { status: ImportJobProgress['status'] }[]): number | false {
+  return jobs.some((j) => !isSettled(j)) ? 15_000 : false;
+}
+
+/**
  * Whether the import finished with something to review.
  *
  * Both halves are required, and the second is not paranoia: a job can only reach COMPLETED with a

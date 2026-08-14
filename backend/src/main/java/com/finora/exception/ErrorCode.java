@@ -75,6 +75,14 @@ public enum ErrorCode {
     // for why a codeless response was actively wrong, not just imprecise).
     IMPORT_CORRUPT_PDF("IMPORT_011", HttpStatus.UNPROCESSABLE_ENTITY,
             "This PDF could not be read -- the file appears to be damaged or incomplete"),
+    // Distinct from a genuinely expired/missing session (still a codeless ApiException, since
+    // "upload again" really is the right instruction there) because the frontend has to TELL THEM
+    // APART, not just print a message: reaching a completed job's "Review this import" action
+    // after the same session was already reviewed and confirmed through the normal flow used to
+    // surface the generic expired-session message ("please upload the statement again"), which is
+    // actively wrong -- the import already succeeded, nothing needs re-uploading.
+    IMPORT_SESSION_ALREADY_CONFIRMED("IMPORT_012", HttpStatus.BAD_REQUEST,
+            "This import has already been reviewed and confirmed."),
 
     // Accounts
     ACCOUNT_NOT_FOUND("ACC_001", HttpStatus.NOT_FOUND, "Account not found"),

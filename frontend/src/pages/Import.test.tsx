@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Import from './Import';
 import { importApi, importJobsApi, categoriesApi, accountsApi, type ImportJobProgress } from '../api/endpoints';
 import type { Account, StagedAccountSection } from '../types';
-import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, NO_HEADER_DETECTED, NO_TRANSACTIONS_FOUND, SCANNED_OCR_REQUIRED, CORRUPT_PDF } from '../api/errorCodes';
+import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, NO_HEADER_DETECTED, NO_TRANSACTIONS_FOUND, SCANNED_OCR_REQUIRED, CORRUPT_PDF, IMPORT_SESSION_ALREADY_CONFIRMED } from '../api/errorCodes';
 import { IMPORT_FAILURE_MESSAGES } from '../api/importFailureMessages';
 import type { DetectedAccountInfo } from '../types';
 
@@ -1418,6 +1418,24 @@ describe('Import — resuming via navigation state', () => {
 
     expect(await screen.findByText(/no longer available/i)).toBeInTheDocument();
   });
+
+  /**
+   * Bug fix, caught by review: isReviewable(job) on ImportDetail.tsx never turns false once a job
+   * completes with a session id, even after that session was already reviewed and confirmed
+   * through the normal flow -- so "Review this import" can still be clicked for an import that
+   * already succeeded. Before this fix, the bare catch below showed the SAME "may have expired,
+   * please upload again" message for this case as for a genuinely expired one, which is actively
+   * wrong: nothing needs re-uploading, the import is already done.
+   */
+  it('says the import was already reviewed, not that it expired, for an already-confirmed session', async () => {
+    vi.mocked(importApi.getSession).mockRejectedValue({
+      response: { data: { errorCode: IMPORT_SESSION_ALREADY_CONFIRMED, message: 'This import has already been reviewed and confirmed.' } },
+    });
+    renderImportWithResumeState('sess-already-confirmed');
+
+    expect(await screen.findByText(/already been reviewed and confirmed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no longer available/i)).not.toBeInTheDocument();
+  });
 });
 
 /**
@@ -1454,6 +1472,77 @@ describe('Import — arriving to retry a failed sync import', () => {
     expect(await screen.findByTestId('statement-dropzone')).toBeInTheDocument();
     expect(screen.getByText('bad-statement.pdf')).toBeInTheDocument();
     expect(screen.getByText(new RegExp(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED]))).toBeInTheDocument();
+  });
+
+  /**
+   * Bug fix, caught by review: startOver()'s stale-arrival-state fix only covered "finish an
+   * import, click Import Another" -- but dismissing a FAILED queued import and giving up on a
+   * CANCELLED one are two OTHER paths back to this same "nothing pending" upload step, and
+   * neither used to clear location.state. Arriving via "Try again" for one file, then failing or
+   * cancelling an unrelated SECOND upload through the async queue, used to leave the FIRST file's
+   * stale "Retrying <file>" banner still showing under the second file's own outcome.
+   */
+  describe('a second, unrelated upload after arriving to retry', () => {
+    const queuedJob = (over: Partial<ImportJobProgress> = {}): ImportJobProgress => ({
+      jobId: 'job-2',
+      fileName: 'unrelated-second-file.csv',
+      status: 'QUEUED',
+      rowsTotal: null,
+      rowsProcessed: 0,
+      createdAt: '2026-08-08T09:00:00Z',
+      startedAt: null,
+      finishedAt: null,
+      importSessionId: null,
+      error: null,
+      correlationId: null,
+      ...over,
+    });
+
+    beforeEach(() => {
+      vi.mocked(importJobsApi.availability).mockReset().mockResolvedValue({ asyncImportAvailable: true });
+      vi.mocked(importJobsApi.submit).mockReset().mockResolvedValue({
+        jobId: 'job-2', statusUrl: '/api/v1/import/jobs/job-2',
+      });
+      vi.mocked(importJobsApi.progress).mockReset();
+      vi.mocked(importJobsApi.cancel).mockReset();
+      vi.mocked(importJobsApi.timeline).mockReset().mockResolvedValue({
+        jobId: 'job-2', status: 'QUEUED', failureCode: null, stages: [],
+      });
+    });
+
+    it('clears the retry banner once the second upload fails and is dismissed', async () => {
+      vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({ status: 'FAILED', error: 'boom' }));
+      vi.mocked(importJobsApi.timeline).mockResolvedValue({
+        jobId: 'job-2', status: 'FAILED', failureCode: null, stages: [],
+      });
+      const user = userEvent.setup();
+      renderImportWithRetryState('bad-statement.pdf', NO_HEADER_DETECTED);
+
+      await screen.findByTestId('retry-import-banner');
+      await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+      await screen.findByTestId('import-timeline');
+      await user.click(await screen.findByRole('button', { name: 'Try a different file' }));
+
+      await waitFor(() => expect(screen.queryByTestId('import-progress')).not.toBeInTheDocument());
+      expect(screen.queryByTestId('retry-import-banner')).not.toBeInTheDocument();
+      expect(screen.queryByText('bad-statement.pdf')).not.toBeInTheDocument();
+    });
+
+    it('clears the retry banner once the second upload is cancelled', async () => {
+      vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({ status: 'PARSING' }));
+      vi.mocked(importJobsApi.cancel).mockResolvedValue(queuedJob({ status: 'CANCELLED' }));
+      const user = userEvent.setup();
+      renderImportWithRetryState('bad-statement.pdf', NO_HEADER_DETECTED);
+
+      await screen.findByTestId('retry-import-banner');
+      await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+      await screen.findByTestId('import-progress');
+      await user.click(await screen.findByRole('button', { name: 'Cancel' }));
+
+      await waitFor(() => expect(screen.queryByTestId('import-progress')).not.toBeInTheDocument());
+      expect(screen.queryByTestId('retry-import-banner')).not.toBeInTheDocument();
+      expect(screen.queryByText('bad-statement.pdf')).not.toBeInTheDocument();
+    });
   });
 
   it('falls back to a safe generic message for an unmapped or missing failure code', async () => {

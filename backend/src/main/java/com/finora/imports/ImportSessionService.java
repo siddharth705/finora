@@ -9,6 +9,7 @@ import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.dto.ImportDto.StagedRow;
 import com.finora.entity.ImportSession;
 import com.finora.exception.ApiException;
+import com.finora.exception.ErrorCode;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.security.OwnershipGuard;
 import org.springframework.data.domain.PageRequest;
@@ -247,7 +248,12 @@ public class ImportSessionService {
                     "This import session has expired -- upload the statement again to continue.");
         }
         if (ImportSession.STATUS_CONFIRMED.equals(session.getStatus())) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "This import has already been confirmed.");
+            // Carries ErrorCode.IMPORT_SESSION_ALREADY_CONFIRMED rather than a codeless
+            // ApiException like the expiry branch above -- the frontend has to tell these two
+            // apart, not just print whatever message arrives. See that code's own comment for the
+            // bug this exists to fix (ImportDetail.tsx's "Review this import" reaching a session
+            // that was already reviewed and confirmed through the normal flow).
+            throw new ApiException(ErrorCode.IMPORT_SESSION_ALREADY_CONFIRMED);
         }
         return session;
     }
