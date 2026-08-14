@@ -115,6 +115,17 @@
       <artifactId>flyway-database-postgresql</artifactId>
     </dependency>
 
+    <!-- Caching. See CacheConfig for the named caches and why Caffeine, not Redis, is the right
+         amount of engineering for a single-instance deployment. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-cache</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.github.ben-manes.caffeine</groupId>
+      <artifactId>caffeine</artifactId>
+    </dependency>
+
     <!-- Security + JWT -->
     <dependency>
       <groupId>org.springframework.boot</groupId>

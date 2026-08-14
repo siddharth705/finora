@@ -176,6 +176,67 @@ class AdminBankControllerIT extends AbstractIntegrationTest {
         assertThat(data).isEmpty();
     }
 
+    /**
+     * {@code BankManagementService.listCustom()}/{@code resolve()}/{@code listAll()} now read
+     * through {@code CustomBankLookup}'s cache (Caffeine, TTL 10 min -- see {@code CacheConfig})
+     * instead of querying {@code bankRepository} directly on every call. This is the regression
+     * that would catch a broken {@code @CacheEvict}: prime the cache with a GET before each
+     * mutation, then assert the very next GET reflects it -- a stale cache would still show the
+     * pre-mutation list here, where {@code admin_canCreateUpdateAndDeleteACustomBank} above would
+     * not have noticed, since it only reads the mutation's own response, never a separate list read.
+     */
+    @Test
+    void theListEndpoint_reflectsCreateUpdateAndDelete_immediately_notAfterTheCacheTtl() throws Exception {
+        User admin = createUser("ADMIN");
+        HttpHeaders headers = bearerFor(admin);
+        String bankId = "CACHE" + System.currentTimeMillis() % 100000;
+
+        // Primes the cache with the list as it stood before this bank ever existed.
+        JsonNode beforeCreate = list(headers);
+        assertThat(containsBankId(beforeCreate, bankId)).isFalse();
+
+        restTemplate.exchange("/api/v1/admin/banks", HttpMethod.POST,
+                new HttpEntity<>("{\"id\":\"" + bankId + "\",\"officialName\":\"Cache Test Bank\",\"shortName\":\"Cache\"}", headers),
+                String.class);
+        JsonNode afterCreate = list(headers);
+        assertThat(containsBankId(afterCreate, bankId))
+                .as("a stale cache would still show the pre-create list here")
+                .isTrue();
+
+        restTemplate.exchange("/api/v1/admin/banks/" + bankId, HttpMethod.PUT,
+                new HttpEntity<>("{\"shortName\":\"Cache Renamed\"}", headers), String.class);
+        JsonNode afterUpdate = list(headers);
+        assertThat(shortNameOf(afterUpdate, bankId))
+                .as("a stale cache would still show the pre-update shortName here")
+                .isEqualTo("Cache Renamed");
+
+        restTemplate.exchange("/api/v1/admin/banks/" + bankId, HttpMethod.DELETE, new HttpEntity<>(headers), String.class);
+        JsonNode afterDelete = list(headers);
+        assertThat(containsBankId(afterDelete, bankId))
+                .as("a stale cache would still show the deleted bank here")
+                .isFalse();
+    }
+
+    private JsonNode list(HttpHeaders headers) throws Exception {
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/banks", HttpMethod.GET, new HttpEntity<>(headers), String.class);
+        return mapper.readTree(response.getBody()).get("data");
+    }
+
+    private boolean containsBankId(JsonNode list, String bankId) {
+        for (JsonNode bank : list) {
+            if (bank.get("id").asText().equals(bankId)) return true;
+        }
+        return false;
+    }
+
+    private String shortNameOf(JsonNode list, String bankId) {
+        for (JsonNode bank : list) {
+            if (bank.get("id").asText().equals(bankId)) return bank.get("shortName").asText();
+        }
+        throw new AssertionError("Bank " + bankId + " not found in list");
+    }
+
     @Test
     void plainUser_isForbiddenFromViewingBankAudit() {
         User user = createUser("USER");

@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -214,6 +215,15 @@ public class ImportSessionService {
      * column drop -- BH-046 found neither survived (Phase 3 was deleted for having nothing to
      * migrate; Phase 4 never got a trigger), so the "temporary" duplication had become permanent.
      * See docs/engineering/statement-storage-migration.md §5.0.
+     *
+     * <p>contentHash, unlike objectKey, is set in BOTH branches now -- distributed-resilience-
+     * patterns-audit-2026-08-14.md §3 / V79 added a second reason a session needs its identity
+     * beyond object-storage addressing: {@link #findLiveSessionByContentHash} deduplicates on it.
+     * Before this, a deployment with no storage provider configured left every session's
+     * contentHash null, which would have made duplicate-upload protection silently inert on
+     * exactly the deployment shape this codebase's own tests run under. Computing it directly via
+     * {@link com.finora.imports.storage.ContentAddress#hashOf} costs one SHA-256 over bytes
+     * already fully in memory -- negligible next to the parse this method's caller just ran.
      */
     private void storeContent(ImportSession session, byte[] fileContent) {
         java.util.Optional<com.finora.imports.storage.ContentAddress> address = statementContentService.store(fileContent);
@@ -222,6 +232,7 @@ public class ImportSessionService {
             session.setObjectKey(address.get().key());
         } else {
             session.setFileContent(fileContent);
+            session.setContentHash(com.finora.imports.storage.ContentAddress.hashOf(fileContent));
         }
     }
 
@@ -313,6 +324,45 @@ public class ImportSessionService {
                 yield false;
             }
         };
+    }
+
+    /**
+     * This user's own live (STAGED, unexpired) session for this exact document, if one exists --
+     * the app-level half of V79's duplicate-upload protection for the synchronous stage path
+     * (POST /csv/stage, /pdf/stage). {@code ImportService} calls this BEFORE parsing, not after,
+     * because the expensive part of a double-clicked upload or a retried request is the parse
+     * itself; a check that only ran at session-creation time would still pay for the second parse
+     * even though it correctly stopped a second row from being written.
+     *
+     * <p>Not the correctness guarantee -- this is a read followed by a possible write, so two
+     * genuinely simultaneous uploads of the same file can both see no match and both proceed to
+     * parse. {@code idx_import_sessions_live_content} (V79) is what actually decides then: the
+     * loser's {@code createSession}/{@code createMultiSection} INSERT hits the constraint and
+     * {@code GlobalExceptionHandler} answers a {@code DataIntegrityViolationException} as 409, the
+     * same shape V74 already established for {@code import_jobs}.
+     *
+     * <p>An expired match is deleted here rather than returned as a block. The unique index this
+     * method serves cannot express "and not expired" -- a partial index predicate must be
+     * immutable, so it cannot reference {@code now()} -- which means a STAGED session that expired
+     * but has not yet been swept ({@link #sweepExpiredSessions} runs on a schedule, not instantly)
+     * would otherwise make a genuinely new upload of the same statement fail with a false
+     * duplicate. Deleting it here is a strict subset of what the scheduled sweep already does to
+     * the same row; this just does it eagerly, on the one request that actually needs the row
+     * gone right now.
+     */
+    @Transactional
+    public Optional<ImportSession> findLiveSessionByContentHash(UUID userId, String contentHash) {
+        Optional<ImportSession> match = importSessionRepository
+                .findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                        userId, contentHash, ImportSession.STATUS_STAGED);
+        if (match.isEmpty()) return Optional.empty();
+
+        ImportSession session = match.get();
+        if (session.getExpiresAt().isAfter(Instant.now())) {
+            return Optional.of(session);
+        }
+        importSessionRepository.delete(session);
+        return Optional.empty();
     }
 
     /**

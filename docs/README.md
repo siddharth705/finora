@@ -41,7 +41,7 @@ Where a PM or the project owner would look first.
 ### `architecture/`
 How the system is built, and the record of why.
 
-- **`adr/`** — the numbered Architecture Decision Records (ADR-001 through ADR-006) and the map of how
+- **`adr/`** — the numbered Architecture Decision Records (ADR-001 through ADR-008) and the map of how
   ADR-004/005/006 relate to each other.
 - **`system-design/`** — design documents for specific subsystems: the financial-document-intelligence
   principles (the largest single document in this tree), the ground-truth model, persistence

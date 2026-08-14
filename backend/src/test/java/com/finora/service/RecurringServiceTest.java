@@ -2,7 +2,6 @@ package com.finora.service;
 
 import com.finora.entity.CategoryRule;
 import com.finora.entity.Transaction;
-import com.finora.repository.FeatureFlagRepository;
 import com.finora.repository.TransactionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,7 +23,7 @@ class RecurringServiceTest {
     private TransactionRepository transactionRepository;
     private RuleEngineService ruleEngineService;
     private AuditService auditService;
-    private FeatureFlagRepository featureFlagRepository;
+    private FeatureFlagService featureFlagService;
     private RecurringService recurringService;
     private final UUID userId = UUID.randomUUID();
 
@@ -36,13 +35,13 @@ class RecurringServiceTest {
         // dedicated tests below) is unaffected by this dependency's addition.
         ruleEngineService = mock(RuleEngineService.class);
         auditService = mock(AuditService.class);
-        featureFlagRepository = mock(FeatureFlagRepository.class);
+        featureFlagService = mock(FeatureFlagService.class);
         // Admin Portal Phase 8 -- default the flag on so every pre-existing test here keeps
         // exercising the real detection logic unchanged; the flag-off behavior gets its own
         // dedicated tests below.
-        when(featureFlagRepository.isEnabled("RECURRING_DETECTION_ENABLED")).thenReturn(true);
+        when(featureFlagService.isEnabled("RECURRING_DETECTION_ENABLED")).thenReturn(true);
         recurringService = new RecurringService(transactionRepository, ruleEngineService, auditService,
-                featureFlagRepository);
+                featureFlagService);
     }
 
     private Transaction expense(String merchant, LocalDate date, BigDecimal amount) {
@@ -262,7 +261,7 @@ class RecurringServiceTest {
 
     @Test
     void detectForUser_isANoOp_whenTheFeatureFlagIsDisabled() {
-        when(featureFlagRepository.isEnabled("RECURRING_DETECTION_ENABLED")).thenReturn(false);
+        when(featureFlagService.isEnabled("RECURRING_DETECTION_ENABLED")).thenReturn(false);
         Transaction t = expense("netflix", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(649));
         when(transactionRepository.findByUserId(userId)).thenReturn(List.of(t));
 
@@ -278,7 +277,7 @@ class RecurringServiceTest {
         // Disabling the flag pauses new detection -- it must not silently wipe a badge a prior,
         // enabled run already set. See detectForUser's own doc comment on why this distinction
         // matters for an admin flipping the flag off mid-incident.
-        when(featureFlagRepository.isEnabled("RECURRING_DETECTION_ENABLED")).thenReturn(false);
+        when(featureFlagService.isEnabled("RECURRING_DETECTION_ENABLED")).thenReturn(false);
         Transaction t = expense("netflix", LocalDate.of(2026, 7, 1), BigDecimal.valueOf(649));
         t.setRecurring(true);
         when(transactionRepository.findByUserId(userId)).thenReturn(List.of(t));

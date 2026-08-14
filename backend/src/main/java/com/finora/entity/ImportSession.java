@@ -68,8 +68,12 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
     @Column(name = "file_content")
     private byte[] fileContent;
 
-    /** Hex SHA-256 of the staged file -- the document's identity. Null when no storage provider is
-     *  configured, in which case the bytes stay in fileContent; see StoredStatement.
+    /** Hex SHA-256 of the staged file -- the document's identity, always computed regardless of
+     *  whether object storage is configured (see ImportSessionService.storeContent). Nullable only
+     *  for rows staged before V79 added idx_import_sessions_live_content; every row created since
+     *  carries one -- it is what that partial unique index and
+     *  ImportSessionService.findLiveSessionByContentHash deduplicate the synchronous stage path
+     *  (POST /csv/stage, /pdf/stage) on, not only the object-storage address it also happens to be.
      *
      *  A session and the StatementImport it confirms into hold IDENTICAL bytes, so they resolve to
      *  the same address and share one stored object. That is why expiring a session must never
