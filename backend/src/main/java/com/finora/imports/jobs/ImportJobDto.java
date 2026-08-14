@@ -1,8 +1,10 @@
 package com.finora.imports.jobs;
 
 import com.finora.entity.ImportJob;
+import com.finora.exception.ErrorCode;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 /** Wire shapes for the asynchronous import path. */
@@ -68,6 +70,43 @@ public final class ImportJobDto {
                     // Given to the client so a support conversation can start from an id that ties
                     // together the worker's logs, its audit rows and any Sentry event.
                     job.getCorrelationId());
+        }
+    }
+
+    /**
+     * One stage's transition, for the customer-facing import timeline -- Premium Import
+     * Reliability v1, §3.1. {@code attempt} is carried on every row (not collapsed to "latest
+     * attempt only") -- a job that failed once and auto-retried successfully is worth showing, now
+     * that Sprint 2 made automatic retries a real, common case rather than hiding it.
+     */
+    public record TimelineStage(
+            String stage, int attempt, String outcome,
+            Instant startedAt, Instant endedAt, Long durationMs
+    ) {
+        static TimelineStage of(com.finora.imports.jobs.ImportJobStage row) {
+            return new TimelineStage(row.getStage().name(), row.getAttempt(), row.getOutcome().name(),
+                    row.getStartedAt(), row.getEndedAt(), row.getDurationMs());
+        }
+    }
+
+    /**
+     * The full timeline for one job the caller owns -- every {@link ImportJobStage} row across
+     * every attempt, chronological, plus a curated failure reason if the job ended in one.
+     *
+     * <p>{@code failureCode} is the wire code (translated via {@link ErrorCode#wireCodeOrNull}),
+     * matching {@code ImportFailureSummaryDto}'s existing convention -- not the raw stored enum
+     * name/exception class name {@code ImportJob.failureCode} actually holds. Populated only once
+     * the job has FAILED, same rule {@link Progress#error} already follows: a job that failed once
+     * and is retrying should not alarm the user with a reason mid-flight for a problem the system
+     * may still resolve on its own.
+     */
+    public record Timeline(UUID jobId, String status, String failureCode, List<TimelineStage> stages) {
+        public static Timeline of(ImportJob job, List<com.finora.imports.jobs.ImportJobStage> rows) {
+            String failureCode = job.getStatus() == ImportJob.Status.FAILED
+                    ? ErrorCode.wireCodeOrNull(job.getFailureCode())
+                    : null;
+            return new Timeline(job.getId(), job.getStatus().name(), failureCode,
+                    rows.stream().map(TimelineStage::of).toList());
         }
     }
 }

@@ -62,6 +62,7 @@ public class ImportJobService {
 
     private final ImportJobStore jobStore;
     private final ImportJobRepository repository;
+    private final ImportJobStageRepository stageRepository;
     private final Optional<StatementStorage> storage;
     private final ImportJobWorker worker;
     private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
@@ -71,11 +72,13 @@ public class ImportJobService {
 
     public ImportJobService(ImportJobStore jobStore,
                              ImportJobRepository repository,
+                             ImportJobStageRepository stageRepository,
                              Optional<StatementStorage> storage,
                              ImportJobWorker worker,
                              org.springframework.transaction.support.TransactionTemplate transactionTemplate) {
         this.jobStore = jobStore;
         this.repository = repository;
+        this.stageRepository = stageRepository;
         this.storage = storage;
         this.worker = worker;
         this.transactionTemplate = transactionTemplate;
@@ -236,6 +239,22 @@ public class ImportJobService {
         return repository.findByIdAndUserId(jobId, userId)
                 .map(ImportJobDto.Progress::of)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Import job not found."));
+    }
+
+    /**
+     * The full stage-by-stage timeline for one job, scoped to its owner -- Premium Import
+     * Reliability v1, §3.1. Same ownership rule as {@link #progress}: a job id alone must never be
+     * enough to read someone else's import, and a 404 rather than a 403 avoids confirming that an
+     * id exists.
+     *
+     * <p>{@link ImportJobStageRepository#findByJobIdOrderByRecordedAtAsc} already returns every
+     * stage across every attempt in the right order -- this method's only job is the ownership
+     * check and the entity-to-DTO assembly.
+     */
+    public ImportJobDto.Timeline timeline(UUID userId, UUID jobId) {
+        ImportJob job = repository.findByIdAndUserId(jobId, userId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Import job not found."));
+        return ImportJobDto.Timeline.of(job, stageRepository.findByJobIdOrderByRecordedAtAsc(jobId));
     }
 
     /**

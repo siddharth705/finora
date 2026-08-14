@@ -43,8 +43,23 @@ export function label(job: ImportJobProgress): string {
   return LABELS[job.status] ?? 'Working';
 }
 
-/** Whether to keep polling. Terminal means terminal — a finished job never changes again. */
-export function isSettled(job: ImportJobProgress): boolean {
+/**
+ * The same sentence {@link label} gives the job's CURRENT status, for one row of the import
+ * timeline instead — the stage vocabulary is the same `ImportJob.Status` enum on both, so this is
+ * the identical map, not a second one to keep in sync with it.
+ */
+export function stageLabel(stage: string): string {
+  return LABELS[stage as ImportJobProgress['status']] ?? 'Working';
+}
+
+/**
+ * Whether to keep polling. Terminal means terminal — a finished job never changes again.
+ *
+ * Takes just the field it needs rather than the full `ImportJobProgress`, so the import timeline
+ * (whose payload is a different shape but carries the identical `status` vocabulary) can reuse this
+ * instead of re-deriving its own terminal-state list.
+ */
+export function isSettled(job: { status: ImportJobProgress['status'] }): boolean {
   return job.status === 'COMPLETED' || job.status === 'FAILED' || job.status === 'CANCELLED';
 }
 

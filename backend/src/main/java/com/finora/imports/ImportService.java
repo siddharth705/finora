@@ -236,9 +236,7 @@ public class ImportService {
     private void recordParseFailure(UUID userId, String fileName, String sourceFormat, long byteSize,
                                      String fingerprint, RuntimeException failure, long startedAtMs,
                                      ParseDiagnostics diagnostics) {
-        String code = failure instanceof ApiException api
-                ? (api.getCode() == null ? null : api.getCode().name())
-                : failure.getClass().getSimpleName();
+        String code = ErrorCode.failureCodeOf(failure);
         try {
             analysisRecorder.recordFailed(userId, StatementAnalysisSession.Source.CUSTOMER_IMPORT, fileName,
                     sourceFormat, byteSize, fingerprint, code, failure.getMessage(),

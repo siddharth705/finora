@@ -314,10 +314,15 @@ public class ImportJobWorker {
             // database and doesn't need the job's own transaction, and the lambda may not even run
             // (jobStore.update is a no-op if the job was deleted between claim and failure).
             ErrorCode.RetryPolicy policy = exceptionClassifier.classify(cause);
+            // The same rule ImportService.recordParseFailure uses for
+            // StatementAnalysisSession.failureCode -- shared via ErrorCode.failureCodeOf rather
+            // than duplicated, so the two write sites cannot drift the day only one of them
+            // changes (Premium Import Reliability v1, §3.1).
+            String failureCode = ErrorCode.failureCodeOf(cause);
             ImportJob.FailureOutcome[] outcome = {ImportJob.FailureOutcome.RETRY_SCHEDULED};
             int[] attempts = {0};
             jobStore.update(jobId, job -> {
-                outcome[0] = job.recordFailure(describe(cause), policy, Instant.now());
+                outcome[0] = job.recordFailure(describe(cause), failureCode, policy, Instant.now());
                 attempts[0] = job.getAttemptCount();
             });
             switch (outcome[0]) {

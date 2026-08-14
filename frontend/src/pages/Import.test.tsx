@@ -41,6 +41,7 @@ vi.mock('../api/endpoints', () => ({
     availability: vi.fn(),
     submit: vi.fn(),
     progress: vi.fn(),
+    timeline: vi.fn(),
     recent: vi.fn(),
     cancel: vi.fn(),
   },
@@ -1011,6 +1012,14 @@ describe('Import — queued imports', () => {
       jobId: 'job-1',
       statusUrl: '/api/v1/import/jobs/job-1',
     });
+    // ImportTimeline mounts alongside ImportProgress for the life of every queued job and polls
+    // this on the same real-timer schedule -- left unmocked, every test in this block leaves a
+    // background retry loop running against an undefined response. A default empty timeline for
+    // whatever the test doesn't care about keeps that loop harmless; tests about the timeline
+    // itself override this.
+    vi.mocked(importJobsApi.timeline).mockReset().mockResolvedValue({
+      jobId: 'job-1', status: 'QUEUED', failureCode: null, stages: [],
+    });
   });
 
   it('queues the upload instead of holding the request open', async () => {
@@ -1115,6 +1124,68 @@ describe('Import — queued imports', () => {
 
     expect(await screen.findByText('No transactions could be read from this statement.'))
       .toBeInTheDocument();
+  });
+
+  /**
+   * The integration gap a code review caught: `ImportProgress` no longer resets `jobId` for a
+   * FAILED job on its own (Premium Import Reliability v1, §3.1) -- that responsibility moved to
+   * `ImportTimeline`'s "Try a different file" button, and every test above this one mocks
+   * `importJobsApi.timeline` only with a default empty response, which would never have caught a
+   * regression in that handoff. This drives the real integration end to end: upload, fail, read
+   * the curated reason, dismiss, and confirm the dropzone is actually reachable again -- not just
+   * that `ImportTimeline` renders correctly in isolation (`ImportTimeline.test.tsx` already covers
+   * that).
+   */
+  it('lets the user try a different file after a queued import fails', async () => {
+    vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({ status: 'FAILED', error: 'boom' }));
+    vi.mocked(importJobsApi.timeline).mockResolvedValue({
+      jobId: 'job-1',
+      status: 'FAILED',
+      failureCode: 'IMPORT_001', // NO_HEADER_DETECTED
+      stages: [
+        { stage: 'PARSING', attempt: 1, outcome: 'FAILED', startedAt: '2026-08-08T09:00:00Z', endedAt: '2026-08-08T09:00:01Z', durationMs: 1000 },
+      ],
+    });
+    const user = userEvent.setup();
+    renderImport();
+    await waitFor(() => expect(importJobsApi.availability).toHaveBeenCalled());
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+
+    // The curated reason, not the raw wire code -- and it must still be readable, i.e. the page
+    // must not have already reset out from under it.
+    expect(await screen.findByText(/couldn't find a transaction table/i)).toBeInTheDocument();
+    expect(screen.getByTestId('import-progress')).toBeInTheDocument();
+
+    await user.click(await screen.findByRole('button', { name: 'Try a different file' }));
+
+    // Actually back to the dropzone -- not just that the button existed and was clickable.
+    await waitFor(() => expect(screen.queryByTestId('import-progress')).not.toBeInTheDocument());
+    expect(screen.getByTestId('statement-file-input')).toBeInTheDocument();
+  });
+
+  /**
+   * The other half of the same review finding: `ImportStageRecorder` deliberately tolerates its
+   * own write failing without breaking the import ("a measurement gap, not an outage"), so a
+   * FAILED job can genuinely reach the client with an empty stage list. Before the fix,
+   * `ImportTimeline` rendered nothing at all for that combination -- no curated reason, no dismiss
+   * button -- stranding the user on the failed screen with no way back short of a reload.
+   */
+  it('still offers a way back when a failed job has no recorded stages', async () => {
+    vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({ status: 'FAILED', error: 'boom' }));
+    vi.mocked(importJobsApi.timeline).mockResolvedValue({
+      jobId: 'job-1', status: 'FAILED', failureCode: null, stages: [],
+    });
+    const user = userEvent.setup();
+    renderImport();
+    await waitFor(() => expect(importJobsApi.availability).toHaveBeenCalled());
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+
+    await user.click(await screen.findByRole('button', { name: 'Try a different file' }));
+
+    await waitFor(() => expect(screen.queryByTestId('import-progress')).not.toBeInTheDocument());
+    expect(screen.getByTestId('statement-file-input')).toBeInTheDocument();
   });
 });
 

@@ -450,4 +450,82 @@ class ImportJobEndpointIT extends AbstractIntegrationTest {
         assertThat(read(a).get("data").get("jobId").asText())
                 .isNotEqualTo(read(b).get("data").get("jobId").asText());
     }
+
+    // ---------------------------------------------------------------- timeline (§3.1)
+
+    @Test
+    void aCompletedJobsTimelineListsEveryStageTheWorkerRan() {
+        User user = user();
+        ResponseEntity<String> accepted = restTemplate.exchange(
+                "/api/v1/import/jobs", HttpMethod.POST, upload(user, "statement.csv", CSV), String.class);
+        String jobId = read(accepted).get("data").get("jobId").asText();
+
+        worker.drainOnce();
+
+        ResponseEntity<String> timeline = restTemplate.exchange(
+                "/api/v1/import/jobs/" + jobId + "/timeline", HttpMethod.GET,
+                new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(timeline.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode data = read(timeline).get("data");
+        assertThat(data.get("status").asText()).isEqualTo("COMPLETED");
+        assertThat(data.get("failureCode").isNull())
+                .as("a completed job has nothing to explain")
+                .isTrue();
+        JsonNode stages = data.get("stages");
+        assertThat(stages.isArray()).isTrue();
+        assertThat(stages.size()).as("PARSING and ANALYZING both ran").isGreaterThanOrEqualTo(2);
+        assertThat(stages.get(0).get("outcome").asText())
+                .as("the worker's first stage must have actually finished, not still say RUNNING")
+                .isEqualTo("COMPLETED");
+    }
+
+    @Test
+    void anotherUsersTimelineIsNotReadable() {
+        User owner = user();
+        User stranger = user();
+        ResponseEntity<String> accepted = restTemplate.exchange(
+                "/api/v1/import/jobs", HttpMethod.POST, upload(owner, "statement.csv", CSV), String.class);
+        String jobId = read(accepted).get("data").get("jobId").asText();
+
+        ResponseEntity<String> asStranger = restTemplate.exchange(
+                "/api/v1/import/jobs/" + jobId + "/timeline", HttpMethod.GET,
+                new HttpEntity<>(bearerFor(stranger)), String.class);
+
+        assertThat(asStranger.getStatusCode())
+                .as("a job id alone must never be enough to read someone else's timeline")
+                .isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    /**
+     * The curated-reason path, exercised without depending on a specific parser error being
+     * reproducible end to end: {@code ImportJob.recordFailure}'s exact write-path logic (proven
+     * unit-level in {@code ImportJobTest}/{@code ImportJobWorkerTest}) is trusted here, and this
+     * test instead proves the piece those don't cover -- that the controller/service/DTO wiring
+     * correctly reads a FAILED job's stored code back out translated to the customer-facing wire
+     * code the frontend's failure-UX contract is keyed by.
+     */
+    @Test
+    void aFailedJobsTimelineCarriesTheTranslatedFailureCode() {
+        User user = user();
+        ResponseEntity<String> accepted = restTemplate.exchange(
+                "/api/v1/import/jobs", HttpMethod.POST, upload(user, "statement.csv", CSV), String.class);
+        UUID jobId = UUID.fromString(read(accepted).get("data").get("jobId").asText());
+
+        ImportJob job = jobRepository.findById(jobId).orElseThrow();
+        job.markClaimed("worker", Instant.now());
+        job.recordFailure("ApiException: No transaction table found", "IMPORT_NO_HEADER_DETECTED",
+                com.finora.exception.ErrorCode.RetryPolicy.FAIL_FAST, Instant.now());
+        jobRepository.save(job);
+
+        ResponseEntity<String> timeline = restTemplate.exchange(
+                "/api/v1/import/jobs/" + jobId + "/timeline", HttpMethod.GET,
+                new HttpEntity<>(bearerFor(user)), String.class);
+
+        JsonNode data = read(timeline).get("data");
+        assertThat(data.get("status").asText()).isEqualTo("FAILED");
+        assertThat(data.get("failureCode").asText())
+                .as("translated to the wire code, not the raw stored ErrorCode enum name")
+                .isEqualTo("IMPORT_001");
+    }
 }

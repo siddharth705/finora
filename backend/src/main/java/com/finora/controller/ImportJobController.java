@@ -114,6 +114,13 @@ public class ImportJobController {
         return ApiResponse.ok(importJobService.progress(currentUser.id(), jobId));
     }
 
+    /** The stage-by-stage history behind {@link #progress}'s single current status -- Premium
+     *  Import Reliability v1, §3.1's customer-facing import timeline. */
+    @GetMapping("/{jobId}/timeline")
+    public ApiResponse<ImportJobDto.Timeline> timeline(@PathVariable UUID jobId) {
+        return ApiResponse.ok(importJobService.timeline(currentUser.id(), jobId));
+    }
+
     /** The caller's recent imports, for a "your uploads" view and for finding a job whose id the
      *  client lost — a page refresh mid-import should not orphan the work. */
     @GetMapping

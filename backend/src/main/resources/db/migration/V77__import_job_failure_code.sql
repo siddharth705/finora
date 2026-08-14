@@ -1,0 +1,19 @@
+-- Premium Import Reliability v1, §3.1 (Recovery Layer: Import Timeline). ImportJob.lastError is
+-- ImportJobWorker.describe(Exception) -- "ClassName: message", raw internal detail never fit to
+-- show a customer directly. StatementAnalysisSession.failure_code already solves exactly this for
+-- the synchronous upload path, but is not joinable back to an ImportJob (no import_job_id column
+-- exists there, import_session_id is always null on a failure row, and correlation_id is shared
+-- across an entire claimed batch rather than being a unique per-job key -- see
+-- ImportTraceService's own doc comment). Rather than build that join, ImportJob gets its own
+-- curated code column, written by the exact same rule ImportService.recordParseFailure already
+-- uses for statement_analysis_sessions.failure_code (ApiException with a code -> the ErrorCode
+-- enum name; anything else -> the exception's simple class name) -- so the two tables' write-side
+-- logic stays identical rather than diverging for no reason, and the read-side translation to a
+-- customer-facing wire code (ErrorCode.wireCodeOrNull) already has to treat an invalid stored
+-- name as null regardless of why it isn't one.
+--
+-- Unlike statement_analysis_sessions.failure_code, this column is NOT append-only-evidence
+-- shaped: import_jobs is a live, mutating row (ImportJob.recordFailure already overwrites
+-- last_error on every attempt), so failure_code is overwritten the same way on every failure,
+-- most recent attempt's reason winning.
+ALTER TABLE import_jobs ADD COLUMN failure_code VARCHAR(32);

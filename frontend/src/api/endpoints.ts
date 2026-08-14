@@ -425,6 +425,28 @@ export interface ImportJobProgress {
   correlationId: string | null;
 }
 
+/** One stage's transition, for the import timeline (Premium Import Reliability v1, §3.1).
+ *  `attempt` is carried on every row rather than collapsed to "latest attempt only" -- a job that
+ *  failed once and auto-retried successfully is worth showing, not hidden. */
+export interface ImportTimelineStage {
+  stage: ImportJobProgress['status'];
+  attempt: number;
+  outcome: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
+  startedAt: string | null;
+  endedAt: string | null;
+  durationMs: number | null;
+}
+
+/** The full timeline for one job. `failureCode` is the wire code (e.g. `"IMPORT_001"`) -- the same
+ *  vocabulary `importFailureMessage` already turns into a curated sentence -- and is only populated
+ *  once the job has actually FAILED, same rule `ImportJobProgress.error` follows. */
+export interface ImportJobTimeline {
+  jobId: string;
+  status: ImportJobProgress['status'];
+  failureCode: string | null;
+  stages: ImportTimelineStage[];
+}
+
 export const importJobsApi = {
   availability: () =>
     api.get<{ asyncImportAvailable: boolean }>('/import/jobs/availability').then((r) => r.data),
@@ -440,6 +462,8 @@ export const importJobsApi = {
   },
   progress: (jobId: string) =>
     api.get<ImportJobProgress>(`/import/jobs/${jobId}`).then((r) => r.data),
+  timeline: (jobId: string) =>
+    api.get<ImportJobTimeline>(`/import/jobs/${jobId}/timeline`).then((r) => r.data),
   recent: (limit = 20) =>
     api.get<ImportJobProgress[]>(`/import/jobs?limit=${limit}`).then((r) => r.data),
   // POST, not DELETE: this ends the work and keeps the row, because a cancelled import is part of

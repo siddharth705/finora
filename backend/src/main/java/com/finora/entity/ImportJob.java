@@ -123,6 +123,22 @@ public class ImportJob {
     @Column(name = "last_error")
     private String lastError;
 
+    /**
+     * The curated identifier behind {@link #lastError}, when there is one -- Premium Import
+     * Reliability v1, §3.1 (the customer-facing import timeline). {@code lastError} is {@code
+     * ImportJobWorker.describe(Exception)}, raw internal detail never fit to show a customer
+     * directly; this is either an {@code ErrorCode} enum name (a known, curated import failure) or
+     * an exception's simple class name, exactly mirroring how {@code
+     * StatementAnalysisSession.failureCode} is written -- so a caller translating this to a
+     * customer-facing wire code can reuse the identical "not a valid ErrorCode name -> null"
+     * handling either table already needs.
+     *
+     * <p>Overwritten on every failure, same as {@code lastError} -- this column describes the most
+     * recent attempt's reason, not a history (the history is {@code ImportJobStage} rows).
+     */
+    @Column(name = "failure_code")
+    private String failureCode;
+
     @Column(name = "correlation_id")
     private String correlationId;
 
@@ -229,6 +245,7 @@ public class ImportJob {
         this.importSessionId = importSessionId;
         this.finishedAt = now;
         this.lastError = null;
+        this.failureCode = null;
     }
 
     /**
@@ -265,7 +282,7 @@ public class ImportJob {
      * @see #recordFailure(String, ErrorCode.RetryPolicy, Instant)
      */
     public FailureOutcome recordFailure(String error, Instant now) {
-        return recordFailure(error, ErrorCode.RetryPolicy.RETRY, now);
+        return recordFailure(error, null, ErrorCode.RetryPolicy.RETRY, now);
     }
 
     /**
@@ -309,15 +326,30 @@ public class ImportJob {
      * comment gives: the next caller would have to remember the same rule, and the one after that.
      *
      * @return what happened -- see {@link FailureOutcome}
+     * @see #recordFailure(String, String, ErrorCode.RetryPolicy, Instant)
      */
     public FailureOutcome recordFailure(String error, ErrorCode.RetryPolicy retryPolicy, Instant now) {
+        return recordFailure(error, null, retryPolicy, now);
+    }
+
+    /**
+     * The same, plus the curated identifier behind {@code error} -- Premium Import Reliability v1,
+     * §3.1. A {@code null} {@code failureCode} is not an error; most callers before the import
+     * timeline existed have no curated identifier to offer and pass it as such.
+     *
+     * @return what happened -- see {@link FailureOutcome}
+     */
+    public FailureOutcome recordFailure(String error, String failureCode,
+                                        ErrorCode.RetryPolicy retryPolicy, Instant now) {
         if (this.status.isTerminal()) {
-            // Deliberately does not touch lastError either. A CANCELLED job's story is "the owner
-            // stopped it", and overwriting that with the exception the worker happened to hit on
-            // its way out would make the admin queue describe a failure that did not happen.
+            // Deliberately does not touch lastError/failureCode either. A CANCELLED job's story is
+            // "the owner stopped it", and overwriting that with the exception the worker happened
+            // to hit on its way out would make the admin queue describe a failure that did not
+            // happen.
             return FailureOutcome.ALREADY_FINISHED;
         }
         this.lastError = error;
+        this.failureCode = failureCode;
         if (shouldDeadLetter(retryPolicy)) {
             this.status = Status.FAILED;
             this.finishedAt = now;
@@ -379,6 +411,14 @@ public class ImportJob {
     public boolean returnToQueue(String reason, Instant now) {
         this.recoveryCount++;
         this.lastError = reason;
+        // A crashed-worker recovery is never a curated ErrorCode -- there is no ApiException here,
+        // just a process that died. Left untouched, a stale failureCode from an EARLIER, unrelated
+        // attempt would survive into this event and, if recovery exhausts here (see below), reach
+        // the customer timeline describing the wrong failure entirely -- e.g. "this PDF is corrupt"
+        // for a job that actually died from repeated worker crashes. Cleared unconditionally, not
+        // just on the terminal branch: a job that recovers and later fails again for a real curated
+        // reason gets that reason fresh from recordFailure, same as lastError already does.
+        this.failureCode = null;
         this.startedAt = null;
         if (this.recoveryCount > MAX_RECOVERIES) {
             this.status = Status.FAILED;
@@ -421,6 +461,7 @@ public class ImportJob {
     public int getRecoveryCount() { return recoveryCount; }
     public Instant getNextAttemptAt() { return nextAttemptAt; }
     public String getLastError() { return lastError; }
+    public String getFailureCode() { return failureCode; }
     public String getCorrelationId() { return correlationId; }
     public UUID getImportSessionId() { return importSessionId; }
     public Instant getCreatedAt() { return createdAt; }

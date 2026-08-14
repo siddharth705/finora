@@ -11,6 +11,7 @@ import { VerificationPanel } from '../components/VerificationPanel';
 import { matchExistingAccount } from '../lib/accountMatch';
 import { DuplicateReview } from '../components/DuplicateReview';
 import { ImportProgress } from '../components/ImportProgress';
+import { ImportTimeline } from '../components/ImportTimeline';
 import {
   EMPTY_REVIEW,
   applyDecisionToSimilar,
@@ -584,20 +585,30 @@ export default function Import() {
           this page until it lands, and offering a second upload alongside it would start a race
           the user did not ask for. */}
       {step === 'upload' && jobId && (
-        <ImportProgress
-          jobId={jobId}
-          onReady={(sessionId) => void openReviewedJob(sessionId)}
-          onGaveUp={(job) => {
-            // Back to the dropzone either way. A cancel is the user's own decision and needs no
-            // explanation; a failure gets the server's, which is the only account of what went
-            // wrong that is worth anything.
-            setJobId(null);
-            setUploadProgress(null);
-            if (job.status === 'FAILED') {
-              setError(job.error ?? 'That import could not be completed.');
-            }
-          }}
-        />
+        <>
+          <ImportProgress
+            jobId={jobId}
+            onReady={(sessionId) => void openReviewedJob(sessionId)}
+            onGaveUp={(job) => {
+              // Cancelling is the user's own decision and needs no explanation, so that path
+              // returns straight to the dropzone. A failure does NOT reset here -- ImportTimeline
+              // (below) is about to show the curated reason and the way back to the dropzone; an
+              // immediate reset would unmount it before anyone could read either.
+              if (job.status !== 'FAILED') {
+                setJobId(null);
+                setUploadProgress(null);
+              }
+            }}
+          />
+          <ImportTimeline
+            jobId={jobId}
+            onDismiss={() => {
+              setJobId(null);
+              setUploadProgress(null);
+              setError(null);
+            }}
+          />
+        </>
       )}
 
       {step === 'upload' && !jobId && pendingPdf && (

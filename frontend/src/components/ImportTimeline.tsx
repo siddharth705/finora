@@ -1,0 +1,165 @@
+import { useEffect, useRef, useState } from 'react';
+import { CheckCircle2, AlertTriangle, Loader2, MinusCircle } from 'lucide-react';
+import { importJobsApi, type ImportJobTimeline as Timeline, type ImportTimelineStage } from '../api/endpoints';
+import { isSettled, stageLabel } from '../lib/importJob';
+import { importFailureMessage } from '../api/importFailureMessages';
+import { POLL_SCHEDULE_MS } from './ImportProgress';
+
+/**
+ * The stage-by-stage history behind {@link import('./ImportProgress').ImportProgress}'s single
+ * current status -- Premium Import Reliability v1, §3.1. Where {@code ImportProgress} answers
+ * "what's happening right now", this answers "what actually happened", including a curated reason
+ * once the job has FAILED -- turning "Failed" into "10:04 Validating statement -- Failed. This PDF
+ * could not be read" instead of leaving the person to guess or contact support.
+ *
+ * <b>Self-contained polling, same schedule as {@code ImportProgress}.</b> Rather than lifting the
+ * parent's already-polled job state, this fetches its own `/timeline` on the identical backoff
+ * schedule and stops on the identical terminal-state rule -- the two calls are independent (one
+ * DTO cannot answer both "what's the single current status" and "what's the full stage history"
+ * without becoming both at once), and reusing the schedule means the two requests land together
+ * rather than drifting out of step with each other.
+ */
+export function ImportTimeline({
+  jobId,
+  onDismiss,
+}: {
+  jobId: string;
+  /** Offered once the job has FAILED, so reading the curated reason doesn't strand the user --
+   *  the dropzone this replaced is only reachable again through this, not through polling settling
+   *  on its own the way a completed/cancelled job's screen already resets automatically. */
+  onDismiss?: () => void;
+}) {
+  const [timeline, setTimeline] = useState<Timeline | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
+  const settled = useRef(false);
+
+  useEffect(() => {
+    settled.current = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let poll = 0;
+    let stopped = false;
+
+    const stop = () => {
+      stopped = true;
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
+
+    const schedule = () => {
+      if (stopped) return;
+      const delay = POLL_SCHEDULE_MS[Math.min(poll, POLL_SCHEDULE_MS.length - 1)];
+      poll += 1;
+      timer = setTimeout(() => void tick(), delay);
+    };
+
+    const tick = async () => {
+      try {
+        const next = await importJobsApi.timeline(jobId);
+        if (stopped) return;
+        setTimeline(next);
+        setPollError(null);
+        if (isSettled(next) && !settled.current) {
+          settled.current = true;
+          stop();
+          return;
+        }
+        schedule();
+      } catch {
+        // Same stance as ImportProgress: a blip mid-poll is not a failed import, so keep trying
+        // rather than showing an error where the timeline should be.
+        if (stopped) return;
+        setPollError('Lost contact with the server -- still trying.');
+        schedule();
+      }
+    };
+
+    schedule();
+    return stop;
+  }, [jobId]);
+
+  // Still nothing to poll with, or nothing recorded and nothing to explain -- both genuinely
+  // render nothing. A FAILED job is the one exception: even with an empty stage list (the stage
+  // recorder tolerates its own write failing without breaking the import, so this does happen),
+  // this must still render the failure reason and the dismiss action -- ImportProgress no longer
+  // offers a way back to the dropzone on its own, so this is the only path left once a job fails.
+  if (!timeline) return null;
+  if (timeline.stages.length === 0 && timeline.status !== 'FAILED') return null;
+
+  const failureMessage = timeline.failureCode
+    ? importFailureMessage(timeline.failureCode)
+    : undefined;
+
+  return (
+    <div
+      className="bg-card rounded-xl2 shadow-card border border-border p-6 mt-4"
+      data-testid="import-timeline"
+    >
+      {timeline.stages.length > 0 && (
+        <ol className="space-y-3">
+          {timeline.stages.map((stage, i) => (
+            <TimelineRow key={`${stage.stage}-${stage.attempt}-${i}`} stage={stage} />
+          ))}
+        </ol>
+      )}
+
+      {timeline.status === 'FAILED' && (
+        <div className="mt-4">
+          <p className="text-xs text-warning" data-testid="import-timeline-failure-reason">
+            {failureMessage ?? "Finora couldn't complete this import. Please try again."}
+          </p>
+          {onDismiss && (
+            <button
+              type="button"
+              onClick={onDismiss}
+              className="mt-2 text-xs font-medium text-primary hover:underline"
+            >
+              Try a different file
+            </button>
+          )}
+        </div>
+      )}
+
+      {pollError && <p className="text-xs text-muted mt-3">{pollError}</p>}
+    </div>
+  );
+}
+
+const OUTCOME_ICON: Record<ImportTimelineStage['outcome'], typeof CheckCircle2> = {
+  COMPLETED: CheckCircle2,
+  FAILED: AlertTriangle,
+  RUNNING: Loader2,
+  SKIPPED: MinusCircle,
+};
+
+const OUTCOME_COLOR: Record<ImportTimelineStage['outcome'], string> = {
+  COMPLETED: 'text-success',
+  FAILED: 'text-warning',
+  RUNNING: 'text-primary',
+  SKIPPED: 'text-muted',
+};
+
+function TimelineRow({ stage }: { stage: ImportTimelineStage }) {
+  const Icon = OUTCOME_ICON[stage.outcome];
+  const color = OUTCOME_COLOR[stage.outcome];
+  const time = stage.startedAt ? new Date(stage.startedAt).toLocaleTimeString() : null;
+
+  return (
+    <li className="flex items-center gap-3">
+      <Icon
+        size={16}
+        className={`${color} flex-shrink-0 ${stage.outcome === 'RUNNING' ? 'animate-spin' : ''}`}
+      />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm text-ink">
+          {stageLabel(stage.stage)}
+          {stage.attempt > 1 && (
+            <span className="text-xs text-muted ml-1.5">(attempt {stage.attempt})</span>
+          )}
+        </p>
+      </div>
+      {time && <span className="text-xs text-muted flex-shrink-0">{time}</span>}
+    </li>
+  );
+}

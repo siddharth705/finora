@@ -156,23 +156,12 @@ public class StatementAnalysisRecorder {
      * The wire code ({@code "IMPORT_001"}) for a stored {@code failureCode} that is really an
      * {@link com.finora.exception.ErrorCode} enum name ({@code "IMPORT_NO_HEADER_DETECTED"}) --
      * see {@link #recentCustomerFailures}'s doc comment for why this translation exists at all.
-     *
-     * <p>Not every stored value is a valid enum name: {@link ImportService#recordParseFailure}
-     * falls back to {@code failure.getClass().getSimpleName()} (e.g. {@code
-     * "NullPointerException"}) for a failure that never carried an {@code ApiException} in the
-     * first place. {@link com.finora.exception.ErrorCode#valueOf} would throw on that input, and a
-     * raw Java exception class name is not something a customer response should carry regardless
-     * -- both are handled by returning {@code null}, which the frontend already treats as "no
-     * curated copy for this one" and falls back to a generic message for, the same as it does for
-     * a null code today.
+     * Delegates to {@link com.finora.exception.ErrorCode#wireCodeOrNull}, extracted there once a
+     * second table ({@code ImportJob.failureCode}, Premium Import Reliability v1, §3.1) needed the
+     * identical translation.
      */
     private static String wireCodeOf(String storedFailureCode) {
-        if (storedFailureCode == null) return null;
-        try {
-            return com.finora.exception.ErrorCode.valueOf(storedFailureCode).code();
-        } catch (IllegalArgumentException notAnErrorCodeName) {
-            return null;
-        }
+        return com.finora.exception.ErrorCode.wireCodeOrNull(storedFailureCode);
     }
 
     /**

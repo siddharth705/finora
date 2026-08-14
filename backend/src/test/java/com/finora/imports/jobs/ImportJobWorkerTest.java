@@ -90,6 +90,10 @@ class ImportJobWorkerTest {
         assertThat(job.getAttemptCount())
                 .as("must dead-letter on the very first attempt, not after spending a budget")
                 .isEqualTo(1);
+        assertThat(job.getFailureCode())
+                .as("Premium Import Reliability v1, §3.1 -- the curated code behind lastError, "
+                        + "for the import timeline")
+                .isEqualTo("IMPORT_NO_HEADER_DETECTED");
     }
 
     /**
@@ -108,6 +112,10 @@ class ImportJobWorkerTest {
         assertThat(job.getNextAttemptAt())
                 .as("RETRY schedules a next attempt, unlike FAIL_FAST")
                 .isNotNull();
+        assertThat(job.getFailureCode())
+                .as("no ApiException/ErrorCode involved -- falls back to the exception's simple "
+                        + "class name, matching StatementAnalysisSession.failureCode's convention")
+                .isEqualTo("StatementStorageException");
     }
 
     /**
@@ -135,6 +143,9 @@ class ImportJobWorkerTest {
                 .as("second occurrence must dead-letter -- not the 5-attempt RETRY budget")
                 .isEqualTo(ImportJob.Status.FAILED);
         assertThat(job.getAttemptCount()).isEqualTo(2);
+        assertThat(job.getFailureCode())
+                .as("no ErrorCode -- falls back to the exception's simple class name")
+                .isEqualTo("NullPointerException");
     }
 
     /**

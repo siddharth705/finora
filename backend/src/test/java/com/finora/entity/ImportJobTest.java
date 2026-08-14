@@ -243,6 +243,60 @@ class ImportJobTest {
         assertThat(job.getStatus()).isEqualTo(ImportJob.Status.FAILED);
     }
 
+    /**
+     * Premium Import Reliability v1, §3.1. The 3-arg overload must keep leaving {@code
+     * failureCode} untouched (delegates with {@code null}), and the 4-arg form must actually store
+     * it -- both proven directly, not inferred from the delegation alone.
+     */
+    @Test
+    void the3ArgOverloadLeavesFailureCodeNull() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+
+        job.recordFailure("locked PDF", ErrorCode.RetryPolicy.FAIL_FAST, Instant.now());
+
+        assertThat(job.getFailureCode()).isNull();
+    }
+
+    @Test
+    void the4ArgOverloadStoresTheFailureCode() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+
+        job.recordFailure("locked PDF", "IMPORT_PDF_PASSWORD_REQUIRED",
+                ErrorCode.RetryPolicy.FAIL_FAST, Instant.now());
+
+        assertThat(job.getFailureCode()).isEqualTo("IMPORT_PDF_PASSWORD_REQUIRED");
+    }
+
+    /** Overwritten on every failure, same as {@code lastError} -- this column describes the most
+     *  recent attempt's reason, not a history. */
+    @Test
+    void aLaterFailureOverwritesAnEarlierFailureCode() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+        job.recordFailure("transient", "IMPORT_006", ErrorCode.RetryPolicy.RETRY, Instant.now());
+        assertThat(job.getFailureCode()).isEqualTo("IMPORT_006");
+
+        job.markClaimed("worker", Instant.now());
+        job.recordFailure("permanent", "IMPORT_CORRUPT_PDF", ErrorCode.RetryPolicy.FAIL_FAST, Instant.now());
+
+        assertThat(job.getFailureCode()).isEqualTo("IMPORT_CORRUPT_PDF");
+    }
+
+    /** Policy-independent, same as {@code lastError} -- a terminal job's failureCode must not be
+     *  overwritten by an exception the worker hit on its way out after the job already finished. */
+    @Test
+    void aTerminalJobsFailureCodeIsUntouchedByALaterFailure() {
+        ImportJob cancelled = job();
+        cancelled.markClaimed("worker", Instant.now());
+        cancelled.cancel(Instant.now());
+
+        cancelled.recordFailure("boom", "IMPORT_001", ErrorCode.RetryPolicy.FAIL_FAST, Instant.now());
+
+        assertThat(cancelled.getFailureCode()).isNull();
+    }
+
     /** The terminal-state refusal is policy-independent -- checked before any policy is consulted. */
     @Test
     void aTerminalJobRefusesEveryPolicy() {
@@ -303,19 +357,57 @@ class ImportJobTest {
         assertThat(job.getRecoveryCount()).isGreaterThan(ImportJob.MAX_RECOVERIES);
     }
 
+    /**
+     * BH-002's shape, extended by a code review's own finding on Premium Import Reliability v1,
+     * §3.1: {@code returnToQueue} is a DIFFERENT event from the curated failure {@code
+     * recordFailure} already recorded on an earlier attempt, and must not let that earlier
+     * failure's {@code failureCode} survive into it. Left uncleared, a job whose first attempt hit
+     * a real, curated failure (a corrupt PDF, say) and then recovered from worker crashes until it
+     * exhausted its recovery budget would reach the customer import timeline still describing the
+     * corrupt PDF -- the actual reason for the FINAL failed state (repeated worker crashes) having
+     * nothing to do with the stale code left behind.
+     */
+    @Test
+    void recoveryExhaustionClearsAnEarlierAttemptsStaleFailureCode() {
+        ImportJob job = job();
+        job.markClaimed("worker", Instant.now());
+        job.recordFailure("locked PDF", "IMPORT_PDF_PASSWORD_REQUIRED",
+                ErrorCode.RetryPolicy.RETRY, Instant.now());
+        assertThat(job.getFailureCode())
+                .as("the real, curated failure from attempt 1")
+                .isEqualTo("IMPORT_PDF_PASSWORD_REQUIRED");
+
+        for (int recovery = 1; recovery <= ImportJob.MAX_RECOVERIES; recovery++) {
+            job.markClaimed("worker", Instant.now());
+            job.returnToQueue("worker died", Instant.now());
+        }
+        job.markClaimed("worker", Instant.now());
+        boolean deadLettered = job.returnToQueue("worker died again", Instant.now());
+
+        assertThat(deadLettered).isTrue();
+        assertThat(job.getStatus()).isEqualTo(ImportJob.Status.FAILED);
+        assertThat(job.getFailureCode())
+                .as("the FINAL failure was recovery exhaustion, not the PDF password -- a stale "
+                        + "code here would tell the customer the wrong story")
+                .isNull();
+    }
+
     @Test
     void completingClearsTheLastError() {
         // Otherwise a job that failed once and then succeeded shows an error forever, and the admin
         // queue reads as though something is still wrong.
         ImportJob job = job();
         job.markClaimed("worker", Instant.now());
-        job.recordFailure("transient", Instant.now());
+        job.recordFailure("transient", "IMPORT_006", ErrorCode.RetryPolicy.RETRY, Instant.now());
         job.markClaimed("worker", Instant.now());
 
         job.complete(UUID.randomUUID(), Instant.now());
 
         assertThat(job.getStatus()).isEqualTo(ImportJob.Status.COMPLETED);
         assertThat(job.getLastError()).isNull();
+        assertThat(job.getFailureCode())
+                .as("same rule as lastError -- a completed job has nothing left to explain")
+                .isNull();
         assertThat(job.getFinishedAt()).isNotNull();
     }
 

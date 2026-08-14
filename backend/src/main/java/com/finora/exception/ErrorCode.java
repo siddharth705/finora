@@ -175,4 +175,53 @@ public enum ErrorCode {
     public HttpStatus defaultStatus() { return defaultStatus; }
     public String defaultMessage() { return defaultMessage; }
     public RetryPolicy retryPolicy() { return retryPolicy; }
+
+    /**
+     * The wire code ({@code "IMPORT_001"}) for a stored value that is really this enum's NAME
+     * ({@code "IMPORT_NO_HEADER_DETECTED"}) -- or {@code null} for any stored value that isn't one,
+     * safely, rather than throwing.
+     *
+     * <p>Extracted here because two independent tables now store a value in exactly this shape and
+     * both need the identical translation: {@code StatementAnalysisSession.failureCode} (the
+     * original case, see {@code StatementAnalysisRecorder.recentCustomerFailures}'s doc comment for
+     * the bug this translation exists to prevent -- handing a customer response the raw enum name
+     * instead of the wire code silently defeated the frontend's failure-UX contract for every row,
+     * caught by a post-merge review, commit {@code c44f417}) and {@code ImportJob.failureCode}
+     * (Premium Import Reliability v1, §3.1, the import timeline).
+     *
+     * <p>Not every stored value is a valid enum name: both write sites fall back to {@code
+     * failure.getClass().getSimpleName()} (e.g. {@code "NullPointerException"}) when the failure
+     * never carried an {@code ApiException} with a code. {@link #valueOf} would throw on that
+     * input, and a raw Java exception class name is not something a customer response should carry
+     * regardless -- both are handled by returning {@code null} here, which every known consumer
+     * already treats as "no curated copy for this one" and falls back to a generic message for.
+     */
+    public static String wireCodeOrNull(String storedName) {
+        if (storedName == null) return null;
+        try {
+            return valueOf(storedName).code();
+        } catch (IllegalArgumentException notAnErrorCodeName) {
+            return null;
+        }
+    }
+
+    /**
+     * What to store as a curated failure identifier for {@code cause} -- this enum's own NAME when
+     * {@code cause} is an {@link ApiException} carrying a code, else the exception's simple class
+     * name (e.g. {@code "NullPointerException"}) as the honest answer for a failure this vocabulary
+     * has no opinion about. {@link #wireCodeOrNull} is this method's read-side counterpart: together
+     * they are the write-then-translate pair every failure-recording call site needs.
+     *
+     * <p>Extracted here for the identical reason {@link #wireCodeOrNull} was: two independent write
+     * sites ({@code ImportService.recordParseFailure} for {@code
+     * StatementAnalysisSession.failureCode}, and {@code ImportJobWorker.recordFailure} for {@code
+     * ImportJob.failureCode}, Premium Import Reliability v1, §3.1) need the identical rule, and a
+     * rule this specific left duplicated is a rule that drifts the first time only one of its two
+     * copies is changed.
+     */
+    public static String failureCodeOf(Throwable cause) {
+        return cause instanceof ApiException api
+                ? (api.getCode() == null ? null : api.getCode().name())
+                : cause.getClass().getSimpleName();
+    }
 }
