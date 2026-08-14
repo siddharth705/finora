@@ -143,6 +143,8 @@ worth keeping honest, since it is satisfied by a correct implementation and by n
 
 ## Related
 
+- [Encryption key management](../../security/encryption-key-management.md) — the operational side:
+  creating the key, the lost-key procedure, and how to run a rotation.
 - [ADR-002: Authentication Architecture](adr-002-authentication-architecture.md) — the session
   model whose tokens are *hashed*, and the reason the distinction in Context matters.
 - `docs/proposals/gmail-transaction-sync-proposal.md` §12.1 — the first caller, and where the
