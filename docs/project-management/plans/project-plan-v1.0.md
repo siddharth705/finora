@@ -214,6 +214,66 @@ Everything else runs beside it or waits. Specifically **off** the critical path 
 
 ---
 
+## 5a. Production-readiness resequencing (2026-08-14)
+
+Following the architecture/production-readiness audit, the owner re-sequenced the resulting gap list
+against one constraint the flat gap list didn't account for: **Railway Pro is planned**, and doing
+full production-grade DR work against infrastructure that is about to change risks rework. The
+sequencing below is a decision, not a scope cut — everything demoted stays tracked.
+
+**Removed from P0 (immediate blocker) status:**
+- **Backup/restore verification** — no longer gates v1.0. Reason: Railway Pro will materially change
+  production capabilities; the team isn't finalizing production ops yet; drilling DR now would likely
+  be redone once the infra changes. See R-4.
+
+**P1 — current, unchanged in priority:**
+1. **Bug-hunt findings closure** — still the highest priority, unaffected by this resequencing (§4).
+2. **Load testing baseline** — kept pre-Railway-Pro, because it doesn't depend on infrastructure that's
+   about to change. Measure API response times, database behavior, memory usage, and import
+   performance before claiming any capacity figure. **Caching evaluation is folded into this work**
+   rather than run as a separate item: the same instrumentation that measures load-test behavior is
+   what should surface slow endpoints and expensive queries. Do not add Redis speculatively — decide
+   only after this measurement exists (see the caching item in the architecture audit).
+
+**P2 — after Railway Pro is purchased:**
+1. Backup + restore drill, retention policy, recovery runbook (R-4, release criterion 3).
+2. Production monitoring hardening — alerts, uptime checks, database metrics, resource thresholds,
+   against final infrastructure rather than provisional.
+3. Caching implementation (if the P1 measurement work justifies it) — Redis only after slow endpoints
+   and expensive queries are identified and index optimization is exhausted first.
+
+**Post-launch:** cache layer refinement, advanced performance work, future architecture
+(Elasticsearch, event-driven scale-out, sharding — all already deferred per the architecture audit).
+
+```
+Now
+│
+├── Bug hunt closure
+├── Import reliability completion
+├── Load testing baseline (caching measurement folded in)
+├── Security review
+│
+↓
+Railway Pro
+│
+├── Backup/restore verification
+├── Production monitoring hardening
+├── Scaling configuration
+│
+↓
+Post-launch optimization
+│
+├── Cache layer (if justified by measurement)
+├── Advanced performance work
+└── Future architecture
+```
+
+This does not change §9's dates — Block E (production readiness) is re-scoped, not shortened, since
+the load-test effort was already estimated there and the restore-drill effort simply moves out of the
+v1.0 window rather than disappearing.
+
+---
+
 ## 6. Dependencies
 
 | This | needs | because |
@@ -238,7 +298,7 @@ Everything else runs beside it or waits. Specifically **off** the critical path 
 | R-17 | The plan file itself has been silently reverted twice by the shared-directory parallel-session pattern | Medium | Realized twice | Hours of PM analysis lost from disk each time, recoverable only because this session's own transcript retained it | Commit this file after every substantive update rather than leaving it as uncommitted working-tree state — see the note at the top of this document | 🟠 Active, mitigation in progress |
 | R-3 | ~~Live deployment has not passed any release gate~~ | — | — | — | **Closed 2026-08-09 by D-1**: no real users, no customer data in production. Reopens the day the first external user signs up | ✅ Closed |
 | R-3a | The rehearsal window closes silently | Medium | High | Restore drill, load test and destructive testing get cheap *only* while prod is empty; that advantage is lost without anyone deciding to lose it | Do Phase 5's drills against real production before beta, not after | 🟠 New |
-| R-4 | No backup or restore has ever been drilled | **High** | Unknown | A Railway Postgres loss is unbounded | Schedule a restore drill in Phase 5 — the drill *is* the evidence | 🔴 Open |
+| R-4 | No backup or restore has ever been drilled | Medium *(re-scoped 2026-08-14, was High)* | Unknown | A Railway Postgres loss is unbounded | **Deliberately deferred to post-Railway-Pro** — see §5a. Tracked, not scheduled; drilling DR against infrastructure that's about to change risks rework. Revisit the moment Railway Pro is purchased | 🟡 Tracked, not blocking |
 | R-5 | Uploads are unscanned for malware | **High** | Medium | Attacker-supplied files reach PDFBox, which is ~2 years behind with no CVE scan | ClamAV sidecar or provider scan + PDFBox upgrade (M2 item 8) | 🔴 Open |
 | R-6 | Single self-hosted macOS runner is a CI SPOF | Medium | Medium | All merges stop; migrated off hosted runners after a billing block | Document the rebuild path (done); keep a hosted fallback profile | 🟡 Partial |
 | R-7 | Scope drift into M3 while Phase 4 is open | **High** | **Materialising now** | The launch date moves with no decision having been made | This plan; §8; the PM role | 🟠 Active |
@@ -327,7 +387,7 @@ measured.
 | B | P1: BH-002, 007, 011, 012, 013, 017, 019, 023, 026, 027 | 5–7 d |
 | C | Security gaps: edge headers, masking guard, malware scan, retention job, PDFBox upgrade | 4–5 d |
 | D | Test readiness: full E2E in CI, nightly job, cross-browser to green, the 7 named test gaps | 3–4 d |
-| E | Production readiness: backup + **restore drill**, load test, runbooks, multi-instance decision, Dependabot batch | 4–6 d |
+| E | Production readiness: load test (with caching/index measurement folded in), runbooks, multi-instance decision, Dependabot batch. **Backup + restore drill moved to post-Railway-Pro — see §5a** | 3–4 d |
 | | **Web subtotal** | **20–27 d** |
 
 ### Mobile track
@@ -505,7 +565,7 @@ in parallel with work you are doing anyway.
 | **Development Complete** | ✅ | Core functionality is implemented across all three apps |
 | **Feature Complete (v1.0)** | 🟡 | M2 items 7–8; password-policy convergence; async threshold decision (D-5) |
 | **QA Complete** | 🔴 | 1 Critical + 12 High open; full E2E not in CI; cross-browser never green; 7 named test gaps |
-| **Production Ready** | 🔴 | No restore drill, no load test, no malware scan, no edge security headers, no secret manager, single-instance controls, indefinite statement retention |
+| **Production Ready** | 🔴 | No load test, no malware scan, no edge security headers, no secret manager, single-instance controls, indefinite statement retention. **Restore drill deliberately deferred to post-Railway-Pro — not a gate for this milestone, see §5a** |
 | **Beta Ready** | 🔴 | Blocked on QA Complete. A beta on balance-corrupting imports is worse than no beta |
 | **v1.0 Ready** | 🔴 | All of the above |
 | **Go-Live** | 🔴 | Owner approval against this table |
@@ -514,11 +574,14 @@ in parallel with work you are doing anyway.
 
 1. Zero open Critical or High defects; every P0 fix carries a test that fails against the old code.
 2. Full E2E green in CI, cross-browser green, smoke blocking on every PR.
-3. A restore from backup has been performed and timed, on a real database, at least once.
-4. A load test at 10× expected launch volume with no error-rate regression.
+3. ~~A restore from backup has been performed and timed, on a real database, at least once.~~
+   **Moved to the post-Railway-Pro gate, not a v1.0 criterion — see §5a.**
+4. A load test at 10× expected launch volume with no error-rate regression, including a pass over
+   slow endpoints and expensive queries (the caching-evaluation measurement folds in here).
 5. Uploads are scanned; PDFBox is current; the edge sets CSP and HSTS.
 6. Statement retention matches what the product says it does, enforced by a job with a test.
-7. A runbook exists for: stuck import job, dead-letter queue, failed deploy, database restore.
+7. A runbook exists for: stuck import job, dead-letter queue, failed deploy. **Database-restore
+   runbook moves with the restore drill to post-Railway-Pro.**
 8. 7+ days of beta with real statements and no P0/P1 raised.
 
 ---
@@ -560,6 +623,7 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-14 | **Production-readiness gap list re-sequenced against the Railway Pro plan (new §5a).** Backup/restore verification moved off the v1.0 release-gate list to a post-Railway-Pro gate — R-4 re-scoped from High to Medium/Tracked, release criterion 3 and the database-restore runbook (criterion 7) both moved out of the v1.0 gate table, §10's Production Ready gate updated to reflect it, §9 Block E re-scoped from 4–6 d to 3–4 d. Load testing stays in P1, pre-Railway-Pro, and the caching-evaluation measurement step (audit finding: no Redis, no cache layer) is folded into that same load-testing work rather than run as a separate item. **No date change** — Block E was re-scoped, not shortened; the restore-drill effort moves out of the window rather than disappearing | Owner's sequencing decision, following the 2026-08-14 architecture/production-readiness audit: Railway Pro will materially change production capabilities, the team isn't finalizing production ops yet, and drilling a full DR process against infrastructure that's about to change risks redoing that work. This is a resequencing, not a scope cut — backup/restore stays tracked (R-4) and returns as a hard gate the moment Railway Pro is purchased |
 | 2026-08-14 | **Process note, recorded rather than hidden: commit `ad13f30` (intended as a docs-only BH-048 correction) also committed and pushed 19 unrelated files** — `ImportJobController`, `ImportJob`, `ErrorCode`, `StatementAnalysisRecorder`, `ImportJobDto/Service/Worker`, the `V77__import_job_failure_code` migration, their tests, and the frontend `ImportTimeline`/`Import.tsx`/`endpoints.ts`/`importJob.ts` changes. These were already staged in this shared working directory's git index before this session ran its own `git add` — consistent with [[parallel-sessions-on-finora]], and not caught because the pre-commit diff was checked scoped to the one intended path (`git diff --stat <file>`) rather than a bare `git status` first. **Owner reviewed and chose to leave the content as committed** — it reads as complete, coherent work (source paired with matching tests, consistent with the ongoing import-reliability effort), not a broken fragment. The commit message on `ad13f30` under-describes what it actually contains; this row is the correction for anyone reading git history later. No code was touched to produce this note | Same failure class that hit this file's own history twice already (V75 migration collision, this file being silently reverted) — a shared, uncommitted git index is state a concurrent session can collide with, whether the collision lands in code or in a commit boundary. Recorded per this plan's own standing practice: state what was lost/misattributed plainly rather than quietly working around it |
 | 2026-08-14 | **BH-048 re-diagnosed; recorded status was stale.** The "e2e-nightly.yml has never executed" framing (carried from the 08-09 hunt report through this plan's 08-11 baseline) was wrong — the workflow has run 5 times. The real, current defect: it failed the last two consecutive nightly runs (08-12, 08-13), root-caused to two 08-11 display-only date-formatting commits whose E2E assertions were never updated. Fix pushed, verified against a live local stack, PR open (#88, not yet merged). Also corrected an internal inconsistency in this plan: §1 read "0 Critical, 0 High" while §4 already listed BH-048/BH-007 as open P1s — these are two different severity scales (security-audit vs. bug-hunt P0-P3) that were never labeled as such. No date change; recalculated on request, not from a new engineering session finishing work | A stale defect description is worse than no description — the plan is only useful if the next reader can trust "still open" means what it says. Caught by re-deriving BH-048's status from actual CI run history and commit diffs rather than re-quoting the 08-09/08-11 record forward unchecked |
 | 2026-08-11 (post-audit) | **External uptime monitoring — Verified.** Configured directly in Better Stack (HTTP monitor, `https://api.finoratech.info/actuator/health`, expects `200` + `"status":"UP"` content match, 2-consecutive-failure down condition), observed reporting `UP`. Documented in `ops/monitoring/README.md` (commit `eadea35`) — no credentials/API keys committed, no Prometheus/Grafana config touched, `scripts/check-dashboard-metrics.py` re-run clean. **Separately noted: application performance monitoring was explicitly not this task's goal** — this closes "is anything watching production from outside," not "do we have full observability." R-09 (the audit's external-monitoring finding) is now closed, not just characterized | Second of three post-audit action items closed. Deliberately did not reopen the audit or expand scope to APM/Prometheus config, per explicit instruction — this was a documentation-closure task following an already-completed external configuration step, not new engineering |
