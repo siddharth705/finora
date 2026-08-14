@@ -28,7 +28,7 @@ comes out is right, and stays right. The two share a name and almost nothing els
 
 | | |
 |---|---|
-| **Overall completion toward v1.0 GA** | **83%** (weighted — see §2). Was 82% on 08-10, 65% at 00:42 on 08-09 |
+| **Overall completion toward v1.0 GA** | **81%** (weighted — see §2; corrected 2026-08-14, see §12 — the previous 83% headline never matched §2's own total, which itself had a 1pp arithmetic error). Was (stated as) 83% on 08-11–08-14, 82% on 08-10, 65% at 00:42 on 08-09 |
 | **Current phase** | Phase 4 complete; **production-readiness audit + remediation pass complete** (2026-08-11) |
 | **Health** | **On Track**, with one warning — see §8 |
 | **v1.0 scope** | Web + admin portal + **mobile** (D-2, 2026-08-09) |
@@ -71,11 +71,11 @@ whose remaining 10% is the part that corrupts a balance is not 90% done for laun
 | 1 | Core product (auth, ledger, accounts, budgets, goals, dashboard, reports, admin portal) | 20% | 95% | 19.0 | Password-policy convergence, a few unmigrated TanStack pages |
 | 2 | Import pipeline (M1 reliability + M2 at-scale) | 20% | 78% | 15.6 | `PdfTableLocator` (1,358 lines) and `imports/product/` (14 classes) still **never reviewed** — the largest unquantified risk in the repo. A new, small, appropriately-scoped gap logged this morning (non-text header row on a real SBI statement), not built ad hoc |
 | 3 | **Financial correctness defects** | 10% | **90%** ▲ | 9.0 | All six original P0s (BH-001/003/004/005/006 + BH-023) CLOSED–VERIFIED and merged, including a real defect found in BH-006's own fix and corrected same night (see §12 changelog). Remainder is Round 2's unreviewed surface, not open tickets |
-| 4 | Security & privacy | 12% | 88% ▲ | 10.6 | BH-014, 017, 025, 032, 036 all merged. Still: no malware scan, no edge headers, no secret manager |
+| 4 | Security & privacy | 12% | 90% ▲ | 10.8 | BH-014, 017, 025, 032, 036, 037, 039, 046 all merged (three more confirmed closed 08-14 — see §4). Remainder is entirely non-bug-hunt now: no malware scan, no edge headers, no secret manager |
 | 5 | Testing & QA readiness | 12% | 85% ▲ | 10.2 | BH-050, 053, 058 (swept) closed; suite at 2383+ tests. `e2e-nightly.yml` runs nightly and on-demand, confirmed green against a real triggered run (BH-048, §4) — the "never actually executed" framing carried in this row was itself stale, corrected 2026-08-14 |
 | 6 | Infrastructure & production readiness | 14% | 57% | 8.0 | **Unchanged across multiple reports now.** No restore drill, no load test, no secret manager, V73/V74 never applied to a non-test database |
 | 7 | Mobile app | 12% | 68% ▲ | 8.2 | **Apple enrolment submitted** (Individual) overnight — first real movement on the item flagged in every prior report. Google Play still not started. Still no confirmed run on a physical device |
-| | **Total** | **100%** | | **81.6 → 82%** | |
+| | **Total** | **100%** | | **80.8 → 81%** | **Corrected 2026-08-14** — the previous "81.6 → 82%" did not match the sum of this table's own rows (19.0+15.6+9.0+10.6+10.2+8.0+8.2 = 80.6, not 81.6), a pre-existing arithmetic error. Recomputed from scratch with row 4's update: the headline moves to 81%, net **down** from the previously stated 82/83% despite real additional progress, because that arithmetic error was inflating it by a full point |
 
 **Mobile is in v1.0** (D-2, 2026-08-09). Its 12% weight stays, and workstream 7 is now on the
 critical path rather than beside it — see §5 and §9.
@@ -114,7 +114,7 @@ measured history consists of, which is why block A and B carry the widest ranges
 | 2 | **M1 — Import Reliability** | ✅ Complete | Tagged `v1.0-import-reliability`, 1,510 tests green on a fresh clone |
 | 3 | **M2 — Import at Scale** | 🟡 ~80% | Items 1–6 built (corpus gate, layout registry V68, WI1A, multi-account parity, async completion, observability V72). Items 7–8 open |
 | 3.5 | Security & privacy cleanup | ✅ Complete | PII sanitization swept, corpus scanner, tree ratchet 145→112, security control audit accepted |
-| **4** | **Hardening & Defect Remediation** | 🔴 **0% — current phase** | 56 open findings from the 2026-08-08 bug hunt |
+| **4** | **Hardening & Defect Remediation** | 🟡 **~98% — effectively complete, 2 items remain** | Corrected 2026-08-14 — the "0%, 56 open" figure was the original 08-08 baseline, never updated as closures landed. Actual current state, re-derived against code and tests (§4): all P0–P3 findings closed or accepted except `BH-044`'s retention half (blocked on an owner decision, not engineering) and `BH-042`/`043`/`045` (owned by a parallel session). Not marked ✅ Complete because those two genuinely remain open |
 | 5 | Production readiness | ⬜ Not started | Backups, DR drill, load test, runbooks, scaling decision |
 | 6 | Beta | ⬜ Not started | Gate: Phase 4 + 5 complete |
 | 7 | v1.0 GA | ⬜ Not started | Gate: §10 release criteria all met |
@@ -314,10 +314,25 @@ session per §1. With this correction, **there is no actionable engineering item
 than what's already covered above: everything closeable by code has been closed, and BH-044's
 remainder is blocked on an owner decision.
 
-### P3 — v1.1
+### P3 — v1.1 (label stale — pulled into v1.0 scope 2026-08-09, see §5)
 
 The 18 Low findings, the Layout Curation UI (M2 item 7), Merchant Intelligence Workbench (WI4A),
 cross-user merchant intelligence, Excel export.
+
+**All 18 Low findings checked, 2026-08-14 — same audit pass as P2's correction above.** None are
+open engineering work:
+
+- **Closed** (verified earlier rounds, 08-09): `BH-008`, `BH-009`, `BH-021`, `BH-022`, `BH-028`,
+  `BH-030`, `BH-047`, `BH-055`, `BH-056`, `BH-057`.
+- **Closed today** (same fixes recorded in P2 above, since these findings span both buckets):
+  `BH-029`, `BH-032`, `BH-036`, `BH-037`, `BH-039`, `BH-046`.
+- **Accepted — real, understood, deliberately not being changed**, per the 08-09 closure report's
+  own §8: `BH-035` (`X-Forwarded-For` last-hop trust assumes exactly one proxy) and `BH-054` (a push
+  to a branch with no open PR gets no CI).
+
+That's all 18. **The entire bug-hunt defect backlog, P0 through P3, is now closed or accepted**
+except the two items named at the top of this section: `BH-044`'s retention half (owner decision)
+and `BH-042`/`043`/`045` (owned by a parallel session, in progress elsewhere).
 
 ### Not in the bug hunt but release-blocking
 
@@ -820,6 +835,7 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-14 | **Phase 4 status corrected; completion recomputed; a pre-existing arithmetic error found and fixed.** Checked the remaining P3/Low bucket the same way as P2 (previous entry): all 18 findings closed or accepted, none open. That makes the entire P0–P3 bug-hunt backlog closed/accepted except `BH-044` (owner decision) and `BH-042`/`043`/`045` (parallel session) — §3's Phase 4 row updated from the stale "0%, 56 open" baseline to reflect that. §2's workstream 4 (Security & privacy) updated 88%→90% for the three newly-confirmed closures (`BH-037`, `BH-039`, `BH-046`). Recomputing §2's own Total from its row contributions gave **80.6%, not the stated 81.6%** — a pre-existing 1pp error, unrelated to today's changes. Corrected total: **80.8% → 81%**, and §1's headline (previously 83%, which never matched §2's 82% either) now matches §2 exactly. Net effect: the headline number goes *down* despite real additional progress, because it was never actually supported by the table under it | Completion figures exist to be checked, not quoted forward — this plan's own opening line claims "every number... is derived from the repository, not asserted." An unverified total silently drifting from its own row sum is the same failure mode as every other drift this plan has caught and corrected today, just in the numbers instead of the prose. Recorded rather than quietly rounded away |
 | 2026-08-14 | **Plan-drift correction: six P2 findings (`BH-014`, `BH-029`, `BH-032`, `BH-036`, `BH-037`, `BH-046`) were already fixed in code and never recorded closed.** Checking "what's the next open bug-hunt item" against current code, not the stale 08-09 report, found each already fixed by a prior session — `LoginExistenceOracleIT`, `ImportJobSourceFormatIT`, `ProductionConfigValidatorTest`, `CorrelationIdCorsContractTest`, `ImportServiceStorageDualWriteTest` all green. `BH-044` is half closed (growth-rate fixed; retention explicitly blocked on an owner decision, not engineering). §1 and §4 updated; P2 now has no actionable engineering item left. No date change | The same discipline this plan already applies to line-number drift (BH-007) and status drift (BH-048) applies to closure drift too — a finding fixed in code but recorded as open is exactly as misleading as the reverse, and it was only caught by re-deriving status from the code and its tests rather than re-quoting the 08-09 report forward |
 | 2026-08-14 | **BH-039 coverage completed — the `ImportSessionRepository` half of the cross-tenant guard.** PR #96's regression test's surviving reference was a `StatementImport` row, so the sweep's `existsByObjectKey(...) || existsByObjectKey(...)` guard's first clause alone kept the object alive and the `ImportSessionRepository` half was never actually exercised. Added `sweep_doesNotReclaimAnObjectStillReferencedByAnotherTenantsLiveImportSession` (surviving reference is another tenant's still-staged `ImportSession`), mutation-checked the same way as the original, committed directly to `main` (`a5365dd`, no PR). No date change | A regression test that passes for the wrong reason (short-circuited by the other half of an OR) is the same failure mode BH-039 itself is about — closing "regression coverage added" without checking which branch it actually reaches would have left the exact gap it claimed to close |
 | 2026-08-14 | **BH-039 closed CLOSED–VERIFIED.** PR #96 merged (`8abfe074`). No live defect, confirmed against real generated SQL; missing cross-tenant regression coverage now in place. Full backend suite green with no recurrence of the `AcquisitionWiringIT` flake. No date change | Closes the day's sixth and last bug-hunt item (BH-048, BH-007, BH-053, BH-018, BH-058, BH-039) at the same VERIFIED bar throughout |
