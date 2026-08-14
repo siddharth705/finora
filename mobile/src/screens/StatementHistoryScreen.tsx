@@ -394,7 +394,6 @@ function StatementDetailModal({ detail, onClose }: { detail: Detail; onClose: ()
               <Field label="Transactions imported" value={String(statement.transactionsImported)} />
               <Field label="Transactions skipped" value={String(statement.transactionsSkipped)} />
               <Field label="Duplicates flagged" value={String(statement.duplicateCount)} />
-              <Field label="Status" value={statement.status} />
             </View>
           ) : isLoading ? (
             <ActivityIndicator color={c.primary} style={styles.detailLoading} />

@@ -58,7 +58,6 @@ const groups: AccountStatementGroup[] = [{
     closingBalance: null,
     transactionsImported: 12,
     transactionsSkipped: 0,
-    status: 'COMPLETED',
     importedAt: '2026-08-01T10:00:00Z',
     duplicateCount: 0,
   }],
