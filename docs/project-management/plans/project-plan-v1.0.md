@@ -239,6 +239,24 @@ runner-level infrastructure issue, not a code defect. The underlying cause was f
 and merged immediately after (`ba33253`, "give AcquisitionWiringIT a real test datasource"),
 confirming the diagnosis.
 
+**`BH-039` — investigated, no live defect found; regression coverage in review.** The finding's own
+words: content addressing being global across tenants "becomes a cross-tenant defect the moment the
+future sweep is built and reference counting is not per-object-global." That sweep has since been
+built (BH-017) — the trigger condition already occurred. Checked directly against the real generated
+SQL: the sweep's reference counting already IS global — `existsByObjectKey` on both
+`StatementImportRepository` and `ImportSessionRepository` takes no `userId` at all, so it cannot be
+scoped to one tenant. **Not a bug — the warned-about trap was avoided when the sweep was built**,
+most likely because the shared-object design was already documented and front of mind. What was
+missing was regression coverage for specifically the cross-tenant case (the existing "object
+survives" tests both use one fixture user for both sides, proving "respects any reference" without
+being able to tell that apart from "respects any reference from this tenant"). Added in
+[PR #96](https://github.com/siddharth705/finora/pull/96), with an explicit warning comment on both
+`existsByObjectKey` methods naming the exact future refactor (adding user-scoping because the query
+"looks" under-scoped) that would silently reintroduce this as live cross-tenant data loss.
+Mutation-checked: the new test and the pre-existing same-tenant test both correctly failed against a
+simulated user-scoped version, with the log showing the shared object actually destructively swept
+despite a live reference. Not yet merged.
+
 ### P3 — v1.1
 
 The 18 Low findings, the Layout Curation UI (M2 item 7), Merchant Intelligence Workbench (WI4A),
@@ -745,6 +763,7 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-14 | **BH-039 investigated: no live defect, regression coverage added.** The finding's own "becomes a cross-tenant defect the moment the sweep is built" trigger already occurred (BH-017's sweep exists), but checked directly against the real generated SQL that its reference counting is already global, not per-tenant — the warned-about trap was avoided. Added the missing cross-tenant regression test plus explicit warning comments naming the exact future mistake that would reintroduce it, in [PR #96](https://github.com/siddharth705/finora/pull/96) (not yet merged). No date change | A "Low/Potential Risk" finding whose trigger condition occurred deserves the same re-verification discipline as anything else — confirming a warned-about defect did NOT materialize is itself real work worth recording, not something to silently assume from the finding's age |
 | 2026-08-14 | **BH-058 class swept and closed — last open P2 test-infrastructure item.** PR #95 merged (`2c40ffa9`): one real occurrence found (`ImportJobStoreIT`'s recovery tests asserting exact counts on table-wide `recoverAbandoned()`), fixed with the noise-fixture technique the original BH-058 fix established; systematic sweep of the rest of the suite found nothing else. Required an admin-override merge after `Backend (Java 25)` failed 4 times on `AcquisitionWiringIT` — confirmed beforehand as a pre-existing runner-level flake (same failure hit `main` itself on unrelated docs-only commits the same day), not a code defect; the underlying cause was fixed independently and merged immediately after (`ba33253`), confirming the diagnosis. No date change | Closes an item that had been carried as "flagged, not swept" since the original finding across three separate closure reports. The admin-override is recorded per this plan's own standing practice — state what was bypassed and why, with the evidence that justified it, not just that it happened |
 | 2026-08-14 | **BH-018 closed CLOSED–VERIFIED — both halves now closed.** PR #93 merged (`02d9d287`): the remaining memory-materialization half (`file.getBytes()` holding up to 10 MB on the heap per upload). Turned out to be interface-wide (`StatementStorage.store(byte[])`, not just one call site) but scoped additively — a new streaming overload as the one real per-backend implementation, the two callers that already hold content in memory for parsing reasons left untouched. Regression test needed its own correction mid-flight: tracking read-chunk sizes didn't actually prove the property (`readAllBytes()` also chunks its reads), tracking write-chunk sizes did. No date change | Closes the last of today's four P1/P2 bug-hunt fixes (BH-048, BH-007, BH-053, BH-018) with the same VERIFIED bar throughout — demonstrated broken, then demonstrated fixed, not inferred from a green suite alone |
 | 2026-08-14 | **BH-053 closed CLOSED–VERIFIED.** PR #92 merged (`c8bc96a`): the check-then-act race in `MerchantLearningService.confirm()`, precisely self-documented by the class's own comments since it was written (including a pre-emptive warning against the tempting wrong fix), closed with a native atomic upsert that stays inside the caller's transaction. The existing regression test only proved the race existed; rewritten against real Postgres to prove it's closed, mutation-checked against the pre-fix code. BH-018's remaining half (memory materialization on upload) is in PR #93, not yet merged — turned out to be an interface-wide question, not one call site, scoped additively rather than as a full conversion. No date change | Same pattern as BH-048/BH-007 earlier today: close a finding the moment it's actually verified, not at the next scheduled re-baseline, and record status precisely (in-review vs. merged-and-verified are not the same thing) |
