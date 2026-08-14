@@ -182,6 +182,13 @@ temp/
 docker-compose.override.yml
 
 # ============================================================================================
+# Load testing (scripts/load-test/) -- k6's raw JSON summary duplicates k6-output.txt and trips
+# the synthetic-fixture PII scanner on numeric timing data, for no benefit over the text summary.
+# ============================================================================================
+
+scripts/load-test/results/*/k6-summary.json
+
+# ============================================================================================
 # IDE / Editor
 # ============================================================================================
 
