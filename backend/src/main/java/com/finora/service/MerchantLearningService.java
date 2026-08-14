@@ -35,10 +35,11 @@ import java.util.UUID;
  * This IS now wired into TransactionService/ImportService (the "deliberately NOT wired in yet"
  * note this comment used to carry expired at Milestone B). The isolation requirement it recorded
  * -- spec Section 10, "Learning update fails after a transaction has been categorized": do NOT
- * rollback the category, only retry/flag learning -- is still unmet, and the one-line
- * Propagation.REQUIRES_NEW it proposed is NOT the fix. See confirm()'s own doc comment for why
- * that annotation would fail every first-time merchant on a foreign key, and what closing this
- * actually requires.
+ * rollback the category, only retry/flag learning -- is still unmet. That is a separate, larger
+ * question (learning failing should never roll back a categorization) from BH-053, which was
+ * specifically the check-then-act race against V7's {@code UNIQUE(user_id, merchant_id,
+ * category_id)} -- see confirm()'s own doc comment for how that one closed, and why the one-line
+ * {@code Propagation.REQUIRES_NEW} this comment used to propose for it was never the fix.
  *
  * Financial Intelligence Workspace, Learning Engine module additions: reset() (bulk-clear a
  * merchant's distribution, distinct from undo()'s one-step-back), timeline()/summary() (the
@@ -90,38 +91,55 @@ public class MerchantLearningService {
      * expressed as "did the leading category change" rather than a separate conflict flag.
      */
     /**
-     * <p><b>Known defect, deliberately not closed with {@code REQUIRES_NEW} -- that fix does not
-     * work here, and the class comment above is wrong to prescribe it.</b> The exposure is real:
-     * the {@code filter(...).findFirst().orElseGet(...)} below is a check-then-act against V7's
-     * {@code UNIQUE(user_id, merchant_id, category_id)}, and because this joins the caller's
-     * transaction, a lost race takes the caller down with it -- on
-     * {@code ImportService.confirm}, that is every transaction insert for a statement the user
-     * has already reviewed.
+     * <p><b>BH-053, closed.</b> The race was real: {@code filter(...).findFirst().orElseGet(...)}
+     * used to be a check-then-act against V7's {@code UNIQUE(user_id, merchant_id, category_id)},
+     * and because this joins the caller's transaction, a lost race took the caller down with it --
+     * on {@code ImportService.confirm}, that was every transaction insert for a statement the user
+     * had already reviewed.
      *
-     * <p>{@code REQUIRES_NEW} would trade a rare race for a constant failure.
+     * <p>{@code REQUIRES_NEW} was considered and rejected, and still would not work.
      * {@code merchant_category_learning} carries {@code NOT NULL} foreign keys to both
      * {@code merchants(id)} and {@code categories(id)}, and on the path that actually calls this
      * ({@code CategorizationService.learn} -> {@code MerchantNormalizationEngine.resolve} /
      * {@code resolveOrCreateCategory}) both parent rows are routinely created in the CALLER's
      * still-uncommitted transaction. A suspended-and-restarted inner transaction cannot see them,
-     * so every first-time merchant or first-time category would fail its foreign-key check. That
-     * is why {@code StatementAnalysisRecorder} can use {@code REQUIRES_NEW} and this cannot: its
-     * evidence row has no foreign key into the work being analysed.
+     * so every first-time merchant or first-time category would have failed its foreign-key check.
+     * That is why {@code StatementAnalysisRecorder} can use {@code REQUIRES_NEW} and this cannot:
+     * its evidence row has no foreign key into the work being analysed.
      *
-     * <p>Closing this properly means removing the race rather than isolating it -- which is the
-     * rule {@code MerchantNormalizationEngine.resolve} already states ("The write simply must not
-     * be attempted"), and which needs a write-path change here, not an annotation. Left open
-     * rather than papered over, so the next reader does not ship the foreign-key regression.
+     * <p>Closed by removing the race rather than isolating it -- the rule
+     * {@code MerchantNormalizationEngine.resolve} already states ("The write simply must not be
+     * attempted"). {@link com.finora.repository.MerchantCategoryLearningRepository#ensurePairExists}
+     * is a native, atomic upsert-or-noop, called here BEFORE any read, still inside this same
+     * transaction. By the time this method reads {@code existingPairs} below, the target pair is
+     * already guaranteed to exist -- {@code saveAll} in {@link #recomputeAndSave} can therefore
+     * only ever issue UPDATEs against rows that are already there, never an INSERT that could
+     * collide with a concurrent caller's.
      */
     @Transactional
     public LearningResult confirm(UUID userId, UUID merchantId, UUID categoryId) {
+        learningRepository.ensurePairExists(userId, merchantId, categoryId);
         List<MerchantCategoryLearning> existingPairs = learningRepository.findByUserIdAndMerchantId(userId, merchantId);
-        MerchantCategoryLearning previousTop = confidenceEngine.topCategory(existingPairs);
+
+        // ensurePairExists may itself be what created the target pair, at confirmationCount=0 --
+        // that placeholder carries no real evidence and must not be eligible to win topCategory
+        // (which is exactly what decides LEARNED vs CORRECTED below). Filtering it out here
+        // reproduces the pre-fix ordering exactly: previousTop used to be computed before the new
+        // pair was created at all, so it never saw it either. A pair that already had real
+        // confirmations (count > 0) is unaffected either way -- ensurePairExists is a no-op
+        // against it, so it is untouched here just as it was before this fix existed.
+        MerchantCategoryLearning previousTop = confidenceEngine.topCategory(
+                existingPairs.stream().filter(p -> p.getConfirmationCount() > 0).toList());
         UUID previousTopCategoryId = previousTop != null ? previousTop.getCategoryId() : null;
 
         MerchantCategoryLearning target = existingPairs.stream()
                 .filter(p -> p.getCategoryId().equals(categoryId))
                 .findFirst()
+                // Should never happen -- ensurePairExists just guaranteed this row exists. Kept
+                // as a defensive fallback (not a throw) for a genuinely different, undocumented
+                // race this fix does not claim to close: a concurrent undo()/reset() deleting the
+                // row between this method's ensure and its read. Out of BH-053's scope, and this
+                // preserves the pre-fix behavior of tolerating it rather than turning it into a 500.
                 .orElseGet(() -> {
                     MerchantCategoryLearning fresh = new MerchantCategoryLearning();
                     fresh.setUserId(userId);
