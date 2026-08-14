@@ -3,6 +3,8 @@ package com.finora.imports.analysis;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finora.dto.ImportDto.FailureCountDto;
+import com.finora.entity.RegisteredLayout;
+import com.finora.repository.RegisteredLayoutRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
@@ -16,6 +18,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Reads the evidence table. Until now nothing did.
@@ -33,11 +36,15 @@ import java.util.Map;
  * document is its {@code reference} ({@code SA-20260806-0145}) — quotable by support, resolvable
  * by engineering, and meaningless to anyone who does not already have access.
  *
- * <p>That does mean a layout reads as {@code FP-1-7A91D3C2} rather than "HSBC composite". Naming a
- * fingerprint is the job of the admin-curated layout registry, which is knowledge rather than
- * evidence and is a separate table that does not exist yet. Showing the fingerprint is the honest
- * intermediate state; inferring a bank name from the structure here would be a guess presented as
- * a fact.
+ * <p>That does mean a layout reads as {@code FP-1-7A91D3C2} rather than "HSBC composite" through
+ * most of this class. Naming a fingerprint is the job of the admin-curated layout registry
+ * ({@code layout_registry}, V68) -- knowledge rather than evidence, and a separate table this
+ * class otherwise leaves alone. {@link #failureCounts} is the one deliberate exception: its
+ * {@code bank} field resolves a failure code's most common fingerprint through that registry,
+ * best-effort, because "what's actually failing, and roughly for whom" is the one question this
+ * report exists to answer and a raw fingerprint doesn't answer it. Everywhere else in this class,
+ * showing the fingerprint stays the honest intermediate state -- inferring a bank name from
+ * structure alone would be a guess presented as a fact.
  *
  * <h2>No thresholds, no verdicts</h2>
  * Counts only. Nothing here decides that a document is "unhealthy" or that a layout needs work —
@@ -114,11 +121,14 @@ public class StatementAnalysisReportService {
     public record AnalysisDetail(AnalysisView analysis, long timesLayoutSeen, long timesLayoutFailed) {}
 
     private final StatementAnalysisSessionRepository repository;
+    private final RegisteredLayoutRepository registeredLayoutRepository;
     private final ObjectMapper objectMapper;
 
     public StatementAnalysisReportService(StatementAnalysisSessionRepository repository,
+                                          RegisteredLayoutRepository registeredLayoutRepository,
                                           ObjectMapper objectMapper) {
         this.repository = repository;
+        this.registeredLayoutRepository = registeredLayoutRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -167,14 +177,61 @@ public class StatementAnalysisReportService {
      *
      * <p>{@code since} has no default and no fallback -- an unbounded scan of a table that only
      * grows is a cost this method should never silently absorb on a caller's behalf.
+     *
+     * <p>{@code bank} -- the layout registry's curated name for the failure code's dominant (most
+     * frequent) layout fingerprint in the window, or null if that fingerprint has never been named
+     * -- is derived from the SAME rows as the count/last-seen totals below, in one pass over one
+     * query ({@link StatementAnalysisSessionRepository#failureCodeLayoutCounts}). An earlier version
+     * of this method ran two separate, near-identical full scans of the window (one grouped by
+     * failure code alone, one grouped by failure code and fingerprint) purely to get the two shapes
+     * separately; that redundant second scan is why this method now aggregates by hand instead of
+     * letting a second {@code GROUP BY} do it.
+     *
+     * <p>Results are explicitly sorted by count descending, then by failure code, rather than
+     * trusting insertion order from the aggregation pass (which reflects the underlying rows'
+     * per-{@code (code, fingerprint)} ordering, not each code's TOTAL count) -- the same
+     * determinism discipline the underlying query applies to its own tiebreak, so two calls
+     * against unchanged data can't silently reorder the list.
      */
     @Transactional(readOnly = true)
     public List<FailureCountDto> failureCounts(Instant since) {
-        return repository.failureCodeCounts(since).stream()
-                .map(row -> new FailureCountDto(
-                        row[0] == null ? "UNKNOWN_FAILURE" : (String) row[0],
-                        (long) row[1],
-                        (Instant) row[2]))
+        Map<String, Long> totalByCode = new LinkedHashMap<>();
+        Map<String, Instant> lastSeenByCode = new LinkedHashMap<>();
+        // Rows arrive ORDER BY COUNT(s) DESC, s.layoutFingerprint ASC (a deterministic tiebreak),
+        // so the first NON-NULL fingerprint seen for a code is its dominant one -- a null
+        // fingerprint (the document failed before it could be characterised) still counts toward
+        // the code's total below, but can never resolve to a registry row, so it is never a
+        // dominant-fingerprint candidate.
+        Map<String, String> dominantFingerprintByCode = new LinkedHashMap<>();
+
+        for (Object[] row : repository.failureCodeLayoutCounts(since)) {
+            String code = (String) row[0];
+            String fingerprint = (String) row[1];
+            long count = (long) row[2];
+            Instant lastSeen = (Instant) row[3];
+
+            totalByCode.merge(code, count, Long::sum);
+            lastSeenByCode.merge(code, lastSeen, (a, b) -> a.isAfter(b) ? a : b);
+            if (fingerprint != null) dominantFingerprintByCode.putIfAbsent(code, fingerprint);
+        }
+
+        Map<String, String> nameByFingerprint = registeredLayoutRepository
+                .findByFingerprintIn(dominantFingerprintByCode.values())
+                .stream()
+                .filter(layout -> layout.getName() != null)
+                .collect(Collectors.toMap(RegisteredLayout::getFingerprint, RegisteredLayout::getName));
+
+        return totalByCode.keySet().stream()
+                .map(code -> {
+                    String fingerprint = dominantFingerprintByCode.get(code);
+                    return new FailureCountDto(
+                            code == null ? "UNKNOWN_FAILURE" : code,
+                            totalByCode.get(code),
+                            lastSeenByCode.get(code),
+                            fingerprint == null ? null : nameByFingerprint.get(fingerprint));
+                })
+                .sorted(Comparator.comparingLong(FailureCountDto::count).reversed()
+                        .thenComparing(FailureCountDto::failureCode))
                 .toList();
     }
 

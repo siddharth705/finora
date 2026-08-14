@@ -63,27 +63,39 @@ public interface StatementAnalysisSessionRepository extends JpaRepository<Statem
     List<Object[]> failureCountsByLayout();
 
     /**
-     * How many customer imports failed, by reason, since some point in time -- Premium Import
-     * Reliability v1, §4's failure analytics. Deliberately narrower than
-     * {@link #failureCountsByLayout}: that answers "which LAYOUT defeats the parser", grouped
-     * across every source; this answers "how many real customers hit each failure reason", which
-     * is why {@code source} is filtered to {@code CUSTOMER_IMPORT} here and isn't there -- an
-     * admin's own diagnostic probing (source {@code ADMIN_ANALYSIS}) must not inflate a count that
-     * is meant to represent customer experience.
+     * How many customer imports failed, by reason AND by layout fingerprint, since some point in
+     * time -- Premium Import Reliability v1, §4.9's failure analytics. {@code source} is filtered
+     * to {@code CUSTOMER_IMPORT} deliberately, unlike {@link #failureCountsByLayout}: an admin's
+     * own diagnostic probing must not inflate a count meant to represent customer experience.
+     *
+     * <p>Grouped by {@code (failureCode, layoutFingerprint)} rather than {@code failureCode} alone
+     * so {@link StatementAnalysisReportService#failureCounts} can derive BOTH the per-code total
+     * (sum the groups) AND a best-effort bank (the dominant non-null fingerprint per code, resolved
+     * through the layout registry) from one scan -- an earlier version of this query ran as two
+     * separate, near-identical full scans of the same window, one to a fault the other's own row
+     * shape didn't need. A null fingerprint (the document failed before it could be characterised)
+     * is a real row and stays in the result, since it still counts toward the code's total; it is
+     * simply never a candidate when the caller picks a dominant fingerprint.
      *
      * <p>{@code since} has no default and no caller-side fallback: an unbounded scan of a table
      * that only grows is a cost this method should never silently absorb on a caller's behalf.
+     *
+     * <p>{@code ORDER BY} carries an explicit tiebreaker ({@code s.layoutFingerprint ASC}) after
+     * the count, not just for cosmetic determinism: two distinct fingerprints tying on count for
+     * the same failure code is a realistic, low-volume-system case, and without a secondary sort
+     * key Postgres does not guarantee which tied row comes back first -- the caller's "dominant
+     * fingerprint" pick would otherwise silently flip between two calls against unchanged data.
      */
     @Query("""
-            SELECT s.failureCode, COUNT(s), MAX(s.createdAt)
+            SELECT s.failureCode, s.layoutFingerprint, COUNT(s), MAX(s.createdAt)
             FROM StatementAnalysisSession s
             WHERE s.outcome = com.finora.imports.analysis.StatementAnalysisSession$Outcome.FAILED
               AND s.source = com.finora.imports.analysis.StatementAnalysisSession$Source.CUSTOMER_IMPORT
               AND s.createdAt >= :since
-            GROUP BY s.failureCode
-            ORDER BY COUNT(s) DESC
+            GROUP BY s.failureCode, s.layoutFingerprint
+            ORDER BY COUNT(s) DESC, s.layoutFingerprint ASC
             """)
-    List<Object[]> failureCodeCounts(@Param("since") Instant since);
+    List<Object[]> failureCodeLayoutCounts(@Param("since") Instant since);
 
     long countByOutcome(StatementAnalysisSession.Outcome outcome);
 

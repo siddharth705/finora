@@ -364,14 +364,21 @@ public class ImportDto {
     ) {}
 
     /** One failure reason's tally, admin-only -- GET /admin/imports/analyses/failures/summary
-     *  (Premium Import Reliability v1, §4). {@code failureCode} here is the raw stored value (the
+     *  (Premium Import Reliability v1, §4.9). {@code failureCode} here is the raw stored value (the
      *  Java ErrorCode enum name, or an exception's simple class name for a codeless failure -- see
      *  StatementAnalysisRecorder's own doc comment on {@code wireCodeOf}), not the customer-facing
      *  wire code {@link ImportFailureSummaryDto} translates to: this is an internal
      *  engineering/support view, and the more precise internal identifier is more useful here than
      *  the wire code would be. A null stored value groups under the literal
-     *  {@code "UNKNOWN_FAILURE"} rather than disappearing from the count. */
-    public record FailureCountDto(String failureCode, long count, java.time.Instant lastSeen) {}
+     *  {@code "UNKNOWN_FAILURE"} rather than disappearing from the count.
+     *
+     *  @param bank the layout registry's curated name for whichever layout fingerprint most often
+     *              produced this failure code in the window, or null if that fingerprint has never
+     *              been named (most haven't -- the registry is only populated by confirmed imports,
+     *              and a failing layout may never have confirmed once). Best-effort by construction,
+     *              per the plan's own framing -- an operator's free-text label, not a verified bank
+     *              identity. */
+    public record FailureCountDto(String failureCode, long count, java.time.Instant lastSeen, String bank) {}
 
     /** What the frontend sends back after the user reviews/edits staged rows. A statement import
      *  is for exactly one account — either an existing one (existingAccountId) or a new one
