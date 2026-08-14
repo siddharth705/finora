@@ -228,21 +228,22 @@ sequencing below is a decision, not a scope cut — everything demoted stays tra
 
 **P1 — current, unchanged in priority:**
 1. **Bug-hunt findings closure** — still the highest priority, unaffected by this resequencing (§4).
-2. **Load testing baseline** — kept pre-Railway-Pro, because it doesn't depend on infrastructure that's
-   about to change. **Scope is deliberately narrow: measure reality, don't engineer for massive
-   scale.** Run at three tiers — 100, 500, 1,000 concurrent users — and at each tier record:
-   - API latency
-   - database usage (connection pool saturation, slow queries)
-   - import processing time
-   - memory usage
-
-   **Purpose: know the current limits, not push past them.** This is a baseline measurement, not a
-   scaling exercise — no infrastructure changes, no premature optimization, just numbers to replace
-   the current arithmetic-derived capacity estimate (§1, §7 R-11). **Caching evaluation is folded into
-   this same pass** rather than run separately: the same three tiers that surface API-latency and
-   database-usage numbers are what should also surface which specific endpoints/queries are slow. Do
-   not add Redis speculatively — decide only after this measurement exists (see the caching item in
-   the architecture audit).
+2. **Load testing baseline — ✅ Complete, 2026-08-14.** Ran at three tiers — 100, 500, 1,000
+   concurrent users — against a local docker-compose stack. Result: clean at 100 users, a measured
+   capacity bottleneck by 500 (HikariCP's 10-connection pool exhausts; 4.4% error rate, 13–15s p95),
+   worse at 1,000. Full findings: [`load-testing-baseline-2026-08-14.md`](../../investigations/performance/load-testing-baseline-2026-08-14.md);
+   R-11 updated accordingly. **This did not just produce a number — it changed the risk's status**
+   from "capacity unknown" to "capacity bottleneck identified, location known, fix not yet chosen."
+   The item below exists because of that.
+3. **Investigate measured bottleneck — Pending, scope deliberately not yet fixed.** The baseline
+   found *where* the ceiling is, not what to do about it. Determine whether remediation requires
+   query optimization, transaction boundary changes, connection pool tuning, or infrastructure
+   changes — and re-run the baseline after remediation to confirm it actually moved. **Not started**
+   because which of those levers to pull, and whether the investigation runs local-only or waits for
+   a Railway-Pro environment, is a decision for the owner to make deliberately, not a default this
+   plan should assume. Do not treat "raise `maximumPoolSize`" as the answer in advance of that
+   investigation — that number was chosen once already (Railway's own connection ceiling, per the
+   architecture audit) and changing it blind can make contention worse, not better.
 
 **P2 — after Railway Pro is purchased:**
 1. Backup + restore drill, retention policy, recovery runbook (R-4, release criterion 3).
@@ -259,8 +260,14 @@ Now
 │
 ├── Bug hunt closure
 ├── Import reliability completion
-├── Load testing baseline (caching measurement folded in)
+├── Load testing baseline ✅ (caching measurement folded in)
 ├── Security review
+│
+↓
+Investigate measured bottleneck
+│
+↓
+Re-test baseline
 │
 ↓
 Railway Pro
@@ -276,6 +283,16 @@ Post-launch optimization
 ├── Advanced performance work
 └── Future architecture
 ```
+
+**Status as of 2026-08-14:**
+
+| Item | Status |
+|---|---|
+| Load testing baseline | Complete |
+| Capacity bottleneck identified | Complete |
+| Root-cause investigation | Pending |
+| Remediation | Pending |
+| Re-test | Pending |
 
 This does not change §9's dates — Block E (production readiness) is re-scoped, not shortened, since
 the load-test effort was already estimated there and the restore-drill effort simply moves out of the
@@ -634,6 +651,7 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-14 | **§5a roadmap updated to reflect what the load-testing baseline actually found.** The baseline didn't just produce a number — it changed R-11 from "capacity unknown" to "capacity bottleneck identified, location known, fix not yet chosen," and the plan's own roadmap diagram was still showing "Load testing baseline → Railway Pro" with nothing in between, which would read to a later reader as "measured, nothing to act on" rather than "measured, found a problem, investigation pending." Inserted **Investigate measured bottleneck → Re-test baseline** between them, plus a small status table (baseline: Complete, bottleneck identified: Complete, root-cause investigation/remediation/re-test: Pending). **Deliberately left unscoped**: no specific fix (pool-size increase, query optimization, transaction-boundary changes, caching) is named, because the investigation that would choose between them hasn't run yet — naming one now would bias it. **No date change** — this is a documentation update tracking a status change, not new engineering | Owner's instruction: the plan should reflect the risk-status change immediately, not wait for the follow-up investigation to be scoped. Explicit owner constraint: do not write "increase HikariCP pool size" as the fix — that decision needs its own investigation (which lever: pool tuning, query optimization, transaction boundaries, or infrastructure) and its own choice of environment (local-only vs. after Railway Pro), not an assumption baked into the roadmap |
 | 2026-08-14 | **Load-testing baseline run (§5a P1 item).** Three tiers (100/500/1,000 concurrent users) against a local docker-compose stack with 100 seeded users and 30,000 transactions. Result: clean at 100 users (0% errors), degrades sharply by 500 (4.4% errors, 13–15s p95) and further at 1,000 (7.3% errors, 37–40s p95) — root-caused in the backend's own logs to HikariCP pool exhaustion (`DB_POOL_MAX_SIZE:10`, already known from the architecture audit, now with a measured consequence). Memory was never a constraint at any tier. R-11 raised Medium → High and reworded from "untested" to "measured, not yet fixed." Full writeup: [`load-testing-baseline-2026-08-14.md`](../../investigations/performance/load-testing-baseline-2026-08-14.md). Reusable tooling committed: `scripts/load-test/{seed.py,loadtest.js,run.sh,README.md}`. **No date change** — this is the P1 baseline measurement itself, not a fix; exact ceiling between 100–500 and a Railway-specific number are follow-ups, not done here | Deliberately scoped per §5a and the owner's own framing: measure reality, don't chase a scale target. Local, not Railway, because pushing 1,000 concurrent connections at the shared deployed instance needs its own explicit conversation, not a default. The pool-exhaustion mechanism this baseline found is architecture-level and will reproduce on Railway regardless of the exact number there |
 | 2026-08-14 | **Production-readiness gap list re-sequenced against the Railway Pro plan (new §5a).** Backup/restore verification moved off the v1.0 release-gate list to a post-Railway-Pro gate — R-4 re-scoped from High to Medium/Tracked, release criterion 3 and the database-restore runbook (criterion 7) both moved out of the v1.0 gate table, §10's Production Ready gate updated to reflect it, §9 Block E re-scoped from 4–6 d to 3–4 d. Load testing stays in P1, pre-Railway-Pro, and the caching-evaluation measurement step (audit finding: no Redis, no cache layer) is folded into that same load-testing work rather than run as a separate item. **No date change** — Block E was re-scoped, not shortened; the restore-drill effort moves out of the window rather than disappearing | Owner's sequencing decision, following the 2026-08-14 architecture/production-readiness audit: Railway Pro will materially change production capabilities, the team isn't finalizing production ops yet, and drilling a full DR process against infrastructure that's about to change risks redoing that work. This is a resequencing, not a scope cut — backup/restore stays tracked (R-4) and returns as a hard gate the moment Railway Pro is purchased |
 | 2026-08-14 | **Process note, recorded rather than hidden: commit `ad13f30` (intended as a docs-only BH-048 correction) also committed and pushed 19 unrelated files** — `ImportJobController`, `ImportJob`, `ErrorCode`, `StatementAnalysisRecorder`, `ImportJobDto/Service/Worker`, the `V77__import_job_failure_code` migration, their tests, and the frontend `ImportTimeline`/`Import.tsx`/`endpoints.ts`/`importJob.ts` changes. These were already staged in this shared working directory's git index before this session ran its own `git add` — consistent with [[parallel-sessions-on-finora]], and not caught because the pre-commit diff was checked scoped to the one intended path (`git diff --stat <file>`) rather than a bare `git status` first. **Owner reviewed and chose to leave the content as committed** — it reads as complete, coherent work (source paired with matching tests, consistent with the ongoing import-reliability effort), not a broken fragment. The commit message on `ad13f30` under-describes what it actually contains; this row is the correction for anyone reading git history later. No code was touched to produce this note | Same failure class that hit this file's own history twice already (V75 migration collision, this file being silently reverted) — a shared, uncommitted git index is state a concurrent session can collide with, whether the collision lands in code or in a commit boundary. Recorded per this plan's own standing practice: state what was lost/misattributed plainly rather than quietly working around it |
