@@ -2,10 +2,13 @@ package com.finora.imports.storage;
 
 import com.finora.AbstractIntegrationTest;
 import com.finora.entity.Account;
+import com.finora.entity.ImportJob;
 import com.finora.entity.ImportSession;
 import com.finora.entity.StatementImport;
 import com.finora.entity.User;
+import com.finora.exception.ErrorCode;
 import com.finora.repository.AccountRepository;
+import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.UserRepository;
@@ -43,6 +46,7 @@ class StatementStorageSweepServiceIT extends AbstractIntegrationTest {
 
     @Autowired private StatementImportRepository statementImportRepository;
     @Autowired private ImportSessionRepository importSessionRepository;
+    @Autowired private ImportJobRepository importJobRepository;
     @Autowired private AccountRepository accountRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private EntityManager entityManager;
@@ -58,7 +62,8 @@ class StatementStorageSweepServiceIT extends AbstractIntegrationTest {
     @BeforeEach
     void setUp() {
         storage = new FilesystemStatementStorage(storageRoot.toString());
-        service = new StatementStorageSweepService(Optional.of(storage), statementImportRepository, importSessionRepository);
+        service = new StatementStorageSweepService(Optional.of(storage), statementImportRepository,
+                importSessionRepository, importJobRepository);
         ReflectionTestUtils.setField(service, "retentionDays", 90);
         ReflectionTestUtils.setField(service, "batchSize", 200);
         ReflectionTestUtils.setField(service, "sweepEnabled", true);
@@ -188,6 +193,63 @@ class StatementStorageSweepServiceIT extends AbstractIntegrationTest {
         assertThat(result.swept()).isZero();
         assertThat(result.skipped()).isEqualTo(1);
         assertThat(storage.exists(address)).isTrue();
+    }
+
+    private ImportJob saveFailedImportJob(ContentAddress address) {
+        ImportJob job = new ImportJob(userId, "statement.pdf", address.hash(), address.key(), "PDF");
+        job.recordFailure("boom", null, ErrorCode.RetryPolicy.FAIL_FAST, Instant.now());
+        return importJobRepository.save(job);
+    }
+
+    private ImportJob saveCompletedImportJob(ContentAddress address) {
+        ImportJob job = new ImportJob(userId, "statement.pdf", address.hash(), address.key(), "PDF");
+        job.complete(UUID.randomUUID(), Instant.now());
+        return importJobRepository.save(job);
+    }
+
+    /**
+     * The gap this change closes, against a real Postgres. A FAILED import_jobs row has no
+     * counterpart in either statement_imports or import_sessions -- work that fails before
+     * producing a confirmable row leaves no trace in either table -- so before
+     * ImportJobRepository.existsByObjectKeyAndStatusNot joined this check, this object would have
+     * been reclaimed the moment it looked old enough, destroying the one thing a future "retry
+     * without re-upload" would need.
+     */
+    @Test
+    @Transactional
+    void sweep_doesNotReclaimAnObjectStillReferencedByALiveFailedImportJob() {
+        ContentAddress address = storeBytes("failed-async-import");
+        StatementImport si = saveStatementImport(address);
+        softDeleteAndBackdate(si, Instant.now().minus(91, ChronoUnit.DAYS));
+        saveFailedImportJob(address);
+
+        StatementStorageSweepService.Result result = service.sweep();
+
+        assertThat(result.swept()).isZero();
+        assertThat(result.skipped()).isEqualTo(1);
+        assertThat(storage.exists(address)).isTrue();
+    }
+
+    /**
+     * The other half: a COMPLETED import_jobs row must not protect its object on its own. Unlike
+     * statement_imports and import_sessions, import_jobs rows never expire (only cascading away
+     * with the owning user) -- if COMPLETED counted here, this object would become permanently
+     * unsweepable the moment the job completed, even long after the statement it produced was
+     * deleted and its originating session expired.
+     */
+    @Test
+    @Transactional
+    void sweep_reclaimsAnObjectWhoseOnlyImportJobReferenceIsCompleted() {
+        ContentAddress address = storeBytes("completed-async-import");
+        StatementImport si = saveStatementImport(address);
+        softDeleteAndBackdate(si, Instant.now().minus(91, ChronoUnit.DAYS));
+        saveCompletedImportJob(address);
+
+        StatementStorageSweepService.Result result = service.sweep();
+
+        assertThat(result.swept()).isEqualTo(1);
+        assertThat(result.skipped()).isZero();
+        assertThat(storage.exists(address)).isFalse();
     }
 
     @Test

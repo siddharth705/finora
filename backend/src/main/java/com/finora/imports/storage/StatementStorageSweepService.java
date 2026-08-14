@@ -1,5 +1,7 @@
 package com.finora.imports.storage;
 
+import com.finora.entity.ImportJob;
+import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.repository.StatementImportRepository;
 import org.slf4j.Logger;
@@ -26,6 +28,15 @@ import java.util.Optional;
  * once {@code app.statement-storage.provider} is actually configured (PR #67), the documented
  * retention window was fiction: the row disappears, the object stays forever.
  *
+ * <p>A third table holds references too, discovered after production evidence surfaced a real
+ * FAILED {@code import_jobs} row whose object had no other live reference at all: async imports
+ * ({@code ImportJobService}) write to storage before a job is even queued, so a job that later
+ * fails still names a real object, one a future "retry without re-upload" needs intact. Neither
+ * {@code statement_imports} nor {@code import_sessions} ever gets a row for work that failed
+ * before producing one, so until {@link ImportJobRepository#existsByObjectKeyAndStatusNot} joined
+ * this check, a failed job's bytes survived only by the accident of some other reference existing
+ * -- never because the failed job itself counted as one.
+ *
  * <h2>Reference counting, not delete-on-row-expiry</h2>
  * Sid decided explicitly against an R2 lifecycle rule or an immediate delete-on-row-expiry, because
  * objects are shared by design (docs/engineering/statement-storage-migration.md §2.1, §3.2): a
@@ -39,12 +50,14 @@ import java.util.Optional;
  * A candidate {@code (content_hash, object_key)} comes from
  * {@link StatementImportRepository#findObjectsUnreferencedSince}: a soft-deleted
  * {@code statement_imports} row whose {@code deleted_at} is older than the retention window. For
- * each candidate, this service re-checks -- fresh, right before acting -- whether ANY row in
- * EITHER table currently references that key
+ * each candidate, this service re-checks -- fresh, right before acting -- whether ANY row in ANY
+ * of three tables currently references that key
  * ({@link StatementImportRepository#existsByObjectKey}, which respects the entity's
  * {@code @SQLRestriction} and so only counts LIVE rows, OR'd with
- * {@link ImportSessionRepository#existsByObjectKey}, which has no lifecycle state to exclude).
- * Only when both say no does {@link StatementStorage#delete} get called.
+ * {@link ImportSessionRepository#existsByObjectKey}, which has no lifecycle state to exclude, OR'd
+ * with {@link ImportJobRepository#existsByObjectKeyAndStatusNot} against {@code COMPLETED} -- see
+ * that method's own doc for why COMPLETED is excluded rather than checked like the others).
+ * Only when all three say no does {@link StatementStorage#delete} get called.
  *
  * <h2>A known, deliberate gap</h2>
  * This can only discover candidates that leave a queryable trace, and only
@@ -89,6 +102,7 @@ public class StatementStorageSweepService {
     private final Optional<StatementStorage> storage;
     private final StatementImportRepository statementImportRepository;
     private final ImportSessionRepository importSessionRepository;
+    private final ImportJobRepository importJobRepository;
 
     @Value("${app.statement-storage.sweep.enabled:true}")
     private boolean sweepEnabled;
@@ -104,10 +118,12 @@ public class StatementStorageSweepService {
 
     public StatementStorageSweepService(Optional<StatementStorage> storage,
                                          StatementImportRepository statementImportRepository,
-                                         ImportSessionRepository importSessionRepository) {
+                                         ImportSessionRepository importSessionRepository,
+                                         ImportJobRepository importJobRepository) {
         this.storage = storage;
         this.importSessionRepository = importSessionRepository;
         this.statementImportRepository = statementImportRepository;
+        this.importJobRepository = importJobRepository;
     }
 
     /**
@@ -164,12 +180,14 @@ public class StatementStorageSweepService {
 
             // The safety-critical check. findObjectsUnreferencedSince() is a discovery query that
             // can be stale by the time execution reaches here -- another statement could have been
-            // confirmed with identical bytes (a fresh statement_imports row) or a new session
-            // staged (a fresh import_sessions row) in the meantime. Re-checking fresh, immediately
-            // before the irreversible call, is what actually makes this safe -- the same shape of
-            // guard as ImportSessionRepository.claimForConfirmation's atomic re-check.
+            // confirmed with identical bytes (a fresh statement_imports row), a new session staged
+            // (a fresh import_sessions row), or an async import queued or failed on the same bytes
+            // (a live, non-COMPLETED import_jobs row) in the meantime. Re-checking fresh,
+            // immediately before the irreversible call, is what actually makes this safe -- the
+            // same shape of guard as ImportSessionRepository.claimForConfirmation's atomic re-check.
             if (statementImportRepository.existsByObjectKey(objectKey)
-                    || importSessionRepository.existsByObjectKey(objectKey)) {
+                    || importSessionRepository.existsByObjectKey(objectKey)
+                    || importJobRepository.existsByObjectKeyAndStatusNot(objectKey, ImportJob.Status.COMPLETED)) {
                 skipped++;
                 continue;
             }

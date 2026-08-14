@@ -111,4 +111,25 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, UUID> {
      * every job that never recorded a session, which today is all of them.
      */
     List<ImportJob> findByImportSessionId(UUID importSessionId);
+
+    /**
+     * Whether a non-COMPLETED job still references this object key. Feeds {@code
+     * StatementStorageSweepService}'s reference check alongside {@code
+     * StatementImportRepository.existsByObjectKey} and {@code ImportSessionRepository.existsByObjectKey}.
+     *
+     * <p>COMPLETED is excluded deliberately, not incidentally. Unlike those other two tables, this
+     * one has no expiry of its own -- a completed job's row outlives the statement it produced
+     * indefinitely, cascading away only if the owning user account itself is deleted (V66). Counting
+     * COMPLETED here would make a completed import's object permanently unsweepable long after its
+     * legitimate references (the confirmed {@code statement_imports} row, or a still-staged {@code
+     * import_sessions} row) had themselves expired -- silently overriding the sweep's actual retention
+     * policy for every successful import, forever, not just bounding it.
+     *
+     * <p>FAILED and the in-flight statuses have no coverage in either of those tables at all -- for
+     * them, this check is the only thing standing between an object and the sweep, which is the gap
+     * this method exists to close: a failed import's bytes used to become unswept-safe only by
+     * accident (another live reference happening to still exist), never because the failed job
+     * itself was recognized as a reason to keep them.
+     */
+    boolean existsByObjectKeyAndStatusNot(String objectKey, ImportJob.Status status);
 }

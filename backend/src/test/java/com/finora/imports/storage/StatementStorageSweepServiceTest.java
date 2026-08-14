@@ -1,5 +1,7 @@
 package com.finora.imports.storage;
 
+import com.finora.entity.ImportJob;
+import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.repository.StatementImportRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,6 +36,7 @@ class StatementStorageSweepServiceTest {
     private StatementStorage storage;
     private StatementImportRepository statementImportRepository;
     private ImportSessionRepository importSessionRepository;
+    private ImportJobRepository importJobRepository;
     private StatementStorageSweepService service;
 
     @BeforeEach
@@ -41,12 +44,13 @@ class StatementStorageSweepServiceTest {
         storage = mock(StatementStorage.class);
         statementImportRepository = mock(StatementImportRepository.class);
         importSessionRepository = mock(ImportSessionRepository.class);
+        importJobRepository = mock(ImportJobRepository.class);
         service = newService(Optional.of(storage));
     }
 
     private StatementStorageSweepService newService(Optional<StatementStorage> storageOptional) {
         StatementStorageSweepService s = new StatementStorageSweepService(
-                storageOptional, statementImportRepository, importSessionRepository);
+                storageOptional, statementImportRepository, importSessionRepository, importJobRepository);
         ReflectionTestUtils.setField(s, "retentionDays", 90);
         ReflectionTestUtils.setField(s, "batchSize", 200);
         ReflectionTestUtils.setField(s, "sweepEnabled", true);
@@ -71,7 +75,7 @@ class StatementStorageSweepServiceTest {
         assertThat(result.failed()).isZero();
         // The whole point: with no provider, this must not even query the database, matching how
         // every other consumer of Optional<StatementStorage> behaves when it's empty.
-        verifyNoInteractions(statementImportRepository, importSessionRepository);
+        verifyNoInteractions(statementImportRepository, importSessionRepository, importJobRepository);
     }
 
     @Test
@@ -138,6 +142,52 @@ class StatementStorageSweepServiceTest {
         verify(storage, never()).delete(anyString());
     }
 
+    /**
+     * The gap this change closes. A FAILED import_jobs row has no counterpart in either
+     * statement_imports or import_sessions -- work that fails before producing a confirmable row
+     * leaves no trace there at all -- so before this check existed, this exact object would have
+     * been swept out from under a future "retry without re-upload" the moment it looked old enough.
+     */
+    @Test
+    void sweep_doesNotDeleteAnObjectStillReferencedByALiveNonCompletedImportJob() {
+        String key = "statements/ee/ff/eeff00.bin";
+        when(statementImportRepository.findObjectsUnreferencedSince(any(), anyInt()))
+                .thenReturn(List.<Object[]>of(candidate("eeff00", key, Instant.now().minus(120, ChronoUnit.DAYS))));
+        when(statementImportRepository.existsByObjectKey(key)).thenReturn(false);
+        when(importSessionRepository.existsByObjectKey(key)).thenReturn(false);
+        when(importJobRepository.existsByObjectKeyAndStatusNot(key, ImportJob.Status.COMPLETED)).thenReturn(true);
+
+        StatementStorageSweepService.Result result = service.sweep();
+
+        assertThat(result.swept()).isZero();
+        assertThat(result.skipped()).isEqualTo(1);
+        verify(storage, never()).delete(anyString());
+    }
+
+    /**
+     * The other half: a COMPLETED job must NOT protect its object on its own. import_jobs rows
+     * never expire (only cascading away with the owning user), so if COMPLETED counted here, a
+     * successfully imported statement's object would become permanently unsweepable the moment the
+     * job completed -- even long after the user deletes the statement and its originating session
+     * expires. This is exactly why the repository check excludes COMPLETED rather than matching
+     * every status the way the other two tables' checks do.
+     */
+    @Test
+    void sweep_deletesAnObjectWhoseOnlyImportJobReferenceIsCompleted() {
+        String key = "statements/11/22/112233.bin";
+        when(statementImportRepository.findObjectsUnreferencedSince(any(), anyInt()))
+                .thenReturn(List.<Object[]>of(candidate("112233", key, Instant.now().minus(120, ChronoUnit.DAYS))));
+        when(statementImportRepository.existsByObjectKey(key)).thenReturn(false);
+        when(importSessionRepository.existsByObjectKey(key)).thenReturn(false);
+        when(importJobRepository.existsByObjectKeyAndStatusNot(key, ImportJob.Status.COMPLETED)).thenReturn(false);
+
+        StatementStorageSweepService.Result result = service.sweep();
+
+        assertThat(result.swept()).isEqualTo(1);
+        assertThat(result.skipped()).isZero();
+        verify(storage).delete(key);
+    }
+
     @Test
     void sweep_continuesTheBatch_whenOneDeleteFails() {
         when(statementImportRepository.findObjectsUnreferencedSince(any(), anyInt()))
@@ -192,6 +242,6 @@ class StatementStorageSweepServiceTest {
 
         service.scheduledSweep();
 
-        verifyNoInteractions(statementImportRepository, importSessionRepository, storage);
+        verifyNoInteractions(statementImportRepository, importSessionRepository, importJobRepository, storage);
     }
 }
