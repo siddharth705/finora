@@ -358,6 +358,31 @@ app:
       interval-ms: ${STATEMENT_STORAGE_SWEEP_INTERVAL_MS:21600000}
       initial-delay-ms: ${STATEMENT_STORAGE_SWEEP_INITIAL_DELAY_MS:300000}
 
+# Reversible encryption at rest for third-party credentials Finora must read back -- OAuth refresh
+# tokens first (ADR-007). NOT for passwords or Finora's own session tokens, which are hashed via
+# TokenHasher; see com.finora.security.crypto's package doc for why the two are not interchangeable.
+#
+# `keys` is a MAP, not a single value, because rotation needs the previous key resolvable while new
+# writes go under the active one -- each ciphertext records the id it was written under. During a
+# rotation, set active-key-id to the new id and keep the old entry until nothing references it.
+#
+# No default for the key itself, deliberately: unlike SMS (where an unconfigured provider degrades
+# to a silent no-op), there is no safe degraded mode here -- writing an integration token without
+# encryption would put a live third-party credential in the database in plaintext.
+# ProductionConfigValidator refuses to boot the prod profile without it.
+#
+# Generate a key with:  openssl rand -base64 32
+finora:
+  security:
+    encryption:
+      active-key-id: ${FINORA_ENCRYPTION_ACTIVE_KEY_ID:v1}
+      keys:
+        # Same posture as app.jwt.secret above: an obviously-fake placeholder so local development
+        # and the test suite boot without setup, and ProductionConfigValidator refuses to start the
+        # prod profile while it is still in place. This value is public, in git, and identical for
+        # every developer -- it protects nothing and is not meant to.
+        v1: ${FINORA_ENCRYPTION_KEY:Zmlub3JhLWxvY2FsLWRldi1rZXktRE8tTk9ULVVTRSE=}
+
 # Backend error monitoring. Off unless SENTRY_DSN is set -- the same posture as every other
 # external integration here (RESEND_API_KEY, GOOGLE_APPLICATION_CREDENTIALS). See
 # com.finora.observability.MonitoringConfig for why each option below is stated rather than

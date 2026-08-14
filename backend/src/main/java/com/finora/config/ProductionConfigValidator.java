@@ -1,5 +1,6 @@
 package com.finora.config;
 
+import com.finora.security.crypto.CryptoProperties;
 import com.finora.service.PhoneVerificationProvider;
 import com.finora.service.SmsProvider;
 import org.slf4j.Logger;
@@ -105,21 +106,28 @@ public class ProductionConfigValidator implements SmartInitializingSingleton {
         return PLACEHOLDER_MARKERS.stream().anyMatch(normalized::contains);
     }
 
+    /** The local-dev placeholder from application.yml. Matching this in prod means the real key was
+     *  never supplied -- see the check in {@link #validate()}. */
+    private static final String LOCAL_DEV_ENCRYPTION_KEY = "Zmlub3JhLWxvY2FsLWRldi1rZXktRE8tTk9ULVVTRSE=";
+
     private final Environment environment;
     private final JwtProperties jwtProperties;
     private final EmailProperties emailProperties;
     private final PhoneVerificationProvider phoneVerificationProvider;
     private final SmsProvider smsProvider;
+    private final CryptoProperties cryptoProperties;
 
     public ProductionConfigValidator(Environment environment, JwtProperties jwtProperties,
                                       EmailProperties emailProperties,
                                       PhoneVerificationProvider phoneVerificationProvider,
-                                      SmsProvider smsProvider) {
+                                      SmsProvider smsProvider,
+                                      CryptoProperties cryptoProperties) {
         this.environment = environment;
         this.jwtProperties = jwtProperties;
         this.emailProperties = emailProperties;
         this.phoneVerificationProvider = phoneVerificationProvider;
         this.smsProvider = smsProvider;
+        this.cryptoProperties = cryptoProperties;
     }
 
     @Override
@@ -224,6 +232,23 @@ public class ProductionConfigValidator implements SmartInitializingSingleton {
             problems.append("- GOOGLE_APPLICATION_CREDENTIALS is unset or invalid. Without it, the Firebase ")
                     .append("Admin SDK can't verify phone numbers, so registration, password reset, and ")
                     .append("password change can never complete their phone-verification step.\n");
+        }
+
+        // ADR-007. Same class of failure as JWT_SECRET above -- a placeholder that is public, in
+        // git, and identical for every developer. The consequence differs though: this key protects
+        // third-party OAuth refresh tokens, which are live credentials to a user's external account
+        // (their mailbox, later their bank). A production deployment running on the dev key means
+        // anyone with the repository can decrypt every stored integration token in the database.
+        //
+        // Checked here rather than only in EnvironmentKeyProvider because that class validates
+        // key SHAPE (base64, 32 bytes) -- which the placeholder satisfies perfectly. Only this
+        // validator knows the difference between a well-formed key and the right key.
+        String activeKey = cryptoProperties.getKeys().get(cryptoProperties.getActiveKeyId());
+        if (activeKey == null || activeKey.isBlank() || LOCAL_DEV_ENCRYPTION_KEY.equals(activeKey.trim())) {
+            problems.append("- FINORA_ENCRYPTION_KEY is unset or still the local-dev placeholder. It encrypts ")
+                    .append("third-party OAuth refresh tokens at rest; on this value, anyone with the ")
+                    .append("repository can decrypt every stored integration credential. Generate one with ")
+                    .append("`openssl rand -base64 32`.\n");
         }
 
         // Unlike RESEND_API_KEY/GOOGLE_APPLICATION_CREDENTIALS above, TWO_FACTOR_API_KEY is
