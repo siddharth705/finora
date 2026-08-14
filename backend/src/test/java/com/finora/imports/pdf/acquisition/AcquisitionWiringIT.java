@@ -1,8 +1,8 @@
 package com.finora.imports.pdf.acquisition;
 
+import com.finora.AbstractIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 
 import java.util.List;
 
@@ -21,9 +21,15 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>So the wiring gets its own assertion. A seam that is correct but unreachable is worth nothing,
  * and the way it becomes unreachable is a change nowhere near it.
+ *
+ * <p><b>Bug fix.</b> Originally a bare {@code @SpringBootTest} with no datasource of its own, which
+ * meant it inherited the "dev" profile's real {@code localhost:5432} datasource instead of the
+ * Testcontainers Postgres every other {@code *IT} class gets from {@link AbstractIntegrationTest} --
+ * failing with {@code Connection to localhost:5432 refused} anywhere that port has nothing
+ * listening, including this project's own CI runner. Extending the shared base class is what every
+ * other integration test in this codebase already does for exactly this reason.
  */
-@SpringBootTest
-class AcquisitionWiringIT {
+class AcquisitionWiringIT extends AbstractIntegrationTest {
 
     @Autowired
     private DocumentTextAcquirer acquirer;
