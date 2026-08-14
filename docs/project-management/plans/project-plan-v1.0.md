@@ -32,7 +32,7 @@ comes out is right, and stays right. The two share a name and almost nothing els
 | **Current phase** | Phase 4 complete; **production-readiness audit + remediation pass complete** (2026-08-11) |
 | **Health** | **On Track**, with one warning — see §8 |
 | **v1.0 scope** | Web + admin portal + **mobile** (D-2, 2026-08-09) |
-| **Open bug-hunt findings** | **0 Critical** (security-audit severity scale — distinct from the bug-hunt's own P0/P1/P2/P3 buckets, see §4), confirmed twice now — once by the original bug-hunt closures, once independently by a fresh 11-domain audit that re-derived evidence from scratch rather than trusting prior claims. **0 P0/P1 IDOR or auth-bypass found** across an exhaustive resource sweep. Bug-hunt P1 bucket: 2 open — BH-048 (fix in PR #88, pending merge + real-run confirmation — see §4) and BH-007 (needs re-verification, not a fix). BH-042/043/045 still owned by a parallel session |
+| **Open bug-hunt findings** | **0 Critical** (security-audit severity scale — distinct from the bug-hunt's own P0/P1/P2/P3 buckets, see §4), confirmed twice now — once by the original bug-hunt closures, once independently by a fresh 11-domain audit that re-derived evidence from scratch rather than trusting prior claims. **0 P0/P1 IDOR or auth-bypass found** across an exhaustive resource sweep. Bug-hunt P1 bucket: 1 open — BH-007 (needs re-verification, not a fix). BH-048 CLOSED–VERIFIED 08-14 (PR #88 merged, real nightly run confirmed green — see §4). BH-042/043/045 still owned by a parallel session |
 | **Baselined against** | `origin/main` @ `cc17716`. `main` fully green — confirmed on the real CI (not just local runs): backend 2191/2191, frontend 322/322, admin-portal 302/302 |
 | **Commits** | 600+ across 11 days (first commit 2026-07-31) |
 | **Backend** | 2191 tests green, real CI run confirmed (not estimated) |
@@ -141,22 +141,26 @@ closures are graded against, not current status** — current status is §1 and 
 All five carry regression tests mutation-checked against the restored defect. These survived a
 1,745-test suite and 489 commits before being found — none had a test at the time.
 
-### P1 — CLOSED except two genuinely open items
+### P1 — CLOSED except one genuinely open item
 
 **Closed:** `BH-002`, `BH-011`, `BH-012`, `BH-013` (Round 1) · `BH-019`, `BH-023`, `BH-026`, `BH-027`
-(financial/idempotency) · `BH-017` (retention, merged) · `BH-025` (BYTEA dual-write, merged).
+(financial/idempotency) · `BH-017` (retention, merged) · `BH-025` (BYTEA dual-write, merged) ·
+**`BH-048`** (see below).
+
+**`BH-048` — CLOSED–VERIFIED, 2026-08-14.** Its "never executed" framing was stale (the workflow had
+actually run 5 times); the real defect was two consecutive nightly failures (08-12, 08-13),
+root-caused to `0fba684`/`62a112c` (08-11) changing the import review table and `DuplicateReview`
+panel to `DD-MMM-YYYY` dates without updating the E2E assertions checking the literal rendered text —
+missed because those specs only run nightly, not in the PR-blocking smoke suite. Fixed in
+[PR #88](https://github.com/siddharth705/finora/pull/88) (merged as `bd5dcd2`), which also picked up
+an unrelated but blocking `nanoid` advisory (`GHSA-2v37-7h3g-55p8`) on `mobile/` via a same-range
+patch bump, `3.3.17` → `3.3.18` — transitive-only, no risk-acceptance call needed. **VERIFIED, not
+just REVIEWED:** a manual `workflow_dispatch` of `e2e-nightly.yml` against `bd5dcd2` (the merge
+commit itself, not a later commit) completed `success` — [run 31774202063](https://github.com/siddharth705/finora/actions/runs/31774202063) <!-- synthetic-ok: public GitHub Actions run ID, not customer data --> — the actual break was
+demonstrated (two real scheduled failures) and then demonstrated gone on the real workflow, not
+inferred from the PR's own smoke job.
 
 **Still open:**
-- **BH-048** — **correction, 2026-08-14: the "never executed" framing was stale.** The workflow has
-  run 5 times, including a manual dispatch. The real defect: it failed the last two consecutive
-  scheduled runs (08-12, 08-13). Root cause found by diffing the last-green (08-11 04:10) and
-  first-red (08-12 04:39) runs' head commits — `0fba684`/`62a112c` (08-11) changed the import review
-  table and `DuplicateReview` panel to render dates as `DD-MMM-YYYY`; both correctly scoped
-  themselves display-only and updated the frontend unit tests, but neither touched the E2E specs
-  asserting on the literal rendered text, and those specs only run nightly, not in the PR-blocking
-  smoke suite. Fix in [PR #88](https://github.com/siddharth705/finora/pull/88) — Strix security
-  review clean, verified locally (28/28 e2e passing on the two affected spec files against a live
-  stack), not yet merged. **Stays open until merged and confirmed green on an actual scheduled run.**
 - **BH-007** — not independently re-verified in the last two re-baselines; due a fresh check.
 - **BH-054** — accepted trade-off, not a defect.
 
@@ -651,6 +655,7 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-14 | **BH-048 closed CLOSED–VERIFIED.** PR #88 merged (`bd5dcd2`); a manual `workflow_dispatch` of `e2e-nightly.yml` run directly against the merge commit completed `success` ([run 31774202063](https://github.com/siddharth705/finora/actions/runs/31774202063) <!-- synthetic-ok: public GitHub Actions run ID, not customer data -->), rather than waiting for the 03:00 UTC schedule or inferring from the PR's own smoke job. Meets this plan's own VERIFIED bar (§4's closure grades): the break was demonstrated (two real consecutive nightly failures), then demonstrated gone on the actual workflow. Bug-hunt P1 bucket now 1 open (BH-007 only). No date change | Closes the loop opened earlier today when BH-048's status was corrected from stale to accurate — a corrected-but-still-open finding is not the same as a closed one, and the plan should say which it is the moment it's actually known, not at the next scheduled re-baseline |
 | 2026-08-14 | **§5a roadmap updated to reflect what the load-testing baseline actually found.** The baseline didn't just produce a number — it changed R-11 from "capacity unknown" to "capacity bottleneck identified, location known, fix not yet chosen," and the plan's own roadmap diagram was still showing "Load testing baseline → Railway Pro" with nothing in between, which would read to a later reader as "measured, nothing to act on" rather than "measured, found a problem, investigation pending." Inserted **Investigate measured bottleneck → Re-test baseline** between them, plus a small status table (baseline: Complete, bottleneck identified: Complete, root-cause investigation/remediation/re-test: Pending). **Deliberately left unscoped**: no specific fix (pool-size increase, query optimization, transaction-boundary changes, caching) is named, because the investigation that would choose between them hasn't run yet — naming one now would bias it. **No date change** — this is a documentation update tracking a status change, not new engineering | Owner's instruction: the plan should reflect the risk-status change immediately, not wait for the follow-up investigation to be scoped. Explicit owner constraint: do not write "increase HikariCP pool size" as the fix — that decision needs its own investigation (which lever: pool tuning, query optimization, transaction boundaries, or infrastructure) and its own choice of environment (local-only vs. after Railway Pro), not an assumption baked into the roadmap |
 | 2026-08-14 | **Load-testing baseline run (§5a P1 item).** Three tiers (100/500/1,000 concurrent users) against a local docker-compose stack with 100 seeded users and 30,000 transactions. Result: clean at 100 users (0% errors), degrades sharply by 500 (4.4% errors, 13–15s p95) and further at 1,000 (7.3% errors, 37–40s p95) — root-caused in the backend's own logs to HikariCP pool exhaustion (`DB_POOL_MAX_SIZE:10`, already known from the architecture audit, now with a measured consequence). Memory was never a constraint at any tier. R-11 raised Medium → High and reworded from "untested" to "measured, not yet fixed." Full writeup: [`load-testing-baseline-2026-08-14.md`](../../investigations/performance/load-testing-baseline-2026-08-14.md). Reusable tooling committed: `scripts/load-test/{seed.py,loadtest.js,run.sh,README.md}`. **No date change** — this is the P1 baseline measurement itself, not a fix; exact ceiling between 100–500 and a Railway-specific number are follow-ups, not done here | Deliberately scoped per §5a and the owner's own framing: measure reality, don't chase a scale target. Local, not Railway, because pushing 1,000 concurrent connections at the shared deployed instance needs its own explicit conversation, not a default. The pool-exhaustion mechanism this baseline found is architecture-level and will reproduce on Railway regardless of the exact number there |
 | 2026-08-14 | **Production-readiness gap list re-sequenced against the Railway Pro plan (new §5a).** Backup/restore verification moved off the v1.0 release-gate list to a post-Railway-Pro gate — R-4 re-scoped from High to Medium/Tracked, release criterion 3 and the database-restore runbook (criterion 7) both moved out of the v1.0 gate table, §10's Production Ready gate updated to reflect it, §9 Block E re-scoped from 4–6 d to 3–4 d. Load testing stays in P1, pre-Railway-Pro, and the caching-evaluation measurement step (audit finding: no Redis, no cache layer) is folded into that same load-testing work rather than run as a separate item. **No date change** — Block E was re-scoped, not shortened; the restore-drill effort moves out of the window rather than disappearing | Owner's sequencing decision, following the 2026-08-14 architecture/production-readiness audit: Railway Pro will materially change production capabilities, the team isn't finalizing production ops yet, and drilling a full DR process against infrastructure that's about to change risks redoing that work. This is a resequencing, not a scope cut — backup/restore stays tracked (R-4) and returns as a hard gate the moment Railway Pro is purchased |
