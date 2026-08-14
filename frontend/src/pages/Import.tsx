@@ -42,6 +42,14 @@ interface ReimportNavState {
   password?: string;
 }
 
+/** Arrival state from the import detail page's "Review" action (Premium Import Reliability v1,
+ *  §3.2) -- a completed queued job already has a staged session, the exact same one "Continue
+ *  previous import" already knows how to open, so this reuses `resumeSession` rather than
+ *  reimplementing it for a second arrival route. */
+interface ResumeSessionNavState {
+  resumeSessionId: string;
+}
+
 // Per-account review state for the multi-account case (a PDF whose upload detected more than one
 // account section, e.g. an HSBC-style composite statement) -- one of these per detected
 // StagedAccountSection, holding exactly the same fields the single-account path already tracks as
@@ -132,7 +140,18 @@ export default function Import() {
   // staging result already computed server-side — see StatementImportService.reimport(). There's
   // no browser File object in this case (the bytes never left the server), so this page skips
   // straight to the review step, locked to the account the statement already belongs to.
-  const reimportState = (location.state as ReimportNavState | null) ?? null;
+  // Checked by field, not just truthiness -- location.state is one shared slot, and this route has
+  // two distinct navigation-state shapes now (reimport, resume), so a blind cast would misread one
+  // as the other. Bug caught by a test: this used to be `(location.state as ReimportNavState |
+  // null) ?? null`, which is truthy for ANY non-null state -- so arriving with only
+  // `{resumeSessionId}` still took the reimport branch first and crashed reading
+  // `.staging.rows` off a value that was never a ReimportResult.
+  const reimportState = (location.state as ReimportNavState | null)?.reimportId
+    ? (location.state as ReimportNavState)
+    : null;
+  const resumeState = (location.state as ResumeSessionNavState | null)?.resumeSessionId
+    ? (location.state as ResumeSessionNavState)
+    : null;
 
   const [step, setStep] = useState<Step>('upload');
   const [error, setError] = useState<string | null>(null);
@@ -213,7 +232,28 @@ export default function Import() {
     // mid-session) shouldn't crash this effect as an unhandled rejection; the page still works
     // with an empty category list / existing-account list, just with fewer detected defaults.
     categoriesApi.list().then((cats) => setCategories(cats.map((c) => c.name))).catch((e) => console.error('Failed to load categories', e));
-    accountsApi.list().then(setExistingAccounts).catch((e) => console.error('Failed to load accounts', e));
+    // Bug fix, caught by a review before ship: auto-resuming below used to fire
+    // `resumeSession(resumeState.resumeSessionId)` directly in this effect, which calls
+    // hydrateReviewFrom -> matchExistingAccount(..., existingAccounts) -- but this effect's
+    // closure is fixed to this render's existingAccounts, `[]` at mount, and setState here never
+    // updates an already-captured closure. The account match would silently run against an empty
+    // list every time, always landing on "new account" even for a statement that plainly matches
+    // one the user already has -- exactly the merge-risk bug the comment on matchExistingAccount's
+    // caller (hydrateReviewFrom) exists to prevent, just reintroduced through a second entry
+    // point. The button-driven "Continue previous import" call to resumeSession is unaffected --
+    // its onClick closure is created fresh on every render, so by the time a user clicks it,
+    // existingAccounts already reflects whatever this same accountsApi.list() call resolved to.
+    // Fixed by passing the freshly-resolved list straight into resumeSession/hydrateReviewFrom
+    // instead of letting them fall back to (stale) component state.
+    accountsApi.list()
+      .then((accounts) => {
+        setExistingAccounts(accounts);
+        if (resumeState && !reimportState) void resumeSession(resumeState.resumeSessionId, accounts);
+      })
+      .catch((e) => {
+        console.error('Failed to load accounts', e);
+        if (resumeState && !reimportState) void resumeSession(resumeState.resumeSessionId, []);
+      });
     // Failing closed on purpose: if this call fails we simply use the synchronous path, which is
     // what every deployment supports. An import that works slowly beats one that does not start.
     importJobsApi.availability()
@@ -231,8 +271,11 @@ export default function Import() {
       setSelectedAccountId(reimportState.accountId);
       setStep('review');
     }
-    // Only ever run once on mount — reimportState comes from router state at navigation time,
-    // not something that changes while this page is open.
+    // resumeState is handled above, chained after accountsApi.list() settles -- see the comment
+    // there for why it can't run inline here the way the reimportState branch does.
+    //
+    // Only ever run once on mount — reimportState/resumeState come from router state at
+    // navigation time, not something that changes while this page is open.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -269,7 +312,7 @@ export default function Import() {
    * confirm payload came to differ between two paths (see lib/newAccountPayload.ts). One of these
    * per arrival route is one too many.
    */
-  function hydrateReviewFrom(staging: StagingResult) {
+  function hydrateReviewFrom(staging: StagingResult, accountsForMatch: Account[] = existingAccounts) {
     setRows(staging.rows);
     // A flagged row starts EXCLUDED but UNRESOLVED -- not silently unticked. The confirm button
     // is blocked until every one has an explicit answer, so "I didn't mean to skip that" stops
@@ -303,7 +346,7 @@ export default function Import() {
     // institution's transactions into another's -- wrong balances, wrong net worth, reconciliation
     // running across two unrelated ledgers -- whereas preselecting NEW at worst creates a
     // duplicate account, which is visible and deletable.
-    const match = matchExistingAccount(staging.detectedAccount, existingAccounts);
+    const match = matchExistingAccount(staging.detectedAccount, accountsForMatch);
     if (match) {
       setAccountChoice('existing');
       setSelectedAccountId(match.id);
@@ -334,13 +377,19 @@ export default function Import() {
    * sequence openReviewedJob above already proves works, for a different arrival route: an
    * abandoned staged session rather than a completed queued job. No upload, no re-selecting a
    * file -- the bytes and staged rows are already server-side from the original upload.
+   *
+   * `accountsForMatch` is optional and only ever passed by the mount effect's auto-resume path
+   * (Premium Import Reliability v1, §3.2) -- see its own comment for why that caller can't rely
+   * on `hydrateReviewFrom`'s default fallback to component state. Every other caller (the button
+   * below) omits it and gets that fallback, which is already correct for a click that happens
+   * well after this page's account list has loaded.
    */
-  async function resumeSession(id: string) {
+  async function resumeSession(id: string, accountsForMatch?: Account[]) {
     setError(null);
     try {
       const session = await importApi.getSession(id);
       setSessionId(session.sessionId);
-      hydrateReviewFrom(session.staging);
+      hydrateReviewFrom(session.staging, accountsForMatch);
       setStep('review');
     } catch {
       // The session most likely expired between the list loading and this click (the 48h window
@@ -381,6 +430,11 @@ export default function Import() {
         setPdfPassword('');
         setPasswordState(null);
         setJobId(accepted.jobId);
+        // StatementHistory's "Recent Imports" section (Premium Import Reliability v1, §3.2) reads
+        // this same key with a 30s staleTime -- without this, a person who was on that page inside
+        // the last 30s, came here to submit a statement, and went straight back would see the
+        // pre-submission snapshot instead of the job they just started.
+        void queryClient.invalidateQueries({ queryKey: ['import-jobs-recent'] });
         return;
       }
 

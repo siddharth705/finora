@@ -46,6 +46,7 @@ public final class ImportJobDto {
      */
     public record Progress(
             UUID jobId,
+            String fileName,
             String status,
             Integer rowsTotal,
             int rowsProcessed,
@@ -59,6 +60,7 @@ public final class ImportJobDto {
         public static Progress of(ImportJob job) {
             return new Progress(
                     job.getId(),
+                    job.getFileName(),
                     job.getStatus().name(),
                     job.getRowsTotal(),
                     job.getRowsProcessed(),

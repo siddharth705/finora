@@ -4,7 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import StatementHistory from './StatementHistory';
-import { statementImportsApi, importApi } from '../api/endpoints';
+import { statementImportsApi, importApi, importJobsApi } from '../api/endpoints';
+import type { ImportJobProgress } from '../api/endpoints';
 import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED, NO_HEADER_DETECTED } from '../api/errorCodes';
 import { IMPORT_FAILURE_MESSAGES } from '../api/importFailureMessages';
 import type { AccountStatementGroup } from '../types';
@@ -22,6 +23,9 @@ vi.mock('../api/endpoints', () => ({
   },
   importApi: {
     listFailures: vi.fn(),
+  },
+  importJobsApi: {
+    recent: vi.fn(),
   },
 }));
 
@@ -107,6 +111,9 @@ describe('StatementHistory — re-importing a password-protected statement', () 
     // No failed imports by default -- these tests are about the re-import flow, not the failures
     // section, which has its own describe block below.
     vi.mocked(importApi.listFailures).mockReset().mockResolvedValue([]);
+    // Same reasoning: no in-progress jobs by default, so this section stays out of the way of the
+    // re-import tests. It has its own describe block below.
+    vi.mocked(importJobsApi.recent).mockReset().mockResolvedValue([]);
   });
 
   it('re-imports in one click when no password is needed', async () => {
@@ -223,6 +230,7 @@ describe('StatementHistory — failed imports', () => {
   beforeEach(() => {
     navigate.mockReset();
     vi.mocked(statementImportsApi.listGroupedByAccount).mockReset().mockResolvedValue(groups);
+    vi.mocked(importJobsApi.recent).mockReset().mockResolvedValue([]);
   });
 
   function aFailure(overrides: Partial<{ reference: string; fileName: string; failureCode: string | null; createdAt: string }> = {}) {
@@ -284,5 +292,86 @@ describe('StatementHistory — failed imports', () => {
     expect(await screen.findByText('HDFC Savings')).toBeInTheDocument();
     expect(screen.getByTitle('Re-import Statement')).toBeInTheDocument();
     expect(screen.queryByText('Failed Imports')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The entry point to the self-service import detail page (Premium Import Reliability v1, §3.2) --
+ * without this section, `/app/imports/:jobId` is reachable only by typing a UUID into the address
+ * bar. `importJobsApi.recent()` is used for the first time here.
+ */
+describe('StatementHistory — recent imports', () => {
+  beforeEach(() => {
+    navigate.mockReset();
+    vi.mocked(statementImportsApi.listGroupedByAccount).mockReset().mockResolvedValue(groups);
+    vi.mocked(importApi.listFailures).mockReset().mockResolvedValue([]);
+  });
+
+  function aJob(overrides: Partial<ImportJobProgress> = {}): ImportJobProgress {
+    return {
+      jobId: 'job-1',
+      fileName: 'still-going.csv',
+      status: 'PARSING',
+      rowsTotal: null,
+      rowsProcessed: 0,
+      createdAt: '2026-08-13T09:00:00Z',
+      startedAt: '2026-08-13T09:00:01Z',
+      finishedAt: null,
+      importSessionId: null,
+      error: null,
+      correlationId: null,
+      ...overrides,
+    };
+  }
+
+  it('lists a job the worker is still holding', async () => {
+    vi.mocked(importJobsApi.recent).mockReset().mockResolvedValue([aJob()]);
+    renderPage();
+
+    expect(await screen.findByText('still-going.csv')).toBeInTheDocument();
+    expect(screen.getByText('Recent Imports')).toBeInTheDocument();
+  });
+
+  it('excludes a completed job -- it is already surfaced by "Continue previous import" instead', async () => {
+    // A COMPLETED async job already has a real staged ImportSession, created through the same code
+    // path the synchronous upload endpoints use, and Import.tsx's own unfinished-sessions list
+    // already shows it. Listing it here too would show the same staged review twice, in two
+    // different shapes.
+    vi.mocked(importJobsApi.recent).mockReset()
+      .mockResolvedValue([aJob({ jobId: 'job-done', fileName: 'done.csv', status: 'COMPLETED', importSessionId: 'session-1' })]);
+    renderPage();
+
+    await screen.findByText('HDFC Savings');
+    expect(screen.queryByText('Recent Imports')).not.toBeInTheDocument();
+    expect(screen.queryByText('done.csv')).not.toBeInTheDocument();
+  });
+
+  it('renders no section at all when there is nothing in progress', async () => {
+    vi.mocked(importJobsApi.recent).mockReset().mockResolvedValue([]);
+    renderPage();
+
+    await screen.findByText('HDFC Savings');
+    expect(screen.queryByText('Recent Imports')).not.toBeInTheDocument();
+  });
+
+  it('navigates to the detail page for the job that was clicked', async () => {
+    vi.mocked(importJobsApi.recent).mockReset().mockResolvedValue([
+      aJob({ jobId: 'job-abc', fileName: 'still-going.csv' }),
+    ]);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByText('still-going.csv'));
+
+    expect(navigate).toHaveBeenCalledWith('/app/imports/job-abc');
+  });
+
+  it('fails closed: a broken recent-jobs query never blanks or blocks the rest of the page', async () => {
+    vi.mocked(importJobsApi.recent).mockReset().mockRejectedValue(new Error('network error'));
+    renderPage();
+
+    expect(await screen.findByText('HDFC Savings')).toBeInTheDocument();
+    expect(screen.getByTitle('Re-import Statement')).toBeInTheDocument();
+    expect(screen.queryByText('Recent Imports')).not.toBeInTheDocument();
   });
 });

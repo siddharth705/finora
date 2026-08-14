@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Import from './Import';
 import { importApi, importJobsApi, categoriesApi, accountsApi, type ImportJobProgress } from '../api/endpoints';
-import type { StagedAccountSection } from '../types';
+import type { Account, StagedAccountSection } from '../types';
 import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, NO_HEADER_DETECTED, NO_TRANSACTIONS_FOUND, SCANNED_OCR_REQUIRED, CORRUPT_PDF } from '../api/errorCodes';
 import { IMPORT_FAILURE_MESSAGES } from '../api/importFailureMessages';
 import type { DetectedAccountInfo } from '../types';
@@ -119,13 +119,16 @@ beforeEach(() => {
 
 function renderImport() {
   const queryClient = new QueryClient();
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
-        <Import />
-      </MemoryRouter>
-    </QueryClientProvider>
-  );
+  return {
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <Import />
+        </MemoryRouter>
+      </QueryClientProvider>
+    ),
+    queryClient,
+  };
 }
 
 function csvFile(name = 'statement.csv') {
@@ -990,6 +993,7 @@ describe('Import — multi-account statements get the same duplicate review', ()
 describe('Import — queued imports', () => {
   const queuedJob = (over: Partial<ImportJobProgress> = {}): ImportJobProgress => ({
     jobId: 'job-1',
+    fileName: 'statement.csv',
     status: 'QUEUED',
     rowsTotal: null,
     rowsProcessed: 0,
@@ -1035,6 +1039,25 @@ describe('Import — queued imports', () => {
     expect(importApi.stageCsv).not.toHaveBeenCalled();
     expect(await screen.findByTestId('import-progress')).toBeInTheDocument();
     expect(await screen.findByText('Reading your statement')).toBeInTheDocument();
+  });
+
+  /**
+   * StatementHistory's "Recent Imports" section (Premium Import Reliability v1, §3.2) reads this
+   * exact key with a 30s staleTime. Without this invalidation, someone who visited that page
+   * inside the last 30s, came here to submit a statement, then went straight back would see the
+   * pre-submission snapshot instead of the job they just started.
+   */
+  it('invalidates the recent-imports list once a queued upload is accepted', async () => {
+    vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({ status: 'PARSING' }));
+    const user = userEvent.setup();
+    const { queryClient } = renderImport();
+    await waitFor(() => expect(importJobsApi.availability).toHaveBeenCalled());
+    queryClient.setQueryData(['import-jobs-recent'], []);
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+
+    await waitFor(() => expect(importJobsApi.submit).toHaveBeenCalled());
+    expect(queryClient.getQueryState(['import-jobs-recent'])?.isInvalidated).toBe(true);
   });
 
   it('falls back to the synchronous upload where the queue is not available', async () => {
@@ -1307,5 +1330,92 @@ describe('Import — continuing an unfinished import', () => {
 
     expect(await screen.findByTestId('statement-dropzone')).toBeInTheDocument();
     expect(screen.queryByText('Continue previous import')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The import detail page's "Review" action (Premium Import Reliability v1, §3.2) arrives here via
+ * router state rather than a session id in the URL. This reuses the exact `resumeSession` function
+ * the "continue previous import" section above already calls -- so the only thing worth testing at
+ * this layer is that the state actually triggers it on mount, not the resume behaviour itself.
+ */
+describe('Import — resuming via navigation state', () => {
+  function renderImportWithResumeState(resumeSessionId: string) {
+    const queryClient = new QueryClient();
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={[{ pathname: '/app/import', state: { resumeSessionId } }]}>
+          <Import />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+  }
+
+  function existingAccount(overrides: Partial<Account> = {}): Account {
+    return {
+      id: 'acct-existing-1',
+      name: 'My Savings',
+      accountType: 'SAVINGS',
+      balance: 1000,
+      accountHolderName: null,
+      accountNumberMasked: null,
+      branchName: null,
+      ifscCode: null,
+      bank: {
+        id: 'OTHER', officialName: null, shortName: 'Other', colorHex: '#000000', initials: 'OT',
+        logoPath: '', category: null, websiteUrl: null, ifscPrefix: null, supportedAccountTypes: [],
+      },
+      lastImportedAt: null,
+      lastStatementPeriodStart: null,
+      lastStatementPeriodEnd: null,
+      statementsCount: 0,
+      transactionsCount: 0,
+      status: 'ACTIVE',
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    vi.mocked(importApi.listSessions).mockReset().mockResolvedValue([]);
+    vi.mocked(importApi.getSession).mockReset();
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('opens the review step for the session named in navigation state, with no re-upload', async () => {
+    vi.mocked(importApi.getSession).mockResolvedValue(stagingResultWith({ sessionId: 'sess-from-detail' }));
+    renderImportWithResumeState('sess-from-detail');
+
+    expect(await screen.findByText(/which account is this statement for/i)).toBeInTheDocument();
+    expect(importApi.getSession).toHaveBeenCalledWith('sess-from-detail');
+    expect(importApi.stageCsv).not.toHaveBeenCalled();
+    expect(importApi.stagePdf).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Bug fix, caught by a pre-ship review: auto-resuming used to call resumeSession from the mount
+   * effect's own closure, which is fixed to that render's existingAccounts -- always `[]`, since
+   * accountsApi.list() (fired in the very same effect) resolves later, on a render this closure
+   * never sees. matchExistingAccount then always saw an empty list and always returned null, so
+   * this screen silently defaulted to "create a new account" even for a statement that plainly
+   * matched one the user already had -- the exact merge-risk the comment on hydrateReviewFrom's
+   * caller (Import.tsx, near matchExistingAccount) exists to prevent, reintroduced through this
+   * second entry point. This test only passes because the fix threads the freshly-resolved
+   * accounts list straight into resumeSession/hydrateReviewFrom instead of relying on that state.
+   */
+  it('matches an existing account instead of silently defaulting to "create a new account"', async () => {
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([existingAccount()]);
+    vi.mocked(importApi.getSession).mockResolvedValue(stagingResultWith({ sessionId: 'sess-from-detail' }));
+    renderImportWithResumeState('sess-from-detail');
+
+    await screen.findByText(/which account is this statement for/i);
+    expect(screen.getByRole('radio', { name: /use an existing account/i })).toBeChecked();
+  });
+
+  it('shows the same expired-session message the list-driven resume uses', async () => {
+    vi.mocked(importApi.getSession).mockRejectedValue(new Error('expired'));
+    renderImportWithResumeState('sess-gone');
+
+    expect(await screen.findByText(/no longer available/i)).toBeInTheDocument();
   });
 });

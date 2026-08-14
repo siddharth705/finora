@@ -408,6 +408,9 @@ export const importApi = {
  */
 export interface ImportJobProgress {
   jobId: string;
+  // Premium Import Reliability v1, §3.2 -- the import detail page's only source for what was
+  // uploaded; nothing else in this response names it.
+  fileName: string;
   status: 'QUEUED' | 'PARSING' | 'ANALYZING' | 'DEDUPING' | 'IMPORTING' | 'LEARNING'
     | 'COMPLETED' | 'FAILED' | 'CANCELLED';
   // Null while the statement is still being read — deliberately not 0, which would be

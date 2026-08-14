@@ -2,12 +2,13 @@ import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ChevronDown, ChevronRight, FileText, Download, RefreshCw, Trash2, Eye, ListChecks, X, AlertTriangle,
+  ChevronDown, ChevronRight, FileText, Download, RefreshCw, Trash2, Eye, ListChecks, X, AlertTriangle, Clock,
 } from 'lucide-react';
-import { importApi, statementImportsApi, type ImportFailureSummary } from '../api/endpoints';
+import { importApi, importJobsApi, statementImportsApi, type ImportFailureSummary, type ImportJobProgress } from '../api/endpoints';
 import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../api/errorCodes';
 import { importFailureMessage } from '../api/importFailureMessages';
 import { BankLogo } from '../components/BankLogo';
+import { label as jobLabel } from '../lib/importJob';
 import type { AccountStatementGroup, StatementSummary, Transaction } from '../types';
 import { formatDate } from '../utils/date';
 
@@ -71,6 +72,26 @@ export default function StatementHistory() {
     queryKey: ['import-failures'],
     queryFn: () => importApi.listFailures(),
   });
+
+  // Premium Import Reliability v1, §3.2 -- the entry point to the import detail page. Independent
+  // of the queries above for the same reason `failures` is: a broken queued-imports list must
+  // never block or blank the statements a user DID successfully import. Failing closed (React
+  // Query does not surface this query's own error to the page without an explicit opt-in this
+  // call never makes) rather than showing an error banner for a section that's allowed to just be
+  // empty.
+  const { data: recentJobs } = useQuery({
+    queryKey: ['import-jobs-recent'],
+    queryFn: () => importJobsApi.recent(),
+  });
+
+  // COMPLETED is deliberately excluded, not just de-emphasized: a completed queued job already has
+  // a real staged ImportSession row, created through the exact same code path the synchronous
+  // upload endpoints use, and that session is already correctly surfaced by "Continue previous
+  // import" (Import.tsx's unfinishedSessions list). Listing it again here would offer the same
+  // staged review in two different sections with two different shapes. Every OTHER status
+  // (QUEUED/PARSING/ANALYZING/DEDUPING/IMPORTING/LEARNING/FAILED/CANCELLED) is genuinely invisible
+  // anywhere else today -- that's this section's actual reason to exist.
+  const inProgressJobs = (recentJobs ?? []).filter((j) => j.status !== 'COMPLETED');
 
   function toggleAccount(accountId: string) {
     setOpenAccounts((prev) => {
@@ -166,6 +187,8 @@ export default function StatementHistory() {
       {error && <p className="text-danger text-sm">{error}</p>}
 
       {!!failures?.length && <FailedImportsSection failures={failures} />}
+
+      {!!inProgressJobs.length && <RecentImportsSection jobs={inProgressJobs} />}
 
       {accountGroups.length === 0 ? (
         <div className="bg-card rounded-xl2 shadow-card border border-border p-8 text-center">
@@ -382,6 +405,47 @@ function FailedImportsSection({ failures }: { failures: ImportFailureSummary[] }
             </div>
             <p className="text-xs text-muted mt-1">{messageFor(f.failureCode)}</p>
           </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The entry point to the self-service import detail page (Premium Import Reliability v1, §3.2) --
+ * without this, `/app/imports/:jobId` is reachable only by typing a UUID into the address bar,
+ * which does not answer "what happened to my import yesterday". `jobs` here has already excluded
+ * COMPLETED (see the caller's own comment on why).
+ */
+function RecentImportsSection({ jobs }: { jobs: ImportJobProgress[] }) {
+  // A hook call, not a prop threaded down from the page -- StatementHistory already has its own
+  // useNavigate() for its own buttons, and this one needs nothing from the caller that reaching
+  // for the hook directly doesn't already give it.
+  const navigate = useNavigate();
+
+  return (
+    <div className="bg-card rounded-xl2 shadow-card border border-border overflow-hidden">
+      <div className="px-5 py-4 border-b border-border flex items-center gap-2">
+        <Clock size={16} className="text-muted" />
+        <div>
+          <h2 className="font-semibold text-ink text-sm">Recent Imports</h2>
+          <p className="text-xs text-muted">Statements still processing, or that didn't finish.</p>
+        </div>
+      </div>
+      <div className="divide-y divide-border">
+        {jobs.map((job) => (
+          <button
+            key={job.jobId}
+            type="button"
+            onClick={() => void navigate(`/app/imports/${job.jobId}`)}
+            className="w-full text-left px-5 py-3.5 hover:bg-bg"
+          >
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <p className="text-sm font-medium text-ink truncate">{job.fileName}</p>
+              <p className="text-xs text-muted flex-shrink-0">{fmtDate(job.createdAt)}</p>
+            </div>
+            <p className="text-xs text-muted mt-1">{jobLabel(job)}</p>
+          </button>
         ))}
       </div>
     </div>

@@ -148,6 +148,10 @@ class ImportJobEndpointIT extends AbstractIntegrationTest {
         assertThat(progress.getStatusCode()).isEqualTo(HttpStatus.OK);
         JsonNode data = read(progress).get("data");
         assertThat(data.get("status").asText()).isEqualTo("QUEUED");
+        assertThat(data.get("fileName").asText())
+                .as("Sprint 3.2's import detail page needs this to identify the import -- nothing "
+                        + "else in the Progress response names what was uploaded")
+                .isEqualTo("statement.csv");
         assertThat(data.get("rowsTotal").isNull())
                 .as("null until PARSING has counted -- 0 would look like an empty file")
                 .isTrue();

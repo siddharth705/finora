@@ -238,4 +238,76 @@ describe('ImportTimeline', () => {
     await advance(10_000);
     expect(api.timeline).toHaveBeenCalledTimes(1);
   });
+
+  /**
+   * The import detail page (Premium Import Reliability v1, §3.2) passes autoRefresh={false}: one
+   * fetch on mount, a manual Refresh button rather than a background poll -- even for a job that is
+   * still active, unlike every other caller of this component.
+   */
+  describe('autoRefresh={false} -- the detail page one-shot mode', () => {
+    it('fetches immediately rather than waiting for the first scheduled delay', async () => {
+      api.timeline.mockResolvedValue(timeline());
+      render(<ImportTimeline jobId="job-1" autoRefresh={false} />);
+
+      // advance(0), not a bare act() -- the fetch is scheduled via a zero-delay setTimeout (so
+      // StrictMode's double-invoke can still cancel the discarded instance's request the same way
+      // the polling path always has), not called inline. ImportProgress's own schedule deliberately
+      // delays the first look by a REAL amount (see its doc comment on why); this has no such wait
+      // to respect, so the delay here is 0, not absent.
+      await advance(0);
+      expect(api.timeline).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not keep polling even when the job is still active', async () => {
+      api.timeline.mockResolvedValue(timeline({ status: 'ANALYZING' }));
+      render(<ImportTimeline jobId="job-1" autoRefresh={false} />);
+
+      await advance(100);
+      expect(api.timeline).toHaveBeenCalledTimes(1);
+
+      await advance(10_000);
+      expect(api.timeline).toHaveBeenCalledTimes(1);
+    });
+
+    it('fetches exactly once more each time refreshToken changes', async () => {
+      api.timeline.mockResolvedValue(timeline({ status: 'ANALYZING' }));
+      const { rerender } = render(<ImportTimeline jobId="job-1" autoRefresh={false} refreshToken={0} />);
+      await advance(0);
+      expect(api.timeline).toHaveBeenCalledTimes(1);
+
+      rerender(<ImportTimeline jobId="job-1" autoRefresh={false} refreshToken={1} />);
+      await advance(0);
+      expect(api.timeline).toHaveBeenCalledTimes(2);
+
+      await advance(10_000);
+      expect(api.timeline).toHaveBeenCalledTimes(2);
+    });
+
+    /**
+     * Bug fix: a failed first fetch used to leave `timeline` null forever (nothing retries in this
+     * mode) and the render guard was `if (!timeline) return null`, which discarded pollError right
+     * along with it -- the whole section silently didn't exist, with no error text and no hint that
+     * clicking the page's Refresh button would fix it.
+     */
+    it('shows the error instead of rendering nothing when the one-shot fetch itself fails', async () => {
+      api.timeline.mockRejectedValue(new Error('network'));
+      render(<ImportTimeline jobId="job-1" autoRefresh={false} />);
+
+      await advance(0);
+
+      expect(screen.getByTestId('import-timeline')).toBeInTheDocument();
+      expect(screen.getByText(/couldn't load the timeline/i)).toBeInTheDocument();
+    });
+
+    /** The polling-mode text ("...still trying") would be a lie here: schedule()'s own !autoRefresh
+     *  guard means nothing actually retries on its own in this mode. */
+    it('does not claim it is still trying, since nothing retries on its own in this mode', async () => {
+      api.timeline.mockRejectedValue(new Error('network'));
+      render(<ImportTimeline jobId="job-1" autoRefresh={false} />);
+
+      await advance(0);
+
+      expect(screen.queryByText(/still trying/i)).not.toBeInTheDocument();
+    });
+  });
 });

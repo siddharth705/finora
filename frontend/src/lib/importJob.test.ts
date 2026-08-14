@@ -14,6 +14,7 @@ import type { ImportJobProgress } from '../api/endpoints';
 function job(over: Partial<ImportJobProgress> = {}): ImportJobProgress {
   return {
     jobId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    fileName: 'statement.csv',
     status: 'QUEUED',
     rowsTotal: null,
     rowsProcessed: 0,
