@@ -72,7 +72,7 @@ whose remaining 10% is the part that corrupts a balance is not 90% done for laun
 | 2 | Import pipeline (M1 reliability + M2 at-scale) | 20% | 78% | 15.6 | `PdfTableLocator` (1,358 lines) and `imports/product/` (14 classes) still **never reviewed** — the largest unquantified risk in the repo. A new, small, appropriately-scoped gap logged this morning (non-text header row on a real SBI statement), not built ad hoc |
 | 3 | **Financial correctness defects** | 10% | **90%** ▲ | 9.0 | All six original P0s (BH-001/003/004/005/006 + BH-023) CLOSED–VERIFIED and merged, including a real defect found in BH-006's own fix and corrected same night (see §12 changelog). Remainder is Round 2's unreviewed surface, not open tickets |
 | 4 | Security & privacy | 12% | 88% ▲ | 10.6 | BH-014, 017, 025, 032, 036 all merged. Still: no malware scan, no edge headers, no secret manager |
-| 5 | Testing & QA readiness | 12% | 85% ▲ | 10.2 | BH-050, 053 closed; suite at 1936+ tests, 0 failures, confirmed via a real rerun after a same-commit CI flake. Still: full E2E has **never actually executed** in CI, the wider BH-058 class was flagged but not swept |
+| 5 | Testing & QA readiness | 12% | 85% ▲ | 10.2 | BH-050, 053, 058 (swept) closed; suite at 2383+ tests. `e2e-nightly.yml` runs nightly and on-demand, confirmed green against a real triggered run (BH-048, §4) — the "never actually executed" framing carried in this row was itself stale, corrected 2026-08-14 |
 | 6 | Infrastructure & production readiness | 14% | 57% | 8.0 | **Unchanged across multiple reports now.** No restore drill, no load test, no secret manager, V73/V74 never applied to a non-test database |
 | 7 | Mobile app | 12% | 68% ▲ | 8.2 | **Apple enrolment submitted** (Individual) overnight — first real movement on the item flagged in every prior report. Google Play still not started. Still no confirmed run on a physical device |
 | | **Total** | **100%** | | **81.6 → 82%** | |
@@ -216,6 +216,28 @@ tracking `OutputStream.write()` sizes does, since a naive reimplementation still
 buffered result in one call. Confirmed against a deliberately reverted mutation before restoring
 the fix. Full backend suite green both before and after rebasing onto unrelated same-day import
 work, with no line-level overlap.
+
+**The BH-058 class of test defect — CLOSED, swept, 2026-08-14.** Named after `MerchantLearningQueueIT`
+was demonstrably broken by an unrelated import-heavy test, then flagged as "not swept for other
+instances" in every closure report since (Round 1, the medium/low pass, this plan). Actually swept
+this time in [PR #95](https://github.com/siddharth705/finora/pull/95) (merged `2c40ffa9`): one real
+occurrence found (`ImportJobStoreIT`'s recovery tests asserting exact counts on the table-wide
+`recoverAbandoned()`), fixed using the same noise-fixture technique the original established, plus a
+systematic search across every table-wide repository method and its test callers in the rest of the
+suite. No other genuine instances found — this codebase already carries substantial deliberate
+hardening against this exact defect class from prior work. This closes the last open P2 test-
+infrastructure item.
+
+**Process note, recorded rather than hidden: PR #95 needed an admin-override merge.** `Backend
+(Java 25)` failed 4 consecutive times on `AcquisitionWiringIT`, always the identical
+`Connection to localhost:5432 refused` on `actions-runner-2` — confirmed, before overriding, that
+the same failure independently hit `main` itself the same day on two pure docs-only commits
+(`cddc809`, `c8bc96a`) that could not possibly cause a real backend test failure, and that
+`ImportJobStoreIT` (this PR's actual change) passed cleanly in all 4 attempts. Merged past the
+failing check on the owner's explicit instruction once the failure was established as a pre-existing
+runner-level infrastructure issue, not a code defect. The underlying cause was fixed independently
+and merged immediately after (`ba33253`, "give AcquisitionWiringIT a real test datasource"),
+confirming the diagnosis.
 
 ### P3 — v1.1
 
@@ -723,6 +745,7 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-14 | **BH-058 class swept and closed — last open P2 test-infrastructure item.** PR #95 merged (`2c40ffa9`): one real occurrence found (`ImportJobStoreIT`'s recovery tests asserting exact counts on table-wide `recoverAbandoned()`), fixed with the noise-fixture technique the original BH-058 fix established; systematic sweep of the rest of the suite found nothing else. Required an admin-override merge after `Backend (Java 25)` failed 4 times on `AcquisitionWiringIT` — confirmed beforehand as a pre-existing runner-level flake (same failure hit `main` itself on unrelated docs-only commits the same day), not a code defect; the underlying cause was fixed independently and merged immediately after (`ba33253`), confirming the diagnosis. No date change | Closes an item that had been carried as "flagged, not swept" since the original finding across three separate closure reports. The admin-override is recorded per this plan's own standing practice — state what was bypassed and why, with the evidence that justified it, not just that it happened |
 | 2026-08-14 | **BH-018 closed CLOSED–VERIFIED — both halves now closed.** PR #93 merged (`02d9d287`): the remaining memory-materialization half (`file.getBytes()` holding up to 10 MB on the heap per upload). Turned out to be interface-wide (`StatementStorage.store(byte[])`, not just one call site) but scoped additively — a new streaming overload as the one real per-backend implementation, the two callers that already hold content in memory for parsing reasons left untouched. Regression test needed its own correction mid-flight: tracking read-chunk sizes didn't actually prove the property (`readAllBytes()` also chunks its reads), tracking write-chunk sizes did. No date change | Closes the last of today's four P1/P2 bug-hunt fixes (BH-048, BH-007, BH-053, BH-018) with the same VERIFIED bar throughout — demonstrated broken, then demonstrated fixed, not inferred from a green suite alone |
 | 2026-08-14 | **BH-053 closed CLOSED–VERIFIED.** PR #92 merged (`c8bc96a`): the check-then-act race in `MerchantLearningService.confirm()`, precisely self-documented by the class's own comments since it was written (including a pre-emptive warning against the tempting wrong fix), closed with a native atomic upsert that stays inside the caller's transaction. The existing regression test only proved the race existed; rewritten against real Postgres to prove it's closed, mutation-checked against the pre-fix code. BH-018's remaining half (memory materialization on upload) is in PR #93, not yet merged — turned out to be an interface-wide question, not one call site, scoped additively rather than as a full conversion. No date change | Same pattern as BH-048/BH-007 earlier today: close a finding the moment it's actually verified, not at the next scheduled re-baseline, and record status precisely (in-review vs. merged-and-verified are not the same thing) |
 | 2026-08-14 | **Remediation candidates scoped, deliberately not started.** Four levers from the bottleneck investigation — accounts N+1 fix, dashboard transaction narrowing, auth-overhead caching, import transaction redesign — each assessed for impact/risk/effort in §5a item 4. Owner's sequencing decision: wait behind Phase 4 (56 open bug-hunt findings), per this plan's own §8 rule that Phase 4 is serial with everything after it. Owner's correctness decision: when the import transaction redesign does start, it gets the same bar as the original BH-* fixes (mutation-checked regression tests, real-Postgres verification) since it touches the exact code area that produced BH-001/003/004/005/006. No date change — this is scoping, not scheduled work | Following the standard set right after the investigation itself: don't let a diagnostic's momentum turn into unscoped engineering work. Named the sequencing conflict (this plan's own §8 rule) explicitly rather than silently starting remediation, and got an explicit owner decision on both what order and what rigor, matching how every other cross-cutting decision in this plan has been recorded |
