@@ -383,7 +383,10 @@ function ReimportPasswordModal({
  * action. A failed sync import has no bytes retained (that's Sprint 4's still-gated
  * retry-without-re-upload work), so this cannot replay the original upload the way confirmed
  * "Reimport" does -- it can only send the person back to Import with the file name and curated
- * failure reason as context, to pick the file again themselves.
+ * failure reason as context, to pick the file again themselves. The `RefreshCw` icon on "Try
+ * again" is §3.3's consistency pass -- the same icon confirmed reimport's `ActionButton` already
+ * uses, and now Import.tsx's staged "Continue Import" too, so all three retry paths read as one
+ * pattern rather than three unrelated features.
  */
 function FailedImportsSection({ failures }: { failures: ImportFailureSummary[] }) {
   const navigate = useNavigate();
@@ -408,8 +411,9 @@ function FailedImportsSection({ failures }: { failures: ImportFailureSummary[] }
             <button
               type="button"
               onClick={() => navigateToRetryFailedImport(navigate, f.fileName, f.failureCode)}
-              className="mt-1.5 text-xs font-medium text-primary hover:underline"
+              className="mt-1.5 text-xs font-medium text-primary hover:underline flex items-center gap-1"
             >
+              <RefreshCw size={12} />
               Try again
             </button>
           </div>

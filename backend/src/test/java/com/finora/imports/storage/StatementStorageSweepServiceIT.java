@@ -82,15 +82,39 @@ class StatementStorageSweepServiceIT extends AbstractIntegrationTest {
     }
 
     private StatementImport saveStatementImport(ContentAddress address) {
+        return saveStatementImport(address, userId, accountId);
+    }
+
+    private StatementImport saveStatementImport(ContentAddress address, UUID forUserId, UUID forAccountId) {
         StatementImport si = new StatementImport();
-        si.setUserId(userId);
-        si.setAccountId(accountId);
+        si.setUserId(forUserId);
+        si.setAccountId(forAccountId);
         si.setFileName("statement.pdf");
         si.setSourceFormat("PDF");
         si.setFileContent(new byte[]{1});
         si.setContentHash(address.hash());
         si.setObjectKey(address.key());
         return statementImportRepository.save(si);
+    }
+
+    private record OtherTenant(UUID userId, UUID accountId) {}
+
+    /** A second, unrelated user+account -- for BH-039's cross-tenant case specifically, where the
+     *  fixture's single {@link #userId} would not exercise the property being tested. */
+    private OtherTenant otherTenant() {
+        User other = new User();
+        other.setEmail("sweep-other-" + UUID.randomUUID() + "@example.com");
+        other.setPasswordHash("irrelevant-for-this-test");
+        other.setFullName("Sweep Test Other User");
+        UUID otherUserId = userRepository.save(other).getId();
+
+        Account otherAccount = new Account();
+        otherAccount.setUserId(otherUserId);
+        otherAccount.setName("Other User's Savings");
+        otherAccount.setAccountType(Account.Type.SAVINGS);
+        otherAccount.setBalance(BigDecimal.valueOf(500));
+        UUID otherAccountId = accountRepository.save(otherAccount).getId();
+        return new OtherTenant(otherUserId, otherAccountId);
     }
 
     private void softDeleteAndBackdate(StatementImport si, Instant deletedAt) {
@@ -212,6 +236,46 @@ class StatementStorageSweepServiceIT extends AbstractIntegrationTest {
 
         assertThat(result.swept()).isZero();
         assertThat(result.skipped()).isZero();
+        assertThat(storage.exists(address)).isTrue();
+    }
+
+    /**
+     * BH-039. Content addressing is global -- {@code SHA-256(bytes)}, no tenant prefix (see
+     * {@link ContentAddress}'s class doc) -- so two DIFFERENT users who happen to upload byte-
+     * identical documents share one object, by design. The finding's own words: this "becomes a
+     * cross-tenant defect the moment the future sweep is built and reference counting is not
+     * per-object-global." The sweep has since been built (BH-017); this proves the reference
+     * counting it actually shipped with is global, not per-tenant -- {@code existsByObjectKey} on
+     * both {@code StatementImportRepository} and {@code ImportSessionRepository} takes no
+     * {@code userId} at all, so it structurally cannot be scoped to one tenant.
+     *
+     * <p>{@link #sweep_doesNotReclaimAnObjectStillReferencedByAnotherLiveStatementImportRow} proves
+     * shared-object survival too, but both its rows belong to the SAME user (the fixture's single
+     * {@link #userId}) -- it cannot tell "correctly checks every reference" apart from "correctly
+     * checks every reference this one tenant has," which is exactly the distinction BH-039 is
+     * about. This is the test that would catch a future refactor which "helpfully" adds user
+     * scoping to either {@code existsByObjectKey} query, thinking it looks under-scoped --
+     * silently reintroducing the cross-tenant data loss BH-039 named: deleting a DIFFERENT user's
+     * only copy of a statement because this user's copy was deleted.
+     */
+    @Test
+    @Transactional
+    void sweep_doesNotReclaimAnObjectStillReferencedByAnotherTenantsLiveRow() {
+        ContentAddress address = storeBytes("byte-identical-across-two-tenants");
+        StatementImport mine = saveStatementImport(address);
+        OtherTenant other = otherTenant();
+        StatementImport theirs = saveStatementImport(address, other.userId(), other.accountId());
+        softDeleteAndBackdate(mine, Instant.now().minus(91, ChronoUnit.DAYS));
+        // theirs is deliberately left alone -- still live, and belongs to a different tenant.
+        assertThat(statementImportRepository.findById(theirs.getId())).isPresent();
+
+        StatementStorageSweepService.Result result = service.sweep();
+
+        assertThat(result.swept())
+                .as("another tenant's only copy of this document must not be destroyed because "
+                        + "MY reference to the same bytes was deleted")
+                .isZero();
+        assertThat(result.skipped()).isEqualTo(1);
         assertThat(storage.exists(address)).isTrue();
     }
 }

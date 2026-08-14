@@ -24,6 +24,7 @@ import type {
   LayoutTimelinePoint,
   LayoutEvidenceReport,
   ImportTrace,
+  CustomerFailureSummary,
 } from '../types';
 
 // Which portal this account belongs to. The same person may hold a USER account and an ADMIN
@@ -417,6 +418,11 @@ export const adminStatementAnalysisApi = {
     api.get<StatementAnalysisSummaryDto>('/admin/imports/analyses/summary').then((r) => r.data),
   byReference: (reference: string) =>
     api.get<StatementAnalysisDetailDto>(`/admin/imports/analyses/${encodeURIComponent(reference)}`).then((r) => r.data),
+  /** Premium Import Reliability v1, §4.2 -- the "user emailed us" entry point. Returns the
+   *  customer's own recent failed imports (reference, file name, failure code), each reference
+   *  feeding straight into adminImportTraceApi.byAnalysis for the full trace. */
+  failuresByUser: (email: string, limit?: number) =>
+    api.get<CustomerFailureSummary[]>('/admin/imports/analyses/failures/by-user', { params: { email, limit } }).then((r) => r.data),
 };
 
 /**

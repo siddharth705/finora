@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { CheckCircle2, UploadCloud, AlertTriangle, Clock, FileText, FileSpreadsheet, Trash2 } from 'lucide-react';
+import { CheckCircle2, UploadCloud, AlertTriangle, Clock, FileText, FileSpreadsheet, Trash2, RefreshCw } from 'lucide-react';
 import { importApi, importJobsApi, statementImportsApi, categoriesApi, accountsApi, type StagingResult } from '../api/endpoints';
 import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID } from '../api/errorCodes';
 import { importFailureMessage } from '../api/importFailureMessages';
@@ -768,8 +768,9 @@ export default function Import() {
                     type="button"
                     onClick={() => void resumeSession(s.id)}
                     disabled={discardingSessionId === s.id}
-                    className="bg-primary text-white text-xs font-semibold rounded-lg px-3 py-1.5 disabled:opacity-40"
+                    className="bg-primary text-white text-xs font-semibold rounded-lg px-3 py-1.5 disabled:opacity-40 flex items-center gap-1.5"
                   >
+                    <RefreshCw size={12} />
                     Continue Import
                   </button>
                   <button

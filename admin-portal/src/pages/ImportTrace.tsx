@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Search, Route, Clock, ShieldQuestion, GraduationCap, CheckCircle2, AlertTriangle, SkipForward } from 'lucide-react';
+import { Search, Route, Clock, ShieldQuestion, GraduationCap, CheckCircle2, AlertTriangle, SkipForward, Mail } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
-import { adminImportTraceApi } from '../api/endpoints';
+import { adminImportTraceApi, adminStatementAnalysisApi } from '../api/endpoints';
 import type { ImportTrace, ImportTraceFinding, ImportTraceStage } from '../types';
 
 /**
@@ -320,12 +320,99 @@ export default function ImportTracePage() {
     retry: false,
   });
 
+  // Premium Import Reliability v1, §4.2 -- the "user emailed us" entry point. A support
+  // conversation starts from an email address, essentially never a reference, so this is a
+  // separate lookup that resolves to a reference rather than a fourth handle type on the form
+  // above: picking a result below drives that same form, it never bypasses it.
+  const [emailInput, setEmailInput] = useState('');
+  const [emailSubmitted, setEmailSubmitted] = useState<string | null>(null);
+
+  const { data: customerFailures, isFetching: isFetchingFailures, error: emailError } = useQuery({
+    queryKey: ['import-failures-by-user', emailSubmitted],
+    queryFn: () => adminStatementAnalysisApi.failuresByUser(emailSubmitted!),
+    enabled: emailSubmitted !== null,
+    retry: false,
+  });
+
+  function traceByReference(reference: string) {
+    setHandleType('analysis');
+    setInput(reference);
+    setSubmitted({ type: 'analysis', value: reference });
+  }
+
   return (
     <AdminLayout
       title="Import Trace"
       subtitle="One import from upload through parsing, verification and learning to completion. No file name, no user — a document is referred to by its handle."
     >
       <RequirePermission permission="PLATFORM_DIAGNOSTICS_VIEW">
+        <form
+          className="bg-card border border-border rounded-xl2 p-5 mb-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const value = emailInput.trim();
+            if (value) setEmailSubmitted(value);
+          }}
+        >
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex-1 min-w-[240px]">
+              <label htmlFor="customer-email" className="block text-[10px] uppercase tracking-wide text-muted mb-1">
+                Customer email
+              </label>
+              <input
+                id="customer-email"
+                type="email"
+                value={emailInput}
+                onChange={(e) => setEmailInput(e.target.value)}
+                placeholder="customer@example.com"
+                className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm text-ink"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={!emailInput.trim() || isFetchingFailures}
+              className="flex items-center gap-1.5 bg-primary text-white rounded-lg px-4 py-2 text-sm disabled:opacity-50"
+            >
+              <Mail size={15} />
+              {isFetchingFailures ? 'Looking…' : 'Find failed imports'}
+            </button>
+          </div>
+          <p className="text-xs text-muted mt-3">
+            Starts from what a support conversation actually has — an email address — and lists
+            that customer's own recent failed imports, each one reference away from a full trace
+            below. This does not search successful imports; a completed import already has no
+            reason to reach support.
+          </p>
+
+          {emailError && (
+            <p className="text-sm text-danger mt-3">
+              No customer account matches that email, or it has no recent failed imports.
+            </p>
+          )}
+
+          {!!customerFailures?.length && (
+            <div className="mt-4 divide-y divide-border border-t border-border">
+              {customerFailures.map((f) => (
+                <div key={f.reference} className="py-2.5 flex items-center justify-between gap-4 flex-wrap">
+                  <div className="min-w-0">
+                    <p className="text-sm text-ink truncate">{f.fileName}</p>
+                    <p className="text-xs text-muted">
+                      {f.failureCode ?? 'Unclassified failure'} · {timestamp(f.createdAt)} · <span className="font-mono">{f.reference}</span>
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => traceByReference(f.reference)}
+                    className="text-xs font-medium text-primary hover:underline flex-shrink-0"
+                  >
+                    Trace this import
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </form>
+
         <form
           className="bg-card border border-border rounded-xl2 p-5 mb-4"
           onSubmit={(e) => {
