@@ -239,15 +239,17 @@ sequencing below is a decision, not a scope cut — everything demoted stays tra
    R-11 updated accordingly. **This did not just produce a number — it changed the risk's status**
    from "capacity unknown" to "capacity bottleneck identified, location known, fix not yet chosen."
    The item below exists because of that.
-3. **Investigate measured bottleneck — Pending, scope deliberately not yet fixed.** The baseline
-   found *where* the ceiling is, not what to do about it. Determine whether remediation requires
-   query optimization, transaction boundary changes, connection pool tuning, or infrastructure
-   changes — and re-run the baseline after remediation to confirm it actually moved. **Not started**
-   because which of those levers to pull, and whether the investigation runs local-only or waits for
-   a Railway-Pro environment, is a decision for the owner to make deliberately, not a default this
-   plan should assume. Do not treat "raise `maximumPoolSize`" as the answer in advance of that
-   investigation — that number was chosen once already (Railway's own connection ceiling, per the
-   architecture audit) and changing it blind can make contention worse, not better.
+3. **Investigate measured bottleneck — ✅ Complete, 2026-08-14.** Five sub-questions answered with
+   evidence (code review, `EXPLAIN ANALYZE`, real HikariCP hold-time metrics, and a direct pool-size
+   experiment): no slow query, no missing index; every authenticated request pays ~5 fixed connection
+   checkouts (auth filter chain); import holds connections 9–20× longer than any read endpoint;
+   **raising `maximumPoolSize` to 20 or 30 was tested directly and made the error rate worse, not
+   better** (4.4% → 41.7% → 13.2%), confirming this is CPU contention, not a connections shortage.
+   Full findings: [`hikaricp-bottleneck-investigation-2026-08-14.md`](../../investigations/performance/hikaricp-bottleneck-investigation-2026-08-14.md).
+   **No fix chosen** — the doc lays out the option space (auth-overhead caching, narrowing the broad
+   transactions, import's per-row chatter) with tradeoffs; which to pursue, in what order, is still
+   the owner's call. Railway's actual Postgres connection ceiling is still an open item, needed
+   before any pool-size discussion resumes.
 
 **P2 — after Railway Pro is purchased:**
 1. Backup + restore drill, retention policy, recovery runbook (R-4, release criterion 3).
@@ -268,7 +270,7 @@ Now
 ├── Security review
 │
 ↓
-Investigate measured bottleneck
+Investigate measured bottleneck ✅
 │
 ↓
 Re-test baseline
@@ -294,8 +296,8 @@ Post-launch optimization
 |---|---|
 | Load testing baseline | Complete |
 | Capacity bottleneck identified | Complete |
-| Root-cause investigation | Pending |
-| Remediation | Pending |
+| Root-cause investigation | Complete — see [`hikaricp-bottleneck-investigation-2026-08-14.md`](../../investigations/performance/hikaricp-bottleneck-investigation-2026-08-14.md) |
+| Remediation | Pending — no fix chosen; investigation found raising pool size makes it *worse*, so this needs a deliberate decision, not a default |
 | Re-test | Pending |
 
 This does not change §9's dates — Block E (production readiness) is re-scoped, not shortened, since
