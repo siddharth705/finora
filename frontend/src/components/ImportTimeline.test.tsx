@@ -13,6 +13,7 @@ const api = vi.mocked(importJobsApi);
 const timeline = (over: Partial<Timeline> = {}): Timeline => ({
   jobId: 'job-1',
   status: 'ANALYZING',
+  userStatus: 'PROCESSING',
   failureCode: null,
   stages: [
     { stage: 'PARSING', attempt: 1, outcome: 'COMPLETED', startedAt: '2026-08-12T10:00:00Z', endedAt: '2026-08-12T10:00:01Z', durationMs: 1000 },

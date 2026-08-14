@@ -43,11 +43,18 @@ public final class ImportJobDto {
      * <p>{@code error} carries the job's {@code last_error} only once the job has actually FAILED.
      * A job that failed once and is retrying is not something to alarm the user about -- it is the
      * system working -- so a transient error is deliberately not surfaced mid-flight.
+     *
+     * <p>{@code status} stays the raw {@link ImportJob.Status} name -- unchanged, since the import
+     * timeline UI needs that granularity. {@code userStatus} is additive: Sprint 4 item 20a's
+     * five-state mapping ({@link UserFacingImportStatus}), for a caller that wants "processing /
+     * completed / action required / failed / cancelled" without re-deriving it from the raw value
+     * and {@code ErrorCode} metadata itself.
      */
     public record Progress(
             UUID jobId,
             String fileName,
             String status,
+            UserFacingImportStatus userStatus,
             Integer rowsTotal,
             int rowsProcessed,
             Instant createdAt,
@@ -62,6 +69,7 @@ public final class ImportJobDto {
                     job.getId(),
                     job.getFileName(),
                     job.getStatus().name(),
+                    UserFacingImportStatus.of(job.getStatus(), job.getFailureCode()),
                     job.getRowsTotal(),
                     job.getRowsProcessed(),
                     job.getCreatedAt(),
@@ -101,14 +109,21 @@ public final class ImportJobDto {
      * the job has FAILED, same rule {@link Progress#error} already follows: a job that failed once
      * and is retrying should not alarm the user with a reason mid-flight for a problem the system
      * may still resolve on its own.
+     *
+     * <p>{@code status} stays the raw {@link ImportJob.Status} name, same reasoning as {@link
+     * Progress#status}; {@code userStatus} is the same additive Sprint 4 item 20a mapping.
      */
-    public record Timeline(UUID jobId, String status, String failureCode, List<TimelineStage> stages) {
+    public record Timeline(
+            UUID jobId, String status, UserFacingImportStatus userStatus,
+            String failureCode, List<TimelineStage> stages
+    ) {
         public static Timeline of(ImportJob job, List<com.finora.imports.jobs.ImportJobStage> rows) {
             String failureCode = job.getStatus() == ImportJob.Status.FAILED
                     ? ErrorCode.wireCodeOrNull(job.getFailureCode())
                     : null;
-            return new Timeline(job.getId(), job.getStatus().name(), failureCode,
-                    rows.stream().map(TimelineStage::of).toList());
+            return new Timeline(job.getId(), job.getStatus().name(),
+                    UserFacingImportStatus.of(job.getStatus(), job.getFailureCode()),
+                    failureCode, rows.stream().map(TimelineStage::of).toList());
         }
     }
 }

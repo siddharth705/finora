@@ -355,6 +355,7 @@ describe('StatementHistory — recent imports', () => {
       jobId: 'job-1',
       fileName: 'still-going.csv',
       status: 'PARSING',
+      userStatus: 'PROCESSING',
       rowsTotal: null,
       rowsProcessed: 0,
       createdAt: '2026-08-13T09:00:00Z',

@@ -16,6 +16,7 @@ function job(over: Partial<ImportJobProgress> = {}): ImportJobProgress {
     jobId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     fileName: 'statement.csv',
     status: 'QUEUED',
+    userStatus: 'PROCESSING',
     rowsTotal: null,
     rowsProcessed: 0,
     createdAt: '2026-08-08T09:00:00Z',
