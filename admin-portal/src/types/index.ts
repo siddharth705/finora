@@ -678,6 +678,18 @@ export interface ImportTraceCompletion {
   sessionConfirmedAt: string | null;
 }
 
+/** One of a customer's own recent failed imports, looked up by email -- the support half of
+ *  Premium Import Reliability v1, §4 (`GET /admin/imports/analyses/failures/by-user`). Deliberately
+ *  narrower than {@link ImportTrace}: file name is included because a support conversation starts
+ *  from "this customer's file", but nothing else PII-shaped rides along -- same boundary as the
+ *  customer's own `GET /import/failures`. */
+export interface CustomerFailureSummary {
+  reference: string;
+  fileName: string;
+  failureCode: string | null;
+  createdAt: string;
+}
+
 export interface ImportTrace {
   analysisReference: string | null;
   importJobId: string | null;
