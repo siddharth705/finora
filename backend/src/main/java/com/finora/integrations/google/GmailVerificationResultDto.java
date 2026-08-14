@@ -43,6 +43,22 @@ public record GmailVerificationResultDto(
     }
 
     /**
+     * The mailbox cannot be read because the scope was never granted — the user completed consent
+     * while declining {@code gmail.readonly}.
+     *
+     * <p>Reported distinctly from {@link #reauthRequired()} even though both end at the same button.
+     * "Your permission expired" and "that permission was never given" are different facts, and only
+     * the second tells the user that reconnecting will fail again unless they grant it this time.
+     * The connection's status is left alone: nothing about it is revoked, and it is not broken in a
+     * way status can express.
+     */
+    static GmailVerificationResultDto scopeNotGranted(GmailConnection connection) {
+        return new GmailVerificationResultDto(false, connection.getStatus().name(),
+                "Finora does not have permission to read this mailbox. Reconnect and allow Gmail "
+                        + "access when Google asks.", true);
+    }
+
+    /**
      * Google could not be reached, or answered with something that says nothing about the grant.
      * Deliberately reports the connection's EXISTING status rather than a failure state — the
      * connection has not been changed, and telling a user to reconnect over a timeout would send

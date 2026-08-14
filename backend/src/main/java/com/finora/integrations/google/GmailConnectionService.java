@@ -62,6 +62,7 @@ public class GmailConnectionService {
     private final UserRepository userRepository;
     private final AuditService auditService;
     private final GmailAccessTokenService accessTokenService;
+    private final GmailApiClient gmailApiClient;
     private final TransactionTemplate transactionTemplate;
     private final SecureRandom secureRandom = new SecureRandom();
 
@@ -73,6 +74,7 @@ public class GmailConnectionService {
                                    UserRepository userRepository,
                                    AuditService auditService,
                                    GmailAccessTokenService accessTokenService,
+                                   GmailApiClient gmailApiClient,
                                    TransactionTemplate transactionTemplate) {
         this.connections = connections;
         this.states = states;
@@ -82,6 +84,7 @@ public class GmailConnectionService {
         this.userRepository = userRepository;
         this.auditService = auditService;
         this.accessTokenService = accessTokenService;
+        this.gmailApiClient = gmailApiClient;
         this.transactionTemplate = transactionTemplate;
     }
 
@@ -263,17 +266,41 @@ public class GmailConnectionService {
      * grant; keeping the token would add a second secret to protect for no benefit.
      */
     public GmailVerificationResultDto verifyConnection(UUID userId) {
+        // Matches beginConnect/completeConnect. Without it, a deployment whose Google client
+        // configuration was removed would send a blank client_id to Google, get invalid_client back,
+        // and report "could not reach Google -- try again shortly" -- advice that can never work,
+        // for a problem the operator has to fix rather than the user.
+        requireConfigured();
+
         GmailConnection connection = connections.findByUserIdAndStatusIn(userId, LIVE)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND,
                         "No Gmail account is connected."));
 
+        // Checked before spending a request: the scope Google recorded at consent time is already
+        // known, and if gmail.readonly is absent then no token, however fresh, can read this
+        // mailbox. Calling Gmail to be told 403 would cost a round trip to learn what the row
+        // already says.
+        if (!connection.hasGmailReadScope()) {
+            return GmailVerificationResultDto.scopeNotGranted(connection);
+        }
+
         try {
-            accessTokenService.accessTokenFor(connection);
+            String accessToken = accessTokenService.accessTokenFor(connection);
+            // The token refreshing proves the GRANT is alive; it does not prove Gmail will honour
+            // it. Reading the profile is the cheapest call that does, and it is what turns this
+            // endpoint from "your credential works" into "Finora can read your mailbox".
+            gmailApiClient.getProfile(accessToken);
             return GmailVerificationResultDto.healthy(connection);
         } catch (GmailReauthRequiredException e) {
             // accessTokenFor has already flipped the connection and audited why -- this only has to
             // report it. The user's next status poll will agree with what they are told here.
             return GmailVerificationResultDto.reauthRequired();
+        } catch (GmailScopeNotGrantedException e) {
+            // Gmail refused on permission grounds despite the recorded scope -- the Gmail API may be
+            // disabled on the Cloud project, or the grant was narrowed after the fact. Reported
+            // distinctly rather than as "reconnect", because a re-consent that does not change the
+            // scope will fail identically.
+            return GmailVerificationResultDto.scopeNotGranted(connection);
         } catch (ApiException e) {
             // Transient. The connection is untouched, so report its existing status rather than
             // inventing a failure state: sending someone through a consent screen because Google
