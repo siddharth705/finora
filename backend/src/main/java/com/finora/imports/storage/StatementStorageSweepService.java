@@ -13,8 +13,10 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * BH-017. Reclaims R2/filesystem objects that no row references, once they have been that way
@@ -33,9 +35,27 @@ import java.util.Optional;
  * ({@code ImportJobService}) write to storage before a job is even queued, so a job that later
  * fails still names a real object, one a future "retry without re-upload" needs intact. Neither
  * {@code statement_imports} nor {@code import_sessions} ever gets a row for work that failed
- * before producing one, so until {@link ImportJobRepository#existsByObjectKeyAndStatusNot} joined
- * this check, a failed job's bytes survived only by the accident of some other reference existing
- * -- never because the failed job itself counted as one.
+ * before producing one, so until {@link ImportJobRepository#existsByObjectKeyAndStatusNotIn}
+ * joined this check, a failed job's bytes survived only by the accident of some other reference
+ * existing -- never because the failed job itself counted as one.
+ *
+ * <p>A job the user cancelled before staging finished (also possible with no {@code
+ * import_sessions} row ever created -- see {@code ImportJob#isCancellable}) has the identical
+ * absence of any other reference, but does NOT get the identical protection: {@link
+ * #IMPORT_JOB_EXCLUDED_STATUSES} excludes CANCELLED alongside COMPLETED, not FAILED alongside
+ * COMPLETED. Retaining a FAILED job's object trades storage for a real, if not yet built, product
+ * need -- retry without re-upload. A CANCELLED job has no such need: the user chose to stop, and
+ * nothing in this codebase offers to resume a cancelled import. Protecting it anyway would spend
+ * the identical unbounded, never-expiring cost (see the next paragraph) for no corresponding
+ * benefit, so it follows the object's normal lifecycle instead, exactly like COMPLETED.
+ *
+ * <p><b>Accepted trade-off: no TTL on FAILED's protection.</b> {@code import_jobs} rows never
+ * expire on their own -- see {@link ImportJobRepository#existsByObjectKeyAndStatusNotIn}'s own doc
+ * -- so a FAILED job's object is retained for as long as that row exists, which today is
+ * indefinitely. This is intentional, not a gap: it means a failed import stays
+ * retryable-without-reupload no matter how old, at the cost of one object per FAILED job ever
+ * occurring. Revisit if that cost becomes real -- it would need a bounded window on this check, or
+ * a cleanup mechanism for {@code import_jobs} rows themselves, neither of which exists today.
  *
  * <h2>Reference counting, not delete-on-row-expiry</h2>
  * Sid decided explicitly against an R2 lifecycle rule or an immediate delete-on-row-expiry, because
@@ -43,8 +63,8 @@ import java.util.Optional;
  * staged session and the import it confirms into hold identical bytes and resolve to the same
  * object, and every account section of a composite statement plus every re-import shares one
  * object too. A row disappearing says nothing about whether the object is still needed -- only
- * the ABSENCE of every referencing row, across both {@code statement_imports} and
- * {@code import_sessions}, does.
+ * the ABSENCE of every referencing row, across all three of {@code statement_imports},
+ * {@code import_sessions}, and {@code import_jobs}, does.
  *
  * <h2>What "eligible" means here</h2>
  * A candidate {@code (content_hash, object_key)} comes from
@@ -55,8 +75,9 @@ import java.util.Optional;
  * ({@link StatementImportRepository#existsByObjectKey}, which respects the entity's
  * {@code @SQLRestriction} and so only counts LIVE rows, OR'd with
  * {@link ImportSessionRepository#existsByObjectKey}, which has no lifecycle state to exclude, OR'd
- * with {@link ImportJobRepository#existsByObjectKeyAndStatusNot} against {@code COMPLETED} -- see
- * that method's own doc for why COMPLETED is excluded rather than checked like the others).
+ * with {@link ImportJobRepository#existsByObjectKeyAndStatusNotIn} against
+ * {@link #IMPORT_JOB_EXCLUDED_STATUSES} -- see that method's own doc for why COMPLETED and
+ * CANCELLED are excluded rather than checked like the others).
  * Only when all three say no does {@link StatementStorage#delete} get called.
  *
  * <h2>A known, deliberate gap</h2>
@@ -98,6 +119,12 @@ public class StatementStorageSweepService {
     /** See this class's "Safety margin" doc section. Not configurable -- it exists specifically to
      *  bound how far a bad configuration value could push the effective window down. */
     static final Duration MINIMUM_SAFETY_BUFFER = Duration.ofHours(24);
+
+    /** See this class's "Accepted trade-off" doc section, and
+     *  {@link ImportJobRepository#existsByObjectKeyAndStatusNotIn}'s own doc, for why these two
+     *  statuses -- and only these two -- don't make an import_jobs row count as a live reference. */
+    static final Set<ImportJob.Status> IMPORT_JOB_EXCLUDED_STATUSES =
+            EnumSet.of(ImportJob.Status.COMPLETED, ImportJob.Status.CANCELLED);
 
     private final Optional<StatementStorage> storage;
     private final StatementImportRepository statementImportRepository;
@@ -181,13 +208,14 @@ public class StatementStorageSweepService {
             // The safety-critical check. findObjectsUnreferencedSince() is a discovery query that
             // can be stale by the time execution reaches here -- another statement could have been
             // confirmed with identical bytes (a fresh statement_imports row), a new session staged
-            // (a fresh import_sessions row), or an async import queued or failed on the same bytes
-            // (a live, non-COMPLETED import_jobs row) in the meantime. Re-checking fresh,
-            // immediately before the irreversible call, is what actually makes this safe -- the
-            // same shape of guard as ImportSessionRepository.claimForConfirmation's atomic re-check.
+            // (a fresh import_sessions row), or an async import queued, failed, or cancelled on the
+            // same bytes (a live import_jobs row outside IMPORT_JOB_EXCLUDED_STATUSES) in the
+            // meantime. Re-checking fresh, immediately before the irreversible call, is what
+            // actually makes this safe -- the same shape of guard as
+            // ImportSessionRepository.claimForConfirmation's atomic re-check.
             if (statementImportRepository.existsByObjectKey(objectKey)
                     || importSessionRepository.existsByObjectKey(objectKey)
-                    || importJobRepository.existsByObjectKeyAndStatusNot(objectKey, ImportJob.Status.COMPLETED)) {
+                    || importJobRepository.existsByObjectKeyAndStatusNotIn(objectKey, IMPORT_JOB_EXCLUDED_STATUSES)) {
                 skipped++;
                 continue;
             }

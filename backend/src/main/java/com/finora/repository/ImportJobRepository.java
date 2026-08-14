@@ -113,23 +113,36 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, UUID> {
     List<ImportJob> findByImportSessionId(UUID importSessionId);
 
     /**
-     * Whether a non-COMPLETED job still references this object key. Feeds {@code
-     * StatementStorageSweepService}'s reference check alongside {@code
-     * StatementImportRepository.existsByObjectKey} and {@code ImportSessionRepository.existsByObjectKey}.
+     * Whether a job outside {@code excludedStatuses} still references this object key. Feeds
+     * {@code StatementStorageSweepService}'s reference check alongside {@code
+     * StatementImportRepository.existsByObjectKey} and {@code ImportSessionRepository.existsByObjectKey}
+     * -- called there with {@code StatementStorageSweepService.IMPORT_JOB_EXCLUDED_STATUSES}, i.e.
+     * {@code {COMPLETED, CANCELLED}}.
      *
-     * <p>COMPLETED is excluded deliberately, not incidentally. Unlike those other two tables, this
-     * one has no expiry of its own -- a completed job's row outlives the statement it produced
-     * indefinitely, cascading away only if the owning user account itself is deleted (V66). Counting
-     * COMPLETED here would make a completed import's object permanently unsweepable long after its
-     * legitimate references (the confirmed {@code statement_imports} row, or a still-staged {@code
-     * import_sessions} row) had themselves expired -- silently overriding the sweep's actual retention
-     * policy for every successful import, forever, not just bounding it.
+     * <p>Those two are excluded deliberately, not incidentally, and for the same reason as each
+     * other: unlike {@code statement_imports}/{@code import_sessions}, this table has no expiry of
+     * its own -- a finished job's row outlives whatever it produced (or didn't) indefinitely,
+     * cascading away only if the owning user account itself is deleted (V66). Counting either here
+     * would make its object permanently unsweepable, for a different reason each time:
+     * <ul>
+     *   <li>A COMPLETED job's object already has a legitimate reference path -- the confirmed
+     *       {@code statement_imports} row, or a still-staged {@code import_sessions} row -- and
+     *       counting the job too would silently override THEIR expiry, retaining the object forever
+     *       after every real reference to it is already gone.</li>
+     *   <li>A CANCELLED job before staging finished (see {@code ImportJob#isCancellable}) has no
+     *       such path at all -- there is no session or statement-import row to expire -- so counting
+     *       it would not override an expiry, it would create a reference with none.</li>
+     * </ul>
+     * Either way the answer is the same: neither state has a product reason to keep the object
+     * reachable, so neither should hold it forever just because its row happens to.
      *
      * <p>FAILED and the in-flight statuses have no coverage in either of those tables at all -- for
      * them, this check is the only thing standing between an object and the sweep, which is the gap
      * this method exists to close: a failed import's bytes used to become unswept-safe only by
      * accident (another live reference happening to still exist), never because the failed job
-     * itself was recognized as a reason to keep them.
+     * itself was recognized as a reason to keep them. That protection is itself unbounded -- see
+     * {@code StatementStorageSweepService}'s class doc, "Accepted trade-off" -- an intentional
+     * choice, not an oversight matching COMPLETED's.
      */
-    boolean existsByObjectKeyAndStatusNot(String objectKey, ImportJob.Status status);
+    boolean existsByObjectKeyAndStatusNotIn(String objectKey, java.util.Collection<ImportJob.Status> excludedStatuses);
 }

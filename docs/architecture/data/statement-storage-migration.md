@@ -132,12 +132,15 @@ statement's download or re-import breaks days later.
 the row and nothing else, exactly as before this migration; `StatementStorageSweepService`
 (`com.finora.imports.storage`) is the only caller of `StatementStorage.delete`, and only for an
 object that has been unreferenced -- checked fresh, across `statement_imports`, `import_sessions`,
-and non-`COMPLETED` `import_jobs` rows, immediately before each delete -- for longer than
-`app.statement-storage.sweep.retention-days` (90 by default, §6). `import_jobs` joined the check
-after production evidence showed a FAILED async import has no row in either of the other two
-tables at all; it is excluded specifically for `COMPLETED`, because unlike the other two tables an
-`import_jobs` row never expires on its own, and counting it there would make a successfully
-imported statement's object permanently unsweepable.
+and `import_jobs` rows outside `{COMPLETED, CANCELLED}`, immediately before each delete -- for
+longer than `app.statement-storage.sweep.retention-days` (90 by default, §6). `import_jobs` joined
+the check after production evidence showed a FAILED async import has no row in either of the other
+two tables at all -- and a CANCELLED-before-staging job has none either, for the same reason. Both
+are excluded from protecting an object on their own, because unlike the other two tables an
+`import_jobs` row never expires on its own: counting COMPLETED there would make a successfully
+imported statement's object permanently unsweepable, and counting CANCELLED would retain an object
+forever that never had a legitimate reference to begin with. FAILED and the in-flight statuses have
+no such bound either, deliberately -- see the class's own "Accepted trade-off" doc section.
 
 That follows directly from the failure semantics in §5.1 — an unreferenced object is a tolerable,
 reclaimable cost, while a row pointing at a missing object is unrecoverable. Row-dropping itself
@@ -361,8 +364,8 @@ Engineering input recorded when this was still open, now the basis for what got 
   fill, and the code was deleted rather than left untested on the statement path.
 - Reference-aware deletion (§3.2) — **BUILT, BH-017.** Rows drop, unchanged;
   `StatementStorageSweepService` sweeps objects separately once every reference to them, across
-  `statement_imports`, `import_sessions`, and non-`COMPLETED` `import_jobs`, has been gone for
-  `app.statement-storage.sweep.retention-days` (90 default). See §6.
+  `statement_imports`, `import_sessions`, and `import_jobs` outside `{COMPLETED, CANCELLED}`, has
+  been gone for `app.statement-storage.sweep.retention-days` (90 default). See §6.
 - **One object class, one cleanup mechanism.** This line previously read "lifecycle rules for
   temporary import-session objects", which contradicted §3.2 and the implementation. There is no
   separate session-object namespace: `ContentAddress.of()` is the only key scheme

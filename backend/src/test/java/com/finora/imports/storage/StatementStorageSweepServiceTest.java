@@ -78,19 +78,28 @@ class StatementStorageSweepServiceTest {
         verifyNoInteractions(statementImportRepository, importSessionRepository, importJobRepository);
     }
 
+    /**
+     * The clean-sweep path: none of the three tables reference this key. Explicitly stubs AND
+     * verifies the import_jobs check specifically (not just relying on Mockito's unstubbed-boolean
+     * default of {@code false}) -- without that verify, this test could not tell "checked, and it
+     * came back false" apart from "never checked at all", and would keep passing unchanged if a
+     * future edit accidentally dropped the import_jobs clause from the OR entirely.
+     */
     @Test
-    void sweep_deletesAnObjectThatIsUnreferencedInBothTables() {
+    void sweep_deletesAnObjectThatIsUnreferencedInAllThreeTables() {
         String key = "statements/aa/bb/aabbcc.bin";
         when(statementImportRepository.findObjectsUnreferencedSince(any(), anyInt()))
                 .thenReturn(List.<Object[]>of(candidate("aabbcc", key, Instant.now().minus(120, ChronoUnit.DAYS))));
         when(statementImportRepository.existsByObjectKey(key)).thenReturn(false);
         when(importSessionRepository.existsByObjectKey(key)).thenReturn(false);
+        when(importJobRepository.existsByObjectKeyAndStatusNotIn(eq(key), any())).thenReturn(false);
 
         StatementStorageSweepService.Result result = service.sweep();
 
         assertThat(result.swept()).isEqualTo(1);
         assertThat(result.skipped()).isZero();
         verify(storage).delete(key);
+        verify(importJobRepository).existsByObjectKeyAndStatusNotIn(eq(key), any());
     }
 
     /**
@@ -104,7 +113,7 @@ class StatementStorageSweepServiceTest {
      * -- which is exactly the shape BH-017 reports as broken, and exactly what Sid decided against
      * building -- would call delete() the moment row A disappeared, with no idea row B exists. This
      * test fails under that implementation and passes only because the sweep re-checks EVERY
-     * candidate against BOTH tables, fresh, before acting.
+     * candidate against all three tables, fresh, before acting.
      */
     @Test
     void sweep_doesNotDeleteAnObjectStillReferencedByAnotherLiveRow_provingReferenceCountingMatters() {
@@ -149,13 +158,13 @@ class StatementStorageSweepServiceTest {
      * been swept out from under a future "retry without re-upload" the moment it looked old enough.
      */
     @Test
-    void sweep_doesNotDeleteAnObjectStillReferencedByALiveNonCompletedImportJob() {
+    void sweep_doesNotDeleteAnObjectStillReferencedByALiveFailedImportJob() {
         String key = "statements/ee/ff/eeff00.bin";
         when(statementImportRepository.findObjectsUnreferencedSince(any(), anyInt()))
                 .thenReturn(List.<Object[]>of(candidate("eeff00", key, Instant.now().minus(120, ChronoUnit.DAYS))));
         when(statementImportRepository.existsByObjectKey(key)).thenReturn(false);
         when(importSessionRepository.existsByObjectKey(key)).thenReturn(false);
-        when(importJobRepository.existsByObjectKeyAndStatusNot(key, ImportJob.Status.COMPLETED)).thenReturn(true);
+        when(importJobRepository.existsByObjectKeyAndStatusNotIn(eq(key), any())).thenReturn(true);
 
         StatementStorageSweepService.Result result = service.sweep();
 
@@ -165,27 +174,81 @@ class StatementStorageSweepServiceTest {
     }
 
     /**
-     * The other half: a COMPLETED job must NOT protect its object on its own. import_jobs rows
-     * never expire (only cascading away with the owning user), so if COMPLETED counted here, a
-     * successfully imported statement's object would become permanently unsweepable the moment the
-     * job completed -- even long after the user deletes the statement and its originating session
-     * expires. This is exactly why the repository check excludes COMPLETED rather than matching
-     * every status the way the other two tables' checks do.
+     * The same gap, the CANCELLED half. A job the user cancelled before staging finished (see
+     * {@code ImportJob#isCancellable}) also has no row in either of the other two tables -- there
+     * was never a session to stage. Regression test for a bug this fix originally shipped with:
+     * the repository check excluded only COMPLETED, so a CANCELLED-only reference was treated as
+     * NOT protecting the object -- silently sweepable the moment it looked old enough, exactly the
+     * failure mode this whole change exists to prevent, just for a different status.
      */
     @Test
-    void sweep_deletesAnObjectWhoseOnlyImportJobReferenceIsCompleted() {
+    void sweep_doesNotDeleteAnObjectStillReferencedByALiveCancelledImportJob() {
+        String key = "statements/22/33/223344.bin";
+        when(statementImportRepository.findObjectsUnreferencedSince(any(), anyInt()))
+                .thenReturn(List.<Object[]>of(candidate("223344", key, Instant.now().minus(120, ChronoUnit.DAYS))));
+        when(statementImportRepository.existsByObjectKey(key)).thenReturn(false);
+        when(importSessionRepository.existsByObjectKey(key)).thenReturn(false);
+        when(importJobRepository.existsByObjectKeyAndStatusNotIn(eq(key), any())).thenReturn(true);
+
+        StatementStorageSweepService.Result result = service.sweep();
+
+        assertThat(result.swept()).isZero();
+        assertThat(result.skipped()).isEqualTo(1);
+        verify(storage, never()).delete(anyString());
+    }
+
+    /**
+     * The other half: a COMPLETED or CANCELLED job must NOT protect its object on its own.
+     * import_jobs rows never expire (only cascading away with the owning user), so if either
+     * counted here, that object would become permanently unsweepable the moment the job reached
+     * that status -- for COMPLETED, even long after the user deletes the statement and its
+     * originating session expires; for CANCELLED, with no other reference ever having existed at
+     * all. This is exactly why the repository check excludes both rather than matching every
+     * status the way the other two tables' checks do.
+     */
+    @Test
+    void sweep_deletesAnObjectWhoseOnlyImportJobReferenceIsCompletedOrCancelled() {
         String key = "statements/11/22/112233.bin";
         when(statementImportRepository.findObjectsUnreferencedSince(any(), anyInt()))
                 .thenReturn(List.<Object[]>of(candidate("112233", key, Instant.now().minus(120, ChronoUnit.DAYS))));
         when(statementImportRepository.existsByObjectKey(key)).thenReturn(false);
         when(importSessionRepository.existsByObjectKey(key)).thenReturn(false);
-        when(importJobRepository.existsByObjectKeyAndStatusNot(key, ImportJob.Status.COMPLETED)).thenReturn(false);
+        when(importJobRepository.existsByObjectKeyAndStatusNotIn(eq(key), any())).thenReturn(false);
 
         StatementStorageSweepService.Result result = service.sweep();
 
         assertThat(result.swept()).isEqualTo(1);
         assertThat(result.skipped()).isZero();
         verify(storage).delete(key);
+    }
+
+    /**
+     * Regression test for the exact exclusion set, not just its effect. The two tests above prove
+     * the sweep behaves correctly for whatever set production code happens to pass; this proves
+     * production code passes the RIGHT set -- {@code {COMPLETED, CANCELLED}}, no more and no less.
+     * A future edit that widened this (e.g. to also exclude FAILED, silently undoing this whole
+     * fix) or narrowed it (e.g. back to just {COMPLETED}, reintroducing the CANCELLED gap the test
+     * above catches only via its stub, not via what's actually sent to the repository) would pass
+     * every other test in this class unchanged -- Mockito's stub matches on the stubbed key
+     * regardless of which set accompanies it. This is the one test that inspects the set itself.
+     */
+    @Test
+    void sweep_excludesExactlyCompletedAndCancelled_fromTheImportJobReferenceCheck() {
+        String key = "statements/44/55/445566.bin";
+        when(statementImportRepository.findObjectsUnreferencedSince(any(), anyInt()))
+                .thenReturn(List.<Object[]>of(candidate("445566", key, Instant.now().minus(120, ChronoUnit.DAYS))));
+        when(statementImportRepository.existsByObjectKey(key)).thenReturn(false);
+        when(importSessionRepository.existsByObjectKey(key)).thenReturn(false);
+        when(importJobRepository.existsByObjectKeyAndStatusNotIn(eq(key), any())).thenReturn(false);
+
+        service.sweep();
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.Collection<ImportJob.Status>> excludedCaptor =
+                org.mockito.ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(importJobRepository).existsByObjectKeyAndStatusNotIn(eq(key), excludedCaptor.capture());
+        assertThat(excludedCaptor.getValue())
+                .containsExactlyInAnyOrder(ImportJob.Status.COMPLETED, ImportJob.Status.CANCELLED);
     }
 
     @Test
@@ -196,6 +259,7 @@ class StatementStorageSweepServiceTest {
                         candidate("hash2", "key2", Instant.now().minus(120, ChronoUnit.DAYS))));
         when(statementImportRepository.existsByObjectKey(anyString())).thenReturn(false);
         when(importSessionRepository.existsByObjectKey(anyString())).thenReturn(false);
+        when(importJobRepository.existsByObjectKeyAndStatusNotIn(anyString(), any())).thenReturn(false);
         org.mockito.Mockito.doThrow(new StatementStorageException("boom", new RuntimeException()))
                 .when(storage).delete("key1");
 
