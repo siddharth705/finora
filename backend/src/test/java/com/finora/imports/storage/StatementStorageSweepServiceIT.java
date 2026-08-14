@@ -129,8 +129,12 @@ class StatementStorageSweepServiceIT extends AbstractIntegrationTest {
     }
 
     private ImportSession saveImportSession(ContentAddress address, String status) {
+        return saveImportSession(address, status, userId);
+    }
+
+    private ImportSession saveImportSession(ContentAddress address, String status, UUID forUserId) {
         ImportSession session = new ImportSession();
-        session.setUserId(userId);
+        session.setUserId(forUserId);
         session.setFileName("statement.pdf");
         session.setFileContent(new byte[]{1});
         session.setStagedRowsJson("[]");
@@ -274,6 +278,41 @@ class StatementStorageSweepServiceIT extends AbstractIntegrationTest {
         assertThat(result.swept())
                 .as("another tenant's only copy of this document must not be destroyed because "
                         + "MY reference to the same bytes was deleted")
+                .isZero();
+        assertThat(result.skipped()).isEqualTo(1);
+        assertThat(storage.exists(address)).isTrue();
+    }
+
+    /**
+     * BH-039, the {@code ImportSessionRepository} half. {@link
+     * #sweep_doesNotReclaimAnObjectStillReferencedByAnotherTenantsLiveRow} proves the cross-tenant
+     * property, but its surviving reference is a {@code StatementImport} row -- the sweep's guard is
+     * {@code statementImportRepository.existsByObjectKey(...) ||
+     * importSessionRepository.existsByObjectKey(...)}, so that test's first clause alone keeps the
+     * object alive and the {@code ImportSessionRepository} half of the OR is never actually
+     * exercised. A future mistake scoped to only {@code ImportSessionRepository.existsByObjectKey}
+     * (the same well-meaning "add userId, it looks under-scoped" refactor BH-039 warns against)
+     * would pass every existing test and still silently destroy another tenant's only copy of a
+     * still-staged document. This is the test that would catch that: the surviving live reference
+     * here is an {@code ImportSession}, not a {@code StatementImport}, and it belongs to a different
+     * tenant.
+     */
+    @Test
+    @Transactional
+    void sweep_doesNotReclaimAnObjectStillReferencedByAnotherTenantsLiveImportSession() {
+        ContentAddress address = storeBytes("staged-by-one-tenant-imported-by-another");
+        StatementImport mine = saveStatementImport(address);
+        OtherTenant other = otherTenant();
+        ImportSession theirs = saveImportSession(address, ImportSession.STATUS_STAGED, other.userId());
+        softDeleteAndBackdate(mine, Instant.now().minus(91, ChronoUnit.DAYS));
+        // theirs is deliberately left alone -- still live, not expired, and belongs to a different tenant.
+        assertThat(importSessionRepository.findById(theirs.getId())).isPresent();
+
+        StatementStorageSweepService.Result result = service.sweep();
+
+        assertThat(result.swept())
+                .as("another tenant's still-staged session on the same bytes must not be destroyed "
+                        + "because MY reference to the same bytes was deleted")
                 .isZero();
         assertThat(result.skipped()).isEqualTo(1);
         assertThat(storage.exists(address)).isTrue();
