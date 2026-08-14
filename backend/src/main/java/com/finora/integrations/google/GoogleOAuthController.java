@@ -102,6 +102,25 @@ public class GoogleOAuthController {
                 .orElseGet(() -> GmailConnectionStatusDto.notConnected(available)));
     }
 
+    /**
+     * "Test connection" — checks the stored credential against Google right now.
+     *
+     * <p>Distinct from {@link #status()}, which reports what the database believes. Those diverge in
+     * the case that matters most: a user who revokes Finora from their own Google account settings
+     * leaves Finora's stored status untouched, because nothing here learns of it until something
+     * tries to use the credential. Without this, that discovery happened on the first failed sync.
+     *
+     * <p>POST rather than GET because it is not free — it spends a request against Google, and a
+     * GET invites caching and prefetching that would multiply that cost invisibly.
+     *
+     * <p>Never returns the access token it mints; verification only needs to know Google honoured
+     * the grant.
+     */
+    @PostMapping("/connection/verify")
+    public ApiResponse<GmailVerificationResultDto> verify() {
+        return ApiResponse.ok(connectionService.verifyConnection(currentUser.id()));
+    }
+
     /** Revokes at Google where possible and clears the stored credential. */
     @DeleteMapping("/connection")
     public ApiResponse<Void> disconnect() {

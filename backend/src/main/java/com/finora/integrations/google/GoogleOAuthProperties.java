@@ -66,6 +66,23 @@ public class GoogleOAuthProperties {
      */
     private String postConnectRedirect = "https://app.finoratech.info/settings";
 
+    /**
+     * Google's own endpoints. Real values by default — nothing needs to set these.
+     *
+     * <p>Configurable rather than hardcoded constants for one reason: {@link GoogleOAuthClient}'s
+     * handling of Google's error responses is a security control (an {@code invalid_grant} means
+     * "this user must reconnect", anything else means "retry"), and a control that cannot be
+     * pointed at a test server cannot be verified. They were constants, and the consequence was
+     * that the distinction had unit tests around it but the code making it had never executed.
+     *
+     * <p>Not a production knob. If one of these is ever overridden outside a test, that is a
+     * misconfiguration worth noticing.
+     */
+    private String tokenEndpoint = "https://oauth2.googleapis.com/token";
+    private String userinfoEndpoint = "https://openidconnect.googleapis.com/v1/userinfo";
+    private String revokeEndpoint = "https://oauth2.googleapis.com/revoke";
+    private String authorizationEndpoint = "https://accounts.google.com/o/oauth2/v2/auth";
+
     /** True when a client id, secret, and redirect URI are all present. Anything less cannot
      *  complete an authorization-code exchange, so the endpoints refuse rather than half-work. */
     public boolean isConfigured() {
@@ -82,6 +99,14 @@ public class GoogleOAuthProperties {
     public void setRedirectUri(String redirectUri) { this.redirectUri = redirectUri; }
     public List<String> getScopes() { return scopes; }
     public void setScopes(List<String> scopes) { this.scopes = scopes; }
+    public String getTokenEndpoint() { return tokenEndpoint; }
+    public void setTokenEndpoint(String tokenEndpoint) { this.tokenEndpoint = tokenEndpoint; }
+    public String getUserinfoEndpoint() { return userinfoEndpoint; }
+    public void setUserinfoEndpoint(String userinfoEndpoint) { this.userinfoEndpoint = userinfoEndpoint; }
+    public String getRevokeEndpoint() { return revokeEndpoint; }
+    public void setRevokeEndpoint(String revokeEndpoint) { this.revokeEndpoint = revokeEndpoint; }
+    public String getAuthorizationEndpoint() { return authorizationEndpoint; }
+    public void setAuthorizationEndpoint(String authorizationEndpoint) { this.authorizationEndpoint = authorizationEndpoint; }
     public String getPostConnectRedirect() { return postConnectRedirect; }
     public void setPostConnectRedirect(String postConnectRedirect) { this.postConnectRedirect = postConnectRedirect; }
 }

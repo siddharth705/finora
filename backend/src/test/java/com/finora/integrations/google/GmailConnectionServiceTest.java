@@ -46,6 +46,7 @@ class GmailConnectionServiceTest {
     private EncryptionService encryptionService;
     private UserRepository userRepository;
     private AuditService auditService;
+    private GmailAccessTokenService accessTokenService;
     private GmailConnectionService service;
 
     private final UUID userId = UUID.randomUUID();
@@ -90,8 +91,10 @@ class GmailConnectionServiceTest {
             return null;
         }).when(transactionTemplate).executeWithoutResult(any());
 
+        accessTokenService = mock(GmailAccessTokenService.class);
         service = new GmailConnectionService(connections, states, googleClient, properties,
-                encryptionService, userRepository, auditService, transactionTemplate);
+                encryptionService, userRepository, auditService, accessTokenService,
+                transactionTemplate);
 
         when(connections.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(states.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -364,6 +367,83 @@ class GmailConnectionServiceTest {
         InOrder inOrder = inOrder(states, googleClient);
         inOrder.verify(states).claimForRedemption(anyString(), any());
         inOrder.verify(googleClient).exchangeCode(anyString());
+    }
+
+    // ---------- verify ----------
+
+    /**
+     * The gap this endpoint closes: {@code GET /status} reports the stored status, which stays
+     * CONNECTED after a user revokes Finora from their own Google account — nothing learns of that
+     * until the credential is used. Verification asks Google.
+     */
+    @Test
+    void verifyConnection_reportsHealthyWhenGoogleHonoursTheCredential() {
+        GmailConnection connection = new GmailConnection();
+        connection.setUserId(userId);
+        connection.setGoogleUserId("google-sub-12345");
+        connection.setGrantedScopes("openid");
+        when(connections.findByUserIdAndStatusIn(eq(userId), any())).thenReturn(Optional.of(connection));
+        when(accessTokenService.accessTokenFor(connection)).thenReturn("fresh-token");
+
+        GmailVerificationResultDto result = service.verifyConnection(userId);
+
+        assertThat(result.healthy()).isTrue();
+        assertThat(result.actionRequired()).isFalse();
+    }
+
+    @Test
+    @DisplayName("a dead grant reports actionRequired, so the UI offers Reconnect")
+    void verifyConnection_whenTheGrantIsDead_reportsReauthRequired() {
+        GmailConnection connection = new GmailConnection();
+        connection.setUserId(userId);
+        connection.setGoogleUserId("google-sub-12345");
+        connection.setGrantedScopes("openid");
+        when(connections.findByUserIdAndStatusIn(eq(userId), any())).thenReturn(Optional.of(connection));
+        when(accessTokenService.accessTokenFor(connection))
+                .thenThrow(new GmailReauthRequiredException("invalid_grant"));
+
+        GmailVerificationResultDto result = service.verifyConnection(userId);
+
+        assertThat(result.healthy()).isFalse();
+        assertThat(result.actionRequired())
+                .as("only the user can fix a revoked grant, so the UI must send them to reconnect")
+                .isTrue();
+        assertThat(result.status()).isEqualTo("REAUTH_REQUIRED");
+    }
+
+    /**
+     * The direction that would be easy to get wrong: a transient failure must NOT tell the user to
+     * reconnect. Sending someone through a consent screen because Google timed out fixes nothing
+     * and costs them their trust in the signal.
+     */
+    @Test
+    @DisplayName("a transient failure does not ask the user to reconnect")
+    void verifyConnection_whenGoogleIsUnreachable_doesNotDemandReconnection() {
+        GmailConnection connection = new GmailConnection();
+        connection.setUserId(userId);
+        connection.setGoogleUserId("google-sub-12345");
+        connection.setGrantedScopes("openid");
+        connection.setStatus(GmailConnection.Status.CONNECTED);
+        when(connections.findByUserIdAndStatusIn(eq(userId), any())).thenReturn(Optional.of(connection));
+        when(accessTokenService.accessTokenFor(connection))
+                .thenThrow(new ApiException(org.springframework.http.HttpStatus.BAD_GATEWAY, "unreachable"));
+
+        GmailVerificationResultDto result = service.verifyConnection(userId);
+
+        assertThat(result.healthy()).isFalse();
+        assertThat(result.actionRequired()).isFalse();
+        assertThat(result.status())
+                .as("the connection was not changed, so its existing status is what to report")
+                .isEqualTo("CONNECTED");
+    }
+
+    @Test
+    void verifyConnection_whenNothingIsConnected_is404() {
+        when(connections.findByUserIdAndStatusIn(eq(userId), any())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.verifyConnection(userId))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("No Gmail account is connected");
     }
 
     // ---------- disconnect ----------
