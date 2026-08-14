@@ -129,6 +129,28 @@ describe('StatementHistory — re-importing a password-protected statement', () 
     expect(navigate).toHaveBeenCalledTimes(1);
   });
 
+  /** Mirrors the exact-shape assertions the resume and retry nav-state call sites already have --
+   *  this route now has three tagged arrival shapes, and this is the one whose own bug (a blind
+   *  truthiness cast, fixed in Premium Import Reliability v1 §3.2) motivated tagging all of them
+   *  with `kind` in the first place, so it should not be the one shape left unverified. */
+  it('navigates with the exact reimport-tagged state shape', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await clickReimport(user);
+
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/app/import', {
+      state: {
+        kind: 'reimport',
+        reimportId: 'stmt-1',
+        staging: reimportResult().staging,
+        accountId: 'acct-1',
+        accountName: 'HDFC Savings',
+        password: undefined,
+      },
+    }));
+  });
+
   it('prompts for the password when the stored file turns out to be protected', async () => {
     vi.mocked(statementImportsApi.reimport).mockReset().mockRejectedValue(rejectWith(PDF_PASSWORD_REQUIRED));
     const user = userEvent.setup();
@@ -268,6 +290,27 @@ describe('StatementHistory — failed imports', () => {
     // isn't just "the failures query hasn't resolved yet".
     await screen.findByText('HDFC Savings');
     expect(screen.queryByText('Failed Imports')).not.toBeInTheDocument();
+  });
+
+  /** Premium Import Reliability v1, §2.5 -- a failed sync import has no bytes retained, so this
+   *  can only send the person back to Import with context, not replay the original upload the
+   *  way confirmed "Reimport" does. Carries the raw failureCODE, not a pre-curated message --
+   *  Import.tsx does its own curation at render time, so the two pages can't drift in wording for
+   *  the same code. */
+  it('sends "Try again" to Import with the file name and raw failure code as context', async () => {
+    vi.mocked(importApi.listFailures).mockReset().mockResolvedValue([aFailure()]);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /try again/i }));
+
+    expect(navigate).toHaveBeenCalledWith('/app/import', {
+      state: {
+        kind: 'retry',
+        retryFileName: 'unreadable-statement.pdf',
+        retryFailureCode: NO_HEADER_DETECTED,
+      },
+    });
   });
 
   it('does not affect the account-groups list, re-import, or delete flows', async () => {

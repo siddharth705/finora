@@ -9,6 +9,7 @@ import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../api/errorCodes';
 import { importFailureMessage } from '../api/importFailureMessages';
 import { BankLogo } from '../components/BankLogo';
 import { label as jobLabel } from '../lib/importJob';
+import { navigateToReimport, navigateToRetryFailedImport } from '../lib/importNavState';
 import type { AccountStatementGroup, StatementSummary, Transaction } from '../types';
 import { formatDate } from '../utils/date';
 
@@ -126,11 +127,9 @@ export default function StatementHistory() {
     try {
       const result = await statementImportsApi.reimport(statement.id, password);
       setPasswordPrompt(null);
-      void navigate('/app/import', {
-        state: {
-          reimportId: statement.id, staging: result.staging, accountId: result.accountId,
-          accountName: result.accountName, password,
-        },
+      navigateToReimport(navigate, {
+        reimportId: statement.id, staging: result.staging, accountId: result.accountId,
+        accountName: result.accountName, password,
       });
     } catch (e: any) {
       const code = e.response?.data?.errorCode;
@@ -380,13 +379,15 @@ function ReimportPasswordModal({
 }
 
 /**
- * "Your recent failed imports" -- Premium Import Reliability v1, §2.1. Deliberately no retry
- * action here yet: a failed sync import has no bytes retained, so there is nothing to retry
- * against until §2's byte-retention work lands. This is visibility only -- what happened, and
- * what to do about it in plain language -- which is still a real improvement over a failure that
- * left no trace at all.
+ * "Your recent failed imports" -- Premium Import Reliability v1, §2.1, with §2.5's "Try again"
+ * action. A failed sync import has no bytes retained (that's Sprint 4's still-gated
+ * retry-without-re-upload work), so this cannot replay the original upload the way confirmed
+ * "Reimport" does -- it can only send the person back to Import with the file name and curated
+ * failure reason as context, to pick the file again themselves.
  */
 function FailedImportsSection({ failures }: { failures: ImportFailureSummary[] }) {
+  const navigate = useNavigate();
+
   return (
     <div className="bg-card rounded-xl2 shadow-card border border-danger/30 overflow-hidden">
       <div className="px-5 py-4 border-b border-border flex items-center gap-2">
@@ -404,6 +405,13 @@ function FailedImportsSection({ failures }: { failures: ImportFailureSummary[] }
               <p className="text-xs text-muted flex-shrink-0">{fmtDate(f.createdAt)}</p>
             </div>
             <p className="text-xs text-muted mt-1">{messageFor(f.failureCode)}</p>
+            <button
+              type="button"
+              onClick={() => navigateToRetryFailedImport(navigate, f.fileName, f.failureCode)}
+              className="mt-1.5 text-xs font-medium text-primary hover:underline"
+            >
+              Try again
+            </button>
           </div>
         ))}
       </div>

@@ -6,6 +6,7 @@ import { importJobsApi } from '../api/endpoints';
 import { ImportTimeline } from '../components/ImportTimeline';
 import { PageLoading } from '../components/PageLoading';
 import { isReviewable, label } from '../lib/importJob';
+import { navigateToResumeSession } from '../lib/importNavState';
 import { formatDate } from '../utils/date';
 
 /**
@@ -118,9 +119,7 @@ export default function ImportDetail() {
         {isReviewable(job) && (
           <button
             type="button"
-            onClick={() =>
-              void navigate('/app/import', { state: { resumeSessionId: job.importSessionId } })
-            }
+            onClick={() => navigateToResumeSession(navigate, job.importSessionId)}
             className="mt-4 bg-primary text-white text-sm font-semibold rounded-lg px-4 py-2 hover:opacity-90"
           >
             Review this import

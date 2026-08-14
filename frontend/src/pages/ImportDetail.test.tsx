@@ -98,7 +98,7 @@ describe('ImportDetail', () => {
     const reviewButton = await screen.findByRole('button', { name: /review this import/i });
     await user.click(reviewButton);
 
-    expect(navigate).toHaveBeenCalledWith('/app/import', { state: { resumeSessionId: 'session-1' } });
+    expect(navigate).toHaveBeenCalledWith('/app/import', { state: { kind: 'resume', resumeSessionId: 'session-1' } });
   });
 
   it('does not offer to review a completed import with no staged session left', async () => {

@@ -1344,7 +1344,7 @@ describe('Import — resuming via navigation state', () => {
     const queryClient = new QueryClient();
     return render(
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[{ pathname: '/app/import', state: { resumeSessionId } }]}>
+        <MemoryRouter initialEntries={[{ pathname: '/app/import', state: { kind: 'resume', resumeSessionId } }]}>
           <Import />
         </MemoryRouter>
       </QueryClientProvider>
@@ -1417,5 +1417,92 @@ describe('Import — resuming via navigation state', () => {
     renderImportWithResumeState('sess-gone');
 
     expect(await screen.findByText(/no longer available/i)).toBeInTheDocument();
+  });
+});
+
+/**
+ * The Failed Imports section's "Try again" action (Premium Import Reliability v1, §2.5) arrives
+ * here with no staged data at all -- a failed sync import has no bytes retained, so unlike
+ * reimport/resume there is nothing to hydrate. This is purely a contextual banner on the ordinary
+ * upload step, reminding the person which file and why it failed last time.
+ */
+describe('Import — arriving to retry a failed sync import', () => {
+  function renderImportWithRetryState(retryFileName: string, retryFailureCode: string | null) {
+    const queryClient = new QueryClient();
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={[{
+          pathname: '/app/import',
+          state: { kind: 'retry', retryFileName, retryFailureCode },
+        }]}>
+          <Import />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+  }
+
+  beforeEach(() => {
+    vi.mocked(importApi.listSessions).mockReset().mockResolvedValue([]);
+    vi.mocked(importApi.getSession).mockReset();
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows which file and the curated reason for a known failure code, still on the ordinary upload step', async () => {
+    renderImportWithRetryState('bad-statement.pdf', NO_HEADER_DETECTED);
+
+    expect(await screen.findByTestId('statement-dropzone')).toBeInTheDocument();
+    expect(screen.getByText('bad-statement.pdf')).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED]))).toBeInTheDocument();
+  });
+
+  it('falls back to a safe generic message for an unmapped or missing failure code', async () => {
+    renderImportWithRetryState('bad-statement.pdf', null);
+
+    await screen.findByTestId('statement-dropzone');
+    expect(screen.getByText(/Finora couldn't complete this import\./)).toBeInTheDocument();
+  });
+
+  it('does not stage or resume anything -- the person must still pick the file', async () => {
+    renderImportWithRetryState('bad-statement.pdf', null);
+
+    await screen.findByTestId('statement-dropzone');
+    expect(importApi.stageCsv).not.toHaveBeenCalled();
+    expect(importApi.stagePdf).not.toHaveBeenCalled();
+    expect(importApi.getSession).not.toHaveBeenCalled();
+  });
+
+  it('shows no retry banner on an ordinary visit with no navigation state', async () => {
+    renderImport();
+
+    await screen.findByTestId('statement-dropzone');
+    expect(screen.queryByTestId('retry-import-banner')).not.toBeInTheDocument();
+  });
+
+  /**
+   * Bug fix, caught by review: reimportState/resumeState/retryState are derived fresh every
+   * render straight from location.state, which react-router does not clear on its own. Without
+   * startOver() explicitly clearing it, finishing a retried import and clicking "Import Another"
+   * for a completely unrelated file left the stale "Retrying <file>" banner still showing.
+   */
+  it('clears the retry banner once the person starts a fresh import via "Import Another"', async () => {
+    vi.mocked(importApi.stageCsv).mockResolvedValue(stagingResultWith());
+    vi.mocked(importApi.confirm).mockResolvedValue({
+      imported: 1, skipped: 0, duplicatesDetected: 0, transfersIdentified: 0, newMerchantsLearned: 0,
+      accountsCreated: [], productsCreated: {}, categoriesAssigned: {}, warnings: [], account: null,
+      totalCredits: 0, totalDebits: 0, statementOpeningBalance: null, statementClosingBalance: null,
+      statementPeriodStart: null, statementPeriodEnd: null, importDurationMs: 12, source: 'CSV',
+    } as never);
+    const user = userEvent.setup();
+    renderImportWithRetryState('bad-statement.pdf', NO_HEADER_DETECTED);
+
+    await screen.findByTestId('retry-import-banner');
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+    await screen.findByText(/which account is this statement for/i);
+    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    await user.click(await screen.findByRole('button', { name: /import another/i }));
+
+    await screen.findByTestId('statement-dropzone');
+    expect(screen.queryByTestId('retry-import-banner')).not.toBeInTheDocument();
   });
 });
