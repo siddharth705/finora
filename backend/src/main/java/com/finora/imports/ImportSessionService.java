@@ -252,12 +252,61 @@ public class ImportSessionService {
         return session;
     }
 
+    /** Package-private -- {@link #listResumableSessions} is the only caller and the only
+     *  public entry point a session list should come through; nothing outside this package
+     *  currently needs the unfiltered population. Widen this back to public if a real second
+     *  caller (e.g. an admin view) actually shows up. */
     @Transactional(readOnly = true)
-    public List<ImportSession> listActiveSessions(UUID userId) {
+    List<ImportSession> listActiveSessions(UUID userId) {
         return importSessionRepository.findByUserIdAndStatusOrderByCreatedAtDesc(userId, ImportSession.STATUS_STAGED)
                 .stream()
                 .filter(s -> s.getExpiresAt().isAfter(Instant.now()))
                 .toList();
+    }
+
+    /**
+     * Same population as {@link #listActiveSessions}, filtered to the kinds the resume UI can
+     * actually reopen -- what {@code GET /import/sessions} should return.
+     *
+     * <p>{@link #listActiveSessions} answers "every session this user could still act on"; it says
+     * nothing about whether {@link #readStagedRows}/{@link #readDetectedAccount} can be called on
+     * the result. A MULTI_ACCOUNT session is active (staged, unexpired) but {@link #requireKind}
+     * rejects it for those two methods, so a caller that maps {@link #listActiveSessions}'s output
+     * straight through them throws for any user who has one staged -- their ENTIRE list, not just
+     * that session. This method exists so the filtering lives here, next to the kind-awareness
+     * {@link #requireKind} already owns, instead of being reconstructed (or silently dropped) by a
+     * caller that doesn't know it's required. Named separately from {@link #listActiveSessions}
+     * rather than folded into it, since some future caller may genuinely want every active session
+     * regardless of kind (e.g. an admin view, or a raw count) -- narrowing that method's contract
+     * would take resumability away from callers who never asked for it.
+     */
+    @Transactional(readOnly = true)
+    public List<ImportSession> listResumableSessions(UUID userId) {
+        return listActiveSessions(userId).stream()
+                .filter(this::supportsResume)
+                .toList();
+    }
+
+    /** Whether the resume UI can reopen a session of this kind. A {@code switch} rather than a
+     *  single equality check so that a THIRD {@link ImportSession} kind can't land on either side
+     *  of {@link #listResumableSessions} by accident -- {@code sessionKind} is a plain String, so
+     *  the compiler can't enforce exhaustiveness, but an unhandled case here still falls through to
+     *  a logged, fail-closed default (excluded, not resumable) rather than either crashing the
+     *  whole list the way the original equality-based bug did, or silently including a kind nothing
+     *  has actually wired resume support for. Today there are exactly two kinds (confirmed via
+     *  {@code grep KIND_ ImportSession.java}) and only SINGLE_ACCOUNT is resumable: that's what
+     *  {@link #readStagedRows}/{@link #readDetectedAccount} -- which the resume flow reads through
+     *  {@code ImportController.toSummary} -- both {@link #requireKind}. */
+    private boolean supportsResume(ImportSession session) {
+        return switch (session.getSessionKind()) {
+            case ImportSession.KIND_SINGLE_ACCOUNT -> true;
+            case ImportSession.KIND_MULTI_ACCOUNT -> false;
+            default -> {
+                log.warn("Import session {} has unrecognized kind '{}' -- excluding it from the resumable list.",
+                        session.getId(), session.getSessionKind());
+                yield false;
+            }
+        };
     }
 
     /**
