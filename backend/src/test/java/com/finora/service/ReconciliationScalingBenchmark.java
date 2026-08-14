@@ -1,7 +1,6 @@
 package com.finora.service;
 
 import com.finora.entity.Transaction;
-import com.finora.repository.FeatureFlagRepository;
 import com.finora.repository.TransactionRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -104,7 +103,7 @@ class ReconciliationScalingBenchmark {
         TransactionRepository repository = mock(TransactionRepository.class);
         when(repository.findByUserId(any())).thenReturn(history);
         return new RecurringService(repository, mock(RuleEngineService.class), mock(AuditService.class),
-                mock(FeatureFlagRepository.class));
+                mock(FeatureFlagService.class));
     }
 
     @Test

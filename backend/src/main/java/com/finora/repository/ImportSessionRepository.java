@@ -9,11 +9,22 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface ImportSessionRepository extends JpaRepository<ImportSession, UUID> {
 
     List<ImportSession> findByUserIdAndStatusOrderByCreatedAtDesc(UUID userId, String status);
+
+    /**
+     * This user's own live (STAGED) session for this exact document, if one exists -- backs
+     * {@code ImportSessionService.findLiveSessionByContentHash}, the app-level half of
+     * V79__import_session_stage_idempotency.sql's duplicate-upload protection. Served by the same
+     * partial unique index that migration creates ({@code idx_import_sessions_live_content}), which
+     * is why this query filters on exactly the columns and status that index covers.
+     */
+    Optional<ImportSession> findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+            UUID userId, String contentHash, String status);
 
     /**
      * Expired sessions from ANY user, oldest first, bounded by the caller's page size.

@@ -3,7 +3,6 @@ package com.finora.service;
 import com.finora.dto.RecurringDto;
 import com.finora.entity.CategoryRule;
 import com.finora.entity.Transaction;
-import com.finora.repository.FeatureFlagRepository;
 import com.finora.repository.TransactionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -58,19 +57,24 @@ public class RecurringService {
     private final TransactionRepository transactionRepository;
     private final RuleEngineService ruleEngineService;
     private final AuditService auditService;
-    private final FeatureFlagRepository featureFlagRepository;
+    private final FeatureFlagService featureFlagService;
 
     public RecurringService(TransactionRepository transactionRepository, RuleEngineService ruleEngineService,
-                             AuditService auditService, FeatureFlagRepository featureFlagRepository) {
+                             AuditService auditService, FeatureFlagService featureFlagService) {
         this.transactionRepository = transactionRepository;
         this.ruleEngineService = ruleEngineService;
         this.auditService = auditService;
-        this.featureFlagRepository = featureFlagRepository;
+        this.featureFlagService = featureFlagService;
     }
 
     @Transactional
     public List<RecurringDto> detectForUser(UUID userId) {
-        if (!featureFlagRepository.isEnabled("RECURRING_DETECTION_ENABLED")) {
+        // Was featureFlagRepository.isEnabled(...) directly -- bypassed FeatureFlagService, which
+        // FeatureFlagRepository's own doc comment says is the intended call path, and meant this,
+        // the one real call site the flags framework is proven against (8 callers: every import
+        // confirm and every transaction mutation), never benefited from FeatureFlagService.isEnabled
+        // being cached (see that class's own doc comment).
+        if (!featureFlagService.isEnabled("RECURRING_DETECTION_ENABLED")) {
             return List.of();
         }
 

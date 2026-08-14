@@ -8,10 +8,12 @@ import com.finora.accounts.AccountDto;
 import com.finora.dto.ImportDto.*;
 import com.finora.entity.Account;
 import com.finora.entity.Category;
+import com.finora.entity.ImportSession;
 import com.finora.entity.StatementImport;
 import com.finora.entity.Transaction;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
+import com.finora.imports.storage.ContentAddress;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.MerchantRepository;
 import com.finora.repository.StatementImportRepository;
@@ -40,6 +42,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -170,6 +173,19 @@ public class ImportService {
      */
     public StagingSessionResponse parseAndStageWithSession(UUID userId, String fileName, byte[] fileContent)
             throws IOException {
+        // Duplicate-upload protection (distributed-resilience-patterns-audit-2026-08-14.md §3;
+        // V79__import_session_stage_idempotency.sql). Checked BEFORE parsing, not after: a
+        // double-clicked upload or a retried request that arrives after the first has already
+        // finished staging would otherwise pay for a full second parse just to discover a
+        // duplicate row it can't create. See ImportSessionService.findLiveSessionByContentHash's
+        // own doc comment for what this does and does not guarantee.
+        Optional<ImportSession> alreadyStaged = importSessionService.findLiveSessionByContentHash(
+                userId, ContentAddress.hashOf(fileContent));
+        if (alreadyStaged.isPresent()) {
+            ImportSession session = alreadyStaged.get();
+            return new StagingSessionResponse(session.getId(), rebuildStagingResponse(session));
+        }
+
         long startedAtMs = System.currentTimeMillis();
         // Captured inside the try so the catch can still record it: a document that parsed far
         // enough to be characterised and THEN failed is the most useful failure there is, because
@@ -277,6 +293,16 @@ public class ImportService {
     /** Filename + raw bytes, for the asynchronous worker — see the CSV counterpart above. */
     public PdfStagingSessionResponse parseAndStagePdfWithSession(UUID userId, String fileName, byte[] fileContent,
                                                                   String password) throws IOException {
+        // Same duplicate-upload protection as the CSV path above -- see that method's own comment
+        // and ImportSessionService.findLiveSessionByContentHash. Checked ahead of opening the
+        // document at all, so a duplicate re-upload of a password-protected PDF needs no password:
+        // nothing is being parsed, only an already-staged result handed back.
+        Optional<ImportSession> alreadyStaged = importSessionService.findLiveSessionByContentHash(
+                userId, ContentAddress.hashOf(fileContent));
+        if (alreadyStaged.isPresent()) {
+            return rebuildPdfStagingSessionResponse(alreadyStaged.get());
+        }
+
         long startedAtMs = System.currentTimeMillis();
         String fingerprint = null;
         ParseDiagnostics diagnostics = ParseDiagnostics.NONE;
@@ -348,6 +374,26 @@ public class ImportService {
                     startedAtMs, diagnostics);
             throw e;
         }
+    }
+
+    /** Rebuilds the response an already-staged session would have produced, for the duplicate-
+     *  upload short-circuit in both stage methods above -- same fields {@code ImportController
+     *  .getSession()} reads back for an ordinary resume, just assembled here instead since this
+     *  path never reaches the controller's own GET. */
+    private StagingResponse rebuildStagingResponse(ImportSession session) {
+        List<StagedRow> rows = importSessionService.readStagedRows(session);
+        int dupCount = (int) rows.stream().filter(StagedRow::likelyDuplicate).count();
+        return new StagingResponse(rows, rows.size(), dupCount, importSessionService.readDetectedAccount(session), List.of());
+    }
+
+    /** PDF equivalent of {@link #rebuildStagingResponse} -- branches on the found session's own
+     *  kind rather than assuming single-account, since a duplicate PDF upload can match either
+     *  shape depending on what the original upload staged. */
+    private PdfStagingSessionResponse rebuildPdfStagingSessionResponse(ImportSession session) {
+        if (ImportSession.KIND_MULTI_ACCOUNT.equals(session.getSessionKind())) {
+            return new PdfStagingSessionResponse(session.getId(), true, null, importSessionService.readSections(session));
+        }
+        return new PdfStagingSessionResponse(session.getId(), false, rebuildStagingResponse(session), null);
     }
 
     private void recordPdfParsed(UUID userId, String fileName, long byteSize, String fingerprint,

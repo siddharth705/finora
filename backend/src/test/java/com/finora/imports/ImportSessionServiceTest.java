@@ -91,6 +91,14 @@ class ImportSessionServiceTest {
      * {@code file_content}. The fix: fill {@code file_content} only when {@code store()} came back
      * empty (no provider configured -- this test's {@code service}, wired with an empty storage
      * Optional in {@link #setUp}, is exactly that case and must keep behaving as before).
+     *
+     * <p>{@code contentHash} is the one field that no longer matches "unchanged from before" --
+     * V79 (distributed-resilience-patterns-audit-2026-08-14.md §3) made {@code storeContent}
+     * compute it directly via {@code ContentAddress.hashOf} in this exact branch, since
+     * {@link ImportSessionService#findLiveSessionByContentHash} needs every session to carry its
+     * identity regardless of whether object storage is configured -- before this, a
+     * no-storage-provider deployment (this test's own setup) would have left duplicate-upload
+     * protection silently inert.
      */
     @Test
     void createSession_whenNoStorageProviderConfigured_stillFillsFileContent_unchangedFromBeforeTheFix() {
@@ -101,7 +109,7 @@ class ImportSessionServiceTest {
 
         assertThat(created.getFileContent()).isEqualTo(fileBytes);
         assertThat(created.getObjectKey()).isNull();
-        assertThat(created.getContentHash()).isNull();
+        assertThat(created.getContentHash()).isEqualTo(com.finora.imports.storage.ContentAddress.hashOf(fileBytes));
     }
 
     /**
@@ -259,6 +267,46 @@ class ImportSessionServiceTest {
         List<ImportSession> active = service.listActiveSessions(userId);
 
         assertThat(active).containsExactly(stillValid);
+    }
+
+    @Test
+    void findLiveSessionByContentHash_returnsAnUnexpiredMatch() {
+        ImportSession match = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        when(importSessionRepository.findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                userId, "hash-a", ImportSession.STATUS_STAGED)).thenReturn(Optional.of(match));
+
+        Optional<ImportSession> found = service.findLiveSessionByContentHash(userId, "hash-a");
+
+        assertThat(found).contains(match);
+        verify(importSessionRepository, never()).delete(any());
+    }
+
+    /**
+     * A partial unique index can't express "and not expired" (its predicate must be immutable, so
+     * it can't reference now()) -- this is the application-level half that handles it instead. A
+     * STAGED session that expired but hasn't been swept yet must not block a genuinely new upload
+     * of the same statement with a false duplicate, so it's deleted here rather than returned as a
+     * match.
+     */
+    @Test
+    void findLiveSessionByContentHash_deletesAnExpiredMatch_andReportsNoneFound() {
+        ImportSession expired = sessionOwnedBy(userId, Instant.now().minusSeconds(60), ImportSession.STATUS_STAGED);
+        when(importSessionRepository.findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                userId, "hash-b", ImportSession.STATUS_STAGED)).thenReturn(Optional.of(expired));
+
+        Optional<ImportSession> found = service.findLiveSessionByContentHash(userId, "hash-b");
+
+        assertThat(found).isEmpty();
+        verify(importSessionRepository).delete(expired);
+    }
+
+    @Test
+    void findLiveSessionByContentHash_returnsEmpty_whenNoStagedSessionHasThisHash() {
+        when(importSessionRepository.findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                userId, "hash-c", ImportSession.STATUS_STAGED)).thenReturn(Optional.empty());
+
+        assertThat(service.findLiveSessionByContentHash(userId, "hash-c")).isEmpty();
+        verify(importSessionRepository, never()).delete(any());
     }
 
     /**

@@ -155,7 +155,11 @@ class ImportServiceSessionTest {
                 // failure, so this is diagnosable without the original file.
                 .hasMessageContaining("3 line(s) of text were recovered");
 
-        verifyNoInteractions(importSessionService);
+        // findLiveSessionByContentHash IS called now (the duplicate-upload pre-check runs
+        // before parsing even starts) -- what must still never happen is a session actually
+        // getting created for rejected content.
+        verify(importSessionService, never()).createSession(any(), any(), any(), any(), any(), any());
+        verify(importSessionService, never()).createMultiSection(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -170,7 +174,11 @@ class ImportServiceSessionTest {
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("could not read any transactions from it");
 
-        verifyNoInteractions(importSessionService);
+        // findLiveSessionByContentHash IS called now (the duplicate-upload pre-check runs
+        // before parsing even starts) -- what must still never happen is a session actually
+        // getting created for rejected content.
+        verify(importSessionService, never()).createSession(any(), any(), any(), any(), any(), any());
+        verify(importSessionService, never()).createMultiSection(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -210,6 +218,8 @@ class ImportServiceSessionTest {
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("sessionId is required");
 
+        // confirmSession(), unlike the two stage methods above, never calls
+        // findLiveSessionByContentHash -- this rejection happens before touching the mock at all.
         verifyNoInteractions(importSessionService);
     }
 
