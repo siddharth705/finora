@@ -89,6 +89,14 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
      * no longer a current reference, so it correctly does not keep an object alive here. See
      * {@code StatementStorageSweepService}, which OR's this against
      * {@code ImportSessionRepository.existsByObjectKey} to decide whether an object is reclaimable.
+     *
+     * <p><b>BH-039: deliberately global, never add a {@code userId} parameter.</b> Content
+     * addressing has no tenant prefix ({@code ContentAddress}'s class doc) -- two different users
+     * who upload byte-identical documents share one object, by design. Scoping this by user would
+     * make the sweep delete another tenant's only copy of a shared document the moment THIS
+     * tenant's reference disappears. {@code StatementStorageSweepServiceIT
+     * .sweep_doesNotReclaimAnObjectStillReferencedByAnotherTenantsLiveRow} is the regression test
+     * for exactly this.
      */
     boolean existsByObjectKey(String objectKey);
 

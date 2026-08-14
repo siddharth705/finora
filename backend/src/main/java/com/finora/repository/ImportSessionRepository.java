@@ -47,6 +47,14 @@ public interface ImportSessionRepository extends JpaRepository<ImportSession, UU
      * STAGED one is, by definition, an active reference. See
      * {@code StatementStorageSweepService}, which OR's this against
      * {@code StatementImportRepository.existsByObjectKey}.
+     *
+     * <p><b>BH-039: deliberately global, never add a {@code userId} parameter.</b> Content
+     * addressing has no tenant prefix ({@code ContentAddress}'s class doc) -- two different users
+     * who upload byte-identical documents share one object, by design. Scoping this by user would
+     * make the sweep delete another tenant's only copy of a shared document the moment THIS
+     * tenant's reference disappears. {@code StatementStorageSweepServiceIT
+     * .sweep_doesNotReclaimAnObjectStillReferencedByAnotherTenantsLiveRow} is the regression test
+     * for exactly this.
      */
     boolean existsByObjectKey(String objectKey);
 
