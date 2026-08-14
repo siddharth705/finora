@@ -2,6 +2,9 @@ package com.finora.repository;
 
 import com.finora.entity.MerchantCategoryLearning;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -39,4 +42,38 @@ public interface MerchantCategoryLearningRepository extends JpaRepository<Mercha
     Optional<MerchantCategoryLearning> findByUserIdAndMerchantIdAndCategoryId(UUID userId, UUID merchantId, UUID categoryId);
 
     List<MerchantCategoryLearning> findByUserId(UUID userId);
+
+    /**
+     * BH-053. Atomic upsert-or-noop: guarantees the (user, merchant, category) row exists,
+     * inserting it with {@code confirmation_count = 0} if it doesn't, leaving an existing row
+     * completely untouched if it does. Deliberately stays in the CALLER's transaction, unlike
+     * {@link RegisteredLayoutRepository#observe}'s superficially similar upsert -- see
+     * {@code MerchantLearningService.confirm()}'s own doc comment for why {@code REQUIRES_NEW}
+     * cannot be used here: this row's foreign keys routinely point at parent rows the caller's
+     * own, still-uncommitted transaction just created, which a suspended-and-restarted inner
+     * transaction cannot see.
+     *
+     * <p>This is what closes the documented check-then-act race. {@code confirm()} calls this
+     * BEFORE reading anything, so by the time it reads and later saves via {@code saveAll}, the
+     * row it might otherwise have tried to INSERT is already guaranteed to exist -- no code path
+     * downstream can attempt an INSERT that could violate
+     * {@code UNIQUE(user_id, merchant_id, category_id)}. Two concurrent callers racing on the
+     * same brand-new pair both run this statement; the database resolves the conflict atomically
+     * and silently, and both callers' subsequent reads see the one row that resulted, never a
+     * constraint violation.
+     *
+     * <p>{@code confirmation_count} starts at 0, not the column's own {@code DEFAULT 1} -- see
+     * V7's migration -- because {@code confirm()} unconditionally increments by 1 immediately
+     * after this call, uniformly for a brand-new pair and one that already existed, so a
+     * genuinely new pair still ends at 1, matching this method's pre-fix behavior exactly.
+     */
+    @Modifying
+    @Query(value = """
+           INSERT INTO merchant_category_learning
+               (id, user_id, merchant_id, category_id, confirmation_count, confidence, last_confirmed_at, created_at, updated_at)
+           VALUES
+               (gen_random_uuid(), :userId, :merchantId, :categoryId, 0, 0, now(), now(), now())
+           ON CONFLICT (user_id, merchant_id, category_id) DO NOTHING
+           """, nativeQuery = true)
+    void ensurePairExists(@Param("userId") UUID userId, @Param("merchantId") UUID merchantId, @Param("categoryId") UUID categoryId);
 }

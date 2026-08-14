@@ -101,17 +101,16 @@ public class ImportController {
 
     // ADR-0002: "your unfinished imports" -- lets the frontend offer to resume a staged-but-not-
     // yet-confirmed session instead of it silently existing only until it expires.
+    //
+    // Deliberately ImportSessionService.listResumableSessions(), not listActiveSessions() --
+    // toSummary() below calls readStagedRows(), which only a SINGLE_ACCOUNT session supports. Using
+    // listActiveSessions() here broke this endpoint for its entire response whenever the caller had
+    // even one staged MULTI_ACCOUNT PDF session (see /pdf/stage's own doc comment), not just that
+    // one session. listResumableSessions() owns the kind filtering so this controller doesn't have
+    // to know which kinds toSummary() can actually handle.
     @GetMapping("/sessions")
     public ApiResponse<List<ImportSessionSummaryDto>> listSessions() {
-        // toSummary() reads staged rows through readStagedRows(), which requireKind()s
-        // SINGLE_ACCOUNT (see ImportSessionService) -- a MULTI_ACCOUNT session (a composite PDF
-        // upload, e.g. HSBC's combined savings+card statement) stores its rows in sectionsJson
-        // instead and would throw there. The frontend's "Continue previous import" also has no
-        // resume flow for a multi-account session (resumeSession() only ever hydrates the
-        // single-account staging shape), so there's nothing useful to list it as anyway --
-        // filtered out here rather than surfaced as an entry whose "Continue" action would fail.
-        List<ImportSessionSummaryDto> sessions = importSessionService.listActiveSessions(currentUser.id()).stream()
-                .filter(s -> ImportSession.KIND_SINGLE_ACCOUNT.equals(s.getSessionKind()))
+        List<ImportSessionSummaryDto> sessions = importSessionService.listResumableSessions(currentUser.id()).stream()
                 .map(this::toSummary)
                 .toList();
         return ApiResponse.ok(sessions);

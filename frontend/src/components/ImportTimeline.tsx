@@ -23,12 +23,24 @@ import { POLL_SCHEDULE_MS } from './ImportProgress';
 export function ImportTimeline({
   jobId,
   onDismiss,
+  autoRefresh = true,
+  refreshToken = 0,
 }: {
   jobId: string;
   /** Offered once the job has FAILED, so reading the curated reason doesn't strand the user --
    *  the dropzone this replaced is only reachable again through this, not through polling settling
    *  on its own the way a completed/cancelled job's screen already resets automatically. */
   onDismiss?: () => void;
+  /** Default true, matching every existing caller (a live upload in progress). The import detail
+   *  page (Premium Import Reliability v1, §3.2) passes false: that page's own design is a single
+   *  fetch on load plus a manual Refresh button, not a background poll -- most visits land on an
+   *  already-terminal job, where a poll would just be one fetch anyway, but for the rare
+   *  still-processing case the page must not keep polling on its own. */
+  autoRefresh?: boolean;
+  /** Bumped by the detail page's Refresh button to trigger exactly one more fetch when
+   *  autoRefresh is false. Unused (and pointless to change) when autoRefresh is true, since the
+   *  schedule already keeps fetching on its own. */
+  refreshToken?: number;
 }) {
   const [timeline, setTimeline] = useState<Timeline | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
@@ -49,7 +61,7 @@ export function ImportTimeline({
     };
 
     const schedule = () => {
-      if (stopped) return;
+      if (stopped || !autoRefresh) return;
       const delay = POLL_SCHEDULE_MS[Math.min(poll, POLL_SCHEDULE_MS.length - 1)];
       poll += 1;
       timer = setTimeout(() => void tick(), delay);
@@ -68,24 +80,61 @@ export function ImportTimeline({
         }
         schedule();
       } catch {
-        // Same stance as ImportProgress: a blip mid-poll is not a failed import, so keep trying
-        // rather than showing an error where the timeline should be.
         if (stopped) return;
-        setPollError('Lost contact with the server -- still trying.');
+        // Mode-aware: in the default polling mode, schedule() below genuinely retries, so "still
+        // trying" is true. In one-shot mode schedule()'s own !autoRefresh guard means nothing
+        // further will happen on its own -- claiming otherwise would tell the person to wait for
+        // something that isn't coming, when the truth is Refresh is the only way to try again.
+        setPollError(
+          autoRefresh
+            ? 'Lost contact with the server -- still trying.'
+            : "Couldn't load the timeline. Try Refresh above."
+        );
         schedule();
       }
     };
 
-    schedule();
+    // autoRefresh mirrors ImportProgress's own schedule (see its doc comment on why the first look
+    // is delayed rather than immediate). The one-shot detail-page mode has no such wait to respect
+    // -- there is no in-flight job about to flip state a moment from now in the common case, and on
+    // a manual refresh the person just asked for the current answer -- so it fetches right away.
+    //
+    // Still deferred by a macrotask rather than called synchronously, though: tick() dispatches its
+    // request before its first `await`, which the `stopped` flag can't prevent (it's only checked
+    // after that await resolves) -- calling it inline would fire two real requests under React
+    // StrictMode's mount->cleanup->mount double-invoke, since the discarded first instance's request
+    // is already in flight before cleanup runs. Routing through the same `timer`/`stop()` pair the
+    // polling path already relies on means StrictMode's clearTimeout on the discarded instance
+    // cancels this one too, exactly as it always has for the polling path.
+    if (autoRefresh) {
+      schedule();
+    } else {
+      timer = setTimeout(() => void tick(), 0);
+    }
     return stop;
-  }, [jobId]);
+  }, [jobId, autoRefresh, refreshToken]);
 
   // Still nothing to poll with, or nothing recorded and nothing to explain -- both genuinely
   // render nothing. A FAILED job is the one exception: even with an empty stage list (the stage
   // recorder tolerates its own write failing without breaking the import, so this does happen),
   // this must still render the failure reason and the dismiss action -- ImportProgress no longer
   // offers a way back to the dropzone on its own, so this is the only path left once a job fails.
-  if (!timeline) return null;
+  if (!timeline) {
+    // A failed FIRST attempt (no successful fetch yet to fall back on) used to fall straight
+    // through to `return null` below, discarding pollError along with it -- silently: on the
+    // one-shot detail page, where nothing retries on its own, that meant the entire timeline
+    // section just didn't appear, with no error text and no hint that the page's Refresh button
+    // would fix it. Showing pollError here, in whatever shell would otherwise hold the timeline,
+    // is the minimum needed for the failure to be visible at all.
+    if (pollError) {
+      return (
+        <div className="bg-card rounded-xl2 shadow-card border border-border p-6 mt-4" data-testid="import-timeline">
+          <p className="text-xs text-muted">{pollError}</p>
+        </div>
+      );
+    }
+    return null;
+  }
   if (timeline.stages.length === 0 && timeline.status !== 'FAILED') return null;
 
   const failureMessage = timeline.failureCode

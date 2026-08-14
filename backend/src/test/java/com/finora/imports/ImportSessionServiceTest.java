@@ -261,6 +261,43 @@ class ImportSessionServiceTest {
         assertThat(active).containsExactly(stillValid);
     }
 
+    /**
+     * The actual regression this method exists to prevent: a user with BOTH kinds staged used to
+     * get an exception for their entire {@code GET /import/sessions} response, because
+     * {@code listActiveSessions} included the MULTI_ACCOUNT session and the controller's
+     * {@code toSummary} unconditionally called {@link ImportSessionService#readStagedRows}, which
+     * {@code requireKind}s SINGLE_ACCOUNT. {@link ImportSessionService#listResumableSessions}
+     * filters the MULTI_ACCOUNT session out before any caller can make that mistake.
+     */
+    @Test
+    void listResumableSessions_excludesMultiAccountSessions_keepingSingleAccountOnes() {
+        ImportSession singleAccount = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        ImportSession multiAccount = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        multiAccount.setSessionKind(ImportSession.KIND_MULTI_ACCOUNT);
+        when(importSessionRepository.findByUserIdAndStatusOrderByCreatedAtDesc(userId, ImportSession.STATUS_STAGED))
+                .thenReturn(List.of(singleAccount, multiAccount));
+
+        List<ImportSession> resumable = service.listResumableSessions(userId);
+
+        assertThat(resumable).containsExactly(singleAccount);
+    }
+
+    /** {@code supportsResume}'s fail-closed default: a session kind neither branch recognizes is
+     *  excluded (not resumable) rather than thrown on -- the whole point of moving away from the
+     *  original equality-based filter is to not reproduce its failure mode (one session's kind
+     *  breaking the entire list) for whatever kind comes after MULTI_ACCOUNT. */
+    @Test
+    void listResumableSessions_excludesAnUnrecognizedSessionKind_insteadOfThrowing() {
+        ImportSession unknownKind = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        unknownKind.setSessionKind("SOME_FUTURE_KIND");
+        when(importSessionRepository.findByUserIdAndStatusOrderByCreatedAtDesc(userId, ImportSession.STATUS_STAGED))
+                .thenReturn(List.of(unknownKind));
+
+        List<ImportSession> resumable = service.listResumableSessions(userId);
+
+        assertThat(resumable).isEmpty();
+    }
+
     @Test
     void claimForConfirmation_flipsStatusAtomically_whenSessionIsStillStaged() {
         UUID sessionId = UUID.randomUUID();

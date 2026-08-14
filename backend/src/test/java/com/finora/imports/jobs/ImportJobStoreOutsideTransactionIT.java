@@ -72,11 +72,18 @@ class ImportJobStoreOutsideTransactionIT extends AbstractIntegrationTest {
         final AtomicBoolean transactionActiveDuringStore = new AtomicBoolean();
         final AtomicInteger storeCalls = new AtomicInteger();
 
+        // BH-018. accept() calls the streaming overload directly (it no longer holds the upload
+        // as a byte[] at all), so this is the one that must observe -- overriding store(byte[])
+        // instead would silently stop exercising the real call path this test asserts about.
         @Override
-        public ContentAddress store(byte[] content) {
+        public ContentAddress store(java.io.InputStream content, long contentLength) {
             transactionActiveDuringStore.set(TransactionSynchronizationManager.isActualTransactionActive());
             storeCalls.incrementAndGet();
-            return ContentAddress.forContent(content);
+            try {
+                return ContentAddress.forContent(content.readAllBytes());
+            } catch (java.io.IOException e) {
+                throw new RuntimeException(e);
+            }
         }
 
         @Override public byte[] retrieve(ContentAddress address) { return new byte[0]; }

@@ -24,23 +24,12 @@ import {
   type RowReview,
 } from '../lib/importReview';
 import { toNewAccountPayload } from '../lib/newAccountPayload';
-import type { Account, DetectedAccountInfo, VerificationReport, ImportSummary, ReimportResult, StagedAccountSection, StagedRow, UnparseableRow } from '../types';
+import type { ImportNavState } from '../lib/importNavState';
+import type { Account, DetectedAccountInfo, VerificationReport, ImportSummary, StagedAccountSection, StagedRow, UnparseableRow } from '../types';
 import { formatDate, formatDateDDMMMYYYY } from '../utils/date';
 
 type Step = 'upload' | 'review' | 'summary';
 type AccountChoice = 'existing' | 'new';
-
-interface ReimportNavState {
-  reimportId: string;
-  staging: ReimportResult['staging'];
-  accountId: string;
-  accountName: string;
-  // Present only when the statement needed one to stage. confirmReimport() re-parses the same
-  // stored bytes server-side to check the reviewed rows against, and for a protected PDF that
-  // re-parse needs the password again -- see StatementImportService.confirmReimport's doc comment
-  // for the incident that happens when this is dropped instead of carried through to confirm.
-  password?: string;
-}
 
 // Per-account review state for the multi-account case (a PDF whose upload detected more than one
 // account section, e.g. an HSBC-style composite statement) -- one of these per detected
@@ -132,7 +121,18 @@ export default function Import() {
   // staging result already computed server-side — see StatementImportService.reimport(). There's
   // no browser File object in this case (the bytes never left the server), so this page skips
   // straight to the review step, locked to the account the statement already belongs to.
-  const reimportState = (location.state as ReimportNavState | null) ?? null;
+  //
+  // One cast, discriminated by the `kind` tag every navigate() call site below sets -- not a
+  // per-shape field-existence guess. That guessing approach caused a real bug once (a blind
+  // truthiness cast on ReimportNavState alone was truthy for ANY non-null state, so arriving with
+  // only `{resumeSessionId}` still took the reimport branch and crashed reading `.staging.rows`
+  // off a value that was never a ReimportResult), and a field-existence check per shape is the
+  // same class of guess with an extra step. A third shape (RetryFailedImportNavState) made
+  // copy-pasting that check again the wrong call.
+  const navState = (location.state as ImportNavState | null) ?? null;
+  const reimportState = navState?.kind === 'reimport' ? navState : null;
+  const resumeState = navState?.kind === 'resume' ? navState : null;
+  const retryState = navState?.kind === 'retry' ? navState : null;
 
   const [step, setStep] = useState<Step>('upload');
   const [error, setError] = useState<string | null>(null);
@@ -213,7 +213,31 @@ export default function Import() {
     // mid-session) shouldn't crash this effect as an unhandled rejection; the page still works
     // with an empty category list / existing-account list, just with fewer detected defaults.
     categoriesApi.list().then((cats) => setCategories(cats.map((c) => c.name))).catch((e) => console.error('Failed to load categories', e));
-    accountsApi.list().then(setExistingAccounts).catch((e) => console.error('Failed to load accounts', e));
+    // Bug fix, caught by a review before ship: auto-resuming below used to fire
+    // `resumeSession(resumeState.resumeSessionId)` directly in this effect, which calls
+    // hydrateReviewFrom -> matchExistingAccount(..., existingAccounts) -- but this effect's
+    // closure is fixed to this render's existingAccounts, `[]` at mount, and setState here never
+    // updates an already-captured closure. The account match would silently run against an empty
+    // list every time, always landing on "new account" even for a statement that plainly matches
+    // one the user already has -- exactly the merge-risk bug the comment on matchExistingAccount's
+    // caller (hydrateReviewFrom) exists to prevent, just reintroduced through a second entry
+    // point. The button-driven "Continue previous import" call to resumeSession is unaffected --
+    // its onClick closure is created fresh on every render, so by the time a user clicks it,
+    // existingAccounts already reflects whatever this same accountsApi.list() call resolved to.
+    // Fixed by passing the freshly-resolved list straight into resumeSession/hydrateReviewFrom
+    // instead of letting them fall back to (stale) component state.
+    accountsApi.list()
+      .then((accounts) => {
+        setExistingAccounts(accounts);
+        // No `&& !reimportState` guard: reimportState/resumeState/retryState are mutually
+        // exclusive by construction now (all three derive from the single navState.kind), so
+        // resumeState truthy already implies the other two are null.
+        if (resumeState) void resumeSession(resumeState.resumeSessionId, accounts);
+      })
+      .catch((e) => {
+        console.error('Failed to load accounts', e);
+        if (resumeState) void resumeSession(resumeState.resumeSessionId, []);
+      });
     // Failing closed on purpose: if this call fails we simply use the synchronous path, which is
     // what every deployment supports. An import that works slowly beats one that does not start.
     importJobsApi.availability()
@@ -231,8 +255,11 @@ export default function Import() {
       setSelectedAccountId(reimportState.accountId);
       setStep('review');
     }
-    // Only ever run once on mount — reimportState comes from router state at navigation time,
-    // not something that changes while this page is open.
+    // resumeState is handled above, chained after accountsApi.list() settles -- see the comment
+    // there for why it can't run inline here the way the reimportState branch does.
+    //
+    // Only ever run once on mount — reimportState/resumeState come from router state at
+    // navigation time, not something that changes while this page is open.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -269,7 +296,7 @@ export default function Import() {
    * confirm payload came to differ between two paths (see lib/newAccountPayload.ts). One of these
    * per arrival route is one too many.
    */
-  function hydrateReviewFrom(staging: StagingResult) {
+  function hydrateReviewFrom(staging: StagingResult, accountsForMatch: Account[] = existingAccounts) {
     setRows(staging.rows);
     // A flagged row starts EXCLUDED but UNRESOLVED -- not silently unticked. The confirm button
     // is blocked until every one has an explicit answer, so "I didn't mean to skip that" stops
@@ -303,7 +330,7 @@ export default function Import() {
     // institution's transactions into another's -- wrong balances, wrong net worth, reconciliation
     // running across two unrelated ledgers -- whereas preselecting NEW at worst creates a
     // duplicate account, which is visible and deletable.
-    const match = matchExistingAccount(staging.detectedAccount, existingAccounts);
+    const match = matchExistingAccount(staging.detectedAccount, accountsForMatch);
     if (match) {
       setAccountChoice('existing');
       setSelectedAccountId(match.id);
@@ -334,13 +361,19 @@ export default function Import() {
    * sequence openReviewedJob above already proves works, for a different arrival route: an
    * abandoned staged session rather than a completed queued job. No upload, no re-selecting a
    * file -- the bytes and staged rows are already server-side from the original upload.
+   *
+   * `accountsForMatch` is optional and only ever passed by the mount effect's auto-resume path
+   * (Premium Import Reliability v1, §3.2) -- see its own comment for why that caller can't rely
+   * on `hydrateReviewFrom`'s default fallback to component state. Every other caller (the button
+   * below) omits it and gets that fallback, which is already correct for a click that happens
+   * well after this page's account list has loaded.
    */
-  async function resumeSession(id: string) {
+  async function resumeSession(id: string, accountsForMatch?: Account[]) {
     setError(null);
     try {
       const session = await importApi.getSession(id);
       setSessionId(session.sessionId);
-      hydrateReviewFrom(session.staging);
+      hydrateReviewFrom(session.staging, accountsForMatch);
       setStep('review');
     } catch {
       // The session most likely expired between the list loading and this click (the 48h window
@@ -381,6 +414,11 @@ export default function Import() {
         setPdfPassword('');
         setPasswordState(null);
         setJobId(accepted.jobId);
+        // StatementHistory's "Recent Imports" section (Premium Import Reliability v1, §3.2) reads
+        // this same key with a 30s staleTime -- without this, a person who was on that page inside
+        // the last 30s, came here to submit a statement, and went straight back would see the
+        // pre-submission snapshot instead of the job they just started.
+        void queryClient.invalidateQueries({ queryKey: ['import-jobs-recent'] });
         return;
       }
 
@@ -559,6 +597,15 @@ export default function Import() {
     setPdfPassword('');
     setPasswordState(null);
     accountsApi.list().then(setExistingAccounts).catch((e) => console.error('Failed to load accounts', e));
+    // Bug fix, caught by review: reimportState/resumeState/retryState are derived fresh every
+    // render straight from location.state, which react-router does NOT clear on its own -- it
+    // only changes via a real navigate() call. Without this, arriving via "Try again", finishing
+    // that import, then clicking "Import Another" for a completely unrelated file left the OLD
+    // "Retrying <file>" banner (and the underlying arrival context in general) still reading from
+    // the original one-time arrival state and reappearing for the new upload. `replace: true`
+    // clears it in place rather than pushing a new history entry for what isn't really a
+    // navigation -- the person never left this page.
+    void navigate(location.pathname, { replace: true });
   }
 
   if (step === 'summary' && summary) {
@@ -578,6 +625,11 @@ export default function Import() {
     .map((s, i) => ({ s, i }))
     .filter(({ s }) => unresolvedCount(s.rows, s.review.decisions) > 0)
     .map(({ s, i }) => sectionLabel(s, i, multiSections?.length ?? 0));
+
+  // Shared by the "continue previous import" list, the retry banner, and the dropzone itself below
+  // -- hoisted once rather than repeated three times so the three conditions can't silently
+  // diverge if one is edited later.
+  const showUploadPicker = step === 'upload' && !jobId && !pendingPdf;
 
   return (
     <div className="space-y-4">
@@ -691,7 +743,7 @@ export default function Import() {
         </form>
       )}
 
-      {step === 'upload' && !jobId && !pendingPdf && !!unfinishedSessions?.length && (
+      {showUploadPicker && !!unfinishedSessions?.length && (
         <div className="bg-card rounded-xl2 shadow-card border border-border overflow-hidden">
           <div className="px-5 py-4 border-b border-border">
             <h2 className="font-semibold text-ink text-sm">Continue previous import</h2>
@@ -736,7 +788,28 @@ export default function Import() {
         </div>
       )}
 
-      {step === 'upload' && !jobId && !pendingPdf && (
+      {/* Arrival from the Failed Imports section's "Try again" action (Premium Import
+          Reliability v1, §2.5) -- purely informational, since there is no staged data to hydrate:
+          the person still has to pick the file themselves, same as any fresh upload, so this
+          exists only to remind them which file and why it failed last time. */}
+      {showUploadPicker && retryState && (
+        <div
+          data-testid="retry-import-banner"
+          className="bg-warning-bg border border-warning/30 rounded-xl2 px-5 py-3.5 flex items-start gap-2.5"
+        >
+          <AlertTriangle size={16} className="text-warning flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm text-ink">
+              Retrying <span className="font-medium">{retryState.retryFileName}</span>
+            </p>
+            <p className="text-xs text-muted mt-0.5">
+              Last attempt: {importFailureMessage(retryState.retryFailureCode) ?? "Finora couldn't complete this import."} Select the file below to try again.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {showUploadPicker && (
         <div
           data-testid="statement-dropzone"
           role="button"

@@ -69,8 +69,13 @@ export function isSettled(job: { status: ImportJobProgress['status'] }): boolean
  * Both halves are required, and the second is not paranoia: a job can only reach COMPLETED with a
  * session, but a client that opened the review step on the status alone would show an empty screen
  * the one time that stopped being true.
+ *
+ * A type predicate, not a plain boolean: ImportDetail.tsx's "Review this import" action needs
+ * `job.importSessionId` as a non-null `string` to navigate with, and this is the one place that
+ * already knows it's safe -- narrowing here means that caller doesn't need its own unchecked `!`
+ * assertion repeating the same guarantee.
  */
-export function isReviewable(job: ImportJobProgress): boolean {
+export function isReviewable(job: ImportJobProgress): job is ImportJobProgress & { importSessionId: string } {
   return job.status === 'COMPLETED' && job.importSessionId !== null;
 }
 

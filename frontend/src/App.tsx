@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { PageLoading } from './components/PageLoading';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
@@ -32,6 +33,7 @@ const VerifyPhone = lazy(() => import('./pages/VerifyPhone'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Ledger = lazy(() => import('./pages/Ledger'));
 const Import = lazy(() => import('./pages/Import'));
+const ImportDetail = lazy(() => import('./pages/ImportDetail'));
 const StatementHistory = lazy(() => import('./pages/StatementHistory'));
 const Budgets = lazy(() => import('./pages/Budgets'));
 const Goals = lazy(() => import('./pages/Goals'));
@@ -41,13 +43,6 @@ const Insights = lazy(() => import('./pages/Insights'));
 const Profile = lazy(() => import('./pages/Profile'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Setup = lazy(() => import('./pages/Setup'));
-
-/** Deliberately not a spinner. A route chunk is usually fetched in well under a frame's worth of
- *  time on a warm connection, and a spinner that flashes for 30ms reads as jank; a quiet line of
- *  text does not. It exists so the fallback is never an empty screen. */
-function PageLoading() {
-  return <p className="text-muted text-sm p-8" role="status">Loading…</p>;
-}
 
 function AppShell({ children }: { children: ReactNode }) {
   return (
@@ -135,6 +130,11 @@ export default function App() {
           <Route path="/app/accounts" element={<Protected><Setup /></Protected>} />
           <Route path="/app/transactions" element={<Protected><Ledger /></Protected>} />
           <Route path="/app/import" element={<Protected><Import /></Protected>} />
+          {/* Premium Import Reliability v1, §3.2 -- the first :id-param route in this app.
+              Deliberately flat (/app/imports/:jobId), matching every other route above rather
+              than nesting under /app/import, since this is "look up one past import", a
+              different concern from "start a new one". */}
+          <Route path="/app/imports/:jobId" element={<Protected><ImportDetail /></Protected>} />
           <Route path="/app/statements" element={<Protected><StatementHistory /></Protected>} />
           <Route path="/app/budgets" element={<Protected><Budgets /></Protected>} />
           <Route path="/app/goals" element={<Protected><Goals /></Protected>} />

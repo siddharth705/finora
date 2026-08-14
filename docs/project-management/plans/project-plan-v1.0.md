@@ -32,7 +32,7 @@ comes out is right, and stays right. The two share a name and almost nothing els
 | **Current phase** | Phase 4 complete; **production-readiness audit + remediation pass complete** (2026-08-11) |
 | **Health** | **On Track**, with one warning — see §8 |
 | **v1.0 scope** | Web + admin portal + **mobile** (D-2, 2026-08-09) |
-| **Open bug-hunt findings** | **0 Critical** (security-audit severity scale — distinct from the bug-hunt's own P0/P1/P2/P3 buckets, see §4), confirmed twice now — once by the original bug-hunt closures, once independently by a fresh 11-domain audit that re-derived evidence from scratch rather than trusting prior claims. **0 P0/P1 IDOR or auth-bypass found** across an exhaustive resource sweep. Bug-hunt P1 bucket: 1 open — BH-007 (needs re-verification, not a fix). BH-048 CLOSED–VERIFIED 08-14 (PR #88 merged, real nightly run confirmed green — see §4). BH-042/043/045 still owned by a parallel session |
+| **Open bug-hunt findings** | **0 Critical** (security-audit severity scale — distinct from the bug-hunt's own P0/P1/P2/P3 buckets, see §4), confirmed twice now — once by the original bug-hunt closures, once independently by a fresh 11-domain audit that re-derived evidence from scratch rather than trusting prior claims. **0 P0/P1 IDOR or auth-bypass found** across an exhaustive resource sweep. Bug-hunt P1 bucket: 0 open. BH-048 CLOSED–VERIFIED 08-14 (PR #88 merged, real nightly run confirmed green) and BH-007 CLOSED–VERIFIED 08-14 (PR #89 merged, mutation-checked regression tests — see §4). BH-042/043/045 still owned by a parallel session |
 | **Baselined against** | `origin/main` @ `cc17716`. `main` fully green — confirmed on the real CI (not just local runs): backend 2191/2191, frontend 322/322, admin-portal 302/302 |
 | **Commits** | 600+ across 11 days (first commit 2026-07-31) |
 | **Backend** | 2191 tests green, real CI run confirmed (not estimated) |
@@ -141,11 +141,11 @@ closures are graded against, not current status** — current status is §1 and 
 All five carry regression tests mutation-checked against the restored defect. These survived a
 1,745-test suite and 489 commits before being found — none had a test at the time.
 
-### P1 — CLOSED except one genuinely open item
+### P1 — fully closed, one accepted trade-off remains (not a defect)
 
 **Closed:** `BH-002`, `BH-011`, `BH-012`, `BH-013` (Round 1) · `BH-019`, `BH-023`, `BH-026`, `BH-027`
 (financial/idempotency) · `BH-017` (retention, merged) · `BH-025` (BYTEA dual-write, merged) ·
-**`BH-048`** (see below).
+**`BH-048`**, **`BH-007`** (see below).
 
 **`BH-048` — CLOSED–VERIFIED, 2026-08-14.** Its "never executed" framing was stale (the workflow had
 actually run 5 times); the real defect was two consecutive nightly failures (08-12, 08-13),
@@ -160,17 +160,62 @@ commit itself, not a later commit) completed `success` — [run 31774202063](htt
 demonstrated (two real scheduled failures) and then demonstrated gone on the real workflow, not
 inferred from the PR's own smoke job.
 
+**`BH-007` — CLOSED–VERIFIED, 2026-08-14.** Re-verified against current code first (line numbers had
+shifted since the 08-08 report, from BH-041/BH-044 both touching `ReconciliationService.java`) —
+confirmed still reproducing: the refund pass's only amount guard was per-pair
+(`income.amount <= expense.amount`), so N income rows each ≤ one EXPENSE could each independently
+match it, silently excluding real income from every total. Fixed in
+[PR #89](https://github.com/siddharth705/finora/pull/89) (merged as `0d15f74`): tracks cumulative
+refund capacity per expense across the pass, seeded from already-resolved `REFUND` rows so it holds
+across separate runs too, not just within one — proven complete for both `reconcileForUser`
+(unbounded) and `reconcileForImport` (windowed) via the existing
+`CANDIDATE_WINDOW_DAYS >= REFUND_WINDOW_DAYS` invariant, no new query needed. **VERIFIED, not just
+REVIEWED:** two new regression tests mutation-checked via `git stash` on just the source fix — both
+confirmed to fail against the pre-fix code with the exact reported symptom (`expected: OK, but was:
+REFUND`), then confirmed passing with the fix restored. Full backend suite green (~2355 tests).
+
 **Still open:**
-- **BH-007** — not independently re-verified in the last two re-baselines; due a fresh check.
 - **BH-054** — accepted trade-off, not a defect.
 
 ### P2 — After the critical path
 
 The 24 Medium findings: performance (`BH-041`–`046`, `055`–`057` — eight services each load the
 user's entire transaction history), privacy/retention (`BH-039`, `BH-044`), operability
-(`BH-008`–`010` returning 500 where they should return 4xx), and the docs-vs-code lies
-(`BH-018`, `BH-021`, `BH-022`) — a comment asserting a guarantee the code does not have is worse
-than silence, because it stops the next reader checking.
+(`BH-008`–`010` returning 500 where they should return 4xx), test infrastructure (`BH-053`), and
+the docs-vs-code lies (`BH-018`, `BH-021`, `BH-022`) — a comment asserting a guarantee the code
+does not have is worse than silence, because it stops the next reader checking.
+
+**`BH-053` — CLOSED–VERIFIED, 2026-08-14.** The check-then-act race in
+`MerchantLearningService.confirm()` against V7's `UNIQUE(user_id, merchant_id, category_id)` --
+the codebase's own most carefully self-documented open defect, complete with a pre-emptive warning
+against the tempting wrong fix (`REQUIRES_NEW`, rejected because the row's foreign keys routinely
+point at parent rows the caller's own uncommitted transaction just created). Closed in
+[PR #92](https://github.com/siddharth705/finora/pull/92) (merged `c8bc96a`) with a native
+`INSERT ... ON CONFLICT DO NOTHING` upsert that stays inside the caller's transaction, honouring
+the same FK-visibility constraint the rejected fix would have violated. **VERIFIED:** the existing
+regression test only proved the race existed; rewritten against real Postgres to prove it's closed
+(one caller's transaction held open past its insert, a second genuinely blocked at the database,
+both resolving correctly), mutation-checked against the pre-fix code (failed with the exact
+predicted `duplicate key value violates unique constraint`), and the two existing propagation-
+contract tests confirmed unchanged.
+
+**`BH-018` — CLOSED–VERIFIED, 2026-08-14. Both halves now closed.** The transaction-boundary claim
+closed earlier; the "Also here" memory-materialization note (`file.getBytes()` holding up to 10 MB
+on the heap per upload, ungated against concurrent uploads) closed in
+[PR #93](https://github.com/siddharth705/finora/pull/93) (merged `02d9d287`). Turned out larger
+than one call site — `StatementStorage.store(byte[])` is the whole interface, not just
+`ImportJobService.accept()`'s use of it — but scoped additively: a new `store(InputStream, long)`
+overload is now the one real implementation per backend (filesystem, R2), with `store(byte[])`
+becoming a default method wrapping the array, so the two callers that already hold content in
+memory for parsing reasons (`ImportService.persistSection`, `ImportSessionService.storeContent`)
+stay untouched rather than being converted for no benefit. **VERIFIED:** a new test proving the
+actual property (content never fully buffered before being written onward) went through its own
+mutation-check refinement — tracking `InputStream.read()` chunk sizes turned out not to
+distinguish real streaming from `readAllBytes()`, which also reads in bounded chunks internally;
+tracking `OutputStream.write()` sizes does, since a naive reimplementation still writes the whole
+buffered result in one call. Confirmed against a deliberately reverted mutation before restoring
+the fix. Full backend suite green both before and after rebasing onto unrelated same-day import
+work, with no line-level overlap.
 
 ### P3 — v1.1
 
@@ -239,15 +284,38 @@ sequencing below is a decision, not a scope cut — everything demoted stays tra
    R-11 updated accordingly. **This did not just produce a number — it changed the risk's status**
    from "capacity unknown" to "capacity bottleneck identified, location known, fix not yet chosen."
    The item below exists because of that.
-3. **Investigate measured bottleneck — Pending, scope deliberately not yet fixed.** The baseline
-   found *where* the ceiling is, not what to do about it. Determine whether remediation requires
-   query optimization, transaction boundary changes, connection pool tuning, or infrastructure
-   changes — and re-run the baseline after remediation to confirm it actually moved. **Not started**
-   because which of those levers to pull, and whether the investigation runs local-only or waits for
-   a Railway-Pro environment, is a decision for the owner to make deliberately, not a default this
-   plan should assume. Do not treat "raise `maximumPoolSize`" as the answer in advance of that
-   investigation — that number was chosen once already (Railway's own connection ceiling, per the
-   architecture audit) and changing it blind can make contention worse, not better.
+3. **Investigate measured bottleneck — ✅ Complete, 2026-08-14.** Five sub-questions answered with
+   evidence (code review, `EXPLAIN ANALYZE`, real HikariCP hold-time metrics, and a direct pool-size
+   experiment): no slow query, no missing index; every authenticated request pays ~5 fixed connection
+   checkouts (auth filter chain); import holds connections 9–20× longer than any read endpoint;
+   **raising `maximumPoolSize` to 20 or 30 was tested directly and made the error rate worse, not
+   better** (4.4% → 41.7% → 13.2%), confirming this is CPU contention, not a connections shortage.
+   Full findings: [`hikaricp-bottleneck-investigation-2026-08-14.md`](../../investigations/performance/hikaricp-bottleneck-investigation-2026-08-14.md).
+   **No fix chosen** — the doc lays out the option space (auth-overhead caching, narrowing the broad
+   transactions, import's per-row chatter) with tradeoffs; which to pursue, in what order, is still
+   the owner's call. **Railway's actual Postgres connection ceiling — checked 2026-08-14:
+   `max_connections = 500`** (via `railway connect postgres`, `SHOW max_connections;` against
+   Production). Generous headroom over the pool of 10 in use today; Railway was never the wall the
+   investigation found — that was local CPU contention, unrelated to this number. Closes the one
+   open item this investigation left; does not change its finding that a bigger pool alone made
+   things worse in the configurations tested.
+4. **Remediation candidates — scoped 2026-08-14, deliberately not started.** Four levers, each with
+   impact/risk/effort assessed:
+
+   | Candidate | Impact | Risk | Effort |
+   |---|---|---|---|
+   | Accounts N+1 fix (`bankRepository.findById` per account → batch) | Low–Medium | Very low — isolated, mechanical | Small |
+   | Dashboard transaction narrowing (fetch → close connection → aggregate in Java) | Medium — dashboard is 40% of traffic | Low–Medium — Hibernate lazy-loading care needed | Small–Medium |
+   | Auth-overhead caching (the ~5 fixed connection checkouts every request pays) | Highest breadth — every endpoint | Medium — cache invalidation on role/permission change is security-sensitive | Medium |
+   | Import transaction redesign (R2 call outside the transaction, reduce per-row chatter, reconsider synchronous reconciliation) | Highest single-operation impact | **Highest** — same code area as BH-001/003/004/005/006, real financial-correctness defects | Large |
+
+   **Owner's sequencing decision: wait behind Phase 4.** Matches this plan's own §8 standing rule —
+   Phase 4 (56 open bug-hunt findings) is serial with everything after it, and this remediation work
+   was scoped as a diagnostic, not committed engineering time. None of the four candidates are
+   started. **When the import transaction redesign does start, it gets the same correctness bar as
+   the original BH-* fixes** — mutation-checked regression tests, real-Postgres verification, a test
+   that fails against the old code and passes against the new — because it touches the exact code
+   area that produced real balance-corruption and double-count defects before.
 
 **P2 — after Railway Pro is purchased:**
 1. Backup + restore drill, retention policy, recovery runbook (R-4, release criterion 3).
@@ -268,7 +336,7 @@ Now
 ├── Security review
 │
 ↓
-Investigate measured bottleneck
+Investigate measured bottleneck ✅
 │
 ↓
 Re-test baseline
@@ -294,8 +362,8 @@ Post-launch optimization
 |---|---|
 | Load testing baseline | Complete |
 | Capacity bottleneck identified | Complete |
-| Root-cause investigation | Pending |
-| Remediation | Pending |
+| Root-cause investigation | Complete — see [`hikaricp-bottleneck-investigation-2026-08-14.md`](../../investigations/performance/hikaricp-bottleneck-investigation-2026-08-14.md) |
+| Remediation | Pending — 4 candidates scoped (impact/risk/effort), deliberately not started; sequenced behind Phase 4 per §8 |
 | Re-test | Pending |
 
 This does not change §9's dates — Block E (production readiness) is re-scoped, not shortened, since
@@ -655,6 +723,12 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-14 | **BH-018 closed CLOSED–VERIFIED — both halves now closed.** PR #93 merged (`02d9d287`): the remaining memory-materialization half (`file.getBytes()` holding up to 10 MB on the heap per upload). Turned out to be interface-wide (`StatementStorage.store(byte[])`, not just one call site) but scoped additively — a new streaming overload as the one real per-backend implementation, the two callers that already hold content in memory for parsing reasons left untouched. Regression test needed its own correction mid-flight: tracking read-chunk sizes didn't actually prove the property (`readAllBytes()` also chunks its reads), tracking write-chunk sizes did. No date change | Closes the last of today's four P1/P2 bug-hunt fixes (BH-048, BH-007, BH-053, BH-018) with the same VERIFIED bar throughout — demonstrated broken, then demonstrated fixed, not inferred from a green suite alone |
+| 2026-08-14 | **BH-053 closed CLOSED–VERIFIED.** PR #92 merged (`c8bc96a`): the check-then-act race in `MerchantLearningService.confirm()`, precisely self-documented by the class's own comments since it was written (including a pre-emptive warning against the tempting wrong fix), closed with a native atomic upsert that stays inside the caller's transaction. The existing regression test only proved the race existed; rewritten against real Postgres to prove it's closed, mutation-checked against the pre-fix code. BH-018's remaining half (memory materialization on upload) is in PR #93, not yet merged — turned out to be an interface-wide question, not one call site, scoped additively rather than as a full conversion. No date change | Same pattern as BH-048/BH-007 earlier today: close a finding the moment it's actually verified, not at the next scheduled re-baseline, and record status precisely (in-review vs. merged-and-verified are not the same thing) |
+| 2026-08-14 | **Remediation candidates scoped, deliberately not started.** Four levers from the bottleneck investigation — accounts N+1 fix, dashboard transaction narrowing, auth-overhead caching, import transaction redesign — each assessed for impact/risk/effort in §5a item 4. Owner's sequencing decision: wait behind Phase 4 (56 open bug-hunt findings), per this plan's own §8 rule that Phase 4 is serial with everything after it. Owner's correctness decision: when the import transaction redesign does start, it gets the same bar as the original BH-* fixes (mutation-checked regression tests, real-Postgres verification) since it touches the exact code area that produced BH-001/003/004/005/006. No date change — this is scoping, not scheduled work | Following the standard set right after the investigation itself: don't let a diagnostic's momentum turn into unscoped engineering work. Named the sequencing conflict (this plan's own §8 rule) explicitly rather than silently starting remediation, and got an explicit owner decision on both what order and what rigor, matching how every other cross-cutting decision in this plan has been recorded |
+| 2026-08-14 | **Railway Production Postgres connection ceiling checked: `max_connections = 500`.** Closes the one open item the HikariCP bottleneck investigation left unresolved. Checked directly against the real production database (`railway connect postgres`, `SHOW max_connections;`), not estimated — Railway CLI installed and authenticated this session, `psql` installed via `libpq` since neither was present locally. Result folded into both the plan (§5a item 3) and the investigation doc (§8): 500 is far above the pool of 10 in use today, so Railway was never the constraint the investigation's pool-size experiment ran into — that was local CPU contention. Does not change the investigation's core finding (raising the pool made things worse in the configurations tested); a larger pool remains available to try later, but only after the CPU-bound issues (auth overhead, broad transactions) are addressed, not before. No date change | Owner's follow-up request after the investigation flagged this as the one thing it couldn't answer locally. Production access was gated behind an explicit approval (the auto-mode classifier blocked the first attempt at a direct `psql` connection to production; the owner approved the specific read-only query before it ran) rather than proceeding automatically, consistent with treating production infrastructure access as requiring confirmation |
+| 2026-08-14 | **A real, tested commit briefly went missing from `main`, caught before it was lost for good.** `1c5b1e4` — `fix(imports): don't 500 the sessions list when a multi-account session is staged`, regression-tested, full suite green — was made by a parallel session in this same shared working directory, then dropped: a `git reset` (not run by this session) moved `main`'s tip back one commit immediately before this session's own HikariCP-investigation commit landed on top of the reset-to commit, and a later `pull --rebase --autostash` from elsewhere locked that state in and pushed it, with `1c5b1e4` reachable only via reflog — not from `main`, not from `origin/main`, its fix absent from `ImportController.java`, its regression test absent from the working tree. Caught by this session's own pre-push habit (`git fetch` + compare before every push, per this plan's own established practice after the V75 and ad13f30 incidents) rather than by anyone noticing the fix was gone. **Recovered**: `git cherry-pick 1c5b1e4` onto the current `main` tip (applied cleanly, no conflicts), verified the fix and its test were actually present in the tree — not just that the cherry-pick command exited zero — then pushed as `59daf00`. The other session's own unrelated uncommitted work in this shared directory was stashed before the cherry-pick and popped back afterward, verified byte-for-byte restored, not just "stash pop didn't error." No engineering content changed beyond restoring what was already written and tested | Third occurrence of the same failure class in this plan's own history (V75 migration collision, this file being silently reverted twice, now a real commit). The pattern is now well-enough established that it isn't worth re-diagnosing each time — verify before every push, investigate anything unexpected before touching it, and record what happened plainly rather than quietly recovering and moving on, per [[parallel-sessions-on-finora]] |
+| 2026-08-14 | **BH-007 closed CLOSED–VERIFIED — bug-hunt P1 bucket now fully closed.** Re-verified against current code before fixing (line numbers had drifted since the 08-08 report from BH-041/BH-044 both touching `ReconciliationService.java`), confirmed still reproducing: the refund pass's only amount guard was per-pair, so N income rows each ≤ one EXPENSE could each independently match it, silently excluding real income from every total. Fixed in [PR #89](https://github.com/siddharth705/finora/pull/89) (merged `0d15f74`) by tracking cumulative refund capacity per expense across the pass, seeded from already-resolved `REFUND` rows so it holds across separate runs, not just one — proven complete for both entry points via the existing `CANDIDATE_WINDOW_DAYS >= REFUND_WINDOW_DAYS` invariant. Meets this plan's own VERIFIED bar: two regression tests mutation-checked via `git stash` on just the source fix, both confirmed to fail against the pre-fix code with the exact reported symptom, then confirmed passing restored. Full backend suite green. No date change | Same discipline as BH-048 earlier today: re-verify against current code rather than trust a stale line-number reference forward, and close a finding the moment it is actually confirmed closed, not at the next scheduled re-baseline |
 | 2026-08-14 | **BH-048 closed CLOSED–VERIFIED.** PR #88 merged (`bd5dcd2`); a manual `workflow_dispatch` of `e2e-nightly.yml` run directly against the merge commit completed `success` ([run 31774202063](https://github.com/siddharth705/finora/actions/runs/31774202063) <!-- synthetic-ok: public GitHub Actions run ID, not customer data -->), rather than waiting for the 03:00 UTC schedule or inferring from the PR's own smoke job. Meets this plan's own VERIFIED bar (§4's closure grades): the break was demonstrated (two real consecutive nightly failures), then demonstrated gone on the actual workflow. Bug-hunt P1 bucket now 1 open (BH-007 only). No date change | Closes the loop opened earlier today when BH-048's status was corrected from stale to accurate — a corrected-but-still-open finding is not the same as a closed one, and the plan should say which it is the moment it's actually known, not at the next scheduled re-baseline |
 | 2026-08-14 | **§5a roadmap updated to reflect what the load-testing baseline actually found.** The baseline didn't just produce a number — it changed R-11 from "capacity unknown" to "capacity bottleneck identified, location known, fix not yet chosen," and the plan's own roadmap diagram was still showing "Load testing baseline → Railway Pro" with nothing in between, which would read to a later reader as "measured, nothing to act on" rather than "measured, found a problem, investigation pending." Inserted **Investigate measured bottleneck → Re-test baseline** between them, plus a small status table (baseline: Complete, bottleneck identified: Complete, root-cause investigation/remediation/re-test: Pending). **Deliberately left unscoped**: no specific fix (pool-size increase, query optimization, transaction-boundary changes, caching) is named, because the investigation that would choose between them hasn't run yet — naming one now would bias it. **No date change** — this is a documentation update tracking a status change, not new engineering | Owner's instruction: the plan should reflect the risk-status change immediately, not wait for the follow-up investigation to be scoped. Explicit owner constraint: do not write "increase HikariCP pool size" as the fix — that decision needs its own investigation (which lever: pool tuning, query optimization, transaction boundaries, or infrastructure) and its own choice of environment (local-only vs. after Railway Pro), not an assumption baked into the roadmap |
 | 2026-08-14 | **Load-testing baseline run (§5a P1 item).** Three tiers (100/500/1,000 concurrent users) against a local docker-compose stack with 100 seeded users and 30,000 transactions. Result: clean at 100 users (0% errors), degrades sharply by 500 (4.4% errors, 13–15s p95) and further at 1,000 (7.3% errors, 37–40s p95) — root-caused in the backend's own logs to HikariCP pool exhaustion (`DB_POOL_MAX_SIZE:10`, already known from the architecture audit, now with a measured consequence). Memory was never a constraint at any tier. R-11 raised Medium → High and reworded from "untested" to "measured, not yet fixed." Full writeup: [`load-testing-baseline-2026-08-14.md`](../../investigations/performance/load-testing-baseline-2026-08-14.md). Reusable tooling committed: `scripts/load-test/{seed.py,loadtest.js,run.sh,README.md}`. **No date change** — this is the P1 baseline measurement itself, not a fix; exact ceiling between 100–500 and a Railway-specific number are follow-ups, not done here | Deliberately scoped per §5a and the owner's own framing: measure reality, don't chase a scale target. Local, not Railway, because pushing 1,000 concurrent connections at the shared deployed instance needs its own explicit conversation, not a default. The pool-exhaustion mechanism this baseline found is architecture-level and will reproduce on Railway regardless of the exact number there |

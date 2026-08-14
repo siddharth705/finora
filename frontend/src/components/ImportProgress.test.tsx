@@ -23,6 +23,7 @@ const api = vi.mocked(importJobsApi);
 
 const job = (over: Partial<ImportJobProgress> = {}): ImportJobProgress => ({
   jobId: 'job-1',
+  fileName: 'statement.csv',
   status: 'QUEUED',
   rowsTotal: null,
   rowsProcessed: 0,

@@ -402,6 +402,72 @@ class ReconciliationServiceTest {
         assertThat(unrelatedIncome.getRefundOfTransactionId()).isNull();
     }
 
+    // BH-007. Reproduces the finding exactly: one EXPENSE, two INCOME rows at the same merchant
+    // within the window, each individually no larger than the expense. Before the fix, both passed
+    // the per-pair "not more than the expense's amount" guard independently and both got marked
+    // REFUND -- 2x the expense's amount silently excluded from every total.
+    @Test
+    void reconcileForUser_capsCumulativeRefundsAtTheExpenseAmount_acrossMultipleMatchingIncomeRows() {
+        UUID accountId = UUID.randomUUID();
+
+        Transaction purchase = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 1),
+                new BigDecimal("500.00"), Transaction.Type.EXPENSE, "ACME STORE", Instant.now());
+        purchase.setMerchant("acme store");
+        // The refund -- earlier date, so it is processed first and claims the expense's capacity.
+        Transaction refund = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 3),
+                new BigDecimal("500.00"), Transaction.Type.INCOME, "ACME REFUND", Instant.now());
+        refund.setMerchant("acme store");
+        // An unrelated payout that happens to match the same merchant token -- exactly the
+        // coincidence the original finding named, not a contrived case.
+        Transaction unrelatedPayout = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 5),
+                new BigDecimal("500.00"), Transaction.Type.INCOME, "ACME PAYOUT", Instant.now());
+        unrelatedPayout.setMerchant("acme store");
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(purchase, refund, unrelatedPayout));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(refund.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.REFUND);
+        assertThat(refund.getRefundOfTransactionId()).isEqualTo(purchase.getId());
+        // The expense's ₹500 capacity is gone -- the second income row is real, unrelated income
+        // and must stay OK, not be silently excluded from every total.
+        assertThat(unrelatedPayout.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.OK);
+        assertThat(unrelatedPayout.getRefundOfTransactionId()).isNull();
+    }
+
+    // BH-007, the other half: capacity already claimed by a PRIOR run (a REFUND row already sitting
+    // in the user's history, not matched fresh in this pass) must count too, or re-running
+    // reconciliation over full history would let a new income row double-dip against an expense
+    // that is already fully accounted for. Provably in scope for reconcileForImport's own windowed
+    // fetch as well -- see the fix's comment on why CANDIDATE_WINDOW_DAYS guarantees this.
+    @Test
+    void reconcileForUser_treatsAnAlreadyResolvedRefundAsConsumingCapacity_notJustMatchesMadeThisRun() {
+        UUID accountId = UUID.randomUUID();
+
+        Transaction purchase = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 1),
+                new BigDecimal("500.00"), Transaction.Type.EXPENSE, "ACME STORE", Instant.now());
+        purchase.setMerchant("acme store");
+
+        Transaction alreadyRefunded = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 3),
+                new BigDecimal("500.00"), Transaction.Type.INCOME, "ACME REFUND", Instant.now());
+        alreadyRefunded.setMerchant("acme store");
+        // Simulates a match a PRIOR reconciliation run already made and persisted.
+        alreadyRefunded.setReconciliationStatus(Transaction.ReconciliationStatus.REFUND);
+        alreadyRefunded.setRefundOfTransactionId(purchase.getId());
+
+        Transaction newIncome = txn(UUID.randomUUID(), accountId, LocalDate.of(2026, 7, 5),
+                new BigDecimal("500.00"), Transaction.Type.INCOME, "ACME PAYOUT", Instant.now());
+        newIncome.setMerchant("acme store");
+
+        when(transactionRepository.findByUserId(userId))
+                .thenReturn(List.of(purchase, alreadyRefunded, newIncome));
+
+        reconciliationService.reconcileForUser(userId);
+
+        assertThat(newIncome.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.OK);
+        assertThat(newIncome.getRefundOfTransactionId()).isNull();
+    }
+
     // --- RECONCILIATION_RUN audit summary (Financial Intelligence Workspace, Reconciliation
     // Monitor module -- see ReconciliationService.reconcileForUser's own doc comment on the
     // counters) ---

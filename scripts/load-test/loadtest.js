@@ -107,9 +107,15 @@ export default function (data) {
   }
   const headers = authHeaders(token);
 
+  // MODE overrides the weighted mix with a single traffic type, for the bottleneck investigation
+  // (Q1: which endpoint holds connections longest; Q3: does import starve other endpoints) --
+  // isolating one endpoint at a time makes hikaricp_connections_usage_seconds attributable,
+  // which the mixed-traffic tiers in the main baseline can't provide on their own.
+  const mode = __ENV.MODE || "mixed";
+
   // Weighted mix approximating real usage: dashboard and transaction list are the two screens a
   // user actually sits on; accounts is a quick glance; import is occasional, not constant.
-  const roll = Math.random();
+  const roll = mode === "dashboard" ? 0 : mode === "transactions" ? 0.5 : mode === "accounts" ? 0.8 : mode === "import" ? 0.95 : Math.random();
 
   if (roll < 0.40) {
     const res = http.get(`${BASE_URL}/api/v1/dashboard/summary`, { ...headers, tags: { name: "dashboard" } });
