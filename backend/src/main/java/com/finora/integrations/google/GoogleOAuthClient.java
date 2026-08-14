@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
 import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
@@ -49,10 +50,11 @@ public class GoogleOAuthClient {
 
     private static final Logger log = LoggerFactory.getLogger(GoogleOAuthClient.class);
 
-    private static final String AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
-    private static final String TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
-    private static final String USERINFO_ENDPOINT = "https://openidconnect.googleapis.com/v1/userinfo";
-    private static final String REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke";
+
+    /** Google's documented signal that a refresh token is permanently dead -- revoked, expired
+     *  through disuse, or invalidated by a password change. The one 4xx that means "the user must
+     *  reconnect" rather than "try again". */
+    private static final String INVALID_GRANT = "invalid_grant";
 
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(15);
@@ -89,7 +91,7 @@ public class GoogleOAuthClient {
      */
     public String buildAuthorizationUrl(String state) {
         String scope = String.join(" ", properties.getScopes());
-        return AUTHORIZATION_ENDPOINT
+        return properties.getAuthorizationEndpoint()
                 + "?client_id=" + encode(properties.getClientId())
                 + "&redirect_uri=" + encode(properties.getRedirectUri())
                 + "&response_type=code"
@@ -116,7 +118,7 @@ public class GoogleOAuthClient {
 
         try {
             TokenResponse response = restClient.post()
-                    .uri(TOKEN_ENDPOINT)
+                    .uri(properties.getTokenEndpoint())
                     .contentType(MediaType.APPLICATION_FORM_URLENCODED)
                     .body(form)
                     .retrieve()
@@ -139,6 +141,70 @@ public class GoogleOAuthClient {
     }
 
     /**
+     * Exchanges a stored refresh token for a fresh access token.
+     *
+     * <p>The first real use of the credential Phase B persisted — until now it was only ever
+     * decrypted to revoke it.
+     *
+     * <p><b>The distinction this method exists to make</b> is between a credential that is
+     * permanently dead and a request that merely failed. Google answers the former with HTTP 400
+     * and {@code error=invalid_grant}: the user changed their password, revoked Finora from their
+     * Google account, the token expired through disuse, or the account was locked. No amount of
+     * retrying fixes any of those — they need the user. Everything else (a 5xx, a timeout, a DNS
+     * failure) is transient and must NOT be treated as revocation, because doing so would tell a
+     * user their mailbox had disconnected because Google had a bad minute.
+     *
+     * @throws GmailReauthRequiredException when the grant is gone and only the user can restore it
+     * @throws ApiException for transient failures, which callers should retry rather than act on
+     */
+    public TokenResponse refreshAccessToken(String refreshToken) {
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("refresh_token", refreshToken);
+        form.add("client_id", properties.getClientId());
+        form.add("client_secret", properties.getClientSecret());
+        form.add("grant_type", "refresh_token");
+
+        try {
+            TokenResponse response = restClient.post()
+                    .uri(properties.getTokenEndpoint())
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .body(form)
+                    .retrieve()
+                    // Handle 4xx here rather than letting it become a generic exception: the body
+                    // carries the one field that decides whether this connection is recoverable.
+                    .onStatus(HttpStatusCode::is4xxClientError, (request, res) -> {
+                        String body = new String(res.getBody().readAllBytes(), StandardCharsets.UTF_8);
+                        if (body.contains(INVALID_GRANT)) {
+                            throw new GmailReauthRequiredException(
+                                    "Google rejected the stored refresh token (invalid_grant).");
+                        }
+                        // A 4xx that is NOT invalid_grant is a problem with the REQUEST -- most
+                        // likely misconfigured client credentials -- not with the user's grant.
+                        // Flipping them to REAUTH_REQUIRED for that would blame the user for an
+                        // operator error, and reconnecting would not fix it.
+                        throw new ApiException(HttpStatus.BAD_GATEWAY,
+                                "Google refused the token refresh. Try again shortly.");
+                    })
+                    .body(TokenResponse.class);
+
+            if (response == null || response.access_token() == null) {
+                throw new ApiException(HttpStatus.BAD_GATEWAY,
+                        "Google did not return an access token.");
+            }
+            return response;
+        } catch (GmailReauthRequiredException | ApiException e) {
+            throw e;
+        } catch (Exception e) {
+            // Deliberately NOT reauth: a timeout or a 5xx says nothing about whether the grant is
+            // still good. The message never echoes the exception, whose text can include the
+            // request -- and this request carries both the client secret and the refresh token.
+            log.warn("Gmail token refresh failed transiently: {}", e.getClass().getSimpleName());
+            throw new ApiException(HttpStatus.BAD_GATEWAY,
+                    "Could not reach Google to refresh the connection. Try again shortly.");
+        }
+    }
+
+    /**
      * Reads the connected account's stable id and address.
      *
      * <p>{@code sub} is what identity is keyed on — see {@link GmailConnection}. The email is for
@@ -147,7 +213,7 @@ public class GoogleOAuthClient {
     public UserInfo fetchUserInfo(String accessToken) {
         try {
             UserInfo info = restClient.get()
-                    .uri(USERINFO_ENDPOINT)
+                    .uri(properties.getUserinfoEndpoint())
                     .header("Authorization", "Bearer " + accessToken)
                     .retrieve()
                     .body(UserInfo.class);
@@ -181,7 +247,7 @@ public class GoogleOAuthClient {
         form.add("token", refreshToken);
         try {
             restClient.post()
-                    .uri(REVOKE_ENDPOINT)
+                    .uri(properties.getRevokeEndpoint())
                     .contentType(MediaType.APPLICATION_FORM_URLENCODED)
                     .body(form)
                     .retrieve()

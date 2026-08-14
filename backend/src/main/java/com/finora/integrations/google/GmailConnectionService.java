@@ -61,6 +61,7 @@ public class GmailConnectionService {
     private final EncryptionService encryptionService;
     private final UserRepository userRepository;
     private final AuditService auditService;
+    private final GmailAccessTokenService accessTokenService;
     private final TransactionTemplate transactionTemplate;
     private final SecureRandom secureRandom = new SecureRandom();
 
@@ -71,6 +72,7 @@ public class GmailConnectionService {
                                    EncryptionService encryptionService,
                                    UserRepository userRepository,
                                    AuditService auditService,
+                                   GmailAccessTokenService accessTokenService,
                                    TransactionTemplate transactionTemplate) {
         this.connections = connections;
         this.states = states;
@@ -79,6 +81,7 @@ public class GmailConnectionService {
         this.encryptionService = encryptionService;
         this.userRepository = userRepository;
         this.auditService = auditService;
+        this.accessTokenService = accessTokenService;
         this.transactionTemplate = transactionTemplate;
     }
 
@@ -241,6 +244,42 @@ public class GmailConnectionService {
     @Transactional(readOnly = true)
     public Optional<GmailConnection> findLiveConnection(UUID userId) {
         return connections.findByUserIdAndStatusIn(userId, LIVE);
+    }
+
+    /**
+     * Checks the stored credential against Google, on demand.
+     *
+     * <p>{@code GET /status} reports what the database believes; this reports what Google will
+     * actually honour. They diverge in exactly the case that matters — a grant revoked from the
+     * user's own Google account settings leaves Finora's status untouched, because nothing here
+     * learns of it until something tries to use the credential. Before this existed, that discovery
+     * happened on a user's first failed sync; now they and support can ask directly.
+     *
+     * <p>Deliberately not {@code @Transactional}: {@link GmailAccessTokenService#accessTokenFor}
+     * calls Google, and that must not happen with a pooled connection held (BH-016/BH-047). It does
+     * its own short write if the status changes.
+     *
+     * <p>The minted access token is discarded. Verification only needs to know Google honoured the
+     * grant; keeping the token would add a second secret to protect for no benefit.
+     */
+    public GmailVerificationResultDto verifyConnection(UUID userId) {
+        GmailConnection connection = connections.findByUserIdAndStatusIn(userId, LIVE)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND,
+                        "No Gmail account is connected."));
+
+        try {
+            accessTokenService.accessTokenFor(connection);
+            return GmailVerificationResultDto.healthy(connection);
+        } catch (GmailReauthRequiredException e) {
+            // accessTokenFor has already flipped the connection and audited why -- this only has to
+            // report it. The user's next status poll will agree with what they are told here.
+            return GmailVerificationResultDto.reauthRequired();
+        } catch (ApiException e) {
+            // Transient. The connection is untouched, so report its existing status rather than
+            // inventing a failure state: sending someone through a consent screen because Google
+            // timed out would be a worse answer than "try again".
+            return GmailVerificationResultDto.temporarilyUnavailable(connection);
+        }
     }
 
     /**

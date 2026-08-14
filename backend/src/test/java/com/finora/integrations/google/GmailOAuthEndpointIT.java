@@ -155,6 +155,26 @@ class GmailOAuthEndpointIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void verify_requiresAuthentication() {
+        ResponseEntity<String> response = restTemplate.exchange(
+                BASE + "/connection/verify", HttpMethod.POST, HttpEntity.EMPTY, String.class);
+
+        assertThat(response.getStatusCode()).isIn(HttpStatus.UNAUTHORIZED, HttpStatus.FORBIDDEN);
+    }
+
+    /** Verification spends a real request against Google, so it must not be reachable anonymously
+     *  -- an unauthenticated verify endpoint would let anyone burn a user's API quota. */
+    @Test
+    void verify_whenNothingIsConnected_is404_notAServerError() {
+        User user = createUser();
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                BASE + "/connection/verify", HttpMethod.POST, new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
     void disconnect_requiresAuthentication() {
         ResponseEntity<String> response = restTemplate.exchange(
                 BASE + "/connection", HttpMethod.DELETE, HttpEntity.EMPTY, String.class);
