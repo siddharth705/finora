@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Production-readiness pass: every secret in application.yml has a local-dev-convenience default
@@ -243,11 +244,34 @@ public class ProductionConfigValidator implements SmartInitializingSingleton {
         // Checked here rather than only in EnvironmentKeyProvider because that class validates
         // key SHAPE (base64, 32 bytes) -- which the placeholder satisfies perfectly. Only this
         // validator knows the difference between a well-formed key and the right key.
-        String activeKey = cryptoProperties.getKeys().get(cryptoProperties.getActiveKeyId());
-        if (activeKey == null || activeKey.isBlank() || LOCAL_DEV_ENCRYPTION_KEY.equals(activeKey.trim())) {
-            problems.append("- FINORA_ENCRYPTION_KEY is unset or still the local-dev placeholder. It encrypts ")
-                    .append("third-party OAuth refresh tokens at rest; on this value, anyone with the ")
-                    .append("repository can decrypt every stored integration credential. Generate one with ")
+        //
+        // EVERY configured key, not just the active one (Strix security review, CWE-321). A
+        // rotation deliberately keeps retired keys configured so ciphertext written under them
+        // stays readable -- so checking only `active-key-id` would pass a production config that
+        // rotated to a real v2 while leaving the repository-public placeholder under v1, and
+        // keyById("v1") would go on decrypting legacy rows under a key anyone can read from git.
+        // The realistic path there is not exotic: an operator setting up a rotation copies the
+        // `keys:` block out of application.yml as a template, which ships the placeholder as v1's
+        // default.
+        //
+        // Blank/null is included for completeness rather than reachability -- EnvironmentKeyProvider
+        // is constructed before this runs (SmartInitializingSingleton) and already refuses an empty
+        // key -- so that this check does not silently depend on that bean ordering.
+        List<String> unsafeKeyIds = cryptoProperties.getKeys().entrySet().stream()
+                .filter(entry -> entry.getValue() == null
+                        || entry.getValue().isBlank()
+                        || LOCAL_DEV_ENCRYPTION_KEY.equals(entry.getValue().trim()))
+                .map(Map.Entry::getKey)
+                .toList();
+        if (!unsafeKeyIds.isEmpty()) {
+            // Names the env var, not just the property path: FINORA_ENCRYPTION_KEY is what an
+            // operator actually sets, and an error naming only `finora.security.encryption.keys`
+            // sends them looking for a file they will not find in a Railway dashboard.
+            problems.append("- FINORA_ENCRYPTION_KEY: encryption key(s) ").append(unsafeKeyIds)
+                    .append(" are unset or still the local-dev placeholder. These encrypt third-party ")
+                    .append("OAuth refresh tokens at rest; on that value, anyone with the repository can ")
+                    .append("decrypt every credential stored under them -- including a retired key kept ")
+                    .append("configured so a rotation can still read old rows. Generate one with ")
                     .append("`openssl rand -base64 32`.\n");
         }
 

@@ -377,6 +377,56 @@ class ProductionConfigValidatorTest {
                 .hasMessageContaining("FINORA_ENCRYPTION_KEY");
     }
 
+    /**
+     * Strix security review, CWE-321. The original check inspected only the key named by
+     * {@code active-key-id}, which passes a mid-rotation configuration that has moved writes onto a
+     * real v2 while leaving the repository-public placeholder configured as v1 — and
+     * {@code keyById("v1")} goes on decrypting every legacy row under a key anyone can read out of
+     * git.
+     *
+     * <p>Not an exotic setup: an operator preparing a rotation copies the {@code keys:} block out of
+     * application.yml as a template, and that block ships the placeholder as v1's default.
+     */
+    @Test
+    void run_inProdProfile_withAPlaceholderRetiredKey_throws_evenWhenTheActiveKeyIsReal() {
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
+        CryptoProperties rotating = new CryptoProperties();
+        rotating.setActiveKeyId("v2");
+        java.util.Map<String, String> keys = new java.util.LinkedHashMap<>();
+        keys.put("v1", "Zmlub3JhLWxvY2FsLWRldi1rZXktRE8tTk9ULVVTRSE="); // retired, still the placeholder
+        keys.put("v2", realCrypto().getKeys().get("v1"));               // active, genuinely real
+        rotating.setKeys(keys);
+
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(),
+                configuredFirebase(), mock(SmsProvider.class), rotating);
+
+        assertThatThrownBy(validator::validate)
+                .as("a retired placeholder key still decrypts legacy ciphertext -- the active key "
+                        + "being real does not make the deployment safe")
+                .hasMessageContaining("v1");
+    }
+
+    @Test
+    void run_inProdProfile_withEveryKeyReal_duringARotation_doesNotComplain() {
+        // The negative: a correct rotation, with two real keys, must not be blocked -- otherwise the
+        // check above would make rotation impossible rather than safe.
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
+        when(environment.getProperty("app.statement-storage.provider")).thenReturn("r2");
+        CryptoProperties rotating = new CryptoProperties();
+        rotating.setActiveKeyId("v2");
+        java.util.Map<String, String> keys = new java.util.LinkedHashMap<>();
+        byte[] otherKey = new byte[32];
+        java.util.Arrays.fill(otherKey, (byte) 99);
+        keys.put("v1", java.util.Base64.getEncoder().encodeToString(otherKey));
+        keys.put("v2", realCrypto().getKeys().get("v1"));
+        rotating.setKeys(keys);
+
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(),
+                configuredFirebase(), mock(SmsProvider.class), rotating);
+
+        assertThat(catchNoThrow(validator)).isTrue();
+    }
+
     @Test
     void run_inProdProfile_withARealEncryptionKey_doesNotComplainAboutIt() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
