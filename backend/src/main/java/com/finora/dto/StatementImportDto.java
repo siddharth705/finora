@@ -29,14 +29,13 @@ public class StatementImportDto {
             BigDecimal closingBalance,
             int transactionsImported,
             int transactionsSkipped,
-            String status,
             Instant importedAt,
             int duplicateCount
     ) {
         public static Summary from(StatementImport s, int duplicateCount) {
             return new Summary(s.getId(), s.getFileName(), s.getStatementPeriodStart(), s.getStatementPeriodEnd(),
                     s.getOpeningBalance(), s.getClosingBalance(), s.getTransactionsImported(),
-                    s.getTransactionsSkipped(), s.getStatus(), s.getImportedAt(), duplicateCount);
+                    s.getTransactionsSkipped(), s.getImportedAt(), duplicateCount);
         }
     }
 

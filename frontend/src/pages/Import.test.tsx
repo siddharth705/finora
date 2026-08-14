@@ -995,6 +995,7 @@ describe('Import — queued imports', () => {
     jobId: 'job-1',
     fileName: 'statement.csv',
     status: 'QUEUED',
+    userStatus: 'PROCESSING',
     rowsTotal: null,
     rowsProcessed: 0,
     createdAt: '2026-08-08T09:00:00Z',
@@ -1022,7 +1023,7 @@ describe('Import — queued imports', () => {
     // whatever the test doesn't care about keeps that loop harmless; tests about the timeline
     // itself override this.
     vi.mocked(importJobsApi.timeline).mockReset().mockResolvedValue({
-      jobId: 'job-1', status: 'QUEUED', failureCode: null, stages: [],
+      jobId: 'job-1', status: 'QUEUED', userStatus: 'PROCESSING', failureCode: null, stages: [],
     });
   });
 
@@ -1173,6 +1174,10 @@ describe('Import — queued imports', () => {
     vi.mocked(importJobsApi.timeline).mockResolvedValue({
       jobId: 'job-1',
       status: 'FAILED',
+      // IMPORT_001/NO_HEADER_DETECTED is one of the five ACTION_REQUIRED codes (ErrorCode's own
+      // table) -- matching that here, not plain FAILED, is what makes this fixture the real shape
+      // a FAILED job carrying this exact failureCode actually has.
+      userStatus: 'ACTION_REQUIRED',
       failureCode: 'IMPORT_001', // NO_HEADER_DETECTED
       stages: [
         { stage: 'PARSING', attempt: 1, outcome: 'FAILED', startedAt: '2026-08-08T09:00:00Z', endedAt: '2026-08-08T09:00:01Z', durationMs: 1000 },
@@ -1206,7 +1211,7 @@ describe('Import — queued imports', () => {
   it('still offers a way back when a failed job has no recorded stages', async () => {
     vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({ status: 'FAILED', error: 'boom' }));
     vi.mocked(importJobsApi.timeline).mockResolvedValue({
-      jobId: 'job-1', status: 'FAILED', failureCode: null, stages: [],
+      jobId: 'job-1', status: 'FAILED', userStatus: 'FAILED', failureCode: null, stages: [],
     });
     const user = userEvent.setup();
     renderImport();
@@ -1487,6 +1492,7 @@ describe('Import — arriving to retry a failed sync import', () => {
       jobId: 'job-2',
       fileName: 'unrelated-second-file.csv',
       status: 'QUEUED',
+      userStatus: 'PROCESSING',
       rowsTotal: null,
       rowsProcessed: 0,
       createdAt: '2026-08-08T09:00:00Z',
@@ -1506,14 +1512,14 @@ describe('Import — arriving to retry a failed sync import', () => {
       vi.mocked(importJobsApi.progress).mockReset();
       vi.mocked(importJobsApi.cancel).mockReset();
       vi.mocked(importJobsApi.timeline).mockReset().mockResolvedValue({
-        jobId: 'job-2', status: 'QUEUED', failureCode: null, stages: [],
+        jobId: 'job-2', status: 'QUEUED', userStatus: 'PROCESSING', failureCode: null, stages: [],
       });
     });
 
     it('clears the retry banner once the second upload fails and is dismissed', async () => {
       vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({ status: 'FAILED', error: 'boom' }));
       vi.mocked(importJobsApi.timeline).mockResolvedValue({
-        jobId: 'job-2', status: 'FAILED', failureCode: null, stages: [],
+        jobId: 'job-2', status: 'FAILED', userStatus: 'FAILED', failureCode: null, stages: [],
       });
       const user = userEvent.setup();
       renderImportWithRetryState('bad-statement.pdf', NO_HEADER_DETECTED);

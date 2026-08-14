@@ -413,6 +413,10 @@ export interface ImportJobProgress {
   fileName: string;
   status: 'QUEUED' | 'PARSING' | 'ANALYZING' | 'DEDUPING' | 'IMPORTING' | 'LEARNING'
     | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  // Sprint 4 item 20a's five-state mapping, additive alongside `status` (unchanged, still needed
+  // for the timeline UI's per-stage granularity) -- for a caller that wants the collapsed
+  // "processing / completed / action required / failed / cancelled" view without re-deriving it.
+  userStatus: 'PROCESSING' | 'COMPLETED' | 'ACTION_REQUIRED' | 'FAILED' | 'CANCELLED';
   // Null while the statement is still being read — deliberately not 0, which would be
   // indistinguishable from an empty file and would render as a stuck "0 of 0".
   rowsTotal: number | null;
@@ -446,6 +450,7 @@ export interface ImportTimelineStage {
 export interface ImportJobTimeline {
   jobId: string;
   status: ImportJobProgress['status'];
+  userStatus: ImportJobProgress['userStatus'];
   failureCode: string | null;
   stages: ImportTimelineStage[];
 }

@@ -101,9 +101,6 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     @Column(name = "transactions_skipped", nullable = false)
     private int transactionsSkipped;
 
-    @Column(nullable = false)
-    private String status = "COMPLETED";
-
     @Column(name = "imported_at", nullable = false)
     private Instant importedAt = Instant.now();
 
@@ -177,8 +174,6 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     public void setTransactionsImported(int transactionsImported) { this.transactionsImported = transactionsImported; }
     public int getTransactionsSkipped() { return transactionsSkipped; }
     public void setTransactionsSkipped(int transactionsSkipped) { this.transactionsSkipped = transactionsSkipped; }
-    public String getStatus() { return status; }
-    public void setStatus(String status) { this.status = status; }
     public Instant getImportedAt() { return importedAt; }
     public void setImportedAt(Instant importedAt) { this.importedAt = importedAt; }
 }
