@@ -260,6 +260,20 @@ despite a live reference. [PR #96](https://github.com/siddharth705/finora/pull/9
 (`8abfe074`), full backend suite green (no `AcquisitionWiringIT` recurrence — confirms `ba33253`'s
 fix held).
 
+**Follow-up, same day (`a5365dd`):** the sweep's reference check is an OR across two tables —
+`statementImportRepository.existsByObjectKey(...) || importSessionRepository.existsByObjectKey(...)`
+— but PR #96's regression test's surviving reference was a `StatementImport` row, so the first
+clause alone kept the object alive and the `ImportSessionRepository` half of the OR was never
+actually exercised. Added
+`sweep_doesNotReclaimAnObjectStillReferencedByAnotherTenantsLiveImportSession`, where the surviving
+live reference is another tenant's still-staged `ImportSession` instead — this reaches the OR's
+second clause under real code, not just under mutation. Mutation-checked the same way: temporarily
+scoped `ImportSessionRepository.existsByObjectKey` to always return false (the same "add userId, it
+looks under-scoped" mistake the warning comment names), confirmed both this test and the
+pre-existing same-tenant `ImportSession` test fail, reverted, confirmed green (7/7). Committed
+directly to `main` (no PR). Both halves of the sweep's cross-tenant guard now have regression
+coverage.
+
 ### P3 — v1.1
 
 The 18 Low findings, the Layout Curation UI (M2 item 7), Merchant Intelligence Workbench (WI4A),
@@ -766,6 +780,7 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-14 | **BH-039 coverage completed — the `ImportSessionRepository` half of the cross-tenant guard.** PR #96's regression test's surviving reference was a `StatementImport` row, so the sweep's `existsByObjectKey(...) || existsByObjectKey(...)` guard's first clause alone kept the object alive and the `ImportSessionRepository` half was never actually exercised. Added `sweep_doesNotReclaimAnObjectStillReferencedByAnotherTenantsLiveImportSession` (surviving reference is another tenant's still-staged `ImportSession`), mutation-checked the same way as the original, committed directly to `main` (`a5365dd`, no PR). No date change | A regression test that passes for the wrong reason (short-circuited by the other half of an OR) is the same failure mode BH-039 itself is about — closing "regression coverage added" without checking which branch it actually reaches would have left the exact gap it claimed to close |
 | 2026-08-14 | **BH-039 closed CLOSED–VERIFIED.** PR #96 merged (`8abfe074`). No live defect, confirmed against real generated SQL; missing cross-tenant regression coverage now in place. Full backend suite green with no recurrence of the `AcquisitionWiringIT` flake. No date change | Closes the day's sixth and last bug-hunt item (BH-048, BH-007, BH-053, BH-018, BH-058, BH-039) at the same VERIFIED bar throughout |
 | 2026-08-14 | **BH-039 investigated: no live defect, regression coverage added.** The finding's own "becomes a cross-tenant defect the moment the sweep is built" trigger already occurred (BH-017's sweep exists), but checked directly against the real generated SQL that its reference counting is already global, not per-tenant — the warned-about trap was avoided. Added the missing cross-tenant regression test plus explicit warning comments naming the exact future mistake that would reintroduce it, in [PR #96](https://github.com/siddharth705/finora/pull/96) (not yet merged). No date change | A "Low/Potential Risk" finding whose trigger condition occurred deserves the same re-verification discipline as anything else — confirming a warned-about defect did NOT materialize is itself real work worth recording, not something to silently assume from the finding's age |
 | 2026-08-14 | **BH-058 class swept and closed — last open P2 test-infrastructure item.** PR #95 merged (`2c40ffa9`): one real occurrence found (`ImportJobStoreIT`'s recovery tests asserting exact counts on table-wide `recoverAbandoned()`), fixed with the noise-fixture technique the original BH-058 fix established; systematic sweep of the rest of the suite found nothing else. Required an admin-override merge after `Backend (Java 25)` failed 4 times on `AcquisitionWiringIT` — confirmed beforehand as a pre-existing runner-level flake (same failure hit `main` itself on unrelated docs-only commits the same day), not a code defect; the underlying cause was fixed independently and merged immediately after (`ba33253`), confirming the diagnosis. No date change | Closes an item that had been carried as "flagged, not swept" since the original finding across three separate closure reports. The admin-override is recorded per this plan's own standing practice — state what was bypassed and why, with the evidence that justified it, not just that it happened |
