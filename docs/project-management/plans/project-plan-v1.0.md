@@ -181,9 +181,31 @@ REFUND`), then confirmed passing with the fix restored. Full backend suite green
 
 The 24 Medium findings: performance (`BH-041`–`046`, `055`–`057` — eight services each load the
 user's entire transaction history), privacy/retention (`BH-039`, `BH-044`), operability
-(`BH-008`–`010` returning 500 where they should return 4xx), and the docs-vs-code lies
-(`BH-018`, `BH-021`, `BH-022`) — a comment asserting a guarantee the code does not have is worse
-than silence, because it stops the next reader checking.
+(`BH-008`–`010` returning 500 where they should return 4xx), test infrastructure (`BH-053`), and
+the docs-vs-code lies (`BH-018`, `BH-021`, `BH-022`) — a comment asserting a guarantee the code
+does not have is worse than silence, because it stops the next reader checking.
+
+**`BH-053` — CLOSED–VERIFIED, 2026-08-14.** The check-then-act race in
+`MerchantLearningService.confirm()` against V7's `UNIQUE(user_id, merchant_id, category_id)` --
+the codebase's own most carefully self-documented open defect, complete with a pre-emptive warning
+against the tempting wrong fix (`REQUIRES_NEW`, rejected because the row's foreign keys routinely
+point at parent rows the caller's own uncommitted transaction just created). Closed in
+[PR #92](https://github.com/siddharth705/finora/pull/92) (merged `c8bc96a`) with a native
+`INSERT ... ON CONFLICT DO NOTHING` upsert that stays inside the caller's transaction, honouring
+the same FK-visibility constraint the rejected fix would have violated. **VERIFIED:** the existing
+regression test only proved the race existed; rewritten against real Postgres to prove it's closed
+(one caller's transaction held open past its insert, a second genuinely blocked at the database,
+both resolving correctly), mutation-checked against the pre-fix code (failed with the exact
+predicted `duplicate key value violates unique constraint`), and the two existing propagation-
+contract tests confirmed unchanged.
+
+**`BH-018`'s remaining half — in review, not yet merged.** The transaction-boundary claim closed
+earlier; the "Also here" memory-materialization note (`file.getBytes()` holding up to 10 MB on the
+heap per upload) is in [PR #93](https://github.com/siddharth705/finora/pull/93), not yet merged.
+Turned out larger than one call site — `StatementStorage.store(byte[])` is the whole interface,
+not just `ImportJobService.accept()`'s use of it — but scoped additively (a new streaming overload,
+the two callers that already hold content in memory for parsing reasons stay untouched) rather than
+a full interface conversion.
 
 ### P3 — v1.1
 
@@ -691,6 +713,7 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-14 | **BH-053 closed CLOSED–VERIFIED.** PR #92 merged (`c8bc96a`): the check-then-act race in `MerchantLearningService.confirm()`, precisely self-documented by the class's own comments since it was written (including a pre-emptive warning against the tempting wrong fix), closed with a native atomic upsert that stays inside the caller's transaction. The existing regression test only proved the race existed; rewritten against real Postgres to prove it's closed, mutation-checked against the pre-fix code. BH-018's remaining half (memory materialization on upload) is in PR #93, not yet merged — turned out to be an interface-wide question, not one call site, scoped additively rather than as a full conversion. No date change | Same pattern as BH-048/BH-007 earlier today: close a finding the moment it's actually verified, not at the next scheduled re-baseline, and record status precisely (in-review vs. merged-and-verified are not the same thing) |
 | 2026-08-14 | **Remediation candidates scoped, deliberately not started.** Four levers from the bottleneck investigation — accounts N+1 fix, dashboard transaction narrowing, auth-overhead caching, import transaction redesign — each assessed for impact/risk/effort in §5a item 4. Owner's sequencing decision: wait behind Phase 4 (56 open bug-hunt findings), per this plan's own §8 rule that Phase 4 is serial with everything after it. Owner's correctness decision: when the import transaction redesign does start, it gets the same bar as the original BH-* fixes (mutation-checked regression tests, real-Postgres verification) since it touches the exact code area that produced BH-001/003/004/005/006. No date change — this is scoping, not scheduled work | Following the standard set right after the investigation itself: don't let a diagnostic's momentum turn into unscoped engineering work. Named the sequencing conflict (this plan's own §8 rule) explicitly rather than silently starting remediation, and got an explicit owner decision on both what order and what rigor, matching how every other cross-cutting decision in this plan has been recorded |
 | 2026-08-14 | **Railway Production Postgres connection ceiling checked: `max_connections = 500`.** Closes the one open item the HikariCP bottleneck investigation left unresolved. Checked directly against the real production database (`railway connect postgres`, `SHOW max_connections;`), not estimated — Railway CLI installed and authenticated this session, `psql` installed via `libpq` since neither was present locally. Result folded into both the plan (§5a item 3) and the investigation doc (§8): 500 is far above the pool of 10 in use today, so Railway was never the constraint the investigation's pool-size experiment ran into — that was local CPU contention. Does not change the investigation's core finding (raising the pool made things worse in the configurations tested); a larger pool remains available to try later, but only after the CPU-bound issues (auth overhead, broad transactions) are addressed, not before. No date change | Owner's follow-up request after the investigation flagged this as the one thing it couldn't answer locally. Production access was gated behind an explicit approval (the auto-mode classifier blocked the first attempt at a direct `psql` connection to production; the owner approved the specific read-only query before it ran) rather than proceeding automatically, consistent with treating production infrastructure access as requiring confirmation |
 | 2026-08-14 | **A real, tested commit briefly went missing from `main`, caught before it was lost for good.** `1c5b1e4` — `fix(imports): don't 500 the sessions list when a multi-account session is staged`, regression-tested, full suite green — was made by a parallel session in this same shared working directory, then dropped: a `git reset` (not run by this session) moved `main`'s tip back one commit immediately before this session's own HikariCP-investigation commit landed on top of the reset-to commit, and a later `pull --rebase --autostash` from elsewhere locked that state in and pushed it, with `1c5b1e4` reachable only via reflog — not from `main`, not from `origin/main`, its fix absent from `ImportController.java`, its regression test absent from the working tree. Caught by this session's own pre-push habit (`git fetch` + compare before every push, per this plan's own established practice after the V75 and ad13f30 incidents) rather than by anyone noticing the fix was gone. **Recovered**: `git cherry-pick 1c5b1e4` onto the current `main` tip (applied cleanly, no conflicts), verified the fix and its test were actually present in the tree — not just that the cherry-pick command exited zero — then pushed as `59daf00`. The other session's own unrelated uncommitted work in this shared directory was stashed before the cherry-pick and popped back afterward, verified byte-for-byte restored, not just "stash pop didn't error." No engineering content changed beyond restoring what was already written and tested | Third occurrence of the same failure class in this plan's own history (V75 migration collision, this file being silently reverted twice, now a real commit). The pattern is now well-enough established that it isn't worth re-diagnosing each time — verify before every push, investigate anything unexpected before touching it, and record what happened plainly rather than quietly recovering and moving on, per [[parallel-sessions-on-finora]] |
