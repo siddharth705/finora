@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { SlidersHorizontal, Sparkles, ShieldCheck, Info, Smartphone, X } from 'lucide-react';
 import { userApi, workspaceApi, analyticsApi, deviceApi, type ImportStatistics, type DeviceSession } from '../api/endpoints';
 import { useTheme } from '../context/ThemeContext';
@@ -111,6 +111,20 @@ export default function Settings() {
   const prefsDirty = lowBalanceThreshold !== savedLowBalanceThreshold || timezone !== savedTimezone;
   const intelDirty = confidenceThreshold !== savedConfidenceThreshold;
 
+  const prefsJustSavedTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const intelJustSavedTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Both "just saved" flashes fire a setTimeout that outlives the request they came from -- if the
+  // component unmounts (navigating away, or a test finishing) before the 2s elapses, the timer
+  // still fires into a torn-down tree. Clearing on unmount is the same discipline this codebase
+  // applies to async work elsewhere (see the AfterCommit pattern on the backend).
+  useEffect(() => {
+    return () => {
+      if (prefsJustSavedTimeout.current) clearTimeout(prefsJustSavedTimeout.current);
+      if (intelJustSavedTimeout.current) clearTimeout(intelJustSavedTimeout.current);
+    };
+  }, []);
+
   function loadSessions() {
     setSessionsLoading(true);
     setSessionsError(false);
@@ -174,7 +188,8 @@ export default function Settings() {
       setTimezone(saved.timezone);
       setSavedTimezone(saved.timezone);
       setPrefsJustSaved(true);
-      setTimeout(() => setPrefsJustSaved(false), 2000);
+      if (prefsJustSavedTimeout.current) clearTimeout(prefsJustSavedTimeout.current);
+      prefsJustSavedTimeout.current = setTimeout(() => setPrefsJustSaved(false), 2000);
     } catch {
       setPrefsError(true);
     } finally {
@@ -190,7 +205,8 @@ export default function Settings() {
       setConfidenceThreshold(s.autoApplyConfidenceThreshold);
       setSavedConfidenceThreshold(s.autoApplyConfidenceThreshold);
       setIntelJustSaved(true);
-      setTimeout(() => setIntelJustSaved(false), 2000);
+      if (intelJustSavedTimeout.current) clearTimeout(intelJustSavedTimeout.current);
+      intelJustSavedTimeout.current = setTimeout(() => setIntelJustSaved(false), 2000);
     } catch {
       setIntelError(true);
     } finally {
