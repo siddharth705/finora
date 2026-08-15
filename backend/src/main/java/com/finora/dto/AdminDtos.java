@@ -169,6 +169,15 @@ public class AdminDtos {
             String timezone
     ) {}
 
+    /** Body for POST /admin/users/{id}/reactivate. Optional on every field -- an admin reactivating
+     *  a suspended account with no note attached (today's existing behavior) is still a valid call;
+     *  a null/blank body maps to a null reason exactly like AdminUpdateUserRequest's null-is-absent
+     *  convention above, not a validation error. */
+    public record AdminReactivateRequest(
+            @jakarta.validation.constraints.Size(max = 500, message = "Reason is too long")
+            String reason
+    ) {}
+
     // --- Merchant Intelligence (AdminMerchantStatsService / AdminUserMerchantController) ---
 
     /** One row in the admin Merchant Intelligence page's platform-wide catalog -- see

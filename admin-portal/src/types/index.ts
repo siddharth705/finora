@@ -8,7 +8,10 @@ export interface UserSummaryDto {
   fullName: string;
   phoneNumber: string | null;
   phoneVerified: boolean;
-  status: 'ACTIVE' | 'SUSPENDED';
+  // DEACTIVATED/PENDING_DELETION are self-service (User.STATUS_*, V81 migration); DELETED is the
+  // terminal, anonymized-tombstone state AccountPurgeSweepService leaves behind -- the row is
+  // never actually removed, see User.STATUS_DELETED's own doc comment.
+  status: 'ACTIVE' | 'SUSPENDED' | 'DEACTIVATED' | 'PENDING_DELETION' | 'DELETED';
   roleNames: string[];
   createdAt: string;
 }

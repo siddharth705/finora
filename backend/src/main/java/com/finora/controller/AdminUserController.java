@@ -1,5 +1,6 @@
 package com.finora.controller;
 
+import com.finora.dto.AdminDtos.AdminReactivateRequest;
 import com.finora.dto.AdminDtos.AdminUpdateUserRequest;
 import com.finora.dto.PagedResponse;
 import com.finora.dto.AdminDtos.UserDetailDto;
@@ -71,9 +72,14 @@ public class AdminUserController {
         return ApiResponse.ok(adminUserService.suspend(id, currentUser.id()), "Account suspended");
     }
 
+    /** Body is optional -- a plain POST with no body (today's existing frontend-admin call) still
+     *  works, matching AdminUpdateUserRequest's null-is-absent convention rather than requiring a
+     *  request rewrite just to add an optional note. */
     @PostMapping("/{id}/reactivate")
     @PreAuthorize("hasAuthority('USER_DELETE')")
-    public ApiResponse<UserSummaryDto> reactivate(@PathVariable UUID id) {
-        return ApiResponse.ok(adminUserService.reactivate(id, currentUser.id()), "Account reactivated");
+    public ApiResponse<UserSummaryDto> reactivate(@PathVariable UUID id,
+            @RequestBody(required = false) @Valid AdminReactivateRequest request) {
+        String reason = request != null ? request.reason() : null;
+        return ApiResponse.ok(adminUserService.reactivate(id, currentUser.id(), reason), "Account reactivated");
     }
 }

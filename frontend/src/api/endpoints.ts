@@ -81,6 +81,10 @@ export const authApi = {
     rawApi.post<ApiEnvelope<{ token: string; refreshToken: string }>>('/auth/refresh').then((r) => r.data.data),
   logout: () =>
     api.post<{ message: string }>('/auth/logout').then((r) => r.data),
+  // token is the reactivation token AUTH_ACCOUNT_DEACTIVATED's error details carry -- see
+  // AuthContext.reactivate and ReactivateAccountPrompt.tsx. Returns the same shape as login.
+  reactivate: (token: string) =>
+    api.post<AuthResponseDto>('/auth/reactivate', { token }),
 };
 
 // Just one endpoint now -- there's no backend-triggered "send" step (Firebase's own client SDK
@@ -639,6 +643,13 @@ export const passwordChangeApi = {
     api.post<{ message: string; otherDevicesSignedOut: boolean }>(
       '/users/me/password-change/complete', { sessionId, newPassword, signOutOtherDevices }
     ).then((r) => r.data),
+};
+
+// The self-service account lifecycle -- see UserAccountLifecycleService on the backend for
+// deactivate (today) and delete-request/purge (Phase B, to follow).
+export const accountLifecycleApi = {
+  deactivate: (currentPassword: string, reason: string, note?: string) =>
+    api.post<{ message: string }>('/users/me/account/deactivate', { currentPassword, reason, note }).then((r) => r.data),
 };
 
 // Self-service view of the caller's own active refresh-token sessions -- backs Settings.tsx's

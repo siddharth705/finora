@@ -36,7 +36,7 @@ export interface ApiEnvelope<T> {
   requestId: string | null;
 }
 
-const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password'];
+const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password', '/auth/reactivate'];
 
 const TOKEN_KEY = 'finora_token';
 const REFRESH_TOKEN_KEY = 'finora_refresh_token';

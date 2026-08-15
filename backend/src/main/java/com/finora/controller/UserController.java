@@ -1,5 +1,6 @@
 package com.finora.controller;
 
+import com.finora.dto.AccountLifecycleDtos.*;
 import com.finora.dto.ApiResponse;
 import com.finora.dto.MeAccessDto;
 import com.finora.dto.PasswordChangeDtos.*;
@@ -14,6 +15,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.util.UUID;
 import com.finora.service.AuthorizationService;
 import com.finora.service.PasswordChangeService;
+import com.finora.service.UserAccountLifecycleService;
 import com.finora.service.UserSettingsService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -28,15 +30,18 @@ public class UserController {
     private final UserRepository userRepository;
     private final AuthorizationService authorizationService;
     private final PasswordChangeService passwordChangeService;
+    private final UserAccountLifecycleService accountLifecycleService;
 
     public UserController(UserSettingsService userSettingsService, CurrentUser currentUser,
                            UserRepository userRepository, AuthorizationService authorizationService,
-                           PasswordChangeService passwordChangeService) {
+                           PasswordChangeService passwordChangeService,
+                           UserAccountLifecycleService accountLifecycleService) {
         this.userSettingsService = userSettingsService;
         this.currentUser = currentUser;
         this.userRepository = userRepository;
         this.authorizationService = authorizationService;
         this.passwordChangeService = passwordChangeService;
+        this.accountLifecycleService = accountLifecycleService;
     }
 
     @GetMapping
@@ -90,5 +95,15 @@ public class UserController {
         User user = userRepository.findById(currentUser.id())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
         return ApiResponse.ok(authorizationService.meAccess(user));
+    }
+
+    /** Reversible: blocks login, signs out every device, retains all data -- see
+     *  UserAccountLifecycleService.deactivate's own doc comment. The frontend clears its own
+     *  local session immediately after this succeeds (there is nothing left to be signed in to). */
+    @PostMapping("/account/deactivate")
+    public ApiResponse<DeactivateResponse> deactivate(@Valid @RequestBody DeactivateRequest request) {
+        accountLifecycleService.deactivate(currentUser.id(), request.currentPassword(), request.reason(), request.note());
+        return ApiResponse.ok(new DeactivateResponse(
+                "Your account has been deactivated. Sign in again any time to reactivate it."));
     }
 }

@@ -129,15 +129,32 @@ function CreateUserForm({
   );
 }
 
+// One label/color pair per status -- ACTIVE is the only "good" one; every other status is some
+// flavor of "this account cannot log in right now," so they all get the same danger treatment
+// except DEACTIVATED (self-service, reversible, so a warning reads more accurately than danger).
+// Exported so UserDetail.tsx's own status badge stays in sync with this one instead of drifting.
+export const STATUS_LABELS: Record<string, { label: string; className: string }> = {
+  ACTIVE: { label: 'Active', className: 'bg-success-bg text-success' },
+  SUSPENDED: { label: 'Suspended', className: 'bg-danger-bg text-danger' },
+  DEACTIVATED: { label: 'Deactivated', className: 'bg-warning-bg text-warning' },
+  PENDING_DELETION: { label: 'Pending Deletion', className: 'bg-danger-bg text-danger' },
+  DELETED: { label: 'Deleted', className: 'bg-danger-bg text-danger' },
+};
+
+/** Shared with UserDetail.tsx's own Reactivate button -- one prompt, one convention, instead of
+ *  two independent copies that could drift apart. Cancel (`null`) aborts the whole action, same as
+ *  Suspend's confirm() above; OK with no text still reactivates, returning `undefined` so the
+ *  caller's mutate() omits the reason entirely rather than sending an empty string. */
+export function promptReactivationReason(fullName: string): string | undefined | null {
+  const reason = window.prompt(`Reactivate ${fullName}? Optionally add a note for the audit log.`);
+  return reason === null ? null : (reason.trim() || undefined);
+}
+
 function StatusBadge({ status }: { status: string }) {
-  const isActive = status === 'ACTIVE';
+  const { label, className } = STATUS_LABELS[status] ?? { label: status, className: 'bg-danger-bg text-danger' };
   return (
-    <span
-      className={`text-xs font-semibold rounded-full px-2.5 py-1 ${
-        isActive ? 'bg-success-bg text-success' : 'bg-danger-bg text-danger'
-      }`}
-    >
-      {isActive ? 'Active' : 'Suspended'}
+    <span className={`text-xs font-semibold rounded-full px-2.5 py-1 ${className}`}>
+      {label}
     </span>
   );
 }
@@ -182,7 +199,7 @@ function UsersTable() {
     onError: (err: any) => notify.error(err?.response?.data?.message ?? 'Failed to suspend user.'),
   });
   const reactivateMutation = useMutation({
-    mutationFn: (id: string) => adminUsersApi.reactivate(id),
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) => adminUsersApi.reactivate(id, reason),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-users'] });
       notify.success('User reactivated.');
@@ -257,31 +274,46 @@ function UsersTable() {
       header: 'Actions',
       headerClassName: 'text-right',
       cellClassName: 'text-right',
-      render: (u) => (
-        u.status === 'ACTIVE' ? (
-          <button
-            type="button"
-            disabled={suspendMutation.isPending}
-            onClick={() => {
-              if (confirm(`Suspend ${u.fullName}? They will be signed out and unable to log in until reactivated.`)) {
-                suspendMutation.mutate(u.id);
-              }
-            }}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-danger hover:bg-danger-bg rounded-lg px-2.5 py-1.5"
-          >
-            <ShieldBan size={14} /> Suspend
-          </button>
-        ) : (
-          <button
-            type="button"
-            disabled={reactivateMutation.isPending}
-            onClick={() => reactivateMutation.mutate(u.id)}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-success hover:bg-success-bg rounded-lg px-2.5 py-1.5"
-          >
-            <ShieldCheck size={14} /> Reactivate
-          </button>
-        )
-      ),
+      render: (u) => {
+        if (u.status === 'ACTIVE') {
+          return (
+            <button
+              type="button"
+              disabled={suspendMutation.isPending}
+              onClick={() => {
+                if (confirm(`Suspend ${u.fullName}? They will be signed out and unable to log in until reactivated.`)) {
+                  suspendMutation.mutate(u.id);
+                }
+              }}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-danger hover:bg-danger-bg rounded-lg px-2.5 py-1.5"
+            >
+              <ShieldBan size={14} /> Suspend
+            </button>
+          );
+        }
+        // Admin reactivation covers both admin-SUSPENDED and self-service DEACTIVATED accounts
+        // (AdminUserService.reactivate) -- a support fallback for a deactivated user whose own
+        // reactivation email link expired or was lost. PENDING_DELETION/DELETED get no action
+        // here for v1 -- see AccountPurgeSweepService's own doc comment on why that's deliberate.
+        if (u.status === 'SUSPENDED' || u.status === 'DEACTIVATED') {
+          return (
+            <button
+              type="button"
+              disabled={reactivateMutation.isPending}
+              onClick={() => {
+                const reason = promptReactivationReason(u.fullName);
+                if (reason !== null) {
+                  reactivateMutation.mutate({ id: u.id, reason });
+                }
+              }}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-success hover:bg-success-bg rounded-lg px-2.5 py-1.5"
+            >
+              <ShieldCheck size={14} /> Reactivate
+            </button>
+          );
+        }
+        return null;
+      },
     });
   }
 
@@ -295,7 +327,13 @@ function UsersTable() {
             onChange: (v) => { setStatus(v); setPage(0); },
             placeholder: 'All statuses',
             label: 'Filter by status',
-            options: [{ label: 'Active', value: 'ACTIVE' }, { label: 'Suspended', value: 'SUSPENDED' }],
+            options: [
+              { label: 'Active', value: 'ACTIVE' },
+              { label: 'Suspended', value: 'SUSPENDED' },
+              { label: 'Deactivated', value: 'DEACTIVATED' },
+              { label: 'Pending Deletion', value: 'PENDING_DELETION' },
+              { label: 'Deleted', value: 'DELETED' },
+            ],
           },
         ]}
         onApply={runSearch}

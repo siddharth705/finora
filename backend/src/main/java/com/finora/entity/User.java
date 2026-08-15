@@ -62,8 +62,26 @@ public class User {
      *  BootstrapService only mints a bootstrap account while setup_completed is false. */
     public static final String SUPER_ADMIN_ROLE = "SUPER_ADMIN";
 
-    /** The status a usable account carries. {@code SUSPENDED} is the other. */
+    /** The status a usable account carries. */
     public static final String STATUS_ACTIVE = "ACTIVE";
+    /** Admin-locked (AdminUserService.suspend) -- no self-service way back, distinct from
+     *  STATUS_DEACTIVATED below on purpose. See isSuspended(). */
+    public static final String STATUS_SUSPENDED = "SUSPENDED";
+    /** Self-service, reversible: the user chose to step away. Blocks login like SUSPENDED, but
+     *  AuthService.login() recognizes it separately and offers a reactivation path instead of a
+     *  dead-end rejection -- see isDeactivated() and AuthService.reactivate().
+     *
+     *  Permanent deletion (PENDING_DELETION/DELETED) is a later phase and deliberately has no
+     *  constants here yet -- see V81's own comment on why that schema ships alongside the code
+     *  that writes it, not ahead of it. */
+    public static final String STATUS_DEACTIVATED = "DEACTIVATED";
+
+    /** Every value users_deactivation_reason_check (V82) allows -- kept as one Java-side list so
+     *  UserAccountLifecycleService.deactivate()'s validation and the DB constraint can never name
+     *  a different set. Product feedback / churn-analysis categories, not technical states -- see
+     *  deactivationReason's own doc comment. */
+    public static final java.util.List<String> DEACTIVATION_REASONS = java.util.List.of(
+            "TAKING_A_BREAK", "NOT_USING_ANYMORE", "PRIVACY_CONCERNS", "USING_ANOTHER_APP", "OTHER");
 
     // Legacy single-role string, kept for backward compatibility -- see
     // V16__rbac_roles_permissions.sql and AuthorizationService. New code assigning a user
@@ -127,13 +145,37 @@ public class User {
     @Column(name = "phone_verified", nullable = false)
     private boolean phoneVerified = false;
 
-    // "ACTIVE" or "SUSPENDED" -- see V23__user_account_status.sql. Checked in AuthService.login
-    // and AuthService.refresh; a suspended user can't obtain a new access token, but any access
-    // token issued before the suspension keeps working until it naturally expires (15 min
-    // default) since JwtAuthFilter doesn't re-check the database on every request. That's a
-    // deliberate tradeoff, not an oversight -- see AdminUserService.suspend's doc comment.
+    // ACTIVE / SUSPENDED / DEACTIVATED -- see V23__user_account_status.sql (original two values)
+    // and V81__account_lifecycle_status.sql (DEACTIVATED, including the widened CHECK constraint
+    // -- this column is NOT free text, the DB enforces the full set too). Checked in
+    // AuthService.login and AuthService.refresh; none of these values obtain a new access token,
+    // but any access token issued before the status change keeps working until it naturally
+    // expires (15 min default) since JwtAuthFilter doesn't re-check the database on every request.
+    // That's a deliberate tradeoff, not an oversight -- see AdminUserService.suspend's doc
+    // comment. Every status change that must take effect immediately also calls
+    // RefreshTokenService.revokeAllForUser in the same transaction.
     @Column(nullable = false)
-    private String status = "ACTIVE";
+    private String status = STATUS_ACTIVE;
+
+    // Product-feedback capture for self-service deactivation (V82) -- see
+    // UserAccountLifecycleService.deactivate()'s own doc comment. One of DEACTIVATION_REASONS
+    // above, or null for an account deactivated before this column existed. Deliberately NOT
+    // cleared on reactivation: churn analysis needs the last reason a user gave even after they
+    // come back, the same "persists indefinitely" precedent as passwordChangedAt (V40).
+    @Column(name = "deactivation_reason", length = 50)
+    private String deactivationReason;
+
+    // Optional free text alongside the reason above -- bounded to spare a churn-analysis query
+    // from an unbounded text column, not because 500 characters is a meaningful product limit.
+    @Column(name = "deactivation_note", length = 500)
+    private String deactivationNote;
+
+    // When the CURRENT (or most recent) self-service deactivation was accepted -- distinct from
+    // updatedAt, which moves on every unrelated edit. Powers the configurable self-service
+    // reactivation window (AuthService.login()'s deactivated branch, app.account-lifecycle.
+    // reactivation-window-*).
+    @Column(name = "deactivated_at")
+    private Instant deactivatedAt;
 
     // IANA timezone name (e.g. "Asia/Kolkata", "America/New_York"), used to resolve the
     // Dashboard's time-of-day greeting server-side-of-truth instead of trusting whatever the
@@ -182,7 +224,14 @@ public class User {
     public void setPhoneVerified(boolean phoneVerified) { this.phoneVerified = phoneVerified; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
-    public boolean isSuspended() { return "SUSPENDED".equals(status); }
+    public boolean isSuspended() { return STATUS_SUSPENDED.equals(status); }
+    public boolean isDeactivated() { return STATUS_DEACTIVATED.equals(status); }
+    public String getDeactivationReason() { return deactivationReason; }
+    public void setDeactivationReason(String deactivationReason) { this.deactivationReason = deactivationReason; }
+    public String getDeactivationNote() { return deactivationNote; }
+    public void setDeactivationNote(String deactivationNote) { this.deactivationNote = deactivationNote; }
+    public Instant getDeactivatedAt() { return deactivatedAt; }
+    public void setDeactivatedAt(Instant deactivatedAt) { this.deactivatedAt = deactivatedAt; }
     public String getTimezone() { return timezone; }
     public void setTimezone(String timezone) { this.timezone = timezone; }
     public Instant getPasswordChangedAt() { return passwordChangedAt; }

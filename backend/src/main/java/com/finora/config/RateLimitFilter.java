@@ -231,6 +231,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 // is the only control there is. Shares resetPasswordLimiter because the two are
                 // steps of one flow and one bucket is the honest way to bound it.
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/reset-password/phone"), resetPasswordLimiter),
+                // Shares resetPasswordLimiter for the same reason reset-password/phone does: an
+                // unguessable, single-use, short-TTL token gates the real cost here (issuing real
+                // access/refresh tokens), so this bounds a token holder retrying in a loop rather
+                // than defending against an anonymous guesser.
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/reactivate"), resetPasswordLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/import/csv/stage"), importStageLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/import/pdf/stage"), importStageLimiter),
                 // The asynchronous upload path, sharing importStageLimiter because it is the same

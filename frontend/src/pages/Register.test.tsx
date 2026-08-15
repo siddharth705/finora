@@ -18,6 +18,7 @@ function renderRegister() {
     fullName: null,
     phoneVerified: false,
     login: vi.fn(),
+    reactivate: vi.fn(),
     register: registerMock,
     setPhoneVerified: vi.fn(),
     logout: vi.fn(),

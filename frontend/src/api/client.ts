@@ -82,7 +82,7 @@ export interface ApiEnvelope<T> {
 // Auth endpoints never need (and shouldn't receive) a Bearer token — sending a stale one
 // serves no purpose here since these are all permitAll server-side, and not sending it at all
 // is simply cleaner than relying on the backend to ignore a token that isn't relevant.
-const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password'];
+const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password', '/auth/reactivate'];
 
 api.interceptors.request.use((config) => {
   const isAuthEndpoint = AUTH_ENDPOINTS_NO_TOKEN.some((path) => config.url?.includes(path));
@@ -110,7 +110,17 @@ api.interceptors.request.use((config) => {
  */
 export const SESSION_ENDED_REASON_KEY = 'finora_session_ended_reason';
 
-function clearSessionAndRedirect(reason?: string) {
+/**
+ * Exported (not just used internally by the interceptor below) specifically so any flow that needs
+ * to end the session and explain why -- outside of a 401 -- can call the one real implementation
+ * instead of re-deriving it. Settings.tsx's account-deactivation flow is the first such caller: it
+ * needs the exact same "clear storage without touching AuthContext's React state, so
+ * ProtectedRoute's own reactive redirect can't race a component that never mounts, then hard-
+ * navigate" behavior this function already provides for session-expiry. A second hand-written copy
+ * of the four `finora_*` keys below already caused a bug once (see the comment inside) -- this
+ * export exists so a third one doesn't.
+ */
+export function clearSessionAndRedirect(reason?: string) {
   // Mirrors every key AuthContext.logout() clears -- this used to miss finora_phone_verified,
   // leaving that one flag behind in localStorage after a forced session expiry. Currently
   // inert in practice (ProtectedRoute redirects on a missing token before it would ever read
@@ -255,10 +265,17 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    // Error responses use the same envelope ({success:false, message, errorCode}) —
-    // surface the message where callers already expect err.response.data.message.
+    // Error responses use the same envelope ({success:false, message, errorCode, details}) —
+    // surface the message where callers already expect err.response.data.message. `details` is
+    // carried through too (not just message/errorCode): AUTH_ACCOUNT_DEACTIVATED's reactivation
+    // token travels there (see ApiException/ApiResponse on the backend) and this used to drop it
+    // silently, which would have made the reactivation flow unreachable from the browser.
     if (error.response?.data?.message) {
-      error.response.data = { message: error.response.data.message, errorCode: error.response.data.errorCode };
+      error.response.data = {
+        message: error.response.data.message,
+        errorCode: error.response.data.errorCode,
+        details: error.response.data.details,
+      };
     }
     return Promise.reject(error);
   }

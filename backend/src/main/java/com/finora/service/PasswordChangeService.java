@@ -72,13 +72,7 @@ public class PasswordChangeService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
 
-        // Same check AuthService already applies at login and password reset -- a suspended
-        // account's own still-valid JWT (issued before suspension took effect; JWTs aren't
-        // revoked on suspension) must not be usable to change the password out from under an
-        // account an admin has deliberately locked out.
-        if (user.isSuspended()) {
-            throw new ApiException(HttpStatus.FORBIDDEN, "This account has been suspended.");
-        }
+        requireActiveAccount(user);
         if (!passwordEncoder.matches(request.currentPassword(), user.getPasswordHash())) {
             auditService.record(userId, "INVALID_CURRENT_PASSWORD", "User", userId);
             throw new ApiException(HttpStatus.BAD_REQUEST, "Current password is incorrect.");
@@ -117,6 +111,13 @@ public class PasswordChangeService {
                 "This step has already been completed, or the session is no longer valid. Please start again.");
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
+        // Bug fix: only start() re-checked account status, so a session opened while ACTIVE could
+        // still run to completion after the account was suspended/deactivated mid-flow (by an
+        // admin, by the user on another device, or by a race with an attacker who has captured the
+        // access token -- see requireActiveAccount()'s own doc comment). Re-checked at every step
+        // for the same reason start() checks it at all: the access token already in the caller's
+        // hand keeps working for up to 15 minutes past the status change.
+        requireActiveAccount(user);
 
         String verifiedPhone = phoneVerificationProvider.verifyAndGetPhoneNumber(request.firebaseIdToken());
         if (!phoneNumbersMatch(verifiedPhone, user.getPhoneNumber())) {
@@ -170,6 +171,11 @@ public class PasswordChangeService {
 
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
+        // See verifyOtp()'s identical call for why every step re-checks this, not just start().
+        // Deliberately after the COMPLETED-session idempotency check above, not before: a session
+        // that already succeeded must keep returning its original outcome even if the account's
+        // status changed afterward -- this only gates a completion that hasn't happened yet.
+        requireActiveAccount(user);
 
         if (passwordEncoder.matches(request.newPassword(), user.getPasswordHash())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "New password must be different from your current password.");
@@ -210,6 +216,22 @@ public class PasswordChangeService {
         });
 
         return new CompleteResponse(completeMessage(request.signOutOtherDevices()), request.signOutOtherDevices());
+    }
+
+    /** Shared by all three steps -- a suspended/deactivated account's own still-valid JWT (issued
+     *  before the status change; JWTs aren't revoked, only the refresh token that would renew
+     *  them) must not be usable to change the password out from under an account that is locked
+     *  out or that its own owner just stepped away from. Specific per status, not a generic
+     *  "inactive" message -- unlike login(), this endpoint is authenticated (the caller already
+     *  holds a valid JWT for this exact account), so naming which state applies isn't an
+     *  enumeration risk the way it would be on a public endpoint. */
+    private void requireActiveAccount(User user) {
+        if (user.isSuspended()) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "This account has been suspended.");
+        }
+        if (user.isDeactivated()) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "This account is deactivated.");
+        }
     }
 
     private String completeMessage(boolean signedOutOtherDevices) {
