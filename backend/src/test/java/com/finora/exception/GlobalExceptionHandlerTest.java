@@ -103,9 +103,52 @@ class GlobalExceptionHandlerTest {
      *
      * Asserted through a captured appender rather than by eyeballing output, so "it logs" is a
      * fact the build checks rather than a claim in a comment.
+     *
+     * <p>Uses {@code ErrorCode.INTERNAL_ERROR} rather than {@code IMPORT_SYSTEM_BUSY} as the
+     * example 5xx (BH-043: {@code IMPORT_SYSTEM_BUSY} now has {@code intentionalRejection=true}
+     * and logs at WARN, not ERROR -- see {@link #handleApiException_logsAnIntentionalRejection_atWarnWithNoStackTrace}
+     * below for that path specifically). This test is about the general "a 5xx this enum has no
+     * opinion about is a genuine failure" rule, which {@code INTERNAL_ERROR} still exercises.
      */
     @Test
     void handleApiException_logsA5xx_soAServerFailureIsNeverSilent() {
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(GlobalExceptionHandler.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class));
+
+            var response = handler.handleApiException(
+                    new ApiException(ErrorCode.INTERNAL_ERROR), request());
+
+            assertThat(response.getStatusCode().value()).isEqualTo(500);
+            assertThat(appender.list).hasSize(1);
+            assertThat(appender.list.get(0).getLevel())
+                    .isEqualTo(ch.qos.logback.classic.Level.ERROR);
+            // The endpoint has to be in the line, or finding which call failed means correlating
+            // by timestamp -- the exact problem that made the production 500 so hard to locate.
+            assertThat(appender.list.get(0).getFormattedMessage())
+                    .contains("/api/v1/import/pdf/stage")
+                    .contains("GEN_002");
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    /**
+     * BH-043: the one exception to the rule the test above covers. IMPORT_SYSTEM_BUSY now fires
+     * on every ordinary burst past the concurrency limit (see ImportConcurrencyLimiter's own doc),
+     * not rarely after a 20s timeout -- logging it at ERROR with a full stack trace on every
+     * occurrence would make routine, correctly-handled backpressure look like a server outage and
+     * could flood ERROR-level alerting with what the system is doing right. WARN, and no
+     * stack-trace argument to the log call (asserted via {@code getThrowableProxy()} being null,
+     * not just eyeballing the formatted message) -- the code and message already say everything
+     * there is to know; there is no origin to go find.
+     */
+    @Test
+    void handleApiException_logsAnIntentionalRejection_atWarnWithNoStackTrace() {
         var logger = (ch.qos.logback.classic.Logger)
                 org.slf4j.LoggerFactory.getLogger(GlobalExceptionHandler.class);
         var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
@@ -120,9 +163,10 @@ class GlobalExceptionHandlerTest {
             assertThat(response.getStatusCode().value()).isEqualTo(503);
             assertThat(appender.list).hasSize(1);
             assertThat(appender.list.get(0).getLevel())
-                    .isEqualTo(ch.qos.logback.classic.Level.ERROR);
-            // The endpoint has to be in the line, or finding which call failed means correlating
-            // by timestamp -- the exact problem that made the production 500 so hard to locate.
+                    .isEqualTo(ch.qos.logback.classic.Level.WARN);
+            assertThat(appender.list.get(0).getThrowableProxy())
+                    .as("no stack trace attached -- nothing to find, the message already says why")
+                    .isNull();
             assertThat(appender.list.get(0).getFormattedMessage())
                     .contains("/api/v1/import/pdf/stage")
                     .contains("IMPORT_006");

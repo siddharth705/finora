@@ -65,8 +65,12 @@ exists specifically to keep that safe under load (see [Redis](#redis) above for 
 caveat on the limiter itself). That's a real, working answer to "what if imports pile up" — it caps
 damage rather than eliminating latency. Moving import processing to a background worker/queue is
 justified once there's a measured case the limiter isn't solving: p95 request latency on the import
-endpoint climbing during real usage, or the concurrency ceiling itself becoming the complaint
-(legitimate imports timing out waiting for a slot, not just failing over-capacity gracefully).
+endpoint climbing during real usage, or the concurrency ceiling itself becoming the complaint --
+BH-043 (2026-08-15) changed what that complaint looks like: the limiter now rejects instantly
+rather than queueing a request for up to 20s, so "legitimate imports timing out waiting for a slot"
+can no longer happen. The real signal now is `IMPORT_SYSTEM_BUSY` (`IMPORT_006`) rejection
+*frequency* -- users hitting the limit often enough, not any request waiting long enough to feel
+hung.
 
 ### Benchmark methodology
 

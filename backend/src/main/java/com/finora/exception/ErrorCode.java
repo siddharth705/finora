@@ -31,8 +31,12 @@ public enum ErrorCode {
     IMPORT_ACCOUNT_NAME_REQUIRED("IMPORT_003", HttpStatus.BAD_REQUEST, "The new account needs a name"),
     IMPORT_ACCOUNT_FORBIDDEN("IMPORT_004", HttpStatus.FORBIDDEN, "This account does not belong to you"),
     IMPORT_ACCOUNT_NOT_FOUND("IMPORT_005", HttpStatus.NOT_FOUND, "Account not found"),
+    // BH-043: intentionalRejection=true -- see that field's own doc. ImportConcurrencyLimiter
+    // now throws this the instant every permit is taken, rather than after a rare 20s timeout, so
+    // it fires on ordinary bursts routinely, not on genuine server trouble.
     IMPORT_SYSTEM_BUSY("IMPORT_006", HttpStatus.SERVICE_UNAVAILABLE,
-            "Finora is processing a lot of statement imports right now. Please try again in a moment."),
+            "Finora is processing a lot of statement imports right now. Please try again in a moment.",
+            RetryPolicy.FAIL_FAST, false, true),
     // Deliberately separate from IMPORT_001 even though both mean "you got nothing". They fail at
     // different stages and need different follow-up: 001 means the document's layout defeated
     // table detection, 007 means the table WAS found and every row inside it was rejected. Folding
@@ -162,6 +166,7 @@ public enum ErrorCode {
     private final String defaultMessage;
     private final RetryPolicy retryPolicy;
     private final boolean userActionRequired;
+    private final boolean intentionalRejection;
 
     /**
      * Every existing call site uses this overload, and every one of them defaults to
@@ -176,11 +181,11 @@ public enum ErrorCode {
      * unclassified failure five times is worse than dead-lettering it once.
      */
     ErrorCode(String code, HttpStatus defaultStatus, String defaultMessage) {
-        this(code, defaultStatus, defaultMessage, RetryPolicy.FAIL_FAST, false);
+        this(code, defaultStatus, defaultMessage, RetryPolicy.FAIL_FAST, false, false);
     }
 
     ErrorCode(String code, HttpStatus defaultStatus, String defaultMessage, RetryPolicy retryPolicy) {
-        this(code, defaultStatus, defaultMessage, retryPolicy, false);
+        this(code, defaultStatus, defaultMessage, retryPolicy, false, false);
     }
 
     /**
@@ -191,16 +196,26 @@ public enum ErrorCode {
      * {@code FAILED}, not guessed into {@code ACTION_REQUIRED}.
      */
     ErrorCode(String code, HttpStatus defaultStatus, String defaultMessage, boolean userActionRequired) {
-        this(code, defaultStatus, defaultMessage, RetryPolicy.FAIL_FAST, userActionRequired);
+        this(code, defaultStatus, defaultMessage, RetryPolicy.FAIL_FAST, userActionRequired, false);
     }
 
+    /**
+     * Full form — every field explicit, no defaulting. {@code IMPORT_SYSTEM_BUSY} is the only
+     * entry that calls this directly today, since it is the only code that needs a non-default
+     * {@link #intentionalRejection} while everything else about it (retry policy, user-action)
+     * stays at the ordinary default -- adding a dedicated shorter overload just for that one
+     * combination would collide with the existing {@code (..., boolean userActionRequired)}
+     * overload above (same erased signature, different meaning), so this call site is explicit
+     * instead.
+     */
     ErrorCode(String code, HttpStatus defaultStatus, String defaultMessage,
-              RetryPolicy retryPolicy, boolean userActionRequired) {
+              RetryPolicy retryPolicy, boolean userActionRequired, boolean intentionalRejection) {
         this.code = code;
         this.defaultStatus = defaultStatus;
         this.defaultMessage = defaultMessage;
         this.retryPolicy = retryPolicy;
         this.userActionRequired = userActionRequired;
+        this.intentionalRejection = intentionalRejection;
     }
 
     public String code() { return code; }
@@ -222,6 +237,23 @@ public enum ErrorCode {
      * same answer without the frontend needing its own copy of which codes qualify.
      */
     public boolean userActionRequired() { return userActionRequired; }
+
+    /**
+     * BH-043: whether a {@code 5xx} carrying this code is the server deliberately choosing to
+     * reject a request it could have served (backpressure, a capacity limit, a maintenance
+     * window), rather than something breaking unexpectedly. {@link GlobalExceptionHandler
+     * #handleApiException} reads this to decide how to log a {@code 5xx} response: a genuine
+     * failure logs at {@code ERROR} with the full stack trace (how to find and fix a real
+     * defect); a deliberate rejection logs at {@code WARN} with no trace (there is nothing to
+     * find — the code and message already say everything the throw site knew), so that an
+     * ordinary, expected condition firing routinely under normal load doesn't read as a server
+     * outage or flood {@code ERROR}-level alerting with what the system is doing correctly.
+     *
+     * <p>Defaults to {@code false} through every shorter constructor overload, same reasoning as
+     * {@link #userActionRequired()}'s own default: a {@code 5xx} this enum has no opinion about
+     * is treated as a genuine failure, not guessed into the quieter path.
+     */
+    public boolean intentionalRejection() { return intentionalRejection; }
 
     /**
      * {@link #userActionRequired()} for a stored value that is really this enum's NAME, or
