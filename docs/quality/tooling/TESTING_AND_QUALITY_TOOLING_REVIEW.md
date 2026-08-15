@@ -15,6 +15,13 @@ on the backend where it is missing, and stop CI jobs from being able to hang for
 > error monitoring" claim are no longer true** — they are annotated inline where they appear. A
 > reader acting on the un-annotated text would redo work that is already done.
 
+> **Status update — 2026-08-15. Backend test execution time reviewed against 9 specific
+> optimization practices.** §3.2's "1689 tests including 59 Testcontainers *IT classes... no new
+> tool" verdict is superseded by growth, not by being wrong: the suite is now 2398 tests / 90 *IT
+> classes, and real CI evidence the same week shows the backend job at **11m29s** — §4's "~2m40s...
+> healthy" feedback-time claim is stale for the same reason. Full findings, with evidence rather
+> than assumption, in [§7](#7-backend-test-execution-time-review--2026-08-15).
+
 ---
 
 ## 1. What already exists
@@ -352,3 +359,147 @@ Every tool added to CI spends a finite budget: **the team's willingness to belie
 
 The three P0 items spend almost none of it. One is a config line. One runs tests that are already
 written and already trusted. One puts error reporting on the only tier that lacks it.
+
+---
+
+## 7. Backend test execution time review — 2026-08-15
+
+Requested review against nine specific optimization practices. Method: read the actual test tree
+(346 files) rather than assume, and where a claim was checkable empirically (timing, flakiness),
+measured it rather than estimated it — the same bar §3.2's own "1689 tests... 59 IT classes"
+figures were held to at the time.
+
+**Headline: six of the nine practices are already correctly followed, with real prior engineering
+behind several of them (documented bugs, already fixed). One was a genuine, real gap — parallel
+test execution — and has been closed, scoped carefully given a proven shared-state hazard found
+in the course of this same review. One (test slices) is a considered non-adoption, not an
+oversight. One (parser-vs-integration separation) was already in good shape.**
+
+### 7.1 Per-practice findings
+
+| # | Practice | Status | Evidence |
+|---|---|---|---|
+| 1 | Separate unit from integration; avoid `@SpringBootTest` for logic-only tests | ✅ Already correct | Of 217 `*Test.java`-named classes, exactly **one** carries `@SpringBootTest` — `AbstractIntegrationTest` itself, the shared base every `*IT` class extends. No unit-named test loads a Spring context. |
+| 2 | Spring test slices (`@WebMvcTest`, `@DataJpaTest`) | ❌ Not used — **considered, not adopted** | Zero occurrences of either annotation anywhere in the tree. See §7.2 for why this is a judgment call, not an oversight. |
+| 3 | Avoid unnecessary `@DirtiesContext` | ✅ Already correct | Zero occurrences anywhere. Context reuse is unobstructed. |
+| 4 | Testcontainers reuse (don't restart Postgres per cycle) | ✅ Already correct, with a documented incident behind it | `AbstractIntegrationTest`'s own class doc records a real bug: `@Testcontainers`/`@Container` was tried first, restarted the container per class, and broke Spring's context cache (`Connection to localhost:X refused` across whole test classes). Fixed by hand-rolling a static singleton container, started once in a static initializer, never stopped, reaped by Ryuk on JVM exit. Verified today: the container + full Spring context boot cost **~28s**, paid once per run, not once per class (isolated-vs-with-container timing, §7.3). |
+| 5 | Flyway not run unnecessarily for unit tests | ✅ Already correct | Follows directly from #1 and #4 — a test with no Spring context never touches Flyway; every `*IT` class shares the one migrated schema for the run. |
+| 6 | Parser-level tests separated from full upload-to-DB tests | ✅ Already in good shape | `CsvParserTest` and five `*PdfTableLocatorTest` classes are plain unit tests (no Spring context) exercising parsing/table-location logic directly against fixtures, distinct from `ParserCrashIsRecordedIT`/`DuplicateEvidenceIT`/etc., which go through the real HTTP → service → DB path. |
+| 7 | Identify which test classes dominate execution time | Done, with a finding worth knowing about | See §7.3 — the naive "slowest classes in a full run" ranking is misleading on its own. |
+| 8 | Parallel execution where safe | ❌ Was a real gap — **closed this pass** | See §7.4. |
+| 9 | Balanced test pyramid | ✅ Already healthy | 1804 unit-test methods vs. 475 integration-test methods — **79% / 21%** by actual test count (not file count, which understates it since IT classes average more methods per class). |
+
+### 7.2 Why test slices were not retrofitted
+
+`@WebMvcTest` mocks the service layer and skips the database entirely; `@DataJpaTest` defaults to
+an embedded database (H2) unless explicitly reconfigured. Both would make the affected tests
+faster in isolation. Neither was adopted, for a reason already on record in this codebase rather
+than invented for this review: `AbstractIntegrationTest`'s own class doc states plainly that
+"soft-delete behavior (`@SQLRestriction`), JSONB columns, and array columns all depend on real
+Postgres semantics that an in-memory database won't faithfully reproduce — this is exactly the
+class of bug Testcontainers exists to catch that a mocked repository can't."
+
+Concretely: `ImportStageIdempotencyIT`'s race test needs a **real Postgres unique-constraint
+violation** to fire and be translated to a 409 — a mocked repository can't produce that.
+`AdminBankControllerIT`'s cache-eviction test needs the **real Spring cache infrastructure**
+wired end-to-end. Converting either to a slice test would not make the existing test faster —
+it would make it test less, silently. This is the same bar §2 of this document already applies
+to every other tool on this list: **does this produce a signal we don't already get, or does it
+just look like progress?**
+
+This is not a blanket rejection. A genuinely new controller test whose whole subject is
+request/response mapping or a validation rule — nothing that touches real persistence semantics —
+is a reasonable candidate for `@WebMvcTest` going forward. Retrofitting the existing 90 `*IT`
+classes is not recommended: the real-behavior coverage they hold today was, in several cases,
+written specifically because a mock had already let a real bug through once.
+
+### 7.3 What actually consumes execution time — and a warm-up artifact worth knowing about
+
+A naive sort of every class's own "Time elapsed" from a full sequential run puts several
+plain-unit `*Test.java` classes at the top — `NetWorthServiceTest` at 29.77s, ahead of every
+`*IT` class in the suite. Taken at face value this reads as "these unit tests are the slow ones."
+
+**That reading is wrong, and checking it mattered.** Re-run alone, `NetWorthServiceTest` — 5
+tests, no loops, no `Thread.sleep`, no Spring context — takes **5.2s**, not 29.77s. The other
+~25s is JVM/Mockito warm-up cost (byte-buddy agent self-attachment happens once per fork, on
+whichever test first calls `mock()`) being attributed to whichever class happens to run early in
+the single shared JVM fork, not that class's own logic. Reporting the naive numbers as "these
+tests are slow and need optimizing" would have pointed effort at code that isn't the problem.
+
+The real, load-bearing numbers, measured directly rather than inferred:
+
+| Cost | Measured | Paid |
+|---|---|---|
+| Maven/JVM bootstrap (tiny unit test alone) | ~19s | Once per `mvn test` invocation |
+| + Testcontainers Postgres + full Spring context boot (smallest `*IT` alone) | ~28s more (~47s total) | Once per run — shared afterward, confirmed by §7.1 #4 |
+| Sum of all 305 reported per-class times, sequential baseline | 311s | — |
+| Actual full-suite wall clock, sequential baseline | 316s | — |
+
+The last two numbers being nearly equal confirms the suite was running with **zero
+parallelism** before this pass — every test, one after another, in one JVM fork. That is the
+real target, not any individual class.
+
+### 7.4 Parallel execution — what was done, and why scoped the way it is
+
+**The gap was real.** No `junit-platform.properties` existed, `pom.xml` had no Surefire
+`forkCount`/`parallel` configuration, and the timing identity in §7.3 confirms the suite ran
+fully sequentially.
+
+**What was added:** `backend/src/test/resources/junit-platform.properties`, enabling JUnit 5's
+own thread-level parallel executor — **class-level parallel by default, methods within a class
+stay sequential.** Deliberately JUnit 5's own executor and not Maven Surefire's `forkCount`
+(process-level parallelism): `forkCount` > 1 runs each fork as a separate JVM, which would start
+a **separate** Testcontainers Postgres per fork — directly undoing the single-shared-container
+design §7.1 #4 exists to provide. Thread-level parallelism stays inside the one JVM Surefire
+already starts, so the existing container-reuse design is untouched.
+
+**Why the ~90 `*IT` classes do not get concurrent execution, on purpose.** Every one extends
+`AbstractIntegrationTest`, which shares one cached Spring `ApplicationContext` — singleton beans
+included — across every matching-configuration `*IT` class. This is not a theoretical concern:
+**a real cross-test interaction through exactly this mechanism was diagnosed and fixed the same
+week this review happened** — `ImportStageIdempotencyIT`'s own HTTP calls were drawing down a
+shared, IP-keyed `RateLimiter` bean's budget, intermittently rate-limiting an unrelated `*IT`
+class (`CorruptPdfFailureRecordingIT`) later in the same run. That was a *sequential* ordering
+interaction; running the same classes concurrently would only make that class of hazard easier to
+trigger, across however many other stateful singleton beans in the app have never been
+individually audited for concurrent-test-time safety. Rather than run that risk suite-wide,
+`AbstractIntegrationTest` is now annotated `@org.junit.jupiter.api.parallel.@Isolated`
+(JUnit 5.7+, confirmed available — this codebase runs 5.12.2) — inherited by every subclass, it
+tells the JUnit platform "run nothing else concurrently while a test in this hierarchy runs." The
+90 `*IT` classes stay exactly as serial relative to each other as they always were; they now run
+interleaved with, not blocking, the unit tests running in parallel around them.
+
+**What was NOT touched:** the ~217 unit-test classes were audited by hand for exactly the two
+risk shapes that would make cross-class parallelism unsafe — `System.setProperty`/global JVM
+mutation (zero occurrences) and fixed, non-random shared temp-file paths (two occurrences found,
+both confirmed safe on inspection — one is a string literal never written to disk, the other a
+lightweight `ApplicationContextRunner`-style test whose fixed path is used by no other file).
+
+**Measured result, verified stable across two full runs (2398 tests each, 0 failures, 0 new
+flakiness):**
+
+| Run | Time | vs. sequential baseline (316s) |
+|---|---|---|
+| Sequential baseline (before this pass) | 5:16 (316s) | — |
+| Parallel, run 1 | 4:16 (256s) | −19% |
+| Parallel, run 2 | 3:35 (215s) | −32% |
+
+Locally measured only — the 11m29s CI figure quoted in the §0 status update is a different,
+typically slower/shared runner, so the same relative improvement, not the same absolute number,
+should be expected there. Re-measuring against real CI after this lands is the natural next
+verification step, not assumed here.
+
+### 7.5 What this does not recommend
+
+Consistent with §6's own principle — a tool or change earns its place by producing a signal
+someone will act on, not by matching a checklist:
+
+- **No `@DataJpaTest`/`@WebMvcTest` retrofit** (§7.2) — would trade real-behavior coverage for
+  speed on tests that were, in some cases, written to catch exactly what a slice can't.
+- **No Surefire fork-based parallelism** — would multiply the Testcontainers container per fork,
+  undoing #4's own fix.
+- **No IT-level parallelism** — would reintroduce, at class-concurrency scale, the exact
+  shared-singleton hazard just found and fixed at ordering scale. Worth revisiting only after a
+  deliberate audit of every stateful singleton bean `*IT` tests can reach (`RateLimiter`,
+  `ImportConcurrencyLimiter`, any cache — see `CacheConfig` — and anything added since), not
+  before.
