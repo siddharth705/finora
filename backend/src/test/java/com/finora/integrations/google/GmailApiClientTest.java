@@ -534,6 +534,42 @@ class GmailApiClientTest {
                 .isNotInstanceOf(ApiException.class);
     }
 
+    /**
+     * A trusted domain bounds who signed the message, not how deeply its MIME structure is nested.
+     * Without a depth limit, a genuinely (or maliciously) deep multipart tree overflows the stack --
+     * a {@code StackOverflowError}, which is an {@code Error} rather than a {@code RuntimeException}
+     * and would not be caught by the per-message handling one layer up. This proves the walk gives
+     * up cleanly (no html found) rather than recursing without bound.
+     *
+     * <p>150 levels, deliberately: deep enough to exceed {@code GmailApiClient}'s own 20-level
+     * guard, shallow enough to stay under Jackson's independent default nesting-depth constraint
+     * ({@code StreamReadConstraints}, ~1000) -- which exists and was confirmed empirically while
+     * writing this test: a naive attempt at ~5000 levels never reached this method's own logic at
+     * all, rejected earlier by Jackson's parser with a generic transient-looking failure. That is a
+     * second, independent layer of defense, not a reason to skip verifying this one -- Jackson's
+     * constraint is about token depth during parsing; this guard is about THIS method's own
+     * recursion once a message has already deserialized successfully, and the two should not be
+     * assumed to always coincide.
+     */
+    @Test
+    @DisplayName("a MIME structure deeper than this method's own limit does not overflow the stack")
+    void getMessageBody_aDeeplyNestedMimeStructureDoesNotStackOverflow() {
+        String leaf = "{\"mimeType\":\"text/plain\",\"body\":{\"data\":\"%s\"}}".formatted(base64url("leaf"));
+        String nested = leaf;
+        for (int i = 0; i < 150; i++) {
+            nested = "{\"mimeType\":\"multipart/mixed\",\"parts\":[" + nested + "]}";
+        }
+
+        status.set(200);
+        body.set(fullMessageJson(nested));
+
+        // Must not throw StackOverflowError -- returning without a match (plainText null) is the
+        // correct outcome once the guard's own depth is exceeded; the leaf 150 levels down is
+        // unreachable by design, not a bug.
+        GmailApiClient.MessageBody result = client.getMessageBody("a-token", "m1");
+        assertThat(result.plainText()).isNull();
+    }
+
     /** Gmail's body.data is base64url WITHOUT padding -- the common real-world case, and the one
      *  that breaks a decoder that assumes RFC-compliant padded input. Chosen so the raw encoded
      *  string's length is not a multiple of 4, so an unpadded-intolerant decoder would fail here. */

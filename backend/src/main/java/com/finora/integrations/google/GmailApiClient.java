@@ -270,24 +270,41 @@ public class GmailApiClient {
      * instead — is skipped rather than fetched. Attachment handling is explicitly out of scope (the
      * design proposal's own exclusion list), and skipping here is what keeps that true structurally:
      * there is no code path in this method that can reach an attachment's bytes at all.
+     *
+     * <p>Depth-bounded ({@link #MAX_MIME_DEPTH}). A trusted domain bounds who signed the message,
+     * not what its MIME structure looks like — see {@link AmazonEmailParser}'s identical reasoning
+     * for the digit-run cap. Recursing without a limit turns a deliberately (or accidentally)
+     * deeply-nested {@code multipart} tree into a {@code StackOverflowError}, which is an
+     * {@code Error} rather than a {@code RuntimeException} — it would not be caught by
+     * {@code GmailReceiptExtractionService}'s per-message handling and could take down the whole
+     * batch rather than the one message responsible. Returning null past the limit degrades to
+     * "no matching part found", the same outcome a genuinely bodyless message already produces.
      */
+    private static final int MAX_MIME_DEPTH = 20;
+
     private static String findPart(RawMessage.RawPart part, String mimeType) {
-        if (part == null) return null;
+        return findPart(part, mimeType, 0);
+    }
+
+    private static String findPart(RawMessage.RawPart part, String mimeType, int depth) {
+        if (part == null || depth > MAX_MIME_DEPTH) return null;
         if (mimeType.equals(part.mimeType()) && part.body() != null && part.body().data() != null) {
             return decodeBase64Url(part.body().data());
         }
         if (part.parts() != null) {
             for (RawMessage.RawPart child : part.parts()) {
-                String found = findPart(child, mimeType);
+                String found = findPart(child, mimeType, depth + 1);
                 if (found != null) return found;
             }
         }
         return null;
     }
 
-    /** Gmail's {@code body.data} is base64url without padding. {@link java.util.Base64}'s decoder
-     *  is not universally lenient about missing padding across the values Gmail actually sends, so
-     *  padding is restored explicitly rather than relying on that. */
+    /**
+     * Gmail's {@code body.data} is base64url. Verified empirically (not assumed) that
+     * {@link java.util.Base64.Decoder} tolerates the unpadded form Gmail actually sends: no
+     * manual padding restoration is needed, or performed, here.
+     */
     private static String decodeBase64Url(String unpadded) {
         return new String(Base64.getUrlDecoder().decode(unpadded), StandardCharsets.UTF_8);
     }
