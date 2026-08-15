@@ -18,10 +18,14 @@ import java.util.UUID;
 public class TransactionController {
 
     private final TransactionService transactionService;
+    private final TransactionExplanationService explanationService;
     private final CurrentUser currentUser;
 
-    public TransactionController(TransactionService transactionService, CurrentUser currentUser) {
+    public TransactionController(TransactionService transactionService,
+                                  TransactionExplanationService explanationService,
+                                  CurrentUser currentUser) {
         this.transactionService = transactionService;
+        this.explanationService = explanationService;
         this.currentUser = currentUser;
     }
 
@@ -50,6 +54,12 @@ public class TransactionController {
     @GetMapping("/needs-review")
     public ApiResponse<List<TransactionDto>> needsReview() {
         return ApiResponse.ok(transactionService.needsReview(currentUser.id()));
+    }
+
+    /** "Why this category?" — fetched on demand, not on every row of the Ledger's list. */
+    @GetMapping("/{id}/explanation")
+    public ApiResponse<TransactionExplanationDto> explanation(@PathVariable UUID id) {
+        return ApiResponse.ok(explanationService.explain(currentUser.id(), id));
     }
 
     @PostMapping

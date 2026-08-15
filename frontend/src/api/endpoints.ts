@@ -166,10 +166,21 @@ export interface UpdateTransactionPayload {
   tags?: string[] | null;
 }
 
+// Mirrors TransactionExplanationDto. Fetched on demand (the "Why this category?" panel), not
+// as part of every list row -- see that DTO's own doc comment for why: every field on it already
+// existed on Transaction before this endpoint did, this just reads it back out.
+export interface TransactionExplanation {
+  decisionSource: string;
+  summary: string;
+  evidence: string[];
+}
+
 export const transactionsApi = {
   search: (filters: TransactionFilters) =>
     api.get<PagedResponse<Transaction>>('/transactions', { params: filters }).then((r) => r.data),
   needsReview: () => api.get<Transaction[]>('/transactions/needs-review').then((r) => r.data),
+  explanation: (id: string) =>
+    api.get<TransactionExplanation>(`/transactions/${id}/explanation`).then((r) => r.data),
   create: (body: unknown) => api.post<Transaction>('/transactions', body).then((r) => r.data),
   update: (id: string, body: UpdateTransactionPayload) =>
     api.put<Transaction>(`/transactions/${id}`, body).then((r) => r.data),

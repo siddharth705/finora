@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { Pencil, Trash2, X, ChevronLeft, ChevronRight } from 'lucide-react';
-import { transactionsApi, categoriesApi, type TransactionFilters, type UpdateTransactionPayload } from '../api/endpoints';
+import { Pencil, Trash2, X, ChevronLeft, ChevronRight, HelpCircle } from 'lucide-react';
+import { transactionsApi, categoriesApi, type TransactionFilters, type UpdateTransactionPayload, type TransactionExplanation } from '../api/endpoints';
 import { AskOnceCard } from '../components/AskOnceCard';
 import type { Transaction } from '../types';
 
@@ -35,6 +35,7 @@ export default function Ledger() {
   const queryClient = useQueryClient();
 
   const [editing, setEditing] = useState<Transaction | null>(null);
+  const [explaining, setExplaining] = useState<Transaction | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -165,6 +166,14 @@ export default function Ledger() {
                     >
                       {t.categoryManuallySet ? 'Manual' : 'Auto'}
                     </span>
+                    <button
+                      type="button"
+                      title="Why this category?"
+                      onClick={() => setExplaining(t)}
+                      className="inline-flex items-center justify-center w-4 h-4 ml-1 text-muted hover:text-ink align-middle"
+                    >
+                      <HelpCircle size={12} />
+                    </button>
                   </td>
                   <td className={`p-2 ${t.type === 'INCOME' ? 'text-success' : 'text-danger'}`}>
                     {t.type === 'INCOME' ? '+' : '-'}{fmt(t.amount)}
@@ -243,7 +252,64 @@ export default function Ledger() {
           }}
         />
       )}
+
+      {explaining && (
+        <ExplanationModal transaction={explaining} onClose={() => setExplaining(null)} />
+      )}
     </div>
+  );
+}
+
+// "Why this category?" -- fetched on demand rather than carried on every row, since most rows
+// are never expanded. Every branch below is Finora's own real categorization decision read back
+// out, not a new guess made for this panel -- see TransactionExplanationDto's own doc comment.
+function ExplanationModal({ transaction, onClose }: { transaction: Transaction; onClose: () => void }) {
+  const [explanation, setExplanation] = useState<TransactionExplanation | null>(null);
+  const [loadError, setLoadError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    transactionsApi.explanation(transaction.id)
+      .then((result) => { if (!cancelled) setExplanation(result); })
+      .catch(() => { if (!cancelled) setLoadError(true); });
+    return () => { cancelled = true; };
+  }, [transaction.id]);
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/40 z-30" onClick={onClose} />
+      <div className="fixed inset-0 z-40 flex items-center justify-center p-4 pointer-events-none">
+        <div className="bg-card border border-border rounded-xl2 shadow-soft w-full max-w-sm p-5 pointer-events-auto">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-ink text-sm">Why this category?</h3>
+            <button type="button" onClick={onClose} aria-label="Close" className="text-muted hover:text-ink">
+              <X size={18} />
+            </button>
+          </div>
+
+          <p className="text-xs text-muted mb-3">
+            {transaction.description || transaction.merchant} · {transaction.categoryName}
+          </p>
+
+          {loadError ? (
+            <p className="text-danger text-xs">Couldn't load this explanation — please try again.</p>
+          ) : !explanation ? (
+            <p className="text-muted text-xs">Loading…</p>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-ink text-sm">{explanation.summary}</p>
+              {explanation.evidence.length > 0 && (
+                <ul className="list-disc list-inside space-y-1">
+                  {explanation.evidence.map((line, i) => (
+                    <li key={i} className="text-xs text-muted">{line}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
 
