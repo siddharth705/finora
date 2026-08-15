@@ -269,7 +269,7 @@ describe('StatementHistory — failed imports', () => {
     renderPage();
 
     expect(await screen.findByText('unreadable-statement.pdf')).toBeInTheDocument();
-    expect(screen.getByText(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED].message)).toBeInTheDocument();
+    expect(screen.getByText(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED])).toBeInTheDocument();
   });
 
   it('falls back to a safe generic message for an unmapped or missing failure code', async () => {

@@ -4,7 +4,7 @@ import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-quer
 import { CheckCircle2, UploadCloud, AlertTriangle, Clock, FileText, FileSpreadsheet, Trash2, RefreshCw } from 'lucide-react';
 import { importApi, importJobsApi, statementImportsApi, categoriesApi, accountsApi, type StagingResult } from '../api/endpoints';
 import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, IMPORT_SESSION_ALREADY_CONFIRMED } from '../api/errorCodes';
-import { importFailureMessage, importFailureIsActionRequired } from '../api/importFailureMessages';
+import { importFailureMessage } from '../api/importFailureMessages';
 import { BankLogo } from '../components/BankLogo';
 import { MaskedAccountNumber } from '../components/MaskedAccountNumber';
 import { VerificationPanel } from '../components/VerificationPanel';
@@ -505,9 +505,10 @@ export default function Import() {
         // contract is that Finora controls the wording, even though the server's own message is
         // already reasonable prose (see ExtractionCheck.java). Only a code with no curated entry
         // falls through to the server message / generic fallback below. Sprint 4 item 22:
-        // importFailureIsActionRequired is the same per-code table the message itself came from,
-        // so the banner's color and its text can never disagree about the same code.
-        showError(contractMessage, importFailureIsActionRequired(code));
+        // userActionRequired comes off the wire (ErrorCode.userActionRequired(), computed once
+        // backend-side -- see GlobalExceptionHandler), not a second frontend-maintained copy of
+        // which codes qualify, so the banner's color can never drift from the backend's own answer.
+        showError(contractMessage, !!e.response?.data?.userActionRequired);
       } else {
         showError(e.response?.data?.message ?? (isPdf ? 'Could not parse this PDF.' : 'Could not parse this CSV.'));
       }

@@ -299,11 +299,15 @@ describe('Import — file-type routing', () => {
  * behaviour, unchanged (covered by the two generic-fallback tests above, not repeated here).
  */
 describe('Import — failure UX contract', () => {
-  function rejectWithCode(errorCode: string) {
+  function rejectWithCode(errorCode: string, userActionRequired = false) {
     // The server message is deliberately different from the contract copy in every case below --
     // if a test passed while actually showing this string, it would mean the contract lookup was
-    // never consulted, not that the two happened to agree.
-    return { response: { data: { errorCode, message: 'server-only wording that must not appear' } } };
+    // never consulted, not that the two happened to agree. userActionRequired defaults to false
+    // (the safe default a codeless failure, or a test that doesn't care, would get) -- callers that
+    // assert on banner color pass the real value the backend would send for that specific code.
+    return {
+      response: { data: { errorCode, message: 'server-only wording that must not appear', userActionRequired } },
+    };
   }
 
   it.each([
@@ -318,7 +322,7 @@ describe('Import — failure UX contract', () => {
 
     await pickAndUploadPdf(user);
 
-    expect(await screen.findByText(IMPORT_FAILURE_MESSAGES[code].message)).toBeInTheDocument();
+    expect(await screen.findByText(IMPORT_FAILURE_MESSAGES[code])).toBeInTheDocument();
     expect(screen.queryByText(/server-only wording/i)).not.toBeInTheDocument();
   });
 
@@ -329,26 +333,26 @@ describe('Import — failure UX contract', () => {
    * answer from the identical per-code table the message itself came from.
    */
   it('colors the banner warning for an ACTION_REQUIRED code and danger for a plain FAILED one', async () => {
-    vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue(rejectWithCode(NO_HEADER_DETECTED));
+    vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue(rejectWithCode(NO_HEADER_DETECTED, true));
     const user = userEvent.setup();
     renderImport();
     await pickAndUploadPdf(user);
 
     const actionRequiredBanner = (await screen.findByText(
-      IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED].message
+      IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED]
     )).closest('p');
     expect(actionRequiredBanner?.className).toContain('text-warning');
     expect(actionRequiredBanner?.className).not.toContain('text-danger');
   });
 
   it('colors the banner danger, not warning, for CORRUPT_PDF', async () => {
-    vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue(rejectWithCode(CORRUPT_PDF));
+    vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue(rejectWithCode(CORRUPT_PDF, false));
     const user = userEvent.setup();
     renderImport();
     await pickAndUploadPdf(user);
 
     const failedBanner = (await screen.findByText(
-      IMPORT_FAILURE_MESSAGES[CORRUPT_PDF].message
+      IMPORT_FAILURE_MESSAGES[CORRUPT_PDF]
     )).closest('p');
     expect(failedBanner?.className).toContain('text-danger');
     expect(failedBanner?.className).not.toContain('text-warning');
@@ -362,11 +366,11 @@ describe('Import — failure UX contract', () => {
    * to the plain dropzone), then hitting a plain validation error on the same mounted page.
    */
   it('does not carry a stale ACTION_REQUIRED color into a later, unrelated error', async () => {
-    vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue(rejectWithCode(NO_HEADER_DETECTED));
+    vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue(rejectWithCode(NO_HEADER_DETECTED, true));
     const user = userEvent.setup();
     renderImport();
     await pickAndUploadPdf(user);
-    await screen.findByText(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED].message);
+    await screen.findByText(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED]);
 
     await user.click(screen.getByRole('button', { name: /choose a different file/i }));
 
@@ -1446,12 +1450,12 @@ describe('Import — continuing an unfinished import', () => {
 
     await screen.findByText('hdfc-july.pdf');
     await user.upload(screen.getByTestId('statement-file-input'), csvFile());
-    await screen.findByText(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED].message);
+    await screen.findByText(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED]);
 
     await user.click(screen.getByTitle('Discard Unfinished Import'));
 
     await waitFor(() =>
-      expect(screen.queryByText(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED].message)).not.toBeInTheDocument()
+      expect(screen.queryByText(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED])).not.toBeInTheDocument()
     );
   });
 
@@ -1602,7 +1606,7 @@ describe('Import — arriving to retry a failed sync import', () => {
 
     expect(await screen.findByTestId('statement-dropzone')).toBeInTheDocument();
     expect(screen.getByText('bad-statement.pdf')).toBeInTheDocument();
-    expect(screen.getByText(new RegExp(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED].message))).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED]))).toBeInTheDocument();
   });
 
   /**

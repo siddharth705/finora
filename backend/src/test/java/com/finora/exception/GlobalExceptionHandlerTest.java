@@ -172,6 +172,50 @@ class GlobalExceptionHandlerTest {
         assertThat(response.getBody().message()).doesNotContain(sensitiveLookingToken);
     }
 
+    // ---------------------------------------------------------------- userActionRequired (§1, Sprint 4 item 22)
+
+    /**
+     * Closes the drift risk Sprint 4 item 22 shipped with and flagged rather than fixed: the
+     * frontend used to keep its own hardcoded copy of which codes are user-actionable. This
+     * centralizes the merge here, exactly like errorCode two lines above it -- so every one of
+     * ErrorCode's ~24 constants gets this on the wire with no throw-site changes needed.
+     */
+    @Test
+    void handleApiException_addsUserActionRequiredTrue_forAnActionableCode() {
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class));
+
+        var response = handler.handleApiException(
+                new ApiException(ErrorCode.IMPORT_NO_HEADER_DETECTED), request());
+
+        assertThat(response.getBody().details()).containsEntry("userActionRequired", true);
+    }
+
+    @Test
+    void handleApiException_addsUserActionRequiredFalse_forANonActionableCode() {
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class));
+
+        var response = handler.handleApiException(
+                new ApiException(ErrorCode.IMPORT_CORRUPT_PDF), request());
+
+        assertThat(response.getBody().details()).containsEntry("userActionRequired", false);
+    }
+
+    /**
+     * The pre-existing, still-common case: a throw site using the plain (status, message)
+     * constructor has no ErrorCode at all -- see ErrorCode's own class doc on incremental
+     * adoption. There is no classification to offer here, so this must not invent one (e.g. by
+     * defaulting to false and thereby claiming a considered answer that was never actually given).
+     */
+    @Test
+    void handleApiException_addsNoUserActionRequiredKey_whenTheExceptionCarriesNoErrorCode() {
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class));
+
+        var response = handler.handleApiException(
+                new ApiException(org.springframework.http.HttpStatus.BAD_REQUEST, "plain message"), request());
+
+        assertThat(response.getBody().details()).doesNotContainKey("userActionRequired");
+    }
+
     /**
      * The other half, and the reason this isn't just "log everything": a 4xx is the server working
      * correctly. Logging every rejected password or malformed upload at ERROR would bury the real
