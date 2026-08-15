@@ -749,6 +749,7 @@ export interface GmailReviewItem {
   category: string;
   confidence: number | null;
   stagedAt: string;
+  reasoning: string;
 }
 
 export const gmailApi = {

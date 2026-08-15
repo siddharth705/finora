@@ -127,11 +127,39 @@ public class GmailReviewService {
                 row.date(),
                 row.suggestedCategory(),
                 row.confidence(),
-                session.getCreatedAt());
+                session.getCreatedAt(),
+                reasoningFor(domain, row));
     }
 
     static String displayNameFor(String domain) {
         return DISPLAY_NAMES.getOrDefault(domain, domain);
+    }
+
+    /**
+     * The review queue's "why" — C6.1. Two real facts, stated plainly, never dressed up as more
+     * than they are:
+     *
+     * <ul>
+     *   <li>Amount and date came from a domain the trusted-sender gate (C3) already authenticated
+     *       before this row could exist at all — worth saying, since the queue itself carries no
+     *       other trace of that check having happened.</li>
+     *   <li>Category: {@code GmailStagingBridge} stages every receipt with {@code
+     *       categorySource = "default"} today — there is no merchant-to-category engine yet
+     *       (C6.3, deliberately deferred by D-17). Saying so here, rather than presenting "Other"
+     *       as if it were a real detection, is the same honesty {@code ParsedReceipt}'s own class
+     *       doc insists on for confidence: a field that could be mistaken for more than it is
+     *       needs to say what it actually is.</li>
+     * </ul>
+     *
+     * <p>Branches on {@code categorySource} rather than assuming "default" so this keeps working
+     * unchanged if a future category-detection engine ever sets a different source here.
+     */
+    static String reasoningFor(String domain, StagedRow row) {
+        String base = "Amount and date read from a verified " + displayNameFor(domain) + " email.";
+        if ("default".equals(row.categorySource())) {
+            return base + " Category isn't auto-detected yet, so it defaults to \"Other\" — check it below.";
+        }
+        return base;
     }
 
     /**

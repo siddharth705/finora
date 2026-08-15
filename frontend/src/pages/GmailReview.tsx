@@ -110,6 +110,10 @@ export default function GmailReview() {
                 </div>
               </div>
 
+              {item.reasoning && (
+                <p className="text-xs text-muted mt-2 italic">{item.reasoning}</p>
+              )}
+
               <div className="mt-3">
                 <label htmlFor={`category-${item.sessionId}`} className="block text-[11px] uppercase text-muted mb-1">
                   Category

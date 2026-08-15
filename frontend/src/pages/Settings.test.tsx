@@ -529,5 +529,54 @@ describe('Settings', () => {
 
       expect(await screen.findByText(/synced recently/i)).toBeInTheDocument();
     });
+
+    // C6.1: `connected: false` alone can't distinguish "never connected" from "the grant just
+    // died" -- REAUTH_REQUIRED collapses `connected` to false the same way a never-connected user
+    // does. Without this, a real user whose token Google rejected saw the exact same "Connect
+    // Gmail" first-time prompt, with no account, no explanation.
+    it('shows a distinct reconnect prompt, not the first-time Connect prompt, when the grant needs reauth', async () => {
+      vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({
+        connected: false, status: 'REAUTH_REQUIRED', googleEmail: 'amy@gmail.example.test',
+      }));
+
+      renderSettings();
+
+      expect(await screen.findByText(/needs reconnect/i)).toBeInTheDocument();
+      expect(screen.getByText('amy@gmail.example.test')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /reconnect gmail/i })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^connect gmail$/i })).not.toBeInTheDocument();
+    });
+
+    it('shows the same reconnect prompt for a connection Google revoked', async () => {
+      vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({
+        connected: false, status: 'REVOKED', googleEmail: 'amy@gmail.example.test',
+      }));
+
+      renderSettings();
+
+      expect(await screen.findByText(/needs reconnect/i)).toBeInTheDocument();
+    });
+
+    it('still shows the plain first-time Connect prompt when the user disconnected on purpose', async () => {
+      vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({ connected: false, status: 'DISCONNECTED' }));
+
+      renderSettings();
+
+      expect(await screen.findByRole('button', { name: /^connect gmail$/i })).toBeInTheDocument();
+      expect(screen.queryByText(/needs reconnect/i)).not.toBeInTheDocument();
+    });
+
+    it('clicking Reconnect Gmail starts the same OAuth flow as Connect Gmail', async () => {
+      const user = userEvent.setup();
+      vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({ connected: false, status: 'REAUTH_REQUIRED' }));
+      vi.mocked(gmailApi.connect).mockResolvedValue({ authorizationUrl: 'https://accounts.google.com/o/oauth2/auth?x=1' });
+      delete (window as any).location;
+      (window as any).location = { href: '' };
+
+      renderSettings();
+      await user.click(await screen.findByRole('button', { name: /reconnect gmail/i }));
+
+      await waitFor(() => expect(window.location.href).toBe('https://accounts.google.com/o/oauth2/auth?x=1'));
+    });
   });
 });
