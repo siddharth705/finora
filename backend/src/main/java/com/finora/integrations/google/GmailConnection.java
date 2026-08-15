@@ -88,6 +88,20 @@ public class GmailConnection {
     @Column(name = "last_synced_at")
     private Instant lastSyncedAt;
 
+    /**
+     * When discovery last finished checking this mailbox.
+     *
+     * <p>Deliberately distinct from {@link #lastSyncedAt}, which V80 reserved for actual transaction
+     * sync and which stays null throughout C4: conflating "we looked" with "we imported something"
+     * would make a status panel lie in exactly the period where nothing is imported yet.
+     *
+     * <p>It is also the window anchor — {@code GmailMessageDiscoveryService} asks Gmail for mail
+     * after this, minus an overlap. Null means never checked, which is what selects the bounded
+     * first-run window rather than a walk of the entire mailbox.
+     */
+    @Column(name = "last_discovery_at")
+    private Instant lastDiscoveryAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
@@ -163,6 +177,8 @@ public class GmailConnection {
     public void setConnectedAt(Instant connectedAt) { this.connectedAt = connectedAt; }
     public Instant getLastSyncedAt() { return lastSyncedAt; }
     public void setLastSyncedAt(Instant lastSyncedAt) { this.lastSyncedAt = lastSyncedAt; }
+    public Instant getLastDiscoveryAt() { return lastDiscoveryAt; }
+    public void setLastDiscoveryAt(Instant lastDiscoveryAt) { this.lastDiscoveryAt = lastDiscoveryAt; touch(); }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 }
