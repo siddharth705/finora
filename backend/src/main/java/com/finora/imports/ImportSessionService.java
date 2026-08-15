@@ -154,6 +154,21 @@ public class ImportSessionService {
     public ImportSession createSession(UUID userId, String fileName, byte[] fileContent,
                                         List<StagedRow> rows, DetectedAccountInfo detectedAccount,
                                         DocumentContext documentContext) {
+        return createSession(userId, fileName, fileContent, rows, detectedAccount, documentContext, null);
+    }
+
+    /**
+     * Same as {@link #createSession(UUID, String, byte[], List, DetectedAccountInfo,
+     * DocumentContext)}, plus records where this session came from (C5-B) --
+     * {@link ImportSession#SOURCE_GMAIL} or null, per {@link ImportSession#getSource()}'s own doc
+     * comment. The only caller with a non-null value is {@code GmailStagingBridge}; every CSV/PDF
+     * caller keeps going through one of the two overloads above and this stays null for them,
+     * unchanged from before this parameter existed.
+     */
+    @Transactional
+    public ImportSession createSession(UUID userId, String fileName, byte[] fileContent,
+                                        List<StagedRow> rows, DetectedAccountInfo detectedAccount,
+                                        DocumentContext documentContext, String source) {
         // BH-047: the expired-session sweep used to run here, inside this transaction. It is a
         // scheduled job now -- see sweepExpiredSessions(). Housekeeping on other users' rows has
         // no business being part of this user's upload.
@@ -165,6 +180,7 @@ public class ImportSessionService {
         session.setDetectedAccountJson(writeJson(detectedAccount));
         session.setExpiresAt(Instant.now().plus(SESSION_TTL));
         applyDocumentContext(session, documentContext);
+        session.setSource(source);
         return importSessionRepository.save(session);
     }
 

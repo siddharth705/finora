@@ -392,6 +392,175 @@ class GmailApiClientTest {
                 .hasMessageNotContaining("secret-looking-internal-detail");
     }
 
+    // ---------------------------------------------------------------------------------------
+    // getMessageBody
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("html and plain-text parts are both extracted from a multipart/alternative message")
+    void getMessageBody_extractsBothPartsFromMultipartAlternative() {
+        status.set(200);
+        body.set(fullMessageJson("""
+                {"mimeType":"multipart/alternative","parts":[
+                  {"mimeType":"text/plain","body":{"data":"%s"}},
+                  {"mimeType":"text/html","body":{"data":"%s"}}
+                ]}""".formatted(
+                base64url("Order Total: Rs. 1,299.00"),
+                base64url("<p>Order Total: Rs. 1,299.00</p>"))));
+
+        GmailApiClient.MessageBody result = client.getMessageBody("a-token", "m1");
+
+        assertThat(result.plainText()).isEqualTo("Order Total: Rs. 1,299.00");
+        assertThat(result.html()).isEqualTo("<p>Order Total: Rs. 1,299.00</p>");
+    }
+
+    /**
+     * Real order-confirmation mail is rarely one level of multipart -- Gmail (and most senders)
+     * wrap the alternative content inside multipart/mixed or multipart/related for attachments and
+     * inline images. A body-extraction method that only looked one level deep would return null for
+     * a large share of real receipts.
+     */
+    @Test
+    @DisplayName("html nested two levels deep (mixed > alternative > html) is still found")
+    void getMessageBody_findsPartsNestedInsideMultipartMixed() {
+        status.set(200);
+        body.set(fullMessageJson("""
+                {"mimeType":"multipart/mixed","parts":[
+                  {"mimeType":"multipart/alternative","parts":[
+                    {"mimeType":"text/plain","body":{"data":"%s"}},
+                    {"mimeType":"text/html","body":{"data":"%s"}}
+                  ]},
+                  {"mimeType":"application/pdf","filename":"invoice.pdf","body":{"attachmentId":"att-1"}}
+                ]}""".formatted(base64url("plain body"), base64url("<p>html body</p>"))));
+
+        GmailApiClient.MessageBody result = client.getMessageBody("a-token", "m1");
+
+        assertThat(result.html()).isEqualTo("<p>html body</p>");
+        assertThat(result.plainText()).isEqualTo("plain body");
+    }
+
+    /** A plain-text-only message must not throw or fabricate an html value -- the field is
+     *  independently nullable exactly for this case. */
+    @Test
+    void getMessageBody_whenThereIsNoHtmlPart_returnsNullHtmlNotAnError() {
+        status.set(200);
+        body.set(fullMessageJson(
+                "{\"mimeType\":\"text/plain\",\"body\":{\"data\":\"%s\"}}"
+                        .formatted(base64url("plain text only, no html"))));
+
+        GmailApiClient.MessageBody result = client.getMessageBody("a-token", "m1");
+
+        assertThat(result.html()).isNull();
+        assertThat(result.plainText()).isEqualTo("plain text only, no html");
+    }
+
+    /**
+     * An attachment part carries an {@code attachmentId} in place of inline {@code body.data}.
+     * Attachment handling is explicitly out of scope (design proposal's own exclusion list) -- this
+     * proves the gap is structural: there is no {@code data} for this method to even read, so it
+     * cannot accidentally start fetching attachment bytes later without a deliberate new code path.
+     */
+    @Test
+    @DisplayName("an attachment part is skipped, never fetched")
+    void getMessageBody_skipsAttachmentPartsEntirely() {
+        status.set(200);
+        body.set(fullMessageJson("""
+                {"mimeType":"multipart/mixed","parts":[
+                  {"mimeType":"text/html","body":{"data":"%s"}},
+                  {"mimeType":"image/png","filename":"receipt.png","body":{"attachmentId":"att-2"}}
+                ]}""".formatted(base64url("<p>the receipt</p>"))));
+
+        GmailApiClient.MessageBody result = client.getMessageBody("a-token", "m1");
+
+        assertThat(result.html()).isEqualTo("<p>the receipt</p>");
+    }
+
+    /**
+     * The security-relevant assertion for this method. {@code format=full} has no header allowlist
+     * -- Gmail returns Subject, To, Cc, everything -- so unlike {@code getMessageHeaders} the
+     * discipline here has to be structural: {@code RawMessage} has no field a header could land in.
+     * This proves a raw response carrying headers does not make them reachable through the client at
+     * all, not merely that the client chooses not to expose them.
+     */
+    @Test
+    @DisplayName("headers present in Gmail's full-format response are unreachable, not merely unused")
+    void getMessageBody_headersInTheRawResponseAreStructurallyUnreachable() {
+        status.set(200);
+        // A realistic format=full response DOES carry a headers array alongside payload -- this
+        // fixture includes one to prove RawMessage's absence of a headers field, not the client's
+        // restraint, is what keeps it out.
+        body.set("""
+                {"id":"m1","threadId":"t1",
+                 "payload":{"mimeType":"text/html","body":{"data":"%s"},
+                            "headers":[{"name":"Subject","value":"Your receipt from a competitor"},
+                                       {"name":"To","value":"someone@example.test"}]}}
+                """.formatted(base64url("<p>body</p>")));
+
+        GmailApiClient.MessageBody result = client.getMessageBody("a-token", "m1");
+
+        assertThat(result.html()).isEqualTo("<p>body</p>");
+        // Nothing in MessageBody COULD carry Subject/To even if it wanted to -- there is no such
+        // field on the record -- but this is the closest a black-box test can get to proving that:
+        // confirm parsing an input containing them still produces exactly {html, plainText}.
+    }
+
+    @Test
+    void getMessageBody_requestsFormatFullNotMetadata() {
+        status.set(200);
+        body.set(fullMessageJson("{\"mimeType\":\"text/plain\",\"body\":{\"data\":\"%s\"}}"
+                .formatted(base64url("hi"))));
+
+        client.getMessageBody("a-token", "m1");
+
+        assertThat(seenUri.get()).contains("format=full").doesNotContain("format=metadata");
+    }
+
+    @Test
+    void getMessageBody_whenScopeWasNeverGranted_throwsScopeNotGranted() {
+        status.set(403);
+        body.set("{\"error\":{\"code\":403,\"message\":\"Insufficient Permission\"}}");
+
+        assertThatThrownBy(() -> client.getMessageBody("a-token", "m1"))
+                .isInstanceOf(GmailScopeNotGrantedException.class);
+    }
+
+    @Test
+    void getMessageBody_whenTheMessageIsGone_isNeitherTransientNorAScopeProblem() {
+        status.set(404);
+        body.set("{\"error\":{\"code\":404,\"message\":\"Requested entity was not found.\"}}");
+
+        assertThatThrownBy(() -> client.getMessageBody("a-token", "vanished"))
+                .isInstanceOf(GmailMessageGoneException.class)
+                .isNotInstanceOf(ApiException.class);
+    }
+
+    /** Gmail's body.data is base64url WITHOUT padding -- the common real-world case, and the one
+     *  that breaks a decoder that assumes RFC-compliant padded input. Chosen so the raw encoded
+     *  string's length is not a multiple of 4, so an unpadded-intolerant decoder would fail here. */
+    @Test
+    @DisplayName("unpadded base64url (Gmail's actual encoding) decodes correctly")
+    void getMessageBody_decodesUnpaddedBase64Url() {
+        String content = "Order Total: Rs. 999.00"; // encodes to a non-multiple-of-4 unpadded length
+        String unpadded = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(content.getBytes(StandardCharsets.UTF_8));
+        assertThat(unpadded.length() % 4).as("fixture must actually exercise the padding path").isNotZero();
+
+        status.set(200);
+        body.set(fullMessageJson("{\"mimeType\":\"text/plain\",\"body\":{\"data\":\"%s\"}}"
+                .formatted(unpadded)));
+
+        assertThat(client.getMessageBody("a-token", "m1").plainText()).isEqualTo(content);
+    }
+
+    private static String fullMessageJson(String payloadJson) {
+        return "{\"id\":\"m1\",\"threadId\":\"t1\",\"payload\":" + payloadJson + "}";
+    }
+
+    private static String base64url(String content) {
+        return java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(content.getBytes(StandardCharsets.UTF_8));
+    }
+
     /** Decodes the query string the stub server received, so assertions are about what Gmail would
      *  have read rather than about the string the client happened to build. */
     private static Map<String, String> queryParams(String uri) {

@@ -29,7 +29,11 @@ public class Transaction extends BaseEntity {
 
     public enum Type { INCOME, EXPENSE }
     public enum ReconciliationStatus { OK, DUPLICATE, TRANSFER, REFUND }
-    public enum Source { MANUAL, CSV_IMPORT }
+    // GMAIL_IMPORT added C5-B. PDF-sourced transactions are still tagged CSV_IMPORT (a pre-existing
+    // gap -- ImportService.persistSection hardcodes CSV_IMPORT regardless of upload format), which
+    // this does not fix; it is not repeated for Gmail. No DB CHECK constrains this column (plain
+    // VARCHAR(20) since V1), so adding a value here needed no migration.
+    public enum Source { MANUAL, CSV_IMPORT, GMAIL_IMPORT }
 
     // Which mechanism produced this transaction's category -- explainability, not a decision
     // input (see docs/rule-engine-relationship-engine-eds.md §3.2). KEYWORD_MATCH is the static

@@ -15,23 +15,30 @@ import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.List;
 
 /**
  * Reads from the Gmail API. Separate from {@link GoogleOAuthClient}, which only ever talks to
  * Google's OAuth endpoints — different concern, different failure modes, different scopes.
  *
- * <h2>What this client can and cannot read</h2>
+ * <h2>What this client reads, and in what order it is meant to be called</h2>
  *
- * Three calls, and the ceiling on all of them is deliberate: {@link #getProfile} proves the mailbox
- * is reachable, {@link #listMessages} returns ids, and {@link #getMessageHeaders} returns headers.
- * <b>Nothing here can fetch a message body.</b>
+ * {@link #getProfile} proves the mailbox is reachable. {@link #listMessages} returns ids — no
+ * content. {@link #getMessageHeaders} returns headers — still no content, and specifically the
+ * headers the C3 trust gate needs. Only {@link #getMessageBody}, added in C5, can return a
+ * message's actual content, and its own doc comment states the one rule that makes that safe:
+ * it is for messages the gate has already cleared, never for deciding whether to clear one.
  *
- * <p>That ceiling is the integration's main safety property, not an omission. Discovery decides
- * whether a sender is trusted from headers alone, so a client that could not download a body cannot
- * download the body of mail from a sender the gate is about to reject. See
- * {@link #getMessageHeaders} for the full reasoning; C5 adds body fetching as its own explicit step,
- * for cleared messages only.
+ * <p>The type system does not enforce that ordering — a {@code String} messageId is a
+ * {@code String} messageId, and nothing stops a future caller from passing an unvetted one to
+ * {@link #getMessageBody}. The methods are ordered here, and their doc comments say so
+ * explicitly, because that is what is available: this class cannot make itself the trust
+ * decision, since it has no access to {@code SenderAuthenticationService} or the processed-message
+ * table discovery already checked against. Enforcement lives one layer up, in whatever calls this
+ * client — currently {@code GmailMessageDiscoveryService} for headers, and C5-B's staging bridge
+ * for bodies, which is expected to call {@link #getMessageBody} only for a message it already
+ * knows is {@code GmailProcessedMessage.Outcome.DETECTED_NOT_STAGED}.
  *
  * <p>{@link #getProfile} answers a question nothing else can: <b>can Finora actually read this
  * mailbox?</b> That is not the same question as "does the token refresh". A user can complete
@@ -194,6 +201,95 @@ public class GmailApiClient {
                 + "&metadataHeaders=Date";
 
         return get(accessToken, uri, MessageHeaders.class, "message headers");
+    }
+
+    /** A message's body — C5. See {@link #getMessageBody}'s doc comment for who may call this and
+     *  when. {@code html}/{@code plainText} are independently nullable: a plain-text-only message
+     *  has no {@code html}, and (rarely) the reverse. */
+    public record MessageBody(String html, String plainText) {}
+
+    /**
+     * The raw shape of Gmail's {@code format=full} response — used only inside
+     * {@link #getMessageBody}, never returned. Gmail returns every header the message carries under
+     * {@code format=full}, with no allowlist equivalent to {@code metadataHeaders}; this type does
+     * not model a headers field at all, so there is nowhere for a Subject or a recipient list to be
+     * held even transiently, let alone leak into {@link MessageBody}.
+     */
+    private record RawMessage(RawPart payload) {
+        private record RawPart(String mimeType, RawBody body, List<RawPart> parts) {}
+        private record RawBody(String data) {}
+    }
+
+    /**
+     * Fetches a message's body — html preferred, plain text as a fallback, and only those two.
+     *
+     * <h2>The rule this method exists under, not just documents</h2>
+     *
+     * <b>Call this only for a message {@code SenderAuthenticationService} has already marked
+     * trusted.</b> Everything from {@link #getMessageHeaders} onward in this class exists to answer
+     * that question BEFORE any content is downloaded; calling this for an unvetted message id
+     * defeats the entire point of C3 and C4 — the content of mail from a sender the gate would have
+     * rejected reaches the process anyway, just one call later than it would have without the gate
+     * at all. Nothing in the type system stops that call; see the class doc for why, and where
+     * enforcement actually lives.
+     *
+     * <h2>Why {@code format=full} is safe here specifically</h2>
+     *
+     * {@link #getMessageHeaders} avoids {@code format=full} because it would return headers the
+     * gate does not need and this codebase should not hold ({@code Subject}, {@code To}). That
+     * concern does not disappear here — it is handled differently: {@link RawMessage} has no field
+     * for headers at all, so {@link #findPart} can only ever extract {@code body} content, and
+     * nothing this method returns can carry a header value even by accident.
+     *
+     * <p>The body itself is still attacker-shaped content from the sender's point of view — this
+     * method fetches it, it does not sanitize it. {@code MerchantEmailSanitizer} is the mandatory
+     * next step for anything this returns; see its class doc.
+     *
+     * @return html and/or plainText, whichever the message actually carries; either may be null
+     */
+    public MessageBody getMessageBody(String accessToken, String messageId) {
+        String uri = properties.getGmailApiBaseUrl()
+                + "/gmail/v1/users/me/messages/" + encode(messageId) + "?format=full";
+
+        RawMessage raw = get(accessToken, uri, RawMessage.class, "message body");
+        return new MessageBody(findPart(raw.payload(), "text/html"),
+                findPart(raw.payload(), "text/plain"));
+    }
+
+    /**
+     * Depth-first search for the first part of the given MIME type. Gmail nests a message's real
+     * content under {@code multipart/alternative} (html + plain-text siblings) and often another
+     * layer of {@code multipart/mixed} or {@code multipart/related} above that (attachments, inline
+     * images) — a single-level scan of {@code parts} would miss content most real messages carry.
+     *
+     * <p>Stops at the first match rather than collecting all of them: a message can legitimately
+     * carry more than one {@code text/html} part (a multipart/related structure with inline-image
+     * alternatives), and this method's job is "the body", not an inventory of every part Gmail sent.
+     *
+     * <p>A part with no inline {@code body.data} — an attachment, referenced by {@code attachmentId}
+     * instead — is skipped rather than fetched. Attachment handling is explicitly out of scope (the
+     * design proposal's own exclusion list), and skipping here is what keeps that true structurally:
+     * there is no code path in this method that can reach an attachment's bytes at all.
+     */
+    private static String findPart(RawMessage.RawPart part, String mimeType) {
+        if (part == null) return null;
+        if (mimeType.equals(part.mimeType()) && part.body() != null && part.body().data() != null) {
+            return decodeBase64Url(part.body().data());
+        }
+        if (part.parts() != null) {
+            for (RawMessage.RawPart child : part.parts()) {
+                String found = findPart(child, mimeType);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    /** Gmail's {@code body.data} is base64url without padding. {@link java.util.Base64}'s decoder
+     *  is not universally lenient about missing padding across the values Gmail actually sends, so
+     *  padding is restored explicitly rather than relying on that. */
+    private static String decodeBase64Url(String unpadded) {
+        return new String(Base64.getUrlDecoder().decode(unpadded), StandardCharsets.UTF_8);
     }
 
     /**

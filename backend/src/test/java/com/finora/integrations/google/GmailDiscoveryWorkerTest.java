@@ -1,12 +1,14 @@
 package com.finora.integrations.google;
 
 import com.finora.exception.ApiException;
+import com.finora.integrations.google.merchant.GmailReceiptExtractionService;
 import com.finora.observability.WorkerExecution;
 import com.finora.observability.WorkerObservability;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 
@@ -33,20 +35,22 @@ import static org.mockito.Mockito.*;
 class GmailDiscoveryWorkerTest {
 
     private GmailMessageDiscoveryService discovery;
+    private GmailReceiptExtractionService extraction;
     private GmailConnectionRepository connections;
     private GmailDiscoveryWorker worker;
 
     @BeforeEach
     void setUp() {
         discovery = mock(GmailMessageDiscoveryService.class);
+        extraction = mock(GmailReceiptExtractionService.class);
         connections = mock(GmailConnectionRepository.class);
 
         WorkerObservability observability = mock(WorkerObservability.class);
         WorkerExecution execution = mock(WorkerExecution.class);
         when(observability.beginScheduled(anyString(), anyString())).thenReturn(execution);
 
-        worker = new GmailDiscoveryWorker(discovery, connections, observability,
-                true, 25, 500, Duration.ofHours(1).toMillis());
+        worker = new GmailDiscoveryWorker(discovery, extraction, connections, observability,
+                true, 25, 500, 50, Duration.ofHours(1).toMillis());
     }
 
     /**
@@ -71,6 +75,39 @@ class GmailDiscoveryWorkerTest {
 
         assertThat(attempted).isEqualTo(3);
         verify(discovery).discoverFor(healthy, 500);
+        verify(extraction).extractFor(healthy, 50);
+    }
+
+    /**
+     * The reason discovery and extraction are one loop iteration, not two scheduled passes:
+     * mail discovery just found should not wait for a later tick to be extracted.
+     */
+    @Test
+    @DisplayName("extraction runs for a connection right after its own discovery pass, same tick")
+    void extractionRunsImmediatelyAfterDiscoveryForEachConnection() {
+        GmailConnection connection = connection();
+        when(connections.findDueForDiscovery(any(), any())).thenReturn(List.of(connection));
+
+        worker.runOnce();
+
+        InOrder inOrder = inOrder(discovery, extraction);
+        inOrder.verify(discovery).discoverFor(connection, 500);
+        inOrder.verify(extraction).extractFor(connection, 50);
+    }
+
+    /** If discovery failed, there is nothing new on this connection for extraction to find this
+     *  tick -- attempting it anyway would just spend a second doomed request. */
+    @Test
+    @DisplayName("a connection whose discovery failed does not also attempt extraction")
+    void extractionIsSkippedWhenDiscoveryFailed() {
+        GmailConnection broken = connection();
+        when(connections.findDueForDiscovery(any(), any())).thenReturn(List.of(broken));
+        doThrow(new ApiException(HttpStatus.BAD_GATEWAY, "Gmail is unavailable."))
+                .when(discovery).discoverFor(eq(broken), anyInt());
+
+        worker.runOnce();
+
+        verify(extraction, never()).extractFor(any(), anyInt());
     }
 
     /**
@@ -120,13 +157,14 @@ class GmailDiscoveryWorkerTest {
      */
     @Test
     void theScheduledTriggerDoesNothingWhenDisabled() {
-        GmailDiscoveryWorker disabled = new GmailDiscoveryWorker(discovery, connections,
-                observabilityStub(), false, 25, 500, 3_600_000L);
+        GmailDiscoveryWorker disabled = new GmailDiscoveryWorker(discovery, extraction, connections,
+                observabilityStub(), false, 25, 500, 50, 3_600_000L);
 
         disabled.scheduledDiscovery();
 
         verifyNoInteractions(connections);
         verifyNoInteractions(discovery);
+        verifyNoInteractions(extraction);
     }
 
     private WorkerObservability observabilityStub() {

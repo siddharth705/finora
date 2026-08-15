@@ -50,13 +50,23 @@ public class GmailProcessedMessage {
         /** Failed authentication, or the authenticated domain is not on the registry. The body was
          *  never fetched — the gate runs on headers precisely so it never has to be. */
         SKIPPED_UNTRUSTED_SENDER,
-        /** From a trusted sender, but nothing about it looks transactional. */
+        /** Trusted, and no {@link MerchantEmailParser} recognised this specific message as a
+         *  receipt — ordinary traffic through a trusted sender (a shipping update, a marketing
+         *  email), not a failure. Set by {@link #markSkippedNotReceipt()} (C5-B). */
         SKIPPED_NOT_RECEIPT,
-        /** Trusted and receipt-shaped, but no merchant-specific parser handles it. Recorded, never
-         *  staged (§10.3) — a generic parser inventing a transaction is the failure this avoids. */
+        /** Trusted, but no {@link MerchantEmailParser} claims this authenticated domain at all —
+         *  no parser exists for this merchant yet. Recorded, never staged (§10.3) — a generic
+         *  parser inventing a transaction is the failure this avoids. This is also C4's own
+         *  terminal state, from before C5-B existed to advance it further. */
         DETECTED_NOT_STAGED,
-        /** Reserved for C5. Nothing writes these yet; nothing parses. */
+        /** A parser claimed this domain, extracted a receipt, it cleared
+         *  {@code ParsedReceiptValidator}, and it was staged. Set by {@link #markParsed()}. */
         PARSED,
+        /** A parser claimed this domain and this message looked like a receipt, but extraction
+         *  failed {@code ParsedReceiptValidator} or produced nothing usable — the "this parser
+         *  needs updating" signal, distinct from {@link #SKIPPED_NOT_RECEIPT} on purpose (§16.1):
+         *  the first is ordinary non-receipt mail, this is a broken extraction on mail that WAS a
+         *  receipt. Set by {@link #markParseFailed()}. */
         PARSE_FAILED
     }
 
@@ -130,6 +140,40 @@ public class GmailProcessedMessage {
                                                 Outcome outcome, String authenticatedDomain) {
         return new GmailProcessedMessage(connectionId, gmailMessageId, outcome,
                 authenticatedDomain, null);
+    }
+
+    /**
+     * Advances a {@code DETECTED_NOT_STAGED} row to its final fate — C5-B.
+     *
+     * <p>The guard is not defensive boilerplate: this row's whole purpose is to record a message's
+     * fate exactly once, and a caller that re-runs extraction on an already-decided row (a retry
+     * that forgot to check first, an overlapping run) must fail loudly rather than silently
+     * overwrite what actually happened the first time.
+     */
+    public void markParsed() {
+        requireCurrentlyDetectedNotStaged();
+        this.outcome = Outcome.PARSED;
+    }
+
+    /** Recognised as a receipt but the extraction did not clear {@code ParsedReceiptValidator}, or
+     *  no field could be extracted at all -- the "this parser needs updating" signal. */
+    public void markParseFailed() {
+        requireCurrentlyDetectedNotStaged();
+        this.outcome = Outcome.PARSE_FAILED;
+    }
+
+    /** No parser recognised this message as receipt-shaped -- ordinary traffic through a trusted
+     *  sender (a shipping update, a marketing email), not a failure. */
+    public void markSkippedNotReceipt() {
+        requireCurrentlyDetectedNotStaged();
+        this.outcome = Outcome.SKIPPED_NOT_RECEIPT;
+    }
+
+    private void requireCurrentlyDetectedNotStaged() {
+        if (outcome != Outcome.DETECTED_NOT_STAGED) {
+            throw new IllegalStateException("Cannot re-decide message " + gmailMessageId
+                    + " (connection " + connectionId + "): already " + outcome);
+        }
     }
 
     public UUID getId() { return id; }

@@ -65,7 +65,21 @@ public class ImportDto {
              * from the list offered to the user as a transaction, while still reading the row's
              * own date/amount/description to derive the statement's opening/closing balance.
              */
-            RowKind kind
+            RowKind kind,
+            /**
+             * 0.0–1.0, or null. Null for every CSV/PDF row — a bank statement line is a fact read
+             * from a column, not an extraction with a reliability estimate, so there is nothing
+             * honest to put here for those sources. Populated only by {@code GmailStagingBridge}
+             * (C5-B), carried straight through from {@code ParsedReceipt.confidence} without being
+             * recomputed — this is display data, not a gate; see {@code ParsedReceipt}'s own class
+             * doc for why nothing may threshold on it to skip review.
+             *
+             * <p>Reuses the review table's existing "low confidence" affordance
+             * ({@code categorySource === 'default'} driving a badge in {@code TransactionPreviewTable})
+             * rather than adding a second one — see {@code GmailStagingBridge} for the exact
+             * threshold and why a Gmail row below it also gets {@code categorySource = "default"}.
+             */
+            Double confidence
     ) {
         /**
          * The shape every caller used before WI5 added {@code duplicateMatch}.
@@ -84,7 +98,18 @@ public class ImportDto {
                           boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
                           DuplicateMatch duplicateMatch) {
             this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
-                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, RowKind.TRANSACTION);
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, RowKind.TRANSACTION,
+                    null);
+        }
+
+        /** The shape every caller used before {@code confidence} was added (C5-B). Defaults null --
+         *  see the field's own doc comment for why only Gmail-derived rows populate it. */
+        public StagedRow(LocalDate date, String description, BigDecimal amount, String type,
+                          String suggestedCategory, String categorySource, UUID ruleId,
+                          boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
+                          DuplicateMatch duplicateMatch, RowKind kind) {
+            this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, null);
         }
 
         /**

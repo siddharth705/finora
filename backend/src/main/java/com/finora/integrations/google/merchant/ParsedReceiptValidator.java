@@ -1,6 +1,7 @@
 package com.finora.integrations.google.merchant;
 
 import com.finora.domain.Money;
+import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -25,6 +26,7 @@ import java.util.List;
  * user review — a receipt that passes here is still only a proposal, exactly as
  * {@link ParsedReceipt}'s own class doc says.
  */
+@Component
 public final class ParsedReceiptValidator {
 
     /**
