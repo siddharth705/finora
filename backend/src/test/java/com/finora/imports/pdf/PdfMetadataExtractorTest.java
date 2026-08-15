@@ -65,6 +65,25 @@ class PdfMetadataExtractorTest {
         assertThat(metadata.accountHolderName()).isEqualTo("KAVITA RAMESH DESAI");
     }
 
+    /**
+     * Bug fix, missing coverage found while completing this fix: ACCOUNT_NAME_TRAILING_LABEL's
+     * leading {@code (?i)} used to case-insensitize the WHOLE pattern, not just the "Account Name"
+     * label text -- so the captured-name group's own {@code [A-Z]} requirement was never actually
+     * enforced, and a lowercase phrase ending in "account name" could still have its preceding
+     * lowercase words captured as if they were a real name. Constructed to demonstrate the
+     * mechanism directly (not verified against a specific real statement, unlike the sibling test
+     * above): under the old pattern, "please update your" (three lowercase words) would have
+     * satisfied the case-insensitized capture group and been returned as the account holder.
+     * {@code (?i:...)} now scopes case-insensitivity to just the label; the captured portion is
+     * case-sensitive again, so no word here starting lowercase can open a match at all.
+     */
+    @Test
+    void extract_doesNotCaptureLowercaseWords_asAnAccountHolderName_viaAccountNameTrailingLabel() {
+        var metadata = extractor.extract(List.of("please update your account name"));
+
+        assertThat(metadata.accountHolderName()).isNull();
+    }
+
     @Test
     void extract_recognizesAStatementPeriod_whenTheDatesPrecedeTheLabelOnTheSameLine() {
         var metadata = extractor.extract(List.of("01-05-2026 to 31-07-2026 Statement Period"));
@@ -126,6 +145,23 @@ class PdfMetadataExtractorTest {
         // "AXIS BANK" shape-matches a plausible name just as well as "JOHN DOE" does (two
         // capitalized words, no digits) -- only the BankRegistry check tells them apart.
         var metadata = extractor.extract(List.of("AXIS BANK", "Neo Rupay Credit Card Statement"));
+
+        assertThat(metadata.accountHolderName()).isNull();
+    }
+
+    /**
+     * Bug fix: LEADING_NAME_LINE's leading {@code (?i)} used to case-insensitize the WHOLE
+     * pattern, including the {@code [A-Z]} the "2-4 capitalized words" requirement depends on -- so
+     * ordinary lowercase prose (two words, an optional trailing period) shape-matched exactly as
+     * well as a real name. Verified against a real ICICI credit-card statement: an unrelated
+     * disclosure sentence left an all-lowercase trailing fragment (two words, a trailing period) as
+     * its own extracted line, which -- despite being entirely lowercase -- satisfied the old
+     * pattern and was captured as the account holder. Input below is a generic phrase with the same
+     * shape, genericized per the Synthetic Fixture Policy rather than quoting the real document.
+     */
+    @Test
+    void extract_doesNotMisreadLowercaseProse_asAnAccountHolderName_viaTheLeadingLineFallback() {
+        var metadata = extractor.extract(List.of("please disregard this."));
 
         assertThat(metadata.accountHolderName()).isNull();
     }
@@ -234,6 +270,64 @@ class PdfMetadataExtractorTest {
                 "78,000 76,183 31,200"));
 
         assertThat(metadata.creditLimit()).isEqualByComparingTo("78000");
+    }
+
+    // "First match wins", not "last match wins" -- every primary Label: Value field below now
+    // commits only on the first matching line, mirroring how every GRID_*/TRAILING_LABEL fallback
+    // already guarded its own assignment. Two of the seven guarded fields are exercised here
+    // (rather than all seven near-identically): creditLimit reproduces the real motivating case
+    // directly; accountHolderName proves the fix is the shared loop discipline, not something
+    // specific to Credit Limit.
+
+    /**
+     * Bug fix: every primary "Label: Value" extraction used to commit on EVERY matching line, so
+     * whichever occurrence appeared LAST in the document silently won. Verified against a real
+     * ICICI credit-card statement whose genuine early Credit Limit field was overwritten by a
+     * later, entirely fictional "Credit Limit" figure from the MITC section's worked example of
+     * how Minimum Amount Due is calculated.
+     */
+    @Test
+    void extract_keepsTheFirstCreditLimit_notALaterUnrelatedOccurrenceOfTheSameLabel() {
+        var metadata = extractor.extract(List.of(
+                "Credit Limit: 100000.00",
+                "Some unrelated text",
+                "Credit Limit: 500.00"));
+
+        assertThat(metadata.creditLimit()).isEqualByComparingTo("100000.00");
+    }
+
+    /**
+     * Same fix, a different field -- proving "first real field wins" is the shared loop discipline
+     * now, not a Credit-Limit-specific special case. A genuine field is stated once, prominently,
+     * near the top of a statement; any later occurrence of the same label is either a harmless
+     * repeat or unrelated boilerplate, never something that should override an already-found answer.
+     */
+    @Test
+    void extract_keepsTheFirstAccountHolderName_notALaterDuplicateLabelOccurrence() {
+        var metadata = extractor.extract(List.of(
+                "Account Holder Name: JOHN DOE",
+                "Some unrelated text",
+                "Account Holder Name: JANE ROE"));
+
+        assertThat(metadata.accountHolderName()).isEqualTo("JOHN DOE");
+    }
+
+    /**
+     * Bug fix: Statement Period fills TWO fields (start and end) from one match, unlike the other
+     * six guarded fields above. A first line whose value doesn't parse as a full "X to Y" range
+     * (e.g. missing the "to" separator) must not half-commit -- if it did, the AND-guarded pair
+     * would be permanently stuck with one side null, unable to fall through to a later, fully-formed
+     * "Statement Period" line that states the whole range together.
+     */
+    @Test
+    void extract_ignoresAPartiallyParseableStatementPeriod_andKeepsALaterFullyFormedOne() {
+        var metadata = extractor.extract(List.of(
+                "Statement Period: 01-05-2026",
+                "Some unrelated text",
+                "Statement Period: 01-05-2026 to 31-05-2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 5, 1));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 5, 31));
     }
 
     // Deferred capability evidence (see the Capability Registry's "Capability Backlog" table in

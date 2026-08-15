@@ -965,6 +965,48 @@ public final class PdfFixtureBuilder {
         return render(List.of(page));
     }
 
+    /**
+     * Phase C-8.1 fixture -- native extraction succeeds, the rows it produces reconcile against
+     * the bank's own printed summary totals (a genuine, independent internal check --
+     * {@link com.finora.imports.SummaryTotalsValidator}, not merely an unreached one), and yet the
+     * document never states a closing balance anywhere: the ledger carries no running-balance
+     * column at all (only Date/Narration/Withdrawals/Deposits), so
+     * {@code PdfPreviewGenerator.buildDetectedAccountInfo}'s balance-point derivation -- which is
+     * the ONLY mechanism that ever populates {@code DetectedAccountInfo.closingBalance()} on the
+     * PDF path, see that method's own doc comment -- has nothing to derive it from, and
+     * {@link com.finora.imports.StatementTotalsValidator} in turn reports {@code NOT_APPLICABLE}
+     * for want of a closing balance to check, not a failure.
+     *
+     * <p>This is deliberately NOT the same shape as {@link #buildPrintedSummaryNoReadableTableSample}
+     * (which fails to locate a table at all) or a balance-chain failure fixture (which fails an
+     * arithmetic check). Every applicable check here either VERIFIES or is legitimately
+     * NOT_APPLICABLE; nothing here looks suspicious under any signal the existing validators
+     * produce. That is the point -- see the C-8.1 investigation this fixture exists for: the exact
+     * "succeeded but incomplete" corpus gap that
+     * {@code docs/architecture/system-design/} (C-8 investigation notes) identified as absent from
+     * the fixture corpus.
+     */
+    public static byte[] buildReconciledSummaryNoBalanceColumnSample() throws IOException {
+        float[] totalsCol = {LEFT_MARGIN, 150f, 280f};
+        float[] countsCol = {LEFT_MARGIN, 150f};
+        float[] ledgerCol = {LEFT_MARGIN, 130f, 300f, 400f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("Some Financial Institution")
+                .line("Account Statement")
+                .row(totalsCol, "Total Debits", "Total Credits")
+                .row(totalsCol, "3404.91", "55000.00")
+                .row(countsCol, "Debit Count", "Credit Count")
+                .row(countsCol, "2", "1")
+                .blankLine()
+                .row(ledgerCol, "Date", "Narration", "Withdrawals", "Deposits")
+                .row(ledgerCol, "05/06/2026", "Salary Credit", "", "55000.00")
+                .row(ledgerCol, "10/06/2026", "Grocery Store", "2000.00", "")
+                .row(ledgerCol, "18/06/2026", "Electricity Bill", "1404.91", "");
+
+        return render(List.of(page));
+    }
+
     // ==================== CREDIT_CARD_SUMMARY_SIGNAL (negative evidence) ====================
 
     /**

@@ -74,8 +74,18 @@ public class PdfMetadataExtractor {
     // preceding, unrelated address fragment ("...3,BEHIND  KAVITA RAMESH DESAI Account Name")
     // doesn't get swept into the captured name -- verified this cap is what correctly excludes
     // "BEHIND" (itself capitalized) while still capturing the full 3-word name.
+    // Bug fix: the leading (?i) applied to the WHOLE pattern, including the [A-Z] the doc comment
+    // above depends on to reject an unrelated capitalized fragment -- Java's CASE_INSENSITIVE flag
+    // makes [A-Z] match lowercase letters too, so the capitalization requirement this comment
+    // describes was never actually enforced. A line ending in the label text (case-insensitively,
+    // where casing genuinely does vary across banks) but preceded only by lowercase words -- e.g.
+    // "please update your account name" -- would have had those lowercase words captured as if
+    // they were a real name, the identical defect LEADING_NAME_LINE below had (see that pattern's
+    // own doc comment for the real ICICI statement that surfaced it there). (?i:...) scopes
+    // case-insensitivity to just the label text; the captured name portion is case-sensitive
+    // again, exactly as the doc comment above always intended.
     private static final Pattern ACCOUNT_NAME_TRAILING_LABEL =
-            Pattern.compile("(?i)([A-Z][A-Za-z]*(?:\\s+[A-Z][A-Za-z]*){0,2})\\s+Account\\s*Name\\s*$");
+            Pattern.compile("([A-Z][A-Za-z]*(?:\\s+[A-Z][A-Za-z]*){0,2})\\s+(?i:Account\\s*Name)\\s*$");
     private static final Pattern ACCOUNT_NUMBER_TRAILING_LABEL =
             Pattern.compile("(?i)^(\\d{6,20})\\s+Account\\s*Number\\s*$");
     private static final Pattern STATEMENT_PERIOD_TRAILING_LABEL =
@@ -167,8 +177,18 @@ public class PdfMetadataExtractor {
     // exactly as well as a real name does (two capitalized words, no digits), so LEADING_TITLE_WORDS
     // rejects any candidate containing one of a small set of generic statement-vocabulary words no
     // real person is named after -- the same overreach-prevention shape as the BankRegistry check.
+    // Bug fix: same underlying defect as ACCOUNT_NAME_TRAILING_LABEL above -- the leading (?i)
+    // covered the WHOLE pattern, so the "2-4 capitalized words" this doc comment describes was
+    // never actually enforced ([a-z] under CASE_INSENSITIVE matches uppercase too, and vice versa).
+    // Verified against the same real ICICI statement: an unrelated disclosure sentence left an
+    // all-lowercase trailing fragment (two lowercase words, trailing period) as its own extracted
+    // line, which shape-matched this pattern exactly and was captured as the account holder.
+    // (?i:...) scopes case-insensitivity to just the courtesy-title prefix (mr/Mr/MR all valid);
+    // each name word must now genuinely start with an uppercase letter, which accepts both Title
+    // Case ("Ravi Kumar") and ALL CAPS ("RAVI KUMAR") -- both real, observed holder-name renderings
+    // (genericized per the Synthetic Fixture Policy) -- while finally rejecting all-lowercase prose.
     private static final Pattern LEADING_NAME_LINE = Pattern.compile(
-            "(?i)^(?:(?:mr|mrs|ms|dr|m/s)\\.?\\s+)?[a-z]+(?:\\s+[a-z]+){1,3}\\.?$");
+            "^(?:(?i:mr|mrs|ms|dr|m/s)\\.?\\s+)?[A-Z][A-Za-z]*(?:\\s+[A-Z][A-Za-z]*){1,3}\\.?$");
     private static final int LEADING_NAME_LINE_SEARCH_WINDOW = 5;
     // "name" included defensively: with ACCOUNT_HOLDER now recognizing a bare "Name" label
     // (see its own doc comment), a document whose "Name" label line somehow reaches this
@@ -229,30 +249,63 @@ public class PdfMetadataExtractor {
         java.math.BigDecimal creditLimit = null;
         LocalDate paymentDueDate = null;
 
+        // Bug fix: every primary "Label: Value" extraction below used to commit on EVERY matching
+        // line rather than only the first, so whichever occurrence a field's label happened to
+        // appear at LAST in the document silently won -- found via a real ICICI credit-card
+        // statement whose genuine early Credit Limit field was overwritten by a later, entirely
+        // fictional "Credit Limit" figure from the MITC section's worked example of how Minimum
+        // Amount Due is calculated. A real field is stated once, prominently, near the top of a
+        // statement; any later occurrence of the same label is either a harmless repeat or exactly
+        // this kind of unrelated boilerplate, never something that should override an
+        // already-found answer. Every GRID_*/TRAILING_LABEL fallback below already guarded its own
+        // assignment this way -- these seven are now consistent with that, not exceptions to it.
         for (int i = 0; i < preTableLines.size(); i++) {
             String line = preTableLines.get(i);
-            String holder = firstGroup(ACCOUNT_HOLDER, line);
-            if (holder != null) { accountHolderName = holder; continue; }
-
-            String acctNo = firstGroup(ACCOUNT_NUMBER, line);
-            if (acctNo != null) {
-                accountNumberFull = acctNo;
-                accountNumberMasked = com.finora.imports.CsvParser.maskAccountNumber(acctNo);
-                continue;
+            if (accountHolderName == null) {
+                String holder = firstGroup(ACCOUNT_HOLDER, line);
+                if (holder != null) { accountHolderName = holder; continue; }
             }
 
-            String branch = firstGroup(BRANCH, line);
-            if (branch != null) { branchName = branch; continue; }
+            if (accountNumberMasked == null) {
+                String acctNo = firstGroup(ACCOUNT_NUMBER, line);
+                if (acctNo != null) {
+                    accountNumberFull = acctNo;
+                    accountNumberMasked = com.finora.imports.CsvParser.maskAccountNumber(acctNo);
+                    continue;
+                }
+            }
 
-            String ifsc = firstGroup(IFSC, line);
-            if (ifsc != null) { ifscCode = ifsc.toUpperCase(); continue; }
+            if (branchName == null) {
+                String branch = firstGroup(BRANCH, line);
+                if (branch != null) { branchName = branch; continue; }
+            }
 
-            String period = firstGroup(STATEMENT_PERIOD, line);
-            if (period != null) {
-                LocalDate[] parsed = parsePeriod(period);
-                periodStart = parsed[0];
-                periodEnd = parsed[1];
-                continue;
+            if (ifscCode == null) {
+                String ifsc = firstGroup(IFSC, line);
+                if (ifsc != null) { ifscCode = ifsc.toUpperCase(); continue; }
+            }
+
+            // Bug fix: unlike the other six guarded fields, a "Statement Period" match fills TWO
+            // variables from one line, and parsePeriod can legitimately produce just one of them
+            // (e.g. a line with no "to" separator). Committing a partial parse the way the old
+            // unconditional assignment did would permanently strand the other half at null under
+            // this guard (periodStart/periodEnd would never both be null again, so this block could
+            // never re-run) -- and half-filling from one line, then completing the other half from
+            // a later, possibly-unrelated line, risks stitching together a period that never
+            // appeared as such in the document. Same discipline creditLimit/paymentDueDate already
+            // apply below: only commit when the captured text actually parses as the expected type
+            // -- here, BOTH halves -- so a partial match is treated as no match at all and the loop
+            // keeps looking for a line that genuinely states the whole period together.
+            if (periodStart == null && periodEnd == null) {
+                String period = firstGroup(STATEMENT_PERIOD, line);
+                if (period != null) {
+                    LocalDate[] parsed = parsePeriod(period);
+                    if (parsed[0] != null && parsed[1] != null) {
+                        periodStart = parsed[0];
+                        periodEnd = parsed[1];
+                        continue;
+                    }
+                }
             }
 
             // Checked ahead of PAYMENT_DUE_DATE below since "Credit Limit" is the more specific
@@ -271,16 +324,20 @@ public class PdfMetadataExtractor {
             // fallback) when the captured text actually parses as the expected type -- same
             // discipline CsvParser.firstParseableAmount already established for the identical
             // "label matched, but what follows isn't really the value" shape.
-            String limit = firstGroup(CREDIT_LIMIT, line);
-            if (limit != null) {
-                java.math.BigDecimal parsedLimit = com.finora.imports.CsvParser.parseNumeric(limit);
-                if (parsedLimit != null) { creditLimit = parsedLimit; continue; }
+            if (creditLimit == null) {
+                String limit = firstGroup(CREDIT_LIMIT, line);
+                if (limit != null) {
+                    java.math.BigDecimal parsedLimit = com.finora.imports.CsvParser.parseNumeric(limit);
+                    if (parsedLimit != null) { creditLimit = parsedLimit; continue; }
+                }
             }
 
-            String dueDate = firstGroup(PAYMENT_DUE_DATE, line);
-            if (dueDate != null) {
-                LocalDate parsedDueDate = parseDate(dueDate);
-                if (parsedDueDate != null) { paymentDueDate = parsedDueDate; continue; }
+            if (paymentDueDate == null) {
+                String dueDate = firstGroup(PAYMENT_DUE_DATE, line);
+                if (dueDate != null) {
+                    LocalDate parsedDueDate = parseDate(dueDate);
+                    if (parsedDueDate != null) { paymentDueDate = parsedDueDate; continue; }
+                }
             }
 
             if (paymentDueDate == null && GRID_DUE_DATE_LABEL.matcher(line).find()) {
@@ -343,14 +400,19 @@ public class PdfMetadataExtractor {
                     continue;
                 }
             }
+            // Bug fix: same partial-parse hazard as the primary STATEMENT_PERIOD block above --
+            // only commit when parsePeriod resolved both halves, so a malformed grid-label match
+            // can't strand this AND-guarded pair at a permanent half-null state.
             if (periodStart == null && periodEnd == null) {
                 Matcher periodMatch = STATEMENT_PERIOD_TRAILING_LABEL.matcher(line);
                 if (periodMatch.matches()) {
                     LocalDate[] parsed = parsePeriod(periodMatch.group(1).trim());
-                    periodStart = parsed[0];
-                    periodEnd = parsed[1];
-                    if (ctx != null) ctx.record("GRID_METADATA_TRAILING_LABEL");
-                    continue;
+                    if (parsed[0] != null && parsed[1] != null) {
+                        periodStart = parsed[0];
+                        periodEnd = parsed[1];
+                        if (ctx != null) ctx.record("GRID_METADATA_TRAILING_LABEL");
+                        continue;
+                    }
                 }
             }
         }
