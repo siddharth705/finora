@@ -72,11 +72,11 @@ public class User {
      *  dead-end rejection -- see isDeactivated() and AuthService.reactivate().
      *
      *  Permanent deletion (PENDING_DELETION/DELETED) is a later phase and deliberately has no
-     *  constants here yet -- see V84's own comment on why that schema ships alongside the code
+     *  constants here yet -- see V87's own comment on why that schema ships alongside the code
      *  that writes it, not ahead of it. */
     public static final String STATUS_DEACTIVATED = "DEACTIVATED";
 
-    /** Every value users_deactivation_reason_check (V85) allows -- kept as one Java-side list so
+    /** Every value users_deactivation_reason_check (V88) allows -- kept as one Java-side list so
      *  UserAccountLifecycleService.deactivate()'s validation and the DB constraint can never name
      *  a different set. Product feedback / churn-analysis categories, not technical states -- see
      *  deactivationReason's own doc comment. */
@@ -146,7 +146,7 @@ public class User {
     private boolean phoneVerified = false;
 
     // ACTIVE / SUSPENDED / DEACTIVATED -- see V23__user_account_status.sql (original two values)
-    // and V84__account_lifecycle_status.sql (DEACTIVATED, including the widened CHECK constraint
+    // and V87__account_lifecycle_status.sql (DEACTIVATED, including the widened CHECK constraint
     // -- this column is NOT free text, the DB enforces the full set too). Checked in
     // AuthService.login and AuthService.refresh; none of these values obtain a new access token,
     // but any access token issued before the status change keeps working until it naturally
@@ -157,7 +157,7 @@ public class User {
     @Column(nullable = false)
     private String status = STATUS_ACTIVE;
 
-    // Product-feedback capture for self-service deactivation (V85) -- see
+    // Product-feedback capture for self-service deactivation (V88) -- see
     // UserAccountLifecycleService.deactivate()'s own doc comment. One of DEACTIVATION_REASONS
     // above, or null for an account deactivated before this column existed. Deliberately NOT
     // cleared on reactivation: churn analysis needs the last reason a user gave even after they
