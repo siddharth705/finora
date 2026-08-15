@@ -35,6 +35,15 @@ app:
     sweep:
       enabled: false
 
+  # BH-044. Same reasoning as statement-storage.sweep above: a background thread rewriting
+  # audit_logs rows (clearing metadata, stamping redacted_at) mid-test is exactly the cross-test
+  # pollution BH-058 was about -- a test asserting on a row's real metadata could otherwise lose
+  # a race against the scheduler wiping it out from under the assertion. Tests that exercise the
+  # sweep call AuditService.redactExpiredMetadata() directly, which does not consult this flag.
+  audit:
+    redaction:
+      enabled: false
+
   # Gmail OAuth (Phase B). The client stays unconfigured under test -- the endpoints' behaviour
   # WITHOUT a Google client is itself part of what GmailOAuthEndpointIT pins, and no test should
   # depend on real Google credentials.
