@@ -5,6 +5,7 @@ import com.finora.imports.DocumentContext;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -563,7 +564,22 @@ public class PdfTableLocator {
                 headerNames = new ArrayList<>();
                 headerAnchors = new ArrayList<>();
                 headerEnds = new ArrayList<>();
-                for (PositionedText t : coalesceHeaderRuns(row)) {
+                // Sorted by x, matching the invariant mergeHeaderLines already establishes and
+                // documents for the wrapped-header path ("the whole pipeline downstream of here
+                // reads header cells in left-to-right order"). This single-line path never had that
+                // guarantee: coalesceHeaderRuns preserves row's own order, which is PDFBox's text-
+                // extraction order, not necessarily left-to-right. Verified on a real SBI credit-card
+                // statement whose header extracted as [Transaction Details, Date, Amount, ( ` )] --
+                // Transaction Details BEFORE Date despite sitting well to its right (x=179 vs x=35).
+                // bucketRow's date-collision redirect ("Date already has a value, so this run
+                // belongs to nearest+1") and OFFSET_COLUMN_ANCHORS's forward amount search both
+                // assume index order IS x order; on that unsorted list, "the column after Date"
+                // resolved to Amount, skipping over Transaction Details entirely, and the whole
+                // description merged into the amount cell -- silently defeating every real amount on
+                // the statement.
+                List<PositionedText> coalesced = new ArrayList<>(coalesceHeaderRuns(stripEmbeddedDateRange(row)));
+                coalesced.sort(Comparator.comparing(PositionedText::x));
+                for (PositionedText t : coalesced) {
                     headerNames.add(t.text().trim());
                     headerAnchors.add(t.x());
                     headerEnds.add(t.endX());
@@ -1648,6 +1664,42 @@ public class PdfTableLocator {
      * VALUES that happen to sit close together (two amounts in narrow neighbouring columns) must
      * never be glued into one fabricated column name.
      */
+    /**
+     * Drops an embedded "from &lt;date&gt; to &lt;date&gt;" statement-period span from a header row
+     * before its cells become column names.
+     *
+     * <p>Verified on a real Kotak credit-card statement, whose header prints its own statement
+     * period inline between two real column labels: {@code "Date Transaction details from
+     * 16-Feb-2026 to 15-Mar-2026 Spends Area Amount (Rs.)R"}. Left in place, those four runs
+     * become FOUR phantom columns -- {@code "Transaction details from"}, {@code "16-Feb-2026"},
+     * {@code "to"}, {@code "15-Mar-2026"} -- and every real row's narration or date partly
+     * buckets into one of them instead of its real column. This is not the density fix above
+     * making the row scoreable; it is what has to happen next so the row's OWN content is
+     * correct once it is scored.
+     *
+     * <p>Narrow on purpose: matches only literal {@code "from"} immediately followed by a
+     * parseable date, then literal {@code "to"} immediately followed by a parseable date, in the
+     * row's own run order (not by x, since this runs before any reordering). A genuine "From"/
+     * "To" pair of COLUMN NAMES is vanishingly unlikely to sit adjacent to two date VALUES in
+     * exactly this shape, and this never touches a data row -- only a row already headed for the
+     * accepted-header branch.
+     */
+    private List<PositionedText> stripEmbeddedDateRange(List<PositionedText> row) {
+        for (int i = 0; i + 3 < row.size(); i++) {
+            if (isWord(row.get(i), "from") && CsvParser.parseDate(row.get(i + 1).text().trim()) != null
+                    && isWord(row.get(i + 2), "to") && CsvParser.parseDate(row.get(i + 3).text().trim()) != null) {
+                List<PositionedText> stripped = new ArrayList<>(row);
+                stripped.subList(i, i + 4).clear();
+                return stripped;
+            }
+        }
+        return row;
+    }
+
+    private boolean isWord(PositionedText t, String word) {
+        return t.text().trim().equalsIgnoreCase(word);
+    }
+
     private List<PositionedText> coalesceHeaderRuns(List<PositionedText> row) {
         List<PositionedText> cells = new ArrayList<>();
         for (PositionedText run : row) {
@@ -1799,7 +1851,21 @@ public class PdfTableLocator {
         // mostly ordinary words. Requiring a third of the cells to be recognized column names
         // rejects that 13-cell/2-match sentence exactly as before, while accepting this 11-cell/
         // 5-match header, so the original protection is kept rather than traded away.
-        boolean denseEnoughToBeAHeader = matches * 3 >= row.size();
+        //
+        // The denominator excludes cells that carry a VALUE (parse as a date or number), not just
+        // recognized names -- verified on a real Kotak credit-card statement whose header embeds
+        // its own dynamic statement period inline: "Date Transaction details from 16-Feb-2026 to
+        // 15-Mar-2026 Spends Area Amount (Rs.)R". PDFBox splits "Transaction"/"details" apart, so
+        // this scores matches=3 ("date", "details", "amount" each individually recognized) against
+        // 11 raw cells -- past the >=2 floor, but 3*3=9 < 11 fails density by exactly the two date
+        // VALUES the range contributes. A date value sitting in a header row is not prose the way
+        // "the" or "balance" would be if this were a paragraph -- it is not a column name and it is
+        // not ordinary text either, so it should not count against the row's "mostly column names"
+        // measure any more than the column names themselves do. Only affects the denominator:
+        // matchesAnyHint already never matches a bare value (HEADER_HINTS names columns, not dates
+        // or amounts), so no value cell was ever contributing to `matches` either way.
+        int valueCells = (int) row.stream().filter(this::carriesAValue).count();
+        boolean denseEnoughToBeAHeader = matches * 3 >= (row.size() - valueCells);
         return hasDate && matches >= 2 && denseEnoughToBeAHeader;
     }
 
@@ -1934,8 +2000,20 @@ public class PdfTableLocator {
             // about to be redirected AWAY from), not on the destination -- this is about trusting
             // what the reference column already holds, not about which column looks correct to
             // receive it.
+            // Also requires a decimal point in the run's own text. Verified against a real Kotak
+            // credit-card statement: several merchant lines print a bare 3-digit card-ending
+            // suffix right after the merchant name ("AMAZON 356", the card's last 3 digits, no
+            // relation to the transaction amount) with no decimal point at all -- unlike every
+            // real amount on the same statement, which is always printed with two decimal places.
+            // Without this, "356" reads as "non-blank, non-amount column, incoming run parses as
+            // a number" exactly like a genuinely overshot "500.00" would, and gets forwarded onto
+            // the real amount, concatenating into "356304.00" for what is actually a ₹304.00
+            // purchase. A bare integer is far more likely to be an identifier -- a suffix, a
+            // count, a reference fragment -- than a standalone currency amount in a column that
+            // isn't itself amount-shaped; a decimal amount overshooting its own column is the
+            // documented motivating case and still has one.
             if (existing != null && !isAmountColumn(columnName) && !isReferenceColumn(columnName)
-                    && CsvParser.parseNumeric(t.text().trim()) != null) {
+                    && t.text().contains(".") && CsvParser.parseNumeric(t.text().trim()) != null) {
                 int laterAmountColumn = nextAmountColumn(headerNames, nearest);
                 if (laterAmountColumn >= 0) {
                     nearest = laterAmountColumn;
@@ -2056,23 +2134,25 @@ public class PdfTableLocator {
         return matchesAnyHint(columnName, AMOUNT_COLUMN_HINTS);
     }
 
-    // Substring, not matchesAnyHint's per-word exact match: a real header cell like "Chq./Ref.No."
-    // is one punctuation-joined token with no whitespace, so matchesAnyHint's word-splitting (which
-    // only strips LEADING/TRAILING punctuation per word, see its own doc comment) would tokenize it
-    // to a single word "chq./ref.no" that equals neither "chq" nor "ref" outright. A substring check
-    // is the right tool for a column-name vocabulary that is routinely glued together like this one.
-    private static final List<String> REFERENCE_COLUMN_HINTS =
-            List.of("ref", "cheque", "chq", "utr", "instrument no");
+    // Word-boundary regex, not matchesAnyHint's per-word exact match and not a plain substring
+    // check: a real header cell like "Chq./Ref.No." is one punctuation-joined token with no
+    // whitespace, so matchesAnyHint's word-splitting (which only strips LEADING/TRAILING
+    // punctuation per word, see its own doc comment) would tokenize it to a single word
+    // "chq./ref.no" that equals neither "chq" nor "ref" outright -- a plain substring check was
+    // tried first and is wrong the other way: "ref" as a bare substring also matches inside
+    // "Refund" and "Preference", neither of which is a reference-number column. \b sees the same
+    // transition (word character <-> non-word character) on punctuation as it does on whitespace,
+    // so it isolates "ref" as its own token in "chq./ref.no." (bounded by "/" and ".") while
+    // correctly refusing to match it inside "refund" (no boundary between "ref" and the "u" that
+    // continues the same word).
+    private static final Pattern REFERENCE_COLUMN_PATTERN =
+            Pattern.compile("\\b(ref|cheque|chq|utr|instrument no)\\b");
 
     /** True for a reference/cheque-number column -- see the OFFSET_COLUMN_ANCHORS guard in
      *  {@link #bucketRow} that this exists for: unlike a merchant-category or description column,
      *  this kind of column legitimately holds nothing but digits. */
     private boolean isReferenceColumn(String columnName) {
-        String normalized = CsvParser.normalizeHeaderCell(columnName);
-        for (String hint : REFERENCE_COLUMN_HINTS) {
-            if (normalized.contains(hint)) return true;
-        }
-        return false;
+        return REFERENCE_COLUMN_PATTERN.matcher(CsvParser.normalizeHeaderCell(columnName)).find();
     }
 
     private int nextAmountColumn(List<String> headerNames, int afterIndex) {

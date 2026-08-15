@@ -218,7 +218,19 @@ class SplitHeaderRunsPdfTableLocatorTest {
         // "9999999999999999" placeholder-as-amount bug this fix corrects -- to 1,360.12 and
         // 3,965.01 respectively -- but neither changes the count, since a placeholder and a real
         // amount both already counted as "a real number" either way; only the VALUE was wrong.
-        List<Integer> expected = List.of(244, 360, 9);
+        //
+        // hdfc-savings-ledger-validation's count moved again, 244 -> 241, when the same
+        // OFFSET_COLUMN_ANCHORS redirect was additionally taught to require a decimal point in
+        // the redirected value -- see that guard's own doc comment (verified on a real Kotak
+        // credit-card statement, where a bare 3-digit card-ending suffix printed next to a
+        // merchant name was wrongly read as an overshot amount and merged into the real one).
+        // Individually confirmed: all 3 rows that dropped out of this count carry `Date=XXXXX`
+        // (redacted/masked entirely, not a real date under any format) with a redacted 4-digit
+        // placeholder amount "9999" that no longer gets rescued by the now-decimal-only redirect
+        // -- a row whose date can never parse stages nothing regardless of what its amount cell
+        // resolves to, so this is the same "boilerplate/unparseable either way" shape as the two
+        // moves above, not a new loss of accuracy on any real transaction.
+        List<Integer> expected = List.of(241, 360, 9);
         String[] transactionAmountColumns = {"withdrawal amt", "deposit amt", "amount", "debit",
                 "credit", "deposit", "withdrawal", "deposits", "withdrawals"};
 

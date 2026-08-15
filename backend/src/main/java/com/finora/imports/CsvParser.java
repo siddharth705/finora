@@ -211,6 +211,16 @@ public class CsvParser {
     public static String normalizeHeaderCell(String cell) {
         if (cell == null) return "";
         String s = cell.trim().toLowerCase();
+        // Bug fix: verified against a real Kotak credit-card statement -- its font renders the
+        // Rupee glyph as a bare "r" immediately after a closing paren ("Amount (Rs.)r" for what
+        // prints on screen as "Amount (Rs.)₹"), the same class of quirk as the Rupee-as-"C" bug
+        // in parseNumeric (see that method's own comment), just a different fallback character
+        // for a different document's font. Left unstripped, the trailing "r" sits past the
+        // parenthetical strip below's end anchor, so it never fires, "amount (rs.)r" never equals
+        // the "amount" hint, and every row on the statement silently failed to normalize. Scoped
+        // to immediately-after-a-closing-paren so a real column name that happens to end in "r"
+        // elsewhere is never touched.
+        s = s.replaceAll("(?<=\\))r\\s*$", "");
         s = s.replaceAll("\\s*\\([^)]*\\)\\s*$", "").trim();
         s = s.replaceAll("\\s*\\(\\s*$", "").trim();
         // Bug fix: trailing punctuation was never stripped, so an abbreviated column name could
