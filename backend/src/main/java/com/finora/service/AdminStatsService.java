@@ -43,7 +43,7 @@ public class AdminStatsService {
         long suspendedUsers = userRepository.countByStatusAndRoleNot("SUSPENDED", "BOOTSTRAP_ADMIN");
         // Bug fix: this used to derive activeUsers as totalUsers - suspendedUsers, on the reasoning
         // that status was a two-value column (V23's original CHECK constraint) so "active" was
-        // always exactly "everyone else." V81 widened status to include DEACTIVATED (and reserves
+        // always exactly "everyone else." V84 widened status to include DEACTIVATED (and reserves
         // room for more self-service states in a later phase) -- the subtraction silently started
         // counting deactivated accounts as active, with no test catching it (AdminStatsServiceTest
         // only ever exercised the ACTIVE/SUSPENDED world). Counting ACTIVE explicitly is immune to

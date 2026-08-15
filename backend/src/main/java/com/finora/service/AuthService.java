@@ -484,7 +484,7 @@ public class AuthService {
             if (selfServiceReactivationWindowHasClosed(user)) {
                 // Deliberately NOT a token-bearing AUTH_ACCOUNT_DEACTIVATED response -- offering a
                 // "Reactivate my account" button that would only fail is worse than not offering
-                // one. The account is NOT deleted (see V82/AccountLifecycleDtos' own comments);
+                // one. The account is NOT deleted (see V85/AccountLifecycleDtos' own comments);
                 // this only closes the SELF-SERVICE path, same as the doc this policy comes from
                 // is explicit about.
                 throw new ApiException(HttpStatus.FORBIDDEN,
@@ -575,7 +575,7 @@ public class AuthService {
 
     /** app.account-lifecycle.reactivation-window-enabled gates this entirely -- disabled (the
      *  default) means no window ever closes, matching today's existing unlimited-window behavior.
-     *  A null deactivatedAt (an account deactivated before V82 shipped the column) is treated the
+     *  A null deactivatedAt (an account deactivated before V85 shipped the column) is treated the
      *  same way: open a window can't have closed if it's never had a start. */
     private boolean selfServiceReactivationWindowHasClosed(User user) {
         if (!reactivationWindowEnabled) {

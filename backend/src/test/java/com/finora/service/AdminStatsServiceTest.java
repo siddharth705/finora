@@ -17,7 +17,7 @@ import static org.mockito.Mockito.when;
  *  exclusion fix: totalUsers, suspendedUsers, and activeUsers must each exclude that system
  *  account -- and, separately (bug fix), to lock in that activeUsers is counted directly via
  *  status = 'ACTIVE' rather than derived as totalUsers - suspendedUsers. The derived form was
- *  correct only while status was a two-value column; V81 added DEACTIVATED (with more self-service
+ *  correct only while status was a two-value column; V84 added DEACTIVATED (with more self-service
  *  statuses reserved for a later phase), and the subtraction silently started counting every
  *  non-suspended, non-active account as "active" -- exactly the gap
  *  overview_doesNotCountADeactivatedAccountAsActive below pins. */

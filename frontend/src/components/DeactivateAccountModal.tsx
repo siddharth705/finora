@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { X } from 'lucide-react';
 import { accountLifecycleApi } from '../api/endpoints';
 
-// Mirrors User.DEACTIVATION_REASONS on the backend -- the DB CHECK constraint (V82) is the actual
+// Mirrors User.DEACTIVATION_REASONS on the backend -- the DB CHECK constraint (V85) is the actual
 // source of truth for the allowed set, so this is a display-label mapping, not a second copy of
 // the validation rule.
 const DEACTIVATION_REASONS: { value: string; label: string }[] = [
