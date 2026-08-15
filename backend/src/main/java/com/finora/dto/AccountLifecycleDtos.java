@@ -3,8 +3,8 @@ package com.finora.dto;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
-/** The self-service account lifecycle -- see UserAccountLifecycleService for deactivate (today)
- *  and delete-request/purge (Phase B, to follow). */
+/** The self-service account lifecycle -- see UserAccountLifecycleService for deactivate and
+ *  delete-request/purge. */
 public class AccountLifecycleDtos {
 
     /** currentPassword is the re-auth gate -- deactivation is reversible and the caller already
@@ -25,4 +25,14 @@ public class AccountLifecycleDtos {
     ) {}
 
     public record DeactivateResponse(String message) {}
+
+    /** sessionId is a PasswordChangeSession id already at OTP_VERIFIED -- the frontend drives the
+     *  exact same start()/verifyOtp() calls ChangePasswordModal uses. See
+     *  UserAccountLifecycleService.requestDeletion and PasswordChangeService.
+     *  consumeForAccountDeletion. No currentPassword field: the session itself is that proof, same
+     *  as CompleteRequest never re-asks for it either -- this is deliberately a higher bar than
+     *  DeactivateRequest's password-only re-auth, since this action is irreversible. */
+    public record DeleteAccountRequest(@NotBlank String sessionId) {}
+
+    public record DeleteAccountResponse(String message) {}
 }

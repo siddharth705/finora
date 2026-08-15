@@ -58,5 +58,11 @@ public class NoOpEmailProvider implements EmailProvider, SilentProductionFallbac
     }
 
     @Override
+    public EmailResult sendAccountDeletionRequestedEmail(String toEmail, java.time.Instant requestedAt) {
+        log.info("No email provider configured — would have sent an account-deletion-requested notification to {}", toEmail);
+        return EmailResult.failure(ProviderType.RESEND, "No email provider configured");
+    }
+
+    @Override
     public String requiredConfigHint() { return "RESEND_API_KEY"; }
 }

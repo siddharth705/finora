@@ -232,6 +232,34 @@ public class PasswordChangeService {
         if (user.isDeactivated()) {
             throw new ApiException(HttpStatus.FORBIDDEN, "This account is deactivated.");
         }
+        if (user.isPendingDeletion() || user.isDeleted()) {
+            // Without this, a PENDING_DELETION account's own still-valid JWT could open a real
+            // password-change flow during the 48h purge window -- irrelevant to the deletion
+            // itself (that's gated by consumeForAccountDeletion below, not this method), but a
+            // password change has no reason to be reachable for an account already leaving.
+            throw new ApiException(HttpStatus.FORBIDDEN, "This account is scheduled for deletion.");
+        }
+    }
+
+    /** The re-auth gate for UserAccountLifecycleService.requestDeletion -- proves current-password
+     *  + OTP were verified in THIS session (start() already checked the password to open it;
+     *  verifyOtp() already confirmed the phone), then consumes it into a distinct terminal state
+     *  so it can never be replayed into complete() and mistaken for a real password change. Does
+     *  NOT re-check currentPassword: the session itself is that proof, same as complete() never
+     *  re-asks for it either.
+     *
+     *  <p>No change needed to resolveSession()/loadActiveSession() for this to be safe: a stray
+     *  replay of a DELETION_CONFIRMED session into verifyOtp() or complete() is rejected by each
+     *  method's own required-status check (STARTED / OTP_VERIFIED respectively) exactly the same
+     *  way any other wrong-state session already is -- DELETION_CONFIRMED was never a state either
+     *  method's idempotency branches special-case, so there's nothing for it to be mistaken for. */
+    @Transactional(noRollbackFor = ApiException.class)
+    public void consumeForAccountDeletion(UUID userId, String rawSessionId) {
+        PasswordChangeSession session = loadActiveSession(userId, rawSessionId, PasswordChangeSession.Status.OTP_VERIFIED,
+                "Verify the code sent to your phone before continuing.");
+        session.setStatus(PasswordChangeSession.Status.DELETION_CONFIRMED);
+        session.setCompletedAt(Instant.now());
+        sessionRepository.save(session);
     }
 
     private String completeMessage(boolean signedOutOtherDevices) {

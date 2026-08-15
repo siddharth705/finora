@@ -33,6 +33,9 @@ public interface MerchantLearningAuditRepository extends JpaRepository<MerchantL
         return findByUserIdOrderByCreatedAtAscIdAsc(userId);
     }
 
+    /** AccountPurgeSweepService -- hard delete, no soft-delete concern on this entity. */
+    void deleteByUserId(UUID userId);
+
     // Admin Portal, Learning Engine module -- platform-wide action counts for the aggregate
     // stats tile. Cheap grouped COUNT, same "simple indexed counts, not a new reporting
     // subsystem" discipline as AdminStatsService. See AdminLearningStatsService for how the

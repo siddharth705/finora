@@ -496,6 +496,25 @@ public class AuthService {
                     Map.of("reactivationToken", rawToken));
         }
 
+        // Same positioning discipline again, and load-bearing this time: requestDeletion()'s "no
+        // cancel link" product decision only holds if a fresh login can't route around it. The
+        // real passwordHash is still on the row until AccountPurgeSweepService's LAST purge step
+        // anonymizes it -- without this check, a user mid-window could just log back in with their
+        // real password and keep using the app, undoing "irreversible, no cancel" entirely. No
+        // reactivation path (unlike DEACTIVATED above): this is intentionally a dead end, same
+        // shape as the suspended branch.
+        if (user.isPendingDeletion()) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "This account is scheduled for deletion and can no longer be signed in to.");
+        }
+        // Realistically unreachable via login() -- DELETED's passwordHash is a random unusable
+        // value written by the purge itself, so it will never match -- but kept as an explicit
+        // branch rather than relying on that side effect, matching the discipline that every
+        // status this column can hold gets its own considered answer, not a silent fallthrough.
+        if (user.isDeleted()) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "This account no longer exists.");
+        }
+
         if (user.getFailedLoginAttempts() > 0 || user.getLockedUntil() != null) {
             user.setFailedLoginAttempts(0);
             user.setLockedUntil(null);
@@ -558,6 +577,13 @@ public class AuthService {
         // flow: this is a silent background call, not a screen the user is looking at, so there's
         // nowhere to show a "welcome back" prompt. A fresh login attempt is what surfaces that.
         if (user.isDeactivated()) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "This account is no longer active. Please sign in again.");
+        }
+        // Same defense-in-depth reasoning as the isDeactivated() check above --
+        // requestDeletion() already revokes every refresh token in the same transaction as the
+        // status write, so this should be unreachable in practice too.
+        if (user.isPendingDeletion() || user.isDeleted()) {
             throw new ApiException(HttpStatus.FORBIDDEN,
                     "This account is no longer active. Please sign in again.");
         }

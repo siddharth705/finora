@@ -202,4 +202,7 @@ public interface MerchantLearningEventRepository extends JpaRepository<MerchantL
     /** The same, for a trace anchored on a job whose statement import is known but whose session is
      *  not -- the asynchronous path, which stages without one. */
     List<MerchantLearningEvent> findBySourceStatementImportIdOrderByCreatedAtAsc(UUID sourceStatementImportId);
+
+    /** AccountPurgeSweepService -- hard delete, no soft-delete concern on this entity. */
+    void deleteByUserId(UUID userId);
 }

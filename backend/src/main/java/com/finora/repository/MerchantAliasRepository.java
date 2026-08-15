@@ -10,4 +10,7 @@ import java.util.UUID;
 public interface MerchantAliasRepository extends JpaRepository<MerchantAlias, UUID> {
     Optional<MerchantAlias> findByUserIdAndNormalizedAlias(UUID userId, String normalizedAlias);
     List<MerchantAlias> findByMerchantId(UUID merchantId);
+
+    /** AccountPurgeSweepService -- hard delete, no soft-delete concern on this entity. */
+    void deleteByUserId(UUID userId);
 }
