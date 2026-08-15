@@ -190,6 +190,45 @@ public class AdminDtos {
             long rowCount
     ) {}
 
+    // --- Gmail Merchant Parser Stats (GmailMerchantStatsService / AdminMerchantStatsController) ---
+
+    /**
+     * One row in the admin Merchant Intelligence page's Gmail parser-health section (C6.2) --
+     * per authenticated email domain, not the canonical merchant name {@link MerchantStatDto}
+     * groups by. See {@code GmailMerchantStatsService} for what each count actually means and why
+     * {@code successRate} is nullable.
+     *
+     * @param domain           the authenticated sending domain -- e.g. {@code amazon.in} -- which
+     *                         is the real merchant identity here, the same key
+     *                         {@code GmailReviewService} keys the review queue on.
+     * @param merchant         a display name, cosmetic only -- see
+     *                         {@code GmailReviewService#displayNameFor}.
+     * @param parsed           messages a parser successfully extracted and staged.
+     * @param parseFailed      messages a parser recognised as receipt-shaped but could not extract
+     *                         cleanly -- the "this parser needs updating" signal.
+     * @param skippedNotReceipt messages a parser correctly decided were not a receipt at all
+     *                         (a shipping update, marketing mail) -- expected traffic, not a fault.
+     * @param noParserYet      messages from a trusted domain no {@code MerchantEmailParser} claims
+     *                         at all -- coverage gap volume, answering "which parser should we
+     *                         write next", not this domain's existing parser's health.
+     * @param successRate      {@code parsed / (parsed + parseFailed + skippedNotReceipt)}, or null
+     *                         when that denominator is zero -- a domain with only {@code
+     *                         noParserYet} traffic has no parser to rate yet, and showing 0% would
+     *                         misreport "broken" as what is actually "not built".
+     * @param lastSeen         the most recent message processed for this domain, across every
+     *                         outcome counted above.
+     */
+    public record GmailMerchantParserStatDto(
+            String domain,
+            String merchant,
+            long parsed,
+            long parseFailed,
+            long skippedNotReceipt,
+            long noParserYet,
+            Double successRate,
+            Instant lastSeen
+    ) {}
+
     // --- Learning Engine (AdminLearningStatsService / AdminUserLearningController) ---
 
     /** Platform-wide aggregate for the admin Learning Engine page. learnedMerchantPairs is a

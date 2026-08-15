@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
@@ -50,4 +51,31 @@ public interface GmailProcessedMessageRepository extends JpaRepository<GmailProc
      */
     List<GmailProcessedMessage> findByConnectionIdAndOutcomeOrderByProcessedAtAsc(
             UUID connectionId, GmailProcessedMessage.Outcome outcome, Pageable pageable);
+
+    /**
+     * Per-merchant-domain outcome breakdown for the admin Merchant Intelligence page (C6.2) — the
+     * same "{@code GROUP BY} two columns, aggregate the rest in Java" shape as
+     * {@code StatementAnalysisSessionRepository#failureCodeLayoutCounts} and
+     * {@code MerchantRepository#platformMerchantCounts}, over this table instead of theirs.
+     *
+     * <p>{@link GmailProcessedMessage.Outcome#SKIPPED_UNTRUSTED_SENDER} is excluded on purpose,
+     * not just uninteresting: it fires before any {@code MerchantEmailParser} is ever consulted
+     * (a sender-authentication failure, not a parser one), so including it would mix a security
+     * signal into a parser-health one and could group unrelated/spoofed domains in as if they
+     * were merchants. Every remaining outcome only exists on a row created via
+     * {@link GmailProcessedMessage#trusted}, which never leaves {@code authenticatedDomain} null —
+     * so this needs no separate null filter.
+     *
+     * <p>{@code since} has no default, matching {@code failureCodeLayoutCounts}'s own reasoning: an
+     * unbounded scan of a table that only grows is a cost this method should never silently absorb.
+     */
+    @Query("""
+           SELECT m.authenticatedDomain, m.outcome, COUNT(m), MAX(m.processedAt)
+           FROM GmailProcessedMessage m
+           WHERE m.outcome != com.finora.integrations.google.GmailProcessedMessage$Outcome.SKIPPED_UNTRUSTED_SENDER
+             AND m.processedAt >= :since
+           GROUP BY m.authenticatedDomain, m.outcome
+           ORDER BY m.authenticatedDomain ASC
+           """)
+    List<Object[]> merchantOutcomeCounts(@Param("since") Instant since);
 }

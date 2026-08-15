@@ -11,7 +11,7 @@ vi.mock('../context/AdminAuthContext', () => ({
   useAdminAuth: vi.fn(),
 }));
 vi.mock('../api/endpoints', () => ({
-  adminMerchantsApi: { platformStats: vi.fn() },
+  adminMerchantsApi: { platformStats: vi.fn(), gmailParserStats: vi.fn() },
 }));
 
 function renderPage() {
@@ -28,8 +28,18 @@ function renderPage() {
 describe('MerchantIntelligence', () => {
   beforeEach(() => {
     vi.mocked(useAdminAuth).mockReset();
-    vi.mocked(adminMerchantsApi.platformStats).mockReset();
+    vi.mocked(adminMerchantsApi.platformStats).mockReset().mockResolvedValue([]);
+    vi.mocked(adminMerchantsApi.gmailParserStats).mockReset().mockResolvedValue([]);
   });
+
+  function grantMerchantManage() {
+    vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({
+      hasPermission: (p: string) => p === 'MERCHANT_MANAGE',
+      permissions: ['MERCHANT_MANAGE'],
+      fullName: 'Support Admin',
+      logout: vi.fn(),
+    }));
+  }
 
   it('shows an access-denied message when the account lacks MERCHANT_MANAGE', () => {
     vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({
@@ -43,7 +53,6 @@ describe('MerchantIntelligence', () => {
       fullName: 'Support Admin',
       logout: vi.fn(),
     }));
-    vi.mocked(adminMerchantsApi.platformStats).mockResolvedValue([]);
 
     renderPage();
 
@@ -51,12 +60,7 @@ describe('MerchantIntelligence', () => {
   });
 
   it('renders the platform catalog for an account with MERCHANT_MANAGE', async () => {
-    vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({
-      hasPermission: (p: string) => p === 'MERCHANT_MANAGE',
-      permissions: ['MERCHANT_MANAGE'],
-      fullName: 'Support Admin',
-      logout: vi.fn(),
-    }));
+    grantMerchantManage();
     vi.mocked(adminMerchantsApi.platformStats).mockResolvedValue([
       { canonicalName: 'Swiggy', userCount: 42, rowCount: 45 },
     ]);
@@ -69,16 +73,58 @@ describe('MerchantIntelligence', () => {
   });
 
   it('shows the empty message when the platform has no merchants yet', async () => {
-    vi.mocked(useAdminAuth).mockReturnValue(mockAdminAuthState({
-      hasPermission: (p: string) => p === 'MERCHANT_MANAGE',
-      permissions: ['MERCHANT_MANAGE'],
-      fullName: 'Support Admin',
-      logout: vi.fn(),
-    }));
-    vi.mocked(adminMerchantsApi.platformStats).mockResolvedValue([]);
+    grantMerchantManage();
 
     renderPage();
 
     await waitFor(() => expect(screen.getByText('No merchants recorded on the platform yet.')).toBeInTheDocument());
+  });
+
+  describe('Gmail parser health', () => {
+    it('renders a row with success rate and every outcome count', async () => {
+      grantMerchantManage();
+      vi.mocked(adminMerchantsApi.gmailParserStats).mockResolvedValue([
+        {
+          domain: 'amazon.in', merchant: 'Amazon', parsed: 8, parseFailed: 2,
+          skippedNotReceipt: 1, noParserYet: 0, successRate: 0.8,
+          lastSeen: '2026-08-14T10:00:00Z',
+        },
+      ]);
+
+      renderPage();
+
+      await waitFor(() => expect(screen.getByText('Amazon')).toBeInTheDocument());
+      expect(screen.getByText('amazon.in')).toBeInTheDocument();
+      expect(screen.getByText('80%')).toBeInTheDocument();
+      expect(screen.getByText('8')).toBeInTheDocument();
+      expect(screen.getByText('2')).toBeInTheDocument();
+    });
+
+    it('shows "No parser yet" instead of 0% for a domain with only coverage-gap traffic', async () => {
+      grantMerchantManage();
+      vi.mocked(adminMerchantsApi.gmailParserStats).mockResolvedValue([
+        {
+          domain: 'newmerchant.example', merchant: 'New Merchant', parsed: 0,
+          parseFailed: 0, skippedNotReceipt: 0, noParserYet: 6, successRate: null,
+          lastSeen: '2026-08-14T10:00:00Z',
+        },
+      ]);
+
+      renderPage();
+
+      await waitFor(() => expect(screen.getByText('New Merchant')).toBeInTheDocument());
+      expect(screen.getByText('No parser yet')).toBeInTheDocument();
+      expect(screen.queryByText('0%')).not.toBeInTheDocument();
+    });
+
+    it('shows the empty message when nothing has been processed in the window', async () => {
+      grantMerchantManage();
+
+      renderPage();
+
+      await waitFor(() => expect(
+        screen.getByText(/No Gmail receipts processed in the last \d+ days\./)
+      ).toBeInTheDocument());
+    });
   });
 });
