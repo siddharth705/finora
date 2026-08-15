@@ -22,6 +22,11 @@ import java.util.UUID;
  *                        either.
  * @param category       the current suggested category — {@code StagedRow.suggestedCategory}, so
  *                        the queue can show what approving right now would file this under.
+ * @param reasoning      a one-line, honest explanation of where {@code amount}/{@code date}/
+ *                        {@code category} came from — C6.1. Built from real signals only
+ *                        ({@code StagedRow.categorySource}, the matched domain): never invented
+ *                        copy about a detection that did not happen. See
+ *                        {@link GmailReviewService#reasoningFor}.
  */
 public record GmailReviewItemDto(
         UUID sessionId,
@@ -31,5 +36,6 @@ public record GmailReviewItemDto(
         LocalDate date,
         String category,
         Double confidence,
-        Instant stagedAt
+        Instant stagedAt,
+        String reasoning
 ) {}

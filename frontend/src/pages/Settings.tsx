@@ -100,6 +100,16 @@ function gmailLastSyncedLabel(status: GmailConnectionStatus): string {
   return label ? `Last synced ${label}` : 'Never synced yet';
 }
 
+/** C6.1: `connected` alone (`status === CONNECTED`) can't tell a user who never connected apart
+ *  from one whose grant just died -- REAUTH_REQUIRED (Google rejected the token) and REVOKED
+ *  (detected revoked at Google's end) both collapse `connected` to false too, per {@code
+ *  GmailConnection.Status}'s own doc. DISCONNECTED (the user did it on purpose from Finora) is
+ *  deliberately excluded here: that one *should* look like "never connected", since the user
+ *  already knows why. */
+function gmailNeedsReconnect(status: GmailConnectionStatus): boolean {
+  return status.status === 'REAUTH_REQUIRED' || status.status === 'REVOKED';
+}
+
 export default function Settings() {
   const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
@@ -575,6 +585,34 @@ export default function Settings() {
           <p className="text-xs text-danger">Couldn't load your Gmail connection — please try again later.</p>
         ) : !gmailStatus?.available ? (
           <p className="text-xs text-muted italic">Gmail sync isn't available on this deployment yet.</p>
+        ) : !gmailStatus.connected && gmailNeedsReconnect(gmailStatus) ? (
+          <div className="border border-warning/40 rounded-lg px-3 py-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm text-ink font-medium flex items-center gap-2">
+                  Gmail
+                  <span className="text-[10px] font-medium uppercase tracking-wide text-warning bg-warning-bg rounded px-1.5 py-0.5">
+                    Needs reconnect
+                  </span>
+                </p>
+                {gmailStatus.googleEmail && (
+                  <p className="text-[11px] text-muted truncate mt-0.5">{gmailStatus.googleEmail}</p>
+                )}
+                <p className="text-[11px] text-muted mt-1">
+                  Google stopped accepting this connection -- reconnect to keep finding receipts.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={gmailConnecting}
+                onClick={handleGmailConnect}
+                className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-3 py-1.5 text-xs uppercase font-medium flex-shrink-0"
+              >
+                {gmailConnecting ? 'Connecting…' : 'Reconnect Gmail'}
+              </button>
+            </div>
+            {gmailActionError && <p className="text-xs text-danger mt-2">{gmailActionError}</p>}
+          </div>
         ) : !gmailStatus.connected ? (
           <div>
             <div className="flex items-center justify-between gap-3">

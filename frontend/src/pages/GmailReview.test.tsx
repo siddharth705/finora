@@ -20,6 +20,8 @@ function item(overrides: Partial<Record<string, unknown>> = {}) {
     category: 'Other',
     confidence: 0.9,
     stagedAt: '2026-08-15T05:00:00Z',
+    reasoning: 'Amount and date read from a verified Amazon email. '
+      + 'Category isn\'t auto-detected yet, so it defaults to "Other" — check it below.',
     ...overrides,
   };
 }
@@ -48,6 +50,23 @@ describe('GmailReview', () => {
     expect(await screen.findByText('Amazon')).toBeInTheDocument();
     expect(screen.getByText('₹1,299.00')).toBeInTheDocument();
     expect(screen.getByText(/90% confidence/)).toBeInTheDocument();
+  });
+
+  // C6.1: the review queue's "why" -- honest about what was actually extracted (a verified
+  // sender) versus what wasn't detected at all (category, still just "Other" by default).
+  it('shows the reasoning behind the extraction, not just the numbers', async () => {
+    renderPage();
+
+    expect(await screen.findByText(/read from a verified amazon email/i)).toBeInTheDocument();
+    expect(screen.getByText(/isn't auto-detected yet/i)).toBeInTheDocument();
+  });
+
+  it('renders nothing extra when a row carries no reasoning', async () => {
+    vi.mocked(gmailApi.reviewQueue).mockResolvedValue([item({ reasoning: '' })]);
+    renderPage();
+
+    await screen.findByText('Amazon');
+    expect(screen.queryByText(/verified/i)).not.toBeInTheDocument();
   });
 
   it('shows an empty state when nothing is pending', async () => {

@@ -102,12 +102,36 @@ class GmailReviewServiceTest {
         assertThat(item.merchantDomain()).isEqualTo("amazon.in");
         assertThat(item.amount()).isEqualByComparingTo("1299.00");
         assertThat(item.confidence()).isEqualTo(0.9);
+        assertThat(item.reasoning())
+                .isEqualTo("Amount and date read from a verified Amazon email. "
+                        + "Category isn't auto-detected yet, so it defaults to \"Other\" — check it below.");
     }
 
     @Test
     @DisplayName("a domain with no known display name falls back to the domain itself")
     void unknownDomainFallsBackToItself() {
         assertThat(GmailReviewService.displayNameFor("swiggy.com")).isEqualTo("swiggy.com");
+    }
+
+    @Test
+    @DisplayName("reasoning names the default-category caveat when categorySource is \"default\"")
+    void reasoningFlagsDefaultCategory() {
+        StagedRow row = stagedRow("amazon.in");
+
+        assertThat(GmailReviewService.reasoningFor("amazon.in", row))
+                .isEqualTo("Amount and date read from a verified Amazon email. "
+                        + "Category isn't auto-detected yet, so it defaults to \"Other\" — check it below.");
+    }
+
+    @Test
+    @DisplayName("reasoning drops the default-category caveat once a real category source exists")
+    void reasoningOmitsCaveatForNonDefaultSource() {
+        StagedRow row = new StagedRow(
+                LocalDate.of(2026, 8, 15), "amazon.in", new BigDecimal("1299.00"), "EXPENSE",
+                "Shopping", "learned", null, false, null, null, null, RowKind.TRANSACTION, 0.9);
+
+        assertThat(GmailReviewService.reasoningFor("amazon.in", row))
+                .isEqualTo("Amount and date read from a verified Amazon email.");
     }
 
     @Test
