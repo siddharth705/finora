@@ -99,4 +99,8 @@ public interface ImportSessionRepository extends JpaRepository<ImportSession, UU
             "WHERE s.id = :id AND s.status = 'STAGED'")
     int claimForConfirmation(@Param("id") UUID id);
 
+    /** AccountPurgeSweepService -- hard delete, no soft-delete concern on this entity (no
+     *  lifecycle state to preserve, unlike StatementImport). Also frees any object this session
+     *  was the sole reference for, for StatementStorageSweepService to eventually reclaim. */
+    void deleteByUserId(UUID userId);
 }

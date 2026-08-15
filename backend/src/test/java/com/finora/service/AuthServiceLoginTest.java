@@ -377,6 +377,65 @@ class AuthServiceLoginTest {
      * reads. Two failures is enough to lock when the configured max is 2, where the old hardcoded
      * default of 5 would have allowed three more attempts first.
      */
+    /** See UserAccountLifecycleService.requestDeletion's "no cancel link" product decision -- a
+     *  login() that let a PENDING_DELETION account back in would trivially undo it, since the real
+     *  passwordHash is still on the row until AccountPurgeSweepService's last purge step. Unlike
+     *  DEACTIVATED, there is no reactivation path: this is intentionally a dead end. */
+    @Test
+    void login_withPendingDeletionAccount_andTheRightPassword_rejectsWithNoReactivationPath() {
+        User u = user("pendingdeletion@example.com", "+919876500095"); // synthetic-ok
+        u.setStatus(User.STATUS_PENDING_DELETION);
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("pendingdeletion@example.com", "USER")).thenReturn(Optional.of(u));
+        stubSuccessfulAuthentication();
+
+        try {
+            authService.login(new LoginRequest("pendingdeletion@example.com", "the-right-password", "USER"));
+        } catch (Exception e) {
+            assertThat(e.getMessage()).contains("scheduled for deletion");
+            verify(reactivationTokenRepository, never()).save(any());
+            verify(refreshTokenService, never()).issue(any());
+            return;
+        }
+        throw new AssertionError("Expected login() to throw for a pending-deletion account");
+    }
+
+    @Test
+    void login_withPendingDeletionAccount_andAWrongPassword_revealsNothingAboutTheAccount() {
+        User u = user("pendingdeletion@example.com", "+919876500095"); // synthetic-ok
+        u.setStatus(User.STATUS_PENDING_DELETION);
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("pendingdeletion@example.com", "USER")).thenReturn(Optional.of(u));
+        when(authenticationManager.authenticate(any())).thenThrow(new BadCredentialsException("nope"));
+
+        try {
+            authService.login(new LoginRequest("pendingdeletion@example.com", "wrong", "USER"));
+        } catch (Exception e) {
+            assertThat(e.getMessage()).isEqualTo("Invalid credentials");
+            return;
+        }
+        throw new AssertionError("Expected login() to throw for a wrong password");
+    }
+
+    /** Realistically unreachable via login() in production (DELETED's passwordHash is a random
+     *  unusable value the purge itself writes), but this test drives the branch directly by
+     *  stubbing authentication to succeed anyway -- see AuthService.login()'s own doc comment on
+     *  why the check exists as an explicit branch regardless. */
+    @Test
+    void login_withDeletedAccount_isRejected() {
+        User u = user("deleted@example.com", "+919876500094"); // synthetic-ok
+        u.setStatus(User.STATUS_DELETED);
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("deleted@example.com", "USER")).thenReturn(Optional.of(u));
+        stubSuccessfulAuthentication();
+
+        try {
+            authService.login(new LoginRequest("deleted@example.com", "whatever", "USER"));
+        } catch (Exception e) {
+            assertThat(e.getMessage()).isEqualTo("This account no longer exists.");
+            verify(refreshTokenService, never()).issue(any());
+            return;
+        }
+        throw new AssertionError("Expected login() to throw for a deleted account");
+    }
+
     @Test
     void login_locksAccountAfterConfiguredMaxAttempts_notTheOldHardcodedDefault() {
         var settings = new com.finora.entity.PlatformSettings();

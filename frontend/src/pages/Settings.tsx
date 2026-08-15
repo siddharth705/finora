@@ -8,6 +8,7 @@ import {
 import { useTheme } from '../context/ThemeContext';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
 import { DeactivateAccountModal } from '../components/DeactivateAccountModal';
+import { DeleteAccountModal } from '../components/DeleteAccountModal';
 import { maskPhone } from '../lib/maskPhone';
 import { parsePositiveAmount } from '../lib/validation';
 import { formatDayMonthYear, formatRelativeTime, SectionCard, VerifiedBadge, SaveStatus, MetricTile } from '../components/AccountUI';
@@ -119,6 +120,7 @@ export default function Settings() {
   const [passwordChangedAt, setPasswordChangedAt] = useState<string | null>(null);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [deactivateOpen, setDeactivateOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [lowBalanceThreshold, setLowBalanceThreshold] = useState('2000');
   const [savedLowBalanceThreshold, setSavedLowBalanceThreshold] = useState('2000');
   const [timezone, setTimezone] = useState('Asia/Kolkata');
@@ -379,6 +381,13 @@ export default function Settings() {
   function handleDeactivated() {
     authApi.logout().catch(() => {});
     clearSessionAndRedirect('Your account has been deactivated. Sign in again any time to reactivate it.');
+  }
+
+  // Same reasoning as handleDeactivated above -- requestDeletion already revoked every refresh
+  // token server-side, this just clears the browser's own httpOnly cookie best-effort and redirects.
+  function handleDeleted() {
+    authApi.logout().catch(() => {});
+    clearSessionAndRedirect("Your account is scheduled for deletion. You've been signed out everywhere.");
   }
 
   if (loading) return <p className="text-muted">Loading…</p>;
@@ -688,11 +697,8 @@ export default function Settings() {
         )}
       </SectionCard>
 
-      {/* "Manage Your Account" gains a Delete Account row the same day that capability actually
-          ships (Phase B) -- see this file's own top-of-file comment on why a subtitle never
-          promises more than what's backed today. */}
-      <SectionCard icon={<UserX size={18} />} title="Manage Your Account" subtitle="Deactivate your Finora account">
-        <div className="pt-1">
+      <SectionCard icon={<UserX size={18} />} title="Manage Your Account" subtitle="Deactivate or permanently delete your Finora account">
+        <div className="pt-1 pb-4 border-b border-border">
           <p className="text-ink font-medium text-sm">Deactivate Account</p>
           <p className="text-muted text-[11px] mt-1 mb-3">
             Temporarily disable your account. You'll be signed out everywhere and won't be able to
@@ -704,6 +710,19 @@ export default function Settings() {
             className="border border-border rounded-lg px-3 py-1.5 text-xs uppercase font-medium text-ink hover:bg-black/5"
           >
             Deactivate Account
+          </button>
+        </div>
+        <div className="pt-4">
+          <p className="text-ink font-medium text-sm">Delete Account</p>
+          <p className="text-muted text-[11px] mt-1 mb-3">
+            Permanently delete your account and all your data. This cannot be undone, and there is
+            no way to cancel this request once submitted.
+          </p>
+          <button
+            onClick={() => setDeleteOpen(true)}
+            className="border border-danger text-danger hover:bg-danger-bg rounded-lg px-3 py-1.5 text-xs uppercase font-medium"
+          >
+            Delete Account
           </button>
         </div>
       </SectionCard>
@@ -719,6 +738,13 @@ export default function Settings() {
         <DeactivateAccountModal
           onClose={() => setDeactivateOpen(false)}
           onDeactivated={handleDeactivated}
+        />
+      )}
+
+      {deleteOpen && (
+        <DeleteAccountModal
+          onClose={() => setDeleteOpen(false)}
+          onDeleted={handleDeleted}
         />
       )}
     </div>

@@ -655,6 +655,11 @@ export const passwordChangeApi = {
 export const accountLifecycleApi = {
   deactivate: (currentPassword: string, reason: string, note?: string) =>
     api.post<{ message: string }>('/users/me/account/deactivate', { currentPassword, reason, note }).then((r) => r.data),
+  // sessionId proves current-password+OTP -- see PasswordChangeService.consumeForAccountDeletion,
+  // reused via the same DELETION_CONFIRMED-gated session DeleteAccountModal builds up through
+  // passwordChangeApi.start/verifyOtp.
+  deleteAccount: (sessionId: string) =>
+    api.post<{ message: string }>('/users/me/account/delete', { sessionId }).then((r) => r.data),
 };
 
 // Self-service view of the caller's own active refresh-token sessions -- backs Settings.tsx's

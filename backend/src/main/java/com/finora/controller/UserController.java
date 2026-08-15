@@ -106,4 +106,13 @@ public class UserController {
         return ApiResponse.ok(new DeactivateResponse(
                 "Your account has been deactivated. Sign in again any time to reactivate it."));
     }
+
+    /** Irreversible -- see UserAccountLifecycleService.requestDeletion's own doc comment. Frontend
+     *  clears its own local session immediately after this succeeds, same as deactivate() above. */
+    @PostMapping("/account/delete")
+    public ApiResponse<DeleteAccountResponse> deleteAccount(@Valid @RequestBody DeleteAccountRequest request) {
+        accountLifecycleService.requestDeletion(currentUser.id(), request.sessionId());
+        return ApiResponse.ok(new DeleteAccountResponse(
+                "Your account is scheduled for deletion. You've been signed out everywhere."));
+    }
 }

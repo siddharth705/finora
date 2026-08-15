@@ -10,4 +10,8 @@ public interface PasswordChangeSessionRepository extends JpaRepository<PasswordC
     /** Scoped to the caller's own userId -- a session ID alone must never be enough to act on
      *  someone else's in-progress password change, even if it were somehow guessed/leaked. */
     Optional<PasswordChangeSession> findByIdAndUserId(UUID id, UUID userId);
+
+    /** AccountPurgeSweepService -- includes the very DELETION_CONFIRMED session that authorized
+     *  the deletion itself. Hard delete, no soft-delete concern on this entity. */
+    void deleteByUserId(UUID userId);
 }

@@ -20,4 +20,8 @@ public interface AccountReactivationTokenRepository extends JpaRepository<Accoun
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE AccountReactivationToken t SET t.usedAt = :now WHERE t.userId = :userId AND t.usedAt IS NULL")
     int markAllUnusedAsUsed(@Param("userId") UUID userId, @Param("now") Instant now);
+
+    /** AccountPurgeSweepService -- moot after purge (the account can never log in again to
+     *  reactivate) but cheap to clean up. Hard delete, no soft-delete concern. */
+    void deleteByUserId(UUID userId);
 }

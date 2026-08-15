@@ -226,6 +226,26 @@ app:
     # "contact support" rejection instead of a token-bearing reactivation prompt.
     reactivation-window-enabled: ${ACCOUNT_REACTIVATION_WINDOW_ENABLED:false}
     reactivation-window-days: ${ACCOUNT_REACTIVATION_WINDOW_DAYS:3}
+  account-purge:
+    sweep:
+      # AccountPurgeSweepService. Purges (anonymizes) accounts sitting at PENDING_DELETION past
+      # retention-hours -- see UserAccountLifecycleService.requestDeletion's "no cancel link"
+      # product decision. Off under test for the same reason every other sweep in this codebase
+      # is: a background thread purging accounts mid-test is the cross-test pollution BH-058 was
+      # about. Tests call AccountPurgeSweepService.sweep() directly.
+      enabled: ${ACCOUNT_PURGE_SWEEP_ENABLED:true}
+      # 48h is the product decision itself, not a tunable retention period like statement
+      # storage's 90 days -- a floor of 48h is enforced in code regardless of what this is set to,
+      # see AccountPurgeSweepService.MINIMUM_SAFETY_BUFFER.
+      retention-hours: ${ACCOUNT_PURGE_SWEEP_RETENTION_HOURS:48}
+      # How many eligible accounts one run considers. Same reasoning as
+      # StatementStorageSweepService's batch-size -- a backlog drains across runs rather than in
+      # one unbounded pass.
+      batch-size: ${ACCOUNT_PURGE_SWEEP_BATCH_SIZE:200}
+      # Gmail revocation calls and per-account work make this slower than a simple row sweep --
+      # hourly by default, well inside the 48h window's own margin.
+      interval-ms: ${ACCOUNT_PURGE_SWEEP_INTERVAL_MS:21600000}
+      initial-delay-ms: ${ACCOUNT_PURGE_SWEEP_INITIAL_DELAY_MS:300000}
   security:
     # RateLimitFilter's own doc comment already flagged this: request.getRemoteAddr() only
     # returns the real client IP when nothing sits between the client and this app. Railway (like
