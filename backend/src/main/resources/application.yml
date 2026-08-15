@@ -418,6 +418,11 @@ app:
         messages-per-connection: ${GMAIL_DISCOVERY_MESSAGES_PER_CONNECTION:500}
         extraction-messages-per-connection: ${GMAIL_EXTRACTION_MESSAGES_PER_CONNECTION:50}
 
+        # "Sync Now" (C5.4) -- a much shorter cooldown than minimum-interval-ms above, since this
+        # gates a single user re-clicking a button, not the whole tick's cost across every mailbox.
+        # See GmailManualSyncService's own doc comment for why it's a separate value.
+        manual-sync-cooldown-ms: ${GMAIL_MANUAL_SYNC_COOLDOWN_MS:60000}
+
 # Reversible encryption at rest for third-party credentials Finora must read back -- OAuth refresh
 # tokens first (ADR-007). NOT for passwords or Finora's own session tokens, which are hashed via
 # TokenHasher; see com.finora.security.crypto's package doc for why the two are not interchangeable.

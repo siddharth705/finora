@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { SlidersHorizontal, Sparkles, ShieldCheck, Info, Smartphone, UserX, X } from 'lucide-react';
-import { authApi, userApi, workspaceApi, analyticsApi, deviceApi, type ImportStatistics, type DeviceSession } from '../api/endpoints';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { SlidersHorizontal, Sparkles, ShieldCheck, Info, Smartphone, UserX, X, Mail, RefreshCw } from 'lucide-react';
+import {
+  authApi, userApi, workspaceApi, analyticsApi, deviceApi, gmailApi,
+  type ImportStatistics, type DeviceSession, type GmailConnectionStatus,
+} from '../api/endpoints';
 import { useTheme } from '../context/ThemeContext';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
 import { DeactivateAccountModal } from '../components/DeactivateAccountModal';
@@ -76,8 +80,30 @@ function expiresInLabel(sessionExpiresAt: string | null): string | null {
   return `Expires in ${days} day${days === 1 ? '' : 's'}`;
 }
 
+/** One-shot message for the `?gmail=` query param GoogleOAuthController's callback redirect
+ *  lands with -- see that controller's own doc comment: the outcome travels as a query parameter
+ *  specifically so no token or error detail can end up in it. Null for anything else (including
+ *  no param at all), which is the signal to render nothing. */
+function gmailCallbackMessage(gmail: string | null): { text: string; isError: boolean } | null {
+  switch (gmail) {
+    case 'connected': return { text: 'Gmail connected.', isError: false };
+    case 'declined': return { text: 'Gmail connection was cancelled.', isError: false };
+    case 'invalid':
+    case 'failed':
+      return { text: "Couldn't connect Gmail -- please try again.", isError: true };
+    default: return null;
+  }
+}
+
+function gmailLastSyncedLabel(status: GmailConnectionStatus): string {
+  const label = formatRelativeTime(status.lastDiscoveryAt);
+  return label ? `Last synced ${label}` : 'Never synced yet';
+}
+
 export default function Settings() {
   const { theme, setTheme } = useTheme();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [phoneNumber, setPhoneNumber] = useState('');
   const [phoneVerified, setPhoneVerified] = useState(false);
   const [passwordChangedAt, setPasswordChangedAt] = useState<string | null>(null);
@@ -111,6 +137,25 @@ export default function Settings() {
   const [sessionsError, setSessionsError] = useState(false);
   const [revokingId, setRevokingId] = useState<string | null>(null);
 
+  const [gmailStatus, setGmailStatus] = useState<GmailConnectionStatus | null>(null);
+  const [gmailLoading, setGmailLoading] = useState(true);
+  const [gmailError, setGmailError] = useState(false);
+  const [gmailConnecting, setGmailConnecting] = useState(false);
+  const [gmailSyncing, setGmailSyncing] = useState(false);
+  const [gmailSyncError, setGmailSyncError] = useState<string | null>(null);
+  // Distinct from gmailError above: that one gates the "couldn't load the connection at all" page
+  // state, rendered only while gmailStatus is still null. Connect/disconnect fail AFTER a status
+  // has already loaded successfully, so reusing gmailError for them would set a flag nothing on
+  // screen ever reads -- a silent failure the user sees as a button that just stops saying
+  // "Connecting…" with no explanation. Caught in self-review, not by a test failing.
+  const [gmailActionError, setGmailActionError] = useState<string | null>(null);
+  const [gmailDisconnecting, setGmailDisconnecting] = useState(false);
+  // The one-shot callback message reads from the URL once and is then dismissed by user action
+  // (or a fresh status load below removing the param) -- not re-derived from searchParams on
+  // every render, the same reason SESSION_ENDED_REASON_KEY is read once and cleared, not left
+  // live in the URL for a refresh to replay.
+  const [gmailCallbackNotice] = useState(() => gmailCallbackMessage(searchParams.get('gmail')));
+
   const prefsDirty = lowBalanceThreshold !== savedLowBalanceThreshold || timezone !== savedTimezone;
   const intelDirty = confidenceThreshold !== savedConfidenceThreshold;
 
@@ -135,6 +180,63 @@ export default function Settings() {
       .then(setSessions)
       .catch(() => setSessionsError(true))
       .finally(() => setSessionsLoading(false));
+  }
+
+  function loadGmailStatus() {
+    setGmailLoading(true);
+    setGmailError(false);
+    gmailApi.status()
+      .then(setGmailStatus)
+      .catch(() => setGmailError(true))
+      .finally(() => setGmailLoading(false));
+  }
+
+  async function handleGmailConnect() {
+    setGmailConnecting(true);
+    setGmailActionError(null);
+    try {
+      const { authorizationUrl } = await gmailApi.connect();
+      // A real browser navigation, not client-side routing -- Google's consent screen is a
+      // different origin entirely, the same reason GoogleOAuthController.connect()'s own doc
+      // comment gives for returning the URL rather than issuing a redirect itself.
+      window.location.href = authorizationUrl;
+    } catch {
+      setGmailConnecting(false);
+      setGmailActionError("Couldn't start the Gmail connection -- please try again.");
+    }
+  }
+
+  async function handleGmailSyncNow() {
+    setGmailSyncing(true);
+    setGmailSyncError(null);
+    try {
+      await gmailApi.syncNow();
+      loadGmailStatus();
+    } catch (err) {
+      // The cooldown (429) and a dead grant (409) are the two outcomes worth telling the user
+      // apart from a generic failure -- everything else collapses to one message, same as the
+      // Active Sessions list's own best-effort error handling above.
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      setGmailSyncError(
+        status === 429 ? 'Gmail was synced recently -- try again in a moment.'
+          : status === 409 ? 'This connection needs to be reconnected -- disconnect and connect again.'
+          : "Gmail sync didn't complete -- try again in a moment.");
+    } finally {
+      setGmailSyncing(false);
+    }
+  }
+
+  async function handleGmailDisconnect() {
+    setGmailDisconnecting(true);
+    setGmailActionError(null);
+    try {
+      await gmailApi.disconnect();
+      loadGmailStatus();
+    } catch {
+      setGmailActionError("Couldn't disconnect Gmail -- please try again.");
+    } finally {
+      setGmailDisconnecting(false);
+    }
   }
 
   useEffect(() => {
@@ -165,6 +267,15 @@ export default function Settings() {
     // was the actual intent.
     analyticsApi.importStatistics().then(setImportStats).catch(() => setImportStatsFailed(true));
     loadSessions();
+    loadGmailStatus();
+    // Strip ?gmail=... from the URL once read (gmailCallbackNotice's initializer already captured
+    // it) so a page refresh doesn't replay a stale "Gmail connected" message.
+    if (searchParams.has('gmail')) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('gmail');
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function savePreferences() {
@@ -449,6 +560,93 @@ export default function Settings() {
           <p className="text-xs text-warning mt-3">
             Couldn't load these statistics just now — they're unavailable, not zero.
           </p>
+        )}
+      </SectionCard>
+
+      <SectionCard icon={<Mail size={18} />} title="Connected Apps" subtitle="Link external accounts Finora can read transactions from">
+        {gmailCallbackNotice && (
+          <p className={`text-xs mb-3 ${gmailCallbackNotice.isError ? 'text-danger' : 'text-success'}`}>
+            {gmailCallbackNotice.text}
+          </p>
+        )}
+        {gmailLoading ? (
+          <p className="text-muted text-sm">Loading…</p>
+        ) : gmailError && !gmailStatus ? (
+          <p className="text-xs text-danger">Couldn't load your Gmail connection — please try again later.</p>
+        ) : !gmailStatus?.available ? (
+          <p className="text-xs text-muted italic">Gmail sync isn't available on this deployment yet.</p>
+        ) : !gmailStatus.connected ? (
+          <div>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm text-ink font-medium">Gmail</p>
+                <p className="text-[11px] text-muted mt-0.5">
+                  Automatically detect receipts from your inbox — nothing is imported without your review.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={gmailConnecting}
+                onClick={handleGmailConnect}
+                className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-3 py-1.5 text-xs uppercase font-medium flex-shrink-0"
+              >
+                {gmailConnecting ? 'Connecting…' : 'Connect Gmail'}
+              </button>
+            </div>
+            {gmailActionError && <p className="text-xs text-danger mt-2">{gmailActionError}</p>}
+          </div>
+        ) : (
+          <div className="border border-border rounded-lg px-3 py-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm text-ink font-medium flex items-center gap-2">
+                  Gmail
+                  <span className="text-[10px] font-medium uppercase tracking-wide text-success bg-success-bg rounded px-1.5 py-0.5">
+                    Connected
+                  </span>
+                </p>
+                <p className="text-[11px] text-muted truncate mt-0.5">{gmailStatus.googleEmail}</p>
+                <p className="text-[11px] text-muted mt-1">{gmailLastSyncedLabel(gmailStatus)}</p>
+              </div>
+              <button
+                type="button"
+                title="Sync now"
+                disabled={gmailSyncing}
+                onClick={handleGmailSyncNow}
+                className="w-7 h-7 rounded-lg hover:bg-black/5 text-muted hover:text-ink inline-flex items-center justify-center flex-shrink-0 disabled:opacity-50"
+              >
+                <RefreshCw size={14} className={gmailSyncing ? 'animate-spin' : ''} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 mt-3">
+              <MetricTile label="Transactions Found" value={gmailStatus.transactionsFound.toLocaleString('en-IN')} />
+              <MetricTile label="Needs Review" value={gmailStatus.needsReview.toLocaleString('en-IN')} />
+            </div>
+
+            {gmailSyncError && <p className="text-xs text-danger mt-2">{gmailSyncError}</p>}
+            {gmailActionError && <p className="text-xs text-danger mt-2">{gmailActionError}</p>}
+
+            <div className="flex items-center gap-3 mt-3 pt-3 border-t border-border">
+              {gmailStatus.needsReview > 0 && (
+                <button
+                  type="button"
+                  onClick={() => navigate('/app/settings/gmail/review')}
+                  className="bg-primary text-white hover:bg-primary-dark rounded-lg px-3 py-1.5 text-xs uppercase font-medium"
+                >
+                  Review {gmailStatus.needsReview}
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={gmailDisconnecting}
+                onClick={handleGmailDisconnect}
+                className="border border-border rounded-lg px-3 py-1.5 text-xs uppercase font-medium text-ink hover:bg-black/5 disabled:opacity-50"
+              >
+                {gmailDisconnecting ? 'Disconnecting…' : 'Disconnect'}
+              </button>
+            </div>
+          </div>
         )}
       </SectionCard>
 
