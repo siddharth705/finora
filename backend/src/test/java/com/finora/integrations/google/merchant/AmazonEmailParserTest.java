@@ -99,9 +99,11 @@ class AmazonEmailParserTest {
 
         ParserResult result = parser.parse(message);
 
-        // Zero-value orders happen (fully-covered by a gift card, a free promotional item) and are
-        // not this parser's decision to filter -- that judgment belongs to the user at review, per
-        // the design proposal's confidence-is-informational-only principle.
+        // The PARSER's job is honest extraction, not business judgment -- a zero total really was
+        // in the email, and inventing a reason to withhold it here would be the parser silently
+        // deciding something for a layer that hasn't looked at it yet. Whether a zero-amount
+        // receipt is plausible ENOUGH to stage is a separate, later question -- see
+        // ParsedReceiptValidatorTest, which is where that judgment actually lives.
         assertThat(result.isParsed()).isTrue();
         assertThat(result.receipt().amount()).isEqualTo(Money.ZERO);
     }

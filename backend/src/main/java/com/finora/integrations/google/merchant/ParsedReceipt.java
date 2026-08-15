@@ -29,11 +29,37 @@ import java.time.LocalDate;
  *                            differently from its delivery.
  * @param confidence          0.0–1.0, this parser's own estimate of extraction reliability. Purely
  *                            informational; see the class doc above.
+ *
+ * <h2>Structural checks live here; business-rule checks live in {@link ParsedReceiptValidator}</h2>
+ *
+ * This constructor refuses a null or blank required field, on the same reasoning as every other
+ * fail-fast validation in this codebase: a parser that produced a null date is a bug, and the bug
+ * should surface at the exact call site that made the mistake, with a message naming the field,
+ * rather than as an NPE three layers downstream with no indication which parser was responsible.
+ *
+ * <p>Deliberately does NOT check that {@link #amount} is positive or that {@link #transactionDate}
+ * is not absurdly far in the future — those are not "this cannot be a receipt" bugs, they are "is
+ * this receipt plausible" judgments, and {@link ParsedReceiptValidator} is where that judgment
+ * belongs. Because null/blank is already eliminated here, the validator does not re-check for it —
+ * checking a condition this constructor has already made impossible would be validating a state
+ * that cannot occur.
  */
 public record ParsedReceipt(String gmailMessageId, String merchantDomain, Money amount,
                             LocalDate transactionDate, double confidence) {
 
     public ParsedReceipt {
+        if (gmailMessageId == null || gmailMessageId.isBlank()) {
+            throw new IllegalArgumentException("gmailMessageId is required");
+        }
+        if (merchantDomain == null || merchantDomain.isBlank()) {
+            throw new IllegalArgumentException("merchantDomain is required");
+        }
+        if (amount == null) {
+            throw new IllegalArgumentException("amount is required");
+        }
+        if (transactionDate == null) {
+            throw new IllegalArgumentException("transactionDate is required");
+        }
         if (confidence < 0.0 || confidence > 1.0) {
             throw new IllegalArgumentException("confidence must be in [0.0, 1.0], got " + confidence);
         }

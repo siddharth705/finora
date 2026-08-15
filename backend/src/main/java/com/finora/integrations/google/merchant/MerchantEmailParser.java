@@ -18,6 +18,15 @@ package com.finora.integrations.google.merchant;
  * per-message state, call out to Gmail, or write anywhere — {@link #parse} returns a value, and
  * what happens to that value (staging it, recording it, discarding it) is {@code
  * GmailStagingBridge}'s job (C5-B), not this interface's.
+ *
+ * <h2>A parser's output is not yet trusted, either</h2>
+ *
+ * A {@code PARSED} result still has to clear {@link ParsedReceiptValidator} before {@code
+ * GmailStagingBridge} treats it as something worth showing a user — a parser is regex and
+ * string-matching against attacker-adjacent content, and a template edge case can produce a
+ * syntactically valid receipt carrying a nonsensical amount or date. {@link ParsedReceipt}'s own
+ * constructor only rules out a missing field; plausibility is the validator's job, not this
+ * interface's or {@link ParsedReceipt}'s.
  */
 public interface MerchantEmailParser {
 
