@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * parse-trust to a sender, so an ordinary authenticated user must not be able to read it, add to it,
  * or disable anything in it.
  *
- * <p>The seeded rows from V81 are also checked here, because an empty registry rejects every message
+ * <p>The seeded rows from V82 are also checked here, because an empty registry rejects every message
  * — safe, but indistinguishable from a broken gate, and only a real database can show whether the
  * migration's seed actually landed.
  */
@@ -111,7 +111,7 @@ class AdminTrustedSenderEndpointIT extends AbstractIntegrationTest {
     }
 
     /**
-     * V81 seeds the initial merchant set deliberately: an empty registry rejects every message,
+     * V82 seeds the initial merchant set deliberately: an empty registry rejects every message,
      * which is safe but indistinguishable from a broken gate on first deploy. Only a real database
      * shows whether the seed landed.
      */
@@ -120,7 +120,7 @@ class AdminTrustedSenderEndpointIT extends AbstractIntegrationTest {
         for (String domain : new String[]{"amazon.in", "myntra.com", "uber.com",
                                           "olacabs.com", "zomato.com", "booking.com"}) {
             assertThat(domains.findByDomain(domain))
-                    .as("%s should be seeded by V81", domain)
+                    .as("%s should be seeded by V82", domain)
                     .isPresent()
                     .get()
                     .matches(TrustedSenderDomain::isActive, "active");
@@ -137,7 +137,7 @@ class AdminTrustedSenderEndpointIT extends AbstractIntegrationTest {
         duplicate.setStatus(TrustedSenderDomain.Status.DISABLED);
 
         assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> domains.saveAndFlush(duplicate)))
-                .as("the partial-free unique index in V81 must reject a second row for one domain")
+                .as("the partial-free unique index in V82 must reject a second row for one domain")
                 .isNotNull();
     }
 }
