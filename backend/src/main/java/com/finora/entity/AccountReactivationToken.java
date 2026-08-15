@@ -4,7 +4,7 @@ import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.UUID;
 
-/** Same shape as {@link PasswordResetToken}, for the identical reason -- see V84's own comment. */
+/** Same shape as {@link PasswordResetToken}, for the identical reason -- see V87's own comment. */
 @Entity
 @Table(name = "account_reactivation_tokens")
 public class AccountReactivationToken {

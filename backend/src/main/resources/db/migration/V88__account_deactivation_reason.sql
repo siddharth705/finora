@@ -7,7 +7,7 @@ ALTER TABLE users ADD COLUMN deactivation_reason VARCHAR(50);
 ALTER TABLE users ADD COLUMN deactivation_note VARCHAR(500);
 ALTER TABLE users ADD COLUMN deactivated_at TIMESTAMPTZ;
 
--- Mirrors the shape of the users_status_check CHECK constraint (V23/V84): the column is not free
+-- Mirrors the shape of the users_status_check CHECK constraint (V23/V87): the column is not free
 -- text, so the allowed set is enforced at the database too, not just in
 -- UserAccountLifecycleService's validation. NULL is allowed (accounts deactivated before this
 -- migration, and any future path that sets DEACTIVATED without asking for a reason) but an
