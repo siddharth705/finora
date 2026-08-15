@@ -52,7 +52,7 @@ public class UserAccountLifecycleService {
      * @param reason one of User.DEACTIVATION_REASONS -- required (product decision: the small
      *               extra step is worth the churn-analysis data for an otherwise fully-reversible
      *               action). Validated here, not just at the DTO layer, because the DB CHECK
-     *               constraint (V85) is the actual source of truth for the allowed set and a
+     *               constraint (V88) is the actual source of truth for the allowed set and a
      *               request-layer @Pattern would be a second place for that list to drift from.
      * @param note optional free text alongside the reason; never validated beyond length (DTO).
      */
