@@ -128,4 +128,8 @@ public class AuthDtos {
     public record VerifyPhoneRequest(@NotBlank String firebaseIdToken) {}
 
     public record VerifyPhoneResponse(String message) {}
+
+    /** token is the raw reactivation token AuthService.login() minted and returned in an
+     *  AUTH_ACCOUNT_DEACTIVATED error's details map -- see AuthService.reactivate(). */
+    public record ReactivateRequest(@NotBlank String token) {}
 }

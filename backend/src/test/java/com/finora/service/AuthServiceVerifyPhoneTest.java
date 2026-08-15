@@ -42,10 +42,12 @@ class AuthServiceVerifyPhoneTest {
 
         authService = new AuthService(
                 userRepository, mock(CategoryRepository.class), mock(PasswordResetTokenRepository.class),
+                mock(com.finora.repository.AccountReactivationTokenRepository.class),
                 mock(PasswordEncoder.class), mock(JwtService.class), mock(AuthenticationManager.class),
                 mock(AuditService.class), mock(RefreshTokenService.class), mock(EmailProvider.class),
                 new EmailProperties(), phoneVerificationProvider, mock(PlatformSettingsService.class),
-                mock(PasswordHistoryService.class), new IdentityLookup(userRepository)
+                mock(PasswordHistoryService.class), new IdentityLookup(userRepository),
+                mock(com.finora.config.RequestMetadata.class)
         );
     }
 

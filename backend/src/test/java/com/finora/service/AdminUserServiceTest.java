@@ -157,11 +157,26 @@ class AdminUserServiceTest {
         User target = user(targetId, "SUSPENDED");
         when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
 
-        adminUserService.reactivate(targetId, adminId);
+        adminUserService.reactivate(targetId, adminId, null);
 
         assertThat(target.getStatus()).isEqualTo("ACTIVE");
         verify(userRepository).save(target);
-        verify(auditService).record(eq(targetId), eq("ACCOUNT_REACTIVATED"), eq("User"), eq(targetId), any());
+        // Distinct from the self-service ACCOUNT_REACTIVATED action -- see AdminUserService's own
+        // doc comment on why an admin-initiated reactivation is a different actor/trust boundary.
+        verify(auditService).record(eq(targetId), eq("ACCOUNT_REACTIVATED_BY_ADMIN"), eq("User"), eq(targetId), any());
+    }
+
+    @Test
+    void reactivate_withAReason_includesItInTheAuditEntry() {
+        User target = user(targetId, "DEACTIVATED");
+        when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
+
+        adminUserService.reactivate(targetId, adminId, "Verified identity over a support ticket.");
+
+        @SuppressWarnings("unchecked")
+        var captor = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(auditService).record(eq(targetId), eq("ACCOUNT_REACTIVATED_BY_ADMIN"), eq("User"), eq(targetId), captor.capture());
+        assertThat(captor.getValue()).containsEntry("reason", "Verified identity over a support ticket.");
     }
 
     @Test

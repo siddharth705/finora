@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import Settings from './Settings';
 import { ThemeProvider } from '../context/ThemeContext';
 import { AuthProvider } from '../context/AuthContext';
-import { userApi, workspaceApi, analyticsApi, deviceApi } from '../api/endpoints';
+import { userApi, workspaceApi, analyticsApi, deviceApi, accountLifecycleApi, authApi } from '../api/endpoints';
 
 // v1 scope is capabilities-first: every section on this page reflects a real, backed setting or
 // fact (see Settings.tsx's own top-of-file comment). These tests cover the real save paths, the
@@ -20,6 +20,8 @@ vi.mock('../api/endpoints', () => ({
   workspaceApi: { getSettings: vi.fn(), updateSettings: vi.fn() },
   analyticsApi: { importStatistics: vi.fn() },
   deviceApi: { list: vi.fn(), revoke: vi.fn() },
+  accountLifecycleApi: { deactivate: vi.fn() },
+  authApi: { logout: vi.fn() },
 }));
 
 function userSettings(overrides: Partial<Record<string, unknown>> = {}) {
@@ -70,6 +72,10 @@ function renderSettings() {
 
 describe('Settings', () => {
   beforeEach(() => {
+    // The deactivate-flow tests write finora_session_ended_reason/finora_token via logout()'s
+    // real localStorage calls (AuthProvider is the real provider here, not mocked) -- without this
+    // clear, whichever ran first leaks its written keys into the next test's assertions.
+    localStorage.clear();
     vi.mocked(userApi.get).mockReset().mockResolvedValue(userSettings());
     vi.mocked(userApi.update).mockReset().mockResolvedValue(userSettings());
     vi.mocked(workspaceApi.getSettings).mockReset().mockResolvedValue({ autoApplyConfidenceThreshold: 90, updatedAt: '2026-05-01T00:00:00Z' });
@@ -79,6 +85,8 @@ describe('Settings', () => {
     });
     vi.mocked(deviceApi.list).mockReset().mockResolvedValue([deviceSession()]);
     vi.mocked(deviceApi.revoke).mockReset().mockResolvedValue(undefined as any);
+    vi.mocked(accountLifecycleApi.deactivate).mockReset().mockResolvedValue({ message: 'Deactivated.' });
+    vi.mocked(authApi.logout).mockReset().mockResolvedValue({ message: 'Signed out.' });
   });
 
   it('renders the real preferences and import-stat facts once loaded', async () => {
@@ -288,5 +296,123 @@ describe('Settings', () => {
     expect(screen.queryByText(/coming in a future release/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/two-factor/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/api key/i)).not.toBeInTheDocument();
+  });
+
+  describe('Manage Your Account — deactivate', () => {
+    it('opens the deactivate modal and calls the API with the entered password', async () => {
+      const user = userEvent.setup();
+      renderSettings();
+
+      await user.click(await screen.findByRole('button', { name: /^deactivate account$/i }));
+      await user.type(screen.getByLabelText(/current password/i), 'CorrectPassword123');
+      await user.selectOptions(screen.getByLabelText(/^reason$/i), 'TAKING_A_BREAK');
+      // Both the page's own trigger button and the modal's submit button share this exact text --
+      // the modal's is the one rendered last in the DOM.
+      const submitButtons = screen.getAllByRole('button', { name: /^deactivate account$/i });
+      await user.click(submitButtons[submitButtons.length - 1]);
+
+      await waitFor(() => expect(accountLifecycleApi.deactivate)
+        .toHaveBeenCalledWith('CorrectPassword123', 'TAKING_A_BREAK', undefined));
+    });
+
+    it('hands the reactivation reason to the login page via a hard redirect, not router state', async () => {
+      // Regression test for bugs found only by actually driving this in a real browser (this
+      // suite's mocked useAuth() masks the first two -- Settings isn't rendered behind
+      // ProtectedRoute here, so neither race below can happen in this test the way it did against
+      // the real app):
+      //
+      // 1. This used to call navigate('/login', { state: { message } }), the way ResetPassword.tsx
+      //    hands Login.tsx a one-shot confirmation. That works for ResetPassword because it isn't
+      //    behind ProtectedRoute; here it raced App.tsx's ProtectedRoute (which wraps
+      //    /app/settings), whose own stateless <Navigate to="/login" replace /> landed on /login
+      //    with no message at all.
+      // 2. The first fix called AuthContext's logout() before redirecting -- logout() calls
+      //    setToken(null), a REACT STATE update, which is exactly what triggers ProtectedRoute's
+      //    reactive redirect in the first place, mounting a client-side-routed Login instance that
+      //    reads AND clears SESSION_ENDED_REASON_KEY before the real, hard-reloaded page ever gets
+      //    to read it.
+      // 3. That second fix then hand-rolled the storage-clearing logic directly in this file
+      //    instead of calling client.ts's own clearSessionAndRedirect(reason) -- caught in code
+      //    review as a needless third copy of the same key list (client.ts's own comment already
+      //    documents a bug from a second copy missing a key once), and as dropping the best-effort
+      //    authApi.logout() call that actually clears the httpOnly refresh-token cookie in the
+      //    browser (the refresh token is already revoked server-side either way, so this was a
+      //    browser-hygiene regression, not a security one).
+      //
+      // The final fix: call authApi.logout() for the cookie, then the shared, exported
+      // clearSessionAndRedirect(reason) for everything else -- reusing the one real implementation
+      // instead of a fourth copy.
+      const user = userEvent.setup();
+      renderSettings();
+
+      await user.click(await screen.findByRole('button', { name: /^deactivate account$/i }));
+      await user.type(screen.getByLabelText(/current password/i), 'CorrectPassword123');
+      await user.selectOptions(screen.getByLabelText(/^reason$/i), 'TAKING_A_BREAK');
+      const submitButtons = screen.getAllByRole('button', { name: /^deactivate account$/i });
+      await user.click(submitButtons[submitButtons.length - 1]);
+
+      await waitFor(() => expect(localStorage.getItem('finora_session_ended_reason'))
+        .toBe('Your account has been deactivated. Sign in again any time to reactivate it.'));
+      expect(localStorage.getItem('finora_token')).toBeNull();
+      // The cookie-clearing half of the fix -- best-effort, but it must actually be attempted.
+      expect(authApi.logout).toHaveBeenCalled();
+    });
+
+    it('shows the server error inline and stays open when the password is wrong', async () => {
+      vi.mocked(accountLifecycleApi.deactivate).mockReset().mockRejectedValue({
+        response: { data: { message: 'Current password is incorrect.' } },
+      });
+      const user = userEvent.setup();
+      renderSettings();
+
+      await user.click(await screen.findByRole('button', { name: /^deactivate account$/i }));
+      await user.type(screen.getByLabelText(/current password/i), 'WrongPassword');
+      await user.selectOptions(screen.getByLabelText(/^reason$/i), 'TAKING_A_BREAK');
+      const submitButtons = screen.getAllByRole('button', { name: /^deactivate account$/i });
+      await user.click(submitButtons[submitButtons.length - 1]);
+
+      expect(await screen.findByText(/current password is incorrect/i)).toBeInTheDocument();
+      // A failed deactivation must not sign the user out.
+      expect(localStorage.getItem('finora_session_ended_reason')).toBeNull();
+    });
+
+    it('requires a reason before submitting', async () => {
+      const user = userEvent.setup();
+      renderSettings();
+
+      await user.click(await screen.findByRole('button', { name: /^deactivate account$/i }));
+      await user.type(screen.getByLabelText(/current password/i), 'CorrectPassword123');
+      const submitButtons = screen.getAllByRole('button', { name: /^deactivate account$/i });
+      await user.click(submitButtons[submitButtons.length - 1]);
+
+      expect(await screen.findByText(/choose a reason for deactivating/i)).toBeInTheDocument();
+      expect(accountLifecycleApi.deactivate).not.toHaveBeenCalled();
+    });
+
+    it('passes an optional note through to the API, trimmed', async () => {
+      const user = userEvent.setup();
+      renderSettings();
+
+      await user.click(await screen.findByRole('button', { name: /^deactivate account$/i }));
+      await user.type(screen.getByLabelText(/current password/i), 'CorrectPassword123');
+      await user.selectOptions(screen.getByLabelText(/^reason$/i), 'PRIVACY_CONCERNS');
+      await user.type(screen.getByLabelText(/anything else/i), '  Not comfortable with data retention  ');
+      const submitButtons = screen.getAllByRole('button', { name: /^deactivate account$/i });
+      await user.click(submitButtons[submitButtons.length - 1]);
+
+      await waitFor(() => expect(accountLifecycleApi.deactivate)
+        .toHaveBeenCalledWith('CorrectPassword123', 'PRIVACY_CONCERNS', 'Not comfortable with data retention'));
+    });
+
+    it('closes without calling the API when cancelled', async () => {
+      const user = userEvent.setup();
+      renderSettings();
+
+      await user.click(await screen.findByRole('button', { name: /^deactivate account$/i }));
+      await user.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+      expect(screen.queryByLabelText(/current password/i)).not.toBeInTheDocument();
+      expect(accountLifecycleApi.deactivate).not.toHaveBeenCalled();
+    });
   });
 });

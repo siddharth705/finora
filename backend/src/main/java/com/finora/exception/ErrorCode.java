@@ -115,6 +115,12 @@ public enum ErrorCode {
             "Signed out after a period of inactivity. Please sign in again."),
     AUTH_SESSION_MAX_AGE("AUTH_006", HttpStatus.UNAUTHORIZED,
             "Your session reached its maximum length. Please sign in again."),
+    // Deliberately distinct from a bare 403 "suspended" message: the frontend has to TELL THEM
+    // APART, since a deactivated account gets an in-place reactivation prompt (see
+    // AuthService.login()'s deactivated branch) where a suspended one is a dead end. The
+    // reactivation token itself travels in ApiException's details map, not this message.
+    AUTH_ACCOUNT_DEACTIVATED("AUTH_007", HttpStatus.FORBIDDEN,
+            "This account is deactivated."),
 
     // Generic fallbacks — used by GlobalExceptionHandler when no more specific code applies
     VALIDATION_ERROR("VAL_001", HttpStatus.BAD_REQUEST, "Validation failed"),

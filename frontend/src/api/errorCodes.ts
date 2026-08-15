@@ -30,3 +30,12 @@ export const CORRUPT_PDF = 'IMPORT_011';
 // through the normal flow used to show the generic expired-session message ("please upload the
 // statement again"), which is actively wrong: the import already succeeded.
 export const IMPORT_SESSION_ALREADY_CONFIRMED = 'IMPORT_012';
+
+// Login.tsx branches on this to show a reactivation prompt instead of a dead-end error --
+// distinct from a bare 403, the same reason every other code in this module exists. Bug fix: this
+// used to be hand-typed independently in Login.tsx AND Login.test.tsx as the wrong value (the
+// enum's Java NAME, 'AUTH_ACCOUNT_DEACTIVATED', instead of its wire CODE) -- both copies agreed
+// with each other and both were wrong, so the whole test suite passed while the real feature was
+// unreachable. This module exists specifically so a value like this has exactly one place to be
+// wrong in.
+export const AUTH_ACCOUNT_DEACTIVATED = 'AUTH_007';

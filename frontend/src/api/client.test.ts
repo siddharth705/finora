@@ -254,6 +254,7 @@ describe('api response interceptor', () => {
     expect((caught as any).response.data).toEqual({
       message: 'Could not find a transaction table in this file',
       errorCode: 'IMPORT_001',
+      details: { userActionRequired: true },
       userActionRequired: true,
     });
   });

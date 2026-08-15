@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { SlidersHorizontal, Sparkles, ShieldCheck, Info, Smartphone, X } from 'lucide-react';
-import { userApi, workspaceApi, analyticsApi, deviceApi, type ImportStatistics, type DeviceSession } from '../api/endpoints';
+import { SlidersHorizontal, Sparkles, ShieldCheck, Info, Smartphone, UserX, X } from 'lucide-react';
+import { authApi, userApi, workspaceApi, analyticsApi, deviceApi, type ImportStatistics, type DeviceSession } from '../api/endpoints';
 import { useTheme } from '../context/ThemeContext';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
+import { DeactivateAccountModal } from '../components/DeactivateAccountModal';
 import { maskPhone } from '../lib/maskPhone';
 import { parsePositiveAmount } from '../lib/validation';
 import { formatDayMonthYear, formatRelativeTime, SectionCard, VerifiedBadge, SaveStatus, MetricTile } from '../components/AccountUI';
+import { clearSessionAndRedirect } from '../api/client';
 
 // v1 scope is deliberately capabilities-first, not roadmap-first: every section below reflects a
 // real, backed setting or fact. No "Coming soon" placeholders for 2FA, API keys, integrations,
@@ -80,6 +82,7 @@ export default function Settings() {
   const [phoneVerified, setPhoneVerified] = useState(false);
   const [passwordChangedAt, setPasswordChangedAt] = useState<string | null>(null);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [deactivateOpen, setDeactivateOpen] = useState(false);
   const [lowBalanceThreshold, setLowBalanceThreshold] = useState('2000');
   const [savedLowBalanceThreshold, setSavedLowBalanceThreshold] = useState('2000');
   const [timezone, setTimezone] = useState('Asia/Kolkata');
@@ -225,6 +228,36 @@ export default function Settings() {
     } finally {
       setRevokingId(null);
     }
+  }
+
+  // The account was just deactivated -- UserAccountLifecycleService.deactivate already revoked
+  // every refresh token server-side, so there is nothing left to be signed in to.
+  //
+  // Bug fix, confirmed against a real browser (not just this app's mocked-useAuth test suite):
+  // this used to call AuthContext's logout() and then navigate('/login', { state: { message } }),
+  // the way ResetPassword.tsx hands Login.tsx a one-shot confirmation. That works for
+  // ResetPassword because it isn't behind ProtectedRoute. Here, logout() calls setToken(null) --
+  // a REACT STATE update -- which App.tsx's ProtectedRoute (wrapping /app/settings) reacts to
+  // immediately by client-side-routing to /login itself, via its own stateless
+  // <Navigate to="/login" replace />. That reactive redirect runs (and, critically, mounts Login
+  // long enough for its one-shot useEffect to read AND clear SESSION_ENDED_REASON_KEY) before the
+  // browser's actual window.location.href navigation below ever fires -- so by the time the real,
+  // hard-reloaded page loads, the reason this function set has already been consumed and thrown
+  // away by a Login instance that never really existed to the user.
+  //
+  // The fix is to never touch AuthContext's React state at all, the same way client.ts's
+  // (now-exported) clearSessionAndRedirect already avoids this. Second bug fix, caught in review:
+  // the first version of this fix hand-rolled clearSessionAndRedirect's own storage-clearing logic
+  // a second time instead of calling it, AND dropped the best-effort authApi.logout() call that
+  // AuthContext.logout() makes -- which is what actually clears the httpOnly refresh-token cookie
+  // in the browser (the token itself is already revoked server-side either way, so this is a
+  // browser-hygiene fix, not a security one: without it, "you'll be signed out everywhere" left a
+  // stale cookie sitting in the browser). The access token here is still fully valid at the moment
+  // of this call (unlike clearSessionAndRedirect's own callers, which only ever run after a refresh
+  // has already failed), so this call can actually succeed.
+  function handleDeactivated() {
+    authApi.logout().catch(() => {});
+    clearSessionAndRedirect('Your account has been deactivated. Sign in again any time to reactivate it.');
   }
 
   if (loading) return <p className="text-muted">Loading…</p>;
@@ -419,10 +452,37 @@ export default function Settings() {
         )}
       </SectionCard>
 
+      {/* "Manage Your Account" gains a Delete Account row the same day that capability actually
+          ships (Phase B) -- see this file's own top-of-file comment on why a subtitle never
+          promises more than what's backed today. */}
+      <SectionCard icon={<UserX size={18} />} title="Manage Your Account" subtitle="Deactivate your Finora account">
+        <div className="pt-1">
+          <p className="text-ink font-medium text-sm">Deactivate Account</p>
+          <p className="text-muted text-[11px] mt-1 mb-3">
+            Temporarily disable your account. You'll be signed out everywhere and won't be able to
+            sign in until you reactivate -- your data is retained securely, and reactivating is as
+            simple as signing in again.
+          </p>
+          <button
+            onClick={() => setDeactivateOpen(true)}
+            className="border border-border rounded-lg px-3 py-1.5 text-xs uppercase font-medium text-ink hover:bg-black/5"
+          >
+            Deactivate Account
+          </button>
+        </div>
+      </SectionCard>
+
       {changePasswordOpen && (
         <ChangePasswordModal
           onClose={() => setChangePasswordOpen(false)}
           onSuccess={() => setPasswordChangedAt(new Date().toISOString())}
+        />
+      )}
+
+      {deactivateOpen && (
+        <DeactivateAccountModal
+          onClose={() => setDeactivateOpen(false)}
+          onDeactivated={handleDeactivated}
         />
       )}
     </div>

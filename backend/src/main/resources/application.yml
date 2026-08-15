@@ -219,6 +219,13 @@ app:
     # (deployment config, a secret manager) instead of one being generated or written anywhere --
     # see RFC-BOOTSTRAP-01 in docs/bootstrap-setup-future-work.md for the full production story.
     key: ${FINORA_SETUP_KEY:}
+  account-lifecycle:
+    # Off by default -- an unlimited self-service reactivation window is today's existing behavior
+    # (AuthService.login()'s deactivated branch always minted a token). Set to true to make the
+    # window below actually close it off after N days, past which login() falls through to a plain
+    # "contact support" rejection instead of a token-bearing reactivation prompt.
+    reactivation-window-enabled: ${ACCOUNT_REACTIVATION_WINDOW_ENABLED:false}
+    reactivation-window-days: ${ACCOUNT_REACTIVATION_WINDOW_DAYS:3}
   security:
     # RateLimitFilter's own doc comment already flagged this: request.getRemoteAddr() only
     # returns the real client IP when nothing sits between the client and this app. Railway (like

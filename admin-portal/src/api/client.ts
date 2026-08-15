@@ -63,7 +63,7 @@ export interface ApiEnvelope<T> {
 // same origin in a future deployment.
 const TOKEN_KEY = 'finora_admin_token';
 
-const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password'];
+const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password', '/auth/reactivate'];
 
 api.interceptors.request.use((config) => {
   const isAuthEndpoint = AUTH_ENDPOINTS_NO_TOKEN.some((path) => config.url?.includes(path));

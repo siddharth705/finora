@@ -67,10 +67,12 @@ class AuthServiceRegisterTest {
         auditService = mock(AuditService.class);
         authService = new AuthService(
                 userRepository, mock(CategoryRepository.class), mock(PasswordResetTokenRepository.class),
+                mock(com.finora.repository.AccountReactivationTokenRepository.class),
                 mock(PasswordEncoder.class), mock(JwtService.class), mock(AuthenticationManager.class),
                 auditService, refreshTokenService, emailProvider,
                 new EmailProperties(), mock(PhoneVerificationProvider.class), platformSettingsService,
-                mock(PasswordHistoryService.class), new IdentityLookup(userRepository)
+                mock(PasswordHistoryService.class), new IdentityLookup(userRepository),
+                mock(com.finora.config.RequestMetadata.class)
         );
     }
 
