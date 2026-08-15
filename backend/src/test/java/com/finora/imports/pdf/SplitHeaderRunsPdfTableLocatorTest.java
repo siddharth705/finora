@@ -193,7 +193,31 @@ class SplitHeaderRunsPdfTableLocatorTest {
         // The headline quantity, measured with TransactionNormalizer's own TRANSACTION_AMOUNT_HINTS
         // and counting only values that parse as a non-zero number:
         //   before -> after:  7 -> 253,  3 -> 374,  1 -> 9.
-        List<Integer> expected = List.of(253, 374, 9);
+        //
+        // hdfc-savings-ledger-validation's count moved again, 253 -> 244, when the
+        // OFFSET_COLUMN_ANCHORS redirect in bucketRow was taught not to move a number out of a
+        // reference/cheque-number column (see that guard's own doc comment -- verified on a real,
+        // unredacted HDFC statement where this exact redirect took a transaction's genuine
+        // Chq./Ref.No. value, "0000000534171215", and moved it into Withdrawal Amt., turning a real
+        // ₹454 deposit into a phantom >₹500,000,000 withdrawal).
+        //
+        // All 9 rows that dropped out of this count on THIS trace are confirmed, individually, to
+        // be non-transaction boilerplate -- every one carries `Date=HDFC BANK LIMITED ... State
+        // account branch ...` (letterhead/GSTIN disclaimer text merged into a row), never a
+        // parseable date, so TransactionNormalizer drops them regardless of what lands in their
+        // amount cell either way. Their loss from this count is not a loss of accuracy on any real
+        // transaction. Row 255 in this same trace is the positive case the guard exists for: its
+        // amount cell held the redacted-reference-number placeholder "9999999999999999" before this
+        // fix and the real amount, "454.00", after it -- a genuine transaction, not boilerplate.
+        //
+        // hdfc-savings-multi-page-ledger's count moved the same way, 374 -> 360: individually
+        // confirmed, all 14 rows that dropped out carry the identical boilerplate `Date=HDFC BANK
+        // LIMITED ... State account branch ...` shape, never a parseable date. Two more genuine
+        // transactions on THIS trace (real dates 28/07/25 and 30/10/25) had the same
+        // "9999999999999999" placeholder-as-amount bug this fix corrects -- to 1,360.12 and
+        // 3,965.01 respectively -- but neither changes the count, since a placeholder and a real
+        // amount both already counted as "a real number" either way; only the VALUE was wrong.
+        List<Integer> expected = List.of(244, 360, 9);
         String[] transactionAmountColumns = {"withdrawal amt", "deposit amt", "amount", "debit",
                 "credit", "deposit", "withdrawal", "deposits", "withdrawals"};
 

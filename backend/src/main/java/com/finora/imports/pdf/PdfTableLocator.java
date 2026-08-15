@@ -1918,7 +1918,24 @@ public class PdfTableLocator {
             // column's own header anchor. Redirects forward to the nearest LATER amount-shaped
             // column, never backward, and never into an otherwise-empty cell (a genuinely blank
             // merchant-category column with just a number in it is left alone).
-            if (existing != null && !isAmountColumn(columnName) && CsvParser.parseNumeric(t.text().trim()) != null) {
+            //
+            // Excludes a reference/cheque-number column, unlike "MEDICAL" above. Verified against a
+            // real HDFC statement: an unusually long Narration ("...CONNECT AND HEAL") pushed its
+            // last word past the Narration/Chq.Ref.No. midpoint (nearestColumn, by left edge), so
+            // Chq./Ref.No. was already non-blank by the time this rule saw the row's ACTUAL
+            // Chq./Ref.No. value -- itself a plain digit run, a bank reference/UTR number, not an
+            // amount. This rule then read "non-blank, non-amount column, incoming run parses as a
+            // number" and forwarded that reference number into Withdrawal Amt., turning a ₹454
+            // deposit into what looked like a >₹500,000,000 withdrawal. The distinction this rule
+            // cannot make on its own: a merchant-category cell like "MEDICAL" never legitimately
+            // holds a number, but a reference/cheque-number cell always does -- so a stray number
+            // landing there is far more likely to belong there than to have overshot from
+            // elsewhere. Deliberately checked on the CURRENT columnName only (the cell this run is
+            // about to be redirected AWAY from), not on the destination -- this is about trusting
+            // what the reference column already holds, not about which column looks correct to
+            // receive it.
+            if (existing != null && !isAmountColumn(columnName) && !isReferenceColumn(columnName)
+                    && CsvParser.parseNumeric(t.text().trim()) != null) {
                 int laterAmountColumn = nextAmountColumn(headerNames, nearest);
                 if (laterAmountColumn >= 0) {
                     nearest = laterAmountColumn;
@@ -2037,6 +2054,25 @@ public class PdfTableLocator {
      *  a hint, so this only adds the qualified spellings of a column that already qualified. */
     private boolean isAmountColumn(String columnName) {
         return matchesAnyHint(columnName, AMOUNT_COLUMN_HINTS);
+    }
+
+    // Substring, not matchesAnyHint's per-word exact match: a real header cell like "Chq./Ref.No."
+    // is one punctuation-joined token with no whitespace, so matchesAnyHint's word-splitting (which
+    // only strips LEADING/TRAILING punctuation per word, see its own doc comment) would tokenize it
+    // to a single word "chq./ref.no" that equals neither "chq" nor "ref" outright. A substring check
+    // is the right tool for a column-name vocabulary that is routinely glued together like this one.
+    private static final List<String> REFERENCE_COLUMN_HINTS =
+            List.of("ref", "cheque", "chq", "utr", "instrument no");
+
+    /** True for a reference/cheque-number column -- see the OFFSET_COLUMN_ANCHORS guard in
+     *  {@link #bucketRow} that this exists for: unlike a merchant-category or description column,
+     *  this kind of column legitimately holds nothing but digits. */
+    private boolean isReferenceColumn(String columnName) {
+        String normalized = CsvParser.normalizeHeaderCell(columnName);
+        for (String hint : REFERENCE_COLUMN_HINTS) {
+            if (normalized.contains(hint)) return true;
+        }
+        return false;
     }
 
     private int nextAmountColumn(List<String> headerNames, int afterIndex) {
