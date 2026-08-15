@@ -67,7 +67,9 @@ describe('ImportTimeline', () => {
    * and a customer with a stage-recording gap would be stranded on the failed screen.
    */
   it('still offers the curated reason and a way back for a failed job with no recorded stages', async () => {
-    api.timeline.mockResolvedValue(timeline({ status: 'FAILED', failureCode: null, stages: [] }));
+    api.timeline.mockResolvedValue(
+      timeline({ status: 'FAILED', userStatus: 'FAILED', failureCode: null, stages: [] })
+    );
     const onDismiss = vi.fn();
     render(<ImportTimeline jobId="job-1" onDismiss={onDismiss} />);
 
@@ -132,6 +134,7 @@ describe('ImportTimeline', () => {
   it('shows the curated reason for a known failure code, not the raw code', async () => {
     api.timeline.mockResolvedValue(timeline({
       status: 'FAILED',
+      userStatus: 'ACTION_REQUIRED', // matches the real UserFacingImportStatus.of mapping for this code
       failureCode: 'IMPORT_001', // NO_HEADER_DETECTED
       stages: [
         { stage: 'PARSING', attempt: 1, outcome: 'FAILED', startedAt: '2026-08-12T10:00:00Z', endedAt: '2026-08-12T10:00:01Z', durationMs: 1000 },
@@ -149,6 +152,7 @@ describe('ImportTimeline', () => {
   it('falls back to a generic message for a failure with no curated code', async () => {
     api.timeline.mockResolvedValue(timeline({
       status: 'FAILED',
+      userStatus: 'FAILED', // no code at all -- nothing to guess into ACTION_REQUIRED
       failureCode: null,
       stages: [
         { stage: 'PARSING', attempt: 1, outcome: 'FAILED', startedAt: '2026-08-12T10:00:00Z', endedAt: '2026-08-12T10:00:01Z', durationMs: 1000 },
@@ -161,6 +165,30 @@ describe('ImportTimeline', () => {
     expect(screen.getByTestId('import-timeline-failure-reason')).toHaveTextContent(
       "Finora couldn't complete this import"
     );
+  });
+
+  /**
+   * Sprint 4 item 22. The color is the ONLY thing that changes between these two -- both show a
+   * curated message, both offer "Try a different file" -- because the distinction §1 introduced
+   * ACTION_REQUIRED for is "can the user fix this themselves", not "is there a message to show".
+   */
+  it.each([
+    ['ACTION_REQUIRED', 'text-warning', 'text-danger'],
+    ['FAILED', 'text-danger', 'text-warning'],
+  ] as const)('colors the failure reason for userStatus %s', async (userStatus, expectedClass, otherClass) => {
+    api.timeline.mockResolvedValue(timeline({
+      status: 'FAILED',
+      userStatus,
+      failureCode: userStatus === 'ACTION_REQUIRED' ? 'IMPORT_001' : 'IMPORT_011',
+      stages: [],
+    }));
+    render(<ImportTimeline jobId="job-1" />);
+
+    await advance(100);
+
+    const reason = screen.getByTestId('import-timeline-failure-reason');
+    expect(reason.className).toContain(expectedClass);
+    expect(reason.className).not.toContain(otherClass);
   });
 
   it('does not show a failure reason or dismiss action for a completed import', async () => {
@@ -177,6 +205,7 @@ describe('ImportTimeline', () => {
   it('calls onDismiss when the user asks to try a different file', async () => {
     api.timeline.mockResolvedValue(timeline({
       status: 'FAILED',
+      userStatus: 'FAILED', // CORRUPT_PDF is not one of the five ACTION_REQUIRED codes
       failureCode: 'IMPORT_011', // CORRUPT_PDF
       stages: [
         { stage: 'PARSING', attempt: 1, outcome: 'FAILED', startedAt: '2026-08-12T10:00:00Z', endedAt: '2026-08-12T10:00:01Z', durationMs: 1000 },

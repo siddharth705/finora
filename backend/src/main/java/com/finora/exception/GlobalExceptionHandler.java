@@ -65,7 +65,32 @@ public class GlobalExceptionHandler {
         }
 
         return ResponseEntity.status(ex.getStatus())
-                .body(ApiResponse.error(ex.getMessage(), errorCode, ex.getDetails()));
+                .body(ApiResponse.error(ex.getMessage(), errorCode, detailsWithActionRequired(ex)));
+    }
+
+    /**
+     * Merges {@code ErrorCode.userActionRequired()} into the exception's own details, centralized
+     * here rather than left for each of the ~24 {@code ApiException} throw sites to remember --
+     * this handler already does the identical thing for {@code errorCode} two lines above.
+     *
+     * <p>Closes a drift risk Sprint 4 item 22 shipped with and flagged rather than fixed: the
+     * frontend previously kept its own hardcoded copy of which codes are user-actionable
+     * ({@code importFailureMessages.ts}), a boolean CLASSIFICATION that has to exactly agree with
+     * this enum, unlike curated message text, which is deliberately independent. The async path
+     * (queued imports) already avoided this by computing {@code userStatus} once, backend-side,
+     * and putting it on the wire ({@code UserFacingImportStatus}); this is the same fix for the
+     * synchronous path, which has no {@code ImportJob} to compute one on.
+     *
+     * <p>{@code ex.getDetails()} is {@link java.util.Collections#emptyMap()} for the overwhelming
+     * majority of throw sites -- copied into a new mutable map rather than merged in place, since
+     * that immutable empty map (and any caller-supplied {@code Map.of(...)}) would throw on
+     * {@code put}.
+     */
+    private static java.util.Map<String, Object> detailsWithActionRequired(ApiException ex) {
+        if (ex.getCode() == null) return ex.getDetails();
+        java.util.Map<String, Object> merged = new java.util.HashMap<>(ex.getDetails());
+        merged.put("userActionRequired", ex.getCode().userActionRequired());
+        return merged;
     }
 
     @ExceptionHandler(BadCredentialsException.class)

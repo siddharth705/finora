@@ -231,4 +231,48 @@ describe('api response interceptor', () => {
 
     expect(refreshMock).toHaveBeenCalledWith();
   });
+
+  /**
+   * Sprint 4 item 22. The error-shape reduction below used to drop everything except message and
+   * errorCode -- backend evidence a page might need (userActionRequired, ErrorCode.
+   * userActionRequired() via GlobalExceptionHandler's details map) would have reached this
+   * interceptor and then been silently discarded before any component saw it.
+   */
+  it('surfaces userActionRequired from the error envelope details, not just message and errorCode', async () => {
+    const caught = await rejectedHandler()({
+      response: {
+        status: 422,
+        data: {
+          message: 'Could not find a transaction table in this file',
+          errorCode: 'IMPORT_001',
+          details: { userActionRequired: true },
+        },
+      },
+      config: { url: '/import/pdf/stage', _retried: false, headers: {} },
+    }).catch((e: unknown) => e);
+
+    expect((caught as any).response.data).toEqual({
+      message: 'Could not find a transaction table in this file',
+      errorCode: 'IMPORT_001',
+      userActionRequired: true,
+    });
+  });
+
+  /**
+   * The other half: a codeless ApiException's `details` never gets the key added at all (see
+   * GlobalExceptionHandlerTest's own coverage of that) -- this must not be silently coerced to
+   * `false` here, which would claim a considered "not actionable" answer that was never actually
+   * given. `undefined` is the honest value; callers already treat that the same as false.
+   */
+  it('leaves userActionRequired undefined, not false, when the backend never sent it at all', async () => {
+    const caught = await rejectedHandler()({
+      response: {
+        status: 500,
+        data: { message: 'Unexpected error', errorCode: 'INTERNAL_ERROR', details: {} },
+      },
+      config: { url: '/import/pdf/stage', _retried: false, headers: {} },
+    }).catch((e: unknown) => e);
+
+    expect((caught as any).response.data.userActionRequired).toBeUndefined();
+  });
 });
