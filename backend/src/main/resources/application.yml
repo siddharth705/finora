@@ -378,6 +378,33 @@ app:
       # open redirect.
       post-connect-redirect: ${GOOGLE_OAUTH_POST_CONNECT_REDIRECT:https://app.finoratech.info/settings}
 
+      # Gmail message discovery (Phase C4). Reads headers and decides what is worth looking at; it
+      # cannot fetch a message body and it cannot create a transaction.
+      discovery:
+        enabled: ${GMAIL_DISCOVERY_ENABLED:true}
+
+        # Every value below is a COST CEILING, not a target. Gmail's per-user quota is the shared
+        # resource, and the wrong failure mode here is one large mailbox consuming a whole tick.
+        #
+        # interval-ms      how often a tick starts, once the previous one finished (fixedDelay).
+        # minimum-interval-ms
+        #                  how long a connection rests after being checked. Larger than the tick
+        #                  interval on purpose: the tick is how often we LOOK for due work, this is
+        #                  how often any one mailbox is due. Equal values would mean the same first
+        #                  N connections are re-checked every tick and the rest never come up.
+        # connections-per-tick
+        #                  the slice size, so one tick's work is bounded by this rather than by how
+        #                  many users the product has.
+        # messages-per-connection
+        #                  the per-run message cap. Hitting it is a PAUSE, not a failure -- the
+        #                  processed-messages table means the next run resumes where this one
+        #                  stopped rather than starting over.
+        interval-ms: ${GMAIL_DISCOVERY_INTERVAL_MS:900000}
+        initial-delay-ms: ${GMAIL_DISCOVERY_INITIAL_DELAY_MS:180000}
+        minimum-interval-ms: ${GMAIL_DISCOVERY_MINIMUM_INTERVAL_MS:3600000}
+        connections-per-tick: ${GMAIL_DISCOVERY_CONNECTIONS_PER_TICK:25}
+        messages-per-connection: ${GMAIL_DISCOVERY_MESSAGES_PER_CONNECTION:500}
+
 # Reversible encryption at rest for third-party credentials Finora must read back -- OAuth refresh
 # tokens first (ADR-007). NOT for passwords or Finora's own session tokens, which are hashed via
 # TokenHasher; see com.finora.security.crypto's package doc for why the two are not interchangeable.

@@ -231,6 +231,13 @@ public class GmailApiClient {
                             throw new GmailScopeNotGrantedException(
                                     "Gmail refused access to this mailbox (403).");
                         }
+                        if (status == 404) {
+                            // Separated from the transient bucket deliberately: retrying a message
+                            // the user deleted never succeeds, and a run that aborts on it resumes
+                            // into the same id every tick. See GmailMessageGoneException.
+                            throw new GmailMessageGoneException(
+                                    "Gmail no longer has this message (404).");
+                        }
                         log.warn("Gmail API refused a {} with {}", what, status);
                         throw new ApiException(HttpStatus.BAD_GATEWAY,
                                 "Gmail refused the request. Try again shortly.");
@@ -241,7 +248,7 @@ public class GmailApiClient {
                 throw new ApiException(HttpStatus.BAD_GATEWAY, "Gmail returned an empty " + what + ".");
             }
             return body;
-        } catch (GmailScopeNotGrantedException | ApiException e) {
+        } catch (GmailScopeNotGrantedException | GmailMessageGoneException | ApiException e) {
             throw e;
         } catch (Exception e) {
             log.warn("Gmail {} failed transiently: {}", what, e.getClass().getSimpleName());

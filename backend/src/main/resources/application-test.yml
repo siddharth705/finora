@@ -50,3 +50,9 @@ app:
       # GmailConnectionService.sweepExpiredStates() directly, which ignores this flag.
       state-cleanup:
         enabled: false
+      # Off for a stronger reason than the sweep above: this worker makes OUTBOUND HTTP CALLS. Left
+      # on, a scheduled tick during an integration test would try to reach Google with whatever
+      # connection rows that test just inserted. Tests call GmailDiscoveryWorker.runOnce() directly,
+      # which ignores this flag.
+      discovery:
+        enabled: false

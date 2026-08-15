@@ -77,16 +77,23 @@ CREATE INDEX idx_gmail_processed_connection ON gmail_processed_messages (connect
 CREATE INDEX idx_gmail_processed_outcome_domain ON gmail_processed_messages (outcome, authenticated_domain);
 
 
--- Where incremental sync resumes from. Gmail's historyId is a per-mailbox cursor: given one, the
--- API returns only what changed since. Stored on the connection rather than in a separate table
--- because it is exactly one value per connection and shares its lifecycle.
+-- NO history_cursor COLUMN, deliberately.
 --
--- Null means "never synced" -- the first run establishes a starting point rather than walking the
--- entire mailbox. See the bounded initial window in the discovery service.
-ALTER TABLE gmail_connections ADD COLUMN history_cursor VARCHAR(64);
+-- Gmail's history.list offers a per-mailbox cursor, and an earlier draft of this migration added a
+-- column for it. C4 does not use one: discovery lists message IDS (cheap -- one quota unit a page,
+-- no content), subtracts the ids already in this table, and fetches headers only for what is left.
+-- The unique index below is what makes a re-listed message free, so the cursor would buy nothing
+-- that is not already bought.
+--
+-- Shipping the column anyway would put an unwritten column in the schema on the promise that C5
+-- fills it in -- which is the dead-code gap this project has already been caught by twice. C5 adds
+-- it in C5's migration, if history.list turns out to be worth the extra failure mode (a historyId
+-- expires after about a week of inactivity and needs a fallback path that date-window listing does
+-- not).
 
 -- When the last completed discovery run finished, so a user-facing panel can say "last checked 10
--- minutes ago" and support can tell a stalled connection from an idle one.
+-- minutes ago" and support can tell a stalled connection from an idle one. It is also the window
+-- anchor: the next run asks Gmail for mail after this, minus an overlap.
 --
 -- Deliberately distinct from last_synced_at, which V80 reserved for actual transaction sync (C5)
 -- and which stays null throughout C4: conflating "we looked" with "we imported something" would

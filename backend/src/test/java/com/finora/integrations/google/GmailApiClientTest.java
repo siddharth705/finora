@@ -362,15 +362,24 @@ class GmailApiClientTest {
                 .isInstanceOf(GmailScopeNotGrantedException.class);
     }
 
-    /** A message deleted between listing and fetching answers 404. Transient from the worker's point
-     *  of view -- one message is skipped, the run continues -- and never a scope problem. */
+    /**
+     * A message deleted between listing and fetching answers 404, and that must NOT land in the
+     * transient bucket.
+     *
+     * <p>Transient means "try again", and trying again on an id the user deleted fails identically
+     * forever: discovery aborts the run on it, resumes into the same window, reaches the same id,
+     * and aborts again -- so every message behind it silently stops being examined. A distinct
+     * exception is what lets discovery skip the id and carry on.
+     */
     @Test
-    void getMessageHeaders_whenTheMessageIsGone_isTransientNotAScopeProblem() {
+    @DisplayName("a deleted message is its own case, not a transient failure")
+    void getMessageHeaders_whenTheMessageIsGone_isNeitherTransientNorAScopeProblem() {
         status.set(404);
         body.set("{\"error\":{\"code\":404,\"message\":\"Requested entity was not found.\"}}");
 
         assertThatThrownBy(() -> client.getMessageHeaders("a-token", "vanished"))
-                .isInstanceOf(ApiException.class)
+                .isInstanceOf(GmailMessageGoneException.class)
+                .isNotInstanceOf(ApiException.class)
                 .isNotInstanceOf(GmailScopeNotGrantedException.class);
     }
 
