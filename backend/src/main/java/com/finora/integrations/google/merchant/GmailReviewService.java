@@ -10,10 +10,12 @@ import com.finora.entity.ImportSession;
 import com.finora.exception.ApiException;
 import com.finora.imports.ImportService;
 import com.finora.imports.ImportSessionService;
+import com.finora.entity.Transaction;
 import com.finora.integrations.google.GmailProcessedMessage;
 import com.finora.integrations.google.GmailProcessedMessageRepository;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.ImportSessionRepository;
+import com.finora.service.CategorizationService;
 import com.finora.util.BankRegistry;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -151,12 +153,21 @@ public class GmailReviewService {
      *       needs to say what it actually is.</li>
      * </ul>
      *
-     * <p>Branches on {@code categorySource} rather than assuming "default" so this keeps working
-     * unchanged if a future category-detection engine ever sets a different source here.
+     * <p>Routes through {@link CategorizationService#decisionSourceFor} rather than checking
+     * {@code "default".equals(row.categorySource())} directly — that's the one canonical mapping
+     * {@code ImportService} also uses at confirm time to set {@code Transaction.decisionSource},
+     * including its fallback of any unrecognized value to {@code MERCHANT_DEFAULT}. Matching it
+     * here means this pre-confirm reasoning and {@code TransactionExplanationService}'s post-
+     * confirm explanation always agree about whether a category was actually detected, instead of
+     * two independent guesses that could drift apart. The English wording of the caveat itself is
+     * still independently maintained in both places (the two moments call for different phrasing —
+     * "check it below" only makes sense pre-approval) — if this fact ever changes (C6.3 ships
+     * detection), also update {@code TransactionExplanationService#defaultExplanation}'s
+     * GMAIL_IMPORT branch, which states the same fact for an already-confirmed transaction.
      */
     static String reasoningFor(String domain, StagedRow row) {
         String base = "Amount and date read from a verified " + displayNameFor(domain) + " email.";
-        if ("default".equals(row.categorySource())) {
+        if (CategorizationService.decisionSourceFor(row.categorySource()) == Transaction.DecisionSource.MERCHANT_DEFAULT) {
             return base + " Category isn't auto-detected yet, so it defaults to \"Other\" — check it below.";
         }
         return base;

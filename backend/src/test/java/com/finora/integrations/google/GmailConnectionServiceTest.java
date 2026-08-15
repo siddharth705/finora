@@ -607,4 +607,54 @@ class GmailConnectionServiceTest {
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("No Gmail account is connected");
     }
+
+    // findCurrentConnection -- unlike findLiveConnection, this is what GET /status now reads from,
+    // specifically so REVOKED (invisible to findLiveConnection's LIVE-only query) is reachable.
+
+    @Test
+    @DisplayName("findCurrentConnection surfaces a REVOKED connection, which findLiveConnection cannot")
+    void findCurrentConnection_surfacesRevoked() {
+        GmailConnection revoked = connectionWithStatus(GmailConnection.Status.REVOKED);
+        when(connections.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(revoked));
+
+        assertThat(service.findCurrentConnection(userId)).contains(revoked);
+    }
+
+    @Test
+    @DisplayName("findCurrentConnection surfaces a DISCONNECTED connection too")
+    void findCurrentConnection_surfacesDisconnected() {
+        GmailConnection disconnected = connectionWithStatus(GmailConnection.Status.DISCONNECTED);
+        when(connections.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(disconnected));
+
+        assertThat(service.findCurrentConnection(userId)).contains(disconnected);
+    }
+
+    @Test
+    @DisplayName("findCurrentConnection picks the most recently created row when several exist")
+    void findCurrentConnection_picksTheNewestRow() {
+        // findByUserIdOrderByCreatedAtDesc's own contract is newest-first -- this asserts the
+        // service takes the head of that list rather than, say, the live one or the oldest.
+        GmailConnection newest = connectionWithStatus(GmailConnection.Status.REAUTH_REQUIRED);
+        GmailConnection older = connectionWithStatus(GmailConnection.Status.DISCONNECTED);
+        when(connections.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(newest, older));
+
+        assertThat(service.findCurrentConnection(userId)).contains(newest);
+    }
+
+    @Test
+    @DisplayName("findCurrentConnection is empty for a user who has never connected")
+    void findCurrentConnection_emptyWhenNeverConnected() {
+        when(connections.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of());
+
+        assertThat(service.findCurrentConnection(userId)).isEmpty();
+    }
+
+    private GmailConnection connectionWithStatus(GmailConnection.Status status) {
+        GmailConnection connection = new GmailConnection();
+        connection.setUserId(userId);
+        connection.setGoogleEmail("amy@gmail.example.test");
+        connection.setGrantedScopes("https://www.googleapis.com/auth/gmail.readonly");
+        connection.setStatus(status);
+        return connection;
+    }
 }

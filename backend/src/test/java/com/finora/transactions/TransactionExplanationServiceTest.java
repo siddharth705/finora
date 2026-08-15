@@ -80,6 +80,26 @@ class TransactionExplanationServiceTest {
     }
 
     @Test
+    void aBetweenRuleShowsReadableNumbersNotTheRawStorageEncoding() {
+        UUID ruleId = UUID.randomUUID();
+        Transaction t = transaction(Transaction.DecisionSource.USER_RULE, ruleId, Transaction.Source.CSV_IMPORT);
+        CategoryRule rule = new CategoryRule();
+        ReflectionTestUtils.setField(rule, "id", ruleId);
+        rule.setField(CategoryRule.Field.AMOUNT);
+        rule.setOperator(CategoryRule.Operator.BETWEEN);
+        rule.setComparisonValue("1000,5000"); // RuleEngineService's own storage format, "low,high"
+        rule.setActionValue("Shopping");
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(t));
+        when(categoryRuleRepository.findById(ruleId)).thenReturn(Optional.of(rule));
+
+        TransactionExplanationDto result = service.explain(userId, txnId);
+
+        assertThat(result.summary()).contains("amount is between 1000 and 5000");
+        assertThat(result.summary()).doesNotContain("1000,5000");
+        assertThat(result.evidence()).contains("Rule condition: amount is between 1000 and 5000");
+    }
+
+    @Test
     void aDeletedRuleStillGetsAnHonestAnswerNotAnError() {
         UUID ruleId = UUID.randomUUID();
         Transaction t = transaction(Transaction.DecisionSource.GLOBAL_RULE, ruleId, Transaction.Source.CSV_IMPORT);

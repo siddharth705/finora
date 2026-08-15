@@ -13,6 +13,11 @@ import java.util.List;
  *
  * @param connected         whether a usable connection exists right now
  * @param status            CONNECTED / REAUTH_REQUIRED / DISCONNECTED / REVOKED, or null if never connected
+ * @param needsReconnect    true for REAUTH_REQUIRED/REVOKED specifically -- connected is already
+ *                          false for these, but a client also needs to tell "never connected" apart
+ *                          from "was connected, involuntarily isn't now" to show the right prompt.
+ *                          Computed here from {@link GmailConnection.Status#needsReconnect()} so a
+ *                          client never has to duplicate that enum's semantics itself.
  * @param googleEmail       which mailbox, so the user can tell WHICH account is linked
  * @param grantedScopes     what Google actually granted — visible so "read-only" is verifiable, not just claimed
  * @param connectedAt       when the link was established
@@ -31,6 +36,7 @@ import java.util.List;
 public record GmailConnectionStatusDto(
         boolean connected,
         String status,
+        boolean needsReconnect,
         String googleEmail,
         List<String> grantedScopes,
         Instant connectedAt,
@@ -42,7 +48,7 @@ public record GmailConnectionStatusDto(
 ) {
 
     public static GmailConnectionStatusDto notConnected(boolean available) {
-        return new GmailConnectionStatusDto(false, null, null, List.of(), null, null, null, 0, 0, available);
+        return new GmailConnectionStatusDto(false, null, false, null, List.of(), null, null, null, 0, 0, available);
     }
 
     public static GmailConnectionStatusDto of(GmailConnection connection, boolean available,
@@ -53,6 +59,7 @@ public record GmailConnectionStatusDto(
         return new GmailConnectionStatusDto(
                 connection.getStatus() == GmailConnection.Status.CONNECTED,
                 connection.getStatus().name(),
+                connection.getStatus().needsReconnect(),
                 connection.getGoogleEmail(),
                 scopes,
                 connection.getConnectedAt(),

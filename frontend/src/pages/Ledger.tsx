@@ -378,7 +378,7 @@ function EditTransactionModal({
         <div className="bg-card border border-border rounded-xl2 shadow-soft w-full max-w-lg max-h-[85vh] overflow-y-auto p-5 pointer-events-auto">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold text-ink text-sm">Edit Transaction</h3>
-            <button type="button" onClick={onClose} className="text-muted hover:text-ink">
+            <button type="button" onClick={onClose} aria-label="Close" className="text-muted hover:text-ink">
               <X size={18} />
             </button>
           </div>

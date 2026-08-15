@@ -30,7 +30,7 @@ vi.mock('../api/endpoints', () => ({
 
 function gmailStatus(overrides: Partial<Record<string, unknown>> = {}) {
   return {
-    connected: false, status: null, googleEmail: null, grantedScopes: [],
+    connected: false, status: null, needsReconnect: false, googleEmail: null, grantedScopes: [],
     connectedAt: null, lastSyncedAt: null, lastDiscoveryAt: null,
     transactionsFound: 0, needsReview: 0, available: true,
     ...overrides,
@@ -536,7 +536,7 @@ describe('Settings', () => {
     // Gmail" first-time prompt, with no account, no explanation.
     it('shows a distinct reconnect prompt, not the first-time Connect prompt, when the grant needs reauth', async () => {
       vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({
-        connected: false, status: 'REAUTH_REQUIRED', googleEmail: 'amy@gmail.example.test',
+        connected: false, status: 'REAUTH_REQUIRED', needsReconnect: true, googleEmail: 'amy@gmail.example.test',
       }));
 
       renderSettings();
@@ -549,7 +549,7 @@ describe('Settings', () => {
 
     it('shows the same reconnect prompt for a connection Google revoked', async () => {
       vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({
-        connected: false, status: 'REVOKED', googleEmail: 'amy@gmail.example.test',
+        connected: false, status: 'REVOKED', needsReconnect: true, googleEmail: 'amy@gmail.example.test',
       }));
 
       renderSettings();
@@ -568,7 +568,7 @@ describe('Settings', () => {
 
     it('clicking Reconnect Gmail starts the same OAuth flow as Connect Gmail', async () => {
       const user = userEvent.setup();
-      vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({ connected: false, status: 'REAUTH_REQUIRED' }));
+      vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({ connected: false, status: 'REAUTH_REQUIRED', needsReconnect: true }));
       vi.mocked(gmailApi.connect).mockResolvedValue({ authorizationUrl: 'https://accounts.google.com/o/oauth2/auth?x=1' });
       delete (window as any).location;
       (window as any).location = { href: '' };
