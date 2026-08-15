@@ -209,6 +209,19 @@
       <version>3.0.8</version>
     </dependency>
 
+    <!-- Sanitizes merchant receipt HTML before any parser sees it (C5, gmail-transaction-sync
+         proposal §12.4). OWASP's sanitizer over jsoup's Safelist because it is allowlist-only by
+         construction and has no "unsafe" escape hatch to misconfigure: a receipt parser has no
+         reason to need one, and every alternative that supports rich embedding also supports
+         turning that support off correctly, which is a mistake to design out rather than avoid.
+         Version is a date-stamped release rather than semver; 20240325.1 was the newest available
+         when this was added. -->
+    <dependency>
+      <groupId>com.googlecode.owasp-java-html-sanitizer</groupId>
+      <artifactId>owasp-java-html-sanitizer</artifactId>
+      <version>20240325.1</version>
+    </dependency>
+
     <!-- Cloudflare R2 speaks the S3 API, so the official AWS SDK is the client; there is no
          Cloudflare-specific SDK to prefer, and R2's own documentation points at exactly this.
 
