@@ -26,7 +26,7 @@ public enum ErrorCode {
     TXN_FORBIDDEN("TXN_003", HttpStatus.FORBIDDEN, "This transaction does not belong to you"),
 
     // Statement import (com.finora.imports)
-    IMPORT_NO_HEADER_DETECTED("IMPORT_001", HttpStatus.UNPROCESSABLE_ENTITY, "Could not find a transaction table in this file"),
+    IMPORT_NO_HEADER_DETECTED("IMPORT_001", HttpStatus.UNPROCESSABLE_ENTITY, "Could not find a transaction table in this file", true),
     IMPORT_ACCOUNT_REQUIRED("IMPORT_002", HttpStatus.BAD_REQUEST, "Choose an existing account or provide details for a new one"),
     IMPORT_ACCOUNT_NAME_REQUIRED("IMPORT_003", HttpStatus.BAD_REQUEST, "The new account needs a name"),
     IMPORT_ACCOUNT_FORBIDDEN("IMPORT_004", HttpStatus.FORBIDDEN, "This account does not belong to you"),
@@ -38,7 +38,7 @@ public enum ErrorCode {
     // table detection, 007 means the table WAS found and every row inside it was rejected. Folding
     // them into one code is what let a real statement import as a silent, confirmable no-op.
     IMPORT_NO_TRANSACTIONS_FOUND("IMPORT_007", HttpStatus.UNPROCESSABLE_ENTITY,
-            "Found a transaction table in this file but could not read any transactions from it"),
+            "Found a transaction table in this file but could not read any transactions from it", true),
     // Two codes, not one, and for the same reason IMPORT_001 and IMPORT_007 are separate: the
     // follow-up differs. 008 means "we have not asked you for the password yet" -- the UI opens a
     // prompt. 009 means "you gave us one and the document rejected it" -- the UI keeps the prompt
@@ -59,12 +59,12 @@ public enum ErrorCode {
     // it. So the user is told only what was observed, and a test requires the words "scanned" and
     // "OCR" to be absent from what they read.
     IMPORT_SCANNED_OCR_REQUIRED("IMPORT_010", HttpStatus.UNPROCESSABLE_ENTITY,
-            "This PDF has no text in it -- every page is an image"),
+            "This PDF has no text in it -- every page is an image", true),
 
     IMPORT_PDF_PASSWORD_REQUIRED("IMPORT_008", HttpStatus.UNPROCESSABLE_ENTITY,
-            "This statement is password protected. Enter the password your bank uses for it."),
+            "This statement is password protected. Enter the password your bank uses for it.", true),
     IMPORT_PDF_PASSWORD_INVALID("IMPORT_009", HttpStatus.UNPROCESSABLE_ENTITY,
-            "That password did not open this statement. Check it and try again."),
+            "That password did not open this statement. Check it and try again.", true),
     // A structurally broken PDF -- truncated by a failed download, corrupted in transit, or saved
     // by something that produced not-quite-valid output. Previously thrown as a codeless
     // ApiException (PdfTextExtractor.loadOrExplain's IOException branch), which meant
@@ -161,6 +161,7 @@ public enum ErrorCode {
     private final HttpStatus defaultStatus;
     private final String defaultMessage;
     private final RetryPolicy retryPolicy;
+    private final boolean userActionRequired;
 
     /**
      * Every existing call site uses this overload, and every one of them defaults to
@@ -175,20 +176,64 @@ public enum ErrorCode {
      * unclassified failure five times is worse than dead-lettering it once.
      */
     ErrorCode(String code, HttpStatus defaultStatus, String defaultMessage) {
-        this(code, defaultStatus, defaultMessage, RetryPolicy.FAIL_FAST);
+        this(code, defaultStatus, defaultMessage, RetryPolicy.FAIL_FAST, false);
     }
 
     ErrorCode(String code, HttpStatus defaultStatus, String defaultMessage, RetryPolicy retryPolicy) {
+        this(code, defaultStatus, defaultMessage, retryPolicy, false);
+    }
+
+    /**
+     * The five {@code IMPORT_*} codes below pass {@code true} here -- Premium Import Reliability
+     * v1, §1's {@code ACTION_REQUIRED} refinement of {@code FAILED}. Everything else defaults to
+     * {@code false} through the shorter overloads, matching {@link RetryPolicy}'s own
+     * safe-default reasoning above: a code this enum has no opinion about is presented as plain
+     * {@code FAILED}, not guessed into {@code ACTION_REQUIRED}.
+     */
+    ErrorCode(String code, HttpStatus defaultStatus, String defaultMessage, boolean userActionRequired) {
+        this(code, defaultStatus, defaultMessage, RetryPolicy.FAIL_FAST, userActionRequired);
+    }
+
+    ErrorCode(String code, HttpStatus defaultStatus, String defaultMessage,
+              RetryPolicy retryPolicy, boolean userActionRequired) {
         this.code = code;
         this.defaultStatus = defaultStatus;
         this.defaultMessage = defaultMessage;
         this.retryPolicy = retryPolicy;
+        this.userActionRequired = userActionRequired;
     }
 
     public String code() { return code; }
     public HttpStatus defaultStatus() { return defaultStatus; }
     public String defaultMessage() { return defaultMessage; }
     public RetryPolicy retryPolicy() { return retryPolicy; }
+
+    /**
+     * Whether the user themselves can reasonably fix what caused this -- Premium Import
+     * Reliability v1, §1's governing rule: "{@code ACTION_REQUIRED} = the user can reasonably
+     * correct the input. {@code FAILED} = the user cannot fix it without Finora or support."
+     * Read by {@link com.finora.imports.jobs.UserFacingImportStatus#of}, never branched on
+     * directly by a throw site -- this is presentation metadata about a known failure, the same
+     * role {@link #defaultMessage} already plays, not retry policy (that's {@link #retryPolicy}).
+     */
+    public boolean userActionRequired() { return userActionRequired; }
+
+    /**
+     * {@link #userActionRequired()} for a stored value that is really this enum's NAME, or
+     * {@code false} for anything that isn't one (including {@code null}) -- the safe default,
+     * since a failure with no curated {@code ErrorCode} at all has no known concrete fix to offer.
+     * Mirrors {@link #wireCodeOrNull}'s exact shape and exists for the identical reason: {@code
+     * ImportJob.failureCode} stores either an {@code ErrorCode} enum name or a raw exception's
+     * simple class name, and only {@link #valueOf} can tell which -- safely, rather than throwing.
+     */
+    public static boolean userActionRequiredOrDefault(String storedName) {
+        if (storedName == null) return false;
+        try {
+            return valueOf(storedName).userActionRequired();
+        } catch (IllegalArgumentException notAnErrorCodeName) {
+            return false;
+        }
+    }
 
     /**
      * The wire code ({@code "IMPORT_001"}) for a stored value that is really this enum's NAME

@@ -25,6 +25,7 @@ const job = (over: Partial<ImportJobProgress> = {}): ImportJobProgress => ({
   jobId: 'job-1',
   fileName: 'statement.csv',
   status: 'QUEUED',
+  userStatus: 'PROCESSING',
   rowsTotal: null,
   rowsProcessed: 0,
   createdAt: '2026-08-08T00:00:00Z',

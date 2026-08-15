@@ -303,7 +303,6 @@ export interface StatementSummary {
   closingBalance: number | null;
   transactionsImported: number;
   transactionsSkipped: number;
-  status: string;
   importedAt: string;
   // Financial Intelligence Workspace, Statement Imports module: how many of this import's own
   // transactions are currently flagged ReconciliationStatus.DUPLICATE. Computed on read

@@ -155,6 +155,30 @@ class GmailOAuthEndpointIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void verify_requiresAuthentication() {
+        ResponseEntity<String> response = restTemplate.exchange(
+                BASE + "/connection/verify", HttpMethod.POST, HttpEntity.EMPTY, String.class);
+
+        assertThat(response.getStatusCode()).isIn(HttpStatus.UNAUTHORIZED, HttpStatus.FORBIDDEN);
+    }
+
+    /**
+     * With Google unconfigured — the test profile's deliberate state, and any deployment that has
+     * not set the env vars — verify answers 503, the same as connect. It does NOT report a
+     * connection problem: the fault is the deployment's, and telling a user to reconnect would send
+     * them to fix something they cannot.
+     */
+    @Test
+    void verify_whenGoogleIsNotConfigured_is503() {
+        User user = createUser();
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                BASE + "/connection/verify", HttpMethod.POST, new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
+    @Test
     void disconnect_requiresAuthentication() {
         ResponseEntity<String> response = restTemplate.exchange(
                 BASE + "/connection", HttpMethod.DELETE, HttpEntity.EMPTY, String.class);

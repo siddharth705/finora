@@ -88,11 +88,41 @@ public class GmailConnection {
     @Column(name = "last_synced_at")
     private Instant lastSyncedAt;
 
+    /**
+     * When discovery last finished checking this mailbox.
+     *
+     * <p>Deliberately distinct from {@link #lastSyncedAt}, which V80 reserved for actual transaction
+     * sync and which stays null throughout C4: conflating "we looked" with "we imported something"
+     * would make a status panel lie in exactly the period where nothing is imported yet.
+     *
+     * <p>It is also the window anchor — {@code GmailMessageDiscoveryService} asks Gmail for mail
+     * after this, minus an overlap. Null means never checked, which is what selects the bounded
+     * first-run window rather than a walk of the entire mailbox.
+     */
+    @Column(name = "last_discovery_at")
+    private Instant lastDiscoveryAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt = Instant.now();
+
+    /**
+     * Whether Google actually granted the scope this integration cannot work without.
+     *
+     * <p>{@link #grantedScopes} was recorded from Phase B precisely because a consent screen can
+     * come back with less than was asked for — and until C2 nothing inspected it. A connection
+     * missing this scope is {@code CONNECTED}, has a working refresh token, and cannot read a
+     * single message.
+     */
+    public boolean hasGmailReadScope() {
+        if (grantedScopes == null || grantedScopes.isBlank()) return false;
+        for (String scope : grantedScopes.split(" ")) {
+            if (GmailApiClient.GMAIL_READONLY_SCOPE.equals(scope.trim())) return true;
+        }
+        return false;
+    }
 
     /** Reassembles the stored halves into the shape {@code EncryptionService.decrypt} takes.
      *  Returns null for a connection that no longer holds a credential. */
@@ -147,6 +177,8 @@ public class GmailConnection {
     public void setConnectedAt(Instant connectedAt) { this.connectedAt = connectedAt; }
     public Instant getLastSyncedAt() { return lastSyncedAt; }
     public void setLastSyncedAt(Instant lastSyncedAt) { this.lastSyncedAt = lastSyncedAt; }
+    public Instant getLastDiscoveryAt() { return lastDiscoveryAt; }
+    public void setLastDiscoveryAt(Instant lastDiscoveryAt) { this.lastDiscoveryAt = lastDiscoveryAt; touch(); }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 }

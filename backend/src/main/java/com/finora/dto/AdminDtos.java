@@ -248,10 +248,12 @@ public class AdminDtos {
      * a background-job monitor this codebase has. CSV import runs synchronously inside the HTTP
      * request (CsvImportService/StatementImportService), not on a queue or worker, so there is no
      * real job queue to observe -- see StatementImportRepository.findAllByOrderByImportedAtDesc's
-     * doc comment. status is always "COMPLETED" today (a failed import throws before a row is
-     * ever persisted, so there's no real FAILED row to show, and this deliberately doesn't
-     * fabricate one) -- hadSkippedRows is the one real per-row signal worth surfacing, the same
-     * honest proxy the Operational Dashboard's importsWithSkippedRowsToday tile already uses.
+     * doc comment. A statement_imports row can only ever represent a completed import (a failed
+     * import throws before a row is ever persisted, so there's no real FAILED row to show -- V81
+     * removed the status column this table briefly carried for exactly that reason), so this
+     * deliberately has no status field to fabricate one -- hadSkippedRows is the one real per-row
+     * signal worth surfacing, the same honest proxy the Operational Dashboard's
+     * importsWithSkippedRowsToday tile already uses.
      */
     public record RecentImportDto(
             UUID id,

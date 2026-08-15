@@ -93,8 +93,9 @@ export interface SystemHealthDto {
 }
 
 /** Mirrors backend RecentImportDto exactly -- Admin Portal Phase 7's closest honest equivalent to
- *  a background-job monitor (see that record's own doc comment for why status is always
- *  "COMPLETED" and hadSkippedRows is the one real per-row signal worth showing). */
+ *  a background-job monitor (see that record's own doc comment for why a statement_imports row
+ *  can only ever be a completed import, and hadSkippedRows is the one real per-row signal worth
+ *  showing). */
 export interface RecentImportDto {
   id: string;
   userId: string;

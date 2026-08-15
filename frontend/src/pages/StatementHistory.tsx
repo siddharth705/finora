@@ -252,7 +252,6 @@ export default function StatementHistory() {
                         </p>
                         <p className="text-xs text-muted">
                           Opening {fmt(s.openingBalance)} → Closing {fmt(s.closingBalance)}
-                          {' · '}<span className="uppercase text-[10px]">{s.status}</span>
                           {s.duplicateCount > 0 && (
                             <span className="text-warning">
                               {' · '}{s.duplicateCount} duplicate{s.duplicateCount === 1 ? '' : 's'} flagged
@@ -532,7 +531,6 @@ function StatementDetailModal({
               <Field label="Transactions imported">{viewing.statement.transactionsImported}</Field>
               <Field label="Transactions skipped">{viewing.statement.transactionsSkipped}</Field>
               <Field label="Duplicates flagged">{viewing.statement.duplicateCount}</Field>
-              <Field label="Status">{viewing.statement.status}</Field>
             </div>
           ) : isLoading ? (
             <p className="text-sm text-muted">Loading…</p>

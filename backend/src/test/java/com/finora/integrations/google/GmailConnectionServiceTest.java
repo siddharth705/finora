@@ -46,6 +46,8 @@ class GmailConnectionServiceTest {
     private EncryptionService encryptionService;
     private UserRepository userRepository;
     private AuditService auditService;
+    private GmailAccessTokenService accessTokenService;
+    private GmailApiClient gmailApiClient;
     private GmailConnectionService service;
 
     private final UUID userId = UUID.randomUUID();
@@ -90,8 +92,11 @@ class GmailConnectionServiceTest {
             return null;
         }).when(transactionTemplate).executeWithoutResult(any());
 
+        accessTokenService = mock(GmailAccessTokenService.class);
+        gmailApiClient = mock(GmailApiClient.class);
         service = new GmailConnectionService(connections, states, googleClient, properties,
-                encryptionService, userRepository, auditService, transactionTemplate);
+                encryptionService, userRepository, auditService, accessTokenService,
+                gmailApiClient, transactionTemplate);
 
         when(connections.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(states.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -364,6 +369,150 @@ class GmailConnectionServiceTest {
         InOrder inOrder = inOrder(states, googleClient);
         inOrder.verify(states).claimForRedemption(anyString(), any());
         inOrder.verify(googleClient).exchangeCode(anyString());
+    }
+
+    // ---------- verify ----------
+
+    /**
+     * The gap this endpoint closes: {@code GET /status} reports the stored status, which stays
+     * CONNECTED after a user revokes Finora from their own Google account — nothing learns of that
+     * until the credential is used. Verification asks Google.
+     */
+    @Test
+    void verifyConnection_reportsHealthyWhenGoogleHonoursTheCredential() {
+        GmailConnection connection = new GmailConnection();
+        connection.setUserId(userId);
+        connection.setGoogleUserId("google-sub-12345");
+        connection.setGrantedScopes("openid " + GmailApiClient.GMAIL_READONLY_SCOPE);
+        when(connections.findByUserIdAndStatusIn(eq(userId), any())).thenReturn(Optional.of(connection));
+        when(accessTokenService.accessTokenFor(connection)).thenReturn("fresh-token");
+        when(gmailApiClient.getProfile("fresh-token")).thenReturn(
+                new GmailApiClient.Profile("mailbox@example.test", 10L, 5L, "123"));
+
+        GmailVerificationResultDto result = service.verifyConnection(userId);
+
+        assertThat(result.healthy()).isTrue();
+        assertThat(result.actionRequired()).isFalse();
+    }
+
+    @Test
+    @DisplayName("a dead grant reports actionRequired, so the UI offers Reconnect")
+    void verifyConnection_whenTheGrantIsDead_reportsReauthRequired() {
+        GmailConnection connection = new GmailConnection();
+        connection.setUserId(userId);
+        connection.setGoogleUserId("google-sub-12345");
+        connection.setGrantedScopes("openid " + GmailApiClient.GMAIL_READONLY_SCOPE);
+        when(connections.findByUserIdAndStatusIn(eq(userId), any())).thenReturn(Optional.of(connection));
+        when(accessTokenService.accessTokenFor(connection))
+                .thenThrow(new GmailReauthRequiredException("invalid_grant"));
+
+        GmailVerificationResultDto result = service.verifyConnection(userId);
+
+        assertThat(result.healthy()).isFalse();
+        assertThat(result.actionRequired())
+                .as("only the user can fix a revoked grant, so the UI must send them to reconnect")
+                .isTrue();
+        assertThat(result.status()).isEqualTo("REAUTH_REQUIRED");
+    }
+
+    /**
+     * The direction that would be easy to get wrong: a transient failure must NOT tell the user to
+     * reconnect. Sending someone through a consent screen because Google timed out fixes nothing
+     * and costs them their trust in the signal.
+     */
+    @Test
+    @DisplayName("a transient failure does not ask the user to reconnect")
+    void verifyConnection_whenGoogleIsUnreachable_doesNotDemandReconnection() {
+        GmailConnection connection = new GmailConnection();
+        connection.setUserId(userId);
+        connection.setGoogleUserId("google-sub-12345");
+        connection.setGrantedScopes("openid " + GmailApiClient.GMAIL_READONLY_SCOPE);
+        connection.setStatus(GmailConnection.Status.CONNECTED);
+        when(connections.findByUserIdAndStatusIn(eq(userId), any())).thenReturn(Optional.of(connection));
+        when(accessTokenService.accessTokenFor(connection))
+                .thenThrow(new ApiException(org.springframework.http.HttpStatus.BAD_GATEWAY, "unreachable"));
+
+        GmailVerificationResultDto result = service.verifyConnection(userId);
+
+        assertThat(result.healthy()).isFalse();
+        assertThat(result.actionRequired()).isFalse();
+        assertThat(result.status())
+                .as("the connection was not changed, so its existing status is what to report")
+                .isEqualTo("CONNECTED");
+    }
+
+    @Test
+    void verifyConnection_whenNothingIsConnected_is404() {
+        when(connections.findByUserIdAndStatusIn(eq(userId), any())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.verifyConnection(userId))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("No Gmail account is connected");
+    }
+
+    /**
+     * C2. The gap Phase B's own doc comment predicted and nothing checked: a user can complete
+     * consent while declining gmail.readonly, leaving a CONNECTED row with a working refresh token
+     * that cannot read a single message.
+     */
+    @Test
+    @DisplayName("a connection without gmail.readonly is reported as unusable, without calling Gmail")
+    void verifyConnection_whenTheScopeWasNeverGranted_saysSo() {
+        GmailConnection connection = new GmailConnection();
+        connection.setUserId(userId);
+        connection.setGoogleUserId("google-sub-12345");
+        connection.setGrantedScopes("openid https://www.googleapis.com/auth/userinfo.email");
+        when(connections.findByUserIdAndStatusIn(eq(userId), any())).thenReturn(Optional.of(connection));
+
+        GmailVerificationResultDto result = service.verifyConnection(userId);
+
+        assertThat(result.healthy()).isFalse();
+        assertThat(result.actionRequired()).isTrue();
+        assertThat(result.message()).contains("permission");
+        // The recorded scope already answers this -- spending a request to be told 403 would cost a
+        // round trip to learn what the row says.
+        verify(accessTokenService, never()).accessTokenFor(any());
+        verify(gmailApiClient, never()).getProfile(anyString());
+    }
+
+    /**
+     * Verification must prove Gmail will honour the token, not merely that the token refreshes.
+     * Those are different facts, and only the second was checked before C2.
+     */
+    @Test
+    void verifyConnection_readsTheMailboxProfile_notJustTheToken() {
+        GmailConnection connection = new GmailConnection();
+        connection.setUserId(userId);
+        connection.setGoogleUserId("google-sub-12345");
+        connection.setGrantedScopes("openid " + GmailApiClient.GMAIL_READONLY_SCOPE);
+        when(connections.findByUserIdAndStatusIn(eq(userId), any())).thenReturn(Optional.of(connection));
+        when(accessTokenService.accessTokenFor(connection)).thenReturn("fresh-token");
+        when(gmailApiClient.getProfile("fresh-token")).thenReturn(
+                new GmailApiClient.Profile("mailbox@example.test", 10L, 5L, "123"));
+
+        assertThat(service.verifyConnection(userId).healthy()).isTrue();
+        verify(gmailApiClient).getProfile("fresh-token");
+    }
+
+    /** Gmail refusing on permission grounds despite a recorded scope -- e.g. the Gmail API disabled
+     *  on the Cloud project. Reported as a permission problem, not "reconnect", because a
+     *  re-consent that changes nothing would fail identically. */
+    @Test
+    void verifyConnection_whenGmailRefusesOnPermission_reportsAScopeProblem() {
+        GmailConnection connection = new GmailConnection();
+        connection.setUserId(userId);
+        connection.setGoogleUserId("google-sub-12345");
+        connection.setGrantedScopes("openid " + GmailApiClient.GMAIL_READONLY_SCOPE);
+        when(connections.findByUserIdAndStatusIn(eq(userId), any())).thenReturn(Optional.of(connection));
+        when(accessTokenService.accessTokenFor(connection)).thenReturn("fresh-token");
+        when(gmailApiClient.getProfile(anyString()))
+                .thenThrow(new GmailScopeNotGrantedException("403"));
+
+        GmailVerificationResultDto result = service.verifyConnection(userId);
+
+        assertThat(result.healthy()).isFalse();
+        assertThat(result.actionRequired()).isTrue();
+        assertThat(result.message()).contains("permission");
     }
 
     // ---------- disconnect ----------
