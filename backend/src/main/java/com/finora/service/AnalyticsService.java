@@ -16,6 +16,7 @@ import com.finora.util.UserZone;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -113,7 +114,14 @@ public class AnalyticsService {
 
         Map<YearMonth, BigDecimal> byMonth = new HashMap<>();
         RefundNetting refunds = refundsFor(userId);
-        for (Transaction t : activeExpenseTransactions(userId, null)) {
+        // BH-042: this used to call activeExpenseTransactions(userId, null) -- the ALL-TIME
+        // overload -- loading the user's entire expense history via findByUserId, and only
+        // discarded everything outside [start, end] afterward, in memory. start/end above are
+        // already the exact window this method needs, so querying them directly is the fix; the
+        // refund netting above is unaffected -- refundsFor() already runs its own small, always-
+        // unbounded-by-design query (see its javadoc) that isn't part of the fetch being narrowed
+        // here.
+        for (Transaction t : activeExpenseTransactions(userId, start.atDay(1), end.atEndOfMonth())) {
             if (t.getMerchantId() == null) continue;
             YearMonth m = YearMonth.from(t.getTxnDate());
             if (m.isBefore(start) || m.isAfter(end)) continue;
@@ -239,6 +247,20 @@ public class AnalyticsService {
         return RefundNetting.reportable(transactionRepository.findByUserId(userId)).stream()
                 .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE
                         && (month == null || YearMonth.from(t.getTxnDate()).equals(month)))
+                .toList();
+    }
+
+    /**
+     * BH-042: date-bounded twin of {@link #activeExpenseTransactions(UUID, YearMonth)}, used only
+     * by {@link #merchantTrend}, which already knows its exact [start, end] window up front -- no
+     * need to load anything outside it, unlike the {@code YearMonth}-or-null overload above (kept
+     * exactly as it was: {@link #topMerchants} and {@link #topCategories} still call it, and their
+     * {@code month == null} "all-time" case is a real, intentional query shape this pass leaves
+     * alone).
+     */
+    private List<Transaction> activeExpenseTransactions(UUID userId, LocalDate from, LocalDate to) {
+        return RefundNetting.reportable(transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to)).stream()
+                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
                 .toList();
     }
 

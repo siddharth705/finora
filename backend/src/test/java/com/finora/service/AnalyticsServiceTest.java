@@ -14,6 +14,7 @@ import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -27,7 +28,9 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AnalyticsServiceTest {
@@ -153,7 +156,11 @@ class AnalyticsServiceTest {
     @Test
     void merchantTrend_returnsSixTrailingMonths_oldestFirst_includingZeroSpendMonths() {
         UUID amazon = UUID.randomUUID();
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(
+        // BH-042: merchantTrend now fetches only its own [start, end] window via
+        // findByUserIdAndTxnDateBetween instead of loading the user's whole history, so the stub
+        // moves to that method -- see merchantTrend_queriesOnlyItsOwnWindow_notTheEntireHistory
+        // below for the test that actually proves the window is what's requested.
+        when(transactionRepository.findByUserIdAndTxnDateBetween(eq(userId), any(), any())).thenReturn(List.of(
                 expense(amazon, LocalDate.of(2026, 7, 10), new BigDecimal("500"))
         ));
         when(merchantRepository.findByUserId(userId)).thenReturn(List.of(merchant(amazon, "Amazon")));
@@ -171,7 +178,7 @@ class AnalyticsServiceTest {
     void merchantTrend_sumsMultipleMerchantsWithinTheSameMonth() {
         UUID amazon = UUID.randomUUID();
         UUID swiggy = UUID.randomUUID();
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(
+        when(transactionRepository.findByUserIdAndTxnDateBetween(eq(userId), any(), any())).thenReturn(List.of(
                 expense(amazon, LocalDate.of(2026, 7, 5), new BigDecimal("500")),
                 expense(swiggy, LocalDate.of(2026, 7, 20), new BigDecimal("300"))
         ));
@@ -180,6 +187,23 @@ class AnalyticsServiceTest {
         var result = analyticsService.merchantTrend(userId, YearMonth.of(2026, 7));
 
         assertThat(result.get(5).totalSpend()).isEqualByComparingTo("800");
+    }
+
+    @Test
+    @DisplayName("BH-042: merchantTrend queries only its own 6-month window, not the entire history")
+    void merchantTrend_queriesOnlyItsOwnWindow_notTheEntireHistory() {
+        // No stub for findByUserId at all -- if merchantTrend ever regresses back to calling the
+        // all-time activeExpenseTransactions(userId, null) overload (which is backed by
+        // findByUserId), this test's own verify() below would fail to see any invocation of
+        // findByUserIdAndTxnDateBetween, since Mockito never routes one method's stub to another.
+        analyticsService.merchantTrend(userId, YearMonth.of(2026, 7));
+
+        org.mockito.ArgumentCaptor<LocalDate> fromCaptor = org.mockito.ArgumentCaptor.forClass(LocalDate.class);
+        org.mockito.ArgumentCaptor<LocalDate> toCaptor = org.mockito.ArgumentCaptor.forClass(LocalDate.class);
+        verify(transactionRepository).findByUserIdAndTxnDateBetween(eq(userId), fromCaptor.capture(), toCaptor.capture());
+
+        assertThat(fromCaptor.getValue()).isEqualTo(LocalDate.of(2026, 2, 1)); // 6 months back from July, inclusive
+        assertThat(toCaptor.getValue()).isEqualTo(LocalDate.of(2026, 7, 31));
     }
 
     // --- categoryConfidence ---
