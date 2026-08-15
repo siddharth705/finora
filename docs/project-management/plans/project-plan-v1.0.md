@@ -32,7 +32,7 @@ comes out is right, and stays right. The two share a name and almost nothing els
 | **Current phase** | Phase 4 complete; **production-readiness audit + remediation pass complete** (2026-08-11) |
 | **Health** | **On Track**, with one warning — see §8 |
 | **v1.0 scope** | Web + admin portal + **mobile** (D-2, 2026-08-09) |
-| **Open bug-hunt findings** | **0 Critical** (security-audit severity scale — distinct from the bug-hunt's own P0/P1/P2/P3 buckets, see §4), confirmed twice now — once by the original bug-hunt closures, once independently by a fresh 11-domain audit that re-derived evidence from scratch rather than trusting prior claims. **0 P0/P1 IDOR or auth-bypass found** across an exhaustive resource sweep. Bug-hunt P1 bucket: 0 open. BH-048 CLOSED–VERIFIED 08-14 (PR #88 merged, real nightly run confirmed green) and BH-007 CLOSED–VERIFIED 08-14 (PR #89 merged, mutation-checked regression tests — see §4). **P2 has no actionable engineering item left** — BH-014/029/032/036/037/046 were already fixed in code but never recorded closed until 08-14's plan-drift correction (see §4); BH-044's remainder needs an owner decision, not a PR. BH-042/043/045 still owned by a parallel session |
+| **Open bug-hunt findings** | **0 Critical** (security-audit severity scale — distinct from the bug-hunt's own P0/P1/P2/P3 buckets, see §4), confirmed twice now — once by the original bug-hunt closures, once independently by a fresh 11-domain audit that re-derived evidence from scratch rather than trusting prior claims. **0 P0/P1 IDOR or auth-bypass found** across an exhaustive resource sweep. Bug-hunt P1 bucket: 0 open. BH-048 CLOSED–VERIFIED 08-14 (PR #88 merged, real nightly run confirmed green) and BH-007 CLOSED–VERIFIED 08-14 (PR #89 merged, mutation-checked regression tests — see §4). **P0–P3 bug-hunt backlog fully closed, accepted, or decided** — BH-014/029/032/036/037/046 were already fixed in code but never recorded closed until 08-14's plan-drift correction (see §4); BH-044's retention direction (redact) decided 08-15, engineering not yet built/scoped. BH-042/043/045 still owned by a parallel session |
 | **Baselined against** | `origin/main` @ `cc17716`. `main` fully green — confirmed on the real CI (not just local runs): backend 2191/2191, frontend 322/322, admin-portal 302/302 |
 | **Commits** | 600+ across 11 days (first commit 2026-07-31) |
 | **Backend** | 2191 tests green, real CI run confirmed (not estimated) |
@@ -68,7 +68,7 @@ whose remaining 10% is the part that corrupts a balance is not 90% done for laun
 
 | # | Workstream | Weight | Done | Contribution | What the remainder is |
 |---|---|---|---|---|---|
-| 1 | Core product (auth, ledger, accounts, budgets, goals, dashboard, reports, admin portal) | 20% | 95% | 19.0 | Password-policy convergence, a few unmigrated TanStack pages |
+| 1 | Core product (auth, ledger, accounts, budgets, goals, dashboard, reports, admin portal) | 20% | 95% | 19.0 | A few unmigrated TanStack pages. (Password-policy convergence — D-6 — checked 2026-08-14: no drift existed, nothing to converge) |
 | 2 | Import pipeline (M1 reliability + M2 at-scale) | 20% | 78% | 15.6 | `PdfTableLocator` (1,358 lines) and `imports/product/` (14 classes) still **never reviewed** — the largest unquantified risk in the repo. A new, small, appropriately-scoped gap logged this morning (non-text header row on a real SBI statement), not built ad hoc |
 | 3 | **Financial correctness defects** | 10% | **90%** ▲ | 9.0 | All six original P0s (BH-001/003/004/005/006 + BH-023) CLOSED–VERIFIED and merged, including a real defect found in BH-006's own fix and corrected same night (see §12 changelog). Remainder is Round 2's unreviewed surface, not open tickets |
 | 4 | Security & privacy | 12% | 90% ▲ | 10.8 | BH-014, 017, 025, 032, 036, 037, 039, 046 all merged (three more confirmed closed 08-14 — see §4). Remainder is entirely non-bug-hunt now: no malware scan, no edge headers, no secret manager |
@@ -114,7 +114,7 @@ measured history consists of, which is why block A and B carry the widest ranges
 | 2 | **M1 — Import Reliability** | ✅ Complete | Tagged `v1.0-import-reliability`, 1,510 tests green on a fresh clone |
 | 3 | **M2 — Import at Scale** | 🟡 ~80% | Items 1–6 built (corpus gate, layout registry V68, WI1A, multi-account parity, async completion, observability V72). Items 7–8 open |
 | 3.5 | Security & privacy cleanup | ✅ Complete | PII sanitization swept, corpus scanner, tree ratchet 145→112, security control audit accepted |
-| **4** | **Hardening & Defect Remediation** | 🟡 **~98% — effectively complete, 2 items remain** | Corrected 2026-08-14 — the "0%, 56 open" figure was the original 08-08 baseline, never updated as closures landed. Actual current state, re-derived against code and tests (§4): all P0–P3 findings closed or accepted except `BH-044`'s retention half (blocked on an owner decision, not engineering) and `BH-042`/`043`/`045` (owned by a parallel session). Not marked ✅ Complete because those two genuinely remain open |
+| **4** | **Hardening & Defect Remediation** | 🟡 **~98% — effectively complete, 1 item remains** | Corrected 2026-08-14, updated 08-15 — all P0–P3 findings closed, accepted, or decided (§4). `BH-044`'s retention direction (redact) decided 08-15; the engineering itself (retention framework, redaction job) is new, unscoped work, not yet built. `BH-042`/`043`/`045` owned by a parallel session, in progress elsewhere. Not marked ✅ Complete because BH-044's build is still outstanding |
 | 5 | Production readiness | ⬜ Not started | Backups, DR drill, load test, runbooks, scaling decision |
 | 6 | Beta | ⬜ Not started | Gate: Phase 4 + 5 complete |
 | 7 | v1.0 GA | ⬜ Not started | Gate: §10 release criteria all met |
@@ -303,16 +303,21 @@ its test suite rather than trusting the 08-09 report forward:
   `ProductionConfigValidatorTest`, `ImportSessionServiceTest`, `ImportServiceStorageDualWriteTest`,
   green.
 - **`BH-044`** (`audit_logs` grows unbounded, and a `RECONCILIATION_RUN` row per write was a large
-  share of that growth) — **half closed.** The growth-rate half is fixed: no row is written for a
-  run that reclassified nothing. **The retention half is still genuinely open**, and stays that way
-  on purpose — it's a compliance/product decision (how long a financial audit trail must be kept,
-  whether a deletion request must remove it, truncate vs. redact vs. archive), not an engineering
-  task, per `AuditService`'s own SEAM doc comment. Needs owner input, not a PR.
+  share of that growth) — **growth-rate half fixed** (no row written for a run that reclassified
+  nothing). **Retention direction decided 2026-08-15: redact.** Owner's call: keep the audit event
+  (actor, action, entity, timestamp, correlation ID — proof something happened) indefinitely;
+  redact the financial payload (amounts, merchant names, descriptions, before/after snapshots) after
+  a defined window, rather than truncating the row entirely or keeping it forever. Owner's proposed
+  defaults: metadata retained long-term, financial payload redacted after 730 days. **Not yet
+  built** — this closes the *decision*, not the engineering (a retention framework, a scheduled
+  redaction job, and — per the owner's own proposal — splitting `audit_logs` from a separate
+  `audit_payloads` table for independent retention rules are all unscoped work, not yet estimated
+  or prioritized against Phase 4/5).
 
 `BH-042`/`043`/`045` (the remaining performance cluster) untouched — still owned by a parallel
-session per §1. With this correction, **there is no actionable engineering item left in P2** other
-than what's already covered above: everything closeable by code has been closed, and BH-044's
-remainder is blocked on an owner decision.
+session per §1. With this correction, **there is no actionable engineering item left in P2 that
+isn't already decided** — BH-044's mechanism is chosen; building it is a new, unscoped item, not an
+open decision.
 
 ### P3 — v1.1 (label stale — pulled into v1.0 scope 2026-08-09, see §5)
 
@@ -347,22 +352,50 @@ and `BH-042`/`043`/`045` (owned by a parallel session, in progress elsewhere).
 
 ## 5. Critical path
 
-Two tracks now, because mobile is in scope (D-2) and its slowest items are **externally gated** —
-Apple/Google enrolment, APNs and Play Integrity configuration, and store review. Those cannot be
-compressed by working harder, only by starting earlier.
+**Superseded by D-11 (2026-08-15) — restructured below, dates not yet recalculated.** The diagram
+this replaced treated mobile as one combined track converging on a single `v1.0 GA`, which assumed
+simultaneous launch. D-11 reversed that: iOS launches first. The structure is corrected here; the
+Best/Target/Conservative dates in §9 are not — they still assume the old, simultaneous-launch shape
+and need their own recalculation pass, deliberately not done yet per the owner's instruction not to
+invent dates ahead of D-7's pricing scope.
+
+Three tracks now: web (shared backend/API, gates both platforms), iOS (decoupled, launches first),
+and Android (trails, still gated by its own tester clock — unaffected by D-11, see §9a).
 
 ```
 web    P0 financial + async defects → P1 security & idempotency → full E2E in CI
-                    → backup/restore drill + load test ─────────────┐
-                                                                    ├→ beta soak → v1.0 GA
-mobile store enrolment + EAS + first device bring-up                │
-                    → duplicate-review parity → mobile E2E          │
-                    → listings + privacy policy → store review ─────┘
+                    → backup/restore drill + load test ──────────────────┐
+                                                                          │
+iOS    Apple enrolment + EAS + iOS device bring-up (APNs)                │
+                    → duplicate-review parity → iOS E2E                 ├→ D-7 pricing/ToS finalized
+                    → store listing + privacy policy (D-12) ─────────────┤   + D-12 contact resolved
+                    → App Store review ──────────────────────────────────┤   → iOS public launch
+                                                                          │
+Android store enrolment (done) + EAS + Android device bring-up          │      (independent milestone,
+                    → 12 testers × 14 continuous days → Play review ────┘       trails iOS — §9a)
 ```
 
-**The sequencing rule this implies:** start the externally-gated mobile items *first*, in parallel
-with the P0 defect work, even though mobile is lower priority. Their surprises have long tails and
-you want them in August, not October. The mobile *code* work stays serial behind the web P0s.
+**Two new blockers sit directly on the iOS path that didn't before D-11 and D-7 reversed:**
+
+- **D-7 (pricing/ToS)** was scoped to v1.1 — zero impact on this critical path. Reversed 2026-08-15:
+  now required before *production launch*, and with iOS launching first, that means before iOS's
+  launch specifically, not some later combined date. No pricing model exists yet (see §11), so this
+  is currently an **unscoped, unestimated blocker** on the nearer platform's launch, not a distant one.
+- **D-12 (privacy-policy data controller)** already blocked both stores' listings before today. What
+  changes is *when* it bites: previously it could hide behind Android's ~3-week tester-gate clock;
+  now, with iOS decoupled and un-gated by that clock, D-12's own timeline (holding for a lawyer's
+  view, per the owner's 2026-08-15 decision) is directly on the critical path to first launch.
+
+**What does *not* change:** the web backend is still a shared dependency — both platforms call the
+same API, so P0/P1/security/E2E/production-readiness work on the web track still gates either mobile
+platform launching, exactly as before. iOS-specific mobile work (M0–M3, M5, M6 from §9's Mobile
+track) still applies to iOS; only Android's tester-gate (M4's cross-platform parity work still
+applies to both) stops being something iOS has to wait behind.
+
+**The sequencing rule this implies, updated:** start Apple enrolment and iOS device bring-up first —
+their surprises have long tails, same reasoning as before. Android enrolment is already done (§1);
+Android device bring-up and the tester-gate clock can run in parallel without blocking iOS, and
+should still start early so Android doesn't trail further than the gate itself requires (§9a).
 
 Everything else runs beside it or waits. Specifically **off** the critical path today:
 
@@ -628,6 +661,15 @@ items. At ~6 working days/week that is 6–8 weeks, and the mobile track's exter
 > These figures are live in [`Finora-v1.0-Decisions.xlsx`](../../Finora-v1.0-Decisions.xlsx) — the
 > Scope tab recomputes them from whatever you mark v1.0 / v1.1 / Cut.
 
+**⚠️ Stale as of 2026-08-15 — built on the simultaneous-launch assumption D-11 reversed.** The table
+below computes one combined date for both platforms; with iOS launching first (§5), the real
+question is now "when does iOS launch" (gated by Apple enrolment, iOS device bring-up, D-7, D-12, and
+App Store review) as a separate figure from "when does Android launch" (still gated by its own
+12-tester/14-day clock, trailing iOS by however long that takes independently). **Deliberately not
+recalculated yet** — D-7 has no defined pricing scope to estimate from, and re-deriving a real number
+off an unscoped item would be inventing a date, not deriving one. Left below for its historical
+basis, not as a current commitment.
+
 | | Date | Basis |
 |---|---|---|
 | **Best case** | **2026-10-12** *(was 2026-09-28)* | Apple enrolment already started, device bring-up works first time, the Medium/Low sweep lands inside 8 days, no store rejection, 7-day soak |
@@ -707,23 +749,32 @@ longer — on top of the 14. **Minimum calendar cost from first closed build to 
   termination on a financial product with a launched iOS twin is not a recoverable position.
 
 **iOS has no equivalent gate.** TestFlight imposes no tester minimum or waiting period, so under a
-personal account the two platforms desynchronise by roughly three weeks — see D-11.
+personal account the two platforms desynchronise by roughly three weeks. **D-11, resolved
+2026-08-15: this desynchronisation is now the plan, not a risk to manage** — iOS launches first,
+Android follows once its own gate clears.
 
 ### What that does to sequencing
 
+**Corrected 2026-08-15.** The diagram and target date below describe **Android's own track only** —
+before D-11, Android's clock set the single combined launch date; now it sets only Android's release
+date, decoupled from iOS's.
+
 ```
-enrol (today) → EAS + Android dev build (M1) → device bring-up (M2) → closed-test build uploaded
-              → 12 testers × 14 continuous days → apply for production access → review → publish
+enrol (done) → EAS + Android dev build (M1) → device bring-up (M2) → closed-test build uploaded
+             → 12 testers × 14 continuous days → apply for production access → review → publish
 ```
 
 Working backwards from a **2026-10-16** target, the closed test must be uploaded by roughly
-**2026-09-12**. That is achievable *only* if mobile bring-up happens in the first two weeks.
+**2026-09-12**. *(This target predates D-11/D-7's reversal and Phase 4's actual closure — kept for
+its mechanics, not as a live date; see §9's stale-table note above.)*
 
-> **This promotes the "front-load mobile" recommendation from preference to requirement.** If the
-> mobile track is sequenced after the web track — the intuitive order, since web is higher priority —
-> the first closed-test build lands around late September, the 14-day clock ends mid-October, review
-> follows, and **the target date becomes unreachable no matter how many hours are worked.** This is
-> the one place in the plan where working harder cannot buy the date back.
+> **Pre-D-11 framing, kept for the reasoning, not the conclusion:** "front-load mobile" was a
+> requirement because sequencing mobile after web made the *one combined date* unreachable no matter
+> how many hours were worked. **Post-D-11, that specific consequence no longer applies to iOS** — iOS
+> isn't waiting on Android's tester-gate clock at all. The clock still fully applies to Android's own
+> release, though, and the same logic still argues for starting Android device bring-up early: the
+> longer it's deferred, the further Android trails iOS, and the closed-test build still has to exist
+> before the 14-day clock can even start.
 
 ### Apple's enrolment tail
 
@@ -754,13 +805,18 @@ incorporating first would cost more time than the tester clock does.
 
 **What choosing individual commits us to.** Three things stop being optional:
 
-1. **The 2026-09-12 closed-test milestone is now binding**, not conditional. It is the only dated
-   commitment in this plan.
-2. **D-10 and D-11 activate.** Twelve testers must be found, and the two platforms will be ready
-   about three weeks apart whether or not we launch them together.
+1. **The 2026-09-12 closed-test milestone is now binding**, not conditional. **Updated 2026-08-15:
+   it binds Android's own release, not the project's single launch date** — D-11 decoupled the two,
+   so this is no longer "the only dated commitment in this plan" in the sense of gating everything;
+   it gates Android specifically.
+2. **D-10 and D-11 activate.** Twelve testers must be found. **D-11 resolved 2026-08-15: iOS first**
+   — the "about three weeks apart" desynchronisation this row anticipated as a risk is now the actual
+   plan, not something to decide.
 3. **D-12 is raised.** With no entity, the privacy policy names *you* as the data controller and
    publishes your contact details on both store listings — for a product that ingests bank
-   statements. That deserves a professional opinion before the policy goes up, not after.
+   statements. **Partially resolved 2026-08-15: owner chose to hold for a lawyer's view** before
+   deciding contact details; the answer itself is still open, and per §5 now sits directly on iOS's
+   critical path rather than behind Android's tester-gate clock.
 
 None of this argues against the choice. Given no entity today, individual is right: incorporating
 first would put 2–4 weeks of paperwork ahead of every line of code, to save a 14-day clock that runs
@@ -807,13 +863,13 @@ in parallel with work you are doing anyway.
 | ~~**D-8**~~ | ~~Already enrolled in either store?~~ | — | ✅ **Resolved 2026-08-09: neither.** Enrolment is now the longest-lead item in the project (§9a). Conservative date moved 2026-11-13 → 2026-11-27 to absorb Apple's reported tail |
 | ~~**D-9**~~ | ~~Individual or organisation store accounts?~~ | — | ✅ **Resolved 2026-08-09: individual, no legal entity exists.** Google's 12-tester gate now **applies**, which makes the 2026-09-12 milestone binding rather than conditional. D-10 and D-11 activate; D-12 is raised as a consequence |
 | **D-10** | **Who are the 12 Play testers?** | **Live** (D-9 = individual). Twelve real people who install the app and stay opted in for 14 continuous days; the streak resets if the count drops | Line them up during Phase 4, not on the day the build is ready. Assume 15–16 recruited to hold 12 |
-| **D-11** | **Simultaneous launch, or iOS first?** | **Live** (D-9 = individual). TestFlight has no tester gate, so iOS can be production-ready ~3 weeks before Android. Holding iOS back costs 3 weeks of real feedback; launching split means v1.0 means two different things on two platforms | **Launch together.** The point of putting mobile in v1.0 (D-2) was one coherent release. But if Apple's enrolment tail runs long, this inverts — Android would lead — so revisit once enrolment clears |
-| **D-12** | **Who is the named data controller in the privacy policy?** | Raised by D-9. Both stores require a published privacy policy naming who holds the data and how to reach them. With no legal entity that is **you, personally**, and the contact details are public on both listings. Finora ingests bank statements, so this is not a formality | **Not a call I should make for you.** Get a professional view on what an individual operator handling financial data owes under Indian law (DPDP) *before* the policy is published — far cheaper now than re-papering after launch. Practical middle ground: a dedicated support address and a post-box rather than a home address |
+| ~~**D-11**~~ | ~~Simultaneous launch, or iOS first?~~ | — | ✅ **Decided 2026-08-15: iOS first**, reversing the standing "launch together" recommendation. TestFlight has no 12-tester gate, so iOS can go store-ready ~3 weeks before Android's Play closed-test streak completes. **Consequence, not yet reflected in §5/§9: those sections currently assume a simultaneous release** — the critical-path diagram, the "one coherent v1.0" framing, and any date math built on both tracks converging need re-deriving against this split. Flagged, not yet done |
+| **D-12** | **Who is the named data controller in the privacy policy?** | Raised by D-9. Both stores require a published privacy policy naming who holds the data and how to reach them. With no legal entity that is **you, personally**, and the contact details are public on both listings. Finora ingests bank statements, so this is not a formality | **Owner's process decision, 2026-08-15: hold for a lawyer's view before deciding contact details.** The underlying question (support email + PO box vs. home address vs. something else) is **still open** — this decides *how* to decide it, not the answer itself. Still blocks privacy-policy publication until resolved |
 | ~~**D-3**~~ | ~~Statement retention policy — how long are the bytes kept?~~ | — | ✅ **Resolved 2026-08-09: reference-counted sweep, ~90 days**, not an R2 lifecycle rule and not the 30-day placeholder this row used to suggest — a sweeper reclaims R2 objects no DB row references, rather than deleting on a clock regardless of live references. Implementation PR in flight. Alongside it, **BH-025 also resolved**: skip the Postgres BYTEA dual-write once an R2 object address exists, rather than keeping it and bounding it explicitly — the dual-write's own justification (BH-046 Phase 3/4) had already collapsed. Implementation PR in flight |
 | **D-4** | **One instance or many at launch?** | Rate limiting and import concurrency are both in-memory; a second replica silently degrades both | One instance for beta, Redis before GA if projected load needs it — decide on the load test's evidence |
-| **D-5** | **Async import: threshold or poll-interval?** | Measured and deliberately left open: queue overhead is ~20 ms, the 1500 ms poll is ~98% of the penalty | Poll immediately then back off; re-measure; probably no threshold ever |
-| **D-6** | **Password policy** — does the backend enforce the complexity the frontend suggests? | Frontend and backend have drifted; README flags it as a pre-release must | Enforce on both sides, one policy, same release |
-| **D-7** | Pricing, subscription model, data-retention promises in the ToS | None exist; the Razorpay UI is deliberately disabled | Out of scope for v1.0 — launch free, decide before v1.1 |
+| ~~**D-5**~~ | ~~Async import: threshold or poll-interval?~~ | — | ✅ **Resolved, checked 2026-08-14: no threshold, immediate-poll-then-backoff** — exactly the recommendation. `POLL_SCHEDULE_MS = [100, 200, 400, 800, 1500]` (`ImportProgress.tsx`), directly tested: `ImportProgress.test.tsx` asserts the exact schedule and that the component follows it |
+| ~~**D-6**~~ | ~~Password policy — does the backend enforce the complexity the frontend suggests?~~ | — | ✅ **Resolved, checked 2026-08-14: no drift to reconcile.** Backend enforces `@Size(min = 8, max = 72)` (`AuthDtos.java:31`); the frontend's strength meter is explicitly documented in its own comment as "a nudge for the user, never a submission gate" (`Register.tsx:20-23`) — both sides already agree on length-only, and the meter was never meant to be a stricter gate the backend forgot to match |
+| ~~**D-7**~~ | ~~Pricing, subscription model, data-retention promises in the ToS~~ | — | ✅ **Decided 2026-08-15: IN SCOPE for v1.0**, reversing the standing "launch free, decide before v1.1" recommendation — pricing must be finalized before production launch. **This is new, currently unscoped work**: no pricing model, tier structure, or ToS draft exists yet, and Razorpay is still deliberately disabled. Needs its own scoping pass (what model, what tiers, ToS drafting, Razorpay activation review — which itself needs the real business address `Contact.tsx` is still placeholdering) before §5/§9 can absorb it as a critical-path item |
 | ~~**D-13**~~ | ~~Approve a live reproduction attempt against BH-006; accept the password-re-prompt UX cost?~~ | — | ✅ **Resolved twice.** Reproduction approved and fixed (PR #75). **The owner's approval of "double prompt is fine" was given on my inaccurate description** — PR #75 as shipped was an unconditional failure for every password-protected reimport, not a double-prompt. Found and corrected same night by a separate commit (`4133910`, direct to `main`, not via PR). Verified end-to-end against a real encrypted PDF |
 | ~~**D-14**~~ | ~~Individual or Organization Apple enrolment, given the DUNS prompt?~~ | — | ✅ **Resolved: Individual**, consistent with D-9. The DUNS prompt meant the Organization flow had been entered by mistake; Individual needs no DUNS. Confirmed convertible to Organization later if a legal entity is ever registered |
 
@@ -835,6 +891,9 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-15 | **§5 critical path restructured for D-11 (iOS-first); §9/§9a flagged stale, dates deliberately not recalculated.** Owner's explicit instruction: fix the dependency model, don't invent dates ahead of D-7's pricing scope. §5's diagram split into three tracks (web/iOS/Android) instead of web/mobile-combined; iOS no longer waits behind Android's 12-tester/14-day clock. **Two new blockers now sit on iOS's path that didn't before today:** D-7 (pricing/ToS, unscoped) and D-12 (privacy-policy contact, held for legal review) — both used to be able to hide behind Android's ~3-week clock; decoupled, they're both directly on the critical path to first launch now. §9's Best/Target/Conservative table marked stale (built on the old combined-date assumption) but left in place for its historical basis. §9a's sequencing narrative corrected to describe Android's own track, not the whole project's date; its "front-load mobile" reasoning kept, its "target date becomes unreachable" conclusion no longer applies to iOS specifically. No new dates estimated anywhere | The owner was explicit: recalculate the *structure* first, and don't estimate D-7/D-11 dates until pricing scope and legal review exist to derive them from — inventing a number here would be exactly the kind of asserted-not-derived figure this plan's own opening line disclaims |
+| 2026-08-15 | **Four owner decisions recorded: D-7, D-11, D-12 (partial), BH-044.** Asked in one batch after the remaining-open-items check. **D-7 reversed**: pricing/ToS moves IN scope for v1.0, must be finalized before production launch — new unscoped work, not yet estimated. **D-11 reversed**: iOS launches first, not simultaneous with Android — §5/§9 still assume simultaneous and need re-deriving against this, flagged but not yet done. **D-12 partially resolved**: owner chose to hold for legal review before deciding contact details; the underlying question (what to publish) stays open. **BH-044 retention direction decided**: redact — keep the audit event, drop financial metadata after a defined window (owner's proposed default: 730 days), rather than truncate or keep forever; the actual retention framework and redaction job remain unbuilt, unscoped work. §4 and §11 updated | Recording decisions the moment they're made, not paraphrasing them from memory later — same discipline this plan applies to everything else. D-7 and D-11 both add real, currently-unscoped critical-path risk; naming that now, rather than only when §5/§9 are next touched, keeps the plan honest about what "decided" does and doesn't mean here |
+| 2026-08-14 | **§11 corrected: D-5 and D-6 were already resolved in code, never marked so.** Checking the six still-live owner-decision items the same way D-13/BH-006 was checked found two already answered: D-5 (async import poll strategy) — `POLL_SCHEDULE_MS = [100, 200, 400, 800, 1500]`, immediate-then-backoff, exactly the recommendation, directly tested. D-6 (password-policy drift) — no drift exists; the frontend strength meter's own comment states it was "never a submission gate," and both sides already agree on the backend's 8-char minimum. Both struck through in §11; §2 workstream 1's remainder text corrected to drop "password-policy convergence" as outstanding. D-4, D-7, D-10, D-11, D-12 confirmed still genuinely open — real logistics/compliance/business calls, not code questions. No date change | Same failure mode as the P2/P3 bug-hunt drift found earlier today, just in §11 instead of §4 — a decision already answered by the code but still listed as awaiting the owner wastes their attention on a non-decision. Checked against the code and its tests rather than assumed resolved from the recommendation text alone |
 | 2026-08-14 | **Phase 4 status corrected; completion recomputed; a pre-existing arithmetic error found and fixed.** Checked the remaining P3/Low bucket the same way as P2 (previous entry): all 18 findings closed or accepted, none open. That makes the entire P0–P3 bug-hunt backlog closed/accepted except `BH-044` (owner decision) and `BH-042`/`043`/`045` (parallel session) — §3's Phase 4 row updated from the stale "0%, 56 open" baseline to reflect that. §2's workstream 4 (Security & privacy) updated 88%→90% for the three newly-confirmed closures (`BH-037`, `BH-039`, `BH-046`). Recomputing §2's own Total from its row contributions gave **80.6%, not the stated 81.6%** — a pre-existing 1pp error, unrelated to today's changes. Corrected total: **80.8% → 81%**, and §1's headline (previously 83%, which never matched §2's 82% either) now matches §2 exactly. Net effect: the headline number goes *down* despite real additional progress, because it was never actually supported by the table under it | Completion figures exist to be checked, not quoted forward — this plan's own opening line claims "every number... is derived from the repository, not asserted." An unverified total silently drifting from its own row sum is the same failure mode as every other drift this plan has caught and corrected today, just in the numbers instead of the prose. Recorded rather than quietly rounded away |
 | 2026-08-14 | **Plan-drift correction: six P2 findings (`BH-014`, `BH-029`, `BH-032`, `BH-036`, `BH-037`, `BH-046`) were already fixed in code and never recorded closed.** Checking "what's the next open bug-hunt item" against current code, not the stale 08-09 report, found each already fixed by a prior session — `LoginExistenceOracleIT`, `ImportJobSourceFormatIT`, `ProductionConfigValidatorTest`, `CorrelationIdCorsContractTest`, `ImportServiceStorageDualWriteTest` all green. `BH-044` is half closed (growth-rate fixed; retention explicitly blocked on an owner decision, not engineering). §1 and §4 updated; P2 now has no actionable engineering item left. No date change | The same discipline this plan already applies to line-number drift (BH-007) and status drift (BH-048) applies to closure drift too — a finding fixed in code but recorded as open is exactly as misleading as the reverse, and it was only caught by re-deriving status from the code and its tests rather than re-quoting the 08-09 report forward |
 | 2026-08-14 | **BH-039 coverage completed — the `ImportSessionRepository` half of the cross-tenant guard.** PR #96's regression test's surviving reference was a `StatementImport` row, so the sweep's `existsByObjectKey(...) || existsByObjectKey(...)` guard's first clause alone kept the object alive and the `ImportSessionRepository` half was never actually exercised. Added `sweep_doesNotReclaimAnObjectStillReferencedByAnotherTenantsLiveImportSession` (surviving reference is another tenant's still-staged `ImportSession`), mutation-checked the same way as the original, committed directly to `main` (`a5365dd`, no PR). No date change | A regression test that passes for the wrong reason (short-circuited by the other half of an OR) is the same failure mode BH-039 itself is about — closing "regression coverage added" without checking which branch it actually reaches would have left the exact gap it claimed to close |
