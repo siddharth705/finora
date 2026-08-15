@@ -197,8 +197,9 @@ class SplitHeaderRunsPdfTableLocatorTest {
         // hdfc-savings-ledger-validation's count moved again, 253 -> 244, when the
         // OFFSET_COLUMN_ANCHORS redirect in bucketRow was taught not to move a number out of a
         // reference/cheque-number column (see that guard's own doc comment -- verified on a real,
-        // unredacted HDFC statement where this exact redirect took a transaction's genuine
-        // Chq./Ref.No. value, "0000000534171215", and moved it into Withdrawal Amt., turning a real
+        // unredacted HDFC statement, not reproduced here, where this exact redirect took a
+        // transaction's genuine (16-digit, zero-padded) Chq./Ref.No. value and moved it into
+        // Withdrawal Amt., turning a real
         // ₹454 deposit into a phantom >₹500,000,000 withdrawal).
         //
         // All 9 rows that dropped out of this count on THIS trace are confirmed, individually, to
