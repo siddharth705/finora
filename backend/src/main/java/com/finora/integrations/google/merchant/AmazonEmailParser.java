@@ -5,10 +5,6 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
-import java.util.List;
-import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -81,13 +77,10 @@ public class AmazonEmailParser implements MerchantEmailParser {
                     + "(?<!\\d)([\\d,]{1,18}\\.\\d{2})(?!\\d)",
             Pattern.CASE_INSENSITIVE);
 
-    /** Amazon.in's templates are not consistent about date format, so this parser tries each of
-     *  the formats actually seen rather than picking one and rejecting the other variant. */
+    /** Amazon.in's templates are not consistent about date format, so the captured text is tried
+     *  against every format {@link ReceiptDateFormats} knows rather than one fixed pattern. */
     private static final Pattern DATE_TEXT = Pattern.compile(
             "Order Date:?\\s*([A-Za-z]+ \\d{1,2}, \\d{4}|\\d{4}-\\d{2}-\\d{2})");
-    private static final List<DateTimeFormatter> DATE_FORMATS = List.of(
-            DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.ENGLISH),
-            DateTimeFormatter.ISO_LOCAL_DATE);
 
     @Override
     public boolean canParse(String authenticatedDomain) {
@@ -129,14 +122,6 @@ public class AmazonEmailParser implements MerchantEmailParser {
     private static LocalDate extractDate(String text) {
         Matcher dateMatch = DATE_TEXT.matcher(text);
         if (!dateMatch.find()) return null;
-        String raw = dateMatch.group(1);
-        for (DateTimeFormatter format : DATE_FORMATS) {
-            try {
-                return LocalDate.parse(raw, format);
-            } catch (DateTimeParseException ignored) {
-                // Try the next format -- Amazon.in's own templates are not consistent about this.
-            }
-        }
-        return null;
+        return ReceiptDateFormats.tryParse(dateMatch.group(1));
     }
 }
