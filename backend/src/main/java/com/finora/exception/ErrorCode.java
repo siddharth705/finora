@@ -211,10 +211,15 @@ public enum ErrorCode {
     /**
      * Whether the user themselves can reasonably fix what caused this -- Premium Import
      * Reliability v1, §1's governing rule: "{@code ACTION_REQUIRED} = the user can reasonably
-     * correct the input. {@code FAILED} = the user cannot fix it without Finora or support."
-     * Read by {@link com.finora.imports.jobs.UserFacingImportStatus#of}, never branched on
-     * directly by a throw site -- this is presentation metadata about a known failure, the same
-     * role {@link #defaultMessage} already plays, not retry policy (that's {@link #retryPolicy}).
+     * correct the input. {@code FAILED} = the user cannot fix it without Finora or support." Never
+     * branched on directly by a throw site -- this is presentation metadata about a known failure,
+     * the same role {@link #defaultMessage} already plays, not retry policy (that's {@link
+     * #retryPolicy}). Two readers, one per import path: {@link
+     * com.finora.imports.jobs.UserFacingImportStatus#of} folds it into the async path's
+     * {@code userStatus}; {@link GlobalExceptionHandler#handleApiException} puts it on the sync
+     * path's error envelope directly, as {@code details.userActionRequired}, so a synchronous
+     * failure -- which has no {@code ImportJob} to compute a {@code userStatus} on -- carries the
+     * same answer without the frontend needing its own copy of which codes qualify.
      */
     public boolean userActionRequired() { return userActionRequired; }
 

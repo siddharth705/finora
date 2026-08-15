@@ -275,6 +275,12 @@ api.interceptors.response.use(
         message: error.response.data.message,
         errorCode: error.response.data.errorCode,
         details: error.response.data.details,
+        // Sprint 4 item 22: whether the user themselves can fix what caused this (a password
+        // panel needing a password is the clearest case) -- computed once, backend-side, from
+        // ErrorCode.userActionRequired() (GlobalExceptionHandler), not re-derived here. Absent
+        // (undefined) for a codeless ApiException, which has no classification to offer; callers
+        // treat that the same as false, never guessing a failure into looking actionable.
+        userActionRequired: error.response.data.details?.userActionRequired,
       };
     }
     return Promise.reject(error);

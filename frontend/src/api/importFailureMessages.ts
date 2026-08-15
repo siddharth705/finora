@@ -4,6 +4,16 @@
  * `message` field happened to contain. Extend this table, don't replace it, as new codes are added;
  * it is meant to be the single source of truth for user-facing import-failure copy.
  *
+ * Deliberately does NOT also carry `ACTION_REQUIRED`-ness alongside the message, even though an
+ * earlier version of this file did: that would have been a boolean CLASSIFICATION duplicating
+ * `ErrorCode.userActionRequired()` on the backend, a real drift risk unlike the message text
+ * (which is deliberately independent curated copy, not something meant to match the backend at
+ * all). `userActionRequired` comes off the wire instead -- `GlobalExceptionHandler` merges
+ * `ErrorCode.userActionRequired()` into every `ApiException` response's `details`, and
+ * `client.ts`'s response interceptor surfaces it as `error.response.data.userActionRequired` --
+ * matching how the async path already gets the identical answer as `userStatus`, computed once,
+ * backend-side, rather than re-derived here.
+ *
  * Imports its keys from errorCodes.ts rather than re-declaring the wire strings, so there is one
  * dictionary of import error codes, not two that can silently drift apart.
  */
