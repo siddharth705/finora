@@ -97,4 +97,34 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, UUID> {
     @Query(value = "SELECT * FROM audit_logs WHERE entity_type = 'Bank' AND metadata->>'bankId' = :bankId ORDER BY created_at DESC",
             nativeQuery = true)
     List<AuditLog> findByBankIdInMetadata(@Param("bankId") String bankId);
+
+    /**
+     * BH-044's redaction sweep ({@code AuditService.redactExpiredMetadata}) -- the candidate-
+     * discovery half only. Ordered oldest-first, same reasoning as {@code ImportSessionRepository
+     * .findByExpiresAtBeforeOrderByExpiresAtAsc}: a backlog drains in a stable order across runs
+     * rather than being reshuffled run to run. Backed by {@code idx_audit_logs_created_at_unredacted}
+     * (V89), a partial index on {@code redacted_at IS NULL} that stays small as more rows get
+     * redacted over time.
+     *
+     * <p>An ordinary derived find query, not the bare {@code deleteBy…} that {@code AuditService}'s
+     * class doc warns must never be added here: this only locates candidates, and the actual
+     * mutation happens inside {@code AuditService} by loading each entity and calling
+     * {@code save(...)}, the same pattern {@code record()} already uses.
+     */
+    List<AuditLog> findByCreatedAtBeforeAndRedactedAtIsNullOrderByCreatedAtAsc(Instant cutoff, Pageable limit);
+
+    /**
+     * The safety-critical fresh re-check {@code AuditService.redactExpiredMetadata} runs
+     * immediately before mutating each candidate -- a live read, not a check of the in-memory
+     * object the discovery query above already returned. That distinction matters: {@link
+     * #findByCreatedAtBeforeAndRedactedAtIsNullOrderByCreatedAtAsc} can be stale by the time
+     * execution reaches a given row (most plausibly a second app instance's redaction pass
+     * reaching the same row first, since Railway can run more than one instance and the
+     * scheduler's {@code fixedDelay} only prevents overlap within one JVM), and an in-memory
+     * candidate object can never reflect that -- it was already guaranteed {@code redactedAt IS
+     * NULL} at SELECT time and nothing re-fetches it afterward. This method exists specifically
+     * to close that gap, mirroring {@code StatementStorageSweepService.sweep}'s own fresh
+     * {@code existsBy…} calls right before its irreversible action.
+     */
+    boolean existsByIdAndRedactedAtIsNull(UUID id);
 }
