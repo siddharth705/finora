@@ -5,6 +5,7 @@ import com.finora.entity.StatementImport;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.goals.GoalRepository;
+import com.finora.imports.analysis.StatementAnalysisSessionRepository;
 import com.finora.integrations.google.GmailConnectionRepository;
 import com.finora.integrations.google.GmailConnectionService;
 import com.finora.repository.AccountReactivationTokenRepository;
@@ -68,6 +69,7 @@ class AccountPurgeSweepServiceTest {
     private TransactionRepository transactionRepository;
     private StatementImportRepository statementImportRepository;
     private StatementImportService statementImportService;
+    private StatementAnalysisSessionRepository statementAnalysisSessionRepository;
     private RelationshipRepository relationshipRepository;
     private AccountRepository accountRepository;
     private AuditService auditService;
@@ -84,6 +86,7 @@ class AccountPurgeSweepServiceTest {
         transactionRepository = mock(TransactionRepository.class);
         statementImportRepository = mock(StatementImportRepository.class);
         statementImportService = mock(StatementImportService.class);
+        statementAnalysisSessionRepository = mock(StatementAnalysisSessionRepository.class);
         relationshipRepository = mock(RelationshipRepository.class);
         accountRepository = mock(AccountRepository.class);
         auditService = mock(AuditService.class);
@@ -118,7 +121,8 @@ class AccountPurgeSweepServiceTest {
                 mock(PasswordChangeSessionRepository.class), mock(PasswordResetTokenRepository.class),
                 mock(AccountReactivationTokenRepository.class), mock(RefreshTokenRepository.class),
                 mock(UserSettingsRepository.class), accountRepository,
-                statementImportRepository, statementImportService, auditService, passwordEncoder, transactionTemplate);
+                statementImportRepository, statementImportService, statementAnalysisSessionRepository,
+                auditService, passwordEncoder, transactionTemplate);
         ReflectionTestUtils.setField(service, "sweepEnabled", true);
         ReflectionTestUtils.setField(service, "retentionHours", 48);
         ReflectionTestUtils.setField(service, "batchSize", 200);
@@ -170,6 +174,7 @@ class AccountPurgeSweepServiceTest {
         assertThat(user.getDeletedAt()).isNotNull();
         verify(auditService).record(eq(userId), eq("ACCOUNT_PURGE_STARTED"), eq("User"), eq(userId), any());
         verify(auditService).record(eq(userId), eq("ACCOUNT_PURGED"), eq("User"), eq(userId), any());
+        verify(statementAnalysisSessionRepository).anonymizeByUserId(userId);
     }
 
     @Test
@@ -290,8 +295,15 @@ class AccountPurgeSweepServiceTest {
         verifyNoInteractions(userRepository, gmailConnectionService, transactionRepository, statementImportService);
     }
 
+    /**
+     * Regression test for a real bug a Strix security review caught: a failed statement purge was
+     * being logged and swallowed, then the user still got finalized to DELETED anyway. Since the
+     * next sweep's discovery query only selects PENDING_DELETION users, that failed statement (and
+     * whatever it still referenced in object storage) would never be retried again -- silently
+     * contradicting this class's own idempotent-retry guarantee.
+     */
     @Test
-    void sweep_oneFailedStatementPurge_doesNotAbortTheRestOfThePurge() {
+    void sweep_oneFailedStatementPurge_attemptsEveryStatement_butDoesNotFinalizeTheUser() {
         User user = pendingDeletionUser();
         stubOneCandidate(user);
         StatementImport ok = new StatementImport();
@@ -303,10 +315,15 @@ class AccountPurgeSweepServiceTest {
 
         AccountPurgeSweepService.Result result = service.sweep();
 
-        assertThat(result.purged()).isEqualTo(1);
+        assertThat(result.purged()).isZero();
+        assertThat(result.failed()).isEqualTo(1);
+        // Best-effort: the OTHER statement was still attempted despite the earlier one failing.
         verify(statementImportService).delete(userId, ok.getId());
-        // A single statement's failure doesn't stop the rest of purgeOne -- the user row still
-        // gets finalized to DELETED.
-        assertThat(user.getStatus()).isEqualTo(User.STATUS_DELETED);
+        // Not finalized -- left exactly where the next sweep's PENDING_DELETION discovery query
+        // will find it again, so the failed statement gets retried rather than stranded forever.
+        assertThat(user.getStatus()).isEqualTo(User.STATUS_PENDING_DELETION);
+        verify(userRepository, never()).save(any());
+        verify(auditService, never()).record(any(), eq("ACCOUNT_PURGED"), any(), any(), any());
+        verify(auditService).record(eq(userId), eq("ACCOUNT_PURGE_FAILED"), eq("User"), eq(userId), any());
     }
 }

@@ -10,6 +10,8 @@ import com.finora.entity.Transaction;
 import com.finora.entity.User;
 import com.finora.goals.Goal;
 import com.finora.goals.GoalRepository;
+import com.finora.imports.analysis.StatementAnalysisSession;
+import com.finora.imports.analysis.StatementAnalysisSessionRepository;
 import com.finora.integrations.google.GmailConnectionRepository;
 import com.finora.integrations.google.GmailConnectionService;
 import com.finora.repository.AccountReactivationTokenRepository;
@@ -99,6 +101,7 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
     @Autowired private AccountRepository accountRepository;
     @Autowired private StatementImportRepository statementImportRepository;
     @Autowired private StatementImportService statementImportService;
+    @Autowired private StatementAnalysisSessionRepository statementAnalysisSessionRepository;
     @Autowired private AuditService auditService;
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private TransactionTemplate transactionTemplate;
@@ -119,7 +122,8 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
                 importJobRepository, importSessionRepository, passwordHistoryRepository,
                 passwordChangeSessionRepository, passwordResetTokenRepository, accountReactivationTokenRepository,
                 refreshTokenRepository, userSettingsRepository, accountRepository, statementImportRepository,
-                statementImportService, auditService, passwordEncoder, transactionTemplate);
+                statementImportService, statementAnalysisSessionRepository, auditService, passwordEncoder,
+                transactionTemplate);
         ReflectionTestUtils.setField(service, "sweepEnabled", true);
         ReflectionTestUtils.setField(service, "retentionHours", 48);
         ReflectionTestUtils.setField(service, "batchSize", 200);
@@ -317,5 +321,43 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         assertThat(afterCount).isZero();
         // The role itself (global, not user-owned) is untouched -- only this user's grant of it.
         assertThat(roleRepository.findById(roleId)).isPresent();
+    }
+
+    /**
+     * Regression test for a real security gap a Strix review caught: {@code
+     * statement_analysis_sessions} was left out of the purge entirely on the theory that "the row
+     * holds nothing personal to protect" (the entity's own class doc) -- but {@code file_name} is
+     * literally the user's uploaded filename and {@code failure_detail} can hold a fragment of the
+     * document itself. Every column on this entity is {@code updatable = false} by design (no
+     * setters at all), so only a real Postgres run proves the native bulk update in {@code
+     * anonymizeByUserId} actually bypasses that and reaches the database -- a mock would happily
+     * "succeed" even if the query were silently wrong.
+     */
+    @Test
+    @Transactional
+    void sweep_anonymizesStatementAnalysisSessions_clearingOnlyTheThreePersonalColumns() {
+        StatementAnalysisSession session = StatementAnalysisSession.failed(
+                "SA-IT-" + UUID.randomUUID().toString().substring(0, 8), userId,
+                StatementAnalysisSession.Source.CUSTOMER_IMPORT, "March_Statement_Jane.pdf", "PDF", 4096L,
+                "hdfc-savings-v3", "IMPORT_007", "Could not anchor row 14: 'HDFC0001234 A/c 9876543210'", // synthetic-ok
+                1200L, null, null);
+        UUID sessionId = statementAnalysisSessionRepository.save(session).getId();
+        entityManager.flush();
+
+        AccountPurgeSweepService.Result result = service.sweep();
+
+        assertThat(result.purged()).isEqualTo(1);
+        entityManager.flush();
+        entityManager.clear();
+
+        StatementAnalysisSession anonymized = statementAnalysisSessionRepository.findById(sessionId).orElseThrow();
+        assertThat(anonymized.getUserId()).isNull();
+        assertThat(anonymized.getFileName()).isNull();
+        assertThat(anonymized.getFailureDetail()).isNull();
+        // The actual layout-intelligence signal this table exists to aggregate -- untouched.
+        assertThat(anonymized.getLayoutFingerprint()).isEqualTo("hdfc-savings-v3");
+        assertThat(anonymized.getFailureCode()).isEqualTo("IMPORT_007");
+        assertThat(anonymized.getOutcome()).isEqualTo(StatementAnalysisSession.Outcome.FAILED);
+        assertThat(anonymized.getReference()).isEqualTo(session.getReference());
     }
 }

@@ -6,6 +6,7 @@ import com.finora.entity.StatementImport;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.goals.GoalRepository;
+import com.finora.imports.analysis.StatementAnalysisSessionRepository;
 import com.finora.integrations.google.GmailConnectionRepository;
 import com.finora.integrations.google.GmailConnectionService;
 import com.finora.repository.AccountReactivationTokenRepository;
@@ -71,14 +72,19 @@ import java.util.UUID;
  * TransactionTemplate} instead, the same split {@link GmailConnectionService#disconnect} itself
  * already uses.
  *
+ * <h2>Anonymized, not deleted: {@code statement_analysis_sessions}</h2>
+ * Has a {@code user_id} column but deliberately no foreign key (see {@code
+ * V59__statement_analysis_sessions.sql}'s own comment): the layout-intelligence evidence itself
+ * should outlive the account that produced it. But two of its other columns are not evidence, they
+ * are personal -- {@code file_name} is literally the name of the file the user uploaded, and {@code
+ * failure_detail} can hold a fragment of the document that defeated the parser (see {@link
+ * com.finora.imports.analysis.StatementAnalysisSessionRepository#anonymizeByUserId} for the exact
+ * columns cleared). Deleting the row would defeat the reason for collecting it; leaving those two
+ * columns populated would defeat "all your data" in the deletion confirmation email. Anonymized in
+ * place, same pattern as {@code accounts} below.
+ *
  * <h2>Explicitly excluded -- do not "fix" this later</h2>
- * <ul>
- *   <li>{@code statement_analysis_sessions} -- has a {@code user_id} column but deliberately no
- *       foreign key (see {@code V59__statement_analysis_sessions.sql}'s own comment): analysis
- *       should outlive the account that produced it, since it's layout-intelligence evidence, not
- *       personal financial data.</li>
- *   <li>{@code merchant_templates} -- global/admin-curated, no {@code user_id} column at all.</li>
- * </ul>
+ * {@code merchant_templates} -- global/admin-curated, no {@code user_id} column at all.
  * {@code gmail_oauth_states} is left out too, but not because it's excluded on purpose the same
  * way -- it already self-sweeps on a 10-minute TTL and is hash-only (no plaintext PII), so there is
  * nothing here for a user-scoped purge to usefully do to it.
@@ -133,6 +139,7 @@ public class AccountPurgeSweepService {
     private final AccountRepository accountRepository;
     private final StatementImportRepository statementImportRepository;
     private final StatementImportService statementImportService;
+    private final StatementAnalysisSessionRepository statementAnalysisSessionRepository;
     private final AuditService auditService;
     private final PasswordEncoder passwordEncoder;
     private final TransactionTemplate transactionTemplate;
@@ -165,6 +172,7 @@ public class AccountPurgeSweepService {
                                      AccountRepository accountRepository,
                                      StatementImportRepository statementImportRepository,
                                      StatementImportService statementImportService,
+                                     StatementAnalysisSessionRepository statementAnalysisSessionRepository,
                                      AuditService auditService,
                                      PasswordEncoder passwordEncoder,
                                      TransactionTemplate transactionTemplate) {
@@ -196,6 +204,7 @@ public class AccountPurgeSweepService {
         this.accountRepository = accountRepository;
         this.statementImportRepository = statementImportRepository;
         this.statementImportService = statementImportService;
+        this.statementAnalysisSessionRepository = statementAnalysisSessionRepository;
         this.auditService = auditService;
         this.passwordEncoder = passwordEncoder;
         this.transactionTemplate = transactionTemplate;
@@ -312,6 +321,12 @@ public class AccountPurgeSweepService {
             refreshTokenRepository.deleteByUserId(userId);
             userSettingsRepository.deleteByUserId(userId);
 
+            // Evidence outlives the account (no FK, by design -- see this class's own doc on why),
+            // but two of its columns aren't evidence, they're personal. See
+            // StatementAnalysisSessionRepository.anonymizeByUserId's own doc for exactly what's
+            // cleared and why the rest is left alone.
+            statementAnalysisSessionRepository.anonymizeByUserId(userId);
+
             // Never hard-deleted -- an ON DELETE CASCADE from accounts would vaporize
             // statement_imports rows outside Hibernate's @SQLDelete interceptor entirely,
             // permanently orphaning any R2 object those rows still track. Anonymize the
@@ -329,15 +344,29 @@ public class AccountPurgeSweepService {
 
         // One statement at a time, each in its own try/catch, reusing StatementImportService.delete
         // as-is -- by now this user's transactions are already gone, so each call just soft-deletes
-        // the statement_imports row itself. A single failure leaves that one statement live for the
-        // next sweep retry rather than aborting the rest.
+        // the statement_imports row itself. Every statement is attempted (best-effort, so one bad
+        // row doesn't block the rest), but a failure is collected rather than swallowed: finalizing
+        // the user to DELETED below must not happen unless every statement actually purged, or the
+        // failed row falls out of the next sweep's PENDING_DELETION discovery query and is never
+        // retried -- exactly the class-level idempotency guarantee this method's own doc comment
+        // promises.
+        RuntimeException statementPurgeFailure = null;
         for (StatementImport statement : statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)) {
             try {
                 statementImportService.delete(userId, statement.getId());
             } catch (Exception e) {
                 log.error("Failed to purge statement {} for user {} during account purge: {}",
                         statement.getId(), userId, e.getMessage(), e);
+                if (statementPurgeFailure == null) {
+                    statementPurgeFailure = new IllegalStateException(
+                            "Failed to purge all statements for user " + userId, e);
+                } else {
+                    statementPurgeFailure.addSuppressed(e);
+                }
             }
+        }
+        if (statementPurgeFailure != null) {
+            throw statementPurgeFailure;
         }
 
         Instant now = Instant.now();
