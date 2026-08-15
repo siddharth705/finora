@@ -80,7 +80,11 @@ public class UserAccountLifecycleService {
         }
 
         if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
-            auditService.record(userId, "INVALID_CURRENT_PASSWORD", "User", userId);
+            // recordEvenOnRollback, not record: deactivate() is plain @Transactional (no
+            // noRollbackFor), so a bare record() here would be rolled back along with everything
+            // else the moment ApiException propagates -- see AuditService.recordEvenOnRollback's
+            // own doc comment for the DataExportService bug this is the same shape as.
+            auditService.recordEvenOnRollback(userId, "INVALID_CURRENT_PASSWORD", "User", userId);
             throw new ApiException(HttpStatus.BAD_REQUEST, "Current password is incorrect.");
         }
 
