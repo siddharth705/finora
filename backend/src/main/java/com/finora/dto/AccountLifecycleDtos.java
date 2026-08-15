@@ -35,4 +35,12 @@ public class AccountLifecycleDtos {
     public record DeleteAccountRequest(@NotBlank String sessionId) {}
 
     public record DeleteAccountResponse(String message) {}
+
+    /** currentPassword is the re-auth gate for Phase C's data export -- same bar as
+     *  DeactivateRequest's, not the OTP tier: the export is a pure read (reversible, changes
+     *  nothing), but it bundles unmasked original bank statement files into one downloadable
+     *  artifact, so a plain re-auth step is worth the friction even though every table in it is
+     *  already individually readable through existing endpoints with just a JWT. See
+     *  DataExportService's own doc comment. */
+    public record ExportDataRequest(@NotBlank String currentPassword) {}
 }

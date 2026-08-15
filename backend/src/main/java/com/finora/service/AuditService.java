@@ -9,6 +9,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -118,6 +120,33 @@ public class AuditService {
     }
 
     public void record(UUID userId, String action, String entityType, UUID entityId) {
+        record(userId, action, entityType, entityId, null);
+    }
+
+    /**
+     * Same as {@link #record}, except the row is committed in its own transaction rather than
+     * joining the caller's.
+     *
+     * <p>Bug found via manual verification of Phase C's export endpoint: {@code
+     * DataExportService.buildBundle} is {@code @Transactional(readOnly = true)}, and its
+     * wrong-password branch called plain {@code record(...)} immediately before throwing {@link
+     * com.finora.exception.ApiException} (a {@code RuntimeException}). Because {@code record}
+     * carries no propagation of its own, that write joined the same transaction -- so Spring's
+     * default rollback-on-RuntimeException rule discarded the just-written audit row along with
+     * everything else the moment the exception propagated. The row was never visible in {@code
+     * audit_logs} despite {@code record()} having been called; only a real Postgres transaction
+     * (not a mocked repository) can show this at all, which is why no unit test caught it.
+     *
+     * <p>The same "record a failure, then throw" shape exists at several other call sites across
+     * this codebase (e.g. {@code PasswordChangeService}, {@code UserAccountLifecycleService}) and
+     * likely carries the identical gap -- out of scope to change here, since this method exists to
+     * fix Phase C's own endpoint, not to audit every caller of {@link #record}. A failure this
+     * audit trail exists specifically to catch (repeated wrong-password attempts against a
+     * password-gated endpoint) is exactly the kind of event that must not silently vanish just
+     * because the request that triggered it went on to fail for the reason being recorded.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void recordEvenOnRollback(UUID userId, String action, String entityType, UUID entityId) {
         record(userId, action, entityType, entityId, null);
     }
 

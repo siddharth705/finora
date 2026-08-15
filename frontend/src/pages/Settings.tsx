@@ -9,6 +9,7 @@ import { useTheme } from '../context/ThemeContext';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
 import { DeactivateAccountModal } from '../components/DeactivateAccountModal';
 import { DeleteAccountModal } from '../components/DeleteAccountModal';
+import { ExportDataModal } from '../components/ExportDataModal';
 import { maskPhone } from '../lib/maskPhone';
 import { parsePositiveAmount } from '../lib/validation';
 import { formatDayMonthYear, formatRelativeTime, SectionCard, VerifiedBadge, SaveStatus, MetricTile } from '../components/AccountUI';
@@ -111,6 +112,7 @@ export default function Settings() {
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [deactivateOpen, setDeactivateOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [lowBalanceThreshold, setLowBalanceThreshold] = useState('2000');
   const [savedLowBalanceThreshold, setSavedLowBalanceThreshold] = useState('2000');
   const [timezone, setTimezone] = useState('Asia/Kolkata');
@@ -570,6 +572,19 @@ export default function Settings() {
             Couldn't load these statistics just now — they're unavailable, not zero.
           </p>
         )}
+        <div className="pt-4 mt-4 border-t border-border">
+          <p className="text-ink font-medium text-sm">Export My Data</p>
+          <p className="text-muted text-[11px] mt-1 mb-3">
+            Download a ZIP of everything in your account, including your original bank statement
+            files.
+          </p>
+          <button
+            onClick={() => setExportOpen(true)}
+            className="border border-border rounded-lg px-3 py-1.5 text-xs uppercase font-medium text-ink hover:bg-black/5"
+          >
+            Export My Data
+          </button>
+        </div>
       </SectionCard>
 
       <SectionCard icon={<Mail size={18} />} title="Connected Apps" subtitle="Link external accounts Finora can read transactions from">
@@ -709,6 +724,8 @@ export default function Settings() {
           onDeleted={handleDeleted}
         />
       )}
+
+      {exportOpen && <ExportDataModal onClose={() => setExportOpen(false)} />}
     </div>
   );
 }

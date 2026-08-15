@@ -660,6 +660,22 @@ export const accountLifecycleApi = {
   // passwordChangeApi.start/verifyOtp.
   deleteAccount: (sessionId: string) =>
     api.post<{ message: string }>('/users/me/account/delete', { sessionId }).then((r) => r.data),
+  // Phase C (Download My Data). POST with the password in the body -- responseType: 'blob' since
+  // the response is a streamed ZIP, not JSON (see UserController.exportData/DataExportService on
+  // the backend). The filename mirrors the backend's own "finora-data-export-<date>.zip" pattern
+  // rather than being read back out of Content-Disposition -- nothing else in this codebase parses
+  // that header either (statementImportsApi.downloadFile above takes its filename from the caller
+  // instead), and the two dates can only disagree by the moment the request straddles midnight.
+  exportData: async (currentPassword: string) => {
+    try {
+      const res = await api.post('/users/me/data-export', { currentPassword }, { responseType: 'blob' });
+      downloadBlob(res.data as Blob, `finora-data-export-${new Date().toISOString().slice(0, 10)}.zip`);
+    } catch (err) {
+      // responseType: 'blob' applies to error responses too -- see withBlobErrorMessage's own doc
+      // comment above (statementImportsApi.downloadFile hits the identical issue).
+      throw await withBlobErrorMessage(err);
+    }
+  },
 };
 
 // Self-service view of the caller's own active refresh-token sessions -- backs Settings.tsx's
