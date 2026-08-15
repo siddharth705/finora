@@ -743,6 +743,7 @@ export const workspaceApi = {
 export interface GmailConnectionStatus {
   connected: boolean;
   status: string | null;
+  needsReconnect: boolean;
   googleEmail: string | null;
   grantedScopes: string[];
   connectedAt: string | null;

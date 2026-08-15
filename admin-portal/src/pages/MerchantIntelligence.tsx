@@ -5,13 +5,10 @@ import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
 import { DataTable, type DataTableColumn } from '../components/DataTable';
 import { adminMerchantsApi } from '../api/endpoints';
+import { formatWhen } from '../lib/formatWhen';
 import type { GmailMerchantParserStatDto, MerchantStatDto } from '../types';
 
 const GMAIL_STATS_WINDOW_DAYS = 30;
-
-function formatWhen(value: string | null) {
-  return value ? new Date(value).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
-}
 
 /** Green at a healthy rate, amber in between, red once a parser is mostly failing -- the same
  *  three-tier severity split Dashboard.tsx already uses for system health, reused here rather

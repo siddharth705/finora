@@ -100,11 +100,13 @@ public class GoogleOAuthController {
         }
     }
 
-    /** What the user's settings page shows. Safe to call whether or not anything is connected. */
+    /** What the user's settings page shows. Safe to call whether or not anything is connected.
+     *  {@code findCurrentConnection}, not {@code findLiveConnection} -- the panel needs to show
+     *  REVOKED/DISCONNECTED too, not just the statuses sync itself cares about. */
     @GetMapping("/status")
     public ApiResponse<GmailConnectionStatusDto> status() {
         boolean available = properties.isConfigured();
-        return ApiResponse.ok(connectionService.findLiveConnection(currentUser.id())
+        return ApiResponse.ok(connectionService.findCurrentConnection(currentUser.id())
                 .map(connection -> GmailConnectionStatusDto.of(connection, available,
                         reviewService.countTransactionsFound(connection.getId()),
                         reviewService.countNeedsReview(currentUser.id())))

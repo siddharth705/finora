@@ -49,7 +49,17 @@ public class GmailConnection {
         /** Statuses that occupy a user's (and a mailbox's) single connection slot. */
         public static final Set<Status> LIVE = EnumSet.of(CONNECTED, REAUTH_REQUIRED);
 
+        /** Statuses that involuntarily broke the connection -- the user needs to reconnect, and
+         *  nothing else will fix it. Deliberately excludes DISCONNECTED: that one was the user's
+         *  own choice, and looking exactly like "never connected" again is correct for it, not a
+         *  gap to fix. The one caller that used to duplicate this test as raw string literals
+         *  (Settings.tsx) now reads {@link GmailConnectionStatusDto#needsReconnect} instead, so a
+         *  status added here is automatically correct on the frontend with no matching edit. */
+        private static final Set<Status> NEEDS_RECONNECT = EnumSet.of(REAUTH_REQUIRED, REVOKED);
+
         public boolean isLive() { return LIVE.contains(this); }
+
+        public boolean needsReconnect() { return NEEDS_RECONNECT.contains(this); }
     }
 
     @Id

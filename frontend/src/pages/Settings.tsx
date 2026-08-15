@@ -101,16 +101,6 @@ function gmailLastSyncedLabel(status: GmailConnectionStatus): string {
   return label ? `Last synced ${label}` : 'Never synced yet';
 }
 
-/** C6.1: `connected` alone (`status === CONNECTED`) can't tell a user who never connected apart
- *  from one whose grant just died -- REAUTH_REQUIRED (Google rejected the token) and REVOKED
- *  (detected revoked at Google's end) both collapse `connected` to false too, per {@code
- *  GmailConnection.Status}'s own doc. DISCONNECTED (the user did it on purpose from Finora) is
- *  deliberately excluded here: that one *should* look like "never connected", since the user
- *  already knows why. */
-function gmailNeedsReconnect(status: GmailConnectionStatus): boolean {
-  return status.status === 'REAUTH_REQUIRED' || status.status === 'REVOKED';
-}
-
 export default function Settings() {
   const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
@@ -594,7 +584,7 @@ export default function Settings() {
           <p className="text-xs text-danger">Couldn't load your Gmail connection — please try again later.</p>
         ) : !gmailStatus?.available ? (
           <p className="text-xs text-muted italic">Gmail sync isn't available on this deployment yet.</p>
-        ) : !gmailStatus.connected && gmailNeedsReconnect(gmailStatus) ? (
+        ) : !gmailStatus.connected && gmailStatus.needsReconnect ? (
           <div className="border border-warning/40 rounded-lg px-3 py-2.5">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">

@@ -47,9 +47,6 @@ public class TransactionExplanationService {
         Transaction t = OwnershipGuard.requireOwned(
                 transactionRepository.findById(transactionId), Transaction::getUserId, userId, "Transaction");
 
-        String categoryName = t.getCategoryId() == null ? "this category"
-                : categoryRepository.findById(t.getCategoryId()).map(Category::getName).orElse("this category");
-
         return switch (t.getDecisionSource()) {
             case MANUAL -> new TransactionExplanationDto(
                     "MANUAL", "You set this category yourself.", List.of());
@@ -69,7 +66,7 @@ public class TransactionExplanationService {
                     "FILE_PROVIDED",
                     "The imported file specified this category directly.",
                     List.of());
-            case MERCHANT_DEFAULT -> defaultExplanation(t, categoryName);
+            case MERCHANT_DEFAULT -> defaultExplanation(t);
         };
     }
 
@@ -85,13 +82,18 @@ public class TransactionExplanationService {
                     List.of("The specific rule is no longer available (it may have been edited or removed since)."));
         }
         String condition = fieldLabel(rule.getField()) + " " + operatorLabel(rule.getOperator())
-                + " \"" + rule.getComparisonValue() + "\"";
+                + " " + comparisonValueLabel(rule);
         String summary = fallbackSummary + " " + condition + " → " + rule.getActionValue() + ".";
         return new TransactionExplanationDto(source, summary,
                 List.of("Rule condition: " + condition, "Assigns category: " + rule.getActionValue()));
     }
 
-    private TransactionExplanationDto defaultExplanation(Transaction t, String categoryName) {
+    // Same fact as GmailReviewService.reasoningFor's "isn't auto-detected yet" caveat (independently
+    // worded on purpose -- this is the after-the-fact ledger explanation, not the pre-approval
+    // review queue). If C6.3 ships category detection, update both.
+    private TransactionExplanationDto defaultExplanation(Transaction t) {
+        String categoryName = t.getCategoryId() == null ? "this category"
+                : categoryRepository.findById(t.getCategoryId()).map(Category::getName).orElse("this category");
         if (t.getSource() == Transaction.Source.GMAIL_IMPORT) {
             return new TransactionExplanationDto("MERCHANT_DEFAULT",
                     "Imported from a Gmail receipt (" + merchantPhrase(t)
@@ -133,5 +135,22 @@ public class TransactionExplanationService {
             case LT -> "is less than";
             case BETWEEN -> "is between";
         };
+    }
+
+    /**
+     * {@code CategoryRule.comparisonValue} is opaque storage, not display text — for every
+     * operator except BETWEEN it's already the one value the user typed, but {@code
+     * RuleEngineService.matchesBetween}'s own doc comment says BETWEEN packs two numbers as
+     * {@code "low,high"} (e.g. {@code "1000,5000"}). Quoting that literally would read as
+     * {@code amount is between "1000,5000"} — the storage encoding leaking into a sentence this
+     * class's own doc comment promises is plain English.
+     */
+    private static String comparisonValueLabel(CategoryRule rule) {
+        if (rule.getOperator() != CategoryRule.Operator.BETWEEN) {
+            return "\"" + rule.getComparisonValue() + "\"";
+        }
+        String[] parts = rule.getComparisonValue().split(",", 2);
+        return parts.length == 2 ? parts[0].trim() + " and " + parts[1].trim()
+                : "\"" + rule.getComparisonValue() + "\"";
     }
 }
