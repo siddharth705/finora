@@ -135,6 +135,9 @@ class AccountPurgeSweepServiceTest {
         u.setDeletionRequestedAt(Instant.now().minus(49, ChronoUnit.HOURS));
         u.setDeactivationReason("TAKING_A_BREAK");
         u.setDeactivationNote("Back in a bit");
+        com.finora.entity.Role role = new com.finora.entity.Role();
+        role.setName("USER");
+        u.setRoles(new java.util.HashSet<>(java.util.Set.of(role)));
         return u;
     }
 
@@ -184,6 +187,11 @@ class AccountPurgeSweepServiceTest {
         // Kept -- churn analytics, same precedent reactivation not clearing it already established.
         assertThat(user.getDeactivationReason()).isEqualTo("TAKING_A_BREAK");
         assertThat(user.getStatus()).isEqualTo(User.STATUS_DELETED);
+        // Explicit RBAC grants are functionally inert on a DELETED account, but cleared anyway --
+        // regression test for a real gap this class's own bugs-and-gaps pass caught: user_roles has
+        // a user_id FK like every other user-owned table, and the first version of purgeOne() never
+        // touched it at all.
+        assertThat(user.getRoles()).isEmpty();
     }
 
     @Test

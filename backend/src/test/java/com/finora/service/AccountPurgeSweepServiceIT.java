@@ -4,6 +4,7 @@ import com.finora.AbstractIntegrationTest;
 import com.finora.entity.Account;
 import com.finora.entity.Budget;
 import com.finora.entity.Category;
+import com.finora.entity.Role;
 import com.finora.entity.StatementImport;
 import com.finora.entity.Transaction;
 import com.finora.entity.User;
@@ -31,6 +32,7 @@ import com.finora.repository.PasswordResetTokenRepository;
 import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.RelationshipIdentifierRepository;
 import com.finora.repository.RelationshipRepository;
+import com.finora.repository.RoleRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
@@ -100,6 +102,7 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
     @Autowired private AuditService auditService;
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private TransactionTemplate transactionTemplate;
+    @Autowired private RoleRepository roleRepository;
     @Autowired private EntityManager entityManager;
 
     private AccountPurgeSweepService service;
@@ -272,5 +275,47 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         assertThat(purgedUser.getStatus()).isEqualTo(User.STATUS_DELETED);
         assertThat(purgedUser.getDeletedAt()).isNotNull();
         assertThat(purgedUser.getEmail()).isEqualTo("deleted-" + userId + "@deleted.finora.invalid");
+    }
+
+    /**
+     * Regression test for a real gap a bugs-and-gaps pass on this class caught: {@code user_roles}
+     * has a {@code user_id} FK like every other user-owned table (confirmed against every
+     * migration that creates one), but the first version of {@code purgeOne} never touched it --
+     * an explicit RBAC grant would have silently survived the purge. {@code User.roles} is managed
+     * via the JPA relationship, not a repository method, so only a real Postgres run proves the
+     * join-table row is actually gone, not just absent from the in-memory collection.
+     */
+    @Test
+    @Transactional
+    void sweep_clearsExplicitRoleGrants_fromTheUserRolesJoinTable() {
+        Role role = new Role();
+        // roles.name is VARCHAR(50) -- a full UUID suffix (36 chars) plus a descriptive prefix
+        // overflows it, so this uses only the entropy a collision-avoidance need actually requires.
+        role.setName("PURGE_IT_ROLE_" + UUID.randomUUID().toString().substring(0, 8));
+        role.setDescription("AccountPurgeSweepServiceIT fixture role");
+        UUID roleId = roleRepository.save(role).getId();
+
+        User user = userRepository.findById(userId).orElseThrow();
+        user.getRoles().add(role);
+        userRepository.save(user);
+        entityManager.flush();
+
+        Long beforeCount = (Long) entityManager
+                .createNativeQuery("SELECT COUNT(*) FROM user_roles WHERE user_id = :userId")
+                .setParameter("userId", userId).getSingleResult();
+        assertThat(beforeCount).isEqualTo(1);
+
+        AccountPurgeSweepService.Result result = service.sweep();
+
+        assertThat(result.purged()).isEqualTo(1);
+        entityManager.flush();
+        entityManager.clear();
+
+        Long afterCount = (Long) entityManager
+                .createNativeQuery("SELECT COUNT(*) FROM user_roles WHERE user_id = :userId")
+                .setParameter("userId", userId).getSingleResult();
+        assertThat(afterCount).isZero();
+        // The role itself (global, not user-owned) is untouched -- only this user's grant of it.
+        assertThat(roleRepository.findById(roleId)).isPresent();
     }
 }

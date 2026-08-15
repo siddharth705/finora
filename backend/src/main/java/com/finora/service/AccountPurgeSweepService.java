@@ -349,6 +349,13 @@ public class AccountPurgeSweepService {
         // deactivationReason is kept -- churn analytics, the same "persists indefinitely"
         // precedent reactivation not clearing it already established.
         user.setDeactivationNote(null);
+        // Explicit RBAC grants (user_roles) -- functionally inert on a DELETED account (login()
+        // rejects it unconditionally, so nothing can ever exercise them again), but a self-service
+        // account-scope check already blocks admin accounts from this flow, so this is only ever
+        // clearing a consumer account's own grants. Legacy user.role stays untouched, same as the
+        // rest of the "everything else on User" list -- it's a plain string, not a table row, and
+        // carries no more identity than the STATUS_DELETED row already does.
+        user.getRoles().clear();
         user.setStatus(User.STATUS_DELETED);
         user.setDeletedAt(now);
         user.setUpdatedAt(now);
