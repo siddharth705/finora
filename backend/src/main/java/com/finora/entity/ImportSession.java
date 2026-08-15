@@ -36,6 +36,10 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
     public static final String KIND_SINGLE_ACCOUNT = "SINGLE_ACCOUNT";
     public static final String KIND_MULTI_ACCOUNT = "MULTI_ACCOUNT";
 
+    /** The only non-null value today (C5-B). Null means CSV or PDF -- both currently confirm into
+     *  {@code Transaction.Source.CSV_IMPORT}, unchanged from before this field existed. */
+    public static final String SOURCE_GMAIL = "GMAIL";
+
     @Id
     @GeneratedValue
     private UUID id;
@@ -123,6 +127,12 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
     @Column(name = "session_kind", nullable = false)
     private String sessionKind = KIND_SINGLE_ACCOUNT;
 
+    /** Null for CSV/PDF (unchanged behaviour), {@link #SOURCE_GMAIL} for a session
+     *  {@code GmailStagingBridge} created. See V84's migration comment for why this is a column
+     *  rather than something inferred at confirm time. */
+    @Column(name = "source", length = 20)
+    private String source;
+
     @Column(nullable = false)
     private String status = STATUS_STAGED;
 
@@ -162,6 +172,8 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
     public void setActivatedCapabilitiesJson(String activatedCapabilitiesJson) { this.activatedCapabilitiesJson = activatedCapabilitiesJson; }
     public String getSessionKind() { return sessionKind; }
     public void setSessionKind(String sessionKind) { this.sessionKind = sessionKind; }
+    public String getSource() { return source; }
+    public void setSource(String source) { this.source = source; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public Instant getCreatedAt() { return createdAt; }

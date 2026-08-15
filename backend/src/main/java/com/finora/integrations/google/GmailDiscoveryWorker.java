@@ -1,5 +1,6 @@
 package com.finora.integrations.google;
 
+import com.finora.integrations.google.merchant.GmailReceiptExtractionService;
 import com.finora.observability.WorkerExecution;
 import com.finora.observability.WorkerObservability;
 import org.slf4j.Logger;
@@ -21,12 +22,24 @@ import java.util.List;
  * about scheduling, batching and limits and nothing about the Gmail API. That is also what makes the
  * discovery logic testable without HTTP.
  *
+ * <h2>Discovery, then extraction, per connection — not two separate ticks</h2>
+ *
+ * C5-B added {@link GmailReceiptExtractionService} immediately after {@code discoverFor} in the same
+ * loop iteration, not as a second scheduled pass over the whole connection list. A connection whose
+ * discovery just found new trusted mail gets that mail extracted in the SAME tick, rather than
+ * waiting for a later pass to notice the {@code DETECTED_NOT_STAGED} backlog discovery just created.
+ * The two remain separate classes (this file only orchestrates; neither knows about the other's
+ * internals) — see each class's own doc comment for why they are split at all.
+ *
  * <h2>One failed connection does not fail the tick</h2>
  *
  * A run's failures are per-connection: an expired grant, a mailbox over quota, a transient 5xx. Each
  * is caught here so the remaining connections in the slice still get their pass. A worker that
  * aborted the tick on the first bad mailbox would let one broken connection starve every other user
- * — and the broken one is precisely the one most likely to fail again next tick.
+ * — and the broken one is precisely the one most likely to fail again next tick. Discovery and
+ * extraction share one try/catch per connection deliberately: if discovery fails, there is nothing
+ * new for extraction to find on this connection this tick anyway, so attempting it would just spend
+ * a second doomed request.
  *
  * <h2>No retry loop</h2>
  *
@@ -44,28 +57,37 @@ public class GmailDiscoveryWorker {
     private static final String JOB_KIND = "mailbox-scan";
 
     private final GmailMessageDiscoveryService discovery;
+    private final GmailReceiptExtractionService extraction;
     private final GmailConnectionRepository connections;
     private final WorkerObservability observability;
 
     private final boolean enabled;
     private final int connectionsPerTick;
     private final int messagesPerConnection;
+    private final int extractionMessagesPerConnection;
     private final Duration minimumInterval;
 
     public GmailDiscoveryWorker(
             GmailMessageDiscoveryService discovery,
+            GmailReceiptExtractionService extraction,
             GmailConnectionRepository connections,
             WorkerObservability observability,
             @Value("${app.integrations.google.discovery.enabled:true}") boolean enabled,
             @Value("${app.integrations.google.discovery.connections-per-tick:25}") int connectionsPerTick,
             @Value("${app.integrations.google.discovery.messages-per-connection:500}") int messagesPerConnection,
+            // Smaller than discovery's own cap on purpose: a discovery message costs one header
+            // fetch, an extraction message costs a body fetch plus parsing plus a staging write --
+            // meaningfully more expensive per message, so its own ceiling is lower.
+            @Value("${app.integrations.google.discovery.extraction-messages-per-connection:50}") int extractionMessagesPerConnection,
             @Value("${app.integrations.google.discovery.minimum-interval-ms:3600000}") long minimumIntervalMs) {
         this.discovery = discovery;
+        this.extraction = extraction;
         this.connections = connections;
         this.observability = observability;
         this.enabled = enabled;
         this.connectionsPerTick = connectionsPerTick;
         this.messagesPerConnection = messagesPerConnection;
+        this.extractionMessagesPerConnection = extractionMessagesPerConnection;
         this.minimumInterval = Duration.ofMillis(minimumIntervalMs);
     }
 
@@ -110,6 +132,7 @@ public class GmailDiscoveryWorker {
             for (GmailConnection connection : due) {
                 try {
                     discovery.discoverFor(connection, messagesPerConnection);
+                    extraction.extractFor(connection, extractionMessagesPerConnection);
                     execution.completed(connection.getId());
                 } catch (GmailReauthRequiredException e) {
                     // Expected, not exceptional. GmailAccessTokenService has already flipped the

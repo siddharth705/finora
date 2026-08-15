@@ -378,8 +378,9 @@ app:
       # open redirect.
       post-connect-redirect: ${GOOGLE_OAUTH_POST_CONNECT_REDIRECT:https://app.finoratech.info/settings}
 
-      # Gmail message discovery (Phase C4). Reads headers and decides what is worth looking at; it
-      # cannot fetch a message body and it cannot create a transaction.
+      # Gmail message discovery (Phase C4) and receipt extraction (Phase C5-B), one worker, one
+      # config block -- extraction runs immediately after discovery for the same connection, not
+      # on its own schedule. See GmailDiscoveryWorker's class doc for why.
       discovery:
         enabled: ${GMAIL_DISCOVERY_ENABLED:true}
 
@@ -396,14 +397,19 @@ app:
         #                  the slice size, so one tick's work is bounded by this rather than by how
         #                  many users the product has.
         # messages-per-connection
-        #                  the per-run message cap. Hitting it is a PAUSE, not a failure -- the
-        #                  processed-messages table means the next run resumes where this one
-        #                  stopped rather than starting over.
+        #                  discovery's own per-run message cap. Hitting it is a PAUSE, not a
+        #                  failure -- the processed-messages table means the next run resumes where
+        #                  this one stopped rather than starting over.
+        # extraction-messages-per-connection
+        #                  the same idea for extraction, smaller because the per-message cost is
+        #                  higher: a body fetch, sanitizing, parsing, and a staging write, versus
+        #                  discovery's single header fetch.
         interval-ms: ${GMAIL_DISCOVERY_INTERVAL_MS:900000}
         initial-delay-ms: ${GMAIL_DISCOVERY_INITIAL_DELAY_MS:180000}
         minimum-interval-ms: ${GMAIL_DISCOVERY_MINIMUM_INTERVAL_MS:3600000}
         connections-per-tick: ${GMAIL_DISCOVERY_CONNECTIONS_PER_TICK:25}
         messages-per-connection: ${GMAIL_DISCOVERY_MESSAGES_PER_CONNECTION:500}
+        extraction-messages-per-connection: ${GMAIL_EXTRACTION_MESSAGES_PER_CONNECTION:50}
 
 # Reversible encryption at rest for third-party credentials Finora must read back -- OAuth refresh
 # tokens first (ADR-007). NOT for passwords or Finora's own session tokens, which are hashed via

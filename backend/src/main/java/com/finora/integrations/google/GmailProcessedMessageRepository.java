@@ -1,10 +1,12 @@
 package com.finora.integrations.google;
 
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -31,4 +33,16 @@ public interface GmailProcessedMessageRepository extends JpaRepository<GmailProc
                                         @Param("messageIds") Collection<String> messageIds);
 
     long countByConnectionId(UUID connectionId);
+
+    /**
+     * Trusted messages still waiting on extraction — C5-B's work queue. Oldest first, so a
+     * mailbox with a backlog processes in the order the mail actually arrived rather than
+     * whatever order the database happens to return rows in.
+     *
+     * <p>Scoped to one connection, matching {@code GmailMessageDiscoveryService.discoverFor}'s own
+     * per-connection shape — extraction runs as the next step for the same connection a discovery
+     * pass just finished, not as a separate cross-mailbox scan.
+     */
+    List<GmailProcessedMessage> findByConnectionIdAndOutcomeOrderByProcessedAtAsc(
+            UUID connectionId, GmailProcessedMessage.Outcome outcome, Pageable pageable);
 }
