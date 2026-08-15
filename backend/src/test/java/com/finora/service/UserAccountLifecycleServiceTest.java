@@ -151,6 +151,46 @@ class UserAccountLifecycleServiceTest {
         throw new AssertionError("Expected deactivate() to throw for an admin-scope account");
     }
 
+    /** Regression test: without this, requestDeletion()'s "no cancel link" product decision was
+     *  trivially reversible -- an access token already issued keeps working for up to 15 minutes
+     *  past the status change (requestDeletion only revokes refresh tokens), and the account's
+     *  real password is unchanged until AccountPurgeSweepService's purge runs 48h later, so
+     *  deactivate() would have happily flipped a PENDING_DELETION account back to DEACTIVATED with
+     *  nothing more than the same still-known current password. */
+    @Test
+    void deactivate_onAPendingDeletionAccount_isRejectedBeforeCheckingThePassword() {
+        User u = user(User.SCOPE_USER);
+        u.setStatus(User.STATUS_PENDING_DELETION);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(u));
+
+        try {
+            service.deactivate(userId, "correct", "OTHER", null);
+        } catch (ApiException e) {
+            assertThat(e.getMessage()).contains("scheduled for deletion");
+            assertThat(u.getStatus()).isEqualTo(User.STATUS_PENDING_DELETION);
+            verify(passwordEncoder, never()).matches(any(), any());
+            verify(refreshTokenService, never()).revokeAllForUser(any());
+            return;
+        }
+        throw new AssertionError("Expected deactivate() to throw for a pending-deletion account");
+    }
+
+    @Test
+    void deactivate_onAnAlreadyDeletedAccount_isRejected() {
+        User u = user(User.SCOPE_USER);
+        u.setStatus(User.STATUS_DELETED);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(u));
+
+        try {
+            service.deactivate(userId, "correct", "OTHER", null);
+        } catch (ApiException e) {
+            assertThat(e.getMessage()).contains("scheduled for deletion");
+            verify(passwordEncoder, never()).matches(any(), any());
+            return;
+        }
+        throw new AssertionError("Expected deactivate() to throw for an already-deleted account");
+    }
+
     // --- requestDeletion() ---
 
     private static final String SESSION_ID = UUID.randomUUID().toString();

@@ -64,6 +64,17 @@ public class UserAccountLifecycleService {
         User user = requireUser(userId);
         requireUserScope(user);
 
+        // Same reasoning as AuthService.login()'s isPendingDeletion()/isDeleted() checks: the
+        // account's real passwordHash is still on the row until AccountPurgeSweepService's last
+        // purge step anonymizes it, and requestDeletion() only revokes refresh tokens -- an access
+        // token already issued keeps working for up to 15 minutes past the status change. Without
+        // this, that window (or simply the same still-known current password, once a fresh login
+        // is blocked) would let someone deactivate their way out of a request that requestDeletion
+        // ()'s own doc comment and confirmation email both promise has "no way to cancel."
+        if (user.isPendingDeletion() || user.isDeleted()) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "This account is scheduled for deletion and can no longer be modified.");
+        }
+
         if (!User.DEACTIVATION_REASONS.contains(reason)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "'" + reason + "' is not a recognized deactivation reason.");
         }
