@@ -84,7 +84,7 @@ is building that consumer.
 **What C6.3 is NOT, and why.** The original pitch's own example —
 
 ```
-User receives: invoice@localgym.com, ₹2,000 membership
+User receives: invoice@localgym.example.test, ₹2,000 membership
 Finora asks: "Is this a transaction?"
 ```
 
