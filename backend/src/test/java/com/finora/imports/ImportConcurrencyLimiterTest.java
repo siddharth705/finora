@@ -162,58 +162,75 @@ class ImportConcurrencyLimiterTest {
      * asked for exactly maxConcurrent -- it never races more callers than there are permits, so it
      * couldn't catch a future regression that admitted MORE than maxConcurrent under real
      * contention (e.g. a hand-rolled counter replacing Semaphore with a check-then-increment race).
-     * This fires 3x as many callers as permits, all at once, and proves the held-concurrently count
-     * never exceeds maxConcurrent even under genuine oversubscription -- Semaphore's own atomicity
-     * is what this pins down, not just this class's plumbing around it.
+     *
+     * <p>Deliberately two-phase, not "fire 3x callers all at once and hope": the holders are
+     * submitted and confirmed to actually hold every permit FIRST (via {@code holdersReady}),
+     * and only THEN are the excess callers submitted -- so by construction, every excess caller's
+     * {@code tryAcquire()} happens while the permits are provably already fully held, not
+     * whenever the thread pool happens to schedule it. A single-phase "submit all N+M at once,
+     * release after the first N report ready" version of this test flaked on a loaded CI runner
+     * (a straggler among the excess callers hadn't started `runGated()` yet when the holders were
+     * released, so it raced a freshly-released permit and succeeded instead of being rejected --
+     * `observedMax` still correctly stayed at maxConcurrent, but the rejected count came in short).
+     * This version has no such race: nothing releases the holders until every excess caller has
+     * already resolved.
      */
     @Test
     void runGated_neverExceedsMaxConcurrent_evenWhenGenuinelyOversubscribed() throws Exception {
         int maxConcurrent = 3;
-        int attempts = maxConcurrent * 3;
+        int excessCallers = maxConcurrent * 2;
         ImportConcurrencyLimiter limiter = new ImportConcurrencyLimiter(maxConcurrent);
         AtomicInteger current = new AtomicInteger(0);
         AtomicInteger observedMax = new AtomicInteger(0);
         AtomicInteger rejected = new AtomicInteger(0);
-        CountDownLatch maxConcurrentReached = new CountDownLatch(maxConcurrent);
+        CountDownLatch holdersReady = new CountDownLatch(maxConcurrent);
         CountDownLatch release = new CountDownLatch(1);
-        CountDownLatch allDone = new CountDownLatch(attempts);
-        ExecutorService pool = Executors.newFixedThreadPool(attempts);
+        ExecutorService holderPool = Executors.newFixedThreadPool(maxConcurrent);
+        ExecutorService excessPool = Executors.newFixedThreadPool(excessCallers);
 
         try {
-            for (int i = 0; i < attempts; i++) {
-                pool.submit(() -> {
+            for (int i = 0; i < maxConcurrent; i++) {
+                holderPool.submit(() -> limiter.runGated(() -> {
+                    int now = current.incrementAndGet();
+                    observedMax.updateAndGet(prevMax -> Math.max(prevMax, now));
+                    holdersReady.countDown();
+                    release.await();
+                    current.decrementAndGet();
+                    return null;
+                }));
+            }
+            assertThat(holdersReady.await(2, TimeUnit.SECONDS))
+                    .as("every permit is held -- excess callers below are now provably guaranteed to find none free")
+                    .isTrue();
+
+            List<Future<?>> excessFutures = new ArrayList<>();
+            for (int i = 0; i < excessCallers; i++) {
+                excessFutures.add(excessPool.submit(() -> {
                     try {
-                        limiter.runGated(() -> {
-                            int now = current.incrementAndGet();
-                            observedMax.updateAndGet(prevMax -> Math.max(prevMax, now));
-                            maxConcurrentReached.countDown();
-                            release.await();
-                            current.decrementAndGet();
-                            return null;
-                        });
+                        limiter.runGated(() -> "should not run");
                     } catch (ApiException e) {
                         rejected.incrementAndGet();
                     } catch (Exception ignored) {
-                        // not under test here
-                    } finally {
-                        allDone.countDown();
+                        // not under test here -- runGated() declares Exception since the caller's
+                        // own work could throw one, but this test's Callable never does
                     }
-                });
+                }));
             }
+            for (Future<?> f : excessFutures) f.get(5, TimeUnit.SECONDS);
 
-            assertThat(maxConcurrentReached.await(2, TimeUnit.SECONDS))
-                    .as("maxConcurrent callers actually got a permit and are running concurrently")
-                    .isTrue();
             release.countDown();
-            assertThat(allDone.await(5, TimeUnit.SECONDS)).as("every attempt resolved").isTrue();
+            holderPool.shutdown();
+            assertThat(holderPool.awaitTermination(5, TimeUnit.SECONDS)).as("holders finished").isTrue();
 
             assertThat(observedMax.get())
-                    .as("never more than maxConcurrent held a permit at once, even racing %d callers for %d permits",
-                            attempts, maxConcurrent)
+                    .as("never more than maxConcurrent held a permit at once")
                     .isEqualTo(maxConcurrent);
-            assertThat(rejected.get()).isEqualTo(attempts - maxConcurrent);
+            assertThat(rejected.get())
+                    .as("every excess caller was rejected, since it ran only after all permits were confirmed held")
+                    .isEqualTo(excessCallers);
         } finally {
-            pool.shutdownNow();
+            holderPool.shutdownNow();
+            excessPool.shutdownNow();
         }
     }
 
