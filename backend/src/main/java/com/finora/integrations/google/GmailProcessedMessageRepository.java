@@ -34,6 +34,11 @@ public interface GmailProcessedMessageRepository extends JpaRepository<GmailProc
 
     long countByConnectionId(UUID connectionId);
 
+    /** "Transactions found" on the connection status panel (C5.4) — every message this mailbox
+     *  ever produced a receipt from, regardless of whether it has since been approved, rejected,
+     *  or still sits in the review queue. */
+    long countByConnectionIdAndOutcome(UUID connectionId, GmailProcessedMessage.Outcome outcome);
+
     /**
      * Trusted messages still waiting on extraction — C5-B's work queue. Oldest first, so a
      * mailbox with a backlog processes in the order the mail actually arrived rather than
