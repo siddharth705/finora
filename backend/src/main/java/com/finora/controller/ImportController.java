@@ -53,7 +53,8 @@ public class ImportController {
     @PostMapping(value = "/csv/stage", consumes = "multipart/form-data")
     public ResponseEntity<ApiResponse<StagingSessionResponse>> stage(@RequestParam("file") MultipartFile file) throws Exception {
         // Before the limiter, deliberately: rejecting an empty file or a PDF posted to the CSV
-        // endpoint should not consume one of the six permits the expensive work is queued behind.
+        // endpoint should not consume one of the six permits the expensive work is gated behind
+        // (BH-043: an instant accept/reject now, not a queue -- see ImportConcurrencyLimiter).
         StatementUpload.requireReadable(file, StatementUpload.Format.CSV);
         return ResponseEntity.ok(ApiResponse.ok(
                 concurrencyLimiter.runGated(() -> importService.parseAndStageWithSession(currentUser.id(), file))));

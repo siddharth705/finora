@@ -300,9 +300,10 @@ app:
     # imports are maxed out, rather than statement imports alone being able to starve the whole
     # connection pool.
     max-concurrent: ${IMPORT_MAX_CONCURRENT:6}
-    # How long an import request waits in the FIFO queue for a processing slot before giving up
-    # and returning a clear "try again shortly" response, rather than hanging indefinitely.
-    acquire-timeout-ms: ${IMPORT_ACQUIRE_TIMEOUT_MS:20000}
+    # BH-043: there used to be an acquire-timeout-ms here controlling how long a request would
+    # block waiting for a processing slot. ImportConcurrencyLimiter now rejects immediately
+    # instead of waiting (see its own doc comment), so that wait no longer exists and the
+    # property was removed rather than left configuring nothing.
   statement-storage:
     # Phase 2 of docs/engineering/statement-storage-migration.md. The V54 content_hash/object_key
     # columns exist and the import pipeline IS wired to this layer -- ImportService,

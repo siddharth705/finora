@@ -101,7 +101,8 @@ public class AdminStatementAnalysisController {
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "password", required = false) String password) throws Exception {
         // Gated for the same reason /imports/csv/stage is: this is the CPU-heavy path, and an
-        // admin analysing a 39-page statement should queue behind the same bound as everyone else
+        // admin analysing a 39-page statement should share the same bound as everyone else
+        // (BH-043: an instant accept/reject now, not a queue -- see ImportConcurrencyLimiter)
         // rather than competing with customer imports for the whole thread pool.
         String reference = concurrencyLimiter.runGated(
                 () -> adminAnalysisService.analyze(currentUser.id(), file, password));
