@@ -217,6 +217,28 @@ class GlobalExceptionHandlerTest {
     }
 
     /**
+     * No current throw site populates a non-empty details map (every one of the ~75 in this
+     * backend uses the 2/3-arg constructors, which default to Collections.emptyMap()) -- but the
+     * merge itself (new HashMap<>(ex.getDetails())) is written to preserve whatever WAS there,
+     * only adding userActionRequired alongside it, and that behavior had no test exercising it
+     * until now.
+     */
+    @Test
+    void handleApiException_preservesTheThrowSitesOwnDetails_whileAddingUserActionRequired() {
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(mock(Environment.class));
+
+        var response = handler.handleApiException(
+                new ApiException(ErrorCode.IMPORT_NO_HEADER_DETECTED.defaultStatus(),
+                        ErrorCode.IMPORT_NO_HEADER_DETECTED, ErrorCode.IMPORT_NO_HEADER_DETECTED.defaultMessage(),
+                        java.util.Map.of("rowsChecked", 12)),
+                request());
+
+        assertThat(response.getBody().details())
+                .containsEntry("rowsChecked", 12)
+                .containsEntry("userActionRequired", true);
+    }
+
+    /**
      * The other half, and the reason this isn't just "log everything": a 4xx is the server working
      * correctly. Logging every rejected password or malformed upload at ERROR would bury the real
      * failures this change exists to surface.
