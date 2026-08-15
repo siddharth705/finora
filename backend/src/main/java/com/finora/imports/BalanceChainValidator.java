@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -186,6 +187,8 @@ public class BalanceChainValidator {
             return new Result(Outcome.NOT_APPLICABLE, List.of(), 0, 0);
         }
 
+        rows = chronological(rows);
+
         int rowsWithBalance = (int) rows.stream().filter(r -> r.balanceAfter() != null).count();
 
         List<Discrepancy> discrepancies = new ArrayList<>();
@@ -252,6 +255,39 @@ public class BalanceChainValidator {
                 && (double) discrepancies.size() / pairsChecked >= FAILED_THRESHOLD;
         Outcome status = systematic ? Outcome.FAILED : Outcome.WARNING;
         return new Result(status, List.copyOf(discrepancies), pairsChecked, rowsWithBalance);
+    }
+
+    /**
+     * Returns {@code rows} in the direction the chain needs to walk forward through: whichever end
+     * is chronologically earliest comes first.
+     *
+     * <p>The caller's contract (see {@link #validate(List)}) is "already sequenced along the
+     * document's own order", not "sorted ascending" -- a full date sort would scramble same-day
+     * clusters that {@link BalanceChainUtil} exists specifically to keep in their real chain order.
+     * But some real exports (PNB ONE, confirmed on a live statement) print newest-first for the
+     * ENTIRE document, not just within a day, and this validator's loop always treats the row
+     * before position i as the one whose balance position i's amount was applied to. Fed a
+     * newest-first document unchanged, every single pair is compared against the wrong
+     * predecessor -- not a few rows, all of them, which is indistinguishable from "every amount is
+     * misread" without this check.
+     *
+     * <p>Reversing (not sorting) is what preserves the same-day chain order a sort would destroy:
+     * it only flips which end the walk starts from, so a same-day cluster's internal order --
+     * whatever it truly is -- comes out the same relative sequence, just traversed the other way.
+     * Detected from the two ends only, deliberately: a full ascending/descending vote over every
+     * adjacent pair would also flag statements with an interior mid-statement summary line or a
+     * same-day tie as "not clearly ordered" and skip the fix on exactly the documents most likely
+     * to need it.
+     */
+    private static List<StagedRow> chronological(List<StagedRow> rows) {
+        LocalDate first = rows.get(0).date();
+        LocalDate last = rows.get(rows.size() - 1).date();
+        if (first == null || last == null || !first.isAfter(last)) {
+            return rows;
+        }
+        List<StagedRow> reversed = new ArrayList<>(rows);
+        Collections.reverse(reversed);
+        return reversed;
     }
 
     /**
