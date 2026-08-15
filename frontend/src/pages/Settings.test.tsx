@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import Settings from './Settings';
 import { ThemeProvider } from '../context/ThemeContext';
 import { AuthProvider } from '../context/AuthContext';
-import { userApi, workspaceApi, analyticsApi, deviceApi, accountLifecycleApi, authApi } from '../api/endpoints';
+import { userApi, workspaceApi, analyticsApi, deviceApi, accountLifecycleApi, authApi, gmailApi } from '../api/endpoints';
 
 // v1 scope is capabilities-first: every section on this page reflects a real, backed setting or
 // fact (see Settings.tsx's own top-of-file comment). These tests cover the real save paths, the
@@ -22,7 +22,20 @@ vi.mock('../api/endpoints', () => ({
   deviceApi: { list: vi.fn(), revoke: vi.fn() },
   accountLifecycleApi: { deactivate: vi.fn() },
   authApi: { logout: vi.fn() },
+  gmailApi: {
+    status: vi.fn(), connect: vi.fn(), disconnect: vi.fn(), syncNow: vi.fn(),
+    reviewQueue: vi.fn(), approve: vi.fn(), reject: vi.fn(),
+  },
 }));
+
+function gmailStatus(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    connected: false, status: null, googleEmail: null, grantedScopes: [],
+    connectedAt: null, lastSyncedAt: null, lastDiscoveryAt: null,
+    transactionsFound: 0, needsReview: 0, available: true,
+    ...overrides,
+  };
+}
 
 function userSettings(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -87,6 +100,10 @@ describe('Settings', () => {
     vi.mocked(deviceApi.revoke).mockReset().mockResolvedValue(undefined as any);
     vi.mocked(accountLifecycleApi.deactivate).mockReset().mockResolvedValue({ message: 'Deactivated.' });
     vi.mocked(authApi.logout).mockReset().mockResolvedValue({ message: 'Signed out.' });
+    vi.mocked(gmailApi.status).mockReset().mockResolvedValue(gmailStatus());
+    vi.mocked(gmailApi.connect).mockReset();
+    vi.mocked(gmailApi.disconnect).mockReset();
+    vi.mocked(gmailApi.syncNow).mockReset();
   });
 
   it('renders the real preferences and import-stat facts once loaded', async () => {
@@ -413,6 +430,104 @@ describe('Settings', () => {
 
       expect(screen.queryByLabelText(/current password/i)).not.toBeInTheDocument();
       expect(accountLifecycleApi.deactivate).not.toHaveBeenCalled();
+    });
+  });
+
+  // C5.4, D-15: the first frontend caller for GoogleOAuthController's connect/status/disconnect
+  // endpoints, which existed on the backend with nothing wired to them since Phase B.
+  describe('Gmail connection', () => {
+    it('offers a Connect Gmail button when nothing is connected yet', async () => {
+      renderSettings();
+
+      expect(await screen.findByRole('button', { name: /connect gmail/i })).toBeInTheDocument();
+    });
+
+    it('redirects the browser to the authorization URL returned by connect()', async () => {
+      const user = userEvent.setup();
+      vi.mocked(gmailApi.connect).mockResolvedValue({ authorizationUrl: 'https://accounts.google.com/o/oauth2/auth?x=1' });
+      const originalHref = window.location.href;
+      // jsdom throws "Not implemented: navigation" on a real assignment -- redefine the property
+      // rather than actually navigating, the same reason clearSessionAndRedirect's own tests do.
+      delete (window as any).location;
+      (window as any).location = { href: '' };
+
+      renderSettings();
+      await user.click(await screen.findByRole('button', { name: /connect gmail/i }));
+
+      await waitFor(() => expect(window.location.href).toBe('https://accounts.google.com/o/oauth2/auth?x=1'));
+      (window as any).location = { href: originalHref };
+    });
+
+    it('shows the connected state with account, sync stats, and actions', async () => {
+      vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({
+        connected: true, status: 'CONNECTED', googleEmail: 'amy@gmail.example.test',
+        lastDiscoveryAt: '2026-08-15T05:00:00Z', transactionsFound: 245, needsReview: 12,
+      }));
+
+      renderSettings();
+
+      expect(await screen.findByText('amy@gmail.example.test')).toBeInTheDocument();
+      expect(screen.getByText('245')).toBeInTheDocument();
+      expect(screen.getByText('12')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /review 12/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /disconnect/i })).toBeInTheDocument();
+    });
+
+    it('does not offer a Review button when nothing needs review', async () => {
+      vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({
+        connected: true, googleEmail: 'amy@gmail.example.test', needsReview: 0,
+      }));
+
+      renderSettings();
+
+      await screen.findByText('amy@gmail.example.test');
+      expect(screen.queryByRole('button', { name: /review/i })).not.toBeInTheDocument();
+    });
+
+    it('calls disconnect and reloads status', async () => {
+      const user = userEvent.setup();
+      vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({ connected: true, googleEmail: 'amy@gmail.example.test' }));
+      vi.mocked(gmailApi.disconnect).mockResolvedValue(undefined as any);
+
+      renderSettings();
+      await user.click(await screen.findByRole('button', { name: /disconnect/i }));
+
+      await waitFor(() => expect(gmailApi.disconnect).toHaveBeenCalled());
+      await waitFor(() => expect(gmailApi.status).toHaveBeenCalledTimes(2));
+    });
+
+    it('shows a visible error when Connect Gmail fails, not a silently-stuck button', async () => {
+      const user = userEvent.setup();
+      vi.mocked(gmailApi.connect).mockRejectedValue(new Error('network error'));
+
+      renderSettings();
+      await user.click(await screen.findByRole('button', { name: /connect gmail/i }));
+
+      expect(await screen.findByText(/couldn't start the gmail connection/i)).toBeInTheDocument();
+      // And the button itself recovers rather than staying stuck on "Connecting…" forever.
+      expect(screen.getByRole('button', { name: /connect gmail/i })).toBeInTheDocument();
+    });
+
+    it('shows a visible error when Disconnect fails', async () => {
+      const user = userEvent.setup();
+      vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({ connected: true, googleEmail: 'amy@gmail.example.test' }));
+      vi.mocked(gmailApi.disconnect).mockRejectedValue(new Error('network error'));
+
+      renderSettings();
+      await user.click(await screen.findByRole('button', { name: /disconnect/i }));
+
+      expect(await screen.findByText(/couldn't disconnect gmail/i)).toBeInTheDocument();
+    });
+
+    it('surfaces a cooldown-specific message when Sync Now is rate-limited', async () => {
+      const user = userEvent.setup();
+      vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({ connected: true, googleEmail: 'amy@gmail.example.test' }));
+      vi.mocked(gmailApi.syncNow).mockRejectedValue({ response: { status: 429 } });
+
+      renderSettings();
+      await user.click(await screen.findByTitle(/sync now/i));
+
+      expect(await screen.findByText(/synced recently/i)).toBeInTheDocument();
     });
   });
 });

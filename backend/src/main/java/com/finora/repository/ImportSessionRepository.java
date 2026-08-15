@@ -17,6 +17,17 @@ public interface ImportSessionRepository extends JpaRepository<ImportSession, UU
     List<ImportSession> findByUserIdAndStatusOrderByCreatedAtDesc(UUID userId, String status);
 
     /**
+     * The Gmail review queue (C5.4) -- every source's own sessions filtered independently, rather
+     * than reusing {@link #findByUserIdAndStatusOrderByCreatedAtDesc} and filtering by
+     * {@code source} in Java, so the "how many need review" count {@code GmailReviewService} and
+     * the connection-status endpoint both need can be a database count, not a full row fetch.
+     */
+    List<ImportSession> findByUserIdAndSourceAndStatusOrderByCreatedAtDesc(
+            UUID userId, String source, String status);
+
+    long countByUserIdAndSourceAndStatus(UUID userId, String source, String status);
+
+    /**
      * This user's own live (STAGED) session for this exact document, if one exists -- backs
      * {@code ImportSessionService.findLiveSessionByContentHash}, the app-level half of
      * V79__import_session_stage_idempotency.sql's duplicate-upload protection. Served by the same

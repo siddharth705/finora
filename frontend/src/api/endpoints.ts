@@ -721,3 +721,50 @@ export const workspaceApi = {
   updateSettings: (body: { autoApplyConfidenceThreshold: number }) =>
     api.put<WorkspaceSettings>('/workspace/settings', body).then((r) => r.data),
 };
+
+// --- Gmail Transaction Sync (C5.4) ---
+//
+// Mirrors GmailConnectionStatusDto exactly. The connect/callback/status/disconnect endpoints have
+// existed on the backend since Phase B; this is the first frontend caller for any of them --
+// there was no "Connect Gmail" button anywhere until now, so wiring the connection flow itself is
+// part of "the minimum needed to make C5 usable", not just the review queue.
+
+export interface GmailConnectionStatus {
+  connected: boolean;
+  status: string | null;
+  googleEmail: string | null;
+  grantedScopes: string[];
+  connectedAt: string | null;
+  lastSyncedAt: string | null;
+  lastDiscoveryAt: string | null;
+  transactionsFound: number;
+  needsReview: number;
+  available: boolean;
+}
+
+// Mirrors GmailReviewItemDto. sessionId is what approve()/reject() take -- there is no separate
+// "receipt id"; a Gmail-sourced ImportSession IS the receipt (GmailStagingBridge stages exactly
+// one row per session), see GmailReviewService's own doc comment.
+export interface GmailReviewItem {
+  sessionId: string;
+  merchant: string;
+  merchantDomain: string;
+  amount: number;
+  date: string;
+  category: string;
+  confidence: number | null;
+  stagedAt: string;
+}
+
+export const gmailApi = {
+  status: () => api.get<GmailConnectionStatus>('/integrations/google/gmail/status').then((r) => r.data),
+  connect: () =>
+    api.post<{ authorizationUrl: string }>('/integrations/google/gmail/connect').then((r) => r.data),
+  disconnect: () => api.delete('/integrations/google/gmail/connection'),
+  syncNow: () => api.post('/integrations/google/gmail/sync-now'),
+  reviewQueue: () =>
+    api.get<GmailReviewItem[]>('/integrations/google/gmail/review-queue').then((r) => r.data),
+  approve: (sessionId: string, category?: string) =>
+    api.post(`/integrations/google/gmail/review/${sessionId}/approve`, category ? { category } : {}),
+  reject: (sessionId: string) => api.post(`/integrations/google/gmail/review/${sessionId}/reject`),
+};
