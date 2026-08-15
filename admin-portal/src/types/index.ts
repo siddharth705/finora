@@ -334,6 +334,21 @@ export interface MerchantStatDto {
   rowCount: number;
 }
 
+/** One row in the Gmail parser-health section (C6.2) -- see the backend's
+ *  GmailMerchantParserStatDto doc comment for exactly what each count means. successRate is null
+ *  when noParserYet is the only traffic this domain has ever produced -- there is no parser to
+ *  rate yet, distinct from a parser that regressed to 0%. */
+export interface GmailMerchantParserStatDto {
+  domain: string;
+  merchant: string;
+  parsed: number;
+  parseFailed: number;
+  skippedNotReceipt: number;
+  noParserYet: number;
+  successRate: number | null;
+  lastSeen: string | null;
+}
+
 export interface MerchantDistributionEntry {
   category: string;
   confirmationCount: number;

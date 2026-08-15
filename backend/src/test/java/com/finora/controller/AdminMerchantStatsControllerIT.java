@@ -5,6 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finora.AbstractIntegrationTest;
 import com.finora.entity.Merchant;
 import com.finora.entity.User;
+import com.finora.integrations.google.GmailApiClient;
+import com.finora.integrations.google.GmailConnection;
+import com.finora.integrations.google.GmailConnectionRepository;
+import com.finora.integrations.google.GmailProcessedMessage;
+import com.finora.integrations.google.GmailProcessedMessageRepository;
 import com.finora.repository.MerchantRepository;
 import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.UserRepository;
@@ -14,7 +19,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.*;
+import org.springframework.web.util.UriComponentsBuilder;
 
+import java.net.URI;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -24,13 +33,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  * .platformMerchantCounts()) -- proves MERCHANT_MANAGE gating and that the aggregate correctly
  * counts DISTINCT users vs. total rows when more than one account has independently created a
  * Merchant with the same canonicalName (the exact scenario the userCount/rowCount split exists
- * to distinguish).
+ * to distinguish). Also covers the same controller's Gmail parser-health endpoint (C6.2) --
+ * {@code GmailMerchantStatsServiceTest}/{@code -ServiceIT} cover that endpoint's own aggregation
+ * logic in depth; this only proves the HTTP-layer wiring (permission gating, the required
+ * {@code since} param, real end-to-end serialization).
  */
 class AdminMerchantStatsControllerIT extends AbstractIntegrationTest {
 
     @Autowired private TestRestTemplate restTemplate;
     @Autowired private UserRepository userRepository;
     @Autowired private MerchantRepository merchantRepository;
+    @Autowired private GmailConnectionRepository gmailConnectionRepository;
+    @Autowired private GmailProcessedMessageRepository gmailProcessedMessageRepository;
     @Autowired private JwtService jwtService;
     @Autowired private RefreshTokenRepository refreshTokens;
     private final ObjectMapper mapper = new ObjectMapper();
@@ -102,5 +116,70 @@ class AdminMerchantStatsControllerIT extends AbstractIntegrationTest {
         assertThat(row).as("stats row for " + uniqueName).isNotNull();
         assertThat(row.get("userCount").asLong()).isEqualTo(2);
         assertThat(row.get("rowCount").asLong()).isEqualTo(2);
+    }
+
+    @Test
+    void plainUser_isForbiddenFromViewingGmailParserStats() {
+        User user = createUser("USER");
+        ResponseEntity<String> response = restTemplate.exchange(
+                gmailParserStatsUrl(Instant.now().minus(1, ChronoUnit.DAYS)),
+                HttpMethod.GET, new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void gmailParserStats_reportsRealOutcomeCountsPerDomain() throws Exception {
+        User admin = createUser("ADMIN");
+        String domain = "unique-merchant-" + UUID.randomUUID() + ".test";
+        UUID connectionId = persistGmailConnection(admin).getId();
+        gmailProcessedMessageRepository.saveAndFlush(GmailProcessedMessage.trusted(
+                connectionId, "msg-1", GmailProcessedMessage.Outcome.PARSED, domain));
+        gmailProcessedMessageRepository.saveAndFlush(GmailProcessedMessage.trusted(
+                connectionId, "msg-2", GmailProcessedMessage.Outcome.PARSE_FAILED, domain));
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                gmailParserStatsUrl(Instant.now().minus(1, ChronoUnit.DAYS)),
+                HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode data = mapper.readTree(response.getBody()).get("data");
+        JsonNode row = null;
+        for (JsonNode candidate : data) {
+            if (candidate.get("domain").asText().equals(domain)) {
+                row = candidate;
+                break;
+            }
+        }
+        assertThat(row).as("gmail parser stats row for " + domain).isNotNull();
+        assertThat(row.get("parsed").asLong()).isEqualTo(1);
+        assertThat(row.get("parseFailed").asLong()).isEqualTo(1);
+        assertThat(row.get("successRate").asDouble()).isEqualTo(0.5);
+    }
+
+    @Test
+    void gmailParserStats_requiresTheSinceParameter() {
+        User admin = createUser("ADMIN");
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/merchants/gmail-parser-stats",
+                HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    private URI gmailParserStatsUrl(Instant since) {
+        return UriComponentsBuilder.fromPath("/api/v1/admin/merchants/gmail-parser-stats")
+                .queryParam("since", since.toString())
+                .build(true).toUri();
+    }
+
+    private GmailConnection persistGmailConnection(User owner) {
+        GmailConnection connection = new GmailConnection();
+        connection.setUserId(owner.getId());
+        connection.setGoogleUserId("google-sub-" + UUID.randomUUID());
+        connection.setGoogleEmail("mailbox-" + UUID.randomUUID() + "@example.test");
+        connection.setGrantedScopes(GmailApiClient.GMAIL_READONLY_SCOPE);
+        connection.setStatus(GmailConnection.Status.CONNECTED);
+        return gmailConnectionRepository.saveAndFlush(connection);
     }
 }
