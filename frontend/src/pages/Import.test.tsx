@@ -1743,6 +1743,11 @@ describe('Import — arriving to retry a failed sync import', () => {
     await user.click(await screen.findByRole('button', { name: /import another/i }));
 
     await screen.findByTestId('statement-dropzone');
-    expect(screen.queryByTestId('retry-import-banner')).not.toBeInTheDocument();
+    // Bug fix (CI flake, same root cause as the "cancelled"/"dismissed" siblings above):
+    // startOver()'s own clearArrivalState() call -- what actually clears retryState -- lands on
+    // a later render than the setStep('upload') that makes the dropzone reappear, since router
+    // navigation and local useState updates commit on separate ticks. findByTestId resolving
+    // only proves the dropzone is back, not that retryState has cleared yet.
+    await waitFor(() => expect(screen.queryByTestId('retry-import-banner')).not.toBeInTheDocument());
   });
 });
