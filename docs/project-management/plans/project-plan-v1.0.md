@@ -142,7 +142,7 @@ closures are graded against, not current status** — current status is §1 and 
 All five carry regression tests mutation-checked against the restored defect. These survived a
 1,745-test suite and 489 commits before being found — none had a test at the time.
 
-### P1 — fully closed, one accepted trade-off remains (not a defect)
+### P1 — one new open defect (BH-060), one accepted trade-off (not a defect)
 
 **Closed:** `BH-002`, `BH-011`, `BH-012`, `BH-013` (Round 1) · `BH-019`, `BH-023`, `BH-026`, `BH-027`
 (financial/idempotency) · `BH-017` (retention, merged) · `BH-025` (BYTEA dual-write, merged) ·
@@ -174,6 +174,26 @@ across separate runs too, not just within one — proven complete for both `reco
 REVIEWED:** two new regression tests mutation-checked via `git stash` on just the source fix — both
 confirmed to fail against the pre-fix code with the exact reported symptom (`expected: OK, but was:
 REFUND`), then confirmed passing with the fix restored. Full backend suite green (~2355 tests).
+
+**`BH-060` — OPEN, ticketed 2026-08-16 (financial correctness, both PDF and CSV import paths).**
+`OPENING BALANCE`/`CLOSING BALANCE` marker rows carrying a real (non-blank) date get staged as
+ordinary transactions with no marker-row exclusion anywhere in the pipeline, and — separate from and
+more serious than the resulting false `BALANCE_CHAIN`/`STATEMENT_TOTALS` verification
+`WARNING`/`FAILED` on correctly-parsed statements — can be **confirmed into the ledger as a real
+`EXPENSE` transaction equal to the account's opening/closing balance**, unless the user notices the
+label text and manually unchecks the row during review; nothing in `StagedRow`/`ConfirmedRow` flags
+it programmatically. Full trace, `TransactionNormalizer.normalize()` → `PdfPreviewGenerator`
+(`:314-363`) / `PreviewGenerator` (`:102-127`) → `ImportVerifier.verify()` → `ImportService
+.persistSection()` (`:704-777`) → `frontend/src/lib/importReview.ts`'s `beginReview()`/
+`isUnderReview()` (`:51-66`, defaults `included: true` for any non-duplicate row) — every layer
+trusts the one before it, none filters. Confirmed via `PdfPreviewGeneratorTest
+.generate_extractsAllSixRowsFromTheGoldenFixture`'s own comment, which documents the six-row count
+including both marker rows as the real, non-test pipeline's actual behavior, not a fixture artifact.
+Full writeup: [`marker-row-pollution-scope-investigation.md`](../../architecture/system-design/marker-row-pollution-scope-investigation.md).
+Tracked as [issue #138](https://github.com/siddharth705/finora/issues/138).
+**Scope/impact only — no fix proposed or implemented; the fix (a shared marker-row detection step
+before verification and before a row is offered as includable) is a separate follow-up decision, not
+yet scheduled.**
 
 **Still open:**
 - **BH-054** — accepted trade-off, not a defect.
