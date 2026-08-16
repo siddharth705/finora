@@ -1,14 +1,13 @@
 package com.finora.service;
 
 import com.finora.entity.Merchant;
-import com.finora.entity.MerchantAlias;
 import com.finora.repository.MerchantAliasRepository;
+import com.finora.repository.MerchantCategoryLearningRepository;
 import com.finora.repository.MerchantRepository;
 import com.finora.util.CategoryRules;
 import com.finora.util.PaymentRailTokens;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -303,60 +302,85 @@ public class MerchantNormalizationEngine {
         return merchant;
     }
 
-    /**
-     * Bug fix: this was check-then-act against {@code UNIQUE(user_id, normalized_alias)}, with
-     * nothing between the check and the insert. Two concurrent imports for the same user hitting
-     * the same new description both saw "no alias yet" and both inserted — and
-     * {@code ImportConcurrencyLimiter}'s semaphore does not prevent it, being a global permit
-     * count with no per-user scoping, so two imports for one user is an ordinary occurrence rather
-     * than an exotic race (one person confirming two statements from two tabs).
-     *
-     * <p>The consequence was disproportionate: the losing insert threw
-     * {@code DataIntegrityViolationException} from inside the confirm transaction, so the user's
-     * ENTIRE import rolled back over a duplicate alias row — a row whose only purpose is caching a
-     * name match, and which by definition already existed with the right value.
-     *
-     * <p>{@code saveAndFlush} forces the constraint check to happen HERE, where it can be caught,
-     * rather than at commit — the same reasoning {@code BootstrapService} records for its own
-     * race. Losing is not a failure: the other writer stored exactly what this one wanted to, so
-     * the correct response is to carry on.
-     */
     /** Never let parser output exceed what the column can hold; see resolve()'s own reasoning. */
     private static String fitToColumn(String value) {
         if (value == null || value.length() <= MAX_STORED_LENGTH) return value;
         return value.substring(0, MAX_STORED_LENGTH);
     }
 
+    /**
+     * <p><b>Bug fix, original.</b> This was check-then-act against
+     * {@code UNIQUE(user_id, normalized_alias)}, with nothing between the check and the insert.
+     * Two concurrent imports for the same user hitting the same new description both saw "no alias
+     * yet" and both inserted — and {@code ImportConcurrencyLimiter}'s semaphore does not prevent
+     * it, being a global permit count with no per-user scoping, so two imports for one user is an
+     * ordinary occurrence rather than an exotic race (one person confirming two statements from two
+     * tabs). The consequence was disproportionate: the losing insert threw
+     * {@code DataIntegrityViolationException} from inside the confirm transaction, so the user's
+     * ENTIRE import rolled back over a duplicate alias row — a row whose only purpose is caching a
+     * name match, and which by definition already existed with the right value.
+     *
+     * <p><b>Bug fix, second (found investigating an unrelated reported race in CSV import staging,
+     * which did not itself reproduce).</b> The first fix's own recovery path did not survive
+     * contact with a genuine race. It was {@code saveAndFlush} inside a {@code try}, and on
+     * {@code DataIntegrityViolationException}, re-querying to tell a real constraint problem
+     * (rethrow) apart from a benign lost race (keep the existing row, log at DEBUG). That re-query
+     * ran in the SAME transaction as the failed insert — {@code resolve()} is
+     * {@code @Transactional} with the default REQUIRED propagation, and on the real call path
+     * ({@code ImportService.confirm} looping {@code resolve()} once per staged row) that is the
+     * whole import's transaction, not a private one. Checked by hand against this project's own
+     * Postgres ({@code docker exec ... psql}): once any statement in an open transaction fails,
+     * EVERY later statement on it — a plain {@code SELECT} included — fails with
+     * {@code current transaction is aborted, commands ignored until end of transaction block}
+     * (SQLSTATE {@code 25P02}) until {@code COMMIT} or {@code ROLLBACK}. There is no savepoint here
+     * ({@code Propagation.NESTED} or an explicit {@code SAVEPOINT}) to undo just the failed insert,
+     * so the "is this a real race" re-query threw too — confirmed empirically in
+     * {@code MerchantConcurrentAliasRaceIT} as {@code JpaSystemException}, not the
+     * {@code DataIntegrityViolationException} the surrounding catch was written to handle — and
+     * propagated out of {@code resolve()} uncaught. A genuine two-writer race therefore failed the
+     * WHOLE import over one alias that only ever needed to be treated as a duplicate, which is
+     * worse than the bug the first fix closed. This had no test: {@code MerchantNormalizationEngineTest}
+     * mocks the repository (a mock cannot reproduce Postgres's abort-the-whole-transaction
+     * semantics), and the one real-Postgres test exercising this catch block,
+     * {@code MerchantOversizedDescriptionIT}, only covered "not a race, rethrow" — never a
+     * genuine race where the target row really is there, just unreachable from the poisoned
+     * transaction.
+     *
+     * <p><b>Why this closes it rather than isolating it.</b> Wrapping just the re-query in its own
+     * {@code Propagation.REQUIRES_NEW} transaction was considered and rejected: it would still
+     * leave the AMBIENT transaction poisoned (a suspended-and-resumed transaction does not
+     * un-abort), so even a successful re-query would only trade a loud exception for
+     * {@code COMMIT} silently downgrading to {@code ROLLBACK} at the very end — Postgres's own
+     * behaviour for a {@code COMMIT} issued against an aborted transaction — discarding the
+     * import with no error at all. {@code MerchantLearningService.confirm}'s own doc comment
+     * records the same verdict for the same shape of problem (BH-053): "the write simply must not
+     * be attempted" once a transaction can be poisoned by it, matching what this class's own
+     * {@link #resolve} already says about the oversized-narration case above. {@link
+     * MerchantAliasRepository#insertIfAbsent} is an {@code INSERT ... ON CONFLICT DO NOTHING},
+     * exactly {@link com.finora.repository.RegisteredLayoutRepository#observe}'s and {@link
+     * MerchantCategoryLearningRepository#ensurePairExists}'s pattern: the database resolves the
+     * conflict atomically and silently, so a benign lost race never raises an exception in the
+     * first place and the ambient transaction is never poisoned. It stays in the CALLER's
+     * transaction rather than {@code REQUIRES_NEW} for the same reason {@code ensurePairExists}
+     * does — {@code merchant_id} is a {@code NOT NULL} foreign key, and on the
+     * brand-new-merchant path ({@link #createMerchantAndAlias}) that parent row was routinely just
+     * {@code save()}d in this SAME still-uncommitted transaction; a suspended-and-restarted inner
+     * transaction could not see it and every first-time merchant would fail its foreign-key check.
+     *
+     * <p>A different, unexpected constraint failure (there should not be one — {@code merchantId}
+     * always names a row this same transaction can see, and {@code normalizedAlias} is already
+     * {@link #fitToColumn}-truncated before it reaches here) is no longer silently caught at all:
+     * {@code ON CONFLICT (user_id, normalized_alias)} only suppresses THAT constraint, so anything
+     * else still raises normally and propagates, which is the correct outcome for a genuinely
+     * unexpected failure — see {@link #resolve}'s own reasoning for why catching it here cannot
+     * help once it has happened.
+     */
     private void addAlias(UUID merchantId, UUID userId, String normalizedAlias) {
-        if (merchantAliasRepository.findByUserIdAndNormalizedAlias(userId, normalizedAlias).isPresent()) return;
-        MerchantAlias alias = new MerchantAlias();
-        alias.setMerchantId(merchantId);
-        alias.setUserId(userId);
-        alias.setNormalizedAlias(normalizedAlias);
-        try {
-            merchantAliasRepository.saveAndFlush(alias);
-        } catch (DataIntegrityViolationException e) {
-            // Only a genuine lost race is benign, and this catch used to assume every integrity
-            // violation was one. It was not: a 400-character alias tripped the VARCHAR(255) limit
-            // here and was logged, at DEBUG, as "created concurrently" -- a diagnosis that was
-            // simply untrue, for an error that had already poisoned the transaction. The import
-            // then died somewhere unrelated with UnexpectedRollbackException, and the log line
-            // that could have explained it said the opposite.
-            //
-            // Re-reading is what tells the two apart. If the row is now present, another writer
-            // really did win and there is nothing to do. If it is absent, this was not a race, and
-            // saying so is worth more than a reassuring message.
-            boolean lostARace = merchantAliasRepository
-                    .findByUserIdAndNormalizedAlias(userId, normalizedAlias).isPresent();
-            if (!lostARace) {
-                log.error("Alias insert for user {} failed for a reason that is NOT a concurrent "
-                        + "insert ({} chars). The transaction is likely already rollback-only, so "
-                        + "the import will fail downstream -- this line is the real cause.",
-                        userId, normalizedAlias.length(), e);
-                throw e;
-            }
-            log.debug("Alias '{}' for user {} was created concurrently; keeping the existing row.",
-                    normalizedAlias, userId);
+        int inserted = merchantAliasRepository.insertIfAbsent(merchantId, userId, normalizedAlias);
+        if (inserted == 0) {
+            log.debug("Alias '{}' for user {} already existed (an earlier call in this same "
+                    + "transaction, or a concurrent writer that got there first); keeping the "
+                    + "existing row.", normalizedAlias, userId);
         }
     }
 
