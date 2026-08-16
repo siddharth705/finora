@@ -103,4 +103,10 @@ public interface ImportSessionRepository extends JpaRepository<ImportSession, UU
      *  lifecycle state to preserve, unlike StatementImport). Also frees any object this session
      *  was the sole reference for, for StatementStorageSweepService to eventually reclaim. */
     void deleteByUserId(UUID userId);
+
+    /** DataExportService -- every session this user has ever staged, any status/kind, expired or
+     *  not. Deliberately unfiltered, unlike every other finder on this repository: the resume-flow
+     *  finders above exist to answer "what can I still act on", but an export owes the user
+     *  everything on record, including sessions that already confirmed or expired. */
+    List<ImportSession> findByUserIdOrderByCreatedAtDesc(UUID userId);
 }

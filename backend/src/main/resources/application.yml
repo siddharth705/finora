@@ -132,6 +132,17 @@ spring:
       max-file-size: ${UPLOAD_MAX_FILE_SIZE:10MB}
       max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:10MB}
 
+  # Phase C (Download My Data) is the first StreamingResponseBody endpoint in this codebase --
+  # its write callback runs asynchronously, on a separate thread, after the controller method
+  # returns. Nothing previously bounded how long such a request may run; this does. 5 minutes is
+  # generous for reading every original statement file for an account out of R2/Postgres and
+  # zipping them, while still finite enough that a stuck request can't hold a container thread
+  # forever. Global, not endpoint-specific -- Spring Boot has no per-endpoint async timeout, and
+  # there's no second async endpoint yet for this to conflict with.
+  mvc:
+    async:
+      request-timeout: 300000
+
 app:
   build:
     # Which commit this build came from, for Platform Diagnostics. A FALLBACK, not the primary
@@ -293,6 +304,13 @@ app:
     reset-password:
       max: ${RATE_LIMIT_RESET_PASSWORD_MAX:10}
       window-seconds: ${RATE_LIMIT_RESET_PASSWORD_WINDOW_SECONDS:600}
+    # Phase C (Download My Data). Far stricter than every other bucket above -- 3/day, not
+    # N/minutes -- because a full export is the most expensive single call this app serves (every
+    # in-scope table plus every original statement file, read and zipped) and is legitimately
+    # needed only rarely.
+    data-export:
+      max: ${RATE_LIMIT_DATA_EXPORT_MAX:3}
+      window-seconds: ${RATE_LIMIT_DATA_EXPORT_WINDOW_SECONDS:86400}
   import:
     # See ImportConcurrencyLimiter's own doc comment for the full reasoning. 6 is deliberately
     # conservative relative to DB_POOL_MAX_SIZE (10, see the datasource config above) -- leaves

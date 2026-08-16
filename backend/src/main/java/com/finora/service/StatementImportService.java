@@ -111,8 +111,11 @@ public class StatementImportService {
 
     /** One grouped COUNT query for every statement import this user has, rather than one query
      *  per statement — see TransactionRepository.countDuplicatesByStatementImportForUser's own
-     *  doc comment. Backs the Statement Imports page's per-import duplicate count. */
-    private Map<UUID, Integer> duplicateCountsByStatementImport(UUID userId) {
+     *  doc comment. Backs the Statement Imports page's per-import duplicate count.
+     *
+     *  <p>Package-private, not private: DataExportService (same package) reuses this rather than
+     *  re-deriving the same grouped-COUNT query a second time. */
+    Map<UUID, Integer> duplicateCountsByStatementImport(UUID userId) {
         Map<UUID, Integer> counts = new HashMap<>();
         for (var row : transactionRepository.countDuplicatesByStatementImportForUser(
                 userId, Transaction.ReconciliationStatus.DUPLICATE)) {
