@@ -135,12 +135,11 @@ public class ImportDto {
      * where a row flagged as a duplicate could be dropped without the person ever seeing what it
      * was supposedly a duplicate OF.
      *
-     * <p>{@code confidence} has exactly one level today, and saying so is more useful than
-     * inventing a spectrum. {@code findPotentialDuplicatesByUser} matches on date AND amount AND
-     * description being identical, so every match is an exact one — there is no weaker tier to
-     * report. A fuzzier tier (same amount, date within a few days) would create a real spectrum,
-     * but that changes WHICH rows get flagged, which is a detection change rather than a
-     * presentation one, and does not belong in the work item that builds the review UI.
+     * <p>{@code confidence} has two levels. {@code "EXACT"} — {@code findPotentialDuplicatesByUser}
+     * matches on date AND amount AND description being identical, so every CSV/PDF match is exact.
+     * {@code "LIKELY"} — {@code GmailReconciliationMatcher} (C6.4), matching a Gmail receipt
+     * against the bank ledger on amount plus a date window plus merchant-name similarity, since a
+     * receipt's description (a merchant domain) can never be textually identical to a bank line.
      *
      * @param existingTransactionId the transaction already in the ledger, so the client can link
      *                              straight to it rather than making the user search

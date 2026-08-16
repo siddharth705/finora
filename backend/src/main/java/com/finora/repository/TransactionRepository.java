@@ -152,6 +152,31 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
             @Param("userId") UUID userId, @Param("date") LocalDate date,
             @Param("amount") BigDecimal amount, @Param("description") String description);
 
+    /**
+     * Candidate bank-side transactions for C6.4's cross-source reconciliation: same user, same
+     * amount, txn date within a window around a Gmail receipt's date. Description is deliberately
+     * NOT compared here -- a receipt's description is a merchant domain ({@code "amazon.in"}) and
+     * a bank line reads something like {@code "AMZN MKTPLACE 4521"}, so exact-equality (what
+     * {@link #findPotentialDuplicatesByUser} does) would never fire between the two. Narrowing to
+     * amount + date window here, then scoring merchant-name similarity in Java
+     * ({@code GmailReconciliationMatcher}), keeps the fuzzy part out of SQL.
+     *
+     * <p>Excludes {@code GMAIL_IMPORT}-sourced rows: a receipt is matched against the bank side of
+     * the ledger, not against another already-confirmed receipt -- see the design proposal's own
+     * distinction between this direction and the "both already landed" case it deliberately holds.
+     */
+    @Query("""
+        SELECT t FROM Transaction t
+        WHERE t.userId = :userId AND t.amount = :amount
+          AND t.txnDate BETWEEN :startDate AND :endDate
+          AND t.txnType = com.finora.entity.Transaction.Type.EXPENSE
+          AND t.source <> com.finora.entity.Transaction.Source.GMAIL_IMPORT
+        ORDER BY t.txnDate
+        """)
+    List<Transaction> findCandidatesForGmailReconciliation(
+            @Param("userId") UUID userId, @Param("amount") BigDecimal amount,
+            @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
+
     /** Backs "View Imported Transactions" and "Delete Statement Import" — every transaction a
      *  given confirmed CSV import produced. See StatementImportService. */
     List<Transaction> findByStatementImportId(UUID statementImportId);
