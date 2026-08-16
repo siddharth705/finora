@@ -54,6 +54,12 @@ import java.util.Optional;
  * to GET only (not the whole /api/v1/users/me/** family): PUT /users/me (preference updates) and
  * the password-change endpoints under this same base path have no reason to be reachable before
  * verification and should stay blocked.
+ *
+ * One further, deliberate carve-out under that same base path: /api/v1/users/me/phone-change/**
+ * (see PHONE_CHANGE_ENDPOINTS below) stays open to unverified users, unlike every other sub-path
+ * there. It exists specifically as the self-service recovery path for a user who cannot verify at
+ * all -- a wrong number on file, a lost SIM, a Firebase config issue -- reached from
+ * VerifyPhone.tsx's own OTP-failure screen. Blocking it here would defeat its own purpose.
  */
 @Component
 public class PhoneVerificationFilter extends OncePerRequestFilter {
@@ -66,10 +72,18 @@ public class PhoneVerificationFilter extends OncePerRequestFilter {
     private static final AntPathRequestMatcher SETUP_STATUS_ENDPOINT =
             new AntPathRequestMatcher("/api/v1/setup/status", "GET");
     // GET only, and the exact base path (no /** wildcard) -- must NOT match PUT /api/v1/users/me
-    // (preference updates) or any /api/v1/users/me/** sub-path (password-change, /access), none
-    // of which an unverified user has any legitimate reason to reach.
+    // (preference updates) or any other /api/v1/users/me/** sub-path (password-change, /access),
+    // none of which an unverified user has any legitimate reason to reach.
     private static final AntPathRequestMatcher USER_ME_ENDPOINT =
             new AntPathRequestMatcher("/api/v1/users/me", "GET");
+    // The one deliberate exception to "no /api/v1/users/me/** sub-path" above. Password-change
+    // stays blocked because it presumes a trusted, already-verified account; phone-change is the
+    // opposite case by construction -- it is the self-service recovery path for a user who CANNOT
+    // verify at all (wrong number on file, lost the old SIM, Firebase can't reach the number),
+    // reached from VerifyPhone.tsx's own OTP-failure screen. Blocking it here would make the
+    // feature unreachable by exactly the population it exists for.
+    private static final AntPathRequestMatcher PHONE_CHANGE_ENDPOINTS =
+            new AntPathRequestMatcher("/api/v1/users/me/phone-change/**");
 
     private final UserRepository userRepository;
     private final ObjectMapper objectMapper;
@@ -87,7 +101,8 @@ public class PhoneVerificationFilter extends OncePerRequestFilter {
 
         if (auth != null && auth.isAuthenticated() && auth.getPrincipal() instanceof UserDetails userDetails
                 && !PHONE_ENDPOINTS.matches(request) && !AUTH_ENDPOINTS.matches(request)
-                && !SETUP_STATUS_ENDPOINT.matches(request) && !USER_ME_ENDPOINT.matches(request)) {
+                && !SETUP_STATUS_ENDPOINT.matches(request) && !USER_ME_ENDPOINT.matches(request)
+                && !PHONE_CHANGE_ENDPOINTS.matches(request)) {
             // The principal's username is the user id (see CurrentUserDetailsService) -- an email
             // would be ambiguous since V52, and could check phone verification against the wrong
             // one of the two accounts a person may hold under one address.

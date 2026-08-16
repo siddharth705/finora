@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import VerifyPhone from './VerifyPhone';
 import { useAuth } from '../context/AuthContext';
-import { phoneApi, userApi } from '../api/endpoints';
+import { phoneApi, phoneChangeApi, userApi } from '../api/endpoints';
 import { sendPhoneVerificationCode, confirmPhoneVerificationCode } from '../lib/phoneAuth';
 
 vi.mock('../context/AuthContext', () => ({
@@ -13,6 +13,7 @@ vi.mock('../context/AuthContext', () => ({
 
 vi.mock('../api/endpoints', () => ({
   phoneApi: { verify: vi.fn() },
+  phoneChangeApi: { start: vi.fn(), verifyOtp: vi.fn(), complete: vi.fn() },
   userApi: { get: vi.fn() },
 }));
 
@@ -53,6 +54,13 @@ describe('VerifyPhone', () => {
     vi.mocked(sendPhoneVerificationCode).mockReset().mockResolvedValue(FAKE_CONFIRMATION);
     vi.mocked(confirmPhoneVerificationCode).mockReset().mockResolvedValue('fake-firebase-id-token');
     vi.mocked(phoneApi.verify).mockReset().mockResolvedValue({ message: 'Phone number verified.' });
+    vi.mocked(phoneChangeApi.start).mockReset().mockResolvedValue({
+      sessionId: 'change-session-1', maskedPhone: '+•••••••••888',
+    });
+    vi.mocked(phoneChangeApi.verifyOtp).mockReset().mockResolvedValue({ message: 'Verified.' });
+    vi.mocked(phoneChangeApi.complete).mockReset().mockResolvedValue({
+      message: 'Your phone number has been updated.', phoneNumber: '+919888888888',
+    });
   });
 
   it('fetches the real phone number and triggers Firebase to send a code on mount', async () => {
@@ -144,7 +152,7 @@ describe('VerifyPhone', () => {
     const logout = vi.fn();
     vi.mocked(useAuth).mockReturnValue({
       token: 'tok', email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
-      login: vi.fn(), register: vi.fn(), setPhoneVerified: vi.fn(), logout,
+      login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), setPhoneVerified: vi.fn(), logout,
     });
     const user = userEvent.setup();
     render(
@@ -169,5 +177,157 @@ describe('VerifyPhone', () => {
 
     expect(await screen.findByText(/doesn't match/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /log out and try again later/i })).not.toBeInTheDocument();
+  });
+
+  describe('Change Number', () => {
+    /** Gets to the "enter a new number" form -- only reachable from the sendError state, the
+     *  same escape hatch Log Out is offered alongside. Does NOT render itself -- the caller
+     *  renders first (via renderVerifyPhone() or its own render() call with custom mocks), since
+     *  renderVerifyPhone() always installs its own fresh useAuth mock and would silently discard
+     *  a caller's own setPhoneVerified/logout spy set up beforehand. */
+    async function openChangeNumberForm(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(await screen.findByRole('button', { name: /^change number$/i }));
+    }
+
+    it('is not offered until the original send has actually failed', async () => {
+      renderVerifyPhone();
+      await screen.findByText(/\+•••••••••705/);
+
+      expect(screen.queryByRole('button', { name: /^change number$/i })).not.toBeInTheDocument();
+    });
+
+    it('rejects an invalid number without submitting', async () => {
+      vi.mocked(sendPhoneVerificationCode).mockRejectedValueOnce({ code: 'auth/invalid-app-credential' });
+      renderVerifyPhone();
+      const user = userEvent.setup();
+      await openChangeNumberForm(user);
+
+      await user.type(screen.getByPlaceholderText('XXXXXXXXXX'), '123');
+      await user.click(screen.getByRole('button', { name: /send code/i }));
+
+      expect(await screen.findByText(/enter a valid 10-digit mobile number/i)).toBeInTheDocument();
+      expect(phoneChangeApi.start).not.toHaveBeenCalled();
+    });
+
+    it('starts a session, sends a Firebase code to the new number, and shows the masked confirmation', async () => {
+      vi.mocked(sendPhoneVerificationCode).mockRejectedValueOnce({ code: 'auth/invalid-app-credential' });
+      renderVerifyPhone();
+      const user = userEvent.setup();
+      await openChangeNumberForm(user);
+
+      await user.type(screen.getByPlaceholderText('XXXXXXXXXX'), '9888888888');
+      await user.click(screen.getByRole('button', { name: /send code/i }));
+
+      await waitFor(() => expect(phoneChangeApi.start).toHaveBeenCalledWith('+919888888888'));
+      await waitFor(() => expect(sendPhoneVerificationCode).toHaveBeenCalledWith('+919888888888', expect.any(String)));
+      expect(await screen.findByText(/\+•••••••••888/)).toBeInTheDocument();
+    });
+
+    it('disables Send code with a cooldown after a genuine Firebase send failure', async () => {
+      vi.mocked(sendPhoneVerificationCode)
+        .mockRejectedValueOnce({ code: 'auth/invalid-app-credential' }) // the initial page-load send
+        .mockRejectedValueOnce({ code: 'auth/too-many-requests' }); // this test's own send attempt
+      renderVerifyPhone();
+      const user = userEvent.setup();
+      await openChangeNumberForm(user);
+
+      await user.type(screen.getByPlaceholderText('XXXXXXXXXX'), '9888888888');
+      await user.click(screen.getByRole('button', { name: /send code/i }));
+
+      const cooldownButton = await screen.findByRole('button', { name: /send code in \d+s/i });
+      expect(cooldownButton).toBeDisabled();
+    });
+
+    /** A backend rejection (duplicate number, same-as-current) means the fix is editing the
+     *  number just typed in -- not waiting out a timer before resubmitting the exact same one.
+     *  Only a genuine Firebase-side send failure is the "don't hammer this" case the cooldown
+     *  above exists for. */
+    it('does not apply the cooldown after a backend rejection -- the user needs to edit the number, not wait', async () => {
+      vi.mocked(sendPhoneVerificationCode).mockRejectedValueOnce({ code: 'auth/invalid-app-credential' });
+      vi.mocked(phoneChangeApi.start).mockRejectedValue({
+        response: { data: { message: 'An account with this mobile number already exists.' } },
+      });
+      renderVerifyPhone();
+      const user = userEvent.setup();
+      await openChangeNumberForm(user);
+
+      await user.type(screen.getByPlaceholderText('XXXXXXXXXX'), '9888888888');
+      await user.click(screen.getByRole('button', { name: /send code/i }));
+
+      await screen.findByText(/already exists/i);
+      expect(screen.getByRole('button', { name: /^send code$/i })).toBeEnabled();
+    });
+
+    it('shows the backend rejection inline (e.g. a number already in use) without touching Firebase', async () => {
+      vi.mocked(sendPhoneVerificationCode).mockRejectedValueOnce({ code: 'auth/invalid-app-credential' });
+      vi.mocked(phoneChangeApi.start).mockRejectedValue({
+        response: { data: { message: 'An account with this mobile number already exists.' } },
+      });
+      renderVerifyPhone();
+      const user = userEvent.setup();
+      await openChangeNumberForm(user);
+
+      await user.type(screen.getByPlaceholderText('XXXXXXXXXX'), '9888888888');
+      await user.click(screen.getByRole('button', { name: /send code/i }));
+
+      expect(await screen.findByText(/already exists/i)).toBeInTheDocument();
+      expect(sendPhoneVerificationCode).not.toHaveBeenCalledWith('+919888888888', expect.any(String));
+    });
+
+    it('confirming the code verifies, completes the change, and marks the phone verified', async () => {
+      vi.mocked(sendPhoneVerificationCode).mockRejectedValueOnce({ code: 'auth/invalid-app-credential' });
+      const setPhoneVerified = vi.fn();
+      vi.mocked(useAuth).mockReturnValue({
+        token: 'tok', email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
+        login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), setPhoneVerified, logout: vi.fn(),
+      });
+      render(
+        <MemoryRouter initialEntries={['/verify-phone']}>
+          <Routes><Route path="/verify-phone" element={<VerifyPhone />} /></Routes>
+        </MemoryRouter>
+      );
+      const user = userEvent.setup();
+      await openChangeNumberForm(user);
+      await user.type(screen.getByPlaceholderText('XXXXXXXXXX'), '9888888888');
+      await user.click(screen.getByRole('button', { name: /send code/i }));
+      await screen.findByText(/\+•••••••••888/);
+
+      await user.type(screen.getByPlaceholderText('123456'), '654321');
+      await user.click(screen.getByRole('button', { name: /confirm number/i }));
+
+      await waitFor(() => expect(confirmPhoneVerificationCode).toHaveBeenCalledWith(FAKE_CONFIRMATION, '654321'));
+      await waitFor(() => expect(phoneChangeApi.verifyOtp).toHaveBeenCalledWith('change-session-1', 'fake-firebase-id-token'));
+      await waitFor(() => expect(phoneChangeApi.complete).toHaveBeenCalledWith('change-session-1'));
+      await waitFor(() => expect(setPhoneVerified).toHaveBeenCalledWith(true));
+    });
+
+    it('shows an inline error and does not complete when Firebase rejects the confirmation code', async () => {
+      vi.mocked(sendPhoneVerificationCode).mockRejectedValueOnce({ code: 'auth/invalid-app-credential' });
+      vi.mocked(confirmPhoneVerificationCode).mockRejectedValue({ code: 'auth/invalid-verification-code' });
+      renderVerifyPhone();
+      const user = userEvent.setup();
+      await openChangeNumberForm(user);
+      await user.type(screen.getByPlaceholderText('XXXXXXXXXX'), '9888888888');
+      await user.click(screen.getByRole('button', { name: /send code/i }));
+      await screen.findByText(/\+•••••••••888/);
+
+      await user.type(screen.getByPlaceholderText('123456'), '000000');
+      await user.click(screen.getByRole('button', { name: /confirm number/i }));
+
+      expect(await screen.findByText(/doesn't match/i)).toBeInTheDocument();
+      expect(phoneChangeApi.complete).not.toHaveBeenCalled();
+    });
+
+    it('Back returns to the original verify screen without starting a session', async () => {
+      vi.mocked(sendPhoneVerificationCode).mockRejectedValueOnce({ code: 'auth/invalid-app-credential' });
+      renderVerifyPhone();
+      const user = userEvent.setup();
+      await openChangeNumberForm(user);
+
+      await user.click(screen.getByRole('button', { name: /^back$/i }));
+
+      expect(await screen.findByRole('heading', { name: /verify your phone/i })).toBeInTheDocument();
+      expect(phoneChangeApi.start).not.toHaveBeenCalled();
+    });
   });
 });

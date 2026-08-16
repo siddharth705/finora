@@ -273,6 +273,8 @@ app:
     # isExpired() check starts rejecting verify-otp/complete calls against it. A property rather
     # than a hardcoded constant so it can be tuned per-deployment without a code change.
     password-change-session-expiry-minutes: ${PASSWORD_CHANGE_SESSION_EXPIRY_MINUTES:15}
+    # Same property, same reasoning, for the Change Phone Number flow (PhoneChangeSession).
+    phone-change-session-expiry-minutes: ${PHONE_CHANGE_SESSION_EXPIRY_MINUTES:15}
   # Per-IP ceilings for the endpoints RateLimitFilter guards. Every default below is the value that
   # used to be hardcoded in that class, so leaving this block alone changes nothing.
   #
@@ -301,6 +303,12 @@ app:
     password-change:
       max: ${RATE_LIMIT_PASSWORD_CHANGE_MAX:15}
       window-seconds: ${RATE_LIMIT_PASSWORD_CHANGE_WINDOW_SECONDS:600}
+    # Change Phone Number. Same ceiling as password-change, and the same reason: not a per-call
+    # cost concern (start() here only does cheap, indexed lookups), but a stolen-JWT hammering
+    # concern -- a hijacked phone number is what an account's own password reset relies on.
+    phone-change:
+      max: ${RATE_LIMIT_PHONE_CHANGE_MAX:15}
+      window-seconds: ${RATE_LIMIT_PHONE_CHANGE_WINDOW_SECONDS:600}
     reset-password:
       max: ${RATE_LIMIT_RESET_PASSWORD_MAX:10}
       window-seconds: ${RATE_LIMIT_RESET_PASSWORD_WINDOW_SECONDS:600}
