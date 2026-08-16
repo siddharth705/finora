@@ -6,9 +6,17 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Parameter;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+
+import static com.finora.config.RateLimitFilter.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
@@ -332,5 +340,57 @@ class RateLimitFilterTest {
         MockHttpServletResponse completeResponse = new MockHttpServletResponse();
         filter.doFilterInternal(completeRequest, completeResponse, chain);
         assertThat(completeResponse.getStatus()).isEqualTo(429);
+    }
+
+    /**
+     * Bug fix (self-review after PR #142): the data-export ceiling was raised from 3/day to 5/day
+     * in two places (DEFAULT_DATA_EXPORT_MAX and application.yml's own default) but the
+     * @Value fallback on the real, Spring-managed constructor below was missed -- a third copy of
+     * the same literal, exactly the "written in two places, they drift" failure this class's own
+     * javadoc already warns about. Harmless today only because application.yml always supplies
+     * the property in the real app; a future context that constructs this bean without it (a
+     * narrower test slice, a refactor, an ops change relying on env vars alone) would have
+     * silently reverted to the 3/day ceiling this PR explicitly fixed. Reflects over every
+     * {@code @Value}-annotated parameter on the full constructor and checks its SpEL fallback
+     * against the corresponding DEFAULT_* constant, so any future drift on ANY of the 16 -- not
+     * just this one -- fails loudly here instead of silently in a deploy that happens to omit
+     * application.yml.
+     */
+    @Test
+    void everyValueAnnotationsFallbackDefault_matchesItsCorrespondingConstant() throws Exception {
+        Map<String, Integer> expectedByProperty = Map.ofEntries(
+                Map.entry("app.rate-limit.login.max", DEFAULT_LOGIN_MAX),
+                Map.entry("app.rate-limit.login.window-seconds", DEFAULT_LOGIN_WINDOW),
+                Map.entry("app.rate-limit.register.max", DEFAULT_REGISTER_MAX),
+                Map.entry("app.rate-limit.register.window-seconds", DEFAULT_REGISTER_WINDOW),
+                Map.entry("app.rate-limit.forgot-password.max", DEFAULT_FORGOT_MAX),
+                Map.entry("app.rate-limit.forgot-password.window-seconds", DEFAULT_FORGOT_WINDOW),
+                Map.entry("app.rate-limit.import-stage.max", DEFAULT_IMPORT_STAGE_MAX),
+                Map.entry("app.rate-limit.import-stage.window-seconds", DEFAULT_IMPORT_STAGE_WINDOW),
+                Map.entry("app.rate-limit.password-change.max", DEFAULT_PASSWORD_CHANGE_MAX),
+                Map.entry("app.rate-limit.password-change.window-seconds", DEFAULT_PASSWORD_CHANGE_WINDOW),
+                Map.entry("app.rate-limit.phone-change.max", DEFAULT_PHONE_CHANGE_MAX),
+                Map.entry("app.rate-limit.phone-change.window-seconds", DEFAULT_PHONE_CHANGE_WINDOW),
+                Map.entry("app.rate-limit.reset-password.max", DEFAULT_RESET_PASSWORD_MAX),
+                Map.entry("app.rate-limit.reset-password.window-seconds", DEFAULT_RESET_PASSWORD_WINDOW),
+                Map.entry("app.rate-limit.data-export.max", DEFAULT_DATA_EXPORT_MAX),
+                Map.entry("app.rate-limit.data-export.window-seconds", DEFAULT_DATA_EXPORT_WINDOW));
+
+        Constructor<?> springConstructor = Arrays.stream(RateLimitFilter.class.getDeclaredConstructors())
+                .filter(c -> c.getParameterCount() > 2)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Expected the @Value-annotated constructor to still exist"));
+
+        Map<String, Integer> actualByProperty = new HashMap<>();
+        for (Parameter p : springConstructor.getParameters()) {
+            Value value = p.getAnnotation(Value.class);
+            if (value == null) continue;
+            // e.g. "${app.rate-limit.data-export.max:5}" -> key "app.rate-limit.data-export.max", default 5
+            String spel = value.value().replace("${", "").replace("}", "");
+            int colon = spel.lastIndexOf(':');
+            actualByProperty.put(spel.substring(0, colon), Integer.parseInt(spel.substring(colon + 1)));
+        }
+
+        assertThat(actualByProperty).containsExactlyInAnyOrderEntriesOf(expectedByProperty);
     }
 }

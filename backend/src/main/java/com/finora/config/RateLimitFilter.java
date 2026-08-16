@@ -239,7 +239,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
             @Value("${app.rate-limit.phone-change.window-seconds:600}") int phoneChangeWindow,
             @Value("${app.rate-limit.reset-password.max:10}") int resetPasswordMax,
             @Value("${app.rate-limit.reset-password.window-seconds:600}") int resetPasswordWindow,
-            @Value("${app.rate-limit.data-export.max:3}") int dataExportMax,
+            @Value("${app.rate-limit.data-export.max:5}") int dataExportMax,
             @Value("${app.rate-limit.data-export.window-seconds:86400}") int dataExportWindow) {
         this.objectMapper = objectMapper;
         this.clientIpResolver = clientIpResolver;
