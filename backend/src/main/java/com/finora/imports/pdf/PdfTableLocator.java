@@ -1976,6 +1976,31 @@ public class PdfTableLocator {
                 existing = result.get(columnName);
                 if (ctx != null) ctx.record("OFFSET_COLUMN_ANCHORS");
             }
+            // Same shape again, this time for a Balance/Amount column that already holds a clean
+            // number receiving genuine NARRATION text afterward. Verified against a real PNB ONE
+            // statement: the Remarks column is wide, left-aligned text whose actual data doesn't
+            // start at a fixed x -- a UPI reference string's digit count varies row to row, so the
+            // narration's left edge sometimes falls on the Balance side of the Balance/Remarks
+            // midpoint purely because that particular reference happened to be short. nearestColumn
+            // then buckets the WHOLE narration into Balance, joined onto the real value with a
+            // space (a real balance figure, then "UPI/DR/<reference>/<bank>/<upi handle>" glued
+            // straight onto it) -- a string that fails parseNumeric outright, so the row's running
+            // balance is lost entirely rather than merely wrong. ~38% of rows on that statement
+            // lost their balance this way. Excludes a trailing Dr/Cr marker ("Dr", "(Cr)")
+            // deliberately: that is a real, common continuation of the SAME balance value printed
+            // as a separate run, not narration overshoot, and must stay attached rather than being
+            // redirected away.
+            if (existing != null && isAmountColumn(columnName) && CsvParser.parseNumeric(existing.trim()) != null
+                    && CsvParser.parseNumeric(t.text().trim()) == null && CsvParser.parseDate(t.text().trim()) == null
+                    && !CsvParser.hasTrailingDrCrMarker(t.text().trim())) {
+                int laterTextColumn = nextNonNumericColumn(headerNames, nearest);
+                if (laterTextColumn >= 0) {
+                    nearest = laterTextColumn;
+                    columnName = headerNames.get(nearest);
+                    existing = result.get(columnName);
+                    if (ctx != null) ctx.record("OFFSET_COLUMN_ANCHORS");
+                }
+            }
             // Same shape as the date redirect above, for the opposite end of the row: an amount
             // (a plain number, optionally Dr/Cr-suffixed) that would otherwise be appended onto an
             // already-non-blank description or merchant-category cell almost certainly overshot
@@ -2158,6 +2183,16 @@ public class PdfTableLocator {
     private int nextAmountColumn(List<String> headerNames, int afterIndex) {
         for (int i = afterIndex + 1; i < headerNames.size(); i++) {
             if (isAmountColumn(headerNames.get(i))) return i;
+        }
+        return -1;
+    }
+
+    /** Mirror of {@link #nextAmountColumn} for the opposite redirect: the nearest LATER column
+     *  that is neither amount- nor date-shaped, for narration text that overshot backward into a
+     *  numeric column. */
+    private int nextNonNumericColumn(List<String> headerNames, int afterIndex) {
+        for (int i = afterIndex + 1; i < headerNames.size(); i++) {
+            if (!isAmountColumn(headerNames.get(i)) && !isDateColumn(headerNames.get(i))) return i;
         }
         return -1;
     }
