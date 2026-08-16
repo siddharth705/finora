@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Line, Doughnut } from 'react-chartjs-2';
@@ -8,15 +8,14 @@ import {
 import {
   Wallet, ArrowDownCircle, ArrowUpCircle, PieChart,
   ShoppingBag, Utensils, Car, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck, Repeat,
-  UploadCloud, Mail, X,
+  UploadCloud, Receipt, LineChart as LineChartIcon, Mail,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { BankLogo } from '../components/BankLogo';
+import { AddTransactionModal } from '../components/AddTransactionModal';
 import {
-  dashboardApi, accountsApi, transactionsApi, categoriesApi, goalsApi, insightsApi, userApi, budgetsApi, reportsApi, recurringApi,
-  type CreateTransactionPayload,
+  dashboardApi, accountsApi, transactionsApi, goalsApi, insightsApi, userApi, budgetsApi, reportsApi, recurringApi,
 } from '../api/endpoints';
-import type { Account } from '../types';
 
 ChartJS.register(ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler);
 
@@ -96,10 +95,41 @@ function expectedLabel(dateStr: string): string {
   return `expected in ${days} days (${date})`;
 }
 
+/** One consistent empty-state treatment (icon + heading + subtext + a real CTA, not just italic
+ *  "No X yet." text) reused across every section of the dashboard that can be empty -- Cash Flow,
+ *  Spending Breakdown, and each of the four Accounts/Recent Transactions/Budget/Goals cards. Each
+ *  section keeps deciding FOR ITSELF whether it's empty (existing per-section logic, unchanged);
+ *  this only standardizes what showing that looks like. */
+function SectionEmptyState({
+  icon: Icon, iconBg, iconColor, title, desc, cta,
+}: {
+  icon: typeof Wallet; iconBg: string; iconColor: string; title: string; desc: string; cta: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col items-center text-center py-4 px-2">
+      <div className={`w-12 h-12 rounded-full ${iconBg} flex items-center justify-center mb-3`}>
+        <Icon size={22} className={iconColor} />
+      </div>
+      <p className="text-sm font-semibold text-ink mb-1">{title}</p>
+      <p className="text-xs text-muted mb-4 max-w-[220px]">{desc}</p>
+      {cta}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { fullName } = useAuth();
   const queryClient = useQueryClient();
   const [cashFlowRange, setCashFlowRange] = useState<CashFlowRange>('6M');
+  const [showAddModal, setShowAddModal] = useState(false);
+
+  function onTransactionAdded() {
+    setShowAddModal(false);
+    void queryClient.invalidateQueries({ queryKey: ['recent-transactions'] });
+    void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+    void queryClient.invalidateQueries({ queryKey: ['accounts'] });
+    void queryClient.invalidateQueries({ queryKey: ['transactions'] });
+  }
 
   // useQueries runs all these independently (each gets its own cache entry, own retry/error
   // handling, own loading state) rather than one big Promise.all where a single failure
@@ -165,24 +195,14 @@ export default function Dashboard() {
 
   const firstName = fullName?.split(' ')[0] ?? 'there';
 
-  // D-21, Step 1: totalElements is the real total this account has, not recentTxnsQ's own
-  // 4-row page size -- a brand-new account (or one that connected Gmail/created an account but
-  // never actually got any transactions in) needs the SAME welcome treatment a completely fresh
-  // signup does, not a page that quietly renders ₹0 everywhere and looks broken.
-  if ((recentTxnsQ.data?.totalElements ?? 0) === 0) {
-    return (
-      <EmptyDashboardWelcome
-        firstName={firstName}
-        timezone={settingsQ.data?.timezone}
-        accounts={accountsQ.data ?? []}
-        onTransactionAdded={() => {
-          void queryClient.invalidateQueries({ queryKey: ['recent-transactions'] });
-          void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
-          void queryClient.invalidateQueries({ queryKey: ['accounts'] });
-        }}
-      />
-    );
-  }
+  // D-21: totalElements is the real total this account has, not recentTxnsQ's own 4-row page
+  // size -- a brand-new account (or one that connected Gmail/created an account but never
+  // actually got any transactions in) needs the same "here's what to do next" treatment a
+  // completely fresh signup does. Redesigned from D-21 Step 1's original single-gate welcome
+  // screen (which replaced the whole page) to keeping the full dashboard shell visible with a
+  // per-section empty state instead -- the shell itself is what shows a new user the shape of the
+  // product, not a page that hides it behind one more screen before they've seen anything.
+  const isEmpty = (recentTxnsQ.data?.totalElements ?? 0) === 0;
 
   // Bug 05: these KPIs are the newest month the account has DATA for, which for a product built
   // around importing statements in arrears is routinely not the current calendar month. This page
@@ -232,10 +252,17 @@ export default function Dashboard() {
               </div>
             </div>
             <p className="text-2xl font-bold text-ink mb-1">{k.value}</p>
-            {k.delta !== null && k.delta !== undefined && (
+            {/* Two KPIs (Balance, Savings Rate) never carry a delta at all -- there's no "last
+                month's balance" comparison that means anything the way income/expense/net do.
+                A muted "— vs last month" for those, and for the three that DO have a delta field
+                but got null back (no prior month to compare against yet), keeps every card the
+                same height and never leaves a silent gap where the line used to just vanish. */}
+            {k.delta !== null && k.delta !== undefined ? (
               <p className={`text-xs font-medium ${(k.invertDelta ? k.delta < 0 : k.delta >= 0) ? 'text-success' : 'text-danger'}`}>
                 {k.delta >= 0 ? '▲' : '▼'} {Math.abs(k.delta).toFixed(1)}% {deltaLabel}
               </p>
+            ) : (
+              <p className="text-xs text-muted">— {deltaLabel}</p>
             )}
           </div>
         ))}
@@ -243,7 +270,10 @@ export default function Dashboard() {
 
       {/* Financial Health Score — DashboardService.computeHealthScore has always returned this
           (score, label, a 5-component breakdown), sent to the frontend on every load; nothing
-          rendered it until now. D-19 Step 1. */}
+          rendered it until now. D-19 Step 1. Hidden entirely while isEmpty -- a score computed
+          from zero transactions has nothing real behind it, same reasoning Subscriptions &
+          Recurring below already applies to itself. */}
+      {!isEmpty && (
       <div className="bg-card rounded-xl2 p-6 shadow-card border border-border mb-6">
         <div className="flex items-center gap-2 mb-4">
           <div className="w-8 h-8 rounded-full bg-primary-light flex items-center justify-center">
@@ -275,6 +305,7 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+      )}
 
       {/* Cash flow + Spending breakdown */}
       <div className="grid lg:grid-cols-[1.6fr_1fr] gap-6 mb-6">
@@ -294,11 +325,25 @@ export default function Dashboard() {
           <p className="text-sm text-muted mb-4">
             You've earned {fmt(summary.monthlyIncome)} and spent {fmt(summary.monthlyExpense)} {periodLabel}.
           </p>
-          <div className="h-64">
+          <div className="h-64 flex items-center justify-center">
             {cashFlowLoading ? (
               <p className="text-sm text-muted">Loading trend…</p>
             ) : cashFlowSeries.length === 0 ? (
-              <p className="text-sm text-muted italic">Not enough history yet — import a statement to see your cash flow trend.</p>
+              <SectionEmptyState
+                icon={LineChartIcon}
+                iconBg="bg-primary-light"
+                iconColor="text-primary"
+                title="No data yet"
+                desc="Import a statement or add transactions to see your cash flow trend."
+                cta={
+                  <Link
+                    to="/app/import"
+                    className="inline-flex items-center gap-1.5 bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold"
+                  >
+                    <UploadCloud size={14} /> Import Statement
+                  </Link>
+                }
+              />
             ) : (
               <CashFlowChart series={cashFlowSeries} />
             )}
@@ -311,7 +356,20 @@ export default function Dashboard() {
             <Link to="/app/reports" className="text-xs text-primary font-medium">View All</Link>
           </div>
           {categoryEntries.length === 0 ? (
-            <p className="text-sm text-muted italic">No spending data yet.</p>
+            <div className="flex-1 flex items-center justify-center">
+              <SectionEmptyState
+                icon={PieChart}
+                iconBg="bg-purple-100"
+                iconColor="text-purple-600"
+                title="No spending data yet"
+                desc="Your top spending categories will appear here."
+                cta={
+                  <Link to="/app/reports" className="inline-block border border-border text-ink hover:bg-bg rounded-lg px-4 py-2 text-xs font-semibold">
+                    View Reports
+                  </Link>
+                }
+              />
+            </div>
           ) : (
             <>
               <div className="relative w-40 h-40 mx-auto mb-4">
@@ -356,7 +414,18 @@ export default function Dashboard() {
           </div>
           <div className="space-y-3">
             {accounts.length === 0 ? (
-              <p className="text-xs text-muted italic">No accounts yet.</p>
+              <SectionEmptyState
+                icon={Wallet}
+                iconBg="bg-blue-100"
+                iconColor="text-blue-600"
+                title="No accounts yet"
+                desc="Add your bank accounts to get a complete view."
+                cta={
+                  <Link to="/app/setup" className="inline-block bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold">
+                    + Add Account
+                  </Link>
+                }
+              />
             ) : accounts.map((a) => (
               <div key={a.id} className="flex items-center gap-3">
                 <BankLogo bank={a.bank} size={36} />
@@ -379,7 +448,22 @@ export default function Dashboard() {
           </div>
           <div className="space-y-3">
             {recentTxns.length === 0 ? (
-              <p className="text-xs text-muted italic">No transactions yet.</p>
+              <SectionEmptyState
+                icon={Receipt}
+                iconBg="bg-green-100"
+                iconColor="text-green-600"
+                title="No transactions yet"
+                desc="Your recent transactions will appear here."
+                cta={
+                  <button
+                    type="button"
+                    onClick={() => setShowAddModal(true)}
+                    className="bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold"
+                  >
+                    + Add Transaction
+                  </button>
+                }
+              />
             ) : recentTxns.map((t) => {
               const Icon = CATEGORY_ICON[t.categoryName] ?? ShoppingBag;
               const color = t.type === 'INCOME' ? '#16a34a' : (CATEGORY_COLOR[t.categoryName] ?? '#2563EB');
@@ -408,26 +492,41 @@ export default function Dashboard() {
           </div>
           <div className="space-y-4">
             {budgets.length === 0 ? (
-              <p className="text-xs text-muted italic">No budgets set yet.</p>
-            ) : budgets.map((b) => {
-              const pct = b.monthlyLimit > 0 ? Math.min(100, (b.spentThisMonth / b.monthlyLimit) * 100) : 0;
-              const over = b.spentThisMonth > b.monthlyLimit;
-              return (
-                <div key={b.id}>
-                  <div className="flex justify-between items-baseline mb-1.5">
-                    <span className="text-sm font-medium text-ink">{b.categoryName}</span>
-                    <span className={`text-xs ${over ? 'text-danger font-medium' : 'text-muted'}`}>{pct.toFixed(0)}%</span>
-                  </div>
-                  <div className="h-1.5 bg-bg rounded-full overflow-hidden mb-1">
-                    <div className={`h-full rounded-full ${over ? 'bg-danger' : 'bg-primary'}`} style={{ width: `${pct}%` }} />
-                  </div>
-                  <p className="text-[11px] text-muted">{fmt(b.spentThisMonth)} of {fmt(b.monthlyLimit)}</p>
-                </div>
-              );
-            })}
-            <Link to="/app/budgets" className="block text-center text-xs font-medium text-primary bg-primary-light rounded-lg py-2.5">
-              <Target size={12} className="inline mr-1 -mt-0.5" /> Manage Budgets
-            </Link>
+              <SectionEmptyState
+                icon={PiggyBank}
+                iconBg="bg-orange-100"
+                iconColor="text-orange-600"
+                title="No budgets set"
+                desc="Create budgets to track your spending and stay on track."
+                cta={
+                  <Link to="/app/budgets" className="inline-block bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold">
+                    Create Budget
+                  </Link>
+                }
+              />
+            ) : (
+              <>
+                {budgets.map((b) => {
+                  const pct = b.monthlyLimit > 0 ? Math.min(100, (b.spentThisMonth / b.monthlyLimit) * 100) : 0;
+                  const over = b.spentThisMonth > b.monthlyLimit;
+                  return (
+                    <div key={b.id}>
+                      <div className="flex justify-between items-baseline mb-1.5">
+                        <span className="text-sm font-medium text-ink">{b.categoryName}</span>
+                        <span className={`text-xs ${over ? 'text-danger font-medium' : 'text-muted'}`}>{pct.toFixed(0)}%</span>
+                      </div>
+                      <div className="h-1.5 bg-bg rounded-full overflow-hidden mb-1">
+                        <div className={`h-full rounded-full ${over ? 'bg-danger' : 'bg-primary'}`} style={{ width: `${pct}%` }} />
+                      </div>
+                      <p className="text-[11px] text-muted">{fmt(b.spentThisMonth)} of {fmt(b.monthlyLimit)}</p>
+                    </div>
+                  );
+                })}
+                <Link to="/app/budgets" className="block text-center text-xs font-medium text-primary bg-primary-light rounded-lg py-2.5">
+                  <Target size={12} className="inline mr-1 -mt-0.5" /> Manage Budgets
+                </Link>
+              </>
+            )}
           </div>
         </div>
 
@@ -438,80 +537,147 @@ export default function Dashboard() {
           </div>
           <div className="space-y-4">
             {goals.length === 0 ? (
-              <p className="text-xs text-muted italic">No goals yet.</p>
-            ) : goals.map((g) => {
-              const pct = g.targetAmount > 0 ? Math.min(100, (g.currentAmount / g.targetAmount) * 100) : 0;
-              return (
-                <div key={g.id}>
-                  <div className="flex justify-between items-baseline mb-1.5">
-                    <span className="text-sm font-medium text-ink">{g.name}</span>
-                    <span className="text-xs text-muted">{pct.toFixed(0)}%</span>
-                  </div>
-                  <div className="h-1.5 bg-bg rounded-full overflow-hidden mb-1">
-                    <div className="h-full bg-primary rounded-full" style={{ width: `${pct}%` }} />
-                  </div>
-                  <p className="text-[11px] text-muted">{fmt(g.currentAmount)} of {fmt(g.targetAmount)}</p>
-                </div>
-              );
-            })}
-            <Link to="/app/goals" className="block text-center text-xs font-medium text-primary bg-primary-light rounded-lg py-2.5">
-              + Create New Goal
-            </Link>
+              <SectionEmptyState
+                icon={Target}
+                iconBg="bg-red-100"
+                iconColor="text-red-600"
+                title="No goals yet"
+                desc="Set your financial goals and achieve them step by step."
+                cta={
+                  <Link to="/app/goals" className="inline-block bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold">
+                    + Create Goal
+                  </Link>
+                }
+              />
+            ) : (
+              <>
+                {goals.map((g) => {
+                  const pct = g.targetAmount > 0 ? Math.min(100, (g.currentAmount / g.targetAmount) * 100) : 0;
+                  return (
+                    <div key={g.id}>
+                      <div className="flex justify-between items-baseline mb-1.5">
+                        <span className="text-sm font-medium text-ink">{g.name}</span>
+                        <span className="text-xs text-muted">{pct.toFixed(0)}%</span>
+                      </div>
+                      <div className="h-1.5 bg-bg rounded-full overflow-hidden mb-1">
+                        <div className="h-full bg-primary rounded-full" style={{ width: `${pct}%` }} />
+                      </div>
+                      <p className="text-[11px] text-muted">{fmt(g.currentAmount)} of {fmt(g.targetAmount)}</p>
+                    </div>
+                  );
+                })}
+                <Link to="/app/goals" className="block text-center text-xs font-medium text-primary bg-primary-light rounded-lg py-2.5">
+                  + Create New Goal
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </div>
 
-      {/* AI Insights — a dedicated section (not just a one-line banner): the top natural-language
-          observations plus whichever spending categories moved the most since last month. */}
-      {(sentences.length > 0 || movers.length > 0) && (
-        <div className="bg-card rounded-xl2 shadow-card border border-border mb-6 overflow-hidden">
+      {/* AI Insights + Quick Actions. AI Insights used to hide entirely with nothing computed yet
+          -- now always visible, generic starter tips in place of real sentences/movers, so a new
+          user sees the section exists rather than it silently not being there. Quick Actions is
+          new: a shortcut grid to the same destinations scattered across this page's own empty
+          states and CTAs, gathered in one place the way the reference design has it. */}
+      <div className="grid lg:grid-cols-[1.6fr_1fr] gap-6 mb-6">
+        <div className="bg-card rounded-xl2 shadow-card border border-border overflow-hidden">
           <div className="flex items-center justify-between px-6 pt-5 pb-4">
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-full bg-primary-light flex items-center justify-center">
                 <Sparkles size={15} className="text-primary" />
               </div>
               <h2 className="font-semibold text-ink">AI Insights</h2>
+              <span className="text-[10px] uppercase font-semibold bg-primary/15 text-primary px-1.5 py-0.5 rounded">Beta</span>
             </div>
             <Link to="/app/insights" className="bg-primary text-white text-xs font-semibold rounded-lg px-4 py-2">
               View Insights
             </Link>
           </div>
-          <div className="px-6 pb-5 grid md:grid-cols-2 gap-x-8 gap-y-3">
-            {sentences.length > 0 && (
-              <div className="space-y-2">
-                {sentences.slice(0, 3).map((s, i) => (
-                  <p key={i} className="text-sm text-ink flex items-start gap-2">
+          {sentences.length === 0 && movers.length === 0 ? (
+            <div className="px-6 pb-5">
+              <p className="text-xs text-muted mb-3">Get personalized insights to improve your financial health.</p>
+              <ul className="space-y-2">
+                {[
+                  'Upload or import more transactions to get AI-powered insights.',
+                  'Track your spending to identify patterns and save more.',
+                  'Set budgets to stay in control of your finances.',
+                ].map((tip) => (
+                  <li key={tip} className="text-sm text-ink flex items-start gap-2">
                     <span className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5 flex-shrink-0" />
-                    {s}
-                  </p>
+                    {tip}
+                  </li>
                 ))}
-              </div>
-            )}
-            {movers.length > 0 && (
-              <div className="space-y-2">
-                {/* Deliberately no period in this heading. These movers come from the INSIGHTS
-                    query, which resolves its own reporting month over a differently-filtered set
-                    (expenses only, where the dashboard also counts income), so the two can pick
-                    different months for an account whose newest month holds only income.
-                    `periodLabel` describes the dashboard's month and would be asserting a period
-                    this list does not necessarily belong to -- the same class of claim as Bug 05.
-                    The insight sentences rendered above already carry their own period wording,
-                    built server-side by InsightsService. */}
-                <p className="text-[11px] uppercase tracking-wide text-muted mb-1">Biggest movers</p>
-                {movers.map((m) => (
-                  <div key={m.category} className="flex items-center justify-between text-sm">
-                    <span className="text-ink">{m.category}</span>
-                    <span className={`flex items-center gap-1 font-medium ${(m.pctChange ?? 0) >= 0 ? 'text-danger' : 'text-success'}`}>
-                      {(m.pctChange ?? 0) >= 0 ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
-                      {Math.abs(m.pctChange ?? 0).toFixed(0)}%
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
+              </ul>
+            </div>
+          ) : (
+            <div className="px-6 pb-5 grid md:grid-cols-2 gap-x-8 gap-y-3">
+              {sentences.length > 0 && (
+                <div className="space-y-2">
+                  {sentences.slice(0, 3).map((s, i) => (
+                    <p key={i} className="text-sm text-ink flex items-start gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5 flex-shrink-0" />
+                      {s}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {movers.length > 0 && (
+                <div className="space-y-2">
+                  {/* Deliberately no period in this heading. These movers come from the INSIGHTS
+                      query, which resolves its own reporting month over a differently-filtered set
+                      (expenses only, where the dashboard also counts income), so the two can pick
+                      different months for an account whose newest month holds only income.
+                      `periodLabel` describes the dashboard's month and would be asserting a period
+                      this list does not necessarily belong to -- the same class of claim as Bug 05.
+                      The insight sentences rendered above already carry their own period wording,
+                      built server-side by InsightsService. */}
+                  <p className="text-[11px] uppercase tracking-wide text-muted mb-1">Biggest movers</p>
+                  {movers.map((m) => (
+                    <div key={m.category} className="flex items-center justify-between text-sm">
+                      <span className="text-ink">{m.category}</span>
+                      <span className={`flex items-center gap-1 font-medium ${(m.pctChange ?? 0) >= 0 ? 'text-danger' : 'text-success'}`}>
+                        {(m.pctChange ?? 0) >= 0 ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
+                        {Math.abs(m.pctChange ?? 0).toFixed(0)}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="bg-card rounded-xl2 p-5 shadow-card border border-border">
+          <h2 className="font-semibold text-ink text-sm mb-4">Quick Actions</h2>
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { icon: UploadCloud, label: 'Import Statement', to: '/app/import' },
+              { icon: Plus, label: 'Add Transaction', onClick: () => setShowAddModal(true) },
+              // D-21 originally scoped three setup paths (import, Gmail, manual) -- Gmail has no
+              // per-section empty-state card of its own the way Import (Cash Flow) and Add
+              // Transaction (Recent Transactions) do, so it lives here instead rather than being
+              // dropped from the redesign entirely.
+              { icon: Mail, label: 'Connect Gmail', to: '/app/settings' },
+              { icon: Target, label: 'Create Budget', to: '/app/budgets' },
+              { icon: PieChart, label: 'View Reports', to: '/app/reports' },
+              { icon: TrendingUp, label: 'Manage Goals', to: '/app/goals' },
+              { icon: LineChartIcon, label: 'Investments', to: '/app/investments' },
+            ].map((action) => {
+              const className = 'flex flex-col items-center gap-1.5 text-center p-3 rounded-lg bg-bg hover:bg-primary-light text-ink hover:text-primary transition-colors';
+              const body = (
+                <>
+                  <action.icon size={18} />
+                  <span className="text-[11px] font-medium leading-tight">{action.label}</span>
+                </>
+              );
+              return action.to
+                ? <Link key={action.label} to={action.to} className={className}>{body}</Link>
+                : <button key={action.label} type="button" onClick={action.onClick} className={className}>{body}</button>;
+            })}
           </div>
         </div>
-      )}
+      </div>
 
       {/* Subscriptions & Recurring Payments — RecurringService.detectForUser has computed this
           (merchant, cadence, average amount, projected next charge) since before this session,
@@ -555,6 +721,10 @@ export default function Dashboard() {
       >
         <Plus size={24} />
       </Link>
+
+      {showAddModal && (
+        <AddTransactionModal onClose={() => setShowAddModal(false)} onSaved={onTransactionAdded} />
+      )}
     </div>
   );
 }
@@ -583,254 +753,3 @@ function CashFlowChart({ series }: { series: { month: string; income: number; ex
   );
 }
 
-/** One of the three setup-path choices below -- a Link when it's just navigation (Import,
- *  Connect Gmail both already have their own full pages), a button when it opens something in
- *  place instead (Add manually, which opens AddTransactionModal without leaving this page). */
-function SetupPathCard({
-  icon: Icon, title, desc, to, onClick,
-}: {
-  icon: typeof Wallet; title: string; desc: string; to?: string; onClick?: () => void;
-}) {
-  const className = 'bg-card rounded-xl2 p-5 shadow-card border border-border text-left hover:border-primary/40 transition-colors block w-full';
-  const body = (
-    <>
-      <div className="w-11 h-11 rounded-xl bg-primary-light flex items-center justify-center mb-3">
-        <Icon size={20} className="text-primary" />
-      </div>
-      <p className="font-semibold text-ink text-sm mb-1">{title}</p>
-      <p className="text-xs text-muted">{desc}</p>
-    </>
-  );
-  return to
-    ? <Link to={to} className={className}>{body}</Link>
-    : <button type="button" onClick={onClick} className={className}>{body}</button>;
-}
-
-/**
- * D-21, Step 1 -- "First Run Experience." Replaces the normal dashboard body entirely for an
- * account with zero transactions, whether that's a brand-new signup or an existing account that
- * created an account/connected Gmail but never actually got any data in. The ₹0-everywhere KPI
- * grid this used to fall through to looked broken, not empty -- nothing on it said what to do
- * next.
- *
- * "First insight generated" from the original pitch is deliberately not part of this component --
- * see D-21 in the project plan for why (no existing signal for "this was the user's first
- * successful import," no design yet for what the insight should say).
- */
-function EmptyDashboardWelcome({
-  firstName, timezone, accounts, onTransactionAdded,
-}: {
-  firstName: string;
-  timezone: string | undefined;
-  accounts: Account[];
-  onTransactionAdded: () => void;
-}) {
-  const [showAddModal, setShowAddModal] = useState(false);
-
-  return (
-    <div>
-      <div className="mb-8">
-        <h1 className="text-[26px] font-bold text-ink mb-1">{greeting(timezone)}, {firstName}! 👋</h1>
-        <p className="text-muted text-sm">
-          Let's get your money story started — pick how you'd like to bring in your first transactions.
-        </p>
-      </div>
-
-      <div className="grid md:grid-cols-3 gap-6 mb-8">
-        <SetupPathCard
-          icon={UploadCloud}
-          title="Import a statement"
-          desc="Upload a bank or credit card statement — Finora reads it and categorizes everything automatically."
-          to="/app/import"
-        />
-        <SetupPathCard
-          icon={Mail}
-          title="Connect Gmail"
-          desc="Let Finora pick up receipts and order confirmations from your inbox automatically."
-          to="/app/settings"
-        />
-        <SetupPathCard
-          icon={Plus}
-          title="Add manually"
-          desc="Already know what you spent? Add your first transaction by hand."
-          onClick={() => setShowAddModal(true)}
-        />
-      </div>
-
-      <div className="flex items-start gap-2.5 bg-primary-light rounded-lg p-3 max-w-xl">
-        <ShieldCheck size={16} className="text-primary flex-shrink-0 mt-0.5" />
-        <p className="text-xs text-ink">
-          Your financial data is encrypted and securely protected. Nothing here is shared or sold.
-        </p>
-      </div>
-
-      {showAddModal && (
-        <AddTransactionModal
-          accounts={accounts}
-          onClose={() => setShowAddModal(false)}
-          onSaved={() => {
-            setShowAddModal(false);
-            onTransactionAdded();
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-/**
- * Wires up TransactionController.create() / transactionsApi.create() -- both already existed,
- * already worked, and had zero call sites anywhere in the frontend before this (confirmed via a
- * repo-wide grep during D-21's scoping). Deliberately close to EditTransactionModal in Ledger.tsx
- * (same field layout, same category-loading pattern) rather than inventing a new convention, minus
- * the fields CreateRequest doesn't have (merchant is derived server-side from description; notes
- * isn't part of creation) and plus the one it needs that Update doesn't: which account this goes
- * on, since a transaction always belongs to one.
- */
-function AddTransactionModal({
-  accounts, onClose, onSaved,
-}: {
-  accounts: Account[];
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [accountId, setAccountId] = useState(accounts[0]?.id ?? '');
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [description, setDescription] = useState('');
-  const [amount, setAmount] = useState('');
-  const [type, setType] = useState<'INCOME' | 'EXPENSE'>('EXPENSE');
-  const [category, setCategory] = useState('');
-  const [categories, setCategories] = useState<string[]>([]);
-  const [categoriesFailed, setCategoriesFailed] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    // Same "notice, not a blocker" reasoning as EditTransactionModal's identical effect in
-    // Ledger.tsx -- an empty category dropdown reads as "you have no categories" when it might
-    // just mean this one request failed; the form still works with categoryName left blank
-    // (TransactionService.create() takes its own auto-categorization path when it's null).
-    categoriesApi.list()
-      .then((cats) => setCategories(cats.map((c) => c.name)))
-      .catch(() => setCategoriesFailed(true));
-  }, []);
-
-  const hasAccount = accounts.length > 0;
-  const canSave = hasAccount && !!accountId && description.trim().length > 0 && !!amount && parseFloat(amount) > 0;
-
-  async function save() {
-    if (!canSave) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const payload: CreateTransactionPayload = {
-        accountId,
-        date,
-        description: description.trim(),
-        amount: parseFloat(amount),
-        type,
-        categoryName: category || null,
-        // Explicit [], not omitted -- Transaction.tags is typed string[] (non-nullable)
-        // everywhere it's read, same reason EditTransactionModal always sends a real array
-        // rather than relying on the field being optional on the wire.
-        tags: [],
-      };
-      await transactionsApi.create(payload);
-      onSaved();
-    } catch (e: any) {
-      setError(e.response?.data?.message ?? 'Could not add this transaction.');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <>
-      <div className="fixed inset-0 bg-black/40 z-30" onClick={onClose} />
-      <div className="fixed inset-0 z-40 flex items-center justify-center p-4 pointer-events-none">
-        <div className="bg-card border border-border rounded-xl2 shadow-soft w-full max-w-lg max-h-[85vh] overflow-y-auto p-5 pointer-events-auto">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-ink text-sm">Add Transaction</h3>
-            <button type="button" onClick={onClose} aria-label="Close" className="text-muted hover:text-ink">
-              <X size={18} />
-            </button>
-          </div>
-
-          {!hasAccount ? (
-            // A transaction always belongs to an account (TransactionService.create()'s
-            // getOwnedAccount call has nothing to attach to otherwise) -- Setup.tsx is the
-            // existing manual-account-creation flow; this doesn't duplicate it.
-            <div className="text-sm text-ink">
-              <p className="mb-3">You'll need an account before adding a transaction by hand.</p>
-              <Link
-                to="/app/setup"
-                className="inline-block bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold"
-              >
-                Add an account
-              </Link>
-            </div>
-          ) : (
-            <>
-              {error && <p className="text-danger text-xs mb-3">{error}</p>}
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div className="col-span-2">
-                  <label htmlFor="add-txn-account" className="block text-[11px] uppercase text-muted mb-1">Account</label>
-                  <select
-                    id="add-txn-account"
-                    value={accountId}
-                    onChange={(e) => setAccountId(e.target.value)}
-                    className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full"
-                  >
-                    {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label htmlFor="add-txn-date" className="block text-[11px] uppercase text-muted mb-1">Date</label>
-                  <input id="add-txn-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
-                </div>
-                <div>
-                  <label htmlFor="add-txn-type" className="block text-[11px] uppercase text-muted mb-1">Type</label>
-                  <select id="add-txn-type" value={type} onChange={(e) => setType(e.target.value as 'INCOME' | 'EXPENSE')} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full">
-                    <option value="EXPENSE">Expense</option>
-                    <option value="INCOME">Income</option>
-                  </select>
-                </div>
-                <div className="col-span-2">
-                  <label htmlFor="add-txn-description" className="block text-[11px] uppercase text-muted mb-1">Description</label>
-                  <input id="add-txn-description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. Groceries at the market" className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
-                </div>
-                <div>
-                  <label htmlFor="add-txn-amount" className="block text-[11px] uppercase text-muted mb-1">Amount</label>
-                  <input id="add-txn-amount" type="number" min="0.01" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
-                </div>
-                <div>
-                  <label htmlFor="add-txn-category" className="block text-[11px] uppercase text-muted mb-1">Category</label>
-                  <select id="add-txn-category" value={category} onChange={(e) => setCategory(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full">
-                    <option value="">Let Finora categorize it</option>
-                    {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                  {categoriesFailed && (
-                    <p className="text-[11px] text-warning mt-1">Couldn't load categories — leave blank to auto-categorize.</p>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex gap-3 mt-5">
-                <button
-                  onClick={save}
-                  disabled={saving || !canSave}
-                  className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
-                >
-                  {saving ? 'Adding…' : 'Add transaction'}
-                </button>
-                <button onClick={onClose} className="border border-border text-ink px-4 py-2 rounded-lg text-xs font-semibold">
-                  Cancel
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    </>
-  );
-}

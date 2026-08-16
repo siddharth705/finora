@@ -167,7 +167,8 @@ class ImportServiceStorageDualWriteTest {
         // this assertion is the one that would have failed pre-fix.
         StatementContentService storageBacked = mock(StatementContentService.class);
         ContentAddress address = new ContentAddress("a".repeat(64), "statements/aa/aa/" + "a".repeat(64) + ".bin");
-        when(storageBacked.store(any())).thenReturn(Optional.of(address));
+        when(storageBacked.store(any(), any())).thenReturn(Optional.of(new StatementContentService.StoredContent(
+                address, 100, 50, com.finora.imports.storage.CompressionType.GZIP, "text/csv")));
         ImportService importService = importServiceWith(storageBacked);
         var request = new ConfirmRequest(null, List.of(confirmedRow()), accountId, null, null, null,
                 null);
@@ -190,7 +191,8 @@ class ImportServiceStorageDualWriteTest {
         // one deduplicated object address both rows already share below.
         StatementContentService storageBacked = mock(StatementContentService.class);
         ContentAddress address = new ContentAddress("b".repeat(64), "statements/bb/bb/" + "b".repeat(64) + ".bin");
-        when(storageBacked.store(any())).thenReturn(Optional.of(address));
+        when(storageBacked.store(any(), any())).thenReturn(Optional.of(new StatementContentService.StoredContent(
+                address, 100, 50, com.finora.imports.storage.CompressionType.GZIP, "application/pdf")));
         byte[] fileBytes = "the-whole-composite-pdf".getBytes();
         when(storageBacked.read(any())).thenReturn(fileBytes);
         ImportService importService = importServiceWith(storageBacked);

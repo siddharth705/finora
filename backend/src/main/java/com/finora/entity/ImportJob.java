@@ -482,4 +482,14 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
      *  on why -- a job carries an address, never the bytes. */
     @Override
     public byte[] getFileContent() { return null; }
+
+    /** Always {@code NONE}. {@link com.finora.imports.jobs.ImportJobService#accept} writes to
+     *  {@code StatementStorage} directly -- not through {@code StatementContentService.store}, the
+     *  only place that compresses -- so a job's object is never gzipped. Returning anything else
+     *  here would make {@code StatementContentService.read} try to decompress bytes that were
+     *  never compressed. */
+    @Override
+    public com.finora.imports.storage.CompressionType getCompressionType() {
+        return com.finora.imports.storage.CompressionType.NONE;
+    }
 }
