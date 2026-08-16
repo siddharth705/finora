@@ -2697,6 +2697,11 @@ public class PdfTableLocator {
         return best;
     }
 
+    /** Rows and non-transaction text collected in the same pass -- see {@link #inferHeaderlessSection}
+     *  for why the latter matters as much as the former (it feeds product/identity classification
+     *  downstream, exactly as the header-based path's own pendingAuxiliary does). */
+    private record HeaderlessBucketResult(List<Map<String, String>> rows, List<String> auxiliaryText) {}
+
     /** Buckets every row of {@code allRows} (not just the transaction-shaped subset used for role
      *  inference and scoring) against the inferred header, merging each non-transaction-shaped row
      *  into the preceding transaction row's Description via the existing {@link #mergeInto} --
@@ -2720,9 +2725,10 @@ public class PdfTableLocator {
      *  the final staged rows too, not just from the candidates {@link #resolveDebitCreditByBalanceChain}
      *  scored. Compares only against the last TRANSACTION-shaped row, so intervening continuation
      *  lines between the original and its reprint don't defeat the comparison. */
-    private List<Map<String, String>> bucketHeaderlessRowsWithContinuation(List<List<PositionedText>> allRows,
+    private HeaderlessBucketResult bucketHeaderlessRowsWithContinuation(List<List<PositionedText>> allRows,
             List<String> headerNames, List<Float> headerAnchors, List<Float> headerEnds, DocumentContext ctx) {
         List<Map<String, String>> result = new ArrayList<>();
+        List<String> auxiliaryText = new ArrayList<>();
         Map<String, String> currentAnchor = null;
         int continuationCount = 0;
         String previousTransactionLine = null;
@@ -2743,9 +2749,14 @@ public class PdfTableLocator {
                 if (bucketed.isEmpty()) continue;
                 mergeInto(currentAnchor, bucketed, headerNames);
                 continuationCount++;
+            } else if (!rowLine.isBlank()) {
+                // Pre-first-transaction page furniture (the exact case this capability was blind to:
+                // a credit-card payment-summary block above the ledger) and post-cap continuation
+                // overflow both land here, never in a transaction row.
+                auxiliaryText.add(rowLine);
             }
         }
-        return result;
+        return new HeaderlessBucketResult(result, auxiliaryText);
     }
 
     /** Entry point for the whole INFERRED_HEADERLESS_LAYOUT capability -- see its top-level doc
@@ -2870,13 +2881,13 @@ public class PdfTableLocator {
             headerEnds.add(columns.get(i).repRight());
         }
 
-        List<Map<String, String>> resultRows = bucketHeaderlessRowsWithContinuation(rows, headerNames, headerAnchors, headerEnds, ctx);
-        if (resultRows.isEmpty()) {
+        HeaderlessBucketResult bucketResult = bucketHeaderlessRowsWithContinuation(rows, headerNames, headerAnchors, headerEnds, ctx);
+        if (bucketResult.rows().isEmpty()) {
             if (ctx != null) ctx.recordDiagnostic("HEADERLESS_FINAL_BUCKETING_EMPTY");
             return null;
         }
         if (ctx != null) ctx.record("INFERRED_HEADERLESS_LAYOUT");
-        return new LocatedSection(List.of(), resultRows);
+        return new LocatedSection(bucketResult.auxiliaryText(), bucketResult.rows());
     }
 
     // ===== INFERRED_TWO_LINE_DATE_BLOCK =====
@@ -3033,6 +3044,13 @@ public class PdfTableLocator {
      *  {@link #TWO_LINE_BLOCK_MIN_TRANSACTIONS} blocks are found. */
     private LocatedSection inferTwoLineDateBlockSection(List<List<PositionedText>> rows, DocumentContext ctx) {
         List<Map<String, String>> resultRows = new ArrayList<>();
+        // Every row a block match doesn't consume -- most importantly, the payment-summary /
+        // account-identity block that precedes the ledger on a real credit-card statement -- is kept
+        // here instead of discarded, so downstream product/identity classification (which reads
+        // LocatedSection.auxiliaryText(), not rows()) has something to work with. This capability
+        // used to return List.of() here, which is exactly why a document using it could extract its
+        // transactions correctly while still being misclassified as SAVINGS with no account number.
+        List<String> auxiliaryText = new ArrayList<>();
         int rowIndex = 0;
         while (rowIndex < rows.size()) {
             String rowLine = lineOf(rows.get(rowIndex));
@@ -3051,6 +3069,7 @@ public class PdfTableLocator {
                 rowIndex += block.rowsConsumed();
                 continue;
             }
+            if (!rowLine.isBlank()) auxiliaryText.add(rowLine);
             rowIndex++;
         }
         if (resultRows.size() < TWO_LINE_BLOCK_MIN_TRANSACTIONS) {
@@ -3058,6 +3077,6 @@ public class PdfTableLocator {
             return null;
         }
         if (ctx != null) ctx.record("INFERRED_TWO_LINE_DATE_BLOCK");
-        return new LocatedSection(List.of(), resultRows);
+        return new LocatedSection(auxiliaryText, resultRows);
     }
 }

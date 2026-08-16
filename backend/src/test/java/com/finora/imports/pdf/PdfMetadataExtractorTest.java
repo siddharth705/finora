@@ -121,6 +121,41 @@ class PdfMetadataExtractorTest {
         assertThat(ctx.capabilities()).extracting(a -> a.capability()).doesNotContain("GRID_METADATA_TRAILING_LABEL");
     }
 
+    // CARD_ENDING_DIGITS: a credit card's identity stated inside an ordinary sentence rather than
+    // any "Label: Value" or grid shape -- modeled on a real AU Small Finance Bank credit-card
+    // statement's own "Statement for your credit card ending with <4 digits>" phrasing (digits
+    // genericized per the Synthetic Fixture Policy). Only the last 4 digits are ever known this
+    // way, so this always produces a masked identity directly, never a full unmasked number.
+
+    @Test
+    void extract_recognizesACardEndingDigitsSentence_asAMaskedAccountIdentity() {
+        var metadata = extractor.extract(List.of(
+                "Statement for your credit card ending with 4321 (19 Mar - 18 Apr 2026)"));
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("••••4321");
+    }
+
+    @Test
+    void extract_recordsCardEndingDigitsIdentity_onDocumentContext_whenTheSentenceMatches() {
+        DocumentContext ctx = new DocumentContext("PDF", "PdfMetadataExtractor");
+
+        extractor.extract(List.of("Statement for your credit card ending with 4321"), ctx);
+
+        assertThat(ctx.capabilities()).extracting(a -> a.capability()).contains("CARD_ENDING_DIGITS_IDENTITY");
+    }
+
+    @Test
+    void extract_preferAnEarlierLabelledAccountNumber_overALaterCardEndingDigitsSentence() {
+        // Same "first field found wins" discipline every other guarded assignment in this class
+        // already follows -- a later, unrelated "ending with" mention (e.g. a linked debit card
+        // referenced deep in a T&C appendix) must not override an already-found real identity.
+        var metadata = extractor.extract(List.of(
+                "Account Number: 000123456789", // synthetic-ok
+                "your linked debit card ending with 9999 is separately governed by..."));
+
+        assertThat(metadata.accountNumberMasked()).endsWith("6789");
+    }
+
     // LEADING_NAME_LINE: real-document-evidenced (a Bank of Baroda savings account statement, an
     // Axis Bank Neo Rupay credit card statement, and a Kotak Mahindra Bank savings statement --
     // three different banks) -- all put the holder's plain name as one of the document's first

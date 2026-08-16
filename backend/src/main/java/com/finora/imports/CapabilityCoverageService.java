@@ -92,7 +92,12 @@ public class CapabilityCoverageService {
             // + amount, then month/year + a bare Cr/Dr marker) rather than a table row at all --
             // found on the same AU statement, once the illustrative sections above stopped
             // blocking recovery. See PdfTableLocator.inferTwoLineDateBlockSection.
-            "INFERRED_TWO_LINE_DATE_BLOCK");
+            "INFERRED_TWO_LINE_DATE_BLOCK",
+            // A credit card's identity stated inside an ordinary sentence ("...credit card ending
+            // with 6385") rather than any "Label: Value" or grid shape -- found on the same AU
+            // statement once INFERRED_TWO_LINE_DATE_BLOCK stopped discarding the auxiliary text this
+            // reads. See PdfMetadataExtractor.CARD_ENDING_DIGITS.
+            "CARD_ENDING_DIGITS_IDENTITY");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure

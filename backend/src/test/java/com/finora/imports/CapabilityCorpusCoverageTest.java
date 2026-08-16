@@ -145,6 +145,13 @@ class CapabilityCorpusCoverageTest {
                 "no trace, and none is planned -- same reasoning as INFERRED_HEADERLESS_LAYOUT. "
                         + "Covered instead by TwoLineDateBlockInferenceTest's fully hand-synthesized "
                         + "fixtures.");
+        DECLARED_WITHOUT_A_TRACE.put("CARD_ENDING_DIGITS_IDENTITY",
+                "no trace, and none is planned -- same reasoning as INFERRED_HEADERLESS_LAYOUT: the "
+                        + "one real document that motivates it (a real AU Small Finance Bank "
+                        + "credit-card statement) would need its actual card-ending sentence "
+                        + "preserved for a trace to exercise this, which the Synthetic Fixture Policy "
+                        + "requires be synthesized, not preserved. Covered instead by "
+                        + "PdfMetadataExtractorTest's fully hand-synthesized fixtures.");
     }
 
     /**

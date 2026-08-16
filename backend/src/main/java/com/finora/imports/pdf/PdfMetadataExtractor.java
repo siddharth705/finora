@@ -96,6 +96,18 @@ public class PdfMetadataExtractor {
     // the same extracted line ("...@GMAIL.COM Email id ABCD0123456 IFSC").
     private static final Pattern IFSC_SHAPE = Pattern.compile("\\b[A-Z]{4}0[A-Z0-9]{6}\\b");
 
+    // CARD_ENDING_DIGITS: a genuinely different identity shape from every "Account Number" pattern
+    // above -- a credit-card statement doesn't label an "Account Number" field at all; it states the
+    // card's last 4 digits inside an ordinary sentence ("Statement for your credit card ending with
+    // 6385"), verified against a real AU Small Finance Bank credit-card statement. Only the last 4
+    // digits are ever known this way -- there is no full number anywhere on the page to mask -- so
+    // this always builds the masked identity directly rather than routing through
+    // CsvParser.maskAccountNumber, which would return a 4-digit input UNMASKED (see its own
+    // digits.length() <= 4 branch); accountNumberFullForHashingOnly is deliberately left unset here,
+    // never guessed from a value this codebase has genuinely never seen.
+    private static final Pattern CARD_ENDING_DIGITS =
+            Pattern.compile("(?i)card\\s+ending\\s+(?:with|in)\\s+(\\d{4})\\b");
+
     private static final DateTimeFormatter[] DATE_FORMATS = {
             DateTimeFormatter.ofPattern("dd-MM-yyyy"),
             DateTimeFormatter.ofPattern("dd/MM/yyyy"),
@@ -371,6 +383,14 @@ public class PdfMetadataExtractor {
                 if (holderMatch.find()) {
                     accountHolderName = holderMatch.group(1).trim();
                     if (ctx != null) ctx.record("GRID_METADATA_TRAILING_LABEL");
+                    continue;
+                }
+            }
+            if (accountNumberMasked == null) {
+                Matcher cardEndingMatch = CARD_ENDING_DIGITS.matcher(line);
+                if (cardEndingMatch.find()) {
+                    accountNumberMasked = "••••" + cardEndingMatch.group(1);
+                    if (ctx != null) ctx.record("CARD_ENDING_DIGITS_IDENTITY");
                     continue;
                 }
             }
