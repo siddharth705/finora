@@ -513,9 +513,7 @@ public class PdfTableLocator {
                 // a genuine header-based table followed by this appendix must keep that real
                 // section, not lose it along with the boilerplate that follows.
                 if (currentRows != null) {
-                    flushPendingLeading(currentRows, pendingLeading);
-                    sections.add(new LocatedSection(pendingAuxiliary, currentRows));
-                    pendingAuxiliary = new ArrayList<>();
+                    pendingAuxiliary = closeCurrentSection(currentRows, pendingLeading, headerNames, pendingAuxiliary, sections, ctx);
                     currentRows = null;
                 }
                 if (ctx != null) ctx.record("ILLUSTRATIVE_BLOCK_SUPPRESSED");
@@ -545,11 +543,11 @@ public class PdfTableLocator {
                     continue; // repeated per-page banner for the account already in progress
                 }
                 if (currentRows != null) {
-                    flushPendingLeading(currentRows, pendingLeading);
-                    sections.add(new LocatedSection(pendingAuxiliary, currentRows));
+                    pendingAuxiliary = closeCurrentSection(currentRows, pendingLeading, headerNames, pendingAuxiliary, sections, ctx);
                     if (ctx != null) ctx.record("COMPOSITE_STATEMENT");
+                } else {
+                    pendingAuxiliary = new ArrayList<>();
                 }
-                pendingAuxiliary = new ArrayList<>();
                 currentRows = null;
                 headerNames = null;
                 headerAnchors = null;
@@ -613,10 +611,8 @@ public class PdfTableLocator {
                 if (currentRows != null) {
                     // A different header shape with no explicit marker line -- fallback signal
                     // for a new section in a document without a banner line.
-                    flushPendingLeading(currentRows, pendingLeading);
-                    sections.add(new LocatedSection(pendingAuxiliary, currentRows));
+                    pendingAuxiliary = closeCurrentSection(currentRows, pendingLeading, headerNames, pendingAuxiliary, sections, ctx);
                     if (ctx != null) ctx.record("COMPOSITE_STATEMENT");
-                    pendingAuxiliary = new ArrayList<>();
                 }
                 headerNames = new ArrayList<>();
                 headerAnchors = new ArrayList<>();
@@ -811,8 +807,7 @@ public class PdfTableLocator {
             }
         }
         if (currentRows != null) {
-            flushPendingLeading(currentRows, pendingLeading);
-            sections.add(new LocatedSection(pendingAuxiliary, currentRows));
+            closeCurrentSection(currentRows, pendingLeading, headerNames, pendingAuxiliary, sections, ctx);
         }
         // INFERRED_HEADERLESS_LAYOUT. Only ever attempted once the loop above has already found
         // nothing -- see this capability's own doc comment on inferHeaderlessSection for why a
@@ -936,6 +931,97 @@ public class PdfTableLocator {
         if (pendingLeading != null && !pendingLeading.isEmpty()) {
             currentRows.add(pendingLeading);
         }
+    }
+
+    /** Below this many rows, a candidate is even considered for {@link
+     *  #looksLikePaymentSummaryPanel} at all -- both real motivating documents produce exactly 2.
+     *  A pure safety net, not the deciding signal: {@link #PAYMENT_SUMMARY_FIELD_PHRASES} is. An
+     *  earlier version of this gate relied on row count plus "no description column" alone and
+     *  broke real, already-supported recurring/fixed-deposit installment schedules -- those are
+     *  ALSO short and ALSO lack a narration column (an installment record has no story to tell the
+     *  way a transaction does), so that pair of signals could not tell a summary panel from a
+     *  genuine small ledger. Found by the full test suite, not a real document: 24 failures and 6
+     *  errors across CompositeMultiProductClassificationTest, TraceFixtureRegressionTest, and
+     *  others the moment it ran, reverted before any of it reached a commit. */
+    private static final int PAYMENT_SUMMARY_PANEL_MAX_ROWS = 2;
+
+    /** How many distinct {@link #PAYMENT_SUMMARY_FIELD_PHRASES} must appear across a candidate's
+     *  header before it counts -- the same two-signal floor {@code MIN_CREDIT_CARD_TEXT_SIGNALS}
+     *  in {@code PdfPreviewGenerator} already uses for the analogous "is this really a credit-card
+     *  payment summary" question elsewhere in the pipeline (a different layer, so not shared code,
+     *  but the same reasoning: one phrase could be a coincidence, two together are a real match). */
+    private static final int MIN_PAYMENT_SUMMARY_FIELD_MATCHES = 2;
+
+    /**
+     * A credit card's own account-level snapshot fields -- due dates, credit/cash limits, the
+     * amount currently owed -- restated once near the top of the statement, never as a repeating
+     * per-row record. Deliberately phrase-level (not single words like "due" or "limit" alone,
+     * which a genuine deposit-schedule column like "Instalment Amt Due" or "Closing Balance" could
+     * otherwise share) and deliberately narrower than the full vocabulary {@code
+     * CREDIT_CARD_TEXT_SIGNALS} in {@code PdfPreviewGenerator} uses for product classification --
+     * this only needs the phrases that actually appeared as HEADER-LIKE labels on the two real
+     * documents that motivate it, not everything that can appear in a payment-summary paragraph.
+     */
+    private static final List<String> PAYMENT_SUMMARY_FIELD_PHRASES = List.of(
+            "total payment due", "minimum payment due", "payment due date", "total amount due",
+            "minimum amount due", "minimum due", "due date", "statement generation date",
+            "statement period", "credit limit", "cash limit");
+
+    /**
+     * A credit card's own payment-summary panel satisfies {@link #looksLikeHeaderRow}'s
+     * date-plus-vocabulary check exactly like a real transaction table does -- it prints several
+     * dates and financial-figure labels together -- so it gets read as a section of its own, one
+     * row deep, immediately superseded by the real ledger's header a few lines later. Verified on
+     * two real credit-card statements with otherwise unrelated layouts (a real Axis statement with
+     * an explicit "PAYMENT SUMMARY" banner above one summary row, and a real HDFC statement with
+     * no such banner at all, just a multi-column credit-limit/dues grid) -- the shared signal used
+     * here is deliberately the phrase vocabulary both share, not the banner text HDFC lacks.
+     *
+     * <p>Requires ALL THREE: a small row count, no recognized narration column ({@link
+     * #DESCRIPTION_COLUMN_LABELS}), AND at least {@link #MIN_PAYMENT_SUMMARY_FIELD_MATCHES}
+     * distinct payment-summary phrases. The first two alone are NOT enough -- see {@link
+     * #PAYMENT_SUMMARY_PANEL_MAX_ROWS}'s own doc comment for the real regression that taught this;
+     * a genuine recurring/fixed-deposit installment schedule is also short and also lacks a
+     * narration column, and only the phrase vocabulary tells the two apart.
+     */
+    private boolean looksLikePaymentSummaryPanel(List<String> headerNames, List<Map<String, String>> currentRows) {
+        if (headerNames == null || currentRows.size() > PAYMENT_SUMMARY_PANEL_MAX_ROWS) return false;
+        Set<String> matchedPhrases = new LinkedHashSet<>();
+        for (String name : headerNames) {
+            String normalized = CsvParser.normalizeHeaderCell(name);
+            if (DESCRIPTION_COLUMN_LABELS.contains(normalized)) return false;
+            for (String phrase : PAYMENT_SUMMARY_FIELD_PHRASES) {
+                if (normalized.contains(phrase)) matchedPhrases.add(phrase);
+            }
+        }
+        return matchedPhrases.size() >= MIN_PAYMENT_SUMMARY_FIELD_MATCHES;
+    }
+
+    /** Closes whatever section is currently open: flushes any pending leading narration, then
+     *  either stages it as a real {@link LocatedSection} or -- when {@link
+     *  #looksLikePaymentSummaryPanel} says it looks like a misdetected payment-summary panel
+     *  instead of a genuine transaction table -- folds its rows back into auxiliary text instead,
+     *  the same "never lose information, just stop calling it a table" treatment {@link
+     *  #inferTwoLineDateBlockSection}'s own unmatched rows already get.
+     *
+     *  @return the {@code pendingAuxiliary} list the caller should keep accumulating into for
+     *  whatever comes next -- a fresh empty list after a real section is staged (its own auxiliary
+     *  text now belongs to that section), or the SAME list, with the demoted rows appended, when
+     *  suppressed -- carrying it forward is what lets a demoted panel's text still end up as
+     *  auxiliary text on the NEXT (real) section once that one closes, rather than being silently
+     *  dropped the moment the caller's own "start fresh" reset ran. */
+    private List<String> closeCurrentSection(List<Map<String, String>> currentRows, Map<String, String> pendingLeading,
+            List<String> headerNames, List<String> pendingAuxiliary, List<LocatedSection> sections, DocumentContext ctx) {
+        flushPendingLeading(currentRows, pendingLeading);
+        if (looksLikePaymentSummaryPanel(headerNames, currentRows)) {
+            for (Map<String, String> row : currentRows) {
+                pendingAuxiliary.add(String.join(" ", row.values()));
+            }
+            if (ctx != null) ctx.record("PAYMENT_SUMMARY_PANEL_SUPPRESSED");
+            return pendingAuxiliary;
+        }
+        sections.add(new LocatedSection(pendingAuxiliary, currentRows));
+        return new ArrayList<>();
     }
 
     /**

@@ -111,7 +111,13 @@ public class CapabilityCoverageService {
             // An "S No." column recovered the same way, not for its own sake but because leaving
             // it unnamed let its digit values collide with and corrupt the Date column (nearestColumn
             // has no maximum-distance cap). See PdfTableLocator.recoverMissingSerialNumberColumn.
-            "RECOVERED_MISSING_SERIAL_NUMBER_COLUMN");
+            "RECOVERED_MISSING_SERIAL_NUMBER_COLUMN",
+            // A credit card's own payment-summary panel (Total/Minimum Payment Due, Available
+            // Credit/Cash Limit, ...) satisfying looksLikeHeaderRow exactly like a real transaction
+            // table -- found on two real credit-card statements (Axis, HDFC) with otherwise
+            // unrelated layouts, each producing a one-row phantom section immediately superseded by
+            // the real ledger's header. See PdfTableLocator.looksLikePaymentSummaryPanel.
+            "PAYMENT_SUMMARY_PANEL_SUPPRESSED");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure

@@ -273,8 +273,12 @@ class SplitHeaderRunsPdfTableLocatorTest {
         PdfTableLocator.LocatedDocument doc = new PdfTableLocator()
                 .locateAll(PdfTrace.load("axis-credit-card-statement"), ctx);
 
-        assertThat(doc.sections()).as("two sections, as before the fix -- no third, bogus one").hasSize(2);
-        assertThat(doc.sections().get(1).rows()).hasSize(111);
+        // One section, not two: the OTHER section this trace used to have was itself a misdetected
+        // payment-summary panel (PdfTableLocator.looksLikePaymentSummaryPanel), not fine print --
+        // a separate fix, now also landing on this trace. What this test actually guards -- no
+        // BOGUS third section from the fine-print run-joining bug -- still holds.
+        assertThat(doc.sections()).as("one section, as before this fix -- no second, bogus one").hasSize(1);
+        assertThat(doc.sections().get(0).rows()).hasSize(111);
         assertThat(doc.sections().stream().flatMap(s -> s.rows().stream())
                 .flatMap(r -> r.keySet().stream()).distinct())
                 .as("no column named out of a fine-print sentence")
@@ -287,14 +291,16 @@ class SplitHeaderRunsPdfTableLocatorTest {
         // mergeHeaderLines seeds its columns from the first line's RUNS: joining them first changes
         // which columns exist and therefore which joins are made, which moved section boundaries on
         // SBI in simulation. Both committed WRAPPED_HEADER documents are asserted structurally.
-        // P-002 Fix 2 (commit pending): SBI's fifth section was a 221-char/31-word EMI-legal-text
-        // paragraph misread as a header. It no longer opens a section, so SBI drops from 5 sections
-        // to 4 -- the remaining four are exactly the four this test already covered.
+        // P-002 Fix 2: SBI's fifth section was a 221-char/31-word EMI-legal-text paragraph
+        // misread as a header. It no longer opens a section, so SBI drops from 5 sections to 4.
+        // A second, separate fix (PdfTableLocator.looksLikePaymentSummaryPanel) then drops one
+        // more: what was section 2 of those four was itself a misdetected payment-summary panel,
+        // the same shape found on the real Axis and HDFC credit statements -- 4 sections to 3.
         PdfTableLocator.LocatedDocument sbi = new PdfTableLocator()
                 .locateAll(PdfTrace.load("sbi-credit-card-statement"), null);
-        assertThat(sbi.sections()).hasSize(4);
+        assertThat(sbi.sections()).hasSize(3);
         assertThat(sbi.sections().stream().map(s -> s.rows().size()).toList())
-                .isEqualTo(List.of(1, 2, 2, 2));
+                .isEqualTo(List.of(1, 2, 2));
 
         DocumentContext ctx = new DocumentContext("PDF", "SplitHeaderRunsPdfTableLocatorTest");
         PdfTableLocator.LocatedDocument composite = new PdfTableLocator()
@@ -376,7 +382,9 @@ class SplitHeaderRunsPdfTableLocatorTest {
         // documents -- all of them unchanged, measured, not assumed.
         Map<String, List<Integer>> expected = Map.ofEntries(
                 Map.entry("au-credit-card-statement", List.of(3, 2, 2, 2)),
-                Map.entry("axis-credit-card-statement", List.of(2, 2, 111)),
+                // 2 sections before PdfTableLocator.looksLikePaymentSummaryPanel, 1 after -- the
+                // dropped section was a misdetected payment-summary panel, not fine print.
+                Map.entry("axis-credit-card-statement", List.of(1, 111)),
                 Map.entry("bob-repeated-account-banner", List.of(1, 58)),
                 Map.entry("bob-savings-ledger-validation", List.of(1, 58)),
                 Map.entry("canara-savings-ledger-validation", List.of(1, 60)),
@@ -387,7 +395,8 @@ class SplitHeaderRunsPdfTableLocatorTest {
                 // untouched by both fixes.
                 Map.entry("central-bank-savings-ledger-validation", List.of(1, 223)),
                 Map.entry("hdfc-composite-deposit-schedules", List.of(4, 84, 9, 2, 7)),
-                Map.entry("hdfc-credit-card-ledger-validation", List.of(2, 2, 4)),
+                // 2 sections before looksLikePaymentSummaryPanel, 1 after -- same panel shape.
+                Map.entry("hdfc-credit-card-ledger-validation", List.of(1, 4)),
                 Map.entry("hdfc-txn-date-narration-header", List.of(1, 5)),
                 Map.entry("hsbc-savings-ledger-validation", List.of(1, 2)),
                 // icici, kotak, sbi: post P-002 Fix 2 (commit pending). Each document's spurious
@@ -400,7 +409,9 @@ class SplitHeaderRunsPdfTableLocatorTest {
                 Map.entry("kotak-credit-card-ledger-validation", List.of(0)),
                 Map.entry("kotak-savings-ledger-validation", List.of(1, 2)),
                 Map.entry("pnb-savings-ledger-validation", List.of(1, 62)),
-                Map.entry("sbi-credit-card-statement", List.of(4, 1, 2, 2, 2)),
+                // 4 sections before looksLikePaymentSummaryPanel, 3 after -- one of the four was
+                // itself a payment-summary panel (see this file's other tests for the detail).
+                Map.entry("sbi-credit-card-statement", List.of(3, 1, 2, 2)),
                 Map.entry("union-bank-savings-ledger-validation", List.of(1, 20)));
 
         for (Map.Entry<String, List<Integer>> e : expected.entrySet()) {
