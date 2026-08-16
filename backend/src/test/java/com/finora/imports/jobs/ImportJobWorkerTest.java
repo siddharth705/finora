@@ -4,8 +4,8 @@ import com.finora.entity.ImportJob;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
 import com.finora.imports.ImportService;
-import com.finora.imports.storage.ContentAddress;
-import com.finora.imports.storage.StatementStorage;
+import com.finora.imports.storage.StatementContentService;
+import com.finora.imports.storage.StatementIntegrityException;
 import com.finora.imports.storage.StatementStorageException;
 import com.finora.observability.AlertSeverity;
 import com.finora.observability.WorkerObservability;
@@ -42,7 +42,7 @@ class ImportJobWorkerTest {
 
     private ImportJobStore jobStore;
     private ImportService importService;
-    private StatementStorage storage;
+    private StatementContentService statementContentService;
     private ImportStageRecorder stageRecorder;
     private ImportJobWorker worker;
 
@@ -52,11 +52,14 @@ class ImportJobWorkerTest {
     void setUp() {
         jobStore = mock(ImportJobStore.class);
         importService = mock(ImportService.class);
-        storage = mock(StatementStorage.class);
+        // BH-045: readContent() now routes through StatementContentService.read(job) (the same
+        // verified path every other statement read uses) rather than calling StatementStorage
+        // directly -- see ImportJobWorker.readContent's own doc for why.
+        statementContentService = mock(StatementContentService.class);
         stageRecorder = mock(ImportStageRecorder.class);
         WorkerObservability observability = new WorkerObservability(new SimpleMeterRegistry());
 
-        worker = new ImportJobWorker(jobStore, importService, Optional.of(storage), observability,
+        worker = new ImportJobWorker(jobStore, importService, statementContentService, observability,
                 stageRecorder, new ExceptionClassifier());
 
         job = new ImportJob(UUID.randomUUID(), "statement.csv", "hash", "objects/key", "CSV");
@@ -69,7 +72,7 @@ class ImportJobWorkerTest {
             change.accept(job);
             return null;
         }).when(jobStore).update(org.mockito.ArgumentMatchers.eq(job.getId()), any());
-        when(storage.retrieve(any(ContentAddress.class))).thenReturn(new byte[] {1, 2, 3});
+        when(statementContentService.read(any())).thenReturn(new byte[] {1, 2, 3});
     }
 
     /**
@@ -116,6 +119,37 @@ class ImportJobWorkerTest {
                 .as("no ApiException/ErrorCode involved -- falls back to the exception's simple "
                         + "class name, matching StatementAnalysisSession.failureCode's convention")
                 .isEqualTo("StatementStorageException");
+    }
+
+    /**
+     * BH-045. Every test above throws from {@code importService.parseAndStageWithSession}; this is
+     * the one that actually exercises {@code readContent()} -- the method this bug fix rewired to
+     * route through {@code StatementContentService.read} -- failing on its own. A hash mismatch
+     * there surfaces as {@link StatementIntegrityException}, which must NOT be treated as an
+     * ordinary {@code StatementStorageException} (see {@link ExceptionClassifier#classify}): it
+     * dead-letters at attempt 2, the same as any other unrecognized-but-classified failure, not the
+     * 5-attempt RETRY budget a plain storage outage gets.
+     */
+    @Test
+    void aContentIntegrityFailureOnReadRetriesOnceThenDeadLetters() throws IOException {
+        when(statementContentService.read(any()))
+                .thenThrow(new StatementIntegrityException("hash mismatch for " + job.getContentHash()));
+
+        worker.drainOnce();
+        assertThat(job.getStatus())
+                .as("first occurrence still gets one retry, same as any RETRY_ONCE_THEN_ALERT case")
+                .isEqualTo(ImportJob.Status.QUEUED);
+        assertThat(job.getAttemptCount()).isEqualTo(1);
+
+        job.markClaimed("worker", Instant.now());
+        worker.drainOnce();
+
+        assertThat(job.getStatus())
+                .as("second occurrence must dead-letter -- not the 5-attempt RETRY budget a plain "
+                        + "StatementStorageException gets")
+                .isEqualTo(ImportJob.Status.FAILED);
+        assertThat(job.getAttemptCount()).isEqualTo(2);
+        assertThat(job.getFailureCode()).isEqualTo("StatementIntegrityException");
     }
 
     /**
