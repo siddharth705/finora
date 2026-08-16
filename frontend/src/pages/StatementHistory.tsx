@@ -12,6 +12,7 @@ import { recentImportsRefetchIntervalMs, label as jobLabel } from '../lib/import
 import { navigateToReimport, navigateToRetryFailedImport } from '../lib/importNavState';
 import type { AccountStatementGroup, StatementSummary, Transaction } from '../types';
 import { formatDate } from '../utils/date';
+import { FinoraCard, EmptyState } from '../design-system';
 
 // Reused from the same failure UX contract Import.tsx's live upload flow already draws on
 // (Premium Import Reliability v1, §6) -- a failure a user comes back to later reads the same way
@@ -199,16 +200,23 @@ export default function StatementHistory() {
       {!!inProgressJobs.length && <RecentImportsSection jobs={inProgressJobs} />}
 
       {accountGroups.length === 0 ? (
-        <div className="bg-card rounded-xl2 shadow-card border border-border p-8 text-center">
-          <FileText size={24} className="mx-auto mb-2 text-muted" />
-          <p className="text-sm text-muted">No statements imported yet.</p>
-          <button
-            onClick={() => navigate('/app/import')}
-            className="mt-3 bg-primary text-white text-xs font-semibold rounded-lg px-4 py-2"
-          >
-            Import a Statement
-          </button>
-        </div>
+        <FinoraCard padding="lg">
+          <EmptyState
+            icon={FileText}
+            iconBg="bg-blue-100"
+            iconColor="text-blue-600"
+            title="No statements imported yet"
+            desc="Import a bank or credit card statement to get started."
+            cta={
+              <button
+                onClick={() => navigate('/app/import')}
+                className="bg-primary text-white text-xs font-semibold rounded-lg px-4 py-2"
+              >
+                Import a Statement
+              </button>
+            }
+          />
+        </FinoraCard>
       ) : (
         accountGroups.map((group: AccountStatementGroup) => {
           const isOpen = openAccounts.has(group.accountId) || accountGroups.length === 1;
