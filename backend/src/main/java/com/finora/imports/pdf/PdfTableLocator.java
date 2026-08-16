@@ -243,6 +243,31 @@ public class PdfTableLocator {
     // exact literal string, since the surrounding asterisk padding is decorative and could vary.
     private static final Pattern STATEMENT_CLOSING_MARKER = Pattern.compile("(?i)end\\s+of\\s+statement");
 
+    // ILLUSTRATIVE_BLOCK_SUPPRESSED. A real AU Small Finance Bank credit-card statement carries a
+    // fee/interest-calculation appendix -- "Illustration for calculating Interest & Late Payment
+    // Charges" -- containing THREE fictional worked-example tables, each introduced by "The
+    // following illustration will indicate the method of calculating...". Each one is a
+    // perfectly well-formed header by every existing rule (a date-hint cell, >=2 HEADER_HINTS
+    // matches, passes the density check) because it IS a real table -- just one describing
+    // invented example transactions, not the statement's own. With nothing distinguishing
+    // "real" from "illustrative," each of the three opened its own section via the
+    // header-signature-difference fallback below, producing three garbage sections with headers
+    // like "Date, Transaction/ Details, Amount, Balance, Transaction Type, Remarks" -- and because
+    // those sections were non-empty, the REAL transactions (a completely different, non-tabular
+    // shape -- see INFERRED_TWO_LINE_DATE_BLOCK) never got a chance: the zero-section fallback
+    // gate at the end of locateAll never fired.
+    //
+    // Matched loosely against the observed phrasing (two clauses, both directly evidenced on the
+    // real document, which uses the "following illustration will indicate" wording for two of its
+    // three fake tables) rather than broadened with unevidenced synonyms ("specimen", "illustrative
+    // example") -- see "Evidence before capability" in the engineering principles doc. Verified via
+    // direct PositionedText geometry dump that the sentence renders as one un-wrapped run, so a
+    // single-row match is sufficient; it does not need the two-row lookahead WRAPPED_HEADER needs
+    // for a heading that spans physical lines.
+    private static final Pattern ILLUSTRATIVE_EXAMPLE_MARKER = Pattern.compile(
+            "(?i)\\bfollowing\\s+illustration\\s+will\\s+indicate\\b"
+                    + "|(?i)\\billustration\\s+for\\s+calculating\\b");
+
     // LEADING_NARRATION_CONTINUATION: how many dateless rows immediately after a transaction's
     // date row are still trusted to be genuinely TRAILING continuations of that same transaction,
     // before a further dateless row is instead treated as the LEADING narration of the NEXT
@@ -446,6 +471,16 @@ public class PdfTableLocator {
         // Parallel to pendingLeading: how many rows have merged into it since the last date
         // anchor. Reset wherever pendingLeading is, or the cap would leak across sections.
         int leadingCount = 0;
+        // ILLUSTRATIVE_BLOCK_SUPPRESSED. One-way: once an illustrative-example marker is seen,
+        // every row for the REST OF THE DOCUMENT is treated the same as today's dateless
+        // no-header-found rows -- folded into pendingAuxiliary, never a header, never a new
+        // section. Not a resume-on-next-marker state machine: on the one real document this
+        // exists for, real content never resumes after the fee/interest-illustration appendix
+        // begins (it runs to the end of the statement), and a one-way gate is meaningfully
+        // simpler to reason about than tracking where illustrative content ends. If a future real
+        // document needs resumption, that is new evidence to design against, not something to
+        // guess at now.
+        boolean illustrativeBlockActive = false;
 
         for (int rowIndex = 0; rowIndex < rows.size(); rowIndex++) {
             List<PositionedText> row = rows.get(rowIndex);
@@ -466,6 +501,27 @@ public class PdfTableLocator {
             }
             // The one row of lookahead the trailing/leading split needs -- see belongsToTheRowAbove.
             Float gapToNextRow = gapBetween(row, rowIndex + 1 < rows.size() ? rows.get(rowIndex + 1) : null);
+
+            if (illustrativeBlockActive) {
+                pendingAuxiliary.add(rowLine);
+                continue;
+            }
+            if (ILLUSTRATIVE_EXAMPLE_MARKER.matcher(rowLine).find()) {
+                illustrativeBlockActive = true;
+                // Closes whatever REAL section is open exactly the same way the header-signature
+                // fallback below does (flush pendingLeading, stage the section) -- a document with
+                // a genuine header-based table followed by this appendix must keep that real
+                // section, not lose it along with the boilerplate that follows.
+                if (currentRows != null) {
+                    flushPendingLeading(currentRows, pendingLeading);
+                    sections.add(new LocatedSection(pendingAuxiliary, currentRows));
+                    pendingAuxiliary = new ArrayList<>();
+                    currentRows = null;
+                }
+                if (ctx != null) ctx.record("ILLUSTRATIVE_BLOCK_SUPPRESSED");
+                pendingAuxiliary.add(rowLine);
+                continue;
+            }
 
             Matcher sectionMarker = SECTION_MARKER.matcher(rowLine);
             if (sectionMarker.find()) {
@@ -763,6 +819,7 @@ public class PdfTableLocator {
         // failure into a result; it is unreachable on every document that already parses.
         if (sections.isEmpty()) {
             LocatedSection inferred = inferHeaderlessSection(rows, ctx);
+            if (inferred == null) inferred = inferTwoLineDateBlockSection(rows, ctx);
             if (inferred != null) sections.add(inferred);
         }
         if (ctx != null) ctx.recordTables(sections.size());
@@ -2819,6 +2876,188 @@ public class PdfTableLocator {
             return null;
         }
         if (ctx != null) ctx.record("INFERRED_HEADERLESS_LAYOUT");
+        return new LocatedSection(List.of(), resultRows);
+    }
+
+    // ===== INFERRED_TWO_LINE_DATE_BLOCK =====
+    //
+    // A real AU Small Finance Bank credit-card statement's "Your Transactions" section isn't a
+    // table at all -- each transaction is a small visual CARD printed across two physical lines:
+    // day-of-month, merchant narration, and a currency-prefixed amount on the upper line; the
+    // month+year and a bare "Cr"/"Dr" direction marker on the line below it. No column headings,
+    // no shared left-edge alignment a table's columns would have -- INFERRED_HEADERLESS_LAYOUT's
+    // own isTransactionShapedRow (a date AND an amount on the SAME row) never matches this shape,
+    // since the date is split across two lines and the amount sits on a different line than the
+    // direction marker that disambiguates it.
+    //
+    // Simpler than INFERRED_HEADERLESS_LAYOUT in one important way: there is no Debit-vs-Credit
+    // ambiguity to resolve by trying candidate assignments against a balance chain, because each
+    // block already carries its own explicit, unambiguous direction (the literal Cr/Dr token).
+    // TransactionNormalizer already fully supports a single Amount column paired with a Type
+    // column holding "Cr"/"Dr" (the same shape a real PNB statement uses -- see its own TYPE_HINTS
+    // handling), so this stages {Date, Description, Amount, Type} rather than inventing a new
+    // column shape or a hypothesis-and-validate search that has nothing left to choose between.
+    //
+    // No heading requirement (no hardcoded "Your Transactions" check): matching
+    // INFERRED_HEADERLESS_LAYOUT's own precedent of relying on content shape, not bank-specific
+    // vocabulary. The compound structural signal below -- a day-of-month cell paired with a
+    // currency-prefixed amount, confirmed by a month/year token paired with a bare direction
+    // marker within TWO_LINE_BLOCK_MAX_GAP, repeated at least TWO_LINE_BLOCK_MIN_TRANSACTIONS
+    // times -- is already narrow enough that a heading would only guard against a threat this
+    // pairing already rules out.
+
+    // Between the ~16pt within-block line pitch and the ~32-35pt between-block gap measured on the
+    // real document -- wide enough to tolerate ordinary rendering jitter, narrow enough that an
+    // unrelated pair of lines two transactions apart can never satisfy it.
+    private static final float TWO_LINE_BLOCK_MAX_GAP = 24.0f;
+    // Mirrors HEADERLESS_MIN_TRANSACTION_ROWS's reasoning: a document with fewer than this many
+    // paired blocks is a coin flip, not evidence -- bail to today's behaviour rather than guess.
+    private static final int TWO_LINE_BLOCK_MIN_TRANSACTIONS = 3;
+    // Allows an optional leading zero -- the real document's day cells are "07", "14", not "7"/"14".
+    private static final Pattern DAY_OF_MONTH_CELL = Pattern.compile("^(0?[1-9]|[12]\\d|3[01])$");
+    private static final Pattern BARE_CR_DR_CELL = Pattern.compile("(?i)^(cr|dr)$");
+    // Not AU-specific: CsvParser.parseNumeric already treats Rs./INR the same as the Rupee sign
+    // everywhere else in this pipeline, so this stays a general "Indian-rupee statement" signal.
+    private static final Pattern CURRENCY_PREFIXED_AMOUNT = Pattern.compile(
+            "(?i)^[+-]?\\s*(₹|rs\\.?|inr)\\s*[\\d,]+\\.\\d{2}$");
+
+    /** One matched transaction: the reconstructed date text (day + month/year, not yet parsed --
+     *  the caller feeds it back through {@link CsvParser#parseDate} exactly as any other staged
+     *  date cell would be), the narration, the raw amount text, the Cr/Dr direction token, and how
+     *  many {@code rows} entries (starting from the anchor row) the block consumed. */
+    private record TwoLineBlock(String dateText, String description, String amountRaw, String direction,
+                                 int rowsConsumed) {}
+
+    /** True for a month/year token by asking the SAME question the eventual staged date will be
+     *  asked -- whether {@code "01 " + text} parses -- rather than a separate hand-written regex
+     *  that could silently drift from what {@link CsvParser#parseDate} actually accepts. */
+    private boolean looksLikeMonthYearToken(String text) {
+        return CsvParser.parseDate("01 " + text.trim()) != null;
+    }
+
+    /** Tries to match a transaction block anchored at {@code rows.get(rowIndex)}: a day-of-month
+     *  cell, confirmed by a currency-prefixed amount cell, a month/year token, and a bare Cr/Dr
+     *  marker all appearing somewhere within {@link #TWO_LINE_BLOCK_MAX_GAP} of the day cell's own
+     *  y (same page). Returns null on any mismatch -- a day-shaped number with nothing else
+     *  qualifying nearby is not a transaction, not an error.
+     *
+     *  <p>Deliberately does NOT assume the day, narration, and amount share one {@code rows} entry
+     *  even though they read as one visual line: measured directly against the real document, the
+     *  amount cell's baseline sits far enough below the narration/day baseline (about 1.3pt from
+     *  the day cell, versus about 4.2pt from the narration cell that starts the row) that
+     *  {@code groupIntoRows}' own {@code ROW_Y_TOLERANCE} (3.0pt) splits what looks like one line
+     *  into two separate {@code rows} entries -- narration+day in one, amount alone in the next --
+     *  with the month/year+direction line as a third. Anchoring on the day cell's own y and
+     *  pooling every cell within the gap bound, rather than assuming a fixed row count, is what
+     *  makes this robust to that split without having to loosen {@code ROW_Y_TOLERANCE} itself
+     *  (a global change with unknown effect on every other document already relying on it).
+     *
+     *  <p>Cross-checks the amount's sign against the direction marker, but only ever refuses the
+     *  ONE contradiction actually reachable on the real document -- a "+"-prefixed amount paired
+     *  with a "Dr" marker. It does not also refuse an unsigned amount paired with "Cr" (the real
+     *  document's debit rows print with no sign at all, so a stricter symmetric rule would reject
+     *  real, correct data for a combination that was never actually observed as wrong -- the same
+     *  mistake {@code firstNonZeroAmount}'s own bug-fix history in TransactionNormalizer warns
+     *  against: inventing strictness beyond what evidence supports). */
+    private TwoLineBlock twoLineBlockAt(List<List<PositionedText>> rows, int rowIndex) {
+        List<PositionedText> anchorRow = rows.get(rowIndex);
+        if (anchorRow.isEmpty()) return null;
+        PositionedText dayCell = null;
+        for (PositionedText cell : anchorRow) {
+            if (DAY_OF_MONTH_CELL.matcher(cell.text().trim()).matches()) {
+                dayCell = cell;
+                break;
+            }
+        }
+        if (dayCell == null) return null;
+
+        // Reference point is the ANCHOR ROW's own y (its smallest member, since groupIntoRows
+        // sorts by y before grouping), not the day cell's own y specifically -- the day cell can
+        // itself sit a couple of points below the row's other members (measured: the narration
+        // cell that starts this row is ~2.9pt above the day cell within the SAME groupIntoRows
+        // group). Measuring from dayCell.y() made the anchor row's own gap negative and broke the
+        // pool before it ever included the row the day cell came from.
+        float windowStartY = anchorRow.get(0).y();
+        int page = dayCell.pageIndex();
+        List<PositionedText> pool = new ArrayList<>();
+        int lastRowInWindow = rowIndex;
+        for (int i = rowIndex; i < rows.size(); i++) {
+            List<PositionedText> row = rows.get(i);
+            if (row.isEmpty() || row.get(0).pageIndex() != page) break;
+            float gap = row.get(0).y() - windowStartY;
+            if (gap < 0 || gap > TWO_LINE_BLOCK_MAX_GAP) break;
+            pool.addAll(row);
+            lastRowInWindow = i;
+        }
+
+        PositionedText amountCell = null;
+        PositionedText monthYearCell = null;
+        PositionedText directionCell = null;
+        for (PositionedText cell : pool) {
+            if (cell == dayCell) continue;
+            String text = cell.text().trim();
+            if (amountCell == null && CURRENCY_PREFIXED_AMOUNT.matcher(text).matches()) {
+                amountCell = cell;
+                continue;
+            }
+            if (monthYearCell == null && looksLikeMonthYearToken(text)) {
+                monthYearCell = cell;
+                continue;
+            }
+            if (directionCell == null && BARE_CR_DR_CELL.matcher(text).matches()) directionCell = cell;
+        }
+        if (amountCell == null || monthYearCell == null || directionCell == null) return null;
+
+        String dateText = dayCell.text().trim() + " " + monthYearCell.text().trim();
+        if (CsvParser.parseDate(dateText) == null) return null;
+
+        String direction = directionCell.text().trim();
+        boolean amountSignIsCredit = amountCell.text().trim().startsWith("+");
+        boolean markerIsCredit = "cr".equalsIgnoreCase(direction);
+        if (amountSignIsCredit && !markerIsCredit) return null;
+
+        List<PositionedText> narrationCells = new ArrayList<>(pool);
+        narrationCells.remove(dayCell);
+        narrationCells.remove(amountCell);
+        narrationCells.remove(monthYearCell);
+        narrationCells.remove(directionCell);
+        return new TwoLineBlock(dateText, lineOf(narrationCells), amountCell.text().trim(), direction,
+                lastRowInWindow - rowIndex + 1);
+    }
+
+    /** Entry point for the whole INFERRED_TWO_LINE_DATE_BLOCK capability -- see its top-level doc
+     *  comment above {@link #TWO_LINE_BLOCK_MAX_GAP}. Walks {@code rows} looking for matched
+     *  blocks, skipping every row a match consumed (a block's own lines can never themselves start
+     *  a different block). Returns null, the same "leave sections exactly as they were" contract
+     *  {@link #inferHeaderlessSection} follows, when fewer than
+     *  {@link #TWO_LINE_BLOCK_MIN_TRANSACTIONS} blocks are found. */
+    private LocatedSection inferTwoLineDateBlockSection(List<List<PositionedText>> rows, DocumentContext ctx) {
+        List<Map<String, String>> resultRows = new ArrayList<>();
+        int rowIndex = 0;
+        while (rowIndex < rows.size()) {
+            String rowLine = lineOf(rows.get(rowIndex));
+            if (PAGE_FOOTER.matcher(rowLine).find() || STATEMENT_CLOSING_MARKER.matcher(rowLine).find()) {
+                rowIndex++;
+                continue;
+            }
+            TwoLineBlock block = twoLineBlockAt(rows, rowIndex);
+            if (block != null) {
+                Map<String, String> staged = new LinkedHashMap<>();
+                staged.put("Date", block.dateText());
+                staged.put("Description", block.description());
+                staged.put("Amount", block.amountRaw());
+                staged.put("Type", block.direction());
+                resultRows.add(staged);
+                rowIndex += block.rowsConsumed();
+                continue;
+            }
+            rowIndex++;
+        }
+        if (resultRows.size() < TWO_LINE_BLOCK_MIN_TRANSACTIONS) {
+            if (ctx != null) ctx.recordDiagnostic("TWO_LINE_BLOCK_TOO_FEW_TRANSACTIONS");
+            return null;
+        }
+        if (ctx != null) ctx.record("INFERRED_TWO_LINE_DATE_BLOCK");
         return new LocatedSection(List.of(), resultRows);
     }
 }

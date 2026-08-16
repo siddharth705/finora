@@ -137,6 +137,14 @@ class CapabilityCorpusCoverageTest {
                         + "this depends on, which the Synthetic Fixture Policy requires be synthesized, "
                         + "not preserved, for exactly this kind of fixture. Covered instead by "
                         + "HeaderlessLayoutInferenceTest's fully hand-synthesized fixtures.");
+        DECLARED_WITHOUT_A_TRACE.put("ILLUSTRATIVE_BLOCK_SUPPRESSED",
+                "no trace, and none is planned -- same reasoning as INFERRED_HEADERLESS_LAYOUT. "
+                        + "Covered instead by IllustrativeBlockSuppressionTest's fully hand-synthesized "
+                        + "fixtures.");
+        DECLARED_WITHOUT_A_TRACE.put("INFERRED_TWO_LINE_DATE_BLOCK",
+                "no trace, and none is planned -- same reasoning as INFERRED_HEADERLESS_LAYOUT. "
+                        + "Covered instead by TwoLineDateBlockInferenceTest's fully hand-synthesized "
+                        + "fixtures.");
     }
 
     /**

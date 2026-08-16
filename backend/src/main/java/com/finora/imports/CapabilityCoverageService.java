@@ -82,7 +82,17 @@ public class CapabilityCoverageService {
             // SBI savings statement whose column vocabulary never appears as text at all. Columns
             // are inferred from data-row geometry and content shape instead of a label. See
             // PdfTableLocator.inferHeaderlessSection.
-            "INFERRED_HEADERLESS_LAYOUT");
+            "INFERRED_HEADERLESS_LAYOUT",
+            // A fictional worked-example table inside a real AU Small Finance Bank credit-card
+            // statement's fee/interest-calculation appendix, indistinguishable from a real header
+            // by vocabulary alone -- three of them opened three garbage sections and blocked real
+            // transaction recovery entirely. See PdfTableLocator.ILLUSTRATIVE_EXAMPLE_MARKER.
+            "ILLUSTRATIVE_BLOCK_SUPPRESSED",
+            // A transaction printed as a two-physical-line visual block (day-of-month + narration
+            // + amount, then month/year + a bare Cr/Dr marker) rather than a table row at all --
+            // found on the same AU statement, once the illustrative sections above stopped
+            // blocking recovery. See PdfTableLocator.inferTwoLineDateBlockSection.
+            "INFERRED_TWO_LINE_DATE_BLOCK");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure

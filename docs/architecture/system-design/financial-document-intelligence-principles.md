@@ -840,6 +840,82 @@ actually works — no test, no claim.
   today's zero-section outcome rather than guessing — by design, but means this fires narrower than
   the shape it targets until measured against more real headerless statements.
 
+#### `ILLUSTRATIVE_BLOCK_SUPPRESSED`
+- **Purpose:** a fictional worked-example table must never be read as a real transaction table.
+  Found on a real AU Small Finance Bank credit-card statement: a fee/interest-calculation appendix,
+  introduced by "The following illustration will indicate the method of calculating...", contains
+  three worked-example tables with invented dates and amounts. Each one is a perfectly well-formed
+  header by every existing rule — it IS a real table, just describing fictional data — so each
+  opened its own section via the header-signature-difference fallback with nothing to tell it apart
+  from a real one. Worse than a document that locates nothing: because those sections were
+  non-empty, the document's real, differently-shaped transactions never got a chance at recovery
+  (`INFERRED_TWO_LINE_DATE_BLOCK`'s own `sections.isEmpty()` gate never fired).
+- **Supported layouts:** any document containing the observed marker phrasing ("following
+  illustration will indicate" / "illustration for calculating"). Deliberately narrow — not
+  broadened with unevidenced synonyms ("specimen", "illustrative example") per "Evidence before
+  capability" above.
+- **Implementation:** `PdfTableLocator.locateAll`, a one-way `boolean illustrativeBlockActive` gate
+  checked before the `SECTION_MARKER` branch. Once `ILLUSTRATIVE_EXAMPLE_MARKER` matches, any
+  currently-open real section is flushed and closed (so a document with a genuine header-based
+  table followed by this appendix keeps its real section), then every row for the REST OF THE
+  DOCUMENT is folded into `pendingAuxiliary` — never a header, never a new section. Not a
+  resume-on-next-marker state machine: on the evidence gathered, real content never resumes after
+  an illustrative block begins.
+- **Regression tests:** `IllustrativeBlockSuppressionTest` — hand-synthesized fixtures only, per
+  the Synthetic Fixture Policy.
+- **Maturity:** Beta — one real document.
+- **Known limitations:** a document where real content genuinely DOES resume after an illustrative
+  block would incorrectly lose that content too — unmeasured, since no such document has been seen.
+  Confirmed via direct geometry dump that the marker sentence renders as a single, non-wrapped
+  `PositionedText` run on the real document; a statement where it wraps across two physical lines
+  would not match today.
+
+#### `INFERRED_TWO_LINE_DATE_BLOCK`
+- **Purpose:** a transaction printed as a two-physical-line visual block instead of a table row.
+  Found on the same AU statement, once `ILLUSTRATIVE_BLOCK_SUPPRESSED` stopped the garbage sections
+  from blocking recovery: each transaction is a small card — day-of-month, merchant narration, and
+  a currency-prefixed amount on one line; month+year and a bare "Cr"/"Dr" direction marker on the
+  line below it. `INFERRED_HEADERLESS_LAYOUT`'s own `isTransactionShapedRow` (date and amount on
+  the SAME row) never matches this shape, since the date is split across two lines.
+- **Supported layouts:** any document with this compound structural signal — a day-of-month cell
+  paired with a currency-prefixed (₹/Rs./INR) amount, confirmed by the immediately following
+  content (within `TWO_LINE_BLOCK_MAX_GAP`) carrying a month/year token and a bare direction marker
+  — repeated at least `TWO_LINE_BLOCK_MIN_TRANSACTIONS` (3) times. No heading requirement (no
+  hardcoded "Your Transactions" check), matching `INFERRED_HEADERLESS_LAYOUT`'s own precedent of
+  relying on content shape, not bank-specific vocabulary.
+- **Implementation:** `PdfTableLocator.inferTwoLineDateBlockSection`, attempted at the same
+  `sections.isEmpty()` gate as `INFERRED_HEADERLESS_LAYOUT`, after it. Simpler than
+  `INFERRED_HEADERLESS_LAYOUT` in one respect: `TransactionNormalizer` already fully supports a
+  single Amount column paired with a Type column holding a literal "Cr"/"Dr" token (the same shape
+  a real PNB statement uses), so there is no Debit-vs-Credit ambiguity to resolve by hypothesis
+  testing — each block already carries its own explicit, unambiguous direction. Stages
+  `{Date, Description, Amount, Type}`. `twoLineBlockAt` pools cells across a Y-WINDOW anchored on
+  the day cell's own row rather than assuming a fixed row count: measured directly against the real
+  document, the amount cell's baseline sits far enough below the narration/day baseline that
+  `groupIntoRows`' `ROW_Y_TOLERANCE` (3.0pt) splits one visual line into two separate `rows`
+  entries — a bug caught and fixed during verification, not by a test (the first version anchored
+  the pooling window on the day cell's own y instead of the row's, which made the anchor row's own
+  gap compute negative and broke the pool before it ever included anything).
+- **Regression tests:** `TwoLineDateBlockInferenceTest` — hand-synthesized fixtures only, including
+  a dedicated case reproducing the split-baseline geometry above as regression coverage for the bug
+  just described.
+- **Maturity:** Beta — one real document.
+- **Known limitations:** a block wide enough (narration wrapped onto an extra physical line, say)
+  that its month/year+direction line falls outside `TWO_LINE_BLOCK_MAX_GAP` of the day cell's row
+  is not handled — the pooling window simply never reaches it, so the whole block is silently
+  dropped, not corrupted (unseen on the real document, which never wraps). Only the first matching
+  cell per pattern within the pooled window is taken if it ever contains two day-shaped or two
+  amount-shaped cells (unseen on the real document). The amount's sign is cross-checked against the
+  direction marker, but only
+  the one contradiction actually reachable ("+"-prefixed paired with "Dr") is refused — a stricter
+  symmetric rule was deliberately not added for a combination never observed as wrong. Deferred, not
+  built: validating the extracted totals against the statement's own printed "Total spends"/
+  "Payments & Refunds" summary via `SUMMARY_TOTALS` — checked the real geometry and the label and
+  value print on the SAME physical row, a different shape than `StatementSummaryExtractor`'s
+  current label-row/value-row-below model, so this needs real new extraction logic, not a
+  vocabulary addition; not required for correctness here since direction is already unambiguous per
+  block, so flagged as a real follow-up rather than bundled in.
+
 #### `PAGE_BOUNDARY_ISOLATION` / `PAGE_FOOTER_EXCLUSION`
 - **Purpose:** a page-number footer line, a per-page repeated title banner, or a statement-closing
   marker line must never merge into the last real transaction row before it.
