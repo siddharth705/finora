@@ -342,6 +342,16 @@ export default function VerifyPhone() {
                     ? 'Try again'
                     : "Didn't get a code? Resend"}
             </button>
+
+            {/* Same trust-box pattern Register.tsx/Login.tsx already use elsewhere in the auth
+                flow -- this is the one auth screen that didn't have it, despite being the one
+                explicitly asking for a phone number a second time. */}
+            <div className="flex items-start gap-2.5 bg-primary-light rounded-lg p-3 mt-6">
+              <ShieldCheck size={16} className="text-primary flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-ink">
+                This number is used only to verify your identity — never for marketing, and never shared.
+              </p>
+            </div>
           </>
         )}
 
