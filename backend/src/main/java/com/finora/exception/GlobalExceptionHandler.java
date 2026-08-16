@@ -67,7 +67,16 @@ public class GlobalExceptionHandler {
         // flood exactly the alerting this class exists to keep meaningful with what the limiter
         // is designed to do correctly. WARN, no trace: the code and message already say
         // everything there is to know, there is no origin to go find.
-        if (ex.getCode() != null && ex.getCode().intentionalRejection()) {
+        //
+        // Post-merge review: is5xxServerError() is checked in BOTH branches now, not just the
+        // ERROR one -- intentionalRejection()'s own doc is explicit that it's about "a 5xx
+        // carrying this code," and every 4xx above this block is documented and tested to stay
+        // completely silent. Without this guard, a future ErrorCode that set
+        // intentionalRejection=true on a 4xx (a plausible mistake -- someone copying
+        // IMPORT_SYSTEM_BUSY's pattern to opt out of ERROR-logging without noticing 4xx never
+        // reached that branch anyway) would start WARN-logging a class of error this class's own
+        // contract says must never be logged at all.
+        if (ex.getStatus().is5xxServerError() && ex.getCode() != null && ex.getCode().intentionalRejection()) {
             log.warn("Deliberate rejection ApiException [{}] on {} {}: {}",
                     errorCode, request.getMethod(), request.getRequestURI(), ex.getMessage());
         } else if (ex.getStatus().is5xxServerError()) {

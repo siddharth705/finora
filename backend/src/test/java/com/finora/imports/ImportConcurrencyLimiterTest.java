@@ -189,15 +189,21 @@ class ImportConcurrencyLimiterTest {
         ExecutorService excessPool = Executors.newFixedThreadPool(excessCallers);
 
         try {
+            // Post-merge review: holder futures are captured and .get()'d below (not just
+            // shutdown()+awaitTermination()'d) so a genuine failure inside a holder task -- e.g. an
+            // InterruptedException from release.await() during an earlier assertion's cleanup --
+            // surfaces as a loud test failure with a real stack trace, instead of vanishing inside
+            // an abandoned Future.
+            List<Future<?>> holderFutures = new ArrayList<>();
             for (int i = 0; i < maxConcurrent; i++) {
-                holderPool.submit(() -> limiter.runGated(() -> {
+                holderFutures.add(holderPool.submit(() -> limiter.runGated(() -> {
                     int now = current.incrementAndGet();
                     observedMax.updateAndGet(prevMax -> Math.max(prevMax, now));
                     holdersReady.countDown();
                     release.await();
                     current.decrementAndGet();
                     return null;
-                }));
+                })));
             }
             assertThat(holdersReady.await(2, TimeUnit.SECONDS))
                     .as("every permit is held -- excess callers below are now provably guaranteed to find none free")
@@ -219,8 +225,7 @@ class ImportConcurrencyLimiterTest {
             for (Future<?> f : excessFutures) f.get(5, TimeUnit.SECONDS);
 
             release.countDown();
-            holderPool.shutdown();
-            assertThat(holderPool.awaitTermination(5, TimeUnit.SECONDS)).as("holders finished").isTrue();
+            for (Future<?> f : holderFutures) f.get(5, TimeUnit.SECONDS);
 
             assertThat(observedMax.get())
                     .as("never more than maxConcurrent held a permit at once")
@@ -246,12 +251,16 @@ class ImportConcurrencyLimiterTest {
         ExecutorService holderPool = Executors.newFixedThreadPool(maxConcurrent);
 
         try {
+            // Post-merge review: captured and .get()'d below, same reasoning as
+            // runGated_neverExceedsMaxConcurrent_evenWhenGenuinelyOversubscribed's own fix -- an
+            // abandoned Future would silently swallow a genuine failure inside a holder task.
+            List<Future<?>> holderFutures = new ArrayList<>();
             for (int i = 0; i < maxConcurrent; i++) {
-                holderPool.submit(() -> limiter.runGated(() -> {
+                holderFutures.add(holderPool.submit(() -> limiter.runGated(() -> {
                     allHoldersReady.countDown();
                     releaseHolders.await();
                     return null;
-                }));
+                })));
             }
             assertThat(allHoldersReady.await(2, TimeUnit.SECONDS)).as("every permit is taken").isTrue();
 
@@ -262,6 +271,7 @@ class ImportConcurrencyLimiterTest {
             }
 
             releaseHolders.countDown();
+            for (Future<?> f : holderFutures) f.get(5, TimeUnit.SECONDS);
         } finally {
             holderPool.shutdownNow();
         }
