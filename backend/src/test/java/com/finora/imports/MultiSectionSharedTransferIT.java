@@ -21,7 +21,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.SpyBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -85,8 +85,8 @@ class MultiSectionSharedTransferIT extends AbstractIntegrationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private MerchantLearningEventRepository learningEventRepository;
 
-    @SpyBean private ReconciliationService reconciliationService;
-    @SpyBean private RecurringService recurringService;
+    @MockitoSpyBean private ReconciliationService reconciliationService;
+    @MockitoSpyBean private RecurringService recurringService;
 
     private static final LocalDate WHEN = LocalDate.of(2026, 7, 10);
     private static final BigDecimal AMOUNT = new BigDecimal("30000.00");

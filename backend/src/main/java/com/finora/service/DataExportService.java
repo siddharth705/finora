@@ -37,6 +37,7 @@ import com.finora.repository.ImportSessionRepository;
 import com.finora.repository.MerchantRepository;
 import com.finora.repository.NetWorthSnapshotRepository;
 import com.finora.repository.StatementImportRepository;
+import com.finora.repository.StatementImportRepository.StatementMetadata;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.rules.RuleDto;
@@ -53,7 +54,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
-import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -79,12 +80,17 @@ import java.util.zip.ZipOutputStream;
  * clean error response, no ZIP bytes ever sent. It deliberately does NOT resolve any statement's
  * original file bytes. {@link #writeZip} runs afterward, inside the {@code StreamingResponseBody}
  * callback the controller wires up -- which Spring runs on a separate thread, after the controller
- * method (and its transaction) has already returned. {@code StatementImport.fileContent} is {@code
- * @Basic(fetch = FetchType.LAZY)}, so resolving it outside its owning transaction throws {@code
- * LazyInitializationException} for any statement still holding its bytes in the database (see
- * {@code StatementImportService.getFile}'s own doc comment) -- which is exactly why {@link
- * #writeZip} calls that method fresh, once per statement, rather than touching {@code
- * StatementImport} entities captured back in {@link #buildBundle}.
+ * method (and its transaction) has already returned. {@link #writeZip} resolves each statement's
+ * bytes fresh, once per statement, via {@code StatementImportService#getFile} rather than touching
+ * a {@code StatementImport} entity captured back in {@link #buildBundle} -- not because {@code
+ * fileContent}'s {@code @Basic(fetch = FetchType.LAZY)} would throw outside its owning transaction
+ * (bytecode enhancement, which this build does not configure, is required for Hibernate to honor
+ * that annotation on a non-{@code @Lob} field at all -- without it the field loads eagerly
+ * regardless), but because {@link #buildBundle} never loads a full {@code StatementImport} entity
+ * in the first place: {@code StatementImportRepository.findMetadataByUserIdOrderByImportedAtDesc}
+ * projects out every column except {@code fileContent}, so the bulk fetch that produces {@code
+ * statementSummaries} below can never pull a user's entire statement history's raw bytes into heap
+ * during this transaction, whether or not the LAZY annotation actually does anything.
  */
 @Service
 public class DataExportService {
@@ -171,8 +177,25 @@ public class DataExportService {
 
         // Mirrors AccountPurgeSweepService.purgeOne()'s own table order.
 
+        // Fetched once, ahead of accounts, and shared by both toAccountExportEntry (Finding 3:
+        // per-account statementsCount/transactionsCount/lastImportedAt, computed the same way
+        // AccountService.listForUser does it, batched rather than one query per account) and the
+        // statement-summaries list below -- see StatementMetadata's own doc comment for why this
+        // is a fileContent-free projection, not the entity-returning finder this class used to call.
+        List<StatementMetadata> statementMetadata = statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId);
+        Map<UUID, StatementMetadata> latestImportByAccount = new HashMap<>();
+        Map<UUID, Integer> statementsCountByAccount = new HashMap<>();
+        for (StatementMetadata m : statementMetadata) {
+            latestImportByAccount.putIfAbsent(m.getAccountId(), m); // already ordered by importedAt desc
+            statementsCountByAccount.merge(m.getAccountId(), 1, Integer::sum);
+        }
+        Map<UUID, Long> transactionsCountByAccount = transactionRepository.countByAccountForUser(userId).stream()
+                .collect(Collectors.toMap(
+                        TransactionRepository.AccountTransactionCount::getAccountId,
+                        TransactionRepository.AccountTransactionCount::getCount));
+
         List<AccountExportEntry> accounts = accountRepository.findByUserIdIncludingDeleted(userId).stream()
-                .map(this::toAccountExportEntry)
+                .map(a -> toAccountExportEntry(a, latestImportByAccount, statementsCountByAccount, transactionsCountByAccount))
                 .toList();
 
         Map<UUID, String> categoryNames = categoryRepository.findByUserId(userId).stream()
@@ -207,14 +230,28 @@ public class DataExportService {
                 .map(ImportJobDto.Progress::of)
                 .toList();
 
+        // Bug fix (review): used to map every session unguarded -- one historical session whose
+        // stagedRowsJson/sectionsJson fails to deserialize against the current record shape (e.g.
+        // a future field rename) threw ImportSessionService.readJson's uncaught
+        // IllegalStateException straight out of buildBundle, failing the user's entire export over
+        // one unrelated, unreadable row. Same "one bad item doesn't sink the batch" discipline the
+        // per-statement loop in writeZip already applies -- caught, logged, and that one session
+        // dropped from the list rather than aborting everything else.
         List<ImportSessionSummaryDto> importSessions = importSessionRepository
                 .findByUserIdOrderByCreatedAtDesc(userId).stream()
-                .map(this::toSessionSummary)
+                .flatMap(session -> {
+                    try {
+                        return java.util.stream.Stream.of(toSessionSummary(session));
+                    } catch (Exception e) {
+                        log.warn("Data export: failed to summarize import session {} for user {}: {}",
+                                session.getId(), userId, e.getMessage(), e);
+                        return java.util.stream.Stream.empty();
+                    }
+                })
                 .toList();
 
         Map<UUID, Integer> duplicateCounts = statementImportService.duplicateCountsByStatementImport(userId);
-        List<StatementImport> statementImportEntities = statementImportRepository.findByUserIdOrderByImportedAtDesc(userId);
-        List<Summary> statementSummaries = statementImportEntities.stream()
+        List<Summary> statementSummaries = statementMetadata.stream()
                 .map(s -> Summary.from(s, duplicateCounts.getOrDefault(s.getId(), 0)))
                 .toList();
 
@@ -228,7 +265,7 @@ public class DataExportService {
 
         return new ExportBundle(userId, user.getEmail(), accounts, transactions, budgets, goals, categories,
                 categoryRules, relationships, netWorthSnapshots, merchants, importJobs, importSessions,
-                statementImportEntities, statementSummaries, gmailConnections, userSettings, workspaceSettings);
+                statementSummaries, gmailConnections, userSettings, workspaceSettings);
     }
 
     /**
@@ -263,16 +300,27 @@ public class DataExportService {
             writeJsonEntry(zos, "account_settings.json", bundle.userSettings());
             writeJsonEntry(zos, "workspace_settings.json", bundle.workspaceSettings());
 
-            for (StatementImport statement : bundle.statementImports()) {
-                String entryName = "statements/" + statement.getId() + "-" + sanitize(statement.getFileName());
+            for (Summary statement : bundle.statementSummaries()) {
+                String entryName = "statements/" + statement.id() + "-" + sanitize(statement.fileName());
                 try {
-                    StatementImportService.FileDownload file = statementImportService.getFile(userId, statement.getId());
+                    StatementImportService.FileDownload file = statementImportService.getFile(userId, statement.id());
                     zos.putNextEntry(new ZipEntry(entryName));
                     zos.write(file.content());
                     zos.closeEntry();
+                } catch (IOException e) {
+                    // Bug fix (review): a broken pipe (client disconnect mid-download) surfaces as
+                    // an ordinary IOException from zos.write/putNextEntry/closeEntry above -- the
+                    // SAME exception type a genuinely broken stream produces. Writing a recovery
+                    // placeholder onto that same, now-dead stream would itself throw a second,
+                    // uncaught IOException, misattributing an ordinary client-side cancel as a
+                    // generic internal failure once it propagates out of this method. Re-thrown
+                    // here, not converted to a placeholder: an IOException means the STREAM is
+                    // unusable, not that this one file's storage read failed, so no further write
+                    // to it (a placeholder or the next statement) can succeed either.
+                    throw e;
                 } catch (Exception e) {
                     log.warn("Data export: failed to read statement {} for user {}: {}",
-                            statement.getId(), userId, e.getMessage(), e);
+                            statement.id(), userId, e.getMessage(), e);
                     writeTextEntry(zos, entryName + ".MISSING.txt",
                             "This file could not be included in your export (" + e.getClass().getSimpleName()
                                     + "). Contact support if you need it.");
@@ -281,15 +329,37 @@ public class DataExportService {
         }
     }
 
-    private AccountExportEntry toAccountExportEntry(Account a) {
-        AccountDto dto = AccountDto.from(a, bankManagementService.resolve(a.getBankId()));
+    private AccountExportEntry toAccountExportEntry(Account a, Map<UUID, StatementMetadata> latestImportByAccount,
+                                                      Map<UUID, Integer> statementsCountByAccount,
+                                                      Map<UUID, Long> transactionsCountByAccount) {
+        // Bug fix (review): used to call AccountDto's 2-arg from(Account, BankDto) overload, which
+        // hardcodes statementsCount/transactionsCount/lastImportedAt to 0/0/null -- every exported
+        // account misrepresented its own history regardless of how much it actually had, even
+        // though transactions.json/statements.json elsewhere in this same archive had the real
+        // numbers. Now computed the same way AccountService.listForUser does it: batched maps built
+        // once in buildBundle, not a query per account.
+        StatementMetadata latestImport = latestImportByAccount.get(a.getId());
+        AccountDto dto = AccountDto.from(a, bankManagementService.resolve(a.getBankId()),
+                latestImport == null ? null : toLatestImportRef(latestImport),
+                statementsCountByAccount.getOrDefault(a.getId(), 0),
+                transactionsCountByAccount.getOrDefault(a.getId(), 0L));
         return new AccountExportEntry(dto, a.getDeletedAt() != null, a.getDeletedAt());
     }
 
+    /** {@code AccountDto.from}'s 5-arg overload takes a {@code StatementImport} entity purely to
+     *  read its {@code importedAt}/{@code statementPeriodStart}/{@code statementPeriodEnd} --
+     *  never {@code fileContent}. A throwaway, unsaved entity carrying only those three fields
+     *  satisfies that contract without ever loading a real one back into this transaction. */
+    private static StatementImport toLatestImportRef(StatementMetadata m) {
+        StatementImport ref = new StatementImport();
+        ref.setImportedAt(m.getImportedAt());
+        ref.setStatementPeriodStart(m.getStatementPeriodStart());
+        ref.setStatementPeriodEnd(m.getStatementPeriodEnd());
+        return ref;
+    }
+
     private RuleDto toRuleDto(CategoryRule r) {
-        return new RuleDto(r.getId(), r.getScope().name(), r.getField().name(), r.getOperator().name(),
-                r.getComparisonValue(), r.getActionType().name(), r.getActionValue(), r.getPriority(), r.isEnabled(),
-                r.getMatchCount(), r.getLastMatchedAt());
+        return RuleDto.from(r);
     }
 
     /** Branches on session kind -- a MULTI_ACCOUNT session's row count has to come from {@code
@@ -320,7 +390,7 @@ public class DataExportService {
                 new ManifestEntry("import_jobs.json", "Your statement import job history.", bundle.importJobs().size()),
                 new ManifestEntry("import_sessions.json", "Your statement staging session history.", bundle.importSessions().size()),
                 new ManifestEntry("statements.json", "Metadata for every statement you've imported.", bundle.statementSummaries().size()),
-                new ManifestEntry("statements/", "The original statement files you uploaded, where still retrievable.", bundle.statementImports().size()),
+                new ManifestEntry("statements/", "The original statement files you uploaded, where still retrievable.", bundle.statementSummaries().size()),
                 new ManifestEntry("gmail_connection.json", "Your Gmail connection status, if any (no credentials).", bundle.gmailConnections().size()),
                 new ManifestEntry("account_settings.json", "Your profile and account preferences.", null),
                 new ManifestEntry("workspace_settings.json", "Your categorization workspace preferences.", null)
@@ -374,16 +444,17 @@ public class DataExportService {
     }
 
     /** Internal transport between {@link #buildBundle} and {@link #writeZip} -- never serialized
-     *  directly. {@code statementImports} (the entities) travel alongside {@code
-     *  statementSummaries} (the DTO) specifically so {@link #writeZip} has the id/fileName it
-     *  needs to resolve each statement's bytes without re-querying. */
+     *  directly. {@code statementSummaries} alone carries what {@link #writeZip} needs to resolve
+     *  each statement's bytes ({@code id()}/{@code fileName()}) -- a separate entity list is no
+     *  longer carried alongside it (removed in the same fix that made {@code buildBundle} stop
+     *  loading full {@code StatementImport} entities at all; see this class's own doc comment). */
     public record ExportBundle(
             UUID userId, String email,
             List<AccountExportEntry> accounts, List<TransactionDto> transactions, List<BudgetDto> budgets,
             List<GoalDto> goals, List<CategoryDto> categories, List<RuleDto> categoryRules,
             List<RelationshipDto> relationships, List<NetWorthSnapshotExportDto> netWorthSnapshots,
             List<MerchantExportDto> merchants, List<ImportJobDto.Progress> importJobs,
-            List<ImportSessionSummaryDto> importSessions, List<StatementImport> statementImports,
+            List<ImportSessionSummaryDto> importSessions,
             List<Summary> statementSummaries, List<GmailConnectionExportDto> gmailConnections,
             UserSettingsDto userSettings, WorkspaceSettingsDto workspaceSettings
     ) {}

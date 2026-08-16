@@ -28,7 +28,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
-import org.springframework.boot.test.mock.mockito.SpyBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.TestPropertySource;
 
@@ -78,7 +78,7 @@ class MerchantLearningQueueIT extends AbstractIntegrationTest {
      * transaction boundaries, and whether a failure survives the rollback of the transaction that
      * caused it. Only the trigger is simulated.
      */
-    @SpyBean private MerchantLearningService learningService;
+    @MockitoSpyBean private MerchantLearningService learningService;
 
     private record Fixture(User user, Merchant merchant, Category category) {}
 

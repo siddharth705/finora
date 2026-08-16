@@ -79,7 +79,11 @@ export default function Login() {
     setLoading(true);
     try {
       const phoneVerified = await login(identifier.trim(), password);
-      void navigate(phoneVerified ? '/app' : '/verify-phone');
+      // fromLogin distinguishes a RETURNING user who still hasn't verified from a brand-new
+      // registration landing there for the first time (see Register.tsx's own identical
+      // navigate call, which never sets it) -- VerifyPhone.tsx uses it to greet the two
+      // differently rather than showing "Welcome back" to someone who just signed up.
+      void navigate(phoneVerified ? '/app' : '/verify-phone', { state: phoneVerified ? undefined : { fromLogin: true } });
     } catch (err: any) {
       // See errorCodes.ts's own doc comment on AUTH_ACCOUNT_DEACTIVATED for why this compares
       // against a shared constant rather than a hand-typed literal here.
@@ -97,7 +101,9 @@ export default function Login() {
   }
 
   function handleReactivated(phoneVerified: boolean) {
-    void navigate(phoneVerified ? '/app' : '/verify-phone');
+    // Same fromLogin reasoning as handleSubmit's own navigate call -- a reactivating user is a
+    // returning one too, arguably more so.
+    void navigate(phoneVerified ? '/app' : '/verify-phone', { state: phoneVerified ? undefined : { fromLogin: true } });
   }
 
   return (

@@ -16,7 +16,7 @@ import com.finora.service.MerchantLearningEventWorker;
 import com.finora.service.MerchantLearningService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.SpyBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.TestPropertySource;
@@ -61,7 +61,7 @@ class MerchantLearningImportIT extends AbstractIntegrationTest {
 
     /** Real by default; told to throw only where a learning failure is the subject. See
      *  MerchantLearningQueueIT for why the failure cannot be induced by deleting the category. */
-    @SpyBean private MerchantLearningService learningService;
+    @MockitoSpyBean private MerchantLearningService learningService;
 
     private record Fixture(User user, Account account) {}
 

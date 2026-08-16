@@ -114,7 +114,18 @@ public class StatementImportService {
      *  doc comment. Backs the Statement Imports page's per-import duplicate count.
      *
      *  <p>Package-private, not private: DataExportService (same package) reuses this rather than
-     *  re-deriving the same grouped-COUNT query a second time. */
+     *  re-deriving the same grouped-COUNT query a second time.
+     *
+     *  <p><b>Trust boundary, for the next caller in this package (review note):</b> widening this
+     *  from {@code private} removed its previous single-caller guarantee -- {@code userId} here is
+     *  taken on faith, with no ownership/ScopedIdentityLookup check of its own, unlike every
+     *  per-entity accessor in this class (which all route through {@code getOwned}/{@code
+     *  OwnershipGuard}). Safe today because both callers ({@link #listGroupedByAccount} and {@code
+     *  DataExportService.buildBundle}) already pass only the authenticated caller's own id. A
+     *  future caller in {@code com.finora.service} that passes a less-trusted id (an admin tool,
+     *  a batch job iterating other users' ids) would get that OTHER user's duplicate counts with
+     *  nothing here or at compile time catching it -- scope the caller, not this method, or add a
+     *  real check here if that stops being true. */
     Map<UUID, Integer> duplicateCountsByStatementImport(UUID userId) {
         Map<UUID, Integer> counts = new HashMap<>();
         for (var row : transactionRepository.countDuplicatesByStatementImportForUser(

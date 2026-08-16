@@ -6,12 +6,55 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 public interface StatementImportRepository extends JpaRepository<StatementImport, UUID> {
+
+    /**
+     * Every column {@code DataExportService} actually needs, deliberately excluding
+     * {@code fileContent}.
+     *
+     * <p>Bug fix (Phase C review): {@code @Basic(fetch = FetchType.LAZY)} on {@code fileContent}
+     * is a no-op without Hibernate bytecode enhancement, which this build does not configure --
+     * confirmed by this same class's own {@code findLatestPeriodEndForAccount} comment above,
+     * documenting the identical eager-load behavior for this exact field. A plain entity-returning
+     * query -- {@link #findByUserIdOrderByImportedAtDesc}, which {@code DataExportService} used to
+     * call directly -- therefore pulls every legacy (database-stored) statement's full raw bytes
+     * into heap during {@code buildBundle()}'s read-only transaction, for every user, regardless of
+     * the LAZY annotation's claim otherwise. This projection selects only the columns {@code
+     * StatementImportDto.Summary}, the export's ZIP-entry naming, and its per-account statement/
+     * import-date rollup actually use, so the generated SQL never touches {@code file_content} at
+     * all -- the one reliable way to keep it out of memory here, since the annotation alone does not.
+     */
+    interface StatementMetadata {
+        UUID getId();
+        UUID getAccountId();
+        String getFileName();
+        LocalDate getStatementPeriodStart();
+        LocalDate getStatementPeriodEnd();
+        BigDecimal getOpeningBalance();
+        BigDecimal getClosingBalance();
+        int getTransactionsImported();
+        int getTransactionsSkipped();
+        Instant getImportedAt();
+    }
+
+    @Query("""
+           SELECT s.id AS id, s.accountId AS accountId, s.fileName AS fileName,
+                  s.statementPeriodStart AS statementPeriodStart, s.statementPeriodEnd AS statementPeriodEnd,
+                  s.openingBalance AS openingBalance, s.closingBalance AS closingBalance,
+                  s.transactionsImported AS transactionsImported, s.transactionsSkipped AS transactionsSkipped,
+                  s.importedAt AS importedAt
+             FROM StatementImport s
+            WHERE s.userId = :userId
+            ORDER BY s.importedAt DESC
+           """)
+    List<StatementMetadata> findMetadataByUserIdOrderByImportedAtDesc(@Param("userId") UUID userId);
 
     /**
      * The latest statement period end already on file for this account, ignoring one row.

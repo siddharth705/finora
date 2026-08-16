@@ -138,10 +138,15 @@ public class AuditService {
      * (not a mocked repository) can show this at all, which is why no unit test caught it.
      *
      * <p>The same "record a failure, then throw" shape exists at several other call sites across
-     * this codebase (e.g. {@code PasswordChangeService}, {@code UserAccountLifecycleService}) and
-     * likely carries the identical gap -- out of scope to change here, since this method exists to
-     * fix Phase C's own endpoint, not to audit every caller of {@link #record}. A failure this
-     * audit trail exists specifically to catch (repeated wrong-password attempts against a
+     * this codebase. A follow-up swept them: {@code UserAccountLifecycleService.deactivate()}
+     * carried the identical gap (plain {@code @Transactional}, no {@code noRollbackFor}) and now
+     * uses this method too. {@code PasswordChangeService}'s three sites do NOT -- their methods
+     * are {@code @Transactional(noRollbackFor = ApiException.class)}, which excludes {@code
+     * ApiException} from Spring's rollback rule entirely, so a plain {@link #record} there already
+     * commits fine; switching them to this method would only add an unneeded {@code REQUIRES_NEW}
+     * transaction. Verified empirically against real Postgres in {@code PasswordChangeServiceIT},
+     * not assumed from the annotation alone -- see that test class's own doc comment. A failure
+     * this audit trail exists specifically to catch (repeated wrong-password attempts against a
      * password-gated endpoint) is exactly the kind of event that must not silently vanish just
      * because the request that triggered it went on to fail for the reason being recorded.
      */

@@ -1660,8 +1660,15 @@ describe('Import — arriving to retry a failed sync import', () => {
       await user.click(await screen.findByRole('button', { name: 'Try a different file' }));
 
       await waitFor(() => expect(screen.queryByTestId('import-progress')).not.toBeInTheDocument());
-      expect(screen.queryByTestId('retry-import-banner')).not.toBeInTheDocument();
-      expect(screen.queryByText('bad-statement.pdf')).not.toBeInTheDocument();
+      // Bug fix (CI flake, same root cause as the sibling "cancelled" test below):
+      // clearArrivalState()'s navigate() call -- which actually clears retryState -- lands on a
+      // later render than the setJobId(null) that unmounts the timeline above, since router
+      // navigation and local useState updates commit on separate ticks. Wrapped in the same
+      // waitFor idiom as the line above so both are given a chance to actually settle.
+      await waitFor(() => {
+        expect(screen.queryByTestId('retry-import-banner')).not.toBeInTheDocument();
+        expect(screen.queryByText('bad-statement.pdf')).not.toBeInTheDocument();
+      });
     });
 
     it('clears the retry banner once the second upload is cancelled', async () => {
@@ -1676,8 +1683,16 @@ describe('Import — arriving to retry a failed sync import', () => {
       await user.click(await screen.findByRole('button', { name: 'Cancel' }));
 
       await waitFor(() => expect(screen.queryByTestId('import-progress')).not.toBeInTheDocument());
-      expect(screen.queryByTestId('retry-import-banner')).not.toBeInTheDocument();
-      expect(screen.queryByText('bad-statement.pdf')).not.toBeInTheDocument();
+      // Bug fix (CI flake): clearArrivalState()'s navigate() call -- which is what actually
+      // clears retryState -- lands on a later render than the setJobId(null) that unmounts
+      // ImportProgress above, since router navigation and local useState updates commit on
+      // separate ticks. A bare synchronous expect() here raced that second update and failed
+      // intermittently under CI's timing (passed locally, failed in CI); wrapping in the same
+      // waitFor idiom as the line above waits for both to actually settle.
+      await waitFor(() => {
+        expect(screen.queryByTestId('retry-import-banner')).not.toBeInTheDocument();
+        expect(screen.queryByText('bad-statement.pdf')).not.toBeInTheDocument();
+      });
     });
   });
 
