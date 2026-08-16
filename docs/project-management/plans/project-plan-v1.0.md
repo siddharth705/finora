@@ -142,11 +142,11 @@ closures are graded against, not current status** — current status is §1 and 
 All five carry regression tests mutation-checked against the restored defect. These survived a
 1,745-test suite and 489 commits before being found — none had a test at the time.
 
-### P1 — one new open defect (BH-060), one accepted trade-off (not a defect)
+### P1 — no open defects, one accepted trade-off (not a defect)
 
 **Closed:** `BH-002`, `BH-011`, `BH-012`, `BH-013` (Round 1) · `BH-019`, `BH-023`, `BH-026`, `BH-027`
 (financial/idempotency) · `BH-017` (retention, merged) · `BH-025` (BYTEA dual-write, merged) ·
-**`BH-048`**, **`BH-007`** (see below).
+**`BH-048`**, **`BH-007`**, **`BH-060`** (see below).
 
 **`BH-048` — CLOSED–VERIFIED, 2026-08-14.** Its "never executed" framing was stale (the workflow had
 actually run 5 times); the real defect was two consecutive nightly failures (08-12, 08-13),
@@ -175,25 +175,28 @@ REVIEWED:** two new regression tests mutation-checked via `git stash` on just th
 confirmed to fail against the pre-fix code with the exact reported symptom (`expected: OK, but was:
 REFUND`), then confirmed passing with the fix restored. Full backend suite green (~2355 tests).
 
-**`BH-060` — OPEN, ticketed 2026-08-16 (financial correctness, both PDF and CSV import paths).**
-`OPENING BALANCE`/`CLOSING BALANCE` marker rows carrying a real (non-blank) date get staged as
-ordinary transactions with no marker-row exclusion anywhere in the pipeline, and — separate from and
-more serious than the resulting false `BALANCE_CHAIN`/`STATEMENT_TOTALS` verification
-`WARNING`/`FAILED` on correctly-parsed statements — can be **confirmed into the ledger as a real
-`EXPENSE` transaction equal to the account's opening/closing balance**, unless the user notices the
-label text and manually unchecks the row during review; nothing in `StagedRow`/`ConfirmedRow` flags
-it programmatically. Full trace, `TransactionNormalizer.normalize()` → `PdfPreviewGenerator`
-(`:314-363`) / `PreviewGenerator` (`:102-127`) → `ImportVerifier.verify()` → `ImportService
-.persistSection()` (`:704-777`) → `frontend/src/lib/importReview.ts`'s `beginReview()`/
-`isUnderReview()` (`:51-66`, defaults `included: true` for any non-duplicate row) — every layer
-trusts the one before it, none filters. Confirmed via `PdfPreviewGeneratorTest
-.generate_extractsAllSixRowsFromTheGoldenFixture`'s own comment, which documents the six-row count
-including both marker rows as the real, non-test pipeline's actual behavior, not a fixture artifact.
-Full writeup: [`marker-row-pollution-scope-investigation.md`](../../architecture/system-design/marker-row-pollution-scope-investigation.md).
-Tracked as [issue #138](https://github.com/siddharth705/finora/issues/138).
-**Scope/impact only — no fix proposed or implemented; the fix (a shared marker-row detection step
-before verification and before a row is offered as includable) is a separate follow-up decision, not
-yet scheduled.**
+**`BH-060` — CLOSED, ticketed 2026-08-16, closed same day on re-verification.** Ticketed as a live
+"`OPENING BALANCE`/`CLOSING BALANCE` marker rows can be confirmed into the ledger as real `EXPENSE`
+transactions" defect, describing no marker-row exclusion anywhere in the pipeline. **Before starting
+any fix work, re-verified against current `main` and found the ticket describes a bug that was
+already fixed five days earlier** — [`ade05ca`](https://github.com/siddharth705/finora/commit/ade05ca)
+(2026-08-11, "stop statement marker rows from becoming ledger transactions") adds `RowKind`
+(`TRANSACTION`/`BALANCE_MARKER`, classified structurally by which amount column resolved a value,
+never by description text) and excludes `BALANCE_MARKER` rows from staging, verification, and
+confirm in both `PdfPreviewGenerator` and `PreviewGenerator`. The ticket's own investigation had
+`ade05ca` in its git history when written and still asserted the pre-fix behavior — no clean
+explanation found for the discrepancy, but the empirical evidence is unambiguous: the 94 tests
+`ade05ca` added or updated (including `PdfPreviewGeneratorTest`'s golden-fixture assertion, changed
+from `hasSize(6)` to `hasSize(4)` in that same commit) all pass on current `main`. Also checked the
+ticket's own defense-in-depth question (`ImportService.persistSection()` has no marker check of its
+own) and found it's a non-issue: both real confirm entry points (`confirmSession`,
+`confirmReimport`) run `ConfirmedRowIntegrity.requireSameRows()` (built for the unrelated BH-006/
+BH-023 fabricated-row bug) before `persistSection()` ever runs — a multiset check of the client's
+confirmed rows against the server's own staged/re-parsed rows, which never contain a marker row to
+begin with. No caller of `confirm()`/`confirmSession()` skips this check. Closed as
+[issue #138](https://github.com/siddharth705/finora/issues/138) with full evidence in the closing
+comment; full original writeup (now describing an already-fixed state, kept for the trail) at
+[`marker-row-pollution-scope-investigation.md`](../../architecture/system-design/marker-row-pollution-scope-investigation.md).
 
 **Still open:**
 - **BH-054** — accepted trade-off, not a defect.
@@ -892,7 +895,7 @@ in parallel with work you are doing anyway.
 |---|---|---|
 | **Development Complete** | ✅ | Core functionality is implemented across all three apps |
 | **Feature Complete (v1.0)** | 🟡 | M2 items 7–8; password-policy convergence; async threshold decision (D-5) |
-| **QA Complete** | 🔴 | **Corrected 2026-08-16 — "1 Critical + 12 High" was stale, left unedited since before the 08-14 defect-backlog correction (§4).** Current: 0 Critical, 0 High from the numbered bug-hunt backlog (P0–P3 all closed/accepted except BH-044's engineering, not yet built, and BH-045, deliberately descoped). What actually remains: one new unticketed financial-correctness defect (marker-row-pollution, see §4) needs a ticket and a fix before this gate is honest; full E2E still not in CI; cross-browser still never green; the 7 named test gaps below are unverified this pass (carried forward, not re-checked) |
+| **QA Complete** | 🔴 | **Corrected 2026-08-16 — "1 Critical + 12 High" was stale, left unedited since before the 08-14 defect-backlog correction (§4).** Current: 0 Critical, 0 High from the numbered bug-hunt backlog (P0–P3 all closed/accepted except BH-044's engineering, not yet built, and BH-045, deliberately descoped). The marker-row-pollution defect flagged earlier the same day was ticketed as BH-060 and closed same-day on re-verification — already fixed 08-11, see §4. What actually remains: full E2E still not in CI; cross-browser still never green; the 7 named test gaps below are unverified this pass (carried forward, not re-checked) |
 | **Production Ready** | 🔴 | No load test, no malware scan, no edge security headers, no secret manager, single-instance controls, indefinite statement retention. **Restore drill deliberately deferred to post-Railway-Pro — not a gate for this milestone, see §5a** |
 | **Beta Ready** | 🔴 | Blocked on QA Complete. A beta on balance-corrupting imports is worse than no beta |
 | **v1.0 Ready** | 🔴 | All of the above |
@@ -959,6 +962,7 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-16 | **BH-060 closed same day it was ticketed: the marker-row financial-correctness defect it describes was already fixed 5 days earlier.** Before starting any fix work per the owner's correctness-first reprioritization (below), re-verified the ticket against current `main` rather than trusting its own investigation doc. Found `ade05ca` (2026-08-11, "stop statement marker rows from becoming ledger transactions") already adds the exact `RowKind.BALANCE_MARKER` exclusion the ticket says is missing, across both PDF and CSV staging -- confirmed empirically, not just by reading the diff: `PdfPreviewGeneratorTest`'s golden-fixture assertion was already changed from `hasSize(6)` to `hasSize(4)` in that commit, and all 94 tests `ade05ca` touched pass on current `main`. The ticket's own investigation had `ade05ca` in its git history when written and still asserted the pre-fix behavior -- no clean explanation found, but the test evidence is unambiguous. Also checked the ticket's own defense-in-depth concern (`persistSection()` has no marker check of its own) and confirmed it's a non-issue: both real confirm entry points run `ConfirmedRowIntegrity.requireSameRows()` -- built for the unrelated BH-006/BH-023 bug -- before `persistSection()` ever runs, and a marker row is never in the server-side truth set that check compares against. Closed [issue #138](https://github.com/siddharth705/finora/issues/138) with full evidence; §4 and §10 corrected to match | Same "verify before acting on a claim" discipline this plan has applied to production/config claims before -- a ticket citing real file paths and line numbers reads as credible, but credibility isn't verification, and duplicating an already-shipped fix would have wasted the exact correctness-first priority the owner had just set |
 | 2026-08-16 | **Owner reprioritized: BH-060 (marker-row financial-correctness defect) fixed before any further C6 work.** Presented with C6.4's completion and three options (continue C6 intelligence, fix correctness first, or return to launch blockers), owner chose correctness-first: "A wrong ₹50,000 transaction is worse than a missing AI feature." Stated sequence: BH-060 fix → C6.5 limited to surfacing already-existing intelligence (notification center, health score UI, subscription reminders) → launch blockers → C6.3/C6.8/C6.7 held for post-GA. This session moves to BH-060 next | Same discipline as every other reprioritization in this file (D-7, D-11, D-17): a real, reasoned scope decision gets recorded the moment it's made, not silently absorbed into whatever gets built next |
 | 2026-08-16 | **D-20/C6.4 shipped: staging-time cross-source reconciliation, merged as PR #137.** `GmailReconciliationMatcher` adds the fuzzy-matching signal the design doc named as missing -- exact amount, a 3-day date window, and merchant-name similarity (normalized Levenshtein distance over `CategoryRules.extractMerchant`'s reduction) -- wired into `GmailStagingBridge.stage()`, which previously hardcoded `likelyDuplicate=false`/`duplicateMatch=null` and never called `DuplicateDetector` at all. Reported through the existing `DuplicateMatch`/`StagedRow` shape with a new `"LIKELY"` confidence tier alongside CSV/PDF's `"EXACT"` -- `DuplicateReview.tsx` needed zero code changes, confirmed live: a synthetic `amazon.in` receipt correctly matched a real `AMZN MKTPLACE 4521` bank transaction, the exact abbreviation case the design doc names. Scoped to the staging-time direction only, per D-20 and the design doc's own recommendation -- post-confirm/ledger-wide reconciliation (needs a new cross-transaction "Merge" operation neither `DuplicateDetector` nor `ReconciliationService` has) stays out of scope. Backend 2845/2845 (incl. a real-Postgres IT test for the new JPQL query), frontend 448/448, all 8 PR checks green including Strix. **C6.3, C6.5's forecasting, and C6.8's whole-month extension remain held** -- no further Step 2 item decided | Closing the loop D-20 opened, same discipline as every other decision-to-shipped record in this file |
 | 2026-08-16 | **Full PM status report, re-baselined against `origin/main` @ `a2f2cad` (post D-20/PR #136). No new completion percentage asserted — still 81% — held for a new reason this pass, not the same one as the last two holds.** §10's Release Gates table corrected: "1 Critical + 12 High open" had gone stale since before the 2026-08-14 defect-backlog correction and was never touched by any of the six re-baselines since, silently contradicting §1/§4's own already-current "0 Critical" numbers the whole time. **BH-042 and BH-043 confirmed fully closed** — their follow-up PRs (#132 `ffa6ad3`, #133 `a77cca7`) merged 2026-08-16 04:02/04:06 UTC, before D-19/D-20 were even recorded, but the "open, unmerged" status in §4 was never updated to match. **New, more severe than R-19: a live financial-correctness defect** — `OPENING BALANCE`/`CLOSING BALANCE` marker rows with a real date import as a real EXPENSE transaction equal to the account's balance, on both PDF and CSV paths, found via an uncommitted investigation note, no BH-0XX ticket yet. Three ready PRs sitting idle: **#130** (Phase C data export, all 8 checks green, Strix clean, zero review comments, open since 08-15) and **#97** (BH-008/009/010 regression coverage, green, open since 08-14) have nothing blocking merge but the merge itself; **#102** (CSP fix) has a failing Backend CI check whose log matches this plan's own documented self-hosted-runner infra-flake signature (line ~232) rather than the CSP diff itself — inference, not confirmed, since the run hasn't been retried since 08-14. **Structural gap, not a defect: the C-8/ADR-006 evidence-engine workstream (Track A/B, several open investigation docs) has zero references anywhere in this file** — it's tracked entirely outside the living plan, in `docs/architecture/adr/adr-006-evidence-decision-reconciliation.md` and a set of uncommitted investigation docs. **Also uncommitted despite being load-bearing**: `Finora-v1.0-Decisions.xlsx` (§9a already cites it as the live source for the v1.0/v1.1/Cut split), `docs/project-management/capability-audit-2026-08-14.md` (the source document D-18/D-19/D-20 all lean on by name), and two product-roadmap docs — the exact uncommitted-shared-checkout failure mode this file has already recorded losing work to twice (see the 2026-08-10 and 2026-08-14 `ad13f30` entries below) | Requested as a full PM status update. Net effect on the headline number: BH-042/043 fully closing argues up, the new marker-row defect and the C-8 tracking gap argue down — held at 81% rather than move either direction on a mix of good and bad news that doesn't net to a re-derived figure, consistent with this file's own rule that a number gets earned by review, not moved by vibes. **Next highest-priority actions, per §12 rule 7:** (1) merge #130 and #97 — zero-risk, already-done work; (2) ticket and fix the marker-row-pollution defect — real production data-integrity bug, highest-severity open item found this pass; (3) commit the four uncommitted load-bearing files before this checkout's state is lost a third time |
