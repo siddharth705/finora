@@ -158,10 +158,18 @@ describe('Dashboard — Subscriptions & Recurring Payments', () => {
     });
   });
 
+  // Bug fix: .toISOString() returns the UTC calendar date, but Dashboard.tsx's expectedLabel()
+  // compares against LOCAL midnight -- the two disagree for roughly 5.5 hours overnight IST
+  // (UTC has not yet rolled to the next day while local time already has), which made
+  // daysFromNow(0) intermittently build "yesterday" in UTC while the app considered it "today"
+  // locally. Local date components instead, matching expectedLabel()'s own local-date semantics.
   function daysFromNow(n: number): string {
     const d = new Date();
     d.setDate(d.getDate() + n);
-    return d.toISOString().slice(0, 10);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
   }
 
   it('renders each recurring item RecurringService already detected, with its own cadence and amount', async () => {
