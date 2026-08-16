@@ -20,8 +20,13 @@
   # Mirrors the policy SecurityConfig.java sets for the API (default-src 'self'; frame-ancestors
   # 'none'; base-uri 'self'), widened only where this app genuinely needs it as a browser-rendered
   # SPA rather than a copy-paste of the API's minimal policy:
-  #   - script-src adds https://www.gstatic.com -- Firebase Phone Auth (src/lib/phoneAuth.ts)
-  #     renders an invisible reCAPTCHA widget, whose script loads from there.
+  #   - script-src adds https://www.gstatic.com and https://www.google.com -- Firebase Phone Auth
+  #     (src/lib/phoneAuth.ts) renders an invisible reCAPTCHA Enterprise widget. Both domains are
+  #     needed: gstatic.com serves supporting assets, but the loader script itself --
+  #     recaptcha/enterprise.js -- is served from google.com. Missing google.com here silently
+  #     broke every OTP-sending flow (registration, delete-account, phone-change, password-reset
+  #     phone-fallback -- everything through phoneAuth.ts) with a generic Firebase
+  #     auth/internal-error, since the verifier never finishes initializing without its own script.
   #   - style-src adds https://fonts.googleapis.com (index.html's Google Fonts <link>) and
   #     'unsafe-inline' -- this app sets style={{...}} inline styles throughout (28 files).
   #   - font-src adds https://fonts.gstatic.com, where fonts.googleapis.com's stylesheet actually
@@ -36,7 +41,7 @@
   #     Auth renders when it can't verify invisibly.
   #   - frame-ancestors 'none' takes over X-Frame-Options' job (both do the same thing; setting
   #     both would just be two places to keep in sync).
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://cdn.brandfetch.io; connect-src 'self' https://api.finoratech.info https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io; frame-src https://www.google.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://cdn.brandfetch.io; connect-src 'self' https://api.finoratech.info https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io; frame-src https://www.google.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Referrer-Policy: strict-origin-when-cross-origin
 
