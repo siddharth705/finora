@@ -76,6 +76,13 @@ com.finora.notification
 └── repository
 ```
 
+**Architecture principle.** The notification system is an internal platform module, not a separate
+service. It stays inside the Finora modular monolith — one Spring Boot deployable, one database —
+until actual scale or operational requirements justify extraction. The package boundary above exists
+for internal clarity and future optionality, not because a `finora-notification-service`, a message
+broker, or a separate deployment pipeline are being planned. Don't read "module" as an invitation to
+build any of those now (see §4).
+
 `provider/` wraps the *existing* `EmailProvider`/`SmsProvider` interfaces (don't replace them —
 they're already tested and working) and adds push as the one genuinely new channel:
 
