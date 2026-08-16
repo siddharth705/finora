@@ -349,7 +349,7 @@ preference for a different pattern discovered mid-implementation is not sufficie
 **Safety gate — confirm all four before starting:**
 - [ ] C-8 Track B closed
 - [ ] All 56 bug-hunt findings closed
-- [ ] Backup/recovery validated
+- [x] Backup/recovery validated — closed 2026-08-16, owner-confirmed (`project-plan-v1.0.md` R-4)
 - [ ] Sentry + production monitoring ready
 
 **Locked, not open for reconsideration** (see §2.1/§2.2/§2.5/§4 for the full reasoning):
