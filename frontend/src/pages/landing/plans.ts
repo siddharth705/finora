@@ -53,6 +53,11 @@ export const AVAILABILITY_STYLE: Record<Availability, { background: string; colo
   exploring: { background: '#F1F5F9', color: '#94A3B8' },
 };
 
+// Free/Plus/Premium — Product's Billing Plan Taxonomy Decision, 2026-08-12 (see
+// docs/proposals/billing-subscription-entitlements-proposal.md §3.1/§3.2). Family and Future
+// were dropped, not renamed; Plus and Premium's feature lists below follow that same decision's
+// entitlement mapping (§3.2), not invented copy — Plus gets deeper analysis of a user's own data,
+// Premium adds new capabilities (Fino, investment insights) on top of it.
 export const PLANS: Plan[] = [
   {
     id: 'free',
@@ -73,8 +78,8 @@ export const PLANS: Plan[] = [
     ladder: ['Import statements', 'Automatic categorization', 'Budgets and goals', 'Spending analysis'],
   },
   {
-    id: 'premium',
-    name: 'Premium',
+    id: 'plus',
+    name: 'Plus',
     price: null,
     availability: 'coming-soon',
     blurb: 'For people who want deeper financial intelligence.',
@@ -82,51 +87,52 @@ export const PLANS: Plan[] = [
     stage: { when: 'Tomorrow', outcome: 'Understand your spending patterns.' },
     features: [
       'Unlimited accounts',
-      'Advanced analytics',
+      'Advanced reports and analytics',
       'Extended financial history',
       'Long-term trends',
+    ],
+    ladder: ['Unlimited accounts', 'Advanced reports', 'Extended history', 'Long-term trends'],
+  },
+  {
+    id: 'premium',
+    name: 'Premium',
+    price: null,
+    availability: 'coming-soon',
+    blurb: 'For people who want Finora to work for them, not just show them the numbers.',
+    promise: 'For people who want an assistant, not just a dashboard.',
+    stage: { when: 'Later', outcome: 'Let Finora work for you.' },
+    features: [
+      'Everything in Plus',
+      'Investment insights',
+      'Fino, your financial assistant',
       'Priority support',
     ],
-    ladder: ['Unlimited accounts', 'Advanced analytics', 'Long-term trends', 'Priority support'],
-  },
-  {
-    id: 'family',
-    name: 'Family',
-    price: null,
-    availability: 'planned',
-    blurb: 'Manage household finances together.',
-    promise: 'For a household, not just a person.',
-    stage: { when: 'Later', outcome: "Manage your family's finances together." },
-    features: ['Shared dashboards', 'Household budgets', 'Shared financial goals'],
-    ladder: ['Shared dashboards', 'Household budgets', 'Shared goals'],
-  },
-  {
-    id: 'future',
-    name: 'Future',
-    price: null,
-    availability: 'exploring',
-    blurb: 'For financial professionals and businesses.',
-    promise: 'Where Finora is headed next.',
-    stage: { when: 'Eventually', outcome: 'Plan your financial future.' },
-    features: ['Tools for professionals', 'Deeper financial intelligence'],
-    ladder: ['Tools for professionals', 'Deeper financial intelligence'],
+    ladder: ['Investment insights', 'Fino, your financial assistant', 'Priority support'],
   },
 ];
 
 /**
- * Free vs Premium, for the comparison table. Only capabilities already committed to appear here --
- * no invented rows padding the Premium column to make the table look worth reading.
+ * Free vs Plus vs Premium, for the comparison table. Rows and tier columns follow the same
+ * entitlement mapping PLANS' Plus/Premium feature lists do (billing proposal §3.2) — only
+ * capabilities already committed to appear here, no invented rows padding a column to make the
+ * table look worth reading.
  */
-export const COMPARISON: { label: string; free: boolean; premium: boolean }[] = [
-  { label: 'Statement import', free: true, premium: true },
-  { label: 'Financial dashboard', free: true, premium: true },
-  { label: 'Transaction categorization', free: true, premium: true },
-  { label: 'Budget tracking', free: true, premium: true },
-  { label: 'Learning engine', free: true, premium: true },
-  { label: 'Advanced analytics', free: false, premium: true },
-  { label: 'Long-term trends', free: false, premium: true },
-  { label: 'Priority support', free: false, premium: true },
+export const COMPARISON: { label: string; free: boolean; plus: boolean; premium: boolean }[] = [
+  { label: 'Statement import', free: true, plus: true, premium: true },
+  { label: 'Financial dashboard', free: true, plus: true, premium: true },
+  { label: 'Transaction categorization', free: true, plus: true, premium: true },
+  { label: 'Budget tracking', free: true, plus: true, premium: true },
+  { label: 'Learning engine', free: true, plus: true, premium: true },
+  { label: 'Advanced analytics', free: false, plus: true, premium: true },
+  { label: 'Extended financial history', free: false, plus: true, premium: true },
+  { label: 'Long-term trends', free: false, plus: true, premium: true },
+  { label: 'Investment insights', free: false, plus: false, premium: true },
+  { label: 'Fino, your financial assistant', free: false, plus: false, premium: true },
+  { label: 'Priority support', free: false, plus: false, premium: true },
 ];
 
-/** The plans shown as cards. `future` appears only in the ladder, not as a card to buy. */
-export const PRICING_CARDS = PLANS.filter((p) => p.id !== 'future');
+/** The plans shown as cards. Every current tier is real and committed, so this is just an alias
+ *  for PLANS today -- kept as its own export (rather than importing PLANS directly in Pricing.tsx)
+ *  in case a future tier is added that belongs in the ladder but not the buyable card grid, the
+ *  same distinction `future` used to draw. */
+export const PRICING_CARDS = PLANS;
