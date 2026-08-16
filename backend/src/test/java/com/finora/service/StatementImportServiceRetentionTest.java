@@ -3,7 +3,6 @@ package com.finora.service;
 import com.finora.dto.StatementImportDto.AccountGroup;
 import com.finora.entity.Account;
 import com.finora.imports.ImportService;
-import com.finora.entity.StatementImport;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.StatementImportRepository;
@@ -58,13 +57,14 @@ class StatementImportServiceRetentionTest {
         return a;
     }
 
-    private StatementImport statement(UUID accountId) {
-        StatementImport s = new StatementImport();
-        ReflectionTestUtils.setField(s, "id", UUID.randomUUID());
-        s.setUserId(userId);
-        s.setAccountId(accountId);
-        s.setFileName("statement.csv");
-        return s;
+    /** listGroupedByAccount() reads the fileContent-free projection, not the entity -- see
+     *  StatementImportRepository.StatementMetadata's own doc comment. */
+    private StatementImportRepository.StatementMetadata statement(UUID accountId) {
+        StatementImportRepository.StatementMetadata m = mock(StatementImportRepository.StatementMetadata.class);
+        when(m.getId()).thenReturn(UUID.randomUUID());
+        when(m.getAccountId()).thenReturn(accountId);
+        when(m.getFileName()).thenReturn("statement.csv");
+        return m;
     }
 
     @Test
@@ -78,9 +78,15 @@ class StatementImportServiceRetentionTest {
                 account(recentlyDeletedId, "PNB Savings", Instant.now().minus(3, ChronoUnit.DAYS)),
                 account(longDeletedId, "Old Wallet", Instant.now().minus(10, ChronoUnit.DAYS))
         ));
-        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of(
-                statement(activeId), statement(recentlyDeletedId), statement(longDeletedId)
-        ));
+        // Built as separate statements, not inline inside the when(...).thenReturn(...) call
+        // below -- each statement(...) call does its own when(...).thenReturn(...) internally,
+        // and Mockito's stubbing-in-progress state doesn't nest: calling when() again before an
+        // outer when(...) has received its thenReturn(...) throws UnfinishedStubbingException.
+        var activeStatement = statement(activeId);
+        var recentlyDeletedStatement = statement(recentlyDeletedId);
+        var longDeletedStatement = statement(longDeletedId);
+        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId))
+                .thenReturn(List.of(activeStatement, recentlyDeletedStatement, longDeletedStatement));
 
         List<AccountGroup> groups = service.listGroupedByAccount(userId);
 
@@ -103,9 +109,8 @@ class StatementImportServiceRetentionTest {
         when(accountRepository.findByUserIdIncludingDeleted(userId)).thenReturn(List.of(
                 account(accountId, "Old Card", Instant.now().minus(8, ChronoUnit.DAYS))
         ));
-        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of(
-                statement(accountId)
-        ));
+        var stmt = statement(accountId);
+        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of(stmt));
 
         List<AccountGroup> groups = service.listGroupedByAccount(userId);
 

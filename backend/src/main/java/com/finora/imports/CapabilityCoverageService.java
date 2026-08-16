@@ -3,8 +3,8 @@ package com.finora.imports;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finora.dto.ImportDto.CapabilityActivation;
-import com.finora.entity.StatementImport;
 import com.finora.repository.StatementImportRepository;
+import com.finora.repository.StatementImportRepository.CapabilityData;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -153,16 +153,16 @@ public class CapabilityCoverageService {
 
     /** Coverage across one user's own imports. */
     public CoverageMap forUser(UUID userId) {
-        return aggregate(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId));
+        return aggregate(statementImportRepository.findCapabilityDataByUserId(userId));
     }
 
-    CoverageMap aggregate(List<StatementImport> imports) {
+    CoverageMap aggregate(List<CapabilityData> imports) {
         Map<String, Integer> activations = new TreeMap<>();
         Map<String, Integer> reasons = new LinkedHashMap<>();
         Map<String, Integer> shapes = new LinkedHashMap<>();
         int rowsLost = 0;
 
-        for (StatementImport si : imports) {
+        for (CapabilityData si : imports) {
             for (String capability : capabilitiesOf(si)) {
                 activations.merge(capability, 1, Integer::sum);
             }
@@ -194,7 +194,7 @@ public class CapabilityCoverageService {
         return sorted;
     }
 
-    private List<String> capabilitiesOf(StatementImport si) {
+    private List<String> capabilitiesOf(CapabilityData si) {
         String json = si.getActivatedCapabilitiesJson();
         if (json == null || json.isBlank()) return List.of();
         try {
@@ -212,7 +212,7 @@ public class CapabilityCoverageService {
         }
     }
 
-    private UnparseableRowSummary unparseableOf(StatementImport si) {
+    private UnparseableRowSummary unparseableOf(CapabilityData si) {
         String json = si.getUnparseableSummaryJson();
         if (json == null || json.isBlank()) return null;
         try {

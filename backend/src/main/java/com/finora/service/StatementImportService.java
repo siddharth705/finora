@@ -11,6 +11,7 @@ import com.finora.exception.ApiException;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.StatementImportRepository;
+import com.finora.repository.StatementImportRepository.StatementMetadata;
 import com.finora.repository.TransactionRepository;
 import com.finora.accounts.AccountBalanceConvention;
 import com.finora.accounts.AccountDto;
@@ -77,8 +78,11 @@ public class StatementImportService {
         Map<UUID, Account> accountsById = accountRepository.findByUserIdIncludingDeleted(userId).stream()
                 .collect(Collectors.toMap(Account::getId, a -> a));
 
-        Map<UUID, List<StatementImport>> byAccount = statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)
-                .stream().collect(Collectors.groupingBy(StatementImport::getAccountId, LinkedHashMap::new, Collectors.toList()));
+        // Metadata projection, not the entity-returning finder: see
+        // StatementImportRepository.StatementMetadata's own doc comment for why this method was
+        // one of the six callers found still loading fileContent eagerly through it.
+        Map<UUID, List<StatementMetadata>> byAccount = statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)
+                .stream().collect(Collectors.groupingBy(StatementMetadata::getAccountId, LinkedHashMap::new, Collectors.toList()));
 
         Instant cutoff = Instant.now().minus(DELETED_ACCOUNT_RETENTION);
         Map<UUID, Integer> duplicateCounts = duplicateCountsByStatementImport(userId);

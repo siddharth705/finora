@@ -21,7 +21,6 @@ import com.finora.entity.Account;
 import com.finora.entity.Category;
 import com.finora.entity.CategoryRule;
 import com.finora.entity.ImportSession;
-import com.finora.entity.StatementImport;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.goals.GoalDto;
@@ -340,22 +339,12 @@ public class DataExportService {
         // once in buildBundle, not a query per account.
         StatementMetadata latestImport = latestImportByAccount.get(a.getId());
         AccountDto dto = AccountDto.from(a, bankManagementService.resolve(a.getBankId()),
-                latestImport == null ? null : toLatestImportRef(latestImport),
+                latestImport == null ? null : latestImport.getImportedAt(),
+                latestImport == null ? null : latestImport.getStatementPeriodStart(),
+                latestImport == null ? null : latestImport.getStatementPeriodEnd(),
                 statementsCountByAccount.getOrDefault(a.getId(), 0),
                 transactionsCountByAccount.getOrDefault(a.getId(), 0L));
         return new AccountExportEntry(dto, a.getDeletedAt() != null, a.getDeletedAt());
-    }
-
-    /** {@code AccountDto.from}'s 5-arg overload takes a {@code StatementImport} entity purely to
-     *  read its {@code importedAt}/{@code statementPeriodStart}/{@code statementPeriodEnd} --
-     *  never {@code fileContent}. A throwaway, unsaved entity carrying only those three fields
-     *  satisfies that contract without ever loading a real one back into this transaction. */
-    private static StatementImport toLatestImportRef(StatementMetadata m) {
-        StatementImport ref = new StatementImport();
-        ref.setImportedAt(m.getImportedAt());
-        ref.setStatementPeriodStart(m.getStatementPeriodStart());
-        ref.setStatementPeriodEnd(m.getStatementPeriodEnd());
-        return ref;
     }
 
     private RuleDto toRuleDto(CategoryRule r) {

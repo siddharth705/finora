@@ -16,20 +16,34 @@ import java.util.UUID;
 public interface StatementImportRepository extends JpaRepository<StatementImport, UUID> {
 
     /**
-     * Every column {@code DataExportService} actually needs, deliberately excluding
-     * {@code fileContent}.
+     * Every column any caller of this repository actually needs for a list/summary view,
+     * deliberately excluding {@code fileContent}.
      *
-     * <p>Bug fix (Phase C review): {@code @Basic(fetch = FetchType.LAZY)} on {@code fileContent}
-     * is a no-op without Hibernate bytecode enhancement, which this build does not configure --
-     * confirmed by this same class's own {@code findLatestPeriodEndForAccount} comment above,
-     * documenting the identical eager-load behavior for this exact field. A plain entity-returning
-     * query -- {@link #findByUserIdOrderByImportedAtDesc}, which {@code DataExportService} used to
-     * call directly -- therefore pulls every legacy (database-stored) statement's full raw bytes
-     * into heap during {@code buildBundle()}'s read-only transaction, for every user, regardless of
-     * the LAZY annotation's claim otherwise. This projection selects only the columns {@code
-     * StatementImportDto.Summary}, the export's ZIP-entry naming, and its per-account statement/
-     * import-date rollup actually use, so the generated SQL never touches {@code file_content} at
-     * all -- the one reliable way to keep it out of memory here, since the annotation alone does not.
+     * <p>Bug fix (Phase C review, widened in a later pass): {@code @Basic(fetch = FetchType.LAZY)}
+     * on {@code fileContent} is a no-op without Hibernate bytecode enhancement, which this build
+     * does not configure -- confirmed by this same class's own {@code findLatestPeriodEndForAccount}
+     * comment above, documenting the identical eager-load behavior for this exact field. The plain
+     * entity-returning finder this projection replaces -- {@code findByUserIdOrderByImportedAtDesc}
+     * -- therefore pulled every legacy (database-stored) statement's full raw bytes into heap on
+     * every list/summary read that reached it: {@code DataExportService.buildBundle} (fixed
+     * first), then, once the same bug was found still live in five more callers in the same review
+     * pass, {@code AccountService.listForUser} (the hottest of the six -- every account-list page
+     * view), {@code StatementImportService.listGroupedByAccount}, {@code
+     * AnalyticsService.importStatistics}, and {@code AccountPurgeSweepService.purgeOne}.
+     * {@code CapabilityCoverageService.forUser} needed different columns entirely (see {@link
+     * CapabilityData}), and {@code WorkspaceDashboardService.summarize} needed no columns at all
+     * (see {@link #countByUserId}), so those two moved to their own query instead of this one.
+     *
+     * <p>The entity-returning finder was deleted once its last caller moved off it -- a
+     * fileContent-eager finder with zero remaining callers is exactly the kind of ready-made
+     * footgun this class's own removed {@code findByIdIncludingDeleted} note already warns about
+     * (see the bottom of this file). Restore it from git history if a genuine need for the full
+     * entity ever appears.
+     *
+     * <p>This projection selects only the columns {@code StatementImportDto.Summary}, export/
+     * statement-history ZIP-entry naming, and per-account statement/import-date/transaction-count
+     * rollups actually use, so the generated SQL never touches {@code file_content} at all -- the
+     * one reliable way to keep it out of memory here, since the annotation alone does not.
      */
     interface StatementMetadata {
         UUID getId();
@@ -80,7 +94,36 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
                                                                  @Param("accountId") UUID accountId,
                                                                  @Param("excludingId") UUID excludingId);
 
-    List<StatementImport> findByUserIdOrderByImportedAtDesc(UUID userId);
+    /** {@code WorkspaceDashboardService.summarize}'s "N statements imported" tile only ever called
+     *  {@code .size()} on the entity-returning finder's full result -- a database COUNT is
+     *  strictly better than fetching (and projecting) any columns at all for that, {@code
+     *  fileContent} included. See {@link StatementMetadata}'s own doc comment for the rest of that
+     *  finder's removal. */
+    long countByUserId(UUID userId);
+
+    /**
+     * The {@code id}/{@code activatedCapabilitiesJson}/{@code unparseableSummaryJson} columns
+     * {@code CapabilityCoverageService.forUser} actually reads, deliberately excluding {@code
+     * fileContent} -- same bug, same fix, as {@link StatementMetadata}, but a disjoint set of
+     * columns: coverage aggregation has no use for a statement's account, balances or file name,
+     * and {@link StatementMetadata} has no use for either JSON column here. {@code id} is kept
+     * (unlike {@link StatementMetadata}, which never needed it) purely so a malformed row can still
+     * be logged by which import produced it -- see {@code CapabilityCoverageService
+     * .capabilitiesOf}/{@code unparseableOf}.
+     */
+    interface CapabilityData {
+        UUID getId();
+        String getActivatedCapabilitiesJson();
+        String getUnparseableSummaryJson();
+    }
+
+    @Query("""
+           SELECT s.id AS id, s.activatedCapabilitiesJson AS activatedCapabilitiesJson,
+                  s.unparseableSummaryJson AS unparseableSummaryJson
+             FROM StatementImport s
+            WHERE s.userId = :userId
+           """)
+    List<CapabilityData> findCapabilityDataByUserId(@Param("userId") UUID userId);
 
     /**
      * The import an asynchronous job produced, if it produced one.

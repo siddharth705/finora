@@ -4,7 +4,6 @@ import com.finora.entity.Category;
 import com.finora.entity.Merchant;
 import com.finora.entity.MerchantCategoryLearning;
 import com.finora.entity.MerchantLearningAudit;
-import com.finora.entity.StatementImport;
 import com.finora.entity.Transaction;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.MerchantCategoryLearningRepository;
@@ -335,10 +334,10 @@ class AnalyticsServiceTest {
 
     @Test
     void importStatistics_sumsAcrossAllImports_lastImportedAtFromTheMostRecent() {
-        StatementImport older = statementImport(20, 2, Instant.parse("2026-01-01T00:00:00Z"));
-        StatementImport newer = statementImport(35, 1, Instant.parse("2026-06-01T00:00:00Z"));
-        // findByUserIdOrderByImportedAtDesc -- newest first, same as the real query's contract
-        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of(newer, older));
+        StatementImportRepository.StatementMetadata older = statementImport(20, 2, Instant.parse("2026-01-01T00:00:00Z"));
+        StatementImportRepository.StatementMetadata newer = statementImport(35, 1, Instant.parse("2026-06-01T00:00:00Z"));
+        // findMetadataByUserIdOrderByImportedAtDesc -- newest first, same as the real query's contract
+        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of(newer, older));
 
         var result = analyticsService.importStatistics(userId);
 
@@ -350,7 +349,7 @@ class AnalyticsServiceTest {
 
     @Test
     void importStatistics_noImportsYet_lastImportedAtIsNull_notEpochZero() {
-        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of());
+        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of());
 
         var result = analyticsService.importStatistics(userId);
 
@@ -393,14 +392,12 @@ class AnalyticsServiceTest {
         assertThat(analyticsService.learningGrowth(userId)).isEmpty();
     }
 
-    private StatementImport statementImport(int imported, int skipped, Instant importedAt) {
-        StatementImport si = new StatementImport();
-        ReflectionTestUtils.setField(si, "id", UUID.randomUUID());
-        si.setUserId(userId);
-        si.setTransactionsImported(imported);
-        si.setTransactionsSkipped(skipped);
-        si.setImportedAt(importedAt);
-        return si;
+    private StatementImportRepository.StatementMetadata statementImport(int imported, int skipped, Instant importedAt) {
+        StatementImportRepository.StatementMetadata m = mock(StatementImportRepository.StatementMetadata.class);
+        when(m.getTransactionsImported()).thenReturn(imported);
+        when(m.getTransactionsSkipped()).thenReturn(skipped);
+        when(m.getImportedAt()).thenReturn(importedAt);
+        return m;
     }
 
     private MerchantLearningAudit auditEntry(MerchantLearningAudit.Action action, Instant createdAt) {

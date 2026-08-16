@@ -2,7 +2,6 @@ package com.finora.service;
 
 import com.finora.entity.Account;
 import com.finora.entity.Relationship;
-import com.finora.entity.StatementImport;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.goals.GoalRepository;
@@ -30,6 +29,7 @@ import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.RelationshipIdentifierRepository;
 import com.finora.repository.RelationshipRepository;
 import com.finora.repository.StatementImportRepository;
+import com.finora.repository.StatementImportRepository.StatementMetadata;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.repository.UserSettingsRepository;
@@ -350,8 +350,11 @@ public class AccountPurgeSweepService {
         // failed row falls out of the next sweep's PENDING_DELETION discovery query and is never
         // retried -- exactly the class-level idempotency guarantee this method's own doc comment
         // promises.
+        // Metadata projection, not the entity-returning finder: see
+        // StatementImportRepository.StatementMetadata's own doc comment -- only .getId() is
+        // needed to drive statementImportService.delete below.
         RuntimeException statementPurgeFailure = null;
-        for (StatementImport statement : statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)) {
+        for (StatementMetadata statement : statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)) {
             try {
                 statementImportService.delete(userId, statement.getId());
             } catch (Exception e) {
