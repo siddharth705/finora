@@ -347,7 +347,7 @@ evidence contradicts something stated here (e.g. a referenced class was renamed 
 preference for a different pattern discovered mid-implementation is not sufficient reason on its own.
 
 **Safety gate — confirm all four before starting:**
-- [ ] C-8 Track B closed
+- [x] C-8 Track B closed — closed 2026-08-11 (`ade05ca`), confirmed still live 2026-08-16 (`project-plan-v1.0.md` §4a). Narrowly Track B specifically, not the whole C-8 evidence-model effort — Track A/C-8.3/R2 remain open but were never part of this gate item
 - [ ] All 56 bug-hunt findings closed
 - [x] Backup/recovery validated — closed 2026-08-16, owner-confirmed (`project-plan-v1.0.md` R-4)
 - [ ] Sentry + production monitoring ready

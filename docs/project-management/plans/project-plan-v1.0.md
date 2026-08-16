@@ -402,6 +402,57 @@ and `BH-042`/`043`/`045` (owned by a parallel session, in progress elsewhere).
 
 ---
 
+## 4a. Statement Intelligence — C-8 Evidence Model & Parser Reliability (new, 2026-08-16)
+
+**Why this section exists.** This entire workstream had zero references anywhere in this living plan
+until today, despite being real, active engineering — tracked only in `docs/architecture/adr/`,
+`docs/architecture/system-design/`, and agent memory, most of it never even committed. That gap is
+what let a stale label ("C-8 Track B completion") sit in this file's own 2026-08-16 changelog as a
+supposed remaining safety-gate item for **five days after it had actually closed** (`ade05ca`,
+2026-08-11) — nobody checking this file could have known, because the file didn't track it. This
+section is the fix: fold C-8/parser status in, and keep it separate from actual launch blockers so
+the two stop getting conflated.
+
+**Not a v1.0 release gate.** Nothing below is in §10's release criteria. This is statement-extraction
+quality/reliability work — real, ongoing, but a different question from "can we launch."
+
+### C-8 Evidence Model (ADR-006) — when to trust extraction enough to skip OCR
+
+| Item | What it is | Status |
+|---|---|---|
+| **Track A #2** | Header-vocabulary synonyms (e.g. "Balance Forward" vs "Opening Balance") | 🔴 Open — blocked on real corpus, not engineering. Two synthetic-corpus measurement passes explicitly exhausted (redactor-bias, then author-bias ceiling); only genuinely new real statements can close it |
+| **Non-ledger #3** | Non-ledger table detection (e.g. FD schedules, interest tables) reliability | 🔴 Open — same corpus blocker as Track A #2 |
+| **Track B** | Marker-row pollution — `OPENING BALANCE`/`CLOSING BALANCE` rows staged and persisted as real transactions | ✅ **Closed 2026-08-11, `ade05ca`.** `RowKind.BALANCE_MARKER` classification, structural (which amount column resolved a value), not description-text matching — generalizes across wording. Confirmed still live and unmodified in current `TransactionNormalizer`/`PdfPreviewGenerator`/`PreviewGenerator` as of this re-baseline. **This is the item that was mislabeled as an open gate on 2026-08-16 — see the changelog correction below** |
+| **C-8.3** | OCR routing trigger — when extraction evidence is insufficient enough to invoke OCR | 🔴 Blocked, not close. The originally-proposed composite trigger was investigated and explicitly rejected (missed a real class-2 failure, 3 false-positive mechanisms); its test-scope code was written then deleted the same day. Reframed, still 5 open questions, nothing wired into `RoutingTextAcquirer` |
+| **R2** | Independent closing-balance source via `StatementSummaryExtractor.PrintedSummary`, to make cross-source corroboration non-circular | 🔴 Deferred, untouched — same corpus blocker |
+
+### Parser Reliability Milestone 1 — real-corpus-driven correctness fixes
+
+Surfaced by a large real-statement corpus sweep (16 savings + 6 credit-card documents, multiple
+banks) run 2026-08-12. Tracked as a "Parser Improvement Board" that has never existed as a committed
+doc — status below is freshly re-verified against git, not carried forward from a snapshot.
+
+| ID | Root cause | Banks affected | Status |
+|---|---|---|---|
+| **P-001** | Wrapped/split headers (horizontal run-split + vertical 2-line admission) | HDFC, CBI | ✅ Closed — `2bcb21e`, `701df9b` |
+| **P-002** | Section over-segmentation → phantom accounts (missing zero-extraction guard + prose mistaken for headers) | Kotak, SBI, AU, HDFC-CC | ✅ Closed — `98560ef`, `c5c4e0f` |
+| **P-003** | Duplicate column names silently collide, one amount column lost | ICICI | ✅ **Closed — `f9ea543`** (`resolveDuplicateColumnNames`, `PdfTableLocator.java:1482-1556`). Not previously tracked as closed anywhere; found during this re-baseline |
+| **P-004** | Reverse-chronological ledgers misread as forward, corrupting balance-chain validation | PNB, Bandhan | ✅ **Closed — `282fe5b`** (direction-detected reversal, `BalanceChainValidator.chronological()`) **+ `42543cd`** (a separate root cause on the same document: wrapped narration swallowing PNB's running-balance cell). PNB now fully VERIFIED across all validators. Not previously tracked; found during this re-baseline |
+| **P-005** | Trace-capture redactor destroys textual (non-numeric-separator) dates, blocking evidence capture for any bank using them | HSBC, Kotak, AU | 🔴 **Still open.** No commit touches this since 2026-08-12; `PdfTraceRedactor`'s `DATE_LIKE` regex still only matches numeric-separator dates |
+| **P-006** | SBI ledger rows entirely unrecognized (zero sections located) | SBI | ✅ **Closed — `89de6b9`** (new `INFERRED_HEADERLESS_LAYOUT` capability, `PdfTableLocator.java`). Verified against the real SBI document: 6/6 transactions extracted, all validators VERIFIED. Not previously tracked; found during this re-baseline |
+
+**Net effect of this re-baseline: 5 of 6 Parser Reliability items are closed, only P-005 remains —
+materially better than what any prior snapshot recorded, because three closures (P-003, P-004, P-006)
+had never been checked off anywhere.** This is the same "unreviewed surface lowers completion until
+checked" principle in reverse: unchecked *closed* work doesn't raise anything either, until verified.
+
+**Standing backlog, still open, none touched:** HDFC merged-cell extraction (confirmed production
+already handles it correctly, per the trace-tooling investigation closed 2026-08-11 — not a code
+gap); `"-"` placeholder noise in unparseable routing (cosmetic); CSV plural-header gap in
+`AMOUNT_HEADER_HINTS`.
+
+---
+
 ## 5. Critical path
 
 **Superseded by D-11 (2026-08-15) — restructured below, dates not yet recalculated.** The diagram
@@ -973,6 +1024,7 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-16 | **Correction: "C-8 Track B completion" was never a real remaining gate item — it closed 2026-08-11, five days before this file's own 2026-08-16 entry (above) listed it as one. New §4a added to fold the whole C-8/parser-reliability workstream into the living plan, separated from actual launch blockers, specifically so this class of mistake stops happening.** The root mistake: Track B (the marker-row-pollution fix) was conflated with "all of C-8" — they're not the same thing. C-8 is the broader OCR-routing/evidence-engine effort; Track B was one closed sub-part of it. Re-verified fresh against git rather than trusting the 2026-08-12 memory snapshot this depended on, and found it was itself stale in the *good* direction: **P-003 (ICICI duplicate columns), P-004 (PNB reverse chronology), and P-006 (SBI extraction failure) are all also closed** (`f9ea543`, `282fe5b`+`42543cd`, `89de6b9` respectively) — none previously checked off anywhere. Only **P-005** (trace redactor destroys textual dates) remains genuinely open in the Parser Reliability Milestone; Track A #2/non-ledger #3/C-8.3/R2 remain genuinely open in the C-8 evidence model, all blocked on real-corpus acquisition, not engineering. See §4a for the full table. **None of this changes any v1.0 release gate** — C-8/parser work was never one. It does correct the notification proposal's own kickoff checklist, which named "C-8 Track B closed" as one of four items gating implementation: that box is now genuinely checked, same as backup/recovery | Same root cause as the BH-060 mistake two entries below: a status label repeated across turns without being re-checked against the actual current state. The fix here is structural, not just a one-time correction — §4a exists so the next re-baseline has something to check against instead of nothing |
 | 2026-08-16 | **R-4 (backup/restore) closed, owner-confirmed, ahead of its deferred schedule.** Owner reports: PostgreSQL manual backup tested, PITR (point-in-time recovery) enabled, a WAL archiving issue found and resolved, and a point-in-time restore tested successfully. Recorded at the same evidentiary standard as the 2026-08-11 Railway config confirmation — owner-confirmed directly, not independently re-verified against Railway this session. §5a, §7 (R-4), and §10 (release criterion 3) all updated. This item was deliberately deferred to post-Railway-Pro on 2026-08-14 (§5a) as a sequencing decision, not a scope cut; the owner chose to close it early rather than wait, which the original resequencing reasoning always allowed for. **Remaining safety-gate items, unchanged: C-8 Track B completion, remaining bug-hunt findings closure, Sentry/production monitoring readiness.** Notification-platform implementation stays frozen behind the full gate, not just this one item | Owner-reported infrastructure work, recorded the same way every other owner-confirmed production fact in this file is — distinct from something checked directly, per this plan's own standing discipline (see the 2026-08-11 entries below) |
 | 2026-08-16 | **BH-060 closed same day it was ticketed: the marker-row financial-correctness defect it describes was already fixed 5 days earlier.** Before starting any fix work per the owner's correctness-first reprioritization (below), re-verified the ticket against current `main` rather than trusting its own investigation doc. Found `ade05ca` (2026-08-11, "stop statement marker rows from becoming ledger transactions") already adds the exact `RowKind.BALANCE_MARKER` exclusion the ticket says is missing, across both PDF and CSV staging -- confirmed empirically, not just by reading the diff: `PdfPreviewGeneratorTest`'s golden-fixture assertion was already changed from `hasSize(6)` to `hasSize(4)` in that commit, and all 94 tests `ade05ca` touched pass on current `main`. The ticket's own investigation had `ade05ca` in its git history when written and still asserted the pre-fix behavior -- no clean explanation found, but the test evidence is unambiguous. Also checked the ticket's own defense-in-depth concern (`persistSection()` has no marker check of its own) and confirmed it's a non-issue: both real confirm entry points run `ConfirmedRowIntegrity.requireSameRows()` -- built for the unrelated BH-006/BH-023 bug -- before `persistSection()` ever runs, and a marker row is never in the server-side truth set that check compares against. Closed [issue #138](https://github.com/siddharth705/finora/issues/138) with full evidence; §4 and §10 corrected to match | Same "verify before acting on a claim" discipline this plan has applied to production/config claims before -- a ticket citing real file paths and line numbers reads as credible, but credibility isn't verification, and duplicating an already-shipped fix would have wasted the exact correctness-first priority the owner had just set |
 | 2026-08-16 | **Owner reprioritized: BH-060 (marker-row financial-correctness defect) fixed before any further C6 work.** Presented with C6.4's completion and three options (continue C6 intelligence, fix correctness first, or return to launch blockers), owner chose correctness-first: "A wrong ₹50,000 transaction is worse than a missing AI feature." Stated sequence: BH-060 fix → C6.5 limited to surfacing already-existing intelligence (notification center, health score UI, subscription reminders) → launch blockers → C6.3/C6.8/C6.7 held for post-GA. This session moves to BH-060 next | Same discipline as every other reprioritization in this file (D-7, D-11, D-17): a real, reasoned scope decision gets recorded the moment it's made, not silently absorbed into whatever gets built next |
