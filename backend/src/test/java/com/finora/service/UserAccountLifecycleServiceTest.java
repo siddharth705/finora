@@ -31,6 +31,7 @@ class UserAccountLifecycleServiceTest {
     private AuditService auditService;
     private EmailProvider emailProvider;
     private RequestMetadata requestMetadata;
+    private PasswordChangeService passwordChangeService;
     private UserAccountLifecycleService service;
     private final UUID userId = UUID.randomUUID();
 
@@ -50,8 +51,11 @@ class UserAccountLifecycleServiceTest {
         when(requestMetadata.device()).thenReturn("Chrome on macOS");
         when(emailProvider.sendAccountDeactivatedEmail(any(), any(), any(), any()))
                 .thenReturn(EmailResult.success(ProviderType.RESEND, "test-message-id"));
+        when(emailProvider.sendAccountDeletionRequestedEmail(any(), any()))
+                .thenReturn(EmailResult.success(ProviderType.RESEND, "test-message-id"));
+        passwordChangeService = mock(PasswordChangeService.class);
         service = new UserAccountLifecycleService(userRepository, passwordEncoder, refreshTokenService,
-                auditService, emailProvider, requestMetadata);
+                auditService, emailProvider, requestMetadata, passwordChangeService);
     }
 
     private User user(String accountScope) {
@@ -145,5 +149,150 @@ class UserAccountLifecycleServiceTest {
             return;
         }
         throw new AssertionError("Expected deactivate() to throw for an admin-scope account");
+    }
+
+    /** Regression test: without this, requestDeletion()'s "no cancel link" product decision was
+     *  trivially reversible -- an access token already issued keeps working for up to 15 minutes
+     *  past the status change (requestDeletion only revokes refresh tokens), and the account's
+     *  real password is unchanged until AccountPurgeSweepService's purge runs 48h later, so
+     *  deactivate() would have happily flipped a PENDING_DELETION account back to DEACTIVATED with
+     *  nothing more than the same still-known current password. */
+    @Test
+    void deactivate_onAPendingDeletionAccount_isRejectedBeforeCheckingThePassword() {
+        User u = user(User.SCOPE_USER);
+        u.setStatus(User.STATUS_PENDING_DELETION);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(u));
+
+        try {
+            service.deactivate(userId, "correct", "OTHER", null);
+        } catch (ApiException e) {
+            assertThat(e.getMessage()).contains("scheduled for deletion");
+            assertThat(u.getStatus()).isEqualTo(User.STATUS_PENDING_DELETION);
+            verify(passwordEncoder, never()).matches(any(), any());
+            verify(refreshTokenService, never()).revokeAllForUser(any());
+            return;
+        }
+        throw new AssertionError("Expected deactivate() to throw for a pending-deletion account");
+    }
+
+    @Test
+    void deactivate_onAnAlreadyDeletedAccount_isRejected() {
+        User u = user(User.SCOPE_USER);
+        u.setStatus(User.STATUS_DELETED);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(u));
+
+        try {
+            service.deactivate(userId, "correct", "OTHER", null);
+        } catch (ApiException e) {
+            assertThat(e.getMessage()).contains("scheduled for deletion");
+            verify(passwordEncoder, never()).matches(any(), any());
+            return;
+        }
+        throw new AssertionError("Expected deactivate() to throw for an already-deleted account");
+    }
+
+    // --- requestDeletion() ---
+
+    private static final String SESSION_ID = UUID.randomUUID().toString();
+
+    @Test
+    void requestDeletion_withAConsumedSession_setsStatusAndTimestampAndRevokesEverySession() {
+        User u = user(User.SCOPE_USER);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(u));
+
+        service.requestDeletion(userId, SESSION_ID);
+
+        verify(passwordChangeService).consumeForAccountDeletion(userId, SESSION_ID);
+        assertThat(u.getStatus()).isEqualTo(User.STATUS_PENDING_DELETION);
+        assertThat(u.getDeletionRequestedAt()).isNotNull();
+        verify(refreshTokenService).revokeAllForUser(userId);
+        verify(auditService).record(eq(userId), eq("ACCOUNT_DELETION_REQUESTED"), eq("User"), eq(userId), any());
+        verify(emailProvider).sendAccountDeletionRequestedEmail(eq("jane@example.com"), any(Instant.class));
+    }
+
+    @Test
+    void requestDeletion_whenSessionConsumptionThrows_changesNothing() {
+        User u = user(User.SCOPE_USER);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(u));
+        doThrow(new ApiException(org.springframework.http.HttpStatus.BAD_REQUEST, "Invalid password change session."))
+                .when(passwordChangeService).consumeForAccountDeletion(userId, SESSION_ID);
+
+        try {
+            service.requestDeletion(userId, SESSION_ID);
+        } catch (ApiException e) {
+            assertThat(u.getStatus()).isEqualTo(User.STATUS_ACTIVE);
+            verify(userRepository, never()).save(any());
+            verify(refreshTokenService, never()).revokeAllForUser(any());
+            verify(auditService, never()).record(any(), eq("ACCOUNT_DELETION_REQUESTED"), any(), any(), any());
+            return;
+        }
+        throw new AssertionError("Expected requestDeletion() to propagate the session-consumption failure");
+    }
+
+    @Test
+    void requestDeletion_onASuspendedAccount_isRejectedBeforeConsumingTheSession() {
+        User u = user(User.SCOPE_USER);
+        u.setStatus(User.STATUS_SUSPENDED);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(u));
+
+        try {
+            service.requestDeletion(userId, SESSION_ID);
+        } catch (ApiException e) {
+            assertThat(e.getMessage()).contains("suspended");
+            assertThat(u.getStatus()).isEqualTo(User.STATUS_SUSPENDED);
+            // Blocked before ever burning the OTP session.
+            verify(passwordChangeService, never()).consumeForAccountDeletion(any(), any());
+            verify(refreshTokenService, never()).revokeAllForUser(any());
+            return;
+        }
+        throw new AssertionError("Expected requestDeletion() to throw for a suspended account");
+    }
+
+    @Test
+    void requestDeletion_onAnAlreadyPendingDeletionAccount_isRejected() {
+        User u = user(User.SCOPE_USER);
+        u.setStatus(User.STATUS_PENDING_DELETION);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(u));
+
+        try {
+            service.requestDeletion(userId, SESSION_ID);
+        } catch (ApiException e) {
+            assertThat(e.getMessage()).contains("already scheduled for deletion");
+            verify(passwordChangeService, never()).consumeForAccountDeletion(any(), any());
+            return;
+        }
+        throw new AssertionError("Expected requestDeletion() to throw for an already-pending-deletion account");
+    }
+
+    @Test
+    void requestDeletion_onAnAlreadyDeletedAccount_isRejectedAsNotFound() {
+        User u = user(User.SCOPE_USER);
+        u.setStatus(User.STATUS_DELETED);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(u));
+
+        try {
+            service.requestDeletion(userId, SESSION_ID);
+        } catch (ApiException e) {
+            assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.NOT_FOUND);
+            verify(passwordChangeService, never()).consumeForAccountDeletion(any(), any());
+            return;
+        }
+        throw new AssertionError("Expected requestDeletion() to throw for an already-deleted account");
+    }
+
+    @Test
+    void requestDeletion_onAnAdminScopeAccount_isRejected() {
+        User u = user(User.SCOPE_ADMIN);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(u));
+
+        try {
+            service.requestDeletion(userId, SESSION_ID);
+        } catch (ApiException e) {
+            assertThat(u.getStatus()).isEqualTo(User.STATUS_ACTIVE);
+            verify(passwordChangeService, never()).consumeForAccountDeletion(any(), any());
+            verify(refreshTokenService, never()).revokeAllForUser(any());
+            return;
+        }
+        throw new AssertionError("Expected requestDeletion() to throw for an admin-scope account");
     }
 }

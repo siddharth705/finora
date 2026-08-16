@@ -45,4 +45,11 @@ public interface GmailConnectionRepository extends JpaRepository<GmailConnection
            """)
     List<GmailConnection> findDueForDiscovery(@Param("checkedBefore") Instant checkedBefore,
                                               Pageable pageable);
+
+    /** AccountPurgeSweepService -- called after GmailConnectionService.disconnect() has already
+     *  revoked and closed any LIVE connection; this clears PII (googleEmail/googleUserId) from
+     *  disconnected/revoked history rows too, not just the live one. gmail_processed_messages
+     *  cascades automatically via its own connection_id ON DELETE CASCADE. Hard delete, no
+     *  soft-delete concern on this entity. */
+    void deleteByUserId(UUID userId);
 }

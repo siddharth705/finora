@@ -187,4 +187,16 @@ public class ResendEmailProvider implements EmailProvider {
                 """;
         return send(EmailMessage.html(toEmail, "Your Finora account was reactivated", html));
     }
+
+    @Override
+    public EmailResult sendAccountDeletionRequestedEmail(String toEmail, Instant requestedAt) {
+        String when = DEACTIVATED_AT_FORMAT.format(requestedAt.atZone(ZoneOffset.UTC));
+        String html = """
+                <p>Your Finora account is scheduled for permanent deletion, requested on %s (UTC).</p>
+                <p>Your account and all your data will be permanently removed in 48 hours. This
+                cannot be undone, and there is no way to cancel this request.</p>
+                <p>If you didn't do this, contact support immediately.</p>
+                """.formatted(when);
+        return send(EmailMessage.html(toEmail, "Your Finora account is scheduled for deletion", html));
+    }
 }

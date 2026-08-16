@@ -337,3 +337,27 @@ with its own tables and a background worker, sized appropriately for something m
 - When Resend/2Factor webhook endpoints are eventually added (unblocking `DELIVERED`), confirm
   webhook signature verification is in scope alongside them — an unauthenticated delivery-status
   endpoint is a new attack surface.
+
+## 7. Implementation kickoff — read this first when picking this up
+
+This proposal is frozen. Implementation is approved to begin once the safety gate below is fully
+cleared, and not before. Implement against the architecture already locked in §2–§5 — this is a
+proposal to execute, not a proposal to redesign. Revisit the architecture only if new codebase
+evidence contradicts something stated here (e.g. a referenced class was renamed or removed); a
+preference for a different pattern discovered mid-implementation is not sufficient reason on its own.
+
+**Safety gate — confirm all four before starting:**
+- [ ] C-8 Track B closed
+- [ ] All 56 bug-hunt findings closed
+- [ ] Backup/recovery validated
+- [ ] Sentry + production monitoring ready
+
+**Locked, not open for reconsideration** (see §2.1/§2.2/§2.5/§4 for the full reasoning):
+- Modular-monolith module (`com.finora.notification`) — not a separate service, no message broker.
+- Transactional outbox + `NotificationDispatcher` worker — not an in-memory event bus.
+- Existing `EmailProvider`/`SmsProvider` stay as-is; push (FCM/APNs) is the only new channel.
+- `device_tokens.encrypted_token`, not a hash, with key management designed alongside it.
+- Lifecycle capped at `CREATED/QUEUED/PROCESSING/SENT/FAILED/RETRYING/DEAD_LETTER` — no
+  `DELIVERED`/`READ` until provider webhooks exist.
+- Deferred stays deferred: delivery/read tracking, localization/i18n, marketing notifications,
+  Kafka/RabbitMQ/service extraction, advanced analytics.

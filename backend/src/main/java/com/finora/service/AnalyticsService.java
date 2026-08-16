@@ -16,6 +16,7 @@ import com.finora.util.UserZone;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -113,10 +114,23 @@ public class AnalyticsService {
 
         Map<YearMonth, BigDecimal> byMonth = new HashMap<>();
         RefundNetting refunds = refundsFor(userId);
-        for (Transaction t : activeExpenseTransactions(userId, null)) {
+        // BH-042: this used to call activeExpenseTransactions(userId, null) -- the ALL-TIME
+        // overload -- loading the user's entire expense history via findByUserId, and only
+        // discarded everything outside [start, end] afterward, in memory. start/end above are
+        // already the exact window this method needs, so querying them directly is the fix; the
+        // refund netting above is unaffected -- refundsFor() already runs its own small, always-
+        // unbounded-by-design query (see its javadoc) that isn't part of the fetch being narrowed
+        // here.
+        //
+        // Post-merge review: the manual month.isBefore(start)/isAfter(end) filter this loop used
+        // to need (when the fetch was all-time) is gone -- findByUserIdAndTxnDateBetween's own
+        // [start.atDay(1), end.atEndOfMonth()] bound already guarantees every row satisfies it, so
+        // the check could only ever be dead code, and dead code that LOOKS like real filtering is
+        // worse than no code: if the query bound were ever narrowed by mistake, this would have
+        // silently absorbed the discrepancy instead of surfacing it as a visible bug.
+        for (Transaction t : activeExpenseTransactions(userId, start.atDay(1), end.atEndOfMonth())) {
             if (t.getMerchantId() == null) continue;
             YearMonth m = YearMonth.from(t.getTxnDate());
-            if (m.isBefore(start) || m.isAfter(end)) continue;
             byMonth.merge(m, refunds.reportableAmount(t), BigDecimal::add);
         }
 
@@ -235,10 +249,30 @@ public class AnalyticsService {
      * and amounts have to come from the same place, which is why the netting is returned alongside
      * rather than being applied here.
      */
+    /**
+     * BH-042 follow-up (found in post-merge review): a single specific month is itself a bounded
+     * window, so delegate to {@link #activeExpenseTransactions(UUID, LocalDate, LocalDate)} rather
+     * than loading the user's entire history to keep one month of it -- the original BH-042 PR
+     * left this {@code month != null} case unbounded, reasoning (correctly) only about the {@code
+     * month == null} "all-time" case, which genuinely does still need every row and stays as-is.
+     */
     private List<Transaction> activeExpenseTransactions(UUID userId, YearMonth month) {
+        if (month != null) {
+            return activeExpenseTransactions(userId, month.atDay(1), month.atEndOfMonth());
+        }
         return RefundNetting.reportable(transactionRepository.findByUserId(userId)).stream()
-                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE
-                        && (month == null || YearMonth.from(t.getTxnDate()).equals(month)))
+                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
+                .toList();
+    }
+
+    /**
+     * BH-042: date-bounded twin of {@link #activeExpenseTransactions(UUID, YearMonth)}'s all-time
+     * case, used by {@link #merchantTrend} (its own [start, end] trend window) and, since the
+     * follow-up above, by the single-month case of the other overload too.
+     */
+    private List<Transaction> activeExpenseTransactions(UUID userId, LocalDate from, LocalDate to) {
+        return RefundNetting.reportable(transactionRepository.findByUserIdAndTxnDateBetween(userId, from, to)).stream()
+                .filter(t -> t.getTxnType() == Transaction.Type.EXPENSE)
                 .toList();
     }
 

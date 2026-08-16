@@ -243,10 +243,28 @@ public class GmailConnectionService {
         });
     }
 
-    /** The user's live connection, if they have one. */
+    /** The user's live connection, if they have one -- {@code CONNECTED} or {@code
+     *  REAUTH_REQUIRED} only, the two statuses Gmail sync actually acts on. */
     @Transactional(readOnly = true)
     public Optional<GmailConnection> findLiveConnection(UUID userId) {
         return connections.findByUserIdAndStatusIn(userId, LIVE);
+    }
+
+    /**
+     * The user's current connection row, whatever its status -- unlike {@link #findLiveConnection},
+     * this also surfaces {@code REVOKED} and {@code DISCONNECTED}. Exists for {@code GET /status}
+     * specifically: {@code findLiveConnection}'s {@code LIVE} set deliberately excludes both (sync
+     * has nothing to do with either), but the status panel needs to tell a user "your connection
+     * was revoked, reconnect" apart from "you've never connected" -- collapsing both to "not
+     * connected" was C6.1's own bug, since REVOKED was invisible to every caller before this
+     * method existed. {@code redeemCallback} always inserts a fresh row on connect rather than
+     * reviving a disconnected/revoked one (a user who reconnects several times accumulates several
+     * historical rows), so the most recently created row is the only one that reflects the
+     * account's current state -- everything older is history, not status.
+     */
+    @Transactional(readOnly = true)
+    public Optional<GmailConnection> findCurrentConnection(UUID userId) {
+        return connections.findByUserIdOrderByCreatedAtDesc(userId).stream().findFirst();
     }
 
     /**

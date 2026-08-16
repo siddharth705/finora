@@ -166,10 +166,21 @@ export interface UpdateTransactionPayload {
   tags?: string[] | null;
 }
 
+// Mirrors TransactionExplanationDto. Fetched on demand (the "Why this category?" panel), not
+// as part of every list row -- see that DTO's own doc comment for why: every field on it already
+// existed on Transaction before this endpoint did, this just reads it back out.
+export interface TransactionExplanation {
+  decisionSource: string;
+  summary: string;
+  evidence: string[];
+}
+
 export const transactionsApi = {
   search: (filters: TransactionFilters) =>
     api.get<PagedResponse<Transaction>>('/transactions', { params: filters }).then((r) => r.data),
   needsReview: () => api.get<Transaction[]>('/transactions/needs-review').then((r) => r.data),
+  explanation: (id: string) =>
+    api.get<TransactionExplanation>(`/transactions/${id}/explanation`).then((r) => r.data),
   create: (body: unknown) => api.post<Transaction>('/transactions', body).then((r) => r.data),
   update: (id: string, body: UpdateTransactionPayload) =>
     api.put<Transaction>(`/transactions/${id}`, body).then((r) => r.data),
@@ -655,6 +666,11 @@ export const passwordChangeApi = {
 export const accountLifecycleApi = {
   deactivate: (currentPassword: string, reason: string, note?: string) =>
     api.post<{ message: string }>('/users/me/account/deactivate', { currentPassword, reason, note }).then((r) => r.data),
+  // sessionId proves current-password+OTP -- see PasswordChangeService.consumeForAccountDeletion,
+  // reused via the same DELETION_CONFIRMED-gated session DeleteAccountModal builds up through
+  // passwordChangeApi.start/verifyOtp.
+  deleteAccount: (sessionId: string) =>
+    api.post<{ message: string }>('/users/me/account/delete', { sessionId }).then((r) => r.data),
 };
 
 // Self-service view of the caller's own active refresh-token sessions -- backs Settings.tsx's
@@ -715,4 +731,53 @@ export const workspaceApi = {
   getSettings: () => api.get<WorkspaceSettings>('/workspace/settings').then((r) => r.data),
   updateSettings: (body: { autoApplyConfidenceThreshold: number }) =>
     api.put<WorkspaceSettings>('/workspace/settings', body).then((r) => r.data),
+};
+
+// --- Gmail Transaction Sync (C5.4) ---
+//
+// Mirrors GmailConnectionStatusDto exactly. The connect/callback/status/disconnect endpoints have
+// existed on the backend since Phase B; this is the first frontend caller for any of them --
+// there was no "Connect Gmail" button anywhere until now, so wiring the connection flow itself is
+// part of "the minimum needed to make C5 usable", not just the review queue.
+
+export interface GmailConnectionStatus {
+  connected: boolean;
+  status: string | null;
+  needsReconnect: boolean;
+  googleEmail: string | null;
+  grantedScopes: string[];
+  connectedAt: string | null;
+  lastSyncedAt: string | null;
+  lastDiscoveryAt: string | null;
+  transactionsFound: number;
+  needsReview: number;
+  available: boolean;
+}
+
+// Mirrors GmailReviewItemDto. sessionId is what approve()/reject() take -- there is no separate
+// "receipt id"; a Gmail-sourced ImportSession IS the receipt (GmailStagingBridge stages exactly
+// one row per session), see GmailReviewService's own doc comment.
+export interface GmailReviewItem {
+  sessionId: string;
+  merchant: string;
+  merchantDomain: string;
+  amount: number;
+  date: string;
+  category: string;
+  confidence: number | null;
+  stagedAt: string;
+  reasoning: string;
+}
+
+export const gmailApi = {
+  status: () => api.get<GmailConnectionStatus>('/integrations/google/gmail/status').then((r) => r.data),
+  connect: () =>
+    api.post<{ authorizationUrl: string }>('/integrations/google/gmail/connect').then((r) => r.data),
+  disconnect: () => api.delete('/integrations/google/gmail/connection'),
+  syncNow: () => api.post('/integrations/google/gmail/sync-now'),
+  reviewQueue: () =>
+    api.get<GmailReviewItem[]>('/integrations/google/gmail/review-queue').then((r) => r.data),
+  approve: (sessionId: string, category?: string) =>
+    api.post(`/integrations/google/gmail/review/${sessionId}/approve`, category ? { category } : {}),
+  reject: (sessionId: string) => api.post(`/integrations/google/gmail/review/${sessionId}/reject`),
 };

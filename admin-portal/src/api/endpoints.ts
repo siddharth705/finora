@@ -3,7 +3,7 @@ import type {
 
   AccountDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
   CreateAccountRequest, CreateBankRequest, CreateRelationshipRequest,
-  CreateRuleRequest, CreateUserRequest, FeatureFlagDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
+  CreateRuleRequest, CreateUserRequest, FeatureFlagDto, GmailMerchantParserStatDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
   LearningTimelineEntry,
   MeAccessDto, MerchantDto, MerchantMergeRequest, MerchantStatDto,
   MerchantUpdateRequest, OperationalDashboardDto, PagedResponse, PermissionDto, PlatformAnalyticsDto,
@@ -297,6 +297,13 @@ export const adminMerchantReviewApi = {
 
 export const adminMerchantsApi = {
   platformStats: () => api.get<MerchantStatDto[]>('/admin/merchants/stats').then((r) => r.data),
+  // No default window on the backend (an unbounded scan is a cost the endpoint never silently
+  // absorbs) -- since is required here too, an ISO string built from a plain Date so callers
+  // don't need to know the backend's exact format.
+  gmailParserStats: (since: Date) =>
+    api.get<GmailMerchantParserStatDto[]>('/admin/merchants/gmail-parser-stats', {
+      params: { since: since.toISOString() },
+    }).then((r) => r.data),
 };
 
 /** Admin, support-assisted merchant management for a specific user -- AdminUserMerchantController

@@ -32,16 +32,19 @@ public class UserAccountLifecycleService {
     private final AuditService auditService;
     private final EmailProvider emailProvider;
     private final RequestMetadata requestMetadata;
+    private final PasswordChangeService passwordChangeService;
 
     public UserAccountLifecycleService(UserRepository userRepository, PasswordEncoder passwordEncoder,
                                         RefreshTokenService refreshTokenService, AuditService auditService,
-                                        EmailProvider emailProvider, RequestMetadata requestMetadata) {
+                                        EmailProvider emailProvider, RequestMetadata requestMetadata,
+                                        PasswordChangeService passwordChangeService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.refreshTokenService = refreshTokenService;
         this.auditService = auditService;
         this.emailProvider = emailProvider;
         this.requestMetadata = requestMetadata;
+        this.passwordChangeService = passwordChangeService;
     }
 
     /**
@@ -60,6 +63,17 @@ public class UserAccountLifecycleService {
     public void deactivate(UUID userId, String currentPassword, String reason, String note) {
         User user = requireUser(userId);
         requireUserScope(user);
+
+        // Same reasoning as AuthService.login()'s isPendingDeletion()/isDeleted() checks: the
+        // account's real passwordHash is still on the row until AccountPurgeSweepService's last
+        // purge step anonymizes it, and requestDeletion() only revokes refresh tokens -- an access
+        // token already issued keeps working for up to 15 minutes past the status change. Without
+        // this, that window (or simply the same still-known current password, once a fresh login
+        // is blocked) would let someone deactivate their way out of a request that requestDeletion
+        // ()'s own doc comment and confirmation email both promise has "no way to cancel."
+        if (user.isPendingDeletion() || user.isDeleted()) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "This account is scheduled for deletion and can no longer be modified.");
+        }
 
         if (!User.DEACTIVATION_REASONS.contains(reason)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "'" + reason + "' is not a recognized deactivation reason.");
@@ -98,6 +112,64 @@ public class UserAccountLifecycleService {
             EmailResult result = emailProvider.sendAccountDeactivatedEmail(email, now, device, ip);
             auditService.record(userId, "EMAIL_SENT", "User", userId, Map.of(
                     "type", "account_deactivated", "provider", result.provider().name(),
+                    "success", result.success()));
+        });
+    }
+
+    /**
+     * Irreversible: current-password+OTP already proven by sessionId (see PasswordChangeService.
+     * consumeForAccountDeletion), sets PENDING_DELETION, revokes every session, sends a
+     * no-cancel-link confirmation email. AccountPurgeSweepService purges the account
+     * AccountPurgeSweepService.MINIMUM_SAFETY_BUFFER-floored 48h later -- there is deliberately no
+     * self-service undo (product decision), unlike deactivate() above.
+     *
+     * @param sessionId a PasswordChangeSession id already at OTP_VERIFIED -- the frontend drives
+     *                  the exact same start()/verifyOtp() calls ChangePasswordModal uses. No
+     *                  currentPassword parameter: the session itself is that proof, same as
+     *                  PasswordChangeService.complete() never re-asks for it either.
+     */
+    @Transactional
+    public void requestDeletion(UUID userId, String sessionId) {
+        User user = requireUser(userId);
+        requireUserScope(user);
+
+        // A suspension is an admin's call, not something a user should be able to route around
+        // via self-service deletion -- they need an admin to reactivate first, then can delete
+        // normally. Checked before consuming the OTP session so a blocked attempt doesn't burn it.
+        if (user.isSuspended()) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "This account has been suspended. Contact support for assistance.");
+        }
+        if (user.isPendingDeletion()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Your account is already scheduled for deletion.");
+        }
+        if (user.isDeleted()) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "User not found");
+        }
+
+        // Proves current-password + OTP for THIS request; throws ApiException(BAD_REQUEST) if the
+        // session is invalid, expired, or not at OTP_VERIFIED. Also consumes it (DELETION_CONFIRMED)
+        // so it can never be replayed into an actual password change.
+        passwordChangeService.consumeForAccountDeletion(userId, sessionId);
+
+        Instant now = Instant.now();
+        user.setStatus(User.STATUS_PENDING_DELETION);
+        user.setDeletionRequestedAt(now);
+        user.setUpdatedAt(now);
+        userRepository.save(user);
+
+        // Same reasoning as deactivate()'s call below: status alone blocks new logins/refreshes,
+        // not an access token already issued (up to 15 minutes) -- revoke every refresh token in
+        // this transaction so the session can't outlive the access token it's currently holding.
+        refreshTokenService.revokeAllForUser(userId);
+
+        Map<String, Object> auditMetadata = requestMetadata.addTo(new HashMap<>(Map.of("method", "self_service")));
+        auditService.record(userId, "ACCOUNT_DELETION_REQUESTED", "User", userId, auditMetadata);
+
+        String email = user.getEmail();
+        AfterCommit.run("account deletion requested email", () -> {
+            EmailResult result = emailProvider.sendAccountDeletionRequestedEmail(email, now);
+            auditService.record(userId, "EMAIL_SENT", "User", userId, Map.of(
+                    "type", "account_deletion_requested", "provider", result.provider().name(),
                     "success", result.success()));
         });
     }

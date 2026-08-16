@@ -69,12 +69,20 @@ public class User {
     public static final String STATUS_SUSPENDED = "SUSPENDED";
     /** Self-service, reversible: the user chose to step away. Blocks login like SUSPENDED, but
      *  AuthService.login() recognizes it separately and offers a reactivation path instead of a
-     *  dead-end rejection -- see isDeactivated() and AuthService.reactivate().
-     *
-     *  Permanent deletion (PENDING_DELETION/DELETED) is a later phase and deliberately has no
-     *  constants here yet -- see V87's own comment on why that schema ships alongside the code
-     *  that writes it, not ahead of it. */
+     *  dead-end rejection -- see isDeactivated() and AuthService.reactivate(). */
     public static final String STATUS_DEACTIVATED = "DEACTIVATED";
+    /** Self-service, irreversible: current-password+OTP gated (same bar as changing a password --
+     *  see PasswordChangeService.consumeForAccountDeletion), no self-service undo. Blocks login
+     *  entirely, unlike DEACTIVATED -- see isPendingDeletion() and
+     *  AccountPurgeSweepService, which purges (anonymizes) the account
+     *  AccountPurgeSweepService.MINIMUM_SAFETY_BUFFER-floored after deletionRequestedAt. */
+    public static final String STATUS_PENDING_DELETION = "PENDING_DELETION";
+    /** Terminal. The row is never actually deleted -- see AccountPurgeSweepService's own doc
+     *  comment on why (keeping it alive, anonymized, is what lets StatementStorageSweepService's
+     *  90-day R2 sweep keep working unmodified) -- only anonymized: email/passwordHash/fullName/
+     *  phoneNumber scrubbed, deactivationReason kept for churn analytics, deactivationNote
+     *  cleared (free text). See isDeleted(). */
+    public static final String STATUS_DELETED = "DELETED";
 
     /** Every value users_deactivation_reason_check (V88) allows -- kept as one Java-side list so
      *  UserAccountLifecycleService.deactivate()'s validation and the DB constraint can never name
@@ -177,6 +185,17 @@ public class User {
     @Column(name = "deactivated_at")
     private Instant deactivatedAt;
 
+    // When the self-service deletion request was accepted -- AccountPurgeSweepService's
+    // eligibility query floors off this. Null unless status is (or was) PENDING_DELETION.
+    @Column(name = "deletion_requested_at")
+    private Instant deletionRequestedAt;
+
+    // Set as the LAST write of AccountPurgeSweepService.purgeOne -- see that class's own doc
+    // comment on why status only flips to DELETED once every other purge step has already
+    // succeeded (the idempotent-retry guarantee).
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
+
     // IANA timezone name (e.g. "Asia/Kolkata", "America/New_York"), used to resolve the
     // Dashboard's time-of-day greeting server-side-of-truth instead of trusting whatever the
     // browser's local clock happens to think "now" is — see UserSettingsService and the
@@ -226,10 +245,16 @@ public class User {
     public void setStatus(String status) { this.status = status; }
     public boolean isSuspended() { return STATUS_SUSPENDED.equals(status); }
     public boolean isDeactivated() { return STATUS_DEACTIVATED.equals(status); }
+    public boolean isPendingDeletion() { return STATUS_PENDING_DELETION.equals(status); }
+    public boolean isDeleted() { return STATUS_DELETED.equals(status); }
     public String getDeactivationReason() { return deactivationReason; }
     public void setDeactivationReason(String deactivationReason) { this.deactivationReason = deactivationReason; }
     public String getDeactivationNote() { return deactivationNote; }
     public void setDeactivationNote(String deactivationNote) { this.deactivationNote = deactivationNote; }
+    public Instant getDeletionRequestedAt() { return deletionRequestedAt; }
+    public void setDeletionRequestedAt(Instant deletionRequestedAt) { this.deletionRequestedAt = deletionRequestedAt; }
+    public Instant getDeletedAt() { return deletedAt; }
+    public void setDeletedAt(Instant deletedAt) { this.deletedAt = deletedAt; }
     public Instant getDeactivatedAt() { return deactivatedAt; }
     public void setDeactivatedAt(Instant deactivatedAt) { this.deactivatedAt = deactivatedAt; }
     public String getTimezone() { return timezone; }

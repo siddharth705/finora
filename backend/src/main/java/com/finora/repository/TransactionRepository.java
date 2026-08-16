@@ -255,4 +255,22 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
            "AND t.txnType = :expenseType AND t.merchantId IS NOT NULL GROUP BY t.merchantId")
     List<Object[]> platformMerchantSpendTotals(@Param("refundStatus") Transaction.ReconciliationStatus refundStatus,
                                                 @Param("expenseType") Transaction.Type expenseType);
+
+    /**
+     * AccountPurgeSweepService. Native, bypassing Hibernate's {@code @SQLDelete} entirely -- a
+     * derived/JPQL {@code deleteByUserId} on this entity would only soft-delete (set
+     * {@code deleted_at}), not purge, since {@code Transaction extends BaseEntity}. Named
+     * {@code hardDeleteByUserId}, not {@code deleteByUserId}, so the bypass is visible at every
+     * call site -- same naming discipline {@link #findByUserId} above.
+     *
+     * <p>One native statement for the whole user, not a loop of {@code repository.delete(entity)}:
+     * this table has two self-referential FKs ({@code is_duplicate_of}, {@code transfer_pair_id}),
+     * and Postgres only checks non-deferred FK constraints at end-of-statement, not per row. A
+     * single bulk {@code DELETE} removes every row for the user atomically, so two of their own
+     * transactions pointing at each other never trip a constraint violation -- a row-by-row loop
+     * could, depending on iteration order.
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query(value = "DELETE FROM transactions WHERE user_id = :userId", nativeQuery = true)
+    void hardDeleteByUserId(@Param("userId") UUID userId);
 }

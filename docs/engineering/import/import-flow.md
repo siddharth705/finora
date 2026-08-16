@@ -56,9 +56,9 @@ regardless of which staging path produced the session, and one endpoint is the p
 
 **Limits.** Staging is rate limited to **10 requests per 10 minutes per IP**
 (`RateLimitFilter.importStageLimiter`, covering both stage endpoints) and gated to **6 concurrent
-parses** with a 20s queue timeout (`ImportConcurrencyLimiter`, configurable via
-`app.import.max-concurrent` / `app.import.acquire-timeout-ms`); exhausting the queue returns
-`IMPORT_006`. Uploads are capped at **10 MB** (`UPLOAD_MAX_FILE_SIZE`).
+parses** (`ImportConcurrencyLimiter`, configurable via `app.import.max-concurrent`); BH-043:
+exceeding the limit is rejected immediately (no wait) with `IMPORT_006`. Uploads are capped at
+**10 MB** (`UPLOAD_MAX_FILE_SIZE`).
 
 ---
 

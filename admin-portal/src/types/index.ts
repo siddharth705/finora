@@ -8,7 +8,7 @@ export interface UserSummaryDto {
   fullName: string;
   phoneNumber: string | null;
   phoneVerified: boolean;
-  // DEACTIVATED/PENDING_DELETION are self-service (User.STATUS_*, V84 migration); DELETED is the
+  // DEACTIVATED/PENDING_DELETION are self-service (User.STATUS_*, V87 migration); DELETED is the
   // terminal, anonymized-tombstone state AccountPurgeSweepService leaves behind -- the row is
   // never actually removed, see User.STATUS_DELETED's own doc comment.
   status: 'ACTIVE' | 'SUSPENDED' | 'DEACTIVATED' | 'PENDING_DELETION' | 'DELETED';
@@ -332,6 +332,21 @@ export interface MerchantStatDto {
   canonicalName: string;
   userCount: number;
   rowCount: number;
+}
+
+/** One row in the Gmail parser-health section (C6.2) -- see the backend's
+ *  GmailMerchantParserStatDto doc comment for exactly what each count means. successRate is null
+ *  when noParserYet is the only traffic this domain has ever produced -- there is no parser to
+ *  rate yet, distinct from a parser that regressed to 0%. */
+export interface GmailMerchantParserStatDto {
+  domain: string;
+  merchant: string;
+  parsed: number;
+  parseFailed: number;
+  skippedNotReceipt: number;
+  noParserYet: number;
+  successRate: number | null;
+  lastSeen: string | null;
 }
 
 export interface MerchantDistributionEntry {

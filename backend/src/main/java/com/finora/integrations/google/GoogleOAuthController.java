@@ -1,6 +1,7 @@
 package com.finora.integrations.google;
 
 import com.finora.dto.ApiResponse;
+import com.finora.integrations.google.merchant.GmailReviewService;
 import com.finora.security.CurrentUser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,13 +31,19 @@ public class GoogleOAuthController {
     private final GmailConnectionService connectionService;
     private final GoogleOAuthProperties properties;
     private final CurrentUser currentUser;
+    private final GmailReviewService reviewService;
+    private final GmailManualSyncService manualSyncService;
 
     public GoogleOAuthController(GmailConnectionService connectionService,
                                   GoogleOAuthProperties properties,
-                                  CurrentUser currentUser) {
+                                  CurrentUser currentUser,
+                                  GmailReviewService reviewService,
+                                  GmailManualSyncService manualSyncService) {
         this.connectionService = connectionService;
         this.properties = properties;
         this.currentUser = currentUser;
+        this.reviewService = reviewService;
+        this.manualSyncService = manualSyncService;
     }
 
     /**
@@ -93,13 +100,29 @@ public class GoogleOAuthController {
         }
     }
 
-    /** What the user's settings page shows. Safe to call whether or not anything is connected. */
+    /** What the user's settings page shows. Safe to call whether or not anything is connected.
+     *  {@code findCurrentConnection}, not {@code findLiveConnection} -- the panel needs to show
+     *  REVOKED/DISCONNECTED too, not just the statuses sync itself cares about. */
     @GetMapping("/status")
     public ApiResponse<GmailConnectionStatusDto> status() {
         boolean available = properties.isConfigured();
-        return ApiResponse.ok(connectionService.findLiveConnection(currentUser.id())
-                .map(connection -> GmailConnectionStatusDto.of(connection, available))
+        return ApiResponse.ok(connectionService.findCurrentConnection(currentUser.id())
+                .map(connection -> GmailConnectionStatusDto.of(connection, available,
+                        reviewService.countTransactionsFound(connection.getId()),
+                        reviewService.countNeedsReview(currentUser.id())))
                 .orElseGet(() -> GmailConnectionStatusDto.notConnected(available)));
+    }
+
+    /**
+     * "Sync Now" — C5.4. Runs discovery+extraction synchronously for this user's connection,
+     * the same two calls {@link GmailDiscoveryWorker}'s tick makes, just for one mailbox and one
+     * request instead of a scheduled slice. See {@link GmailManualSyncService} for the cooldown
+     * and error-mapping this delegates to.
+     */
+    @PostMapping("/sync-now")
+    public ApiResponse<Void> syncNow() {
+        manualSyncService.syncNow(currentUser.id());
+        return ApiResponse.ok(null, "Gmail synced");
     }
 
     /**

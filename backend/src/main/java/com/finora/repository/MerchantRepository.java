@@ -48,6 +48,12 @@ public interface MerchantRepository extends JpaRepository<Merchant, UUID> {
     // UUIDs. Same pattern as CurrentUser-scoped queries elsewhere in the codebase.
     Optional<Merchant> findByIdAndUserId(UUID id, UUID userId);
 
+    /** AccountPurgeSweepService -- called last among the merchant-intelligence tables, after
+     *  merchant_aliases/merchant_category_learning/merchant_learning_audit/merchant_learning_events
+     *  (all FK'd to merchants with ON DELETE CASCADE, which would clean them up anyway -- explicit
+     *  ordering is deliberate here, not load-bearing). Hard delete, no soft-delete concern. */
+    void deleteByUserId(UUID userId);
+
     /**
      * Backs the admin Merchant Intelligence page's platform-wide catalog (AdminMerchantStatsService)
      * -- every other query on this repository is deliberately userId-scoped (see the two above),

@@ -17,7 +17,13 @@ import java.util.UUID;
 public class PasswordChangeSession {
 
     public enum Status {
-        STARTED, OTP_VERIFIED, COMPLETED, EXPIRED
+        STARTED, OTP_VERIFIED, COMPLETED, EXPIRED,
+        /** Consumed by UserAccountLifecycleService.requestDeletion's re-auth gate, not an actual
+         *  password change -- deliberately distinct from COMPLETED, so a stray replay into
+         *  PasswordChangeService.complete() is rejected rather than mistaken for a real password
+         *  change reusing COMPLETED's idempotent-replay branch. See
+         *  PasswordChangeService.consumeForAccountDeletion. */
+        DELETION_CONFIRMED
     }
 
     @Id

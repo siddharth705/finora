@@ -2,6 +2,7 @@ package com.finora.imports.analysis;
 
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -11,6 +12,27 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface StatementAnalysisSessionRepository extends JpaRepository<StatementAnalysisSession, UUID> {
+
+    /**
+     * AccountPurgeSweepService -- the one deliberate exception to this table's "written once,
+     * never edited" design (see {@link StatementAnalysisSession}'s own class doc, which claims
+     * "the row holds nothing personal to protect"). That claim doesn't survive contact with two of
+     * its own columns: {@code file_name} is the exact filename the user uploaded, and
+     * {@code failure_detail} can hold a fragment of the document itself (see {@code
+     * ImportDto.ImportFailureSummaryDto}'s own doc comment on why that field is admin/debug-only
+     * and never reaches a customer response). Clears exactly those two plus {@code user_id} --
+     * {@code layout_fingerprint}/{@code outcome}/{@code failure_code}/{@code section_count}/{@code
+     * duration_ms}/{@code source}/{@code reference}/{@code created_at} are the actual
+     * layout-intelligence signal this table exists to aggregate, and none of them are personal.
+     *
+     * <p>Native, not a JPQL bulk update: every column here is {@code updatable = false} by design
+     * (the entity has no setters at all), so a native statement is what makes bypassing that
+     * immutability, on this one purge-only path, visible rather than accidental.
+     */
+    @Modifying
+    @Query(value = "UPDATE statement_analysis_sessions SET user_id = NULL, file_name = NULL, failure_detail = NULL WHERE user_id = :userId",
+            nativeQuery = true)
+    void anonymizeByUserId(@Param("userId") UUID userId);
 
     /**
      * The reference counter, from a database sequence rather than a count of existing rows.

@@ -59,7 +59,27 @@ public class GlobalExceptionHandler {
         // origin identified, and with the request line so the endpoint is known without correlating
         // by timestamp. Deliberately not logging query string or body -- this is a financial API
         // and those carry customer data.
-        if (ex.getStatus().is5xxServerError()) {
+        //
+        // BH-043: a 5xx whose code is ErrorCode.intentionalRejection() is the one exception to
+        // "always ERROR" above -- see that field's own doc. IMPORT_SYSTEM_BUSY now fires on every
+        // ordinary burst past the concurrency limit, not rarely after a 20s timeout, so treating
+        // every occurrence as an alarming server failure (full stack trace, ERROR-level) would
+        // flood exactly the alerting this class exists to keep meaningful with what the limiter
+        // is designed to do correctly. WARN, no trace: the code and message already say
+        // everything there is to know, there is no origin to go find.
+        //
+        // Post-merge review: is5xxServerError() is checked in BOTH branches now, not just the
+        // ERROR one -- intentionalRejection()'s own doc is explicit that it's about "a 5xx
+        // carrying this code," and every 4xx above this block is documented and tested to stay
+        // completely silent. Without this guard, a future ErrorCode that set
+        // intentionalRejection=true on a 4xx (a plausible mistake -- someone copying
+        // IMPORT_SYSTEM_BUSY's pattern to opt out of ERROR-logging without noticing 4xx never
+        // reached that branch anyway) would start WARN-logging a class of error this class's own
+        // contract says must never be logged at all.
+        if (ex.getStatus().is5xxServerError() && ex.getCode() != null && ex.getCode().intentionalRejection()) {
+            log.warn("Deliberate rejection ApiException [{}] on {} {}: {}",
+                    errorCode, request.getMethod(), request.getRequestURI(), ex.getMessage());
+        } else if (ex.getStatus().is5xxServerError()) {
             log.error("Server-error ApiException [{}] on {} {}: {}",
                     errorCode, request.getMethod(), request.getRequestURI(), ex.getMessage(), ex);
         }

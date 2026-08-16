@@ -145,4 +145,9 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, UUID> {
      * choice, not an oversight matching COMPLETED's.
      */
     boolean existsByObjectKeyAndStatusNotIn(String objectKey, java.util.Collection<ImportJob.Status> excludedStatuses);
+
+    /** AccountPurgeSweepService -- hard delete, no soft-delete concern on this entity. Also frees
+     *  any object this job was the sole reference for, for StatementStorageSweepService to
+     *  eventually reclaim. */
+    void deleteByUserId(UUID userId);
 }

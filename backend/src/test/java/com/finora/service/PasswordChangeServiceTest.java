@@ -435,4 +435,99 @@ class PasswordChangeServiceTest {
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Invalid password change session");
     }
+
+    // --- consumeForAccountDeletion() ---
+
+    @Test
+    void consumeForAccountDeletion_afterOtpVerified_advancesTheSessionToDeletionConfirmed() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.OTP_VERIFIED, Instant.now().plusSeconds(600));
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+
+        service.consumeForAccountDeletion(userId, session.getId().toString());
+
+        assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.DELETION_CONFIRMED);
+        assertThat(session.getCompletedAt()).isNotNull();
+        verify(sessionRepository).save(session);
+    }
+
+    @Test
+    void consumeForAccountDeletion_beforeOtpHasBeenVerified_rejects() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.STARTED, Instant.now().plusSeconds(600));
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.consumeForAccountDeletion(userId, session.getId().toString()))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("Verify the code");
+
+        assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.STARTED);
+    }
+
+    @Test
+    void consumeForAccountDeletion_onAnExpiredSession_rejectsAndMarksItExpired() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.OTP_VERIFIED, Instant.now().minusSeconds(60));
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.consumeForAccountDeletion(userId, session.getId().toString()))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("expired");
+
+        assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.EXPIRED);
+    }
+
+    @Test
+    void consumeForAccountDeletion_onAnotherUsersSessionId_isNotFound() {
+        UUID otherUsersSessionId = UUID.randomUUID();
+        when(sessionRepository.findByIdAndUserId(otherUsersSessionId, userId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.consumeForAccountDeletion(userId, otherUsersSessionId.toString()))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("Invalid password change session");
+    }
+
+    /** Regression test for the exact bug DELETION_CONFIRMED being a distinct terminal state (not a
+     *  reuse of COMPLETED) exists to prevent: a session consumed for account deletion must not be
+     *  replayable into complete() and mistaken for an idempotent password-change replay -- it must
+     *  be rejected the same way any other wrong-state session is. */
+    @Test
+    void complete_onASessionAlreadyConsumedForDeletion_isRejectedNotTreatedAsAnIdempotentReplay() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.DELETION_CONFIRMED, Instant.now().plusSeconds(600));
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.complete(userId,
+                new CompleteRequest(session.getId().toString(), "NewPass456!", false, null),
+                THIS_DEVICES_SESSION))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("Verify the code");
+
+        assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.DELETION_CONFIRMED);
+        verify(userRepository, never()).save(any());
+    }
+
+    /** Same regression, the verifyOtp() half: a DELETION_CONFIRMED session replayed into verifyOtp()
+     *  (whose required status is STARTED) must be rejected as any other wrong-state session is. */
+    @Test
+    void verifyOtp_onASessionAlreadyConsumedForDeletion_isRejected() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.DELETION_CONFIRMED, Instant.now().plusSeconds(600));
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest(session.getId().toString(), "some-token")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("already been completed");
+
+        verify(phoneVerificationProvider, never()).verifyAndGetPhoneNumber(any());
+    }
+
+    @Test
+    void start_onAPendingDeletionAccount_isRejectedBeforeEvenCheckingThePassword() {
+        User user = existingUser();
+        user.setStatus(User.STATUS_PENDING_DELETION);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> service.start(userId, new StartRequest("OldPass123!")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("scheduled for deletion");
+
+        verify(passwordEncoder, never()).matches(any(), any());
+        verify(sessionRepository, never()).save(any());
+    }
 }

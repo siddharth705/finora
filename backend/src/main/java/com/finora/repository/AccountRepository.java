@@ -6,11 +6,20 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface AccountRepository extends JpaRepository<Account, UUID> {
     List<Account> findByUserId(UUID userId);
     List<Account> findByUserIdAndAccountType(UUID userId, Account.Type type);
+
+    // GmailReviewService's find-or-create for the one shared "Gmail receipts" account (C5.4) --
+    // by exact name rather than a dedicated marker column, since that name is already the fixed
+    // suggestedName GmailStagingBridge's unknownAccount() has produced for every receipt since
+    // C5-B. findFirst rather than assuming uniqueness: nothing enforces a user can't also have an
+    // unrelated account of the same name, and a derived query throwing on more than one match
+    // would turn that harmless coincidence into a broken approval.
+    Optional<Account> findFirstByUserIdAndName(UUID userId, String name);
 
     // Backs the admin User detail view's "N accounts" stat (AdminUserService.getUser). A derived
     // query, so it's still filtered by @SQLRestriction like every other non-native lookup on this

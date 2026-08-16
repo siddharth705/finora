@@ -226,6 +226,26 @@ app:
     # "contact support" rejection instead of a token-bearing reactivation prompt.
     reactivation-window-enabled: ${ACCOUNT_REACTIVATION_WINDOW_ENABLED:false}
     reactivation-window-days: ${ACCOUNT_REACTIVATION_WINDOW_DAYS:3}
+  account-purge:
+    sweep:
+      # AccountPurgeSweepService. Purges (anonymizes) accounts sitting at PENDING_DELETION past
+      # retention-hours -- see UserAccountLifecycleService.requestDeletion's "no cancel link"
+      # product decision. Off under test for the same reason every other sweep in this codebase
+      # is: a background thread purging accounts mid-test is the cross-test pollution BH-058 was
+      # about. Tests call AccountPurgeSweepService.sweep() directly.
+      enabled: ${ACCOUNT_PURGE_SWEEP_ENABLED:true}
+      # 48h is the product decision itself, not a tunable retention period like statement
+      # storage's 90 days -- a floor of 48h is enforced in code regardless of what this is set to,
+      # see AccountPurgeSweepService.MINIMUM_SAFETY_BUFFER.
+      retention-hours: ${ACCOUNT_PURGE_SWEEP_RETENTION_HOURS:48}
+      # How many eligible accounts one run considers. Same reasoning as
+      # StatementStorageSweepService's batch-size -- a backlog drains across runs rather than in
+      # one unbounded pass.
+      batch-size: ${ACCOUNT_PURGE_SWEEP_BATCH_SIZE:200}
+      # Gmail revocation calls and per-account work make this slower than a simple row sweep --
+      # hourly by default, well inside the 48h window's own margin.
+      interval-ms: ${ACCOUNT_PURGE_SWEEP_INTERVAL_MS:21600000}
+      initial-delay-ms: ${ACCOUNT_PURGE_SWEEP_INITIAL_DELAY_MS:300000}
   security:
     # RateLimitFilter's own doc comment already flagged this: request.getRemoteAddr() only
     # returns the real client IP when nothing sits between the client and this app. Railway (like
@@ -280,9 +300,10 @@ app:
     # imports are maxed out, rather than statement imports alone being able to starve the whole
     # connection pool.
     max-concurrent: ${IMPORT_MAX_CONCURRENT:6}
-    # How long an import request waits in the FIFO queue for a processing slot before giving up
-    # and returning a clear "try again shortly" response, rather than hanging indefinitely.
-    acquire-timeout-ms: ${IMPORT_ACQUIRE_TIMEOUT_MS:20000}
+    # BH-043: there used to be an acquire-timeout-ms here controlling how long a request would
+    # block waiting for a processing slot. ImportConcurrencyLimiter now rejects immediately
+    # instead of waiting (see its own doc comment), so that wait no longer exists and the
+    # property was removed rather than left configuring nothing.
   statement-storage:
     # Phase 2 of docs/engineering/statement-storage-migration.md. The V54 content_hash/object_key
     # columns exist and the import pipeline IS wired to this layer -- ImportService,
@@ -364,6 +385,31 @@ app:
       # An object sits at zero references for 90 days before it is even a candidate.
       interval-ms: ${STATEMENT_STORAGE_SWEEP_INTERVAL_MS:21600000}
       initial-delay-ms: ${STATEMENT_STORAGE_SWEEP_INITIAL_DELAY_MS:300000}
+  audit:
+    redaction:
+      # BH-044. AuditService.redactExpiredMetadata replaces audit_logs.metadata with a small
+      # marker once a row is older than retention-days -- the event itself (actor, action,
+      # entity, timestamp, correlation id) is kept forever, only the JSONB payload carrying real
+      # financial content is wiped. A floor of 90 days is enforced in code regardless of what
+      # this is set to -- see AuditService.MINIMUM_RETENTION.
+      #
+      # Off under test for the same reason app.statement-storage.sweep.enabled is: a background
+      # thread rewriting audit rows mid-test is exactly the cross-test pollution BH-058 was
+      # about. Tests call AuditService.redactExpiredMetadata() directly.
+      enabled: ${AUDIT_REDACTION_ENABLED:true}
+      # Sid's product decision (BH-044, 2026-08-15): the metadata payload inside an audit event
+      # is redacted after 730 days (~2 years). The event row itself is never deleted.
+      retention-days: ${AUDIT_REDACTION_RETENTION_DAYS:730}
+      # How many redaction candidates one pass considers. Larger than
+      # statement-storage.sweep.batch-size (200) because audit_logs is written from ~70+ call
+      # sites across ~28 services and is a much higher-volume table.
+      batch-size: ${AUDIT_REDACTION_BATCH_SIZE:500}
+      # Shorter than statement-storage.sweep.interval-ms (6h) for the same volume reason as
+      # batch-size above -- keeps pace with a higher write rate. Like that sweep, nothing depends
+      # on this running promptly in an absolute sense: a 730-day-old row redacted a few hours
+      # late is immaterial.
+      interval-ms: ${AUDIT_REDACTION_INTERVAL_MS:3600000}
+      initial-delay-ms: ${AUDIT_REDACTION_INITIAL_DELAY_MS:300000}
 
   # Gmail data integration (docs/proposals/gmail-transaction-sync-proposal.md, Phase B). NOT
   # "Sign in with Google" -- a third-party data grant by an already-signed-in user.
@@ -417,6 +463,11 @@ app:
         connections-per-tick: ${GMAIL_DISCOVERY_CONNECTIONS_PER_TICK:25}
         messages-per-connection: ${GMAIL_DISCOVERY_MESSAGES_PER_CONNECTION:500}
         extraction-messages-per-connection: ${GMAIL_EXTRACTION_MESSAGES_PER_CONNECTION:50}
+
+        # "Sync Now" (C5.4) -- a much shorter cooldown than minimum-interval-ms above, since this
+        # gates a single user re-clicking a button, not the whole tick's cost across every mailbox.
+        # See GmailManualSyncService's own doc comment for why it's a separate value.
+        manual-sync-cooldown-ms: ${GMAIL_MANUAL_SYNC_COOLDOWN_MS:60000}
 
 # Reversible encryption at rest for third-party credentials Finora must read back -- OAuth refresh
 # tokens first (ADR-007). NOT for passwords or Finora's own session tokens, which are hashed via
