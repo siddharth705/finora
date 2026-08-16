@@ -20,6 +20,11 @@ vi.mock('../lib/phoneAuth', () => ({
   sendPhoneVerificationCode: vi.fn(),
   confirmPhoneVerificationCode: vi.fn(),
   resetPhoneVerification: vi.fn(),
+  friendlySendError: vi.fn(() => 'Could not send a verification code right now. Please try again.'),
+}));
+
+vi.mock('../lib/monitoring', () => ({
+  reportHandledError: vi.fn(),
 }));
 
 const FAKE_CONFIRMATION = { confirm: vi.fn() } as any;
@@ -121,5 +126,48 @@ describe('VerifyPhone', () => {
     renderVerifyPhone();
 
     expect(await screen.findByText(/could not send a verification code/i)).toBeInTheDocument();
+  });
+
+  it('disables Resend with a countdown right after a manual resend, so it cannot be spammed', async () => {
+    const user = userEvent.setup();
+    renderVerifyPhone();
+    await screen.findByText(/\+•••••••••705/);
+
+    await user.click(screen.getByText("Didn't get a code? Resend"));
+
+    const cooldownButton = await screen.findByRole('button', { name: /resend in \d+s/i });
+    expect(cooldownButton).toBeDisabled();
+  });
+
+  it('offers a Log Out escape hatch when the initial send fails, and signs the user out on click', async () => {
+    vi.mocked(sendPhoneVerificationCode).mockRejectedValue({ code: 'auth/invalid-app-credential' });
+    const logout = vi.fn();
+    vi.mocked(useAuth).mockReturnValue({
+      token: 'tok', email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
+      login: vi.fn(), register: vi.fn(), setPhoneVerified: vi.fn(), logout,
+    });
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/verify-phone']}>
+        <Routes><Route path="/verify-phone" element={<VerifyPhone />} /></Routes>
+      </MemoryRouter>
+    );
+
+    await user.click(await screen.findByRole('button', { name: /log out and try again later/i }));
+
+    expect(logout).toHaveBeenCalled();
+  });
+
+  it('does not offer the Log Out escape hatch for a wrong-code error -- that only needs a retype', async () => {
+    vi.mocked(confirmPhoneVerificationCode).mockRejectedValue({ code: 'auth/invalid-verification-code' });
+    const user = userEvent.setup();
+    renderVerifyPhone();
+    await screen.findByText(/\+•••••••••705/);
+
+    await user.type(screen.getByPlaceholderText('123456'), '000000');
+    await user.click(screen.getByRole('button', { name: /^verify$/i }));
+
+    expect(await screen.findByText(/doesn't match/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /log out and try again later/i })).not.toBeInTheDocument();
   });
 });

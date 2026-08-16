@@ -4,7 +4,13 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Sparkles } from 'lucide-react';
 import { authApi } from '../api/endpoints';
 import { PasswordInput } from '../components/PasswordInput';
-import { sendPhoneVerificationCode, confirmPhoneVerificationCode, resetPhoneVerification } from '../lib/phoneAuth';
+import {
+  sendPhoneVerificationCode,
+  confirmPhoneVerificationCode,
+  resetPhoneVerification,
+  friendlySendError,
+} from '../lib/phoneAuth';
+import { reportHandledError } from '../lib/monitoring';
 import { maskPhone } from '../lib/maskPhone';
 import type { ConfirmationResult } from 'firebase/auth';
 
@@ -71,7 +77,19 @@ export default function ResetPassword() {
       const result = await sendPhoneVerificationCode(res.phoneNumber, RECAPTCHA_CONTAINER_ID);
       setConfirmation(result);
     } catch (err: any) {
-      setOtpError(err.response?.data?.message ?? 'Could not send a verification code. The link may be invalid or expired.');
+      // Logged, not just displayed -- same reasoning as VerifyPhone.tsx's own fix. A backend
+      // rejection (invalid/expired token) carries err.response and needs no Firebase-specific
+      // logging; a Firebase send failure does not, and is exactly the case that previously had no
+      // trace anywhere outside one user's browser console.
+      if (!err.response) {
+        console.error('ResetPassword: requestOtp failed', err);
+        reportHandledError(err, 'reset-password-send-otp');
+      }
+      // Same fix ChangePasswordModal.tsx already carries -- see resetPhoneVerification's own doc
+      // comment: a consumed/expired invisible-reCAPTCHA widget throws on reuse, so a retry needs a
+      // fresh verifier regardless of which of the two failure shapes above just happened.
+      resetPhoneVerification();
+      setOtpError(err.response?.data?.message ?? friendlySendError(err));
     } finally {
       setSendingOtp(false);
     }
