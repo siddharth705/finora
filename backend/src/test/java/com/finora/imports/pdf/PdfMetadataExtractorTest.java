@@ -156,6 +156,24 @@ class PdfMetadataExtractorTest {
         assertThat(metadata.accountNumberMasked()).endsWith("6789");
     }
 
+    /**
+     * Bug fix, found during self-review before this ever reached a real document: the pattern used
+     * to match bare "card ending with/in", not specifically "credit card ending with/in". Since
+     * this scans the WHOLE document's auxiliary text with the same guarded first-match discipline
+     * every field here follows, a savings/current-account statement that mentions a linked DEBIT
+     * card in passing -- with no other Account Number field ever appearing at all -- would have
+     * pinned accountNumberMasked to the debit card's digits, a real account misidentified by its
+     * unrelated linked card. Requiring the literal phrase "credit card" closes this without
+     * narrowing AU's own real phrasing at all.
+     */
+    @Test
+    void extract_doesNotMatchABareDebitCardMention_whenNoAccountNumberFieldExistsAtAll() {
+        var metadata = extractor.extract(List.of(
+                "your linked debit card ending with 9999 is separately governed by..."));
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
     // LEADING_NAME_LINE: real-document-evidenced (a Bank of Baroda savings account statement, an
     // Axis Bank Neo Rupay credit card statement, and a Kotak Mahindra Bank savings statement --
     // three different banks) -- all put the holder's plain name as one of the document's first

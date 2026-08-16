@@ -99,14 +99,22 @@ public class PdfMetadataExtractor {
     // CARD_ENDING_DIGITS: a genuinely different identity shape from every "Account Number" pattern
     // above -- a credit-card statement doesn't label an "Account Number" field at all; it states the
     // card's last 4 digits inside an ordinary sentence ("Statement for your credit card ending with
-    // 6385"), verified against a real AU Small Finance Bank credit-card statement. Only the last 4
-    // digits are ever known this way -- there is no full number anywhere on the page to mask -- so
-    // this always builds the masked identity directly rather than routing through
+    // <4 digits>"), verified against a real AU Small Finance Bank credit-card statement. Only the
+    // last 4 digits are ever known this way -- there is no full number anywhere on the page to
+    // mask -- so this always builds the masked identity directly rather than routing through
     // CsvParser.maskAccountNumber, which would return a 4-digit input UNMASKED (see its own
     // digits.length() <= 4 branch); accountNumberFullForHashingOnly is deliberately left unset here,
     // never guessed from a value this codebase has genuinely never seen.
+    //
+    // Deliberately requires the literal phrase "credit card", not bare "card": this scans the
+    // WHOLE document's auxiliary text, and the same guarded-first-match discipline every field in
+    // this class already follows means whichever mention is found FIRST wins permanently. A
+    // savings/current-account statement that references a linked DEBIT card in passing ("your
+    // debit card ending in 1234...") earlier in the document than its own real Account Number
+    // field would otherwise pin the identity to the wrong card's digits. AU's own real phrasing
+    // ("...your credit card ending with...") already satisfies this narrower match.
     private static final Pattern CARD_ENDING_DIGITS =
-            Pattern.compile("(?i)card\\s+ending\\s+(?:with|in)\\s+(\\d{4})\\b");
+            Pattern.compile("(?i)credit\\s+card\\s+ending\\s+(?:with|in)\\s+(\\d{4})\\b");
 
     private static final DateTimeFormatter[] DATE_FORMATS = {
             DateTimeFormatter.ofPattern("dd-MM-yyyy"),

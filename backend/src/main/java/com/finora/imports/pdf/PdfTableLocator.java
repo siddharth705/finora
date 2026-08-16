@@ -807,7 +807,18 @@ public class PdfTableLocator {
             }
         }
         if (currentRows != null) {
-            closeCurrentSection(currentRows, pendingLeading, headerNames, pendingAuxiliary, sections, ctx);
+            List<String> leftover = closeCurrentSection(currentRows, pendingLeading, headerNames, pendingAuxiliary, sections, ctx);
+            // closeCurrentSection returns non-empty only when it just suppressed a payment-summary
+            // panel instead of staging a section (the ordinary path always returns a fresh, empty
+            // list for whatever section comes next). This is the end of the document, so there IS
+            // no next section to fold that demoted text into -- without this, a document whose
+            // FINAL section is a payment-summary panel would silently lose it, the exact class of
+            // bug e65af76 fixed elsewhere in auxiliaryText handling. Only added when a real section
+            // already exists: a document whose ONLY content was a suppressed panel must stay
+            // sections.isEmpty() so the headerless/two-line fallbacks below still get their chance.
+            if (!leftover.isEmpty() && !sections.isEmpty()) {
+                sections.add(new LocatedSection(leftover, List.of()));
+            }
         }
         // INFERRED_HEADERLESS_LAYOUT. Only ever attempted once the loop above has already found
         // nothing -- see this capability's own doc comment on inferHeaderlessSection for why a
