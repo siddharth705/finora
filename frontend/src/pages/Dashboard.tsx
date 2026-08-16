@@ -7,12 +7,12 @@ import {
 } from 'chart.js';
 import {
   Wallet, ArrowDownCircle, ArrowUpCircle, PieChart,
-  ShoppingBag, Utensils, Car, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck,
+  ShoppingBag, Utensils, Car, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck, Repeat,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { BankLogo } from '../components/BankLogo';
 import {
-  dashboardApi, accountsApi, transactionsApi, goalsApi, insightsApi, userApi, budgetsApi, reportsApi,
+  dashboardApi, accountsApi, transactionsApi, goalsApi, insightsApi, userApi, budgetsApi, reportsApi, recurringApi,
 } from '../api/endpoints';
 
 ChartJS.register(ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler);
@@ -79,6 +79,20 @@ function monthLabel(monthStr: string) {
   return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
 }
 
+// RecurringDto.nextEstimate is a projection from the merchant's own historical gap
+// (lastDate + averageGap), never a confirmed bill date -- "expected", not "due", stays honest
+// about that. A past-due estimate (the pattern predicted a charge that hasn't shown up yet, e.g.
+// a cancelled subscription with no new import since) reads as "expected around <date>" rather
+// than a nonsensical negative day count.
+function expectedLabel(dateStr: string): string {
+  const days = Math.round((new Date(dateStr + 'T00:00:00').getTime() - new Date().setHours(0, 0, 0, 0)) / 86_400_000);
+  const date = new Date(dateStr + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+  if (days < 0) return `expected around ${date}`;
+  if (days === 0) return 'expected today';
+  if (days === 1) return 'expected tomorrow';
+  return `expected in ${days} days (${date})`;
+}
+
 export default function Dashboard() {
   const { fullName } = useAuth();
   const [cashFlowRange, setCashFlowRange] = useState<CashFlowRange>('6M');
@@ -87,7 +101,7 @@ export default function Dashboard() {
   // handling, own loading state) rather than one big Promise.all where a single failure
   // blanks the whole dashboard — the insights query already tolerated failure via .catch(),
   // this generalizes that to every query on the page.
-  const [summaryQ, accountsQ, recentTxnsQ, goalsQ, insightsQ, settingsQ, budgetsQ] = useQueries({
+  const [summaryQ, accountsQ, recentTxnsQ, goalsQ, insightsQ, settingsQ, budgetsQ, recurringQ] = useQueries({
     queries: [
       { queryKey: ['dashboard-summary'], queryFn: () => dashboardApi.summary() },
       { queryKey: ['accounts'], queryFn: () => accountsApi.list() },
@@ -96,6 +110,7 @@ export default function Dashboard() {
       { queryKey: ['insights'], queryFn: () => insightsApi.get(), retry: false },
       { queryKey: ['user-settings'], queryFn: () => userApi.get() },
       { queryKey: ['budgets'], queryFn: () => budgetsApi.list() },
+      { queryKey: ['recurring'], queryFn: () => recurringApi.list(), retry: false },
     ],
   });
 
@@ -137,6 +152,9 @@ export default function Dashboard() {
   const budgets = (budgetsQ.data ?? []).slice(0, 3);
   const sentences = insightsQ.data?.sentences ?? [];
   const movers = (insightsQ.data?.movers ?? []).filter((m) => m.pctChange !== null).slice(0, 2);
+  // RecurringDto already arrives sorted by nextEstimate (RecurringService's own doc comment) --
+  // taking the first few is "soonest due", not an arbitrary truncation.
+  const upcomingRecurring = (recurringQ.data ?? []).slice(0, 5);
 
   if (loading) return <p className="text-muted">Loading…</p>;
   if (hasError || !summary) return <p className="text-muted">Couldn't load your dashboard — please try again later.</p>;
@@ -469,6 +487,38 @@ export default function Dashboard() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Subscriptions & Recurring Payments — RecurringService.detectForUser has computed this
+          (merchant, cadence, average amount, projected next charge) since before this session,
+          consumed by nothing until now: the Ledger/Reports "recurring" badge is the only place
+          this data ever reached a screen. Read-only surfacing, same as Financial Health Score and
+          AI Insights above -- no new detection logic, just showing what already exists. */}
+      {upcomingRecurring.length > 0 && (
+        <div className="bg-card rounded-xl2 shadow-card border border-border mb-6 overflow-hidden">
+          <div className="flex items-center gap-2 px-6 pt-5 pb-4">
+            <div className="w-8 h-8 rounded-full bg-primary-light flex items-center justify-center">
+              <Repeat size={15} className="text-primary" />
+            </div>
+            <h2 className="font-semibold text-ink">Subscriptions &amp; Recurring Payments</h2>
+          </div>
+          <ul className="px-6 pb-5 space-y-3">
+            {upcomingRecurring.map((r) => (
+              <li key={r.merchant} className="flex items-center justify-between text-sm">
+                <div>
+                  <span className="text-ink font-medium">{r.merchant}</span>
+                  <span className="text-[10px] uppercase bg-primary/15 text-primary px-1.5 py-0.5 rounded ml-2">
+                    {r.label}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <p className="text-ink font-medium">{fmt(r.averageAmount)}</p>
+                  <p className="text-xs text-muted">{expectedLabel(r.nextEstimate)}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
