@@ -1,5 +1,6 @@
 package com.finora.rules;
 
+import com.finora.entity.CategoryRule;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
@@ -19,6 +20,17 @@ public record RuleDto(
         String actionType, String actionValue, int priority, boolean enabled,
         long matchCount, Instant lastMatchedAt
 ) {
+    /** Bug fix (Phase C review): RuleService.toDto and DataExportService's own rule-export mapping
+     *  used to each hand-write this same 11-argument construction independently -- a field added to
+     *  either CategoryRule or RuleDto had two call sites to update by hand, with nothing enforcing
+     *  they'd stay in sync. One factory now, matching the AccountDto.from(...) convention this
+     *  codebase already uses for exactly this reuse case. */
+    public static RuleDto from(CategoryRule r) {
+        return new RuleDto(r.getId(), r.getScope().name(), r.getField().name(), r.getOperator().name(),
+                r.getComparisonValue(), r.getActionType().name(), r.getActionValue(), r.getPriority(), r.isEnabled(),
+                r.getMatchCount(), r.getLastMatchedAt());
+    }
+
     // Always creates a USER-scope rule — see RuleService.create(). GLOBAL rules are seed data
     // only for this milestone (docs/rule-engine-relationship-engine-eds.md §6 Non-goals).
     public record CreateRequest(

@@ -114,13 +114,21 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // token AND a Firebase-verified phone gate the expensive work, so this was never an anonymous
     // DoS -- which is why the ceiling is generous. It bounds a token holder retrying in a loop.
     private final RateLimiter resetPasswordLimiter;
-    // Phase C (Download My Data). Far stricter than importStageLimiter -- 3/day, not 10/10min --
+    // Phase C (Download My Data). Far stricter than importStageLimiter -- 5/day, not 10/10min --
     // because a full export is strictly more expensive per call (every in-scope table plus every
-    // original statement file, read and zipped) and legitimately needed far less often. A JWT
-    // stolen via XSS or a compromised device is the realistic threat this bounds, same reasoning
-    // as passwordChangeLimiter: without a ceiling, an attacker holding a stolen-but-still-valid
-    // token could pull the account's full data bundle -- unmasked bank statements included -- in
-    // a loop.
+    // original statement file, read and zipped) and legitimately needed far less often. Bug fix
+    // (review): raised from an original 3. This filter runs before the controller, so it counts
+    // every request that reaches this path -- wrong password or not, since
+    // DataExportService.buildBundle requires the password fresh on every call with no session or
+    // grace window. 3/day left almost no room for a single mistyped password without losing a
+    // real day's access to the feature; 5 leaves two spare attempts alongside the "a handful of
+    // exports a day" ceiling this ceiling actually intends to enforce.
+    //
+    // A token holder retrying in a loop -- a JWT stolen via XSS or a compromised device -- is
+    // what this bounds, same reasoning as passwordChangeLimiter/resetPasswordLimiter. Like every
+    // limiter in this class, the bucket is per-IP (see clientIpResolver.resolve below), not
+    // per-token: it does not stop an attacker who rotates IPs, only one retrying from the same
+    // one. See resetPasswordLimiter's own comment for the same, more honestly-scoped claim.
     private final RateLimiter dataExportLimiter;
     // Bug fix: this used to be `new ObjectMapper()` -- a second, freshly-constructed mapper with
     // none of the auto-configuration Spring Boot's own JacksonAutoConfiguration applies to its
@@ -172,7 +180,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     static final int DEFAULT_IMPORT_STAGE_MAX = 10, DEFAULT_IMPORT_STAGE_WINDOW = 600;
     static final int DEFAULT_PASSWORD_CHANGE_MAX = 15, DEFAULT_PASSWORD_CHANGE_WINDOW = 600;
     static final int DEFAULT_RESET_PASSWORD_MAX = 10, DEFAULT_RESET_PASSWORD_WINDOW = 600;
-    static final int DEFAULT_DATA_EXPORT_MAX = 3, DEFAULT_DATA_EXPORT_WINDOW = 86400;
+    static final int DEFAULT_DATA_EXPORT_MAX = 5, DEFAULT_DATA_EXPORT_WINDOW = 86400;
 
     /**
      * The shipped configuration, for tests.
@@ -269,6 +277,16 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/password-change/start"), passwordChangeLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/password-change/verify-otp"), passwordChangeLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/password-change/complete"), passwordChangeLimiter),
+                // Bug fix (review): this endpoint had no limiter at all. deactivate() does the
+                // same real per-call cost passwordChangeLimiter's own comment names -- a bcrypt
+                // comparison against the account's current password on every call -- and its
+                // wrong-password branch now also runs AuditService.recordEvenOnRollback (a
+                // REQUIRES_NEW transaction, briefly holding a second pooled DB connection). With
+                // no ceiling, a caller holding a valid-but-stolen token could loop this endpoint
+                // unboundedly, paying that bcrypt + double-connection cost on every call. Shares
+                // passwordChangeLimiter, not dataExportLimiter -- same cost shape as password
+                // change, not the much larger per-call cost a full data export carries.
+                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/account/deactivate"), passwordChangeLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/data-export"), dataExportLimiter));
     }
 
