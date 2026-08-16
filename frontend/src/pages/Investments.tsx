@@ -150,7 +150,7 @@ export default function Investments() {
                 labels: holdings.map((h) => h.name),
                 datasets: [{ data: holdings.map((h) => h.balance), backgroundColor: holdings.map((_, i) => COLORS[i % COLORS.length]) }],
               }}
-              options={baseChartOptions}
+              options={{ ...baseChartOptions }}
             />
           </ChartContainer>
         </FinoraCard>

@@ -31,4 +31,14 @@ describe('MetricCard', () => {
     render(<MetricCard label="Expenses" value="₹500" icon={Wallet} iconBg="bg-red-100" iconColor="text-red-600" delta={-5} deltaLabel="vs last month" invertDelta />);
     expect(screen.getByText(/5\.0% vs last month/)).toHaveClass('text-success');
   });
+
+  it('applies a valueColor override for pages with no delta line to carry that meaning', () => {
+    render(<MetricCard label="Income" value="₹500" icon={Wallet} iconBg="bg-green-100" iconColor="text-green-600" valueColor="text-success" />);
+    expect(screen.getByText('₹500')).toHaveClass('text-success');
+  });
+
+  it('defaults the value color to text-ink when no valueColor is given', () => {
+    render(<MetricCard label="Total Balance" value="₹1,000" icon={Wallet} iconBg="bg-blue-100" iconColor="text-blue-600" />);
+    expect(screen.getByText('₹1,000')).toHaveClass('text-ink');
+  });
 });

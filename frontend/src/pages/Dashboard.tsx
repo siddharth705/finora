@@ -647,7 +647,7 @@ export default function Dashboard() {
               <li key={r.merchant} className="flex items-center justify-between text-sm">
                 <div>
                   <span className="text-ink font-medium">{r.merchant}</span>
-                  <span className="ml-2"><Badge label={r.label} /></span>
+                  <Badge label={r.label} className="ml-2" />
                 </div>
                 <div className="text-right">
                   <p className="text-ink font-medium">{fmt(r.averageAmount)}</p>

@@ -10,9 +10,9 @@ const TONE = {
  * Deliberately just a visual primitive: no tier/entitlement logic. PR4 (Premium Layer, gated on
  * D-7) is what decides what a "Plus"/"Premium" tone means and whether it's shown at all.
  */
-export function Badge({ tone = 'primary', label }: { tone?: keyof typeof TONE; label: string }) {
+export function Badge({ tone = 'primary', label, className = '' }: { tone?: keyof typeof TONE; label: string; className?: string }) {
   return (
-    <span className={`text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded ${TONE[tone]}`}>
+    <span className={`text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded ${TONE[tone]} ${className}`}>
       {label}
     </span>
   );
