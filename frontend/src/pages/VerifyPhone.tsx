@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles, ShieldCheck, Loader2 } from 'lucide-react';
 import { phoneApi, phoneChangeApi, userApi } from '../api/endpoints';
 import { useAuth } from '../context/AuthContext';
@@ -53,6 +53,12 @@ const PHONE_PATTERN = /^[6-9][0-9]{9}$/;
 
 export default function VerifyPhone() {
   const navigate = useNavigate();
+  const location = useLocation();
+  // Distinguishes a RETURNING user who still hasn't verified (Login.tsx's own navigate call sets
+  // this) from a brand-new registration landing here for the first time (Register.tsx's own
+  // identical navigate call never does) -- greeting a fresh signup with "Welcome back" would be
+  // backwards.
+  const fromLogin = Boolean((location.state as { fromLogin?: boolean } | null)?.fromLogin);
   const { setPhoneVerified, logout } = useAuth();
   const [otp, setOtp] = useState('');
   // Kept as two separate states rather than one -- a failed *send* (Firebase down, bad config,
@@ -259,6 +265,7 @@ export default function VerifyPhone() {
 
         {mode === 'verify' && (
           <>
+            {fromLogin && <p className="text-sm font-medium text-ink mb-1">Welcome back!</p>}
             <div className="flex items-center gap-2 mb-2">
               <ShieldCheck size={20} className="text-primary" />
               <h1 className="text-2xl font-bold text-ink">Verify your phone</h1>

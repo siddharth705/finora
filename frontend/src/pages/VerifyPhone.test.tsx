@@ -30,13 +30,13 @@ vi.mock('../lib/monitoring', () => ({
 
 const FAKE_CONFIRMATION = { confirm: vi.fn() } as any;
 
-function renderVerifyPhone() {
+function renderVerifyPhone(routerState?: { fromLogin?: boolean }) {
   vi.mocked(useAuth).mockReturnValue({
     token: 'tok', email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
     login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), setPhoneVerified: vi.fn(), logout: vi.fn(),
   });
   return render(
-    <MemoryRouter initialEntries={['/verify-phone']}>
+    <MemoryRouter initialEntries={[{ pathname: '/verify-phone', state: routerState }]}>
       <Routes>
         <Route path="/verify-phone" element={<VerifyPhone />} />
       </Routes>
@@ -177,6 +177,19 @@ describe('VerifyPhone', () => {
 
     expect(await screen.findByText(/doesn't match/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /log out and try again later/i })).not.toBeInTheDocument();
+  });
+
+  it('greets a returning user with "Welcome back!" when arriving from Login.tsx', async () => {
+    renderVerifyPhone({ fromLogin: true });
+
+    expect(await screen.findByText('Welcome back!')).toBeInTheDocument();
+  });
+
+  it('shows no greeting for a brand-new registration, which never sets fromLogin', async () => {
+    renderVerifyPhone();
+    await screen.findByText(/\+•••••••••705/);
+
+    expect(screen.queryByText('Welcome back!')).not.toBeInTheDocument();
   });
 
   describe('Change Number', () => {
