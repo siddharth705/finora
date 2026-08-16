@@ -7,8 +7,8 @@ import { AVAILABILITY_LABEL, AVAILABILITY_STYLE, COMPARISON, PRICING_CARDS } fro
  * Pricing, with a paid tier advertised but not pretended into existence.
  *
  * The rule this section is built on: it is fine to advertise a future paid plan, and not fine to
- * imply it is already available. So Premium, Family and Enterprise carry a status badge WHERE THE
- * PRICE WOULD GO, rather than a number. That placement is deliberate -- a price with a small
+ * imply it is already available. So Plus and Premium carry a status badge WHERE THE PRICE WOULD
+ * GO, rather than a number. That placement is deliberate -- a price with a small
  * "coming soon" tag beside it still reads as a price, and the earlier version of this page
  * displayed ₹149 and ₹249 that nobody had actually decided on. Inventing a number you later have
  * to change is its own kind of dishonesty, and the first people to notice are the ones who
@@ -84,12 +84,18 @@ export function Pricing() {
       <Reveal delayMs={160}>
         <div className="max-w-2xl mx-auto mt-14 m-card overflow-hidden">
           <table className="w-full text-sm">
-            <caption className="sr-only">Feature comparison between the Free plan and the planned Premium plan</caption>
+            <caption className="sr-only">Feature comparison between the Free, Plus and Premium plans</caption>
             <thead>
               <tr style={{ background: '#F8FAFC' }}>
                 <th scope="col" className="text-left font-semibold px-5 py-3" style={{ color: 'var(--m-ink)' }}>Feature</th>
                 <th scope="col" className="px-4 py-3 font-semibold w-24" style={{ color: 'var(--m-ink)' }}>Free</th>
-                <th scope="col" className="px-4 py-3 font-semibold w-32" style={{ color: 'var(--m-ink)' }}>
+                <th scope="col" className="px-4 py-3 font-semibold w-28" style={{ color: 'var(--m-ink)' }}>
+                  Plus
+                  <span className="block text-[9px] font-medium normal-case tracking-normal" style={{ color: 'var(--m-ink-3)' }}>
+                    coming soon
+                  </span>
+                </th>
+                <th scope="col" className="px-4 py-3 font-semibold w-28" style={{ color: 'var(--m-ink)' }}>
                   Premium
                   <span className="block text-[9px] font-medium normal-case tracking-normal" style={{ color: 'var(--m-ink-3)' }}>
                     coming soon
@@ -98,12 +104,17 @@ export function Pricing() {
               </tr>
             </thead>
             <tbody>
-              {COMPARISON.map(({ label, free, premium }) => (
+              {COMPARISON.map(({ label, free, plus, premium }) => (
                 <tr key={label} className="border-t" style={{ borderColor: 'var(--m-line)' }}>
                   <th scope="row" className="text-left font-normal px-5 py-3" style={{ color: 'var(--m-ink-2)' }}>{label}</th>
                   <td className="text-center px-4 py-3">
                     {free
                       ? <Check size={16} className="inline text-[#16A34A]" aria-label="Included" />
+                      : <Minus size={16} className="inline text-slate-300" aria-label="Not included" />}
+                  </td>
+                  <td className="text-center px-4 py-3">
+                    {plus
+                      ? <Check size={16} className="inline text-[#2563EB]" aria-label="Included" />
                       : <Minus size={16} className="inline text-slate-300" aria-label="Not included" />}
                   </td>
                   <td className="text-center px-4 py-3">
