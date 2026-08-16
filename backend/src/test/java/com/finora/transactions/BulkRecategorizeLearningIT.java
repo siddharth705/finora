@@ -18,7 +18,7 @@ import com.finora.service.MerchantLearningEventWorker;
 import com.finora.service.MerchantLearningService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.SpyBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.TestPropertySource;
 
@@ -75,7 +75,7 @@ class BulkRecategorizeLearningIT extends AbstractIntegrationTest {
     /** Real by default; told to throw only where a learning failure is the subject. See
      *  {@code MerchantLearningQueueIT} for why the failure cannot be induced by deleting the
      *  category — V62 cascades the event away instead of making its apply fail. */
-    @SpyBean private MerchantLearningService learningService;
+    @MockitoSpyBean private MerchantLearningService learningService;
 
     /** Five distinct merchants, one shared target category — the shape where "one row's learning
      *  failed" and "the batch survived" can be told apart. All five tokens differ, so
