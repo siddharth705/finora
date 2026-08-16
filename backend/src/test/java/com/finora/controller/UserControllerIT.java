@@ -117,9 +117,18 @@ class UserControllerIT extends AbstractIntegrationTest {
      * CorrelationIdFilter's own finally block has already cleared MDC for the original request
      * thread. Both rows carrying the SAME request ID -- the one this test sent, not a freshly
      * generated one -- is only possible if exportData()'s manual capture/restore actually works.
+     *
+     * <p>Bug fix (CI flake): this used to read the audit log exactly once, immediately after
+     * restTemplate.exchange() returned. That races DATA_EXPORTED's own write: the client sees the
+     * response as complete as soon as the last ZIP bytes are flushed off the socket, but the
+     * server-side callback still has a synchronous JDBC insert left to run (the audit record) after
+     * that flush -- nothing orders "client finished reading" before "server finished writing the
+     * audit row." Passed reliably in local runs and failed once in CI (different load/timing),
+     * confirming this was exactly that race rather than a real defect. Polls instead of reading
+     * once, same reasoning as awaiting any other async side effect.
      */
     @Test
-    void exportData_correctPassword_auditsRequestedThenExported_bothCarryingTheSameRequestId() {
+    void exportData_correctPassword_auditsRequestedThenExported_bothCarryingTheSameRequestId() throws InterruptedException {
         String requestId = "mdc-propagation-" + UUID.randomUUID();
         HttpEntity<ExportDataRequest> entity = new HttpEntity<>(
                 new ExportDataRequest(PASSWORD), headersFor(user, requestId));
@@ -129,7 +138,7 @@ class UserControllerIT extends AbstractIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getHeaders().getFirst(CorrelationIdFilter.HEADER_NAME)).isEqualTo(requestId);
 
-        List<AuditLog> logs = auditLogRepository.findByUserIdOrderByCreatedAtDesc(user.getId());
+        List<AuditLog> logs = awaitAuditAction(user.getId(), "DATA_EXPORTED");
         AuditLog requested = logs.stream().filter(l -> l.getAction().equals("DATA_EXPORT_REQUESTED")).findFirst()
                 .orElseThrow(() -> new AssertionError("DATA_EXPORT_REQUESTED was never recorded"));
         AuditLog exported = logs.stream().filter(l -> l.getAction().equals("DATA_EXPORTED")).findFirst()
@@ -140,5 +149,20 @@ class UserControllerIT extends AbstractIntegrationTest {
         // findByUserIdOrderByCreatedAtDesc is newest-first: DATA_EXPORTED (recorded after the
         // stream completes) must sort ahead of DATA_EXPORT_REQUESTED (recorded before it starts).
         assertThat(logs.indexOf(exported)).isLessThan(logs.indexOf(requested));
+    }
+
+    /** Polls up to 2s (50ms interval) for an audit row with the given action to appear, then
+     *  returns the full newest-first list -- the streaming callback's own audit write happens
+     *  after the HTTP response is already fully delivered to the client, so a single immediate
+     *  read here is inherently racy. */
+    private List<AuditLog> awaitAuditAction(UUID userId, String action) throws InterruptedException {
+        long deadline = System.nanoTime() + java.time.Duration.ofSeconds(2).toNanos();
+        List<AuditLog> logs;
+        do {
+            logs = auditLogRepository.findByUserIdOrderByCreatedAtDesc(userId);
+            if (logs.stream().anyMatch(l -> l.getAction().equals(action))) return logs;
+            Thread.sleep(50);
+        } while (System.nanoTime() < deadline);
+        return logs;
     }
 }
