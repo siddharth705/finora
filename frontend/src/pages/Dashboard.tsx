@@ -7,7 +7,7 @@ import {
 } from 'chart.js';
 import {
   Wallet, ArrowDownCircle, ArrowUpCircle, PieChart,
-  ShoppingBag, Utensils, Car, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target,
+  ShoppingBag, Utensils, Car, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { BankLogo } from '../components/BankLogo';
@@ -41,6 +41,26 @@ function greeting(timezone: string | undefined) {
   if (h < 17) return 'Good afternoon';
   if (h < 21) return 'Good evening';
   return 'Good night';
+}
+
+// Same three-tier thresholds DashboardService.computeHealthScore already labels server-side
+// (Excellent/Good/Fair/Needs Attention at 80/60/40) -- this just maps the label to a color rather
+// than re-deriving the cutoffs from the raw score, so the two can't drift apart.
+function healthColor(label: string): string {
+  switch (label) {
+    case 'Excellent': return 'text-success';
+    case 'Good': return 'text-primary';
+    case 'Fair': return 'text-warning';
+    default: return 'text-danger';
+  }
+}
+function healthBarColor(label: string): string {
+  switch (label) {
+    case 'Excellent': return 'bg-success';
+    case 'Good': return 'bg-primary';
+    case 'Fair': return 'bg-warning';
+    default: return 'bg-danger';
+  }
 }
 
 const CATEGORY_ICON: Record<string, any> = {
@@ -178,6 +198,41 @@ export default function Dashboard() {
             )}
           </div>
         ))}
+      </div>
+
+      {/* Financial Health Score — DashboardService.computeHealthScore has always returned this
+          (score, label, a 5-component breakdown), sent to the frontend on every load; nothing
+          rendered it until now. D-19 Step 1. */}
+      <div className="bg-card rounded-xl2 p-6 shadow-card border border-border mb-6">
+        <div className="flex items-center gap-2 mb-4">
+          <div className="w-8 h-8 rounded-full bg-primary-light flex items-center justify-center">
+            <ShieldCheck size={15} className="text-primary" />
+          </div>
+          <h2 className="font-semibold text-ink">Financial Health Score</h2>
+        </div>
+        <div className="grid md:grid-cols-[auto_1fr] gap-6 items-center">
+          <div className="text-center md:text-left">
+            <p className={`text-4xl font-bold ${healthColor(summary.healthLabel)}`}>{summary.healthScore}</p>
+            <p className="text-xs text-muted">out of 100</p>
+            <p className={`text-sm font-medium mt-1 ${healthColor(summary.healthLabel)}`}>{summary.healthLabel}</p>
+          </div>
+          <div className="space-y-2.5">
+            {Object.entries(summary.healthBreakdown).map(([name, score]) => (
+              <div key={name}>
+                <div className="flex justify-between items-baseline mb-1">
+                  <span className="text-xs text-ink">{name}</span>
+                  <span className="text-xs text-muted">{Math.round(score)}%</span>
+                </div>
+                <div className="h-1.5 bg-bg rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${healthBarColor(summary.healthLabel)}`}
+                    style={{ width: `${Math.max(0, Math.min(100, score))}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Cash flow + Spending breakdown */}
