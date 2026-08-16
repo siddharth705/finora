@@ -152,6 +152,22 @@ export interface PagedResponse<T> {
   totalPages: number;
 }
 
+// Mirrors TransactionDto.CreateRequest -- see TransactionService.create() for what the backend
+// actually does with each field: merchant is derived from description server-side
+// (CategoryRules.extractMerchant), never sent; a null/omitted categoryName takes the engine's own
+// auto-categorization path instead of a manual one. accountId is required (a transaction always
+// belongs to an account the caller owns -- see getOwnedAccount's own ownership check), unlike
+// UpdateTransactionPayload below, which deliberately excludes it.
+export interface CreateTransactionPayload {
+  accountId: string;
+  categoryName?: string | null;
+  date: string;
+  description: string;
+  amount: number;
+  type: 'INCOME' | 'EXPENSE';
+  tags?: string[];
+}
+
 // Full-edit payload for the Transactions page's Edit action. All fields optional/nullable —
 // only send what actually changed (see TransactionDto.UpdateRequest, which the backend applies
 // as "update this field if non-null"). Deliberately no accountId — see that DTO's doc comment.
@@ -181,7 +197,7 @@ export const transactionsApi = {
   needsReview: () => api.get<Transaction[]>('/transactions/needs-review').then((r) => r.data),
   explanation: (id: string) =>
     api.get<TransactionExplanation>(`/transactions/${id}/explanation`).then((r) => r.data),
-  create: (body: unknown) => api.post<Transaction>('/transactions', body).then((r) => r.data),
+  create: (body: CreateTransactionPayload) => api.post<Transaction>('/transactions', body).then((r) => r.data),
   update: (id: string, body: UpdateTransactionPayload) =>
     api.put<Transaction>(`/transactions/${id}`, body).then((r) => r.data),
   updateCategory: (id: string, category: string) =>

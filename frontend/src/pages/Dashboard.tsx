@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { useQueries, useQuery } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Line, Doughnut } from 'react-chartjs-2';
 import {
@@ -8,12 +8,15 @@ import {
 import {
   Wallet, ArrowDownCircle, ArrowUpCircle, PieChart,
   ShoppingBag, Utensils, Car, Sparkles, Plus, PiggyBank, TrendingUp, TrendingDown, Target, ShieldCheck, Repeat,
+  UploadCloud, Mail, X,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { BankLogo } from '../components/BankLogo';
 import {
-  dashboardApi, accountsApi, transactionsApi, goalsApi, insightsApi, userApi, budgetsApi, reportsApi, recurringApi,
+  dashboardApi, accountsApi, transactionsApi, categoriesApi, goalsApi, insightsApi, userApi, budgetsApi, reportsApi, recurringApi,
+  type CreateTransactionPayload,
 } from '../api/endpoints';
+import type { Account } from '../types';
 
 ChartJS.register(ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler);
 
@@ -95,6 +98,7 @@ function expectedLabel(dateStr: string): string {
 
 export default function Dashboard() {
   const { fullName } = useAuth();
+  const queryClient = useQueryClient();
   const [cashFlowRange, setCashFlowRange] = useState<CashFlowRange>('6M');
 
   // useQueries runs all these independently (each gets its own cache entry, own retry/error
@@ -160,6 +164,25 @@ export default function Dashboard() {
   if (hasError || !summary) return <p className="text-muted">Couldn't load your dashboard — please try again later.</p>;
 
   const firstName = fullName?.split(' ')[0] ?? 'there';
+
+  // D-21, Step 1: totalElements is the real total this account has, not recentTxnsQ's own
+  // 4-row page size -- a brand-new account (or one that connected Gmail/created an account but
+  // never actually got any transactions in) needs the SAME welcome treatment a completely fresh
+  // signup does, not a page that quietly renders ₹0 everywhere and looks broken.
+  if ((recentTxnsQ.data?.totalElements ?? 0) === 0) {
+    return (
+      <EmptyDashboardWelcome
+        firstName={firstName}
+        timezone={settingsQ.data?.timezone}
+        accounts={accountsQ.data ?? []}
+        onTransactionAdded={() => {
+          void queryClient.invalidateQueries({ queryKey: ['recent-transactions'] });
+          void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+          void queryClient.invalidateQueries({ queryKey: ['accounts'] });
+        }}
+      />
+    );
+  }
 
   // Bug 05: these KPIs are the newest month the account has DATA for, which for a product built
   // around importing statements in arrears is routinely not the current calendar month. This page
@@ -557,5 +580,257 @@ function CashFlowChart({ series }: { series: { month: string; income: number; ex
         scales: { y: { ticks: { callback: (v) => fmt(Number(v)) } } },
       }}
     />
+  );
+}
+
+/** One of the three setup-path choices below -- a Link when it's just navigation (Import,
+ *  Connect Gmail both already have their own full pages), a button when it opens something in
+ *  place instead (Add manually, which opens AddTransactionModal without leaving this page). */
+function SetupPathCard({
+  icon: Icon, title, desc, to, onClick,
+}: {
+  icon: typeof Wallet; title: string; desc: string; to?: string; onClick?: () => void;
+}) {
+  const className = 'bg-card rounded-xl2 p-5 shadow-card border border-border text-left hover:border-primary/40 transition-colors block w-full';
+  const body = (
+    <>
+      <div className="w-11 h-11 rounded-xl bg-primary-light flex items-center justify-center mb-3">
+        <Icon size={20} className="text-primary" />
+      </div>
+      <p className="font-semibold text-ink text-sm mb-1">{title}</p>
+      <p className="text-xs text-muted">{desc}</p>
+    </>
+  );
+  return to
+    ? <Link to={to} className={className}>{body}</Link>
+    : <button type="button" onClick={onClick} className={className}>{body}</button>;
+}
+
+/**
+ * D-21, Step 1 -- "First Run Experience." Replaces the normal dashboard body entirely for an
+ * account with zero transactions, whether that's a brand-new signup or an existing account that
+ * created an account/connected Gmail but never actually got any data in. The ₹0-everywhere KPI
+ * grid this used to fall through to looked broken, not empty -- nothing on it said what to do
+ * next.
+ *
+ * "First insight generated" from the original pitch is deliberately not part of this component --
+ * see D-21 in the project plan for why (no existing signal for "this was the user's first
+ * successful import," no design yet for what the insight should say).
+ */
+function EmptyDashboardWelcome({
+  firstName, timezone, accounts, onTransactionAdded,
+}: {
+  firstName: string;
+  timezone: string | undefined;
+  accounts: Account[];
+  onTransactionAdded: () => void;
+}) {
+  const [showAddModal, setShowAddModal] = useState(false);
+
+  return (
+    <div>
+      <div className="mb-8">
+        <h1 className="text-[26px] font-bold text-ink mb-1">{greeting(timezone)}, {firstName}! 👋</h1>
+        <p className="text-muted text-sm">
+          Let's get your money story started — pick how you'd like to bring in your first transactions.
+        </p>
+      </div>
+
+      <div className="grid md:grid-cols-3 gap-6 mb-8">
+        <SetupPathCard
+          icon={UploadCloud}
+          title="Import a statement"
+          desc="Upload a bank or credit card statement — Finora reads it and categorizes everything automatically."
+          to="/app/import"
+        />
+        <SetupPathCard
+          icon={Mail}
+          title="Connect Gmail"
+          desc="Let Finora pick up receipts and order confirmations from your inbox automatically."
+          to="/app/settings"
+        />
+        <SetupPathCard
+          icon={Plus}
+          title="Add manually"
+          desc="Already know what you spent? Add your first transaction by hand."
+          onClick={() => setShowAddModal(true)}
+        />
+      </div>
+
+      <div className="flex items-start gap-2.5 bg-primary-light rounded-lg p-3 max-w-xl">
+        <ShieldCheck size={16} className="text-primary flex-shrink-0 mt-0.5" />
+        <p className="text-xs text-ink">
+          Your financial data is encrypted and securely protected. Nothing here is shared or sold.
+        </p>
+      </div>
+
+      {showAddModal && (
+        <AddTransactionModal
+          accounts={accounts}
+          onClose={() => setShowAddModal(false)}
+          onSaved={() => {
+            setShowAddModal(false);
+            onTransactionAdded();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Wires up TransactionController.create() / transactionsApi.create() -- both already existed,
+ * already worked, and had zero call sites anywhere in the frontend before this (confirmed via a
+ * repo-wide grep during D-21's scoping). Deliberately close to EditTransactionModal in Ledger.tsx
+ * (same field layout, same category-loading pattern) rather than inventing a new convention, minus
+ * the fields CreateRequest doesn't have (merchant is derived server-side from description; notes
+ * isn't part of creation) and plus the one it needs that Update doesn't: which account this goes
+ * on, since a transaction always belongs to one.
+ */
+function AddTransactionModal({
+  accounts, onClose, onSaved,
+}: {
+  accounts: Account[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [accountId, setAccountId] = useState(accounts[0]?.id ?? '');
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [description, setDescription] = useState('');
+  const [amount, setAmount] = useState('');
+  const [type, setType] = useState<'INCOME' | 'EXPENSE'>('EXPENSE');
+  const [category, setCategory] = useState('');
+  const [categories, setCategories] = useState<string[]>([]);
+  const [categoriesFailed, setCategoriesFailed] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Same "notice, not a blocker" reasoning as EditTransactionModal's identical effect in
+    // Ledger.tsx -- an empty category dropdown reads as "you have no categories" when it might
+    // just mean this one request failed; the form still works with categoryName left blank
+    // (TransactionService.create() takes its own auto-categorization path when it's null).
+    categoriesApi.list()
+      .then((cats) => setCategories(cats.map((c) => c.name)))
+      .catch(() => setCategoriesFailed(true));
+  }, []);
+
+  const hasAccount = accounts.length > 0;
+  const canSave = hasAccount && !!accountId && description.trim().length > 0 && !!amount && parseFloat(amount) > 0;
+
+  async function save() {
+    if (!canSave) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const payload: CreateTransactionPayload = {
+        accountId,
+        date,
+        description: description.trim(),
+        amount: parseFloat(amount),
+        type,
+        categoryName: category || null,
+        // Explicit [], not omitted -- Transaction.tags is typed string[] (non-nullable)
+        // everywhere it's read, same reason EditTransactionModal always sends a real array
+        // rather than relying on the field being optional on the wire.
+        tags: [],
+      };
+      await transactionsApi.create(payload);
+      onSaved();
+    } catch (e: any) {
+      setError(e.response?.data?.message ?? 'Could not add this transaction.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/40 z-30" onClick={onClose} />
+      <div className="fixed inset-0 z-40 flex items-center justify-center p-4 pointer-events-none">
+        <div className="bg-card border border-border rounded-xl2 shadow-soft w-full max-w-lg max-h-[85vh] overflow-y-auto p-5 pointer-events-auto">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-ink text-sm">Add Transaction</h3>
+            <button type="button" onClick={onClose} aria-label="Close" className="text-muted hover:text-ink">
+              <X size={18} />
+            </button>
+          </div>
+
+          {!hasAccount ? (
+            // A transaction always belongs to an account (TransactionService.create()'s
+            // getOwnedAccount call has nothing to attach to otherwise) -- Setup.tsx is the
+            // existing manual-account-creation flow; this doesn't duplicate it.
+            <div className="text-sm text-ink">
+              <p className="mb-3">You'll need an account before adding a transaction by hand.</p>
+              <Link
+                to="/app/setup"
+                className="inline-block bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold"
+              >
+                Add an account
+              </Link>
+            </div>
+          ) : (
+            <>
+              {error && <p className="text-danger text-xs mb-3">{error}</p>}
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="col-span-2">
+                  <label htmlFor="add-txn-account" className="block text-[11px] uppercase text-muted mb-1">Account</label>
+                  <select
+                    id="add-txn-account"
+                    value={accountId}
+                    onChange={(e) => setAccountId(e.target.value)}
+                    className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full"
+                  >
+                    {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="add-txn-date" className="block text-[11px] uppercase text-muted mb-1">Date</label>
+                  <input id="add-txn-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
+                </div>
+                <div>
+                  <label htmlFor="add-txn-type" className="block text-[11px] uppercase text-muted mb-1">Type</label>
+                  <select id="add-txn-type" value={type} onChange={(e) => setType(e.target.value as 'INCOME' | 'EXPENSE')} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full">
+                    <option value="EXPENSE">Expense</option>
+                    <option value="INCOME">Income</option>
+                  </select>
+                </div>
+                <div className="col-span-2">
+                  <label htmlFor="add-txn-description" className="block text-[11px] uppercase text-muted mb-1">Description</label>
+                  <input id="add-txn-description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. Groceries at the market" className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
+                </div>
+                <div>
+                  <label htmlFor="add-txn-amount" className="block text-[11px] uppercase text-muted mb-1">Amount</label>
+                  <input id="add-txn-amount" type="number" min="0.01" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
+                </div>
+                <div>
+                  <label htmlFor="add-txn-category" className="block text-[11px] uppercase text-muted mb-1">Category</label>
+                  <select id="add-txn-category" value={category} onChange={(e) => setCategory(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full">
+                    <option value="">Let Finora categorize it</option>
+                    {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  {categoriesFailed && (
+                    <p className="text-[11px] text-warning mt-1">Couldn't load categories — leave blank to auto-categorize.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-5">
+                <button
+                  onClick={save}
+                  disabled={saving || !canSave}
+                  className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
+                >
+                  {saving ? 'Adding…' : 'Add transaction'}
+                </button>
+                <button onClick={onClose} className="border border-border text-ink px-4 py-2 rounded-lg text-xs font-semibold">
+                  Cancel
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
