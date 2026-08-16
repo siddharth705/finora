@@ -4,6 +4,7 @@ import com.finora.imports.CsvParser;
 import com.finora.imports.DocumentContext;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -753,6 +754,16 @@ public class PdfTableLocator {
         if (currentRows != null) {
             flushPendingLeading(currentRows, pendingLeading);
             sections.add(new LocatedSection(pendingAuxiliary, currentRows));
+        }
+        // INFERRED_HEADERLESS_LAYOUT. Only ever attempted once the loop above has already found
+        // nothing -- see this capability's own doc comment on inferHeaderlessSection for why a
+        // header-vocabulary miss on the whole document is a different problem from every other
+        // capability in this class, which all assume a header was found and refine what happens
+        // around it. Gated on sections.isEmpty() specifically so this can only ever turn today's
+        // failure into a result; it is unreachable on every document that already parses.
+        if (sections.isEmpty()) {
+            LocatedSection inferred = inferHeaderlessSection(rows, ctx);
+            if (inferred != null) sections.add(inferred);
         }
         if (ctx != null) ctx.recordTables(sections.size());
         return new LocatedDocument(sections);
@@ -2300,5 +2311,514 @@ public class PdfTableLocator {
             line.append(t.text());
         }
         return line.toString();
+    }
+
+    // ===== INFERRED_HEADERLESS_LAYOUT =====
+    //
+    // Every capability above this point assumes looksLikeHeaderRow found SOMETHING -- they refine
+    // where a header is, what it is folded with, or how a row is bucketed once one already exists.
+    // This one exists for a real SBI savings statement where none of that ever gets a chance to
+    // run: the column vocabulary (Date/Narration/Debit/Credit/Balance) never appears as text
+    // anywhere in the document, so looksLikeHeaderRow never scores true, currentRows stays null for
+    // the whole of locateAll's main loop, and every line -- transaction data included -- falls into
+    // pendingAuxiliary as unstructured text. The document returns zero sections despite its
+    // transaction table being geometrically as regular as any header-based one: a stable 7-anchor
+    // column structure (Date, Value Date, Narration, a reference-ish column, Debit, Credit,
+    // Balance), confirmed directly against the real file's PositionedText geometry.
+    //
+    // The approach: infer column ROLES from what the data itself looks like, rather than from
+    // vocabulary that was never printed. A physical row is trusted as transaction-shaped only if it
+    // carries both a date and a decimal amount (isTransactionShapedRow); columns are found by
+    // clustering those rows' cell positions (clusterIntoColumns); each cluster's role -- Date,
+    // Description, or a numeric candidate -- is decided from what its own values look like across
+    // every transaction-shaped row, not from a label. The one genuinely ambiguous decision --
+    // which numeric column is Debit and which is Credit -- is resolved by trying the small, bounded
+    // set of plausible assignments and keeping whichever one's running-balance arithmetic actually
+    // holds up (resolveDebitCreditByBalanceChain), the same "verify against real data before
+    // committing" discipline every other fix in this file's history already follows.
+    //
+    // Deliberately conservative at every stage: each step returns null/bails to today's
+    // zero-section outcome rather than emit a labeling nothing here can stand behind. This is not
+    // the real financial verification -- BalanceChainValidator, downstream via ImportVerifier,
+    // still runs unchanged on whatever this produces, exactly as it does for any other document
+    // (PdfPreviewGenerator only ever asks "is doc.sections() non-empty", never how it got that
+    // way) -- it is a selection heuristic for choosing between a handful of candidate column
+    // labelings, not a replacement for verification.
+    //
+    // Named "headerless LAYOUT" rather than after SBI specifically: nothing below keys on this
+    // bank, this account, or any vocabulary unique to this document -- it is architected to fire on
+    // any statement with this same shape (a geometrically regular, date-anchored transaction table
+    // printed with no column headings at all), not hardcoded to the one real document that
+    // motivated it.
+
+    // Unmeasured against a corpus of real headerless statements -- there is only one in hand, and
+    // real financial documents are never committed (Synthetic Fixture Policy). Tight enough to keep
+    // two real columns separate (the closest real gap measured on the motivating document is ~49pt,
+    // a blank column's right edge to the Debit column's anchor) and loose enough to absorb ordinary
+    // rendering jitter at one fixed edge. Revisit once a second real headerless statement is seen.
+    private static final float HEADERLESS_COLUMN_CLUSTER_TOLERANCE = 15.0f;
+    // Mirrors BalanceChainValidator.MIN_PAIRS_FOR_A_VERDICT's spirit (a score from too few rows is
+    // a coin flip, not evidence), one row higher: this also has to survive its own row-
+    // classification heuristic being imperfect, not just ordinary small-sample noise.
+    private static final int HEADERLESS_MIN_TRANSACTION_ROWS = 3;
+    // Bounds resolveDebitCreditByBalanceChain's search to at most 4x3=12 trials -- small and
+    // bounded by construction, so it can never become the combinatorial search it deliberately
+    // isn't. A document whose numeric-candidate pool is larger than this bails out rather than
+    // guesses; that shape hasn't been seen on a real statement yet.
+    private static final int HEADERLESS_MAX_NUMERIC_CANDIDATES = 4;
+    private static final float HEADERLESS_DATE_FRACTION_THRESHOLD = 0.8f;
+    private static final float HEADERLESS_MIN_COLUMN_PRESENCE = 0.2f;
+    private static final float HEADERLESS_NUMERIC_PURITY_THRESHOLD = 0.8f;
+    // Balance is the one numeric column that must be populated on essentially every transaction
+    // row (there is always a resulting balance); Debit and Credit are each populated on a subset.
+    // This is the signal that tells them apart -- deliberately NOT applied as a presence gate to
+    // the Debit/Credit candidate pool itself: a statement with five debits and one credit (the
+    // motivating document has exactly this shape) would fail any presence bar high enough to be
+    // meaningful for Balance, so numeric-candidate admission below is gated on purity alone, which
+    // a genuinely unused column already fails (zero non-blank cells scores zero purity by
+    // definition -- see ColumnStats.numericPurity()).
+    private static final float HEADERLESS_BALANCE_COLUMN_MIN_PRESENCE = 0.9f;
+    // Mirrors BalanceChainValidator.FAILED_THRESHOLD (private, a different architectural layer --
+    // cited here by value, not by reference) and the same reasoning: half is what distinguishes "a
+    // whole column is mislabeled" from "a few rows are quirky", and a labeling that cannot clear
+    // even that bar is not worth guessing.
+    private static final double HEADERLESS_CHAIN_ACCEPT_THRESHOLD = 0.5;
+
+    /** True when text is empty or is nothing but a placeholder dash -- the literal character a real
+     *  SBI statement prints in an amount column that does not apply to a given row. Treated as "no
+     *  value" everywhere in this capability, the same way {@link CsvParser#parseNumeric} already
+     *  treats it (a bare dash is not a parseable number): counting it as "present but non-numeric"
+     *  would understate every amount column's purity for no reason, since the column is not
+     *  actually holding anything on that row. */
+    private boolean isBlankCell(String text) {
+        String t = text.trim();
+        return t.isEmpty() || t.matches("-+");
+    }
+
+    /** True for a physical row this document prints one transaction on. Requires a date-parseable
+     *  cell AND a decimal-amount cell on the SAME row -- verified directly against the real
+     *  document's account-summary block (every field there prints as its own line; date-bearing
+     *  lines and amount-bearing lines never coincide) that this combination cleanly isolates the
+     *  transaction table from the metadata around it, with no bank-specific vocabulary at all.
+     *
+     *  <p>The amount half requires a decimal point, not just {@link CsvParser#parseNumeric}
+     *  returning non-null, for the same reason {@link #bucketRow}'s own OFFSET_COLUMN_ANCHORS
+     *  redirect already requires it: a bare digit run -- an account number, a CIF number, a MICR
+     *  code, all of which sit in the same metadata block as real dates -- parses as a valid
+     *  BigDecimal but is not a currency amount. Without this guard, a metadata line naming both an
+     *  account-opening date and an account number would misclassify as a transaction row. */
+    private boolean isTransactionShapedRow(List<PositionedText> row) {
+        boolean hasDate = false;
+        boolean hasAmount = false;
+        for (PositionedText cell : row) {
+            String text = cell.text().trim();
+            if (!hasDate && CsvParser.parseDate(text) != null) hasDate = true;
+            if (!hasAmount && text.contains(".") && CsvParser.parseNumeric(text) != null) hasAmount = true;
+        }
+        return hasDate && hasAmount;
+    }
+
+    /** Drops the second of any two ADJACENT transaction-shaped rows whose full cell text is
+     *  identical. Exists for a real artifact on the motivating document: it reprints its last
+     *  transaction row again at the top of the following page, right before the statement-summary
+     *  block -- same date, narration, amounts, and balance. Left in, that duplicate implies a
+     *  zero-delta transaction that fits no real debit or credit, which would corrupt
+     *  {@link #resolveDebitCreditByBalanceChain}'s scoring into rejecting an otherwise-correct
+     *  column labeling. Scoped to ADJACENT rows deliberately: two coincidentally-identical but
+     *  genuinely distinct transactions would still have moved the balance between them, so their
+     *  balance cell -- part of the full-line equality check -- would differ, and this never fires
+     *  on them. */
+    private List<List<PositionedText>> dedupeAdjacentIdenticalRows(List<List<PositionedText>> rows) {
+        List<List<PositionedText>> result = new ArrayList<>();
+        String previousLine = null;
+        for (List<PositionedText> row : rows) {
+            String line = lineOf(row);
+            if (!line.equals(previousLine)) result.add(row);
+            previousLine = line;
+        }
+        return result;
+    }
+
+    /** The position clusterIntoColumns groups a cell by: a numeric cell's RIGHT edge, everything
+     *  else's LEFT edge. The same left/right split {@link #bucketRow}'s own RIGHT_ALIGNED_AMOUNTS
+     *  handling already makes necessary elsewhere in this file -- a right-aligned amount's left
+     *  edge shifts with the value's digit count while its right edge stays fixed -- applied here
+     *  one step earlier, at column-discovery time instead of at bucketing time. Clustering by raw
+     *  left edge alone risks splitting one logical amount column into two, or merging a short value
+     *  into its neighbour, exactly as RIGHT_ALIGNED_AMOUNTS's own doc comment documents for a real
+     *  HDFC statement. */
+    private float clusterKey(PositionedText cell) {
+        return CsvParser.parseNumeric(cell.text().trim()) != null ? cell.endX() : cell.x();
+    }
+
+    /** One column this capability discovered from data alone: its representative left edge (the
+     *  minimum x seen among its cells -- used as this column's headerAnchors entry, matching how
+     *  {@link #bucketRow}'s primary placement always compares by left edge) and representative
+     *  right edge (the maximum endX seen among its NUMERIC cells, or the same as the left edge if
+     *  it has none -- used as this column's headerEnds entry, feeding the RIGHT_ALIGNED_AMOUNTS
+     *  override exactly as a real header's own endX would), plus the content-shape counts every
+     *  role decision below is made from.
+     *
+     *  <p>{@code amountLikeCount} is deliberately narrower than "parses as a number": it requires a
+     *  decimal point too, the same guard {@link #isTransactionShapedRow} and {@link #bucketRow}'s
+     *  own OFFSET_COLUMN_ANCHORS redirect already apply, for the same reason -- a bare digit run (a
+     *  cheque number, a reference number) parses as a valid BigDecimal but is not a currency amount.
+     *  {@link #numericPurity()} is built from this, not from every numeric parse, so a
+     *  reference-number column with real (but non-decimal) values can never look enough like an
+     *  amount column to enter the Debit/Credit candidate pool. */
+    private record ColumnStats(float repLeft, float repRight, int nonBlankCount, int dateCount,
+                                int amountLikeCount, long wordSum) {
+        float presence(int totalRows) {
+            return totalRows == 0 ? 0f : (float) nonBlankCount / totalRows;
+        }
+
+        float dateFraction() {
+            return nonBlankCount == 0 ? 0f : (float) dateCount / nonBlankCount;
+        }
+
+        float numericPurity() {
+            return nonBlankCount == 0 ? 0f : (float) amountLikeCount / nonBlankCount;
+        }
+
+        float avgWordCount() {
+            return nonBlankCount == 0 ? 0f : (float) wordSum / nonBlankCount;
+        }
+    }
+
+    /** Clusters every non-blank cell across {@code transactionRows} by {@link #clusterKey} into
+     *  columns, returned in ascending clusterKey order. Each returned {@link ColumnStats} is built
+     *  entirely from the cells that landed in its own cluster -- there is no separate re-matching
+     *  step, so a cell can never be counted against a different column here than the one that
+     *  defined its own cluster. */
+    private List<ColumnStats> clusterIntoColumns(List<List<PositionedText>> transactionRows) {
+        List<PositionedText> informative = new ArrayList<>();
+        for (List<PositionedText> row : transactionRows) {
+            for (PositionedText cell : row) {
+                if (!isBlankCell(cell.text())) informative.add(cell);
+            }
+        }
+        informative.sort(Comparator.comparing(this::clusterKey));
+
+        List<List<PositionedText>> groups = new ArrayList<>();
+        List<PositionedText> current = new ArrayList<>();
+        Float lastKey = null;
+        for (PositionedText cell : informative) {
+            float key = clusterKey(cell);
+            if (lastKey != null && key - lastKey > HEADERLESS_COLUMN_CLUSTER_TOLERANCE) {
+                groups.add(current);
+                current = new ArrayList<>();
+            }
+            current.add(cell);
+            lastKey = key;
+        }
+        if (!current.isEmpty()) groups.add(current);
+
+        List<ColumnStats> stats = new ArrayList<>();
+        for (List<PositionedText> group : groups) {
+            float repLeft = Float.MAX_VALUE;
+            float repRight = -Float.MAX_VALUE;
+            boolean anyNumeric = false;
+            int dateCount = 0;
+            int amountLikeCount = 0;
+            long wordSum = 0;
+            for (PositionedText cell : group) {
+                String text = cell.text().trim();
+                repLeft = Math.min(repLeft, cell.x());
+                if (CsvParser.parseNumeric(text) != null) {
+                    anyNumeric = true;
+                    repRight = Math.max(repRight, cell.endX());
+                    if (text.contains(".")) amountLikeCount++;
+                }
+                if (CsvParser.parseDate(text) != null) dateCount++;
+                wordSum += text.split("\\s+").length;
+            }
+            if (!anyNumeric) repRight = repLeft;
+            stats.add(new ColumnStats(repLeft, repRight, group.size(), dateCount, amountLikeCount, wordSum));
+        }
+        return stats;
+    }
+
+    /** The candidate labeling {@link #resolveDebitCreditByBalanceChain} settled on: which numeric
+     *  column (by index into the {@code List<ColumnStats>} it was chosen from) is Debit, which is
+     *  Credit, and the chain-consistency score that made it the winner. */
+    private record DebitCreditAssignment(int debitIndex, int creditIndex, double score) {}
+
+    /** The value {@code row} holds for {@code column}, or null if nothing in the row lands near it.
+     *  Matches a cell by the SMALLER of its left- or right-edge distance to the column's own
+     *  representative edges -- unlike {@link #clusterKey}, which commits to one edge per cell type
+     *  at discovery time, this only needs to find "the one real value in this row for this column"
+     *  for scoring purposes, not to define the column itself.
+     *
+     *  <p>Bug fix: this used to accept whichever non-blank cell was CLOSEST with no cutoff -- on a
+     *  row where this column is genuinely blank (a debit row's Credit cell, printed as a dash and
+     *  therefore already excluded by {@link #isBlankCell}), the globally-nearest surviving cell was
+     *  often the OTHER amount column's real value, tens of points away but still nearer than
+     *  anything else on the row. That silently copied one row's debit into its own credit slot (and
+     *  the reverse), making every {@link #scoreChain} trial fail identically regardless of which
+     *  candidate pairing was actually correct -- measured directly against the real motivating
+     *  document, where every permutation scored exactly 0.0. Bounded to the column's own measured
+     *  jitter (its repRight-repLeft span) plus {@link #HEADERLESS_COLUMN_CLUSTER_TOLERANCE}: a
+     *  genuine same-column value's right edge sits within a few points of repRight regardless of
+     *  digit count, comfortably inside that bound, while the real document's own Debit/Credit gap
+     *  (measured ~78pt between their nearest real values) sits well outside it. */
+    private BigDecimal nearestCellValue(List<PositionedText> row, ColumnStats column) {
+        float maxAcceptableDistance = HEADERLESS_COLUMN_CLUSTER_TOLERANCE + (column.repRight() - column.repLeft());
+        PositionedText best = null;
+        float bestDistance = Float.MAX_VALUE;
+        for (PositionedText cell : row) {
+            String text = cell.text().trim();
+            if (isBlankCell(text)) continue;
+            float distance = Math.min(Math.abs(cell.x() - column.repLeft()), Math.abs(cell.endX() - column.repRight()));
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = cell;
+            }
+        }
+        if (best == null || bestDistance > maxAcceptableDistance) return null;
+        return CsvParser.parseNumeric(best.text().trim());
+    }
+
+    /** Fraction of chain-consecutive {@code transactionRows} where {@code balance[i] ==
+     *  balance[i-1] - debit[i] + credit[i]} (BigDecimal-exact, one-paisa tolerance for rounding),
+     *  trying {@code debitIdx}/{@code creditIdx} as the candidate labeling. A row with no value in
+     *  the debit or credit column counts as zero for that side -- the same treatment a real
+     *  Debit/Credit-shaped statement already gets downstream (a blank cell is not a missing
+     *  transaction, it is the side that did not move). Pairs where either balance is missing are
+     *  skipped rather than counted as a miss, since this is scoring a LABELING, not flagging a
+     *  discrepancy the way BalanceChainValidator's real report does. */
+    private double scoreChain(List<List<PositionedText>> transactionRows, ColumnStats balanceColumn,
+                               ColumnStats debitColumn, ColumnStats creditColumn) {
+        List<BigDecimal> balances = new ArrayList<>();
+        List<BigDecimal> debits = new ArrayList<>();
+        List<BigDecimal> credits = new ArrayList<>();
+        for (List<PositionedText> row : transactionRows) {
+            balances.add(nearestCellValue(row, balanceColumn));
+            debits.add(nearestCellValue(row, debitColumn));
+            credits.add(nearestCellValue(row, creditColumn));
+        }
+        int checked = 0;
+        int matched = 0;
+        for (int i = 1; i < balances.size(); i++) {
+            BigDecimal previousBalance = balances.get(i - 1);
+            BigDecimal thisBalance = balances.get(i);
+            if (previousBalance == null || thisBalance == null) continue;
+            BigDecimal debit = debits.get(i) == null ? BigDecimal.ZERO : debits.get(i);
+            BigDecimal credit = credits.get(i) == null ? BigDecimal.ZERO : credits.get(i);
+            BigDecimal expected = previousBalance.subtract(debit).add(credit);
+            checked++;
+            if (expected.subtract(thisBalance).abs().compareTo(new BigDecimal("0.01")) <= 0) matched++;
+        }
+        return checked == 0 ? 0.0 : (double) matched / checked;
+    }
+
+    /** Tries every plausible (candidate -> Debit)/(candidate -> Credit) assignment from
+     *  {@code numericPool} and keeps whichever scores highest via {@link #scoreChain}, or null if
+     *  the best score doesn't clear {@link #HEADERLESS_CHAIN_ACCEPT_THRESHOLD}. A pool of size N
+     *  tries every ordered pair (at most 4x3=12 trials at {@link #HEADERLESS_MAX_NUMERIC_CANDIDATES}) --
+     *  small and bounded by construction, never the combinatorial search this deliberately isn't.
+     *
+     *  <p>Deliberately NOT built on {@code BalanceChainValidator}/{@code StagedRow}: this chooses
+     *  between candidate column labelings over raw bucketed rows, not the verification
+     *  BalanceChainValidator performs on already-normalized, committed rows -- building a throwaway
+     *  StagedRow for every one of up to 12 trials just to discard 11 is the wrong shape for what is
+     *  a selection heuristic, not a second verification layer. The real verification is unaffected
+     *  and still runs, unchanged, once a labeling is chosen -- see this capability's own top-level
+     *  doc comment. */
+    private DebitCreditAssignment resolveDebitCreditByBalanceChain(List<List<PositionedText>> transactionRows,
+            List<ColumnStats> columns, int balanceColumn, List<Integer> numericPool) {
+        DebitCreditAssignment best = null;
+        for (int debitIdx : numericPool) {
+            for (int creditIdx : numericPool) {
+                if (debitIdx == creditIdx) continue;
+                double score = scoreChain(transactionRows, columns.get(balanceColumn), columns.get(debitIdx), columns.get(creditIdx));
+                if (best == null || score > best.score()) {
+                    best = new DebitCreditAssignment(debitIdx, creditIdx, score);
+                }
+            }
+        }
+        if (best == null || best.score() < HEADERLESS_CHAIN_ACCEPT_THRESHOLD) return null;
+        return best;
+    }
+
+    /** Buckets every row of {@code allRows} (not just the transaction-shaped subset used for role
+     *  inference and scoring) against the inferred header, merging each non-transaction-shaped row
+     *  into the preceding transaction row's Description via the existing {@link #mergeInto} --
+     *  reused rather than reimplemented, since it already carries the hardening "never corrupt an
+     *  already-valid date or amount" needs (see mergeInto's own doc comment). This is what recovers
+     *  a narration that wraps across several following physical lines with no date or amount of its
+     *  own, exactly as the header-based path's own WRAPPED_DESCRIPTION handling does.
+     *
+     *  <p>Skips {@link #PAGE_FOOTER} lines and stops entirely at the first
+     *  {@link #STATEMENT_CLOSING_MARKER} match, mirroring the header-based path. Known, bounded
+     *  limitation: a statement whose closing summary (totals, counts) is not marked by either
+     *  pattern -- the motivating document's own "Statement Summary" block is not -- gets folded
+     *  into the last transaction's Description instead of being dropped. Capped at
+     *  {@link #MAX_BLOCK_CONTINUATION_ROWS} consecutive merges per anchor, so this can never
+     *  corrupt more than a bounded amount of trailing text, and it never touches a date, amount, or
+     *  balance cell regardless -- mergeInto's own protection covers that.
+     *
+     *  <p>Also drops a transaction-shaped row whose full text exactly repeats the immediately
+     *  preceding transaction-shaped row -- the same page-boundary reprint {@link
+     *  #dedupeAdjacentIdenticalRows} exists for, applied again here so the duplicate is absent from
+     *  the final staged rows too, not just from the candidates {@link #resolveDebitCreditByBalanceChain}
+     *  scored. Compares only against the last TRANSACTION-shaped row, so intervening continuation
+     *  lines between the original and its reprint don't defeat the comparison. */
+    private List<Map<String, String>> bucketHeaderlessRowsWithContinuation(List<List<PositionedText>> allRows,
+            List<String> headerNames, List<Float> headerAnchors, List<Float> headerEnds, DocumentContext ctx) {
+        List<Map<String, String>> result = new ArrayList<>();
+        Map<String, String> currentAnchor = null;
+        int continuationCount = 0;
+        String previousTransactionLine = null;
+        for (List<PositionedText> row : allRows) {
+            String rowLine = lineOf(row);
+            if (PAGE_FOOTER.matcher(rowLine).find()) continue;
+            if (STATEMENT_CLOSING_MARKER.matcher(rowLine).find()) break;
+            if (isTransactionShapedRow(row)) {
+                if (rowLine.equals(previousTransactionLine)) continue;
+                Map<String, String> bucketed = bucketRow(row, headerNames, headerAnchors, headerEnds, ctx);
+                if (bucketed.isEmpty()) continue;
+                result.add(bucketed);
+                currentAnchor = bucketed;
+                continuationCount = 0;
+                previousTransactionLine = rowLine;
+            } else if (currentAnchor != null && continuationCount < MAX_BLOCK_CONTINUATION_ROWS) {
+                Map<String, String> bucketed = bucketRow(row, headerNames, headerAnchors, headerEnds, ctx);
+                if (bucketed.isEmpty()) continue;
+                mergeInto(currentAnchor, bucketed, headerNames);
+                continuationCount++;
+            }
+        }
+        return result;
+    }
+
+    /** Entry point for the whole INFERRED_HEADERLESS_LAYOUT capability -- see its top-level doc
+     *  comment above {@link #HEADERLESS_COLUMN_CLUSTER_TOLERANCE}. Returns null, never partially,
+     *  when the document doesn't fit this shape well enough to trust; the caller's contract on null
+     *  is "leave sections exactly as they were" -- today's zero-section outcome. */
+    private LocatedSection inferHeaderlessSection(List<List<PositionedText>> rows, DocumentContext ctx) {
+        List<List<PositionedText>> candidates = new ArrayList<>();
+        for (List<PositionedText> row : rows) {
+            if (isTransactionShapedRow(row)) candidates.add(row);
+        }
+        candidates = dedupeAdjacentIdenticalRows(candidates);
+        if (candidates.size() < HEADERLESS_MIN_TRANSACTION_ROWS) {
+            if (ctx != null) ctx.recordDiagnostic("HEADERLESS_TOO_FEW_TRANSACTION_ROWS");
+            return null;
+        }
+
+        List<ColumnStats> columns = clusterIntoColumns(candidates);
+        int totalRows = candidates.size();
+
+        // Date / Value Date: the leftmost 1-2 columns whose non-blank cells are mostly
+        // date-parseable. isTransactionShapedRow already required every candidate row to carry a
+        // date somewhere, so the true date column's presence should be near-universal by
+        // construction -- the presence gate here is a sanity floor, not the deciding signal.
+        List<Integer> dateColumns = new ArrayList<>();
+        for (int i = 0; i < columns.size(); i++) {
+            ColumnStats c = columns.get(i);
+            if (c.dateFraction() >= HEADERLESS_DATE_FRACTION_THRESHOLD && c.presence(totalRows) >= HEADERLESS_MIN_COLUMN_PRESENCE) {
+                dateColumns.add(i);
+            }
+        }
+        if (dateColumns.isEmpty()) {
+            if (ctx != null) ctx.recordDiagnostic("HEADERLESS_NO_DATE_COLUMN");
+            return null;
+        }
+        Set<Integer> claimed = new LinkedHashSet<>();
+        int dateColumn = dateColumns.get(0);
+        claimed.add(dateColumn);
+        Integer valueDateColumn = dateColumns.size() > 1 ? dateColumns.get(1) : null;
+        if (valueDateColumn != null) claimed.add(valueDateColumn);
+
+        // Description: among unclaimed columns, the one whose non-blank cells average the most
+        // words -- a narration column is prose, every other column is a short date or a number.
+        int descriptionColumn = -1;
+        float bestWordAverage = -1f;
+        for (int i = 0; i < columns.size(); i++) {
+            if (claimed.contains(i)) continue;
+            ColumnStats c = columns.get(i);
+            if (c.presence(totalRows) < HEADERLESS_MIN_COLUMN_PRESENCE) continue;
+            if (c.avgWordCount() > bestWordAverage) {
+                bestWordAverage = c.avgWordCount();
+                descriptionColumn = i;
+            }
+        }
+        if (descriptionColumn < 0) {
+            if (ctx != null) ctx.recordDiagnostic("HEADERLESS_NO_DESCRIPTION_COLUMN");
+            return null;
+        }
+        claimed.add(descriptionColumn);
+
+        // Numeric candidates: among the still-unclaimed columns, keep only ones whose non-blank
+        // cells are mostly numeric. No presence gate here deliberately -- see
+        // HEADERLESS_BALANCE_COLUMN_MIN_PRESENCE's own doc comment for why a low-presence column
+        // (a statement with far more debits than credits, or vice versa) must not be excluded here.
+        // A column with no real values at all already scores zero purity by definition and is
+        // excluded on that basis instead.
+        List<Integer> numericCandidates = new ArrayList<>();
+        for (int i = 0; i < columns.size(); i++) {
+            if (claimed.contains(i)) continue;
+            if (columns.get(i).numericPurity() >= HEADERLESS_NUMERIC_PURITY_THRESHOLD) numericCandidates.add(i);
+        }
+        if (numericCandidates.isEmpty()) {
+            if (ctx != null) ctx.recordDiagnostic("HEADERLESS_NO_NUMERIC_CANDIDATES");
+            return null;
+        }
+
+        // Balance: the numeric candidate with the highest presence, gated on being near-universal
+        // -- the one signal that actually distinguishes it from Debit/Credit, each of which is
+        // legitimately populated on only a subset of rows.
+        int balanceColumn = numericCandidates.get(0);
+        for (int i : numericCandidates) {
+            if (columns.get(i).presence(totalRows) > columns.get(balanceColumn).presence(totalRows)) balanceColumn = i;
+        }
+        if (columns.get(balanceColumn).presence(totalRows) < HEADERLESS_BALANCE_COLUMN_MIN_PRESENCE) {
+            if (ctx != null) ctx.recordDiagnostic("HEADERLESS_NO_BALANCE_COLUMN");
+            return null;
+        }
+        numericCandidates.remove(Integer.valueOf(balanceColumn));
+        if (numericCandidates.isEmpty() || numericCandidates.size() > HEADERLESS_MAX_NUMERIC_CANDIDATES) {
+            if (ctx != null) ctx.recordDiagnostic("HEADERLESS_NUMERIC_POOL_UNUSABLE");
+            return null;
+        }
+
+        DebitCreditAssignment assignment = resolveDebitCreditByBalanceChain(candidates, columns, balanceColumn, numericCandidates);
+        if (assignment == null) {
+            if (ctx != null) ctx.recordDiagnostic("HEADERLESS_CHAIN_SCORE_TOO_LOW");
+            return null;
+        }
+
+        // Literal, recognized vocabulary only (TransactionNormalizer.recognizedColumnNames()) --
+        // this capability assigns ROLES onto a fixed set of names, it never invents new ones, so
+        // nothing downstream of PdfTableLocator needs to change to recognize an inferred column.
+        Map<Integer, String> roleByIndex = new LinkedHashMap<>();
+        roleByIndex.put(dateColumn, "Date");
+        if (valueDateColumn != null) roleByIndex.put(valueDateColumn, "Value Date");
+        roleByIndex.put(descriptionColumn, "Description");
+        roleByIndex.put(balanceColumn, "Balance");
+        roleByIndex.put(assignment.debitIndex(), "Debit");
+        roleByIndex.put(assignment.creditIndex(), "Credit");
+
+        // Sorted by left edge -- bucketRow's own OFFSET_COLUMN_ANCHORS redirects (nextAmountColumn,
+        // nextNonNumericColumn) search FORWARD from an index assuming headerNames is already in
+        // left-to-right order, the same invariant the header-based path documents and depends on.
+        List<Integer> namedIndices = new ArrayList<>(roleByIndex.keySet());
+        namedIndices.sort(Comparator.comparing(i -> columns.get(i).repLeft()));
+        List<String> headerNames = new ArrayList<>();
+        List<Float> headerAnchors = new ArrayList<>();
+        List<Float> headerEnds = new ArrayList<>();
+        for (int i : namedIndices) {
+            headerNames.add(roleByIndex.get(i));
+            headerAnchors.add(columns.get(i).repLeft());
+            headerEnds.add(columns.get(i).repRight());
+        }
+
+        List<Map<String, String>> resultRows = bucketHeaderlessRowsWithContinuation(rows, headerNames, headerAnchors, headerEnds, ctx);
+        if (resultRows.isEmpty()) {
+            if (ctx != null) ctx.recordDiagnostic("HEADERLESS_FINAL_BUCKETING_EMPTY");
+            return null;
+        }
+        if (ctx != null) ctx.record("INFERRED_HEADERLESS_LAYOUT");
+        return new LocatedSection(List.of(), resultRows);
     }
 }

@@ -801,6 +801,45 @@ actually works — no test, no claim.
   committed document, so no behaviour is guaranteed for it and none is claimed. Recorded as an
   open scenario rather than closed by speculative code.
 
+#### `INFERRED_HEADERLESS_LAYOUT`
+- **Purpose:** a transaction table with no header row anywhere in the document — not a wrapped or
+  malformed one, none at all. Found on a real SBI savings statement whose column vocabulary
+  (Date/Narration/Debit/Credit/Balance) never appears as text at all, so `looksLikeHeaderRow` never
+  scores true and the document returned zero sections despite a geometrically regular, 7-column
+  transaction table.
+- **Supported layouts:** any table with no header vocabulary at all, provided its transaction rows
+  are geometrically regular (stable column x-positions) and carry a date, a narration, a running
+  balance, and separate debit/credit columns. Not a general "infer any layout" mechanism — it is
+  this one well-evidenced shape, architected to fire on any document with it rather than hardcoded
+  to SBI, not a stand-in for the broader candidate-layout work this could grow into.
+- **Implementation:** `PdfTableLocator.inferHeaderlessSection`, attempted only once `locateAll`'s
+  header-based main loop has already produced zero sections. Row classification
+  (`isTransactionShapedRow`) requires both a date-parseable cell and a decimal-amount cell on the
+  same physical row; column discovery (`clusterIntoColumns`) clusters cell positions using a
+  right-aligned amount's right edge and everything else's left edge, the same split
+  `RIGHT_ALIGNED_AMOUNTS` needs at bucketing time, applied one step earlier; each column's role
+  (Date, Description, or a numeric candidate) is decided from the content shape of its own values,
+  never from a label. The one genuinely ambiguous decision — which numeric column is Debit and
+  which is Credit — is resolved by trying the small, bounded set of plausible assignments
+  (`resolveDebitCreditByBalanceChain`) and keeping whichever one's running-balance arithmetic
+  actually holds up against the real data, a selection heuristic scored independently of
+  `BalanceChainValidator` (a different architectural layer) rather than a replacement for it — the
+  real verification still runs downstream, unchanged, on whatever labeling this settles on.
+- **Regression tests:** `HeaderlessLayoutInferenceTest` — hand-synthesized fixtures only, per the
+  Synthetic Fixture Policy (the real motivating document is never committed).
+- **Invariant:** may only ever turn a document that located zero sections into one with rows; it is
+  gated on `sections.isEmpty()` at the point `locateAll` would otherwise have returned, so it is
+  unreachable on any document whose header-based path already finds something.
+- **Maturity:** Beta — one real document.
+- **Known limitations:** a statement whose closing summary block (totals, counts) is not marked by
+  `PAGE_FOOTER` or `STATEMENT_CLOSING_MARKER` — the motivating document's own "Statement Summary"
+  heading is neither — gets folded into the last transaction's Description as trailing noise rather
+  than dropped, bounded to at most `MAX_BLOCK_CONTINUATION_ROWS` lines and never touching a date,
+  amount, or balance cell. A numeric-candidate pool larger than `HEADERLESS_MAX_NUMERIC_CANDIDATES`
+  (4), or a document where no Debit/Credit assignment clears the acceptance threshold, bails to
+  today's zero-section outcome rather than guessing — by design, but means this fires narrower than
+  the shape it targets until measured against more real headerless statements.
+
 #### `PAGE_BOUNDARY_ISOLATION` / `PAGE_FOOTER_EXCLUSION`
 - **Purpose:** a page-number footer line, a per-page repeated title banner, or a statement-closing
   marker line must never merge into the last real transaction row before it.

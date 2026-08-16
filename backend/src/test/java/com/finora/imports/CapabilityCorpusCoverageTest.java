@@ -130,6 +130,13 @@ class CapabilityCorpusCoverageTest {
                         + "cover a capability nothing emits, so this one is blocked on that first.");
         DECLARED_WITHOUT_A_TRACE.put("LEADING_NAME_LINE",
                 "no trace, and nothing records it -- same as LEADING_PLUS_CREDIT.");
+        DECLARED_WITHOUT_A_TRACE.put("INFERRED_HEADERLESS_LAYOUT",
+                "no trace, and none is planned -- the one real document that motivates it is a "
+                        + "genuinely headerless statement, so a trace captured from it would need widths "
+                        + "recorded from real dates and amounts to reproduce the balance-chain scoring "
+                        + "this depends on, which the Synthetic Fixture Policy requires be synthesized, "
+                        + "not preserved, for exactly this kind of fixture. Covered instead by "
+                        + "HeaderlessLayoutInferenceTest's fully hand-synthesized fixtures.");
     }
 
     /**

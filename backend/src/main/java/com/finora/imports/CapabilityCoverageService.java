@@ -77,7 +77,12 @@ public class CapabilityCoverageService {
             // Two header cells normalizing to the same column name -- found on a real ICICI
             // savings statement whose stacked heading names both amount columns "Amount (INR)".
             // See PdfTableLocator.resolveDuplicateColumnNames.
-            "DUPLICATE_COLUMN_NAMES");
+            "DUPLICATE_COLUMN_NAMES",
+            // A transaction table with no header row anywhere in the document -- found on a real
+            // SBI savings statement whose column vocabulary never appears as text at all. Columns
+            // are inferred from data-row geometry and content shape instead of a label. See
+            // PdfTableLocator.inferHeaderlessSection.
+            "INFERRED_HEADERLESS_LAYOUT");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure
