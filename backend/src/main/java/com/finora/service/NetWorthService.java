@@ -3,7 +3,6 @@ package com.finora.service;
 import com.finora.accounts.AccountBalanceConvention;
 import com.finora.dto.NetWorthDto;
 import com.finora.entity.Account;
-import com.finora.entity.NetWorthSnapshot;
 import com.finora.entity.User;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.NetWorthSnapshotRepository;
@@ -52,7 +51,22 @@ public class NetWorthService {
      *  server happens to run could get yesterday's or tomorrow's date stamped on a snapshot they
      *  clicked "save" on today, from their own point of view. Now resolves against
      *  User.timezone (same safe-fallback pattern DashboardService already uses for the same
-     *  underlying problem -- an invalid/malformed value falls back rather than 500ing). */
+     *  underlying problem -- an invalid/malformed value falls back rather than 500ing).
+     *
+     *  <p>Bug fix, second (found while auditing for the same class of bug as
+     *  {@code MerchantNormalizationEngine.addAlias}). This used to be
+     *  {@code findByUserIdAndSnapshotDate().orElseGet(new)} then {@code save()}, guarded by a
+     *  {@code catch (DataIntegrityViolationException)} that re-found and re-saved the winner's row
+     *  on a lost race -- the exact "insert, catch, re-query inside the same call" shape that turned
+     *  out to poison an ambient transaction in {@code addAlias}. It never actually did so HERE,
+     *  purely because this method carries no {@code @Transactional} and its only caller ({@code
+     *  NetWorthController}) doesn't either, so every repository call already ran in its own
+     *  self-contained transaction -- the same accident of omission {@code BootstrapService.run}
+     *  documents relying on deliberately. Relying on "nobody has added @Transactional yet" is not a
+     *  guarantee, so this is now {@link NetWorthSnapshotRepository#upsertForToday}, an
+     *  {@code INSERT ... ON CONFLICT DO UPDATE}: the database resolves the race atomically, so
+     *  there is no exception to catch and no ambient transaction that could be poisoned regardless
+     *  of what this method or its caller are annotated with in the future. */
     public NetWorthDto saveSnapshotForToday(UUID userId) {
         List<Account> accounts = accountRepository.findByUserId(userId);
         BigDecimal liquid = sum(accounts, Account.Type.SAVINGS).add(sum(accounts, Account.Type.WALLET));
@@ -62,33 +76,7 @@ public class NetWorthService {
         BigDecimal netWorth = netWorthOf(accounts);
         LocalDate today = LocalDate.now(safeZoneId(userRepository.findById(userId).map(User::getTimezone).orElse(null)));
 
-        NetWorthSnapshot snap = snapshotRepository.findByUserIdAndSnapshotDate(userId, today)
-                .orElseGet(NetWorthSnapshot::new);
-        snap.setUserId(userId);
-        snap.setSnapshotDate(today);
-        snap.setTotalAssets(totalAssets);
-        snap.setTotalLiabilities(liabilities);
-        snap.setNetWorth(netWorth);
-        try {
-            snapshotRepository.save(snap);
-        } catch (org.springframework.dao.DataIntegrityViolationException e) {
-            // Bug fix: the find-then-save above is a genuine check-then-act race -- two
-            // concurrent calls for the same user+day (a double-click on "Save today's snapshot,"
-            // or a retried request) could both find nothing, both try to INSERT a new row, and
-            // the net_worth_snapshots(user_id, snapshot_date) UNIQUE constraint (V1 migration)
-            // would let exactly one of those inserts through and throw this exception for the
-            // other -- correctly preventing duplicate rows, but as an unhandled 500 rather than
-            // the "same-day snapshots overwrite" behavior this method's own doc comment promises.
-            // The loser here just means someone else's concurrent request won the race and
-            // already created today's row -- re-fetching and updating THAT row instead achieves
-            // the same overwrite semantics the non-racing path already has.
-            snap = snapshotRepository.findByUserIdAndSnapshotDate(userId, today)
-                    .orElseThrow(() -> e); // genuinely shouldn't happen -- rethrow the original rather than swallow a real problem
-            snap.setTotalAssets(totalAssets);
-            snap.setTotalLiabilities(liabilities);
-            snap.setNetWorth(netWorth);
-            snapshotRepository.save(snap);
-        }
+        snapshotRepository.upsertForToday(userId, today, totalAssets, liabilities, netWorth);
 
         return current(userId);
     }
