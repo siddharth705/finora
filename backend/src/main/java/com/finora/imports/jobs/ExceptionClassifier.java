@@ -2,6 +2,7 @@ package com.finora.imports.jobs;
 
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
+import com.finora.imports.storage.StatementIntegrityException;
 import com.finora.imports.storage.StatementStorageException;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Component;
@@ -51,6 +52,15 @@ public class ExceptionClassifier {
         if (e instanceof ApiException api) {
             return api.getCode() != null ? api.getCode().retryPolicy() : ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT;
         }
+        // BH-045: checked before its parent, and deliberately NOT mapped to RETRY like the parent
+        // is. StatementIntegrityException's own doc: "this is a correctness problem... retrying
+        // reads the same wrong bytes forever" -- unlike a plain StatementStorageException (an
+        // object that's missing or unreachable, which a real RETRY might outlast), a hash mismatch
+        // will fail identically on every one of RETRY's 5 attempts. RETRY_ONCE_THEN_ALERT is the
+        // closer fit of the three policies this class has: it does not burn the full ~31-minute
+        // budget on a retry that cannot succeed, and its ERROR severity (unlike RETRY's WARNING)
+        // pages someone for what may be a tampered or corrupted statement, not a passing blip.
+        if (e instanceof StatementIntegrityException) return ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT;
         if (e instanceof StatementStorageException) return ErrorCode.RetryPolicy.RETRY;
         if (e instanceof DataAccessException) return ErrorCode.RetryPolicy.RETRY;
         return ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT;

@@ -2,6 +2,7 @@ package com.finora.imports.jobs;
 
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
+import com.finora.imports.storage.StatementIntegrityException;
 import com.finora.imports.storage.StatementStorageException;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessException;
@@ -54,6 +55,22 @@ class ExceptionClassifierTest {
     void statementStorageFailure_isRetried() {
         assertThat(classifier.classify(new StatementStorageException("R2 unavailable")))
                 .isEqualTo(ErrorCode.RetryPolicy.RETRY);
+    }
+
+    /**
+     * BH-045. {@link StatementIntegrityException} extends {@link StatementStorageException}, so an
+     * {@code instanceof StatementStorageException} check alone would silently also match it -- this
+     * proves the subclass is checked first and gets a genuinely different policy, not the parent's.
+     * Per that exception's own class doc, "retrying reads the same wrong bytes forever": RETRY (the
+     * parent's policy) would spend the full 5-attempt budget on a mismatch that cannot resolve
+     * itself, at only WARNING severity. RETRY_ONCE_THEN_ALERT is the closer fit of the three
+     * policies this class has -- it does not waste that budget, and its ERROR severity is
+     * appropriate for what may be a tampered or corrupted statement, not a passing outage.
+     */
+    @Test
+    void statementIntegrityFailure_isRetriedOnceThenAlerted_notTreatedAsAnOrdinaryStorageRetry() {
+        assertThat(classifier.classify(new StatementIntegrityException("hash mismatch")))
+                .isEqualTo(ErrorCode.RetryPolicy.RETRY_ONCE_THEN_ALERT);
     }
 
     @Test
