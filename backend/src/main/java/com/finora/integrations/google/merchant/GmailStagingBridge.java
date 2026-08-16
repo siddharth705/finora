@@ -2,6 +2,7 @@ package com.finora.integrations.google.merchant;
 
 import com.finora.accounts.AccountDto;
 import com.finora.dto.ImportDto.DetectedAccountInfo;
+import com.finora.dto.ImportDto.DuplicateMatch;
 import com.finora.dto.ImportDto.StagedRow;
 import com.finora.entity.ImportSession;
 import com.finora.imports.ImportSessionService;
@@ -49,6 +50,15 @@ import java.util.UUID;
  * categorySource = "default"} is honest about that, and it is not a downgrade: it is what already
  * drives the review table's "low confidence" badge, so every Gmail-derived row gets that signal
  * for free, with no new UI.
+ *
+ * <h2>Cross-source reconciliation (C6.4, staging-time direction)</h2>
+ *
+ * Every receipt is checked against already-confirmed bank transactions via
+ * {@link GmailReconciliationMatcher} before it is staged — the design proposal's own finding that
+ * {@code DuplicateDetector}'s exact-description match structurally cannot fire between a receipt
+ * (described by merchant domain) and a bank line (described by the bank's own narration). A match
+ * populates {@code likelyDuplicate}/{@code duplicateMatch} exactly as CSV/PDF staging does, so
+ * {@code DuplicateReview.tsx} needs no changes to show it.
  */
 @Service
 public class GmailStagingBridge {
@@ -57,9 +67,12 @@ public class GmailStagingBridge {
             DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.ENGLISH);
 
     private final ImportSessionService importSessionService;
+    private final GmailReconciliationMatcher reconciliationMatcher;
 
-    public GmailStagingBridge(ImportSessionService importSessionService) {
+    public GmailStagingBridge(ImportSessionService importSessionService,
+                               GmailReconciliationMatcher reconciliationMatcher) {
         this.importSessionService = importSessionService;
+        this.reconciliationMatcher = reconciliationMatcher;
     }
 
     /** What staging one receipt did. */
@@ -84,6 +97,9 @@ public class GmailStagingBridge {
             return Result.ALREADY_STAGED;
         }
 
+        Optional<DuplicateMatch> duplicateMatch = reconciliationMatcher.findMatch(
+                userId, receipt.transactionDate(), receipt.amount().toBigDecimal(), receipt.merchantDomain());
+
         StagedRow row = new StagedRow(
                 receipt.transactionDate(),
                 descriptionFor(receipt),
@@ -92,10 +108,10 @@ public class GmailStagingBridge {
                 "Other",
                 "default",
                 null,
-                false,
+                duplicateMatch.isPresent(),
                 null,
                 null,
-                null,
+                duplicateMatch.orElse(null),
                 RowKind.TRANSACTION,
                 receipt.confidence());
 

@@ -21,9 +21,14 @@ import { formatDateDDMMMYYYY } from '../utils/date';
  * - **Each action says what it does.** "Import anyway" and "Skip" rather than a checkbox whose
  *   consequence is inferred from its position in a table.
  *
- * `confidence` is not rendered as a score. The backend matches on date, amount AND description
- * being identical, so every match is exact — a percentage would imply a spectrum the detector
- * cannot produce.
+ * `confidence` is not rendered as a score, even though it now carries two distinct values
+ * (`"EXACT"` for CSV/PDF's date+amount+description match, `"LIKELY"` for a Gmail receipt matched
+ * against the bank ledger by amount + date window + merchant-name similarity, since a receipt's
+ * description can never be textually identical to a bank line — see `DuplicateMatch`'s own doc).
+ * A percentage or badge would invite treating "LIKELY" as a lesser-trust flag to dismiss rather
+ * than read; `match.reason` already says, in plain language, what was actually compared, which is
+ * the same "no automatic filter" principle this whole component exists for, applied to the
+ * confidence value itself.
  *
  * **This component renders a review; it does not own one.** The decision state machine, and the
  * rule that a row may only start unticked if it also starts unresolved, live in

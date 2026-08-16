@@ -32,6 +32,7 @@ import static org.mockito.Mockito.*;
 class GmailStagingBridgeTest {
 
     private ImportSessionService importSessionService;
+    private GmailReconciliationMatcher reconciliationMatcher;
     private GmailStagingBridge bridge;
 
     private final UUID userId = UUID.randomUUID();
@@ -39,8 +40,10 @@ class GmailStagingBridgeTest {
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
         importSessionService = mock(ImportSessionService.class);
-        bridge = new GmailStagingBridge(importSessionService);
+        reconciliationMatcher = mock(GmailReconciliationMatcher.class);
+        bridge = new GmailStagingBridge(importSessionService, reconciliationMatcher);
         when(importSessionService.findLiveSessionByContentHash(any(), any())).thenReturn(Optional.empty());
+        when(reconciliationMatcher.findMatch(any(), any(), any(), any())).thenReturn(Optional.empty());
     }
 
     @Test
@@ -180,6 +183,49 @@ class GmailStagingBridgeTest {
         verify(importSessionService).createSession(
                 any(), fileNameCaptor.capture(), any(), any(), any(), any(), anyString());
         assertThat(fileNameCaptor.getValue()).contains("amazon.in").contains("2026");
+    }
+
+    /**
+     * The whole point of wiring {@link GmailReconciliationMatcher} in: a receipt that matches the
+     * bank ledger must reach the review UI exactly the way a CSV/PDF duplicate does — same two
+     * fields, no new client-side branch needed.
+     */
+    @Test
+    @DisplayName("a reconciliation match sets likelyDuplicate and duplicateMatch on the staged row")
+    void aReconciliationMatchIsCarriedOntoTheStagedRow() {
+        com.finora.dto.ImportDto.DuplicateMatch match = new com.finora.dto.ImportDto.DuplicateMatch(
+                UUID.randomUUID(), UUID.randomUUID(), LocalDate.of(2026, 8, 9), "AMZN MKTPLACE",
+                new BigDecimal("1299.00"), "EXPENSE", java.time.Instant.now(), 1, "LIKELY",
+                "Same amount around this date, and the merchant looks like the same business.");
+        when(reconciliationMatcher.findMatch(any(), any(), any(), any())).thenReturn(Optional.of(match));
+
+        bridge.stage(userId, receipt("msg-1", "amazon.in",
+                Money.of(new BigDecimal("1299.00")), LocalDate.of(2026, 8, 10), 0.9));
+
+        StagedRow row = capturedRows().get(0);
+        assertThat(row.likelyDuplicate()).isTrue();
+        assertThat(row.duplicateMatch()).isEqualTo(match);
+    }
+
+    @Test
+    @DisplayName("no reconciliation match leaves the staged row honestly clean, not a stale guess")
+    void noReconciliationMatchLeavesTheRowClean() {
+        bridge.stage(userId, receipt("msg-1", "amazon.in",
+                Money.of(new BigDecimal("1299.00")), LocalDate.of(2026, 8, 10), 0.9));
+
+        StagedRow row = capturedRows().get(0);
+        assertThat(row.likelyDuplicate()).isFalse();
+        assertThat(row.duplicateMatch()).isNull();
+    }
+
+    @Test
+    @DisplayName("the matcher is asked with the receipt's own date, amount and domain -- not the account-scoped variant")
+    void theMatcherIsCalledWithTheReceiptsOwnFields() {
+        bridge.stage(userId, receipt("msg-1", "amazon.in",
+                Money.of(new BigDecimal("1299.00")), LocalDate.of(2026, 8, 10), 0.9));
+
+        verify(reconciliationMatcher).findMatch(userId, LocalDate.of(2026, 8, 10),
+                new BigDecimal("1299.00"), "amazon.in");
     }
 
     private List<StagedRow> capturedRows() {
