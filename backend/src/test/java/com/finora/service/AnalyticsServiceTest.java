@@ -129,10 +129,14 @@ class AnalyticsServiceTest {
 
     @Test
     void topMerchants_filtersToTheGivenMonth() {
+        // BH-042 follow-up: a specific month is now itself the bounded query
+        // (findByUserIdAndTxnDateBetween), not a filter over the all-time findByUserId load -- see
+        // topMerchants_givenASpecificMonth_queriesOnlyThatMonth below for the test that proves the
+        // bound is what's actually requested. The June row here would never even be fetched now,
+        // but keeping it in the stub still proves the July-only assertion holds either way.
         UUID amazon = UUID.randomUUID();
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(
-                expense(amazon, LocalDate.of(2026, 6, 15), new BigDecimal("1000")), // June -- excluded
-                expense(amazon, LocalDate.of(2026, 7, 15), new BigDecimal("500"))   // July -- included
+        when(transactionRepository.findByUserIdAndTxnDateBetween(eq(userId), any(), any())).thenReturn(List.of(
+                expense(amazon, LocalDate.of(2026, 7, 15), new BigDecimal("500"))
         ));
         when(merchantRepository.findByUserId(userId)).thenReturn(List.of(merchant(amazon, "Amazon")));
 
@@ -140,6 +144,33 @@ class AnalyticsServiceTest {
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).totalSpend()).isEqualByComparingTo("500");
+    }
+
+    @Test
+    @DisplayName("BH-042 follow-up: topMerchants given a specific month queries only that month, not the entire history")
+    void topMerchants_givenASpecificMonth_queriesOnlyThatMonth() {
+        // No stub for findByUserId at all -- if this ever regresses back to the all-time
+        // activeExpenseTransactions(userId, month) filtering in memory, this test's own verify()
+        // below would fail to see any invocation of findByUserIdAndTxnDateBetween, since Mockito
+        // never routes one method's stub to another.
+        analyticsService.topMerchants(userId, YearMonth.of(2026, 7));
+
+        org.mockito.ArgumentCaptor<LocalDate> fromCaptor = org.mockito.ArgumentCaptor.forClass(LocalDate.class);
+        org.mockito.ArgumentCaptor<LocalDate> toCaptor = org.mockito.ArgumentCaptor.forClass(LocalDate.class);
+        verify(transactionRepository).findByUserIdAndTxnDateBetween(eq(userId), fromCaptor.capture(), toCaptor.capture());
+
+        assertThat(fromCaptor.getValue()).isEqualTo(LocalDate.of(2026, 7, 1));
+        assertThat(toCaptor.getValue()).isEqualTo(LocalDate.of(2026, 7, 31));
+    }
+
+    @Test
+    @DisplayName("BH-042 follow-up: the all-time case (month == null) is unaffected, still queries the whole history")
+    void topMerchants_givenNoMonth_stillQueriesTheEntireHistory() {
+        analyticsService.topMerchants(userId, null);
+
+        verify(transactionRepository).findByUserId(userId);
+        verify(transactionRepository, org.mockito.Mockito.never())
+                .findByUserIdAndTxnDateBetween(any(), any(), any());
     }
 
     @Test
