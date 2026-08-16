@@ -473,6 +473,36 @@ describe('Settings', () => {
       expect(screen.getByRole('button', { name: /disconnect/i })).toBeInTheDocument();
     });
 
+    // D-19 Step 1 (Trust Center): grantedScopes has been on the DTO since C5.4, never rendered.
+    it('shows what Gmail access was actually granted, in plain English', async () => {
+      vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({
+        connected: true, googleEmail: 'amy@gmail.example.test',
+        grantedScopes: [
+          'openid',
+          'https://www.googleapis.com/auth/userinfo.email',
+          'https://www.googleapis.com/auth/gmail.readonly',
+        ],
+      }));
+
+      renderSettings();
+
+      // "openid" is skipped -- it has no user-meaningful capability of its own.
+      expect(await screen.findByText(/read gmail messages/i)).toBeInTheDocument();
+      expect(screen.getByText(/see your email address/i)).toBeInTheDocument();
+      expect(screen.queryByText(/openid/i)).not.toBeInTheDocument();
+    });
+
+    it('shows no permissions line when the connection somehow carries no known scopes', async () => {
+      vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({
+        connected: true, googleEmail: 'amy@gmail.example.test', grantedScopes: [],
+      }));
+
+      renderSettings();
+
+      await screen.findByText('amy@gmail.example.test');
+      expect(screen.queryByText(/permissions/i)).not.toBeInTheDocument();
+    });
+
     it('does not offer a Review button when nothing needs review', async () => {
       vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({
         connected: true, googleEmail: 'amy@gmail.example.test', needsReview: 0,

@@ -101,6 +101,22 @@ function gmailLastSyncedLabel(status: GmailConnectionStatus): string {
   return label ? `Last synced ${label}` : 'Never synced yet';
 }
 
+// D-19 Step 1 (Trust Center): grantedScopes has been on GmailConnectionStatusDto since C5.4,
+// never rendered. `openid` has no user-meaningful description of its own (it's what makes `sub`
+// available, not a capability over the user's data) -- skipped rather than shown as a raw URI.
+// "Read Gmail messages", not "read receipts only": gmail.readonly is what Google's consent
+// screen actually grants access to (the whole mailbox, at the OAuth layer) -- the trusted-sender
+// gate (C3) is Finora's own policy restriction on top of that, not something this scope itself
+// enforces, and this list should say what was actually granted, not what Finora chooses to do
+// with it.
+const SCOPE_LABELS: Record<string, string> = {
+  'https://www.googleapis.com/auth/gmail.readonly': 'Read Gmail messages',
+  'https://www.googleapis.com/auth/userinfo.email': 'See your email address',
+};
+function gmailPermissionLabels(scopes: string[]): string[] {
+  return scopes.map((s) => SCOPE_LABELS[s]).filter((label): label is string => !!label);
+}
+
 export default function Settings() {
   const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
@@ -644,6 +660,12 @@ export default function Settings() {
                 </p>
                 <p className="text-[11px] text-muted truncate mt-0.5">{gmailStatus.googleEmail}</p>
                 <p className="text-[11px] text-muted mt-1">{gmailLastSyncedLabel(gmailStatus)}</p>
+                {gmailPermissionLabels(gmailStatus.grantedScopes).length > 0 && (
+                  <p className="text-[11px] text-muted mt-1">
+                    <span className="text-ink">Permissions:</span> {gmailPermissionLabels(gmailStatus.grantedScopes).join(', ')}
+                    {' — never sent, modified, or deleted'}
+                  </p>
+                )}
               </div>
               <button
                 type="button"
