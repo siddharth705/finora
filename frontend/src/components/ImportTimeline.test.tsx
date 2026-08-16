@@ -13,6 +13,7 @@ const api = vi.mocked(importJobsApi);
 const timeline = (over: Partial<Timeline> = {}): Timeline => ({
   jobId: 'job-1',
   status: 'ANALYZING',
+  userStatus: 'PROCESSING',
   failureCode: null,
   stages: [
     { stage: 'PARSING', attempt: 1, outcome: 'COMPLETED', startedAt: '2026-08-12T10:00:00Z', endedAt: '2026-08-12T10:00:01Z', durationMs: 1000 },
@@ -66,7 +67,9 @@ describe('ImportTimeline', () => {
    * and a customer with a stage-recording gap would be stranded on the failed screen.
    */
   it('still offers the curated reason and a way back for a failed job with no recorded stages', async () => {
-    api.timeline.mockResolvedValue(timeline({ status: 'FAILED', failureCode: null, stages: [] }));
+    api.timeline.mockResolvedValue(
+      timeline({ status: 'FAILED', userStatus: 'FAILED', failureCode: null, stages: [] })
+    );
     const onDismiss = vi.fn();
     render(<ImportTimeline jobId="job-1" onDismiss={onDismiss} />);
 
@@ -131,6 +134,7 @@ describe('ImportTimeline', () => {
   it('shows the curated reason for a known failure code, not the raw code', async () => {
     api.timeline.mockResolvedValue(timeline({
       status: 'FAILED',
+      userStatus: 'ACTION_REQUIRED', // matches the real UserFacingImportStatus.of mapping for this code
       failureCode: 'IMPORT_001', // NO_HEADER_DETECTED
       stages: [
         { stage: 'PARSING', attempt: 1, outcome: 'FAILED', startedAt: '2026-08-12T10:00:00Z', endedAt: '2026-08-12T10:00:01Z', durationMs: 1000 },
@@ -148,6 +152,7 @@ describe('ImportTimeline', () => {
   it('falls back to a generic message for a failure with no curated code', async () => {
     api.timeline.mockResolvedValue(timeline({
       status: 'FAILED',
+      userStatus: 'FAILED', // no code at all -- nothing to guess into ACTION_REQUIRED
       failureCode: null,
       stages: [
         { stage: 'PARSING', attempt: 1, outcome: 'FAILED', startedAt: '2026-08-12T10:00:00Z', endedAt: '2026-08-12T10:00:01Z', durationMs: 1000 },
@@ -160,6 +165,30 @@ describe('ImportTimeline', () => {
     expect(screen.getByTestId('import-timeline-failure-reason')).toHaveTextContent(
       "Finora couldn't complete this import"
     );
+  });
+
+  /**
+   * Sprint 4 item 22. The color is the ONLY thing that changes between these two -- both show a
+   * curated message, both offer "Try a different file" -- because the distinction §1 introduced
+   * ACTION_REQUIRED for is "can the user fix this themselves", not "is there a message to show".
+   */
+  it.each([
+    ['ACTION_REQUIRED', 'text-warning', 'text-danger'],
+    ['FAILED', 'text-danger', 'text-warning'],
+  ] as const)('colors the failure reason for userStatus %s', async (userStatus, expectedClass, otherClass) => {
+    api.timeline.mockResolvedValue(timeline({
+      status: 'FAILED',
+      userStatus,
+      failureCode: userStatus === 'ACTION_REQUIRED' ? 'IMPORT_001' : 'IMPORT_011',
+      stages: [],
+    }));
+    render(<ImportTimeline jobId="job-1" />);
+
+    await advance(100);
+
+    const reason = screen.getByTestId('import-timeline-failure-reason');
+    expect(reason.className).toContain(expectedClass);
+    expect(reason.className).not.toContain(otherClass);
   });
 
   it('does not show a failure reason or dismiss action for a completed import', async () => {
@@ -176,6 +205,7 @@ describe('ImportTimeline', () => {
   it('calls onDismiss when the user asks to try a different file', async () => {
     api.timeline.mockResolvedValue(timeline({
       status: 'FAILED',
+      userStatus: 'FAILED', // CORRUPT_PDF is not one of the five ACTION_REQUIRED codes
       failureCode: 'IMPORT_011', // CORRUPT_PDF
       stages: [
         { stage: 'PARSING', attempt: 1, outcome: 'FAILED', startedAt: '2026-08-12T10:00:00Z', endedAt: '2026-08-12T10:00:01Z', durationMs: 1000 },
@@ -225,6 +255,22 @@ describe('ImportTimeline', () => {
     await advance(200);
 
     expect(api.timeline).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * Bug fix: the one-shot mode's "show pollError instead of rendering nothing" fix used to apply
+   * unconditionally, so it leaked into this default polling mode too -- a first-poll blip during
+   * a live upload started showing a duplicate "Lost contact with the server" card right next to
+   * ImportProgress's own near-identical one. Polling mode keeps its original silent behavior: a
+   * blip is not a failed import, and the next scheduled poll (asserted above) recovers on its own.
+   */
+  it('renders nothing (not an error card) while a first-poll blip is still retrying', async () => {
+    api.timeline.mockRejectedValueOnce(new Error('network')).mockResolvedValue(timeline());
+    render(<ImportTimeline jobId="job-1" />);
+
+    await advance(100);
+
+    expect(screen.queryByTestId('import-timeline')).not.toBeInTheDocument();
   });
 
   it('leaves no timer behind when the user navigates away mid-import', async () => {
@@ -308,6 +354,43 @@ describe('ImportTimeline', () => {
       await advance(0);
 
       expect(screen.queryByText(/still trying/i)).not.toBeInTheDocument();
+    });
+
+    /**
+     * Bug fix: a REFRESH that fails after an earlier fetch already succeeded used to show the
+     * exact same "Couldn't load the timeline" text a first-ever failure shows -- misleading, since
+     * by definition a fetch already worked (the stages rendered from it are still on screen right
+     * above this line) and Refresh is what failed, not the initial load.
+     */
+    it('says the refresh failed, not that the timeline never loaded, once something already rendered', async () => {
+      api.timeline.mockResolvedValueOnce(timeline({ status: 'ANALYZING' })).mockRejectedValueOnce(new Error('network'));
+      const { rerender } = render(<ImportTimeline jobId="job-1" autoRefresh={false} refreshToken={0} />);
+      await advance(0);
+      expect(screen.getByTestId('import-timeline')).toBeInTheDocument();
+
+      rerender(<ImportTimeline jobId="job-1" autoRefresh={false} refreshToken={1} />);
+      await advance(0);
+
+      expect(screen.getByText(/couldn't refresh -- showing the last known status/i)).toBeInTheDocument();
+      expect(screen.queryByText(/couldn't load the timeline/i)).not.toBeInTheDocument();
+    });
+
+    /**
+     * Bug fix: the empty-stage-list early return (`if (timeline.stages.length === 0 ...) return
+     * null`) ran even when a refresh had just failed on top of an earlier empty-but-successful
+     * fetch, silently discarding pollError the same way the very-first-fetch case used to.
+     */
+    it('still shows a refresh failure even when the last successful fetch had no stages recorded yet', async () => {
+      api.timeline.mockResolvedValueOnce(timeline({ status: 'QUEUED', stages: [] })).mockRejectedValueOnce(new Error('network'));
+      const { rerender } = render(<ImportTimeline jobId="job-1" autoRefresh={false} refreshToken={0} />);
+      await advance(0);
+      expect(screen.queryByTestId('import-timeline')).not.toBeInTheDocument();
+
+      rerender(<ImportTimeline jobId="job-1" autoRefresh={false} refreshToken={1} />);
+      await advance(0);
+
+      expect(screen.getByTestId('import-timeline')).toBeInTheDocument();
+      expect(screen.getByText(/couldn't refresh -- showing the last known status/i)).toBeInTheDocument();
     });
   });
 });

@@ -9,6 +9,7 @@ import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { adminAuditApi, adminRolesApi, adminUsersApi } from '../api/endpoints';
+import { STATUS_LABELS, promptReactivationReason } from './Users';
 
 // Split out of this file, which had grown to 1770 lines -- the largest source file in the repo and,
 // until the accompanying UserDetail.test.tsx, one of the few admin pages with no test at all. This
@@ -58,7 +59,10 @@ function UserDetailContent({ id }: { id: string }) {
   }
 
   const suspendMutation = useMutation({ mutationFn: () => adminUsersApi.suspend(id), onSuccess: invalidateUser });
-  const reactivateMutation = useMutation({ mutationFn: () => adminUsersApi.reactivate(id), onSuccess: invalidateUser });
+  const reactivateMutation = useMutation({
+    mutationFn: (reason?: string) => adminUsersApi.reactivate(id, reason),
+    onSuccess: invalidateUser,
+  });
   const assignRoleMutation = useMutation({
     mutationFn: (roleName: string) => adminRolesApi.assignRole(id, roleName),
     onSuccess: () => {
@@ -87,13 +91,19 @@ function UserDetailContent({ id }: { id: string }) {
         <div className="flex items-start justify-between mb-5">
           <div>
             <h2 className="text-lg font-bold text-ink">{user.fullName}</h2>
-            <span
-              className={`inline-block mt-1.5 text-xs font-semibold rounded-full px-2.5 py-1 ${
-                user.status === 'ACTIVE' ? 'bg-success-bg text-success' : 'bg-danger-bg text-danger'
-              }`}
-            >
-              {user.status === 'ACTIVE' ? 'Active' : 'Suspended'}
-            </span>
+            {(() => {
+              // One lookup, not two -- the earlier version called STATUS_LABELS[user.status] twice
+              // with two DIFFERENT fallback shapes (one falling back to SUSPENDED's styling, the
+              // other to a plain unstyled label), which could show a mismatched color/text pair for
+              // any status this map doesn't recognize. Same single-lookup shape Users.tsx's own
+              // StatusBadge already uses.
+              const { label, className } = STATUS_LABELS[user.status] ?? { label: user.status, className: 'bg-danger-bg text-danger' };
+              return (
+                <span className={`inline-block mt-1.5 text-xs font-semibold rounded-full px-2.5 py-1 ${className}`}>
+                  {label}
+                </span>
+              );
+            })()}
           </div>
           <div className="flex items-center gap-2">
             {canEditProfile && !editingProfile && (
@@ -105,30 +115,36 @@ function UserDetailContent({ id }: { id: string }) {
                 <Pencil size={14} /> Edit profile
               </button>
             )}
-            {canModify && (
-              user.status === 'ACTIVE' ? (
-                <button
-                  type="button"
-                  disabled={suspendMutation.isPending}
-                  onClick={() => {
-                    if (confirm(`Suspend ${user.fullName}? They will be signed out and unable to log in until reactivated.`)) {
-                      suspendMutation.mutate();
-                    }
-                  }}
-                  className="inline-flex items-center gap-1.5 text-sm font-medium text-danger border border-danger/30 hover:bg-danger-bg rounded-lg px-3.5 py-2"
-                >
-                  <ShieldBan size={15} /> Suspend account
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled={reactivateMutation.isPending}
-                  onClick={() => reactivateMutation.mutate()}
-                  className="inline-flex items-center gap-1.5 text-sm font-medium text-success border border-success/30 hover:bg-success-bg rounded-lg px-3.5 py-2"
-                >
-                  <ShieldCheck size={15} /> Reactivate account
-                </button>
-              )
+            {canModify && user.status === 'ACTIVE' && (
+              <button
+                type="button"
+                disabled={suspendMutation.isPending}
+                onClick={() => {
+                  if (confirm(`Suspend ${user.fullName}? They will be signed out and unable to log in until reactivated.`)) {
+                    suspendMutation.mutate();
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-danger border border-danger/30 hover:bg-danger-bg rounded-lg px-3.5 py-2"
+              >
+                <ShieldBan size={15} /> Suspend account
+              </button>
+            )}
+            {/* Covers both admin-SUSPENDED and self-service DEACTIVATED -- see Users.tsx's
+                Actions column for the same widened check and why. */}
+            {canModify && (user.status === 'SUSPENDED' || user.status === 'DEACTIVATED') && (
+              <button
+                type="button"
+                disabled={reactivateMutation.isPending}
+                onClick={() => {
+                  const reason = promptReactivationReason(user.fullName);
+                  if (reason !== null) {
+                    reactivateMutation.mutate(reason);
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-success border border-success/30 hover:bg-success-bg rounded-lg px-3.5 py-2"
+              >
+                <ShieldCheck size={15} /> Reactivate account
+              </button>
             )}
           </div>
         </div>

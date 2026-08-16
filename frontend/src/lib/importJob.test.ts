@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { detail, isCancellable, isReviewable, isSettled, label, percent } from './importJob';
+import { detail, isCancellable, isReviewable, isSettled, label, percent, recentImportsRefetchIntervalMs } from './importJob';
 import type { ImportJobProgress } from '../api/endpoints';
 
 /**
@@ -16,6 +16,7 @@ function job(over: Partial<ImportJobProgress> = {}): ImportJobProgress {
     jobId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     fileName: 'statement.csv',
     status: 'QUEUED',
+    userStatus: 'PROCESSING',
     rowsTotal: null,
     rowsProcessed: 0,
     createdAt: '2026-08-08T09:00:00Z',
@@ -41,6 +42,33 @@ describe('importJob — when to stop polling', () => {
     expect(isSettled(job({ status: 'COMPLETED' }))).toBe(true);
     expect(isSettled(job({ status: 'FAILED' }))).toBe(true);
     expect(isSettled(job({ status: 'CANCELLED' }))).toBe(true);
+  });
+});
+
+/**
+ * Bug fix, caught by review: "Recent Imports" used to have nothing keeping it current for someone
+ * who stayed on Statement History the whole time a watched job finished -- staleTime/window-focus
+ * refetching only helps on remount or tab refocus, neither of which happens for an already-open,
+ * already-focused page. Tested directly rather than only through React Query's own
+ * refetchInterval callback, which would need simulated timers to exercise at all.
+ */
+describe('importJob — how often "Recent Imports" should refetch itself', () => {
+  it('keeps refetching while anything listed is still in flight', () => {
+    expect(recentImportsRefetchIntervalMs([job({ status: 'QUEUED' })])).toBe(15_000);
+    expect(recentImportsRefetchIntervalMs([job({ status: 'ANALYZING' })])).toBe(15_000);
+  });
+
+  it('stops once every listed job has settled', () => {
+    expect(recentImportsRefetchIntervalMs([job({ status: 'FAILED' })])).toBe(false);
+    expect(recentImportsRefetchIntervalMs([job({ status: 'COMPLETED' }), job({ status: 'CANCELLED' })])).toBe(false);
+  });
+
+  it('keeps refetching if even one of several listed jobs is still in flight', () => {
+    expect(recentImportsRefetchIntervalMs([job({ status: 'COMPLETED' }), job({ status: 'PARSING' })])).toBe(15_000);
+  });
+
+  it('has nothing to watch for an empty list', () => {
+    expect(recentImportsRefetchIntervalMs([])).toBe(false);
   });
 });
 

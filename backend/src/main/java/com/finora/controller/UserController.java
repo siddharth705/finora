@@ -1,5 +1,6 @@
 package com.finora.controller;
 
+import com.finora.dto.AccountLifecycleDtos.*;
 import com.finora.dto.ApiResponse;
 import com.finora.dto.MeAccessDto;
 import com.finora.dto.PasswordChangeDtos.*;
@@ -11,32 +12,54 @@ import com.finora.security.CurrentUser;
 import com.finora.security.JwtAuthFilter;
 import jakarta.servlet.http.HttpServletRequest;
 
+import java.time.LocalDate;
+import java.util.Map;
 import java.util.UUID;
+import com.finora.service.AuditService;
 import com.finora.service.AuthorizationService;
+import com.finora.service.DataExportService;
 import com.finora.service.PasswordChangeService;
+import com.finora.service.UserAccountLifecycleService;
 import com.finora.service.UserSettingsService;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 @RestController
 @RequestMapping("/api/v1/users/me")
 public class UserController {
+
+    private static final Logger log = LoggerFactory.getLogger(UserController.class);
 
     private final UserSettingsService userSettingsService;
     private final CurrentUser currentUser;
     private final UserRepository userRepository;
     private final AuthorizationService authorizationService;
     private final PasswordChangeService passwordChangeService;
+    private final UserAccountLifecycleService accountLifecycleService;
+    private final DataExportService dataExportService;
+    private final AuditService auditService;
 
     public UserController(UserSettingsService userSettingsService, CurrentUser currentUser,
                            UserRepository userRepository, AuthorizationService authorizationService,
-                           PasswordChangeService passwordChangeService) {
+                           PasswordChangeService passwordChangeService,
+                           UserAccountLifecycleService accountLifecycleService,
+                           DataExportService dataExportService, AuditService auditService) {
         this.userSettingsService = userSettingsService;
         this.currentUser = currentUser;
         this.userRepository = userRepository;
         this.authorizationService = authorizationService;
         this.passwordChangeService = passwordChangeService;
+        this.accountLifecycleService = accountLifecycleService;
+        this.dataExportService = dataExportService;
+        this.auditService = auditService;
     }
 
     @GetMapping
@@ -90,5 +113,59 @@ public class UserController {
         User user = userRepository.findById(currentUser.id())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
         return ApiResponse.ok(authorizationService.meAccess(user));
+    }
+
+    /** Reversible: blocks login, signs out every device, retains all data -- see
+     *  UserAccountLifecycleService.deactivate's own doc comment. The frontend clears its own
+     *  local session immediately after this succeeds (there is nothing left to be signed in to). */
+    @PostMapping("/account/deactivate")
+    public ApiResponse<DeactivateResponse> deactivate(@Valid @RequestBody DeactivateRequest request) {
+        accountLifecycleService.deactivate(currentUser.id(), request.currentPassword(), request.reason(), request.note());
+        return ApiResponse.ok(new DeactivateResponse(
+                "Your account has been deactivated. Sign in again any time to reactivate it."));
+    }
+
+    /** Irreversible -- see UserAccountLifecycleService.requestDeletion's own doc comment. Frontend
+     *  clears its own local session immediately after this succeeds, same as deactivate() above. */
+    @PostMapping("/account/delete")
+    public ApiResponse<DeleteAccountResponse> deleteAccount(@Valid @RequestBody DeleteAccountRequest request) {
+        accountLifecycleService.requestDeletion(currentUser.id(), request.sessionId());
+        return ApiResponse.ok(new DeleteAccountResponse(
+                "Your account is scheduled for deletion. You've been signed out everywhere."));
+    }
+
+    /**
+     * "Download My Data" (Phase C) -- see DataExportService's own doc comment for the full design,
+     * in particular why this is split into a synchronous gather ({@code buildBundle}, which also
+     * proves the password and can therefore still return a clean error response) followed by a
+     * streamed ZIP write ({@code writeZip}, which cannot: headers are already committed by the
+     * time it runs).
+     *
+     * <p>{@code POST}, not {@code GET} -- matches deactivate()/deleteAccount()'s own convention
+     * for a password-gated self-service action, and lets the password travel in the body.
+     */
+    @PostMapping("/data-export")
+    public ResponseEntity<StreamingResponseBody> exportData(@Valid @RequestBody ExportDataRequest request) {
+        UUID userId = currentUser.id();
+        DataExportService.ExportBundle bundle = dataExportService.buildBundle(userId, request.currentPassword());
+        auditService.record(userId, "DATA_EXPORT_REQUESTED", "User", userId, Map.of());
+
+        String fileName = "finora-data-export-" + LocalDate.now() + ".zip";
+        StreamingResponseBody body = out -> {
+            try {
+                dataExportService.writeZip(userId, bundle, out);
+                auditService.record(userId, "DATA_EXPORTED", "User", userId,
+                        Map.of("statementCount", bundle.statementSummaries().size()));
+            } catch (Exception e) {
+                log.error("Data export failed mid-stream for user {}: {}", userId, e.getMessage(), e);
+                auditService.record(userId, "DATA_EXPORT_FAILED", "User", userId,
+                        Map.of("error", e.getClass().getSimpleName()));
+            }
+        };
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("application/zip"))
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(fileName).build().toString())
+                .body(body);
     }
 }

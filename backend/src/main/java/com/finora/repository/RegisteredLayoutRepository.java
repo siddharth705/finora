@@ -23,6 +23,11 @@ public interface RegisteredLayoutRepository extends JpaRepository<RegisteredLayo
 
     Optional<RegisteredLayout> findByFingerprint(String fingerprint);
 
+    /** Batch form of {@link #findByFingerprint}, for resolving many fingerprints to their curated
+     *  names in one query rather than one per fingerprint -- the registry stays small, but a
+     *  caller iterating a whole failure-analytics window still shouldn't pay N+1 for it. */
+    java.util.List<RegisteredLayout> findByFingerprintIn(java.util.Collection<String> fingerprints);
+
     /**
      * Records that a confirmed import produced this layout: inserts the row, or advances the
      * observed columns of the row that is already there.

@@ -1,6 +1,7 @@
 package com.finora.imports.analysis;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.finora.repository.RegisteredLayoutRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.Pageable;
@@ -17,12 +18,14 @@ import static org.mockito.Mockito.when;
 class StatementAnalysisReportServiceTest {
 
     private StatementAnalysisSessionRepository repository;
+    private RegisteredLayoutRepository registeredLayoutRepository;
     private StatementAnalysisReportService service;
 
     @BeforeEach
     void setUp() {
         repository = mock(StatementAnalysisSessionRepository.class);
-        service = new StatementAnalysisReportService(repository, new ObjectMapper());
+        registeredLayoutRepository = mock(RegisteredLayoutRepository.class);
+        service = new StatementAnalysisReportService(repository, registeredLayoutRepository, new ObjectMapper());
         when(repository.count()).thenReturn(0L);
         when(repository.countByOutcome(any())).thenReturn(0L);
         when(repository.countDistinctLayouts()).thenReturn(0L);

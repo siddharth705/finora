@@ -49,12 +49,13 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
      */
     Optional<StatementImport> findByImportJobId(UUID importJobId);
 
-    // Admin Portal, Operational Dashboard + Statement Import health provider -- imports.status
-    // never actually leaves "COMPLETED" anywhere in this codebase today (CsvImportService/
-    // StatementImportService both throw synchronously on a parse failure rather than persisting
-    // a FAILED row), so "failed imports" has no real signal to report yet. transactionsSkipped
-    // is the honest substitute: real evidence an import didn't cleanly account for every row,
-    // without claiming a "failure" this pipeline can't actually detect. See
+    // Admin Portal, Operational Dashboard + Statement Import health provider -- a statement_imports
+    // row can only ever represent a completed import (CsvImportService/StatementImportService both
+    // throw synchronously on a parse failure rather than persisting a row for it; V81 removed the
+    // status column this table briefly carried for exactly that reason -- it could never hold
+    // anything else), so "failed imports" has no real signal to report from this table.
+    // transactionsSkipped is the honest substitute: real evidence an import didn't cleanly account
+    // for every row, without claiming a "failure" this pipeline can't actually detect. See
     // StatementImportHealthProvider's class comment for how this feeds the health panel.
     long countByImportedAtAfter(Instant threshold);
 

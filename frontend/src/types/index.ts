@@ -163,6 +163,10 @@ export interface StagedRow {
   // between staging and the ledger.
   referenceNumber: string | null;
   balanceAfter: number | null;
+  // 0.0–1.0, null for every CSV/PDF row (a bank statement line has no extraction-reliability
+  // estimate to carry). Populated only for a Gmail-derived row -- display only, per
+  // ParsedReceipt's own doc comment: nothing may skip review because this number is high.
+  confidence: number | null;
 }
 
 // Best-effort fields pulled from the statement itself. Every field is nullable and genuinely
@@ -313,7 +317,6 @@ export interface StatementSummary {
   closingBalance: number | null;
   transactionsImported: number;
   transactionsSkipped: number;
-  status: string;
   importedAt: string;
   // Financial Intelligence Workspace, Statement Imports module: how many of this import's own
   // transactions are currently flagged ReconciliationStatus.DUPLICATE. Computed on read

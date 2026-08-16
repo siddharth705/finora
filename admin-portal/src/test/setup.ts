@@ -35,6 +35,19 @@ beforeEach(() => {
   vi.spyOn(window, 'confirm').mockReturnValue(true);
 });
 
+// Same problem as window.confirm above, for window.prompt: jsdom logs "Not implemented" and
+// returns undefined, which is neither the "Cancel" `null` a real browser returns nor a string --
+// code written for a real prompt() call (e.g. `if (reason !== null) mutate(reason.trim())`)
+// crashes on `.trim()` instead of reading as cancelled. An empty string is the permissive default,
+// prompt() (e.g. `if (reason !== null) mutate(reason.trim())`) crashes on `.trim()` instead of
+// reading as cancelled. An empty string is the permissive default, matching confirm's default
+// above: it reads as "OK with no text entered," so a test exercising what happens after the admin
+// proceeds doesn't have to know this dialog exists. A test asserting the Cancel path should
+// override this explicitly with `vi.mocked(window.prompt).mockReturnValueOnce(null)`.
+beforeEach(() => {
+  vi.spyOn(window, 'prompt').mockReturnValue('');
+});
+
 // See finora/frontend/src/test/setup.ts's comment on this same hook -- without `test.globals:
 // true`, Testing Library's automatic cleanup never self-registers, so every rendered test's DOM
 // would otherwise accumulate in document.body for the rest of the file.

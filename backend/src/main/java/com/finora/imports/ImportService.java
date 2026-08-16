@@ -606,7 +606,9 @@ public class ImportService {
                     null); // a multi-section PDF was already unlocked once to be staged; no password to carry here
             persisted.add(persistSection(userId, session.getFileName(), statementContentService.read(session), perAccountRequest, i,
                     session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
-                session.getUnparseableSummaryJson()));
+                // A multi-section import is CSV/PDF only -- a Gmail receipt is never
+                // multi-account -- so source is always null on this path, not session.getSource().
+                session.getUnparseableSummaryJson(), null));
         }
 
         reconcileAcross(userId, persisted);
@@ -654,7 +656,7 @@ public class ImportService {
         ConfirmedRowIntegrity.requireSameRows(stagedRows, request.rows());
         return confirm(userId, session.getFileName(), statementContentService.read(session), request, null,
                 session.getLayoutMetadataJson(), session.getLayoutFingerprint(), session.getActivatedCapabilitiesJson(),
-                session.getUnparseableSummaryJson());
+                session.getUnparseableSummaryJson(), session.getSource());
     }
 
     /**
@@ -700,12 +702,15 @@ public class ImportService {
      * MultipartFile implementation just to satisfy the type — same reasoning as the
      * parseAndStage(userId, filename, InputStream) split above. No ImportSession is available on
      * this path (confirmReimport() replays already-stored bytes, not a fresh staged session), so
-     * the layout metadata/fingerprint/capabilities trio is left null here -- same "best-effort,
-     * never recomputed after the fact" discipline as every other nullable field on this pipeline.
+     * the layout metadata/fingerprint/capabilities trio -- and source (C5-B) -- are left null here,
+     * same "best-effort, never recomputed after the fact" discipline as every other nullable field
+     * on this pipeline. Re-importing a Gmail-derived StatementImport this way would fall back to
+     * CSV_IMPORT provenance; that gap is accepted rather than solved here, on the same reasoning as
+     * the PDF-mislabelled-as-CSV_IMPORT one Transaction.Source's own comment already accepts.
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request) {
-        return confirm(userId, fileName, fileContent, request, null, null, null, null, null);
+        return confirm(userId, fileName, fileContent, request, null, null, null, null, null, null);
     }
 
     /**
@@ -717,7 +722,7 @@ public class ImportService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request, Integer sourceSectionIndex) {
-        return confirm(userId, fileName, fileContent, request, sourceSectionIndex, null, null, null, null);
+        return confirm(userId, fileName, fileContent, request, sourceSectionIndex, null, null, null, null, null);
     }
 
     /**
@@ -728,13 +733,17 @@ public class ImportService {
      * no access to the original StagedRow/DetectedAccountInfo/DocumentContext, only the reviewed
      * ConfirmedRow list. All three nullable -- a caller with no session (see the byte-array
      * overload above) simply leaves them unset.
+     *
+     * <p>{@code source} (C5-B): {@link com.finora.entity.ImportSession#SOURCE_GMAIL} or null, copied
+     * verbatim from the session the same way the metadata trio is -- never recomputed here, and
+     * multi-section confirms always pass null (a Gmail receipt is never multi-section).
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request, Integer sourceSectionIndex,
                                     String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson,
-                                    String unparseableSummaryJson) {
+                                    String unparseableSummaryJson, String source) {
         PersistedSection section = persistSection(userId, fileName, fileContent, request, sourceSectionIndex,
-                layoutMetadataJson, layoutFingerprint, activatedCapabilitiesJson, unparseableSummaryJson);
+                layoutMetadataJson, layoutFingerprint, activatedCapabilitiesJson, unparseableSummaryJson, source);
         reconcileAcross(userId, List.of(section));
         return summarise(userId, section);
     }
@@ -795,7 +804,7 @@ public class ImportService {
     private PersistedSection persistSection(UUID userId, String fileName, byte[] fileContent, ConfirmRequest request,
                                     Integer sourceSectionIndex,
                                     String layoutMetadataJson, String layoutFingerprint, String activatedCapabilitiesJson,
-                                    String unparseableSummaryJson) {
+                                    String unparseableSummaryJson, String source) {
         long startedAtMs = System.currentTimeMillis();
         List<String> accountsCreated = new ArrayList<>();
         // What was created, by PRODUCT rather than by account. The summary says "1 Savings, 1 Fixed
@@ -852,7 +861,11 @@ public class ImportService {
             t.setMerchant(CategoryRules.extractMerchant(row.description()));
             t.setAmount(row.amount());
             t.setTxnType(com.finora.util.EnumParsing.parse(Transaction.Type.class, row.type(), "type"));
-            t.setSource(Transaction.Source.CSV_IMPORT);
+            // GMAIL_IMPORT only when the session actually said so (C5-B); everything else keeps
+            // the exact pre-existing behaviour, INCLUDING the known PDF-mislabelled-as-CSV_IMPORT
+            // gap -- see Transaction.Source's own comment. Not fixing that here.
+            t.setSource(com.finora.entity.ImportSession.SOURCE_GMAIL.equals(source)
+                    ? Transaction.Source.GMAIL_IMPORT : Transaction.Source.CSV_IMPORT);
             t.setReferenceNumber(row.referenceNumber());
             t.setBalanceAfter(row.balanceAfter());
             t.setNeedsCategoryReview(isUnresolvedGuess);

@@ -1,12 +1,15 @@
 package com.finora.service;
 
 import com.finora.config.EmailProperties;
+import com.finora.config.RequestMetadata;
 import com.finora.dto.AuthDtos.*;
+import com.finora.entity.AccountReactivationToken;
 import com.finora.entity.Category;
 import com.finora.entity.PasswordResetToken;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
+import com.finora.repository.AccountReactivationTokenRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.PasswordResetTokenRepository;
 import com.finora.repository.UserRepository;
@@ -15,6 +18,7 @@ import com.finora.util.PhoneMasking;
 import com.finora.util.PhoneNumbers;
 import com.finora.util.AfterCommit;
 import com.finora.util.TokenHasher;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.IncorrectResultSizeDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -70,6 +74,10 @@ public class AuthService {
             "Business Expenses", "Other"
     );
     private static final long RESET_TOKEN_TTL_MINUTES = 30;
+    // Short relative to the reset-token TTL above -- this token exists only to carry a login
+    // attempt that already proved the password straight through to a single confirm click, not
+    // to survive being read from an email later, so there's no reason to give it 30 minutes.
+    private static final long REACTIVATION_TOKEN_TTL_MINUTES = 15;
     // MAX_FAILED_LOGIN_ATTEMPTS / LOCKOUT_DURATION_MINUTES used to be hardcoded here -- now read
     // live from PlatformSettingsService on every call (see registerFailedLogin() and login()'s
     // lockout check) so an admin's change on the System page takes effect immediately, not just
@@ -77,9 +85,17 @@ public class AuthService {
     // (5 / 15) these constants used to have, so existing behavior is unchanged until an admin
     // actually edits the setting.
 
+    // Disabled by default: an unlimited self-service reactivation window is today's existing
+    // behavior, and this is an opt-in production hardening knob, not a launch requirement.
+    @Value("${app.account-lifecycle.reactivation-window-enabled:false}")
+    private boolean reactivationWindowEnabled;
+    @Value("${app.account-lifecycle.reactivation-window-days:3}")
+    private int reactivationWindowDays;
+
     private final UserRepository userRepository;
     private final CategoryRepository categoryRepository;
     private final PasswordResetTokenRepository resetTokenRepository;
+    private final AccountReactivationTokenRepository reactivationTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final AuthenticationManager authenticationManager;
@@ -91,20 +107,23 @@ public class AuthService {
     private final PlatformSettingsService platformSettingsService;
     private final PasswordHistoryService passwordHistoryService;
     private final IdentityLookup identityLookup;
+    private final RequestMetadata requestMetadata;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public AuthService(UserRepository userRepository, CategoryRepository categoryRepository,
-                        PasswordResetTokenRepository resetTokenRepository, PasswordEncoder passwordEncoder,
+                        PasswordResetTokenRepository resetTokenRepository,
+                        AccountReactivationTokenRepository reactivationTokenRepository, PasswordEncoder passwordEncoder,
                         JwtService jwtService, AuthenticationManager authenticationManager,
                         AuditService auditService, RefreshTokenService refreshTokenService,
                         EmailProvider emailProvider, EmailProperties emailProperties,
                         PhoneVerificationProvider phoneVerificationProvider,
                         PlatformSettingsService platformSettingsService,
                         PasswordHistoryService passwordHistoryService,
-                        IdentityLookup identityLookup) {
+                        IdentityLookup identityLookup, RequestMetadata requestMetadata) {
         this.userRepository = userRepository;
         this.categoryRepository = categoryRepository;
         this.resetTokenRepository = resetTokenRepository;
+        this.reactivationTokenRepository = reactivationTokenRepository;
         this.passwordEncoder = passwordEncoder;
         this.timingParityHash = passwordEncoder.encode("finora-bh-014-timing-parity-not-a-password");
         this.jwtService = jwtService;
@@ -117,6 +136,7 @@ public class AuthService {
         this.platformSettingsService = platformSettingsService;
         this.passwordHistoryService = passwordHistoryService;
         this.identityLookup = identityLookup;
+        this.requestMetadata = requestMetadata;
     }
 
     @Transactional
@@ -452,6 +472,49 @@ public class AuthService {
                     "This account has been suspended. Contact support for assistance.");
         }
 
+        // Same positioning discipline as the suspended check above (AFTER password verification,
+        // so this reaches only someone who already proved they know the password) -- but unlike
+        // suspended, a deactivated account isn't necessarily a dead end. The password check just
+        // proved this is genuinely the account owner, so within the self-service reactivation
+        // window (app.account-lifecycle.reactivation-window-*) this mints a reactivation token
+        // straight through rather than making them go find a "reactivate" link some other way. No
+        // USER_LOGIN audit entry, for the same reason the suspended branch has none: no login
+        // happened yet.
+        if (user.isDeactivated()) {
+            if (selfServiceReactivationWindowHasClosed(user)) {
+                // Deliberately NOT a token-bearing AUTH_ACCOUNT_DEACTIVATED response -- offering a
+                // "Reactivate my account" button that would only fail is worse than not offering
+                // one. The account is NOT deleted (see V88/AccountLifecycleDtos' own comments);
+                // this only closes the SELF-SERVICE path, same as the doc this policy comes from
+                // is explicit about.
+                throw new ApiException(HttpStatus.FORBIDDEN,
+                        "This account is deactivated and the self-service reactivation window has closed. Contact support to reactivate it.");
+            }
+            String rawToken = mintReactivationToken(user.getId());
+            throw new ApiException(HttpStatus.FORBIDDEN, ErrorCode.AUTH_ACCOUNT_DEACTIVATED,
+                    ErrorCode.AUTH_ACCOUNT_DEACTIVATED.defaultMessage(),
+                    Map.of("reactivationToken", rawToken));
+        }
+
+        // Same positioning discipline again, and load-bearing this time: requestDeletion()'s "no
+        // cancel link" product decision only holds if a fresh login can't route around it. The
+        // real passwordHash is still on the row until AccountPurgeSweepService's LAST purge step
+        // anonymizes it -- without this check, a user mid-window could just log back in with their
+        // real password and keep using the app, undoing "irreversible, no cancel" entirely. No
+        // reactivation path (unlike DEACTIVATED above): this is intentionally a dead end, same
+        // shape as the suspended branch.
+        if (user.isPendingDeletion()) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "This account is scheduled for deletion and can no longer be signed in to.");
+        }
+        // Realistically unreachable via login() -- DELETED's passwordHash is a random unusable
+        // value written by the purge itself, so it will never match -- but kept as an explicit
+        // branch rather than relying on that side effect, matching the discipline that every
+        // status this column can hold gets its own considered answer, not a silent fallthrough.
+        if (user.isDeleted()) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "This account no longer exists.");
+        }
+
         if (user.getFailedLoginAttempts() > 0 || user.getLockedUntil() != null) {
             user.setFailedLoginAttempts(0);
             user.setLockedUntil(null);
@@ -507,6 +570,23 @@ public class AuthService {
             throw new ApiException(HttpStatus.FORBIDDEN,
                     "This account has been suspended. Contact support for assistance.");
         }
+        // UserAccountLifecycleService.deactivate() calls refreshTokenService.revokeAllForUser in
+        // the same transaction as the status write, so this should be unreachable in practice --
+        // kept as a defense-in-depth backstop against a refresh that was already in flight when
+        // the status changed. Deliberately a flat reject here, not login()'s reactivation-token
+        // flow: this is a silent background call, not a screen the user is looking at, so there's
+        // nowhere to show a "welcome back" prompt. A fresh login attempt is what surfaces that.
+        if (user.isDeactivated()) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "This account is no longer active. Please sign in again.");
+        }
+        // Same defense-in-depth reasoning as the isDeactivated() check above --
+        // requestDeletion() already revokes every refresh token in the same transaction as the
+        // status write, so this should be unreachable in practice too.
+        if (user.isPendingDeletion() || user.isDeleted()) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "This account is no longer active. Please sign in again.");
+        }
 
         String newAccessToken = jwtService.generateToken(user.getId(), user.getEmail(),
                 rotation.newToken().sessionId(), user.getAccountScope());
@@ -517,6 +597,95 @@ public class AuthService {
     public LogoutResponse logout(LogoutRequest request) {
         refreshTokenService.revoke(request.refreshToken());
         return new LogoutResponse("Signed out.");
+    }
+
+    /** app.account-lifecycle.reactivation-window-enabled gates this entirely -- disabled (the
+     *  default) means no window ever closes, matching today's existing unlimited-window behavior.
+     *  A null deactivatedAt (an account deactivated before V88 shipped the column) is treated the
+     *  same way: open a window can't have closed if it's never had a start. */
+    private boolean selfServiceReactivationWindowHasClosed(User user) {
+        if (!reactivationWindowEnabled) {
+            return false;
+        }
+        Instant deactivatedAt = user.getDeactivatedAt();
+        if (deactivatedAt == null) {
+            return false;
+        }
+        return deactivatedAt.plus(java.time.Duration.ofDays(reactivationWindowDays)).isBefore(Instant.now());
+    }
+
+    /** Mints a raw reactivation token for a just-authenticated deactivated user -- see login()'s
+     *  deactivated branch. Any earlier unconsumed link for this user is burned first, same
+     *  "one live link at a time" rule forgotPassword() applies to reset tokens, so an abandoned
+     *  earlier login attempt can't be replayed after a later one already succeeded. */
+    private String mintReactivationToken(UUID userId) {
+        Instant now = Instant.now();
+        reactivationTokenRepository.markAllUnusedAsUsed(userId, now);
+
+        byte[] randomBytes = new byte[32];
+        secureRandom.nextBytes(randomBytes);
+        String rawToken = Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
+
+        AccountReactivationToken art = new AccountReactivationToken();
+        art.setUserId(userId);
+        art.setTokenHash(TokenHasher.sha256(rawToken));
+        art.setExpiresAt(now.plusSeconds(REACTIVATION_TOKEN_TTL_MINUTES * 60));
+        reactivationTokenRepository.save(art);
+        return rawToken;
+    }
+
+    /**
+     * Completes the "Welcome back — reactivate your account?" confirmation Login.tsx shows after
+     * a deactivated account's password checks out (see login()'s deactivated branch). Re-confirms
+     * the account is still DEACTIVATED (a race guard -- e.g. two tabs, or the token being reused
+     * after an admin already reactivated it through the admin portal) rather than trusting the
+     * token alone to imply that. Issues real tokens on success, same AuthResponse shape login()
+     * itself returns, so the frontend lands the user signed in with one extra click rather than a
+     * second full login.
+     */
+    @Transactional
+    public AuthResponse reactivate(ReactivateRequest request) {
+        AccountReactivationToken art = reactivationTokenRepository.findByTokenHash(TokenHasher.sha256(request.token()))
+                .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, "This reactivation link is invalid or has already been used."));
+        if (art.getUsedAt() != null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "This reactivation link has already been used.");
+        }
+        if (art.getExpiresAt().isBefore(Instant.now())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "This reactivation link has expired — please sign in again.");
+        }
+
+        User user = userRepository.findById(art.getUserId())
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
+        if (!user.isDeactivated()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "This account is no longer deactivated.");
+        }
+
+        user.setStatus(User.STATUS_ACTIVE);
+        user.setUpdatedAt(Instant.now());
+        userRepository.save(user);
+
+        art.setUsedAt(Instant.now());
+        reactivationTokenRepository.save(art);
+
+        Map<String, Object> reactivationAuditMetadata = requestMetadata.addTo(
+                new java.util.HashMap<>(Map.of("method", "self_service_login")));
+        auditService.record(user.getId(), "ACCOUNT_REACTIVATED", "User", user.getId(), reactivationAuditMetadata);
+
+        UUID reactivatedUserId = user.getId();
+        String reactivatedEmail = user.getEmail();
+        AfterCommit.run("account reactivated email", () -> {
+            EmailResult result = emailProvider.sendAccountReactivatedEmail(reactivatedEmail);
+            auditService.record(reactivatedUserId, "EMAIL_SENT", "User", reactivatedUserId, Map.of(
+                    "type", "account_reactivated", "provider", result.provider().name(),
+                    "success", result.success()));
+        });
+
+        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId());
+        var issued = refreshTokenService.issue(user.getId());
+        String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId(),
+                user.getAccountScope());
+        return new AuthResponse(accessToken, issued.rawToken(), user.getEmail(), user.getFullName(),
+                user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()));
     }
 
     /**

@@ -55,8 +55,7 @@ to leave at its default: local dev defaults, or must be explicitly set.
 | `FINORA_SETUP_KEY` | No | empty (auto-generated + written to `.finora/installation.key`) | First-run bootstrap installation key | See `docs/bootstrap-setup-future-work.md` — set explicitly rather than relying on a written file in any deployment without a persistent, host-readable filesystem |
 | `TRUST_PROXY_HEADERS` | **Yes, on Railway** | `false` | Whether `RateLimitFilter` trusts `X-Forwarded-For` for the real client IP | **Must be `true` on Railway** (or any deployment behind a real reverse proxy) — otherwise every user shares one rate-limit bucket. Must stay `false` anywhere not behind a trusted proxy, or rate limiting can be bypassed by spoofing the header. Like `TWO_FACTOR_API_KEY` above, `ProductionConfigValidator` only logs a startup warning if this is left at its default in `prod` — it never refuses to boot over this one. |
 | `PASSWORD_CHANGE_SESSION_EXPIRY_MINUTES` | No | `15` | How long a started Change Password flow (`PasswordChangeSession`) stays usable before `verify-otp`/`complete` start rejecting it | Yes |
-| `IMPORT_MAX_CONCURRENT` | No | `6` | Max concurrent statement-import requests (`ImportConcurrencyLimiter`), deliberately conservative relative to `DB_POOL_MAX_SIZE` so imports can't starve every other endpoint's DB usage | Yes |
-| `IMPORT_ACQUIRE_TIMEOUT_MS` | No | `20000` | How long an import request waits in the FIFO queue for a processing slot before giving up with a "try again shortly" response | Yes |
+| `IMPORT_MAX_CONCURRENT` | No | `6` | Max concurrent statement-import requests (`ImportConcurrencyLimiter`), deliberately conservative relative to `DB_POOL_MAX_SIZE` so imports can't starve every other endpoint's DB usage. BH-043: past this limit, requests are rejected immediately (HTTP 503, `IMPORT_006`) rather than queued -- there is no wait-timeout variable to set anymore | Yes |
 | `UPLOAD_MAX_FILE_SIZE` / `UPLOAD_MAX_REQUEST_SIZE` | No | `10MB` | Multipart upload size limits (CSV/PDF statement import) | Yes |
 
 ## Local development
@@ -203,7 +202,7 @@ knowingly rather than discovered later.
 | Control | Where | Effect of running N instances |
 |---|---|---|
 | Per-IP rate limits (`RateLimiter`, used by `RateLimitFilter`) | in-memory `ConcurrentHashMap`, per JVM | Every limit becomes **N× more permissive**. Login goes from 10 attempts/min/IP to 10N — this is the per-IP half of the credential-stuffing defence. Registration, forgot-password, import staging and password-change scale the same way. |
-| Import concurrency (`ImportConcurrencyLimiter`) | in-process fair `Semaphore`, `app.import.max-concurrent` (default 6) | **6N** imports can run at once, each holding statement bytes in memory and competing for that instance's own DB connections. The cap exists to stop a burst of uploads exhausting heap; N instances raise the real ceiling without raising the memory available to any one of them. |
+| Import concurrency (`ImportConcurrencyLimiter`) | in-process `Semaphore` (BH-043: non-fair -- see the env-var table above), `app.import.max-concurrent` (default 6) | **6N** imports can run at once, each holding statement bytes in memory and competing for that instance's own DB connections. The cap exists to stop a burst of uploads exhausting heap; N instances raise the real ceiling without raising the memory available to any one of them. |
 
 Both classes say so in their own doc comments. Neither is a bug — an in-process limiter is the
 right amount of engineering for one instance, and reaching for Redis before there is a second

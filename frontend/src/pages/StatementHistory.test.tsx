@@ -58,7 +58,6 @@ const groups: AccountStatementGroup[] = [{
     closingBalance: null,
     transactionsImported: 12,
     transactionsSkipped: 0,
-    status: 'COMPLETED',
     importedAt: '2026-08-01T10:00:00Z',
     duplicateCount: 0,
   }],
@@ -355,6 +354,7 @@ describe('StatementHistory — recent imports', () => {
       jobId: 'job-1',
       fileName: 'still-going.csv',
       status: 'PARSING',
+      userStatus: 'PROCESSING',
       rowsTotal: null,
       rowsProcessed: 0,
       createdAt: '2026-08-13T09:00:00Z',
@@ -416,5 +416,40 @@ describe('StatementHistory — recent imports', () => {
     expect(await screen.findByText('HDFC Savings')).toBeInTheDocument();
     expect(screen.getByTitle('Re-import Statement')).toBeInTheDocument();
     expect(screen.queryByText('Recent Imports')).not.toBeInTheDocument();
+  });
+
+  /**
+   * Bug fix, caught by review: this query has no staleTime override of its own before this fix,
+   * so it inherits the app's real global default (App.tsx: 30s, refetchOnWindowFocus off) -- a
+   * job that finished or failed while the user was on a different page kept showing its
+   * last-fetched in-flight status even after navigating back, for up to 30 seconds. Uses a
+   * QueryClient configured with that SAME 30s default (renderPage()'s own test client doesn't set
+   * one, so it's already effectively zero and wouldn't catch this) to prove the override on this
+   * specific query actually beats it, not just that a from-scratch fetch happens to look fresh.
+   */
+  it('shows a job that just changed status even when revisited well inside the app-wide 30s staleTime', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 30_000, refetchOnWindowFocus: false } },
+    });
+    vi.mocked(importJobsApi.recent).mockReset().mockResolvedValueOnce([aJob({ status: 'PARSING' })]);
+
+    const { unmount } = render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter><StatementHistory /></MemoryRouter>
+      </QueryClientProvider>
+    );
+    await screen.findByText('still-going.csv');
+    unmount();
+
+    // The job settled while the user was away; the SAME client (same 30s-stale cache) is reused
+    // for the revisit, exactly like navigating back within the app rather than a fresh page load.
+    vi.mocked(importJobsApi.recent).mockResolvedValueOnce([aJob({ status: 'FAILED' })]);
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter><StatementHistory /></MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => expect(importJobsApi.recent).toHaveBeenCalledTimes(2));
   });
 });

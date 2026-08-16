@@ -238,6 +238,7 @@ class RateLimitFilterTest {
                 "/api/v1/users/me/password-change/start",
                 "/api/v1/users/me/password-change/verify-otp",
                 "/api/v1/users/me/password-change/complete",
+                "/api/v1/users/me/data-export",
         };
 
         for (String path : mustBeLimited) {

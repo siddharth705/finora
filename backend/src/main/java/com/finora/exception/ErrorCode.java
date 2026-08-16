@@ -26,19 +26,23 @@ public enum ErrorCode {
     TXN_FORBIDDEN("TXN_003", HttpStatus.FORBIDDEN, "This transaction does not belong to you"),
 
     // Statement import (com.finora.imports)
-    IMPORT_NO_HEADER_DETECTED("IMPORT_001", HttpStatus.UNPROCESSABLE_ENTITY, "Could not find a transaction table in this file"),
+    IMPORT_NO_HEADER_DETECTED("IMPORT_001", HttpStatus.UNPROCESSABLE_ENTITY, "Could not find a transaction table in this file", true),
     IMPORT_ACCOUNT_REQUIRED("IMPORT_002", HttpStatus.BAD_REQUEST, "Choose an existing account or provide details for a new one"),
     IMPORT_ACCOUNT_NAME_REQUIRED("IMPORT_003", HttpStatus.BAD_REQUEST, "The new account needs a name"),
     IMPORT_ACCOUNT_FORBIDDEN("IMPORT_004", HttpStatus.FORBIDDEN, "This account does not belong to you"),
     IMPORT_ACCOUNT_NOT_FOUND("IMPORT_005", HttpStatus.NOT_FOUND, "Account not found"),
+    // BH-043: intentionalRejection=true -- see that field's own doc. ImportConcurrencyLimiter
+    // now throws this the instant every permit is taken, rather than after a rare 20s timeout, so
+    // it fires on ordinary bursts routinely, not on genuine server trouble.
     IMPORT_SYSTEM_BUSY("IMPORT_006", HttpStatus.SERVICE_UNAVAILABLE,
-            "Finora is processing a lot of statement imports right now. Please try again in a moment."),
+            "Finora is processing a lot of statement imports right now. Please try again in a moment.",
+            RetryPolicy.FAIL_FAST, false, true),
     // Deliberately separate from IMPORT_001 even though both mean "you got nothing". They fail at
     // different stages and need different follow-up: 001 means the document's layout defeated
     // table detection, 007 means the table WAS found and every row inside it was rejected. Folding
     // them into one code is what let a real statement import as a silent, confirmable no-op.
     IMPORT_NO_TRANSACTIONS_FOUND("IMPORT_007", HttpStatus.UNPROCESSABLE_ENTITY,
-            "Found a transaction table in this file but could not read any transactions from it"),
+            "Found a transaction table in this file but could not read any transactions from it", true),
     // Two codes, not one, and for the same reason IMPORT_001 and IMPORT_007 are separate: the
     // follow-up differs. 008 means "we have not asked you for the password yet" -- the UI opens a
     // prompt. 009 means "you gave us one and the document rejected it" -- the UI keeps the prompt
@@ -59,12 +63,12 @@ public enum ErrorCode {
     // it. So the user is told only what was observed, and a test requires the words "scanned" and
     // "OCR" to be absent from what they read.
     IMPORT_SCANNED_OCR_REQUIRED("IMPORT_010", HttpStatus.UNPROCESSABLE_ENTITY,
-            "This PDF has no text in it -- every page is an image"),
+            "This PDF has no text in it -- every page is an image", true),
 
     IMPORT_PDF_PASSWORD_REQUIRED("IMPORT_008", HttpStatus.UNPROCESSABLE_ENTITY,
-            "This statement is password protected. Enter the password your bank uses for it."),
+            "This statement is password protected. Enter the password your bank uses for it.", true),
     IMPORT_PDF_PASSWORD_INVALID("IMPORT_009", HttpStatus.UNPROCESSABLE_ENTITY,
-            "That password did not open this statement. Check it and try again."),
+            "That password did not open this statement. Check it and try again.", true),
     // A structurally broken PDF -- truncated by a failed download, corrupted in transit, or saved
     // by something that produced not-quite-valid output. Previously thrown as a codeless
     // ApiException (PdfTextExtractor.loadOrExplain's IOException branch), which meant
@@ -75,6 +79,14 @@ public enum ErrorCode {
     // for why a codeless response was actively wrong, not just imprecise).
     IMPORT_CORRUPT_PDF("IMPORT_011", HttpStatus.UNPROCESSABLE_ENTITY,
             "This PDF could not be read -- the file appears to be damaged or incomplete"),
+    // Distinct from a genuinely expired/missing session (still a codeless ApiException, since
+    // "upload again" really is the right instruction there) because the frontend has to TELL THEM
+    // APART, not just print a message: reaching a completed job's "Review this import" action
+    // after the same session was already reviewed and confirmed through the normal flow used to
+    // surface the generic expired-session message ("please upload the statement again"), which is
+    // actively wrong -- the import already succeeded, nothing needs re-uploading.
+    IMPORT_SESSION_ALREADY_CONFIRMED("IMPORT_012", HttpStatus.BAD_REQUEST,
+            "This import has already been reviewed and confirmed."),
 
     // Accounts
     ACCOUNT_NOT_FOUND("ACC_001", HttpStatus.NOT_FOUND, "Account not found"),
@@ -107,6 +119,12 @@ public enum ErrorCode {
             "Signed out after a period of inactivity. Please sign in again."),
     AUTH_SESSION_MAX_AGE("AUTH_006", HttpStatus.UNAUTHORIZED,
             "Your session reached its maximum length. Please sign in again."),
+    // Deliberately distinct from a bare 403 "suspended" message: the frontend has to TELL THEM
+    // APART, since a deactivated account gets an in-place reactivation prompt (see
+    // AuthService.login()'s deactivated branch) where a suspended one is a dead end. The
+    // reactivation token itself travels in ApiException's details map, not this message.
+    AUTH_ACCOUNT_DEACTIVATED("AUTH_007", HttpStatus.FORBIDDEN,
+            "This account is deactivated."),
 
     // Generic fallbacks — used by GlobalExceptionHandler when no more specific code applies
     VALIDATION_ERROR("VAL_001", HttpStatus.BAD_REQUEST, "Validation failed"),
@@ -147,6 +165,8 @@ public enum ErrorCode {
     private final HttpStatus defaultStatus;
     private final String defaultMessage;
     private final RetryPolicy retryPolicy;
+    private final boolean userActionRequired;
+    private final boolean intentionalRejection;
 
     /**
      * Every existing call site uses this overload, and every one of them defaults to
@@ -161,20 +181,96 @@ public enum ErrorCode {
      * unclassified failure five times is worse than dead-lettering it once.
      */
     ErrorCode(String code, HttpStatus defaultStatus, String defaultMessage) {
-        this(code, defaultStatus, defaultMessage, RetryPolicy.FAIL_FAST);
+        this(code, defaultStatus, defaultMessage, RetryPolicy.FAIL_FAST, false, false);
     }
 
     ErrorCode(String code, HttpStatus defaultStatus, String defaultMessage, RetryPolicy retryPolicy) {
+        this(code, defaultStatus, defaultMessage, retryPolicy, false, false);
+    }
+
+    /**
+     * The five {@code IMPORT_*} codes below pass {@code true} here -- Premium Import Reliability
+     * v1, §1's {@code ACTION_REQUIRED} refinement of {@code FAILED}. Everything else defaults to
+     * {@code false} through the shorter overloads, matching {@link RetryPolicy}'s own
+     * safe-default reasoning above: a code this enum has no opinion about is presented as plain
+     * {@code FAILED}, not guessed into {@code ACTION_REQUIRED}.
+     */
+    ErrorCode(String code, HttpStatus defaultStatus, String defaultMessage, boolean userActionRequired) {
+        this(code, defaultStatus, defaultMessage, RetryPolicy.FAIL_FAST, userActionRequired, false);
+    }
+
+    /**
+     * Full form — every field explicit, no defaulting. {@code IMPORT_SYSTEM_BUSY} is the only
+     * entry that calls this directly today, since it is the only code that needs a non-default
+     * {@link #intentionalRejection} while everything else about it (retry policy, user-action)
+     * stays at the ordinary default -- adding a dedicated shorter overload just for that one
+     * combination would collide with the existing {@code (..., boolean userActionRequired)}
+     * overload above (same erased signature, different meaning), so this call site is explicit
+     * instead.
+     */
+    ErrorCode(String code, HttpStatus defaultStatus, String defaultMessage,
+              RetryPolicy retryPolicy, boolean userActionRequired, boolean intentionalRejection) {
         this.code = code;
         this.defaultStatus = defaultStatus;
         this.defaultMessage = defaultMessage;
         this.retryPolicy = retryPolicy;
+        this.userActionRequired = userActionRequired;
+        this.intentionalRejection = intentionalRejection;
     }
 
     public String code() { return code; }
     public HttpStatus defaultStatus() { return defaultStatus; }
     public String defaultMessage() { return defaultMessage; }
     public RetryPolicy retryPolicy() { return retryPolicy; }
+
+    /**
+     * Whether the user themselves can reasonably fix what caused this -- Premium Import
+     * Reliability v1, §1's governing rule: "{@code ACTION_REQUIRED} = the user can reasonably
+     * correct the input. {@code FAILED} = the user cannot fix it without Finora or support." Never
+     * branched on directly by a throw site -- this is presentation metadata about a known failure,
+     * the same role {@link #defaultMessage} already plays, not retry policy (that's {@link
+     * #retryPolicy}). Two readers, one per import path: {@link
+     * com.finora.imports.jobs.UserFacingImportStatus#of} folds it into the async path's
+     * {@code userStatus}; {@link GlobalExceptionHandler#handleApiException} puts it on the sync
+     * path's error envelope directly, as {@code details.userActionRequired}, so a synchronous
+     * failure -- which has no {@code ImportJob} to compute a {@code userStatus} on -- carries the
+     * same answer without the frontend needing its own copy of which codes qualify.
+     */
+    public boolean userActionRequired() { return userActionRequired; }
+
+    /**
+     * BH-043: whether a {@code 5xx} carrying this code is the server deliberately choosing to
+     * reject a request it could have served (backpressure, a capacity limit, a maintenance
+     * window), rather than something breaking unexpectedly. {@link GlobalExceptionHandler
+     * #handleApiException} reads this to decide how to log a {@code 5xx} response: a genuine
+     * failure logs at {@code ERROR} with the full stack trace (how to find and fix a real
+     * defect); a deliberate rejection logs at {@code WARN} with no trace (there is nothing to
+     * find — the code and message already say everything the throw site knew), so that an
+     * ordinary, expected condition firing routinely under normal load doesn't read as a server
+     * outage or flood {@code ERROR}-level alerting with what the system is doing correctly.
+     *
+     * <p>Defaults to {@code false} through every shorter constructor overload, same reasoning as
+     * {@link #userActionRequired()}'s own default: a {@code 5xx} this enum has no opinion about
+     * is treated as a genuine failure, not guessed into the quieter path.
+     */
+    public boolean intentionalRejection() { return intentionalRejection; }
+
+    /**
+     * {@link #userActionRequired()} for a stored value that is really this enum's NAME, or
+     * {@code false} for anything that isn't one (including {@code null}) -- the safe default,
+     * since a failure with no curated {@code ErrorCode} at all has no known concrete fix to offer.
+     * Mirrors {@link #wireCodeOrNull}'s exact shape and exists for the identical reason: {@code
+     * ImportJob.failureCode} stores either an {@code ErrorCode} enum name or a raw exception's
+     * simple class name, and only {@link #valueOf} can tell which -- safely, rather than throwing.
+     */
+    public static boolean userActionRequiredOrDefault(String storedName) {
+        if (storedName == null) return false;
+        try {
+            return valueOf(storedName).userActionRequired();
+        } catch (IllegalArgumentException notAnErrorCodeName) {
+            return false;
+        }
+    }
 
     /**
      * The wire code ({@code "IMPORT_001"}) for a stored value that is really this enum's NAME

@@ -176,7 +176,7 @@ class ClosingBalanceEvidenceRederivationServiceIT extends AbstractIntegrationTes
         assertThatThrownBy(() -> rederivationService.rederiveClosingBalanceEvidence(
                 userId, session.getId(), null, BigDecimal.TEN))
                 .isInstanceOf(ApiException.class)
-                .hasMessageContaining("already been confirmed");
+                .hasMessageContaining("already been reviewed and confirmed");
     }
 
     /** A session that is owned/not-expired/not-confirmed (passes every ownership check) but whose

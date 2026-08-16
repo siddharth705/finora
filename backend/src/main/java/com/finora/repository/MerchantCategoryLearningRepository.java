@@ -43,6 +43,9 @@ public interface MerchantCategoryLearningRepository extends JpaRepository<Mercha
 
     List<MerchantCategoryLearning> findByUserId(UUID userId);
 
+    /** AccountPurgeSweepService -- hard delete, no soft-delete concern on this entity. */
+    void deleteByUserId(UUID userId);
+
     /**
      * BH-053. Atomic upsert-or-noop: guarantees the (user, merchant, category) row exists,
      * inserting it with {@code confirmation_count = 0} if it doesn't, leaving an existing row

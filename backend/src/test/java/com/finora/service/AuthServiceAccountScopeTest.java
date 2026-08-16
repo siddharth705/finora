@@ -146,6 +146,7 @@ class AuthServiceAccountScopeTest {
         return new AuthService(repo,
                 mock(com.finora.repository.CategoryRepository.class),
                 mock(com.finora.repository.PasswordResetTokenRepository.class),
+                mock(com.finora.repository.AccountReactivationTokenRepository.class),
                 mock(org.springframework.security.crypto.password.PasswordEncoder.class),
                 mock(com.finora.security.JwtService.class),
                 mock(org.springframework.security.authentication.AuthenticationManager.class),
@@ -156,6 +157,7 @@ class AuthServiceAccountScopeTest {
                 mock(PhoneVerificationProvider.class),
                 settings,
                 mock(PasswordHistoryService.class),
-                new IdentityLookup(userRepository));
+                new IdentityLookup(userRepository),
+                mock(com.finora.config.RequestMetadata.class));
     }
 }

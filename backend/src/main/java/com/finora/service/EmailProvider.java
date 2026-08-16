@@ -1,5 +1,7 @@
 package com.finora.service;
 
+import java.time.Instant;
+
 /**
  * Abstraction over "actually send an email" so business services never talk to Resend (or any
  * future replacement) directly -- same PhoneVerificationProvider-style boundary. isConfigured()
@@ -21,4 +23,15 @@ public interface EmailProvider {
     EmailResult sendPasswordResetEmail(String toEmail, String resetLink);
     EmailResult sendWelcomeEmail(String toEmail, String fullName);
     EmailResult sendPasswordChangedEmail(String toEmail);
+    /** device/ip are the best-effort RequestMetadata labels for the request that made the
+     *  deactivation call -- null-safe, since this is a security notification whose value degrades
+     *  gracefully rather than failing outright when either is unavailable (e.g. a test harness, or
+     *  a future non-HTTP caller). Lets a user who did not deactivate their own account tell, from
+     *  the email alone, that this was not them. */
+    EmailResult sendAccountDeactivatedEmail(String toEmail, Instant deactivatedAt, String device, String ip);
+    EmailResult sendAccountReactivatedEmail(String toEmail);
+    /** No cancel link -- the 48h purge buffer is an ops safety margin, not a user-facing undo
+     *  (product decision). Purely informational: what happened, when, and that it cannot be
+     *  reversed. */
+    EmailResult sendAccountDeletionRequestedEmail(String toEmail, Instant requestedAt);
 }

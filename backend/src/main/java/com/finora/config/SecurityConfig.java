@@ -108,6 +108,19 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> {
                 auth.requestMatchers("/api/v1/auth/**").permitAll()
                     .requestMatchers(HttpMethod.GET, "/api/v1/setup/status").permitAll()
+                    // Google redirects the user's BROWSER here after consent. That navigation
+                    // carries no Authorization header, and this API keeps no session, so requiring
+                    // authentication would make the callback unreachable by construction rather
+                    // than more secure.
+                    //
+                    // What replaces authentication is the `state` parameter, and it is held to a
+                    // higher bar precisely because it is doing this job alone: 256 bits of entropy,
+                    // stored only as a SHA-256 hash, bound to the user who started the flow,
+                    // expiring in ten minutes, and redeemable exactly once. See GmailOAuthState.
+                    //
+                    // Narrowed to GET on this one path -- not the whole /integrations tree, whose
+                    // other endpoints (connect, status, disconnect) must stay authenticated.
+                    .requestMatchers(HttpMethod.GET, "/api/v1/integrations/google/gmail/callback").permitAll()
                     .requestMatchers("/actuator/health").permitAll();
                 // Anonymous Swagger outside prod only -- see apiDocsPubliclyReachable's doc comment.
                 // Must be registered BEFORE anyRequest(): Spring Security evaluates rules in

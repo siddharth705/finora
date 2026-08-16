@@ -9,6 +9,7 @@ import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.dto.ImportDto.StagedRow;
 import com.finora.entity.ImportSession;
 import com.finora.exception.ApiException;
+import com.finora.exception.ErrorCode;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.security.OwnershipGuard;
 import org.springframework.data.domain.PageRequest;
@@ -153,6 +154,21 @@ public class ImportSessionService {
     public ImportSession createSession(UUID userId, String fileName, byte[] fileContent,
                                         List<StagedRow> rows, DetectedAccountInfo detectedAccount,
                                         DocumentContext documentContext) {
+        return createSession(userId, fileName, fileContent, rows, detectedAccount, documentContext, null);
+    }
+
+    /**
+     * Same as {@link #createSession(UUID, String, byte[], List, DetectedAccountInfo,
+     * DocumentContext)}, plus records where this session came from (C5-B) --
+     * {@link ImportSession#SOURCE_GMAIL} or null, per {@link ImportSession#getSource()}'s own doc
+     * comment. The only caller with a non-null value is {@code GmailStagingBridge}; every CSV/PDF
+     * caller keeps going through one of the two overloads above and this stays null for them,
+     * unchanged from before this parameter existed.
+     */
+    @Transactional
+    public ImportSession createSession(UUID userId, String fileName, byte[] fileContent,
+                                        List<StagedRow> rows, DetectedAccountInfo detectedAccount,
+                                        DocumentContext documentContext, String source) {
         // BH-047: the expired-session sweep used to run here, inside this transaction. It is a
         // scheduled job now -- see sweepExpiredSessions(). Housekeeping on other users' rows has
         // no business being part of this user's upload.
@@ -164,6 +180,7 @@ public class ImportSessionService {
         session.setDetectedAccountJson(writeJson(detectedAccount));
         session.setExpiresAt(Instant.now().plus(SESSION_TTL));
         applyDocumentContext(session, documentContext);
+        session.setSource(source);
         return importSessionRepository.save(session);
     }
 
@@ -258,7 +275,12 @@ public class ImportSessionService {
                     "This import session has expired -- upload the statement again to continue.");
         }
         if (ImportSession.STATUS_CONFIRMED.equals(session.getStatus())) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "This import has already been confirmed.");
+            // Carries ErrorCode.IMPORT_SESSION_ALREADY_CONFIRMED rather than a codeless
+            // ApiException like the expiry branch above -- the frontend has to tell these two
+            // apart, not just print whatever message arrives. See that code's own comment for the
+            // bug this exists to fix (ImportDetail.tsx's "Review this import" reaching a session
+            // that was already reviewed and confirmed through the normal flow).
+            throw new ApiException(ErrorCode.IMPORT_SESSION_ALREADY_CONFIRMED);
         }
         return session;
     }

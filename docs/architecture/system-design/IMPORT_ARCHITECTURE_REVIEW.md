@@ -63,11 +63,19 @@ return ResponseEntity.ok(ApiResponse.ok(                     // HTTP 200, not 20
 Everything — PDFBox extraction, table detection, normalization, categorization, duplicate detection
 — happens inline before the response is written.
 
-### 1.2 `ImportConcurrencyLimiter` — a real queue, in-process
+### 1.2 `ImportConcurrencyLimiter` — an admission gate, in-process, not a queue
 
-This is the piece most likely to be misread as "no queueing exists". It is a **fair (FIFO)
-semaphore** with 6 permits (`app.import.max-concurrent:6`) and a 20-second acquire timeout, after
-which the caller gets `503 IMPORT_SYSTEM_BUSY`.
+BH-043 (2026-08-15): this used to be a **fair (FIFO) semaphore** with 6 permits
+(`app.import.max-concurrent:6`) and a 20-second acquire timeout — a real, if in-process, queue,
+which is what the rest of this section originally analyzed. It no longer queues anything: a caller
+past all 6 permits gets `503 IMPORT_SYSTEM_BUSY` **instantly**, not after a wait, because the wait
+itself was found to park the Tomcat request thread for up to 20s under load, degrading every other
+endpoint sharing that pool (login, dashboard, ledger) — the exact failure mode this limiter exists
+to prevent, just relocated rather than avoided. See `ImportConcurrencyLimiter`'s own class doc for
+the full reasoning.
+
+The distinction that matters for this review: there is no queue depth to reason about anymore, only
+an accept/reject decision made immediately against the current permit count.
 
 Its javadoc already anticipates precisely the question this review asks, and states the boundary
 condition explicitly:
@@ -161,9 +169,9 @@ than silently falling back to the database.
 
 **The current design cannot serve this, and would not fail quietly.**
 
-With `max-concurrent: 6` and a 20-second acquire timeout, a burst of 50,000 uploads against a
-single instance means 6 proceed and essentially all the rest receive `503 IMPORT_SYSTEM_BUSY` after
-waiting 20 seconds.
+With `max-concurrent: 6`, a burst of 50,000 uploads against a single instance means 6 proceed and
+essentially all the rest receive `503 IMPORT_SYSTEM_BUSY` immediately (BH-043: no wait at all
+anymore, see §1.2).
 
 That is worth crediting properly: **the system degrades in a controlled way rather than collapsing.**
 It does not OOM, it does not exhaust the connection pool, it does not take down unrelated endpoints.
@@ -174,8 +182,9 @@ But controlled rejection is not service. Using the measured throughput from the 
 
 - 6 concurrent × (1 statement / 79s) ≈ **0.076 statements/second per instance**
 - 50,000 statements ≈ **7.6 days** on one instance
-- Even at 100 instances: ~1.8 hours — and every request still times out at 20 seconds, so almost
-  none of those users get a response tied to their upload
+- Even at 100 instances: ~1.8 hours — and every request past the concurrency limit is rejected
+  immediately (BH-043), so almost none of those users get a response tied to their upload actually
+  being processed, they just find out sooner that it wasn't
 
 The binding constraint is **not** the queue. Even with a perfect distributed queue, 50,000 × 5,000
 rows = 250 million rows at ~16ms each is ~46 CPU-days of work. **Asynchronous processing changes

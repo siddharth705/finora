@@ -6,6 +6,7 @@ import com.finora.dto.ImportDto.DetectedAccountInfo;
 import com.finora.dto.ImportDto.StagedRow;
 import com.finora.entity.ImportSession;
 import com.finora.exception.ApiException;
+import com.finora.exception.ErrorCode;
 import com.finora.repository.ImportSessionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -236,6 +237,14 @@ class ImportSessionServiceTest {
                 .hasMessageContaining("expired");
     }
 
+    /**
+     * Carries ErrorCode.IMPORT_SESSION_ALREADY_CONFIRMED, checked here as its own assertion
+     * rather than trusting the message-containing check above to also prove it -- the frontend
+     * (ImportDetail.tsx's "Review this import" reaching an already-confirmed session, see
+     * resumeSession's catch block in Import.tsx) branches on the CODE, not the message text, so a
+     * regression that dropped the code while leaving the message unchanged would pass the
+     * message-only assertion and still ship the exact bug this code exists to fix.
+     */
     @Test
     void getOwnedSession_rejectsAnAlreadyConfirmedSession() {
         ImportSession confirmed = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_CONFIRMED);
@@ -243,7 +252,9 @@ class ImportSessionServiceTest {
 
         assertThatThrownBy(() -> service.getOwnedSession(userId, UUID.randomUUID()))
                 .isInstanceOf(ApiException.class)
-                .hasMessageContaining("already been confirmed");
+                .hasMessageContaining("already been reviewed and confirmed")
+                .extracting(e -> ((ApiException) e).getCode())
+                .isEqualTo(ErrorCode.IMPORT_SESSION_ALREADY_CONFIRMED);
     }
 
     @Test

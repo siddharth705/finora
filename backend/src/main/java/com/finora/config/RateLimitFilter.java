@@ -114,6 +114,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // token AND a Firebase-verified phone gate the expensive work, so this was never an anonymous
     // DoS -- which is why the ceiling is generous. It bounds a token holder retrying in a loop.
     private final RateLimiter resetPasswordLimiter;
+    // Phase C (Download My Data). Far stricter than importStageLimiter -- 3/day, not 10/10min --
+    // because a full export is strictly more expensive per call (every in-scope table plus every
+    // original statement file, read and zipped) and legitimately needed far less often. A JWT
+    // stolen via XSS or a compromised device is the realistic threat this bounds, same reasoning
+    // as passwordChangeLimiter: without a ceiling, an attacker holding a stolen-but-still-valid
+    // token could pull the account's full data bundle -- unmasked bank statements included -- in
+    // a loop.
+    private final RateLimiter dataExportLimiter;
     // Bug fix: this used to be `new ObjectMapper()` -- a second, freshly-constructed mapper with
     // none of the auto-configuration Spring Boot's own JacksonAutoConfiguration applies to its
     // managed ObjectMapper bean (in particular, no JavaTimeModule). ApiResponse.timestamp is a
@@ -164,6 +172,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     static final int DEFAULT_IMPORT_STAGE_MAX = 10, DEFAULT_IMPORT_STAGE_WINDOW = 600;
     static final int DEFAULT_PASSWORD_CHANGE_MAX = 15, DEFAULT_PASSWORD_CHANGE_WINDOW = 600;
     static final int DEFAULT_RESET_PASSWORD_MAX = 10, DEFAULT_RESET_PASSWORD_WINDOW = 600;
+    static final int DEFAULT_DATA_EXPORT_MAX = 3, DEFAULT_DATA_EXPORT_WINDOW = 86400;
 
     /**
      * The shipped configuration, for tests.
@@ -179,7 +188,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 DEFAULT_FORGOT_MAX, DEFAULT_FORGOT_WINDOW,
                 DEFAULT_IMPORT_STAGE_MAX, DEFAULT_IMPORT_STAGE_WINDOW,
                 DEFAULT_PASSWORD_CHANGE_MAX, DEFAULT_PASSWORD_CHANGE_WINDOW,
-                DEFAULT_RESET_PASSWORD_MAX, DEFAULT_RESET_PASSWORD_WINDOW);
+                DEFAULT_RESET_PASSWORD_MAX, DEFAULT_RESET_PASSWORD_WINDOW,
+                DEFAULT_DATA_EXPORT_MAX, DEFAULT_DATA_EXPORT_WINDOW);
     }
 
     /**
@@ -208,7 +218,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
             @Value("${app.rate-limit.password-change.max:15}") int passwordChangeMax,
             @Value("${app.rate-limit.password-change.window-seconds:600}") int passwordChangeWindow,
             @Value("${app.rate-limit.reset-password.max:10}") int resetPasswordMax,
-            @Value("${app.rate-limit.reset-password.window-seconds:600}") int resetPasswordWindow) {
+            @Value("${app.rate-limit.reset-password.window-seconds:600}") int resetPasswordWindow,
+            @Value("${app.rate-limit.data-export.max:3}") int dataExportMax,
+            @Value("${app.rate-limit.data-export.window-seconds:86400}") int dataExportWindow) {
         this.objectMapper = objectMapper;
         this.clientIpResolver = clientIpResolver;
         this.loginLimiter = new RateLimiter(loginMax, loginWindow);
@@ -217,6 +229,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         this.importStageLimiter = new RateLimiter(importStageMax, importStageWindow);
         this.passwordChangeLimiter = new RateLimiter(passwordChangeMax, passwordChangeWindow);
         this.resetPasswordLimiter = new RateLimiter(resetPasswordMax, resetPasswordWindow);
+        this.dataExportLimiter = new RateLimiter(dataExportMax, dataExportWindow);
         this.limitedEndpoints = List.of(
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/login"), loginLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/register"), registerLimiter),
@@ -231,6 +244,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 // is the only control there is. Shares resetPasswordLimiter because the two are
                 // steps of one flow and one bucket is the honest way to bound it.
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/reset-password/phone"), resetPasswordLimiter),
+                // Shares resetPasswordLimiter for the same reason reset-password/phone does: an
+                // unguessable, single-use, short-TTL token gates the real cost here (issuing real
+                // access/refresh tokens), so this bounds a token holder retrying in a loop rather
+                // than defending against an anonymous guesser.
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/reactivate"), resetPasswordLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/import/csv/stage"), importStageLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/import/pdf/stage"), importStageLimiter),
                 // The asynchronous upload path, sharing importStageLimiter because it is the same
@@ -250,7 +268,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 new LimitedEndpoint(PARSER.parse("/api/v1/import/jobs"), importStageLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/password-change/start"), passwordChangeLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/password-change/verify-otp"), passwordChangeLimiter),
-                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/password-change/complete"), passwordChangeLimiter));
+                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/password-change/complete"), passwordChangeLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/data-export"), dataExportLimiter));
     }
 
     @Override

@@ -65,7 +65,21 @@ public class ImportDto {
              * from the list offered to the user as a transaction, while still reading the row's
              * own date/amount/description to derive the statement's opening/closing balance.
              */
-            RowKind kind
+            RowKind kind,
+            /**
+             * 0.0–1.0, or null. Null for every CSV/PDF row — a bank statement line is a fact read
+             * from a column, not an extraction with a reliability estimate, so there is nothing
+             * honest to put here for those sources. Populated only by {@code GmailStagingBridge}
+             * (C5-B), carried straight through from {@code ParsedReceipt.confidence} without being
+             * recomputed — this is display data, not a gate; see {@code ParsedReceipt}'s own class
+             * doc for why nothing may threshold on it to skip review.
+             *
+             * <p>Reuses the review table's existing "low confidence" affordance
+             * ({@code categorySource === 'default'} driving a badge in {@code TransactionPreviewTable})
+             * rather than adding a second one — see {@code GmailStagingBridge} for the exact
+             * threshold and why a Gmail row below it also gets {@code categorySource = "default"}.
+             */
+            Double confidence
     ) {
         /**
          * The shape every caller used before WI5 added {@code duplicateMatch}.
@@ -84,7 +98,18 @@ public class ImportDto {
                           boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
                           DuplicateMatch duplicateMatch) {
             this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
-                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, RowKind.TRANSACTION);
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, RowKind.TRANSACTION,
+                    null);
+        }
+
+        /** The shape every caller used before {@code confidence} was added (C5-B). Defaults null --
+         *  see the field's own doc comment for why only Gmail-derived rows populate it. */
+        public StagedRow(LocalDate date, String description, BigDecimal amount, String type,
+                          String suggestedCategory, String categorySource, UUID ruleId,
+                          boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
+                          DuplicateMatch duplicateMatch, RowKind kind) {
+            this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, null);
         }
 
         /**
@@ -110,12 +135,11 @@ public class ImportDto {
      * where a row flagged as a duplicate could be dropped without the person ever seeing what it
      * was supposedly a duplicate OF.
      *
-     * <p>{@code confidence} has exactly one level today, and saying so is more useful than
-     * inventing a spectrum. {@code findPotentialDuplicatesByUser} matches on date AND amount AND
-     * description being identical, so every match is an exact one — there is no weaker tier to
-     * report. A fuzzier tier (same amount, date within a few days) would create a real spectrum,
-     * but that changes WHICH rows get flagged, which is a detection change rather than a
-     * presentation one, and does not belong in the work item that builds the review UI.
+     * <p>{@code confidence} has two levels. {@code "EXACT"} — {@code findPotentialDuplicatesByUser}
+     * matches on date AND amount AND description being identical, so every CSV/PDF match is exact.
+     * {@code "LIKELY"} — {@code GmailReconciliationMatcher} (C6.4), matching a Gmail receipt
+     * against the bank ledger on amount plus a date window plus merchant-name similarity, since a
+     * receipt's description (a merchant domain) can never be textually identical to a bank line.
      *
      * @param existingTransactionId the transaction already in the ledger, so the client can link
      *                              straight to it rather than making the user search
@@ -364,14 +388,21 @@ public class ImportDto {
     ) {}
 
     /** One failure reason's tally, admin-only -- GET /admin/imports/analyses/failures/summary
-     *  (Premium Import Reliability v1, §4). {@code failureCode} here is the raw stored value (the
+     *  (Premium Import Reliability v1, §4.9). {@code failureCode} here is the raw stored value (the
      *  Java ErrorCode enum name, or an exception's simple class name for a codeless failure -- see
      *  StatementAnalysisRecorder's own doc comment on {@code wireCodeOf}), not the customer-facing
      *  wire code {@link ImportFailureSummaryDto} translates to: this is an internal
      *  engineering/support view, and the more precise internal identifier is more useful here than
      *  the wire code would be. A null stored value groups under the literal
-     *  {@code "UNKNOWN_FAILURE"} rather than disappearing from the count. */
-    public record FailureCountDto(String failureCode, long count, java.time.Instant lastSeen) {}
+     *  {@code "UNKNOWN_FAILURE"} rather than disappearing from the count.
+     *
+     *  @param bank the layout registry's curated name for whichever layout fingerprint most often
+     *              produced this failure code in the window, or null if that fingerprint has never
+     *              been named (most haven't -- the registry is only populated by confirmed imports,
+     *              and a failing layout may never have confirmed once). Best-effort by construction,
+     *              per the plan's own framing -- an operator's free-text label, not a verified bank
+     *              identity. */
+    public record FailureCountDto(String failureCode, long count, java.time.Instant lastSeen, String bank) {}
 
     /** What the frontend sends back after the user reviews/edits staged rows. A statement import
      *  is for exactly one account — either an existing one (existingAccountId) or a new one

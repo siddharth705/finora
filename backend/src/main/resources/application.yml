@@ -132,6 +132,17 @@ spring:
       max-file-size: ${UPLOAD_MAX_FILE_SIZE:10MB}
       max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:10MB}
 
+  # Phase C (Download My Data) is the first StreamingResponseBody endpoint in this codebase --
+  # its write callback runs asynchronously, on a separate thread, after the controller method
+  # returns. Nothing previously bounded how long such a request may run; this does. 5 minutes is
+  # generous for reading every original statement file for an account out of R2/Postgres and
+  # zipping them, while still finite enough that a stuck request can't hold a container thread
+  # forever. Global, not endpoint-specific -- Spring Boot has no per-endpoint async timeout, and
+  # there's no second async endpoint yet for this to conflict with.
+  mvc:
+    async:
+      request-timeout: 300000
+
 app:
   build:
     # Which commit this build came from, for Platform Diagnostics. A FALLBACK, not the primary
@@ -219,6 +230,33 @@ app:
     # (deployment config, a secret manager) instead of one being generated or written anywhere --
     # see RFC-BOOTSTRAP-01 in docs/bootstrap-setup-future-work.md for the full production story.
     key: ${FINORA_SETUP_KEY:}
+  account-lifecycle:
+    # Off by default -- an unlimited self-service reactivation window is today's existing behavior
+    # (AuthService.login()'s deactivated branch always minted a token). Set to true to make the
+    # window below actually close it off after N days, past which login() falls through to a plain
+    # "contact support" rejection instead of a token-bearing reactivation prompt.
+    reactivation-window-enabled: ${ACCOUNT_REACTIVATION_WINDOW_ENABLED:false}
+    reactivation-window-days: ${ACCOUNT_REACTIVATION_WINDOW_DAYS:3}
+  account-purge:
+    sweep:
+      # AccountPurgeSweepService. Purges (anonymizes) accounts sitting at PENDING_DELETION past
+      # retention-hours -- see UserAccountLifecycleService.requestDeletion's "no cancel link"
+      # product decision. Off under test for the same reason every other sweep in this codebase
+      # is: a background thread purging accounts mid-test is the cross-test pollution BH-058 was
+      # about. Tests call AccountPurgeSweepService.sweep() directly.
+      enabled: ${ACCOUNT_PURGE_SWEEP_ENABLED:true}
+      # 48h is the product decision itself, not a tunable retention period like statement
+      # storage's 90 days -- a floor of 48h is enforced in code regardless of what this is set to,
+      # see AccountPurgeSweepService.MINIMUM_SAFETY_BUFFER.
+      retention-hours: ${ACCOUNT_PURGE_SWEEP_RETENTION_HOURS:48}
+      # How many eligible accounts one run considers. Same reasoning as
+      # StatementStorageSweepService's batch-size -- a backlog drains across runs rather than in
+      # one unbounded pass.
+      batch-size: ${ACCOUNT_PURGE_SWEEP_BATCH_SIZE:200}
+      # Gmail revocation calls and per-account work make this slower than a simple row sweep --
+      # hourly by default, well inside the 48h window's own margin.
+      interval-ms: ${ACCOUNT_PURGE_SWEEP_INTERVAL_MS:21600000}
+      initial-delay-ms: ${ACCOUNT_PURGE_SWEEP_INITIAL_DELAY_MS:300000}
   security:
     # RateLimitFilter's own doc comment already flagged this: request.getRemoteAddr() only
     # returns the real client IP when nothing sits between the client and this app. Railway (like
@@ -266,6 +304,13 @@ app:
     reset-password:
       max: ${RATE_LIMIT_RESET_PASSWORD_MAX:10}
       window-seconds: ${RATE_LIMIT_RESET_PASSWORD_WINDOW_SECONDS:600}
+    # Phase C (Download My Data). Far stricter than every other bucket above -- 3/day, not
+    # N/minutes -- because a full export is the most expensive single call this app serves (every
+    # in-scope table plus every original statement file, read and zipped) and is legitimately
+    # needed only rarely.
+    data-export:
+      max: ${RATE_LIMIT_DATA_EXPORT_MAX:3}
+      window-seconds: ${RATE_LIMIT_DATA_EXPORT_WINDOW_SECONDS:86400}
   import:
     # See ImportConcurrencyLimiter's own doc comment for the full reasoning. 6 is deliberately
     # conservative relative to DB_POOL_MAX_SIZE (10, see the datasource config above) -- leaves
@@ -273,9 +318,10 @@ app:
     # imports are maxed out, rather than statement imports alone being able to starve the whole
     # connection pool.
     max-concurrent: ${IMPORT_MAX_CONCURRENT:6}
-    # How long an import request waits in the FIFO queue for a processing slot before giving up
-    # and returning a clear "try again shortly" response, rather than hanging indefinitely.
-    acquire-timeout-ms: ${IMPORT_ACQUIRE_TIMEOUT_MS:20000}
+    # BH-043: there used to be an acquire-timeout-ms here controlling how long a request would
+    # block waiting for a processing slot. ImportConcurrencyLimiter now rejects immediately
+    # instead of waiting (see its own doc comment), so that wait no longer exists and the
+    # property was removed rather than left configuring nothing.
   statement-storage:
     # Phase 2 of docs/engineering/statement-storage-migration.md. The V54 content_hash/object_key
     # columns exist and the import pipeline IS wired to this layer -- ImportService,
@@ -357,6 +403,114 @@ app:
       # An object sits at zero references for 90 days before it is even a candidate.
       interval-ms: ${STATEMENT_STORAGE_SWEEP_INTERVAL_MS:21600000}
       initial-delay-ms: ${STATEMENT_STORAGE_SWEEP_INITIAL_DELAY_MS:300000}
+  audit:
+    redaction:
+      # BH-044. AuditService.redactExpiredMetadata replaces audit_logs.metadata with a small
+      # marker once a row is older than retention-days -- the event itself (actor, action,
+      # entity, timestamp, correlation id) is kept forever, only the JSONB payload carrying real
+      # financial content is wiped. A floor of 90 days is enforced in code regardless of what
+      # this is set to -- see AuditService.MINIMUM_RETENTION.
+      #
+      # Off under test for the same reason app.statement-storage.sweep.enabled is: a background
+      # thread rewriting audit rows mid-test is exactly the cross-test pollution BH-058 was
+      # about. Tests call AuditService.redactExpiredMetadata() directly.
+      enabled: ${AUDIT_REDACTION_ENABLED:true}
+      # Sid's product decision (BH-044, 2026-08-15): the metadata payload inside an audit event
+      # is redacted after 730 days (~2 years). The event row itself is never deleted.
+      retention-days: ${AUDIT_REDACTION_RETENTION_DAYS:730}
+      # How many redaction candidates one pass considers. Larger than
+      # statement-storage.sweep.batch-size (200) because audit_logs is written from ~70+ call
+      # sites across ~28 services and is a much higher-volume table.
+      batch-size: ${AUDIT_REDACTION_BATCH_SIZE:500}
+      # Shorter than statement-storage.sweep.interval-ms (6h) for the same volume reason as
+      # batch-size above -- keeps pace with a higher write rate. Like that sweep, nothing depends
+      # on this running promptly in an absolute sense: a 730-day-old row redacted a few hours
+      # late is immaterial.
+      interval-ms: ${AUDIT_REDACTION_INTERVAL_MS:3600000}
+      initial-delay-ms: ${AUDIT_REDACTION_INITIAL_DELAY_MS:300000}
+
+  # Gmail data integration (docs/proposals/gmail-transaction-sync-proposal.md, Phase B). NOT
+  # "Sign in with Google" -- a third-party data grant by an already-signed-in user.
+  #
+  # Unset is a supported state: the endpoints answer 503 and the UI hides the entry point. It is
+  # deliberately not a boot-time requirement the way the encryption key is -- a missing Gmail client
+  # disables one optional integration rather than risking a credential.
+  #
+  # redirect-uri must match a URI registered on the Google OAuth client EXACTLY (scheme, host, port,
+  # path -- a trailing slash is a different URI), and needs a separate registered entry per
+  # environment.
+  integrations:
+    google:
+      client-id: ${GOOGLE_OAUTH_CLIENT_ID:}
+      client-secret: ${GOOGLE_OAUTH_CLIENT_SECRET:}
+      redirect-uri: ${GOOGLE_OAUTH_REDIRECT_URI:}
+      # Where the callback returns the browser. Configuration rather than a request parameter --
+      # the callback is unauthenticated by necessity, so a request-supplied target would be an
+      # open redirect.
+      post-connect-redirect: ${GOOGLE_OAUTH_POST_CONNECT_REDIRECT:https://app.finoratech.info/settings}
+
+      # Gmail message discovery (Phase C4) and receipt extraction (Phase C5-B), one worker, one
+      # config block -- extraction runs immediately after discovery for the same connection, not
+      # on its own schedule. See GmailDiscoveryWorker's class doc for why.
+      discovery:
+        enabled: ${GMAIL_DISCOVERY_ENABLED:true}
+
+        # Every value below is a COST CEILING, not a target. Gmail's per-user quota is the shared
+        # resource, and the wrong failure mode here is one large mailbox consuming a whole tick.
+        #
+        # interval-ms      how often a tick starts, once the previous one finished (fixedDelay).
+        # minimum-interval-ms
+        #                  how long a connection rests after being checked. Larger than the tick
+        #                  interval on purpose: the tick is how often we LOOK for due work, this is
+        #                  how often any one mailbox is due. Equal values would mean the same first
+        #                  N connections are re-checked every tick and the rest never come up.
+        # connections-per-tick
+        #                  the slice size, so one tick's work is bounded by this rather than by how
+        #                  many users the product has.
+        # messages-per-connection
+        #                  discovery's own per-run message cap. Hitting it is a PAUSE, not a
+        #                  failure -- the processed-messages table means the next run resumes where
+        #                  this one stopped rather than starting over.
+        # extraction-messages-per-connection
+        #                  the same idea for extraction, smaller because the per-message cost is
+        #                  higher: a body fetch, sanitizing, parsing, and a staging write, versus
+        #                  discovery's single header fetch.
+        interval-ms: ${GMAIL_DISCOVERY_INTERVAL_MS:900000}
+        initial-delay-ms: ${GMAIL_DISCOVERY_INITIAL_DELAY_MS:180000}
+        minimum-interval-ms: ${GMAIL_DISCOVERY_MINIMUM_INTERVAL_MS:3600000}
+        connections-per-tick: ${GMAIL_DISCOVERY_CONNECTIONS_PER_TICK:25}
+        messages-per-connection: ${GMAIL_DISCOVERY_MESSAGES_PER_CONNECTION:500}
+        extraction-messages-per-connection: ${GMAIL_EXTRACTION_MESSAGES_PER_CONNECTION:50}
+
+        # "Sync Now" (C5.4) -- a much shorter cooldown than minimum-interval-ms above, since this
+        # gates a single user re-clicking a button, not the whole tick's cost across every mailbox.
+        # See GmailManualSyncService's own doc comment for why it's a separate value.
+        manual-sync-cooldown-ms: ${GMAIL_MANUAL_SYNC_COOLDOWN_MS:60000}
+
+# Reversible encryption at rest for third-party credentials Finora must read back -- OAuth refresh
+# tokens first (ADR-007). NOT for passwords or Finora's own session tokens, which are hashed via
+# TokenHasher; see com.finora.security.crypto's package doc for why the two are not interchangeable.
+#
+# `keys` is a MAP, not a single value, because rotation needs the previous key resolvable while new
+# writes go under the active one -- each ciphertext records the id it was written under. During a
+# rotation, set active-key-id to the new id and keep the old entry until nothing references it.
+#
+# No default for the key itself, deliberately: unlike SMS (where an unconfigured provider degrades
+# to a silent no-op), there is no safe degraded mode here -- writing an integration token without
+# encryption would put a live third-party credential in the database in plaintext.
+# ProductionConfigValidator refuses to boot the prod profile without it.
+#
+# Generate a key with:  openssl rand -base64 32
+finora:
+  security:
+    encryption:
+      active-key-id: ${FINORA_ENCRYPTION_ACTIVE_KEY_ID:v1}
+      keys:
+        # Same posture as app.jwt.secret above: an obviously-fake placeholder so local development
+        # and the test suite boot without setup, and ProductionConfigValidator refuses to start the
+        # prod profile while it is still in place. This value is public, in git, and identical for
+        # every developer -- it protects nothing and is not meant to.
+        v1: ${FINORA_ENCRYPTION_KEY:Zmlub3JhLWxvY2FsLWRldi1rZXktRE8tTk9ULVVTRSE=}
 
 # Backend error monitoring. Off unless SENTRY_DSN is set -- the same posture as every other
 # external integration here (RESEND_API_KEY, GOOGLE_APPLICATION_CREDENTIALS). See

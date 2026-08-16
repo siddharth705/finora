@@ -215,6 +215,42 @@ class PasswordChangeServiceTest {
                 .hasMessageContaining("Invalid password change session");
     }
 
+    /** Regression test: only start() used to re-check account status, so a session opened while
+     *  ACTIVE could still advance through verifyOtp() (and on to complete()) after the account was
+     *  suspended or deactivated mid-flow -- the still-valid access token that opened the session
+     *  keeps working for up to 15 minutes past the status change, same reason start() checks this
+     *  at all. */
+    @Test
+    void verifyOtp_onASuspendedAccount_isRejectedBeforeCallingFirebase() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.STARTED, Instant.now().plusSeconds(600));
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+        User user = existingUser();
+        user.setStatus("SUSPENDED");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest(session.getId().toString(), "some-token")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("suspended");
+
+        verify(phoneVerificationProvider, never()).verifyAndGetPhoneNumber(any());
+        assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.STARTED);
+    }
+
+    @Test
+    void verifyOtp_onADeactivatedAccount_isRejectedBeforeCallingFirebase() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.STARTED, Instant.now().plusSeconds(600));
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+        User user = existingUser();
+        user.setStatus(User.STATUS_DEACTIVATED);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest(session.getId().toString(), "some-token")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("deactivated");
+
+        verify(phoneVerificationProvider, never()).verifyAndGetPhoneNumber(any());
+    }
+
     // --- complete() ---
 
     @Test
@@ -319,6 +355,63 @@ class PasswordChangeServiceTest {
         verify(auditService, never()).record(any(), eq("PASSWORD_CHANGED"), any(), any(), any());
     }
 
+    /** Same regression as verifyOtp_onASuspendedAccount_... -- complete() is the step that
+     *  actually writes the new password, so this is the more consequential half of the gap. */
+    @Test
+    void complete_onASuspendedAccount_isRejectedWithoutWritingTheNewPassword() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.OTP_VERIFIED, Instant.now().plusSeconds(600));
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+        User user = existingUser();
+        user.setStatus("SUSPENDED");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> service.complete(userId,
+                new CompleteRequest(session.getId().toString(), "NewPass456!", false, null),
+                THIS_DEVICES_SESSION))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("suspended");
+
+        assertThat(user.getPasswordHash()).isEqualTo("hashed-old-password");
+        assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.OTP_VERIFIED);
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void complete_onADeactivatedAccount_isRejectedWithoutWritingTheNewPassword() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.OTP_VERIFIED, Instant.now().plusSeconds(600));
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+        User user = existingUser();
+        user.setStatus(User.STATUS_DEACTIVATED);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> service.complete(userId,
+                new CompleteRequest(session.getId().toString(), "NewPass456!", false, null),
+                THIS_DEVICES_SESSION))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("deactivated");
+
+        assertThat(user.getPasswordHash()).isEqualTo("hashed-old-password");
+        verify(userRepository, never()).save(any());
+    }
+
+    /** The status check must NOT reach far enough to break the existing idempotent-replay
+     *  guarantee: a session that already succeeded has to keep returning its original outcome even
+     *  if the account's status changed afterward (e.g. the user deactivated their own account
+     *  right after changing their password) -- there is nothing left to gate. */
+    @Test
+    void complete_onASessionAlreadyCompleted_returnsTheOriginalOutcome_evenIfTheAccountIsNowDeactivated() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.COMPLETED, Instant.now().plusSeconds(600));
+        session.setSignedOutOtherDevices(true);
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+
+        var response = service.complete(userId,
+                new CompleteRequest(session.getId().toString(), "NewPass456!", false, null),
+                THIS_DEVICES_SESSION);
+
+        assertThat(response.otherDevicesSignedOut()).isTrue();
+        verify(userRepository, never()).findById(any());
+    }
+
     @Test
     void complete_onAnExpiredSession_rejectsAndMarksItExpired() {
         PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.OTP_VERIFIED, Instant.now().minusSeconds(60));
@@ -341,5 +434,100 @@ class PasswordChangeServiceTest {
         assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest(otherUsersSessionId.toString(), "some-token")))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Invalid password change session");
+    }
+
+    // --- consumeForAccountDeletion() ---
+
+    @Test
+    void consumeForAccountDeletion_afterOtpVerified_advancesTheSessionToDeletionConfirmed() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.OTP_VERIFIED, Instant.now().plusSeconds(600));
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+
+        service.consumeForAccountDeletion(userId, session.getId().toString());
+
+        assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.DELETION_CONFIRMED);
+        assertThat(session.getCompletedAt()).isNotNull();
+        verify(sessionRepository).save(session);
+    }
+
+    @Test
+    void consumeForAccountDeletion_beforeOtpHasBeenVerified_rejects() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.STARTED, Instant.now().plusSeconds(600));
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.consumeForAccountDeletion(userId, session.getId().toString()))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("Verify the code");
+
+        assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.STARTED);
+    }
+
+    @Test
+    void consumeForAccountDeletion_onAnExpiredSession_rejectsAndMarksItExpired() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.OTP_VERIFIED, Instant.now().minusSeconds(60));
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.consumeForAccountDeletion(userId, session.getId().toString()))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("expired");
+
+        assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.EXPIRED);
+    }
+
+    @Test
+    void consumeForAccountDeletion_onAnotherUsersSessionId_isNotFound() {
+        UUID otherUsersSessionId = UUID.randomUUID();
+        when(sessionRepository.findByIdAndUserId(otherUsersSessionId, userId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.consumeForAccountDeletion(userId, otherUsersSessionId.toString()))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("Invalid password change session");
+    }
+
+    /** Regression test for the exact bug DELETION_CONFIRMED being a distinct terminal state (not a
+     *  reuse of COMPLETED) exists to prevent: a session consumed for account deletion must not be
+     *  replayable into complete() and mistaken for an idempotent password-change replay -- it must
+     *  be rejected the same way any other wrong-state session is. */
+    @Test
+    void complete_onASessionAlreadyConsumedForDeletion_isRejectedNotTreatedAsAnIdempotentReplay() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.DELETION_CONFIRMED, Instant.now().plusSeconds(600));
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.complete(userId,
+                new CompleteRequest(session.getId().toString(), "NewPass456!", false, null),
+                THIS_DEVICES_SESSION))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("Verify the code");
+
+        assertThat(session.getStatus()).isEqualTo(PasswordChangeSession.Status.DELETION_CONFIRMED);
+        verify(userRepository, never()).save(any());
+    }
+
+    /** Same regression, the verifyOtp() half: a DELETION_CONFIRMED session replayed into verifyOtp()
+     *  (whose required status is STARTED) must be rejected as any other wrong-state session is. */
+    @Test
+    void verifyOtp_onASessionAlreadyConsumedForDeletion_isRejected() {
+        PasswordChangeSession session = sessionWith(PasswordChangeSession.Status.DELETION_CONFIRMED, Instant.now().plusSeconds(600));
+        when(sessionRepository.findByIdAndUserId(session.getId(), userId)).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.verifyOtp(userId, new VerifyOtpRequest(session.getId().toString(), "some-token")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("already been completed");
+
+        verify(phoneVerificationProvider, never()).verifyAndGetPhoneNumber(any());
+    }
+
+    @Test
+    void start_onAPendingDeletionAccount_isRejectedBeforeEvenCheckingThePassword() {
+        User user = existingUser();
+        user.setStatus(User.STATUS_PENDING_DELETION);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> service.start(userId, new StartRequest("OldPass123!")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("scheduled for deletion");
+
+        verify(passwordEncoder, never()).matches(any(), any());
+        verify(sessionRepository, never()).save(any());
     }
 }

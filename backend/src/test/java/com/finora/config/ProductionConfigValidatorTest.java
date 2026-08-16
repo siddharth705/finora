@@ -1,5 +1,6 @@
 package com.finora.config;
 
+import com.finora.security.crypto.CryptoProperties;
 import com.finora.service.PhoneVerificationProvider;
 import com.finora.service.SmsProvider;
 import org.junit.jupiter.api.Test;
@@ -30,6 +31,23 @@ class ProductionConfigValidatorTest {
 
     private EmailProperties realEmail() {
         return emailWith("re_real_resend_api_key");
+    }
+
+    /** A 32-byte AES key that is NOT the local-dev placeholder -- what a correctly configured
+     *  production deployment supplies. ADR-007. */
+    private CryptoProperties realCrypto() {
+        byte[] raw = new byte[32];
+        java.util.Arrays.fill(raw, (byte) 42);
+        return cryptoWith(java.util.Base64.getEncoder().encodeToString(raw));
+    }
+
+    private CryptoProperties cryptoWith(String base64Key) {
+        CryptoProperties props = new CryptoProperties();
+        props.setActiveKeyId("v1");
+        java.util.Map<String, String> keys = new java.util.LinkedHashMap<>();
+        keys.put("v1", base64Key);
+        props.setKeys(keys);
+        return props;
     }
 
     private PhoneVerificationProvider firebaseWith(boolean configured) {
@@ -93,7 +111,7 @@ class ProductionConfigValidatorTest {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
         when(environment.getProperty("app.statement-storage.provider")).thenReturn(null);
         when(environment.getProperty("app.import.queue.enabled")).thenReturn("false");
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThatThrownBy(validator::validate)
                 .as("the queue being off must no longer excuse missing storage -- that gate is "
@@ -105,7 +123,7 @@ class ProductionConfigValidatorTest {
     void run_inProdProfile_withABlankStorageProvider_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
         when(environment.getProperty("app.statement-storage.provider")).thenReturn("   ");
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThatThrownBy(validator::validate)
                 .as("an empty string is not a configured provider -- Railway sets blank variables "
@@ -118,7 +136,7 @@ class ProductionConfigValidatorTest {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
         when(environment.getProperty("app.statement-storage.provider")).thenReturn(null);
         when(environment.getProperty("app.import.queue.enabled")).thenReturn("true");
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThatThrownBy(validator::validate)
                 .as("the queue message adds information the general one does not -- uploads fail "
@@ -131,7 +149,7 @@ class ProductionConfigValidatorTest {
     void run_inProdProfile_withFilesystemStorage_doesNotThrow() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
         when(environment.getProperty("app.statement-storage.provider")).thenReturn("filesystem");
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThat(catchNoThrow(validator))
                 .as("filesystem is a supported provider -- this check is about durability being "
@@ -146,7 +164,7 @@ class ProductionConfigValidatorTest {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"dev"}, "finora");
         when(environment.getProperty("app.statement-storage.provider")).thenReturn(null);
         JwtProperties jwt = jwtWith("change-this-to-a-long-random-secret-in-your-env-file-min-32-chars");
-        var validator = new ProductionConfigValidator(environment, jwt, emailWith(null), unconfiguredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, jwt, emailWith(null), unconfiguredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThat(catchNoThrow(validator)).isTrue();
     }
@@ -155,7 +173,7 @@ class ProductionConfigValidatorTest {
     void run_inProdProfile_withThePlaceholderJwtSecretStillSet_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
         JwtProperties jwt = jwtWith("change-this-to-a-long-random-secret-in-your-env-file-min-32-chars");
-        var validator = new ProductionConfigValidator(environment, jwt, realEmail(), configuredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, jwt, realEmail(), configuredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThatThrownBy(() -> validator.validate())
                 .isInstanceOf(IllegalStateException.class)
@@ -166,7 +184,7 @@ class ProductionConfigValidatorTest {
     void run_inProdProfile_withATooShortJwtSecret_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
         JwtProperties jwt = jwtWith("too-short");
-        var validator = new ProductionConfigValidator(environment, jwt, realEmail(), configuredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, jwt, realEmail(), configuredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThatThrownBy(() -> validator.validate())
                 .isInstanceOf(IllegalStateException.class)
@@ -176,7 +194,7 @@ class ProductionConfigValidatorTest {
     @Test
     void run_inProdProfile_withTheDefaultDbPasswordStillSet_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "finora");
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThatThrownBy(() -> validator.validate())
                 .isInstanceOf(IllegalStateException.class)
@@ -192,7 +210,7 @@ class ProductionConfigValidatorTest {
     @Test
     void run_inProdProfile_withNoResendApiKeyConfigured_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
-        var validator = new ProductionConfigValidator(environment, realJwt(), emailWith(null), configuredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, realJwt(), emailWith(null), configuredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThatThrownBy(() -> validator.validate())
                 .isInstanceOf(IllegalStateException.class)
@@ -202,7 +220,7 @@ class ProductionConfigValidatorTest {
     @Test
     void run_inProdProfile_withABlankResendApiKeyConfigured_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
-        var validator = new ProductionConfigValidator(environment, realJwt(), emailWith("   "), configuredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, realJwt(), emailWith("   "), configuredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThatThrownBy(() -> validator.validate())
                 .isInstanceOf(IllegalStateException.class)
@@ -212,7 +230,7 @@ class ProductionConfigValidatorTest {
     @Test
     void run_inProdProfile_withFirebaseNotConfigured_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), unconfiguredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), unconfiguredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThatThrownBy(() -> validator.validate())
                 .isInstanceOf(IllegalStateException.class)
@@ -225,7 +243,7 @@ class ProductionConfigValidatorTest {
     @Test
     void run_inProdProfile_withNoTwoFactorApiKeyConfigured_warnsButDoesNotThrow() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), smsWith(false));
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), smsWith(false), realCrypto());
 
         assertThat(catchNoThrow(validator)).isTrue();
     }
@@ -237,7 +255,7 @@ class ProductionConfigValidatorTest {
     void run_inProdProfile_withTrustProxyHeadersUnset_warnsButDoesNotThrow() {
         Environment environment = envWithProfilesAndDbPasswordAndTrustProxyHeaders(
                 new String[]{"prod"}, "a-real-password", false);
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThat(catchNoThrow(validator)).isTrue();
     }
@@ -246,7 +264,7 @@ class ProductionConfigValidatorTest {
     void run_inProdProfile_withTrustProxyHeadersSetTrue_doesNotThrow() {
         Environment environment = envWithProfilesAndDbPasswordAndTrustProxyHeaders(
                 new String[]{"prod"}, "a-real-password", true);
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThat(catchNoThrow(validator)).isTrue();
     }
@@ -260,7 +278,7 @@ class ProductionConfigValidatorTest {
     @Test
     void run_inProdProfile_withNoDbPassword_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, null);
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThatThrownBy(validator::validate)
                 .as("an unset password was the case the old message claimed to catch and did not")
@@ -270,7 +288,7 @@ class ProductionConfigValidatorTest {
     @Test
     void run_inProdProfile_withABlankDbPassword_throws() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "   ");
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThatThrownBy(validator::validate)
                 .hasMessageContaining("DB_PASSWORD is unset or blank");
@@ -282,7 +300,7 @@ class ProductionConfigValidatorTest {
         // first thing on the first page of any tutorial, and a production database reachable with
         // it is not meaningfully protected.
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "POSTGRES");
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThatThrownBy(validator::validate)
                 .hasMessageContaining("DB_PASSWORD is a well-known default");
@@ -294,7 +312,7 @@ class ProductionConfigValidatorTest {
         // over a password an operator deliberately chose is a different decision and not this
         // validator's to make -- and a validator that cries wolf gets its exception caught.
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "hunter2");
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThat(catchNoThrow(validator)).isTrue();
     }
@@ -302,7 +320,7 @@ class ProductionConfigValidatorTest {
     @Test
     void run_inProdProfile_withRealSecretsConfigured_doesNotThrow() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
-        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThat(catchNoThrow(validator)).isTrue();
     }
@@ -313,7 +331,7 @@ class ProductionConfigValidatorTest {
         // exactly what makes that possible.
         Environment environment = envWithProfilesAndDbPassword(new String[]{"dev"}, "finora");
         JwtProperties jwt = jwtWith("change-this-to-a-long-random-secret-in-your-env-file-min-32-chars");
-        var validator = new ProductionConfigValidator(environment, jwt, emailWith(null), unconfiguredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, jwt, emailWith(null), unconfiguredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThat(catchNoThrow(validator)).isTrue();
     }
@@ -322,7 +340,99 @@ class ProductionConfigValidatorTest {
     void run_withNoActiveProfilesAtAll_doesNotThrow() {
         Environment environment = envWithProfilesAndDbPassword(new String[]{}, "finora");
         JwtProperties jwt = jwtWith("change-this-to-a-long-random-secret-in-your-env-file-min-32-chars");
-        var validator = new ProductionConfigValidator(environment, jwt, emailWith(null), unconfiguredFirebase(), mock(SmsProvider.class));
+        var validator = new ProductionConfigValidator(environment, jwt, emailWith(null), unconfiguredFirebase(), mock(SmsProvider.class), realCrypto());
+
+        assertThat(catchNoThrow(validator)).isTrue();
+    }
+
+    /**
+     * ADR-007. The encryption key protects third-party OAuth refresh tokens — live credentials to a
+     * user's external account. The local-dev placeholder is public, in git, and identical for every
+     * developer, so a production deployment still running on it means anyone with the repository can
+     * decrypt every stored integration token.
+     *
+     * <p>This has to be checked HERE rather than only in {@code EnvironmentKeyProvider}, because
+     * that class validates key <em>shape</em> — base64, 32 bytes — which the placeholder satisfies
+     * perfectly. Only this validator knows the difference between a well-formed key and the right
+     * one.
+     */
+    @Test
+    void run_inProdProfile_withTheLocalDevEncryptionKey_throws() {
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(),
+                configuredFirebase(), mock(SmsProvider.class),
+                cryptoWith("Zmlub3JhLWxvY2FsLWRldi1rZXktRE8tTk9ULVVTRSE="));
+
+        assertThatThrownBy(validator::validate)
+                .hasMessageContaining("FINORA_ENCRYPTION_KEY");
+    }
+
+    @Test
+    void run_inProdProfile_withNoEncryptionKey_throws() {
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(),
+                configuredFirebase(), mock(SmsProvider.class), cryptoWith(""));
+
+        assertThatThrownBy(validator::validate)
+                .hasMessageContaining("FINORA_ENCRYPTION_KEY");
+    }
+
+    /**
+     * Strix security review, CWE-321. The original check inspected only the key named by
+     * {@code active-key-id}, which passes a mid-rotation configuration that has moved writes onto a
+     * real v2 while leaving the repository-public placeholder configured as v1 — and
+     * {@code keyById("v1")} goes on decrypting every legacy row under a key anyone can read out of
+     * git.
+     *
+     * <p>Not an exotic setup: an operator preparing a rotation copies the {@code keys:} block out of
+     * application.yml as a template, and that block ships the placeholder as v1's default.
+     */
+    @Test
+    void run_inProdProfile_withAPlaceholderRetiredKey_throws_evenWhenTheActiveKeyIsReal() {
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
+        CryptoProperties rotating = new CryptoProperties();
+        rotating.setActiveKeyId("v2");
+        java.util.Map<String, String> keys = new java.util.LinkedHashMap<>();
+        keys.put("v1", "Zmlub3JhLWxvY2FsLWRldi1rZXktRE8tTk9ULVVTRSE="); // retired, still the placeholder
+        keys.put("v2", realCrypto().getKeys().get("v1"));               // active, genuinely real
+        rotating.setKeys(keys);
+
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(),
+                configuredFirebase(), mock(SmsProvider.class), rotating);
+
+        assertThatThrownBy(validator::validate)
+                .as("a retired placeholder key still decrypts legacy ciphertext -- the active key "
+                        + "being real does not make the deployment safe")
+                .hasMessageContaining("v1");
+    }
+
+    @Test
+    void run_inProdProfile_withEveryKeyReal_duringARotation_doesNotComplain() {
+        // The negative: a correct rotation, with two real keys, must not be blocked -- otherwise the
+        // check above would make rotation impossible rather than safe.
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
+        when(environment.getProperty("app.statement-storage.provider")).thenReturn("r2");
+        CryptoProperties rotating = new CryptoProperties();
+        rotating.setActiveKeyId("v2");
+        java.util.Map<String, String> keys = new java.util.LinkedHashMap<>();
+        byte[] otherKey = new byte[32];
+        java.util.Arrays.fill(otherKey, (byte) 99);
+        keys.put("v1", java.util.Base64.getEncoder().encodeToString(otherKey));
+        keys.put("v2", realCrypto().getKeys().get("v1"));
+        rotating.setKeys(keys);
+
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(),
+                configuredFirebase(), mock(SmsProvider.class), rotating);
+
+        assertThat(catchNoThrow(validator)).isTrue();
+    }
+
+    @Test
+    void run_inProdProfile_withARealEncryptionKey_doesNotComplainAboutIt() {
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
+        when(environment.getProperty("app.statement-storage.provider")).thenReturn("r2");
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(),
+                configuredFirebase(), mock(SmsProvider.class), realCrypto());
 
         assertThat(catchNoThrow(validator)).isTrue();
     }

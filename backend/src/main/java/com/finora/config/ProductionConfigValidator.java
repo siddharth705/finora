@@ -1,5 +1,6 @@
 package com.finora.config;
 
+import com.finora.security.crypto.CryptoProperties;
 import com.finora.service.PhoneVerificationProvider;
 import com.finora.service.SmsProvider;
 import org.slf4j.Logger;
@@ -10,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Production-readiness pass: every secret in application.yml has a local-dev-convenience default
@@ -105,21 +107,28 @@ public class ProductionConfigValidator implements SmartInitializingSingleton {
         return PLACEHOLDER_MARKERS.stream().anyMatch(normalized::contains);
     }
 
+    /** The local-dev placeholder from application.yml. Matching this in prod means the real key was
+     *  never supplied -- see the check in {@link #validate()}. */
+    private static final String LOCAL_DEV_ENCRYPTION_KEY = "Zmlub3JhLWxvY2FsLWRldi1rZXktRE8tTk9ULVVTRSE=";
+
     private final Environment environment;
     private final JwtProperties jwtProperties;
     private final EmailProperties emailProperties;
     private final PhoneVerificationProvider phoneVerificationProvider;
     private final SmsProvider smsProvider;
+    private final CryptoProperties cryptoProperties;
 
     public ProductionConfigValidator(Environment environment, JwtProperties jwtProperties,
                                       EmailProperties emailProperties,
                                       PhoneVerificationProvider phoneVerificationProvider,
-                                      SmsProvider smsProvider) {
+                                      SmsProvider smsProvider,
+                                      CryptoProperties cryptoProperties) {
         this.environment = environment;
         this.jwtProperties = jwtProperties;
         this.emailProperties = emailProperties;
         this.phoneVerificationProvider = phoneVerificationProvider;
         this.smsProvider = smsProvider;
+        this.cryptoProperties = cryptoProperties;
     }
 
     @Override
@@ -224,6 +233,46 @@ public class ProductionConfigValidator implements SmartInitializingSingleton {
             problems.append("- GOOGLE_APPLICATION_CREDENTIALS is unset or invalid. Without it, the Firebase ")
                     .append("Admin SDK can't verify phone numbers, so registration, password reset, and ")
                     .append("password change can never complete their phone-verification step.\n");
+        }
+
+        // ADR-007. Same class of failure as JWT_SECRET above -- a placeholder that is public, in
+        // git, and identical for every developer. The consequence differs though: this key protects
+        // third-party OAuth refresh tokens, which are live credentials to a user's external account
+        // (their mailbox, later their bank). A production deployment running on the dev key means
+        // anyone with the repository can decrypt every stored integration token in the database.
+        //
+        // Checked here rather than only in EnvironmentKeyProvider because that class validates
+        // key SHAPE (base64, 32 bytes) -- which the placeholder satisfies perfectly. Only this
+        // validator knows the difference between a well-formed key and the right key.
+        //
+        // EVERY configured key, not just the active one (Strix security review, CWE-321). A
+        // rotation deliberately keeps retired keys configured so ciphertext written under them
+        // stays readable -- so checking only `active-key-id` would pass a production config that
+        // rotated to a real v2 while leaving the repository-public placeholder under v1, and
+        // keyById("v1") would go on decrypting legacy rows under a key anyone can read from git.
+        // The realistic path there is not exotic: an operator setting up a rotation copies the
+        // `keys:` block out of application.yml as a template, which ships the placeholder as v1's
+        // default.
+        //
+        // Blank/null is included for completeness rather than reachability -- EnvironmentKeyProvider
+        // is constructed before this runs (SmartInitializingSingleton) and already refuses an empty
+        // key -- so that this check does not silently depend on that bean ordering.
+        List<String> unsafeKeyIds = cryptoProperties.getKeys().entrySet().stream()
+                .filter(entry -> entry.getValue() == null
+                        || entry.getValue().isBlank()
+                        || LOCAL_DEV_ENCRYPTION_KEY.equals(entry.getValue().trim()))
+                .map(Map.Entry::getKey)
+                .toList();
+        if (!unsafeKeyIds.isEmpty()) {
+            // Names the env var, not just the property path: FINORA_ENCRYPTION_KEY is what an
+            // operator actually sets, and an error naming only `finora.security.encryption.keys`
+            // sends them looking for a file they will not find in a Railway dashboard.
+            problems.append("- FINORA_ENCRYPTION_KEY: encryption key(s) ").append(unsafeKeyIds)
+                    .append(" are unset or still the local-dev placeholder. These encrypt third-party ")
+                    .append("OAuth refresh tokens at rest; on that value, anyone with the repository can ")
+                    .append("decrypt every credential stored under them -- including a retired key kept ")
+                    .append("configured so a rotation can still read old rows. Generate one with ")
+                    .append("`openssl rand -base64 32`.\n");
         }
 
         // Unlike RESEND_API_KEY/GOOGLE_APPLICATION_CREDENTIALS above, TWO_FACTOR_API_KEY is

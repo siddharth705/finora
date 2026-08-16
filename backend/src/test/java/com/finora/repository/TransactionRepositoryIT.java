@@ -203,4 +203,38 @@ class TransactionRepositoryIT extends AbstractIntegrationTest {
                 .as("another user's dates are not this user's")
                 .isEmpty();
     }
+
+    /**
+     * C6.4. The JPQL here compares an enum literal by its fully-qualified Java path
+     * ({@code com.finora.entity.Transaction.Type.EXPENSE}) rather than a bound parameter -- exactly
+     * the kind of syntax a mock repository would never catch a typo in. Real Postgres via
+     * Testcontainers is what proves the query even parses.
+     */
+    @Test
+    @Transactional
+    void findCandidatesForGmailReconciliation_matchesOnAmountAndDateWindow_excludingGmailSourcedRows() {
+        Transaction inWindow = newTransaction(new BigDecimal("1299.00"), LocalDate.of(2026, 8, 9), "AMZN MKTPLACE");
+
+        Transaction wrongAmount = newTransaction(new BigDecimal("50.00"), LocalDate.of(2026, 8, 9), "AMZN MKTPLACE");
+
+        Transaction outsideWindow = newTransaction(new BigDecimal("1299.00"), LocalDate.of(2026, 7, 1), "AMZN MKTPLACE");
+
+        Transaction gmailSourced = new Transaction();
+        gmailSourced.setUserId(userId);
+        gmailSourced.setAccountId(accountId);
+        gmailSourced.setCategoryId(categoryId);
+        gmailSourced.setTxnDate(LocalDate.of(2026, 8, 9));
+        gmailSourced.setAmount(new BigDecimal("1299.00"));
+        gmailSourced.setTxnType(Transaction.Type.EXPENSE);
+        gmailSourced.setDescription("amazon.in");
+        gmailSourced.setSource(Transaction.Source.GMAIL_IMPORT);
+        transactionRepository.save(gmailSourced);
+
+        List<Transaction> candidates = transactionRepository.findCandidatesForGmailReconciliation(
+                userId, new BigDecimal("1299.00"), LocalDate.of(2026, 8, 7), LocalDate.of(2026, 8, 13));
+
+        assertThat(candidates).extracting(Transaction::getId).containsExactly(inWindow.getId());
+        assertThat(candidates).extracting(Transaction::getId)
+                .doesNotContain(wrongAmount.getId(), outsideWindow.getId(), gmailSourced.getId());
+    }
 }

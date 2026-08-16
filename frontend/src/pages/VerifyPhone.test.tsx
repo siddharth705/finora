@@ -32,7 +32,7 @@ const FAKE_CONFIRMATION = { confirm: vi.fn() } as any;
 function renderVerifyPhone() {
   vi.mocked(useAuth).mockReturnValue({
     token: 'tok', email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
-    login: vi.fn(), register: vi.fn(), setPhoneVerified: vi.fn(), logout: vi.fn(),
+    login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), setPhoneVerified: vi.fn(), logout: vi.fn(),
   });
   return render(
     <MemoryRouter initialEntries={['/verify-phone']}>
@@ -80,7 +80,7 @@ describe('VerifyPhone', () => {
     const setPhoneVerified = vi.fn();
     vi.mocked(useAuth).mockReturnValue({
       token: 'tok', email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
-      login: vi.fn(), register: vi.fn(), setPhoneVerified, logout: vi.fn(),
+      login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), setPhoneVerified, logout: vi.fn(),
     });
     render(
       <MemoryRouter initialEntries={['/verify-phone']}>

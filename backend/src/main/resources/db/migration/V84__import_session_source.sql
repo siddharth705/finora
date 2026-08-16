@@ -1,0 +1,15 @@
+-- Phase C5-B. Nullable, single-valued today: existing rows and every CSV/PDF session leave this
+-- null, which persistSection already treats identically to how it has always behaved -- inserting
+-- this column changes nothing about any existing import path.
+--
+-- The alternative to a column was inferring origin from context at confirm time (the way
+-- StatementImport.sourceFormat used to be inferred from a filename extension, before that was
+-- called out as the wrong pattern -- "explicit, not inferred"). A Gmail session's synthetic file
+-- content ("gmail:<message id>") could technically be sniffed for the same purpose, but that is
+-- exactly the implicit-signal approach this codebase's own convention already rejected once.
+--
+-- Not an enum/CHECK-constrained set of values: today it is null or 'GMAIL', but a value this
+-- narrow is cheap to widen (PDF gets its own value once it stops being mislabeled CSV_IMPORT,
+-- which is a real gap this migration does not fix -- see Transaction.Source's own comment) without
+-- another migration to loosen a constraint.
+ALTER TABLE import_sessions ADD COLUMN source VARCHAR(20);

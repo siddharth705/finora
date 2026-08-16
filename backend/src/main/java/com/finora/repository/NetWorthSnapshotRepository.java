@@ -11,4 +11,7 @@ import java.util.UUID;
 public interface NetWorthSnapshotRepository extends JpaRepository<NetWorthSnapshot, UUID> {
     List<NetWorthSnapshot> findByUserIdOrderBySnapshotDateAsc(UUID userId);
     Optional<NetWorthSnapshot> findByUserIdAndSnapshotDate(UUID userId, LocalDate date);
+
+    /** AccountPurgeSweepService -- hard delete, no soft-delete concern on this entity. */
+    void deleteByUserId(UUID userId);
 }

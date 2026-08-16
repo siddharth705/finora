@@ -46,6 +46,17 @@ public class AuthController {
                 .body(ApiResponse.ok(response, "Signed in"));
     }
 
+    /** Completes the "Welcome back — reactivate your account?" confirmation Login.tsx shows after
+     *  a deactivated account's password checks out (login() throws AUTH_ACCOUNT_DEACTIVATED with
+     *  a reactivation token in its details map). Same AuthResponse shape and refresh-cookie
+     *  handling as login() itself, so the client's success path doesn't need to special-case it. */
+    @PostMapping("/reactivate")
+    public ResponseEntity<ApiResponse<AuthResponse>> reactivate(@Valid @RequestBody ReactivateRequest request) {
+        AuthResponse response = authService.reactivate(request);
+        return withRefreshCookie(response.refreshToken())
+                .body(ApiResponse.ok(response, "Account reactivated"));
+    }
+
     private ResponseEntity.BodyBuilder withRefreshCookie(String rawToken) {
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, refreshTokenCookie.issue(rawToken).toString());

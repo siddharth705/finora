@@ -206,13 +206,29 @@ public class AdminUserService {
         return toSummary(user);
     }
 
+    /** Also accepts a self-service DEACTIVATED account, not just admin-SUSPENDED -- a support
+     *  fallback for a user whose self-service reactivation token has expired or was lost (e.g.
+     *  lost the device the email went to), so they aren't otherwise stuck.
+     *
+     *  <p>Audited as ACCOUNT_REACTIVATED_BY_ADMIN, not the self-service flows' ACCOUNT_REACTIVATED
+     *  -- same account-state transition, but a materially different actor and trust boundary (a
+     *  support agent acting on someone else's account under a permission grant, not the account
+     *  owner proving their own password), so the two shouldn't share one action name in the trail.
+     *
+     *  @param reason optional support note (e.g. a ticket reference); never validated beyond
+     *                length (DTO) -- unlike self-service deactivation's reason, this isn't drawn
+     *                from a fixed enum, since it's free text an admin writes for their own audit
+     *                trail rather than product-facing churn-analysis data. */
     @Transactional
-    public UserSummaryDto reactivate(UUID userId, UUID actingAdminId) {
+    public UserSummaryDto reactivate(UUID userId, UUID actingAdminId, String reason) {
         User user = requireUser(userId);
-        if (user.isSuspended()) {
-            user.setStatus("ACTIVE");
+        if (user.isSuspended() || user.isDeactivated()) {
+            user.setStatus(User.STATUS_ACTIVE);
             userRepository.save(user);
-            auditService.record(userId, "ACCOUNT_REACTIVATED", "User", userId, Map.of("reactivatedBy", actingAdminId.toString()));
+            Map<String, Object> auditMetadata = new java.util.HashMap<>();
+            auditMetadata.put("reactivatedBy", actingAdminId.toString());
+            if (reason != null && !reason.isBlank()) auditMetadata.put("reason", reason);
+            auditService.record(userId, "ACCOUNT_REACTIVATED_BY_ADMIN", "User", userId, auditMetadata);
         }
         return toSummary(user);
     }
