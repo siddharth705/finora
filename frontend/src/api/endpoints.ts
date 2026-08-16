@@ -661,6 +661,28 @@ export const passwordChangeApi = {
     ).then((r) => r.data),
 };
 
+// The OTP-gated Change Phone Number flow -- see VerifyPhone.tsx's own "Change Number" step, and
+// PhoneChangeService on the backend for the full start -> verify-otp -> complete state machine.
+// Reachable by an unverified user (see PhoneVerificationFilter's own PHONE_CHANGE_ENDPOINTS
+// carve-out) unlike passwordChangeApi above -- this IS the recovery path for someone who cannot
+// verify at all. No currentPassword step first, unlike passwordChangeApi.start: the caller is
+// already authenticated, and the OTP itself (proving control of the NEW number) is the entire
+// proof this flow needs.
+export const phoneChangeApi = {
+  start: (newPhoneNumber: string) =>
+    api.post<{ sessionId: string; maskedPhone: string }>(
+      '/users/me/phone-change/start', { newPhoneNumber }
+    ).then((r) => r.data),
+  verifyOtp: (sessionId: string, firebaseIdToken: string) =>
+    api.post<{ message: string }>(
+      '/users/me/phone-change/verify-otp', { sessionId, firebaseIdToken }
+    ).then((r) => r.data),
+  complete: (sessionId: string) =>
+    api.post<{ message: string; phoneNumber: string }>(
+      '/users/me/phone-change/complete', { sessionId }
+    ).then((r) => r.data),
+};
+
 // The self-service account lifecycle -- see UserAccountLifecycleService on the backend for
 // deactivate (today) and delete-request/purge (Phase B, to follow).
 export const accountLifecycleApi = {

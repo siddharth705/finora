@@ -238,6 +238,9 @@ class RateLimitFilterTest {
                 "/api/v1/users/me/password-change/start",
                 "/api/v1/users/me/password-change/verify-otp",
                 "/api/v1/users/me/password-change/complete",
+                "/api/v1/users/me/phone-change/start",
+                "/api/v1/users/me/phone-change/verify-otp",
+                "/api/v1/users/me/phone-change/complete",
                 "/api/v1/users/me/data-export",
         };
 
@@ -300,6 +303,31 @@ class RateLimitFilterTest {
         // The third step, never called yet, is still blocked -- same shared bucket, not a fresh
         // quota of its own.
         HttpServletRequest completeRequest = requestFor("/api/v1/users/me/password-change/complete", "10.0.0.9", null);
+        MockHttpServletResponse completeResponse = new MockHttpServletResponse();
+        filter.doFilterInternal(completeRequest, completeResponse, chain);
+        assertThat(completeResponse.getStatus()).isEqualTo(429);
+    }
+
+    /** Same bucketing property as passwordChangeSteps_shareOneRateLimitBucket, for the Change Phone
+     *  Number flow's own three steps. */
+    @Test
+    void phoneChangeSteps_shareOneRateLimitBucket() throws Exception {
+        RateLimitFilter filter = newFilter(false);
+        FilterChain chain = mock(FilterChain.class);
+
+        boolean tripped = false;
+        for (int i = 0; i < 20; i++) {
+            String path = i % 2 == 0
+                    ? "/api/v1/users/me/phone-change/start"
+                    : "/api/v1/users/me/phone-change/verify-otp";
+            HttpServletRequest request = requestFor(path, "10.0.0.10", null);
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            filter.doFilterInternal(request, response, chain);
+            if (response.getStatus() == 429) tripped = true;
+        }
+        assertThat(tripped).isTrue();
+
+        HttpServletRequest completeRequest = requestFor("/api/v1/users/me/phone-change/complete", "10.0.0.10", null);
         MockHttpServletResponse completeResponse = new MockHttpServletResponse();
         filter.doFilterInternal(completeRequest, completeResponse, chain);
         assertThat(completeResponse.getStatus()).isEqualTo(429);

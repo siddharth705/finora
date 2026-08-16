@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import Login from './Login';
 import { AuthProvider } from '../context/AuthContext';
 import { authApi } from '../api/endpoints';
@@ -15,6 +15,21 @@ vi.mock('../api/endpoints', () => ({
   userApi: { get: vi.fn(), update: vi.fn() },
 }));
 
+// A stand-in for the real VerifyPhone.tsx (out of scope here -- its own test file covers it),
+// but one that surfaces the fromLogin router-state flag Login.tsx is responsible for setting.
+// "Verify your phone" stays its own exact-text element so every existing assertion below keeps
+// matching regardless of whether the flag marker is also present.
+function VerifyPhoneStub() {
+  const location = useLocation();
+  const fromLogin = Boolean((location.state as { fromLogin?: boolean } | null)?.fromLogin);
+  return (
+    <div>
+      <p>Verify your phone</p>
+      {fromLogin && <p>fromLogin=true</p>}
+    </div>
+  );
+}
+
 function renderLogin(state?: { message?: string }) {
   return render(
     <MemoryRouter initialEntries={[{ pathname: '/login', state }]}>
@@ -22,7 +37,7 @@ function renderLogin(state?: { message?: string }) {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/app" element={<p>Dashboard</p>} />
-          <Route path="/verify-phone" element={<p>Verify your phone</p>} />
+          <Route path="/verify-phone" element={<VerifyPhoneStub />} />
         </Routes>
       </AuthProvider>
     </MemoryRouter>
@@ -98,7 +113,7 @@ describe('Login — deactivated account reactivation prompt', () => {
     await waitFor(() => expect(screen.getByText('Dashboard')).toBeInTheDocument());
   });
 
-  it('routes to phone verification instead when the reactivated account has not verified its phone', async () => {
+  it('routes to phone verification instead when the reactivated account has not verified its phone, flagged as a returning user', async () => {
     const user = userEvent.setup();
     vi.mocked(authApi.login).mockReset().mockRejectedValue(deactivatedError());
     vi.mocked(authApi.reactivate).mockReset().mockResolvedValue({
@@ -113,6 +128,9 @@ describe('Login — deactivated account reactivation prompt', () => {
     await user.click(await screen.findByRole('button', { name: /reactivate my account/i }));
 
     await waitFor(() => expect(screen.getByText('Verify your phone')).toBeInTheDocument());
+    // A user reactivating an account is a returning one too, arguably more so -- same fromLogin
+    // treatment as an ordinary unverified login below.
+    expect(screen.getByText('fromLogin=true')).toBeInTheDocument();
   });
 
   it('goes back to the sign-in form without reactivating', async () => {
@@ -127,5 +145,46 @@ describe('Login — deactivated account reactivation prompt', () => {
 
     expect(screen.getByLabelText(/email or mobile number/i)).toBeInTheDocument();
     expect(authApi.reactivate).not.toHaveBeenCalled();
+  });
+});
+
+// An ordinary (non-deactivated) login where the account just hasn't verified its phone yet --
+// distinct from Register.tsx's own identical navigate call, which never sets this: a brand-new
+// signup landing on /verify-phone for the first time is not a "welcome back" moment, but a
+// returning user who still hasn't finished verifying is.
+describe('Login — flags a returning-but-unverified user for VerifyPhone', () => {
+  it('routes to phone verification with fromLogin set, on an ordinary successful login', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authApi.login).mockReset().mockResolvedValue({
+      data: {
+        token: 'access-token', refreshToken: 'refresh-token',
+        email: 'jane@example.com', fullName: 'Jane', phoneVerified: false, maskedPhone: '+•••••••••705',
+      },
+    } as any);
+    renderLogin();
+
+    await user.type(screen.getByLabelText(/email or mobile number/i), 'jane@example.com');
+    await user.type(screen.getByLabelText(/^password$/i), 'CorrectPassword123');
+    await user.click(screen.getByRole('button', { name: /sign in/i }));
+
+    await waitFor(() => expect(screen.getByText('Verify your phone')).toBeInTheDocument());
+    expect(screen.getByText('fromLogin=true')).toBeInTheDocument();
+  });
+
+  it('does not set fromLogin when the account is already verified and lands on the dashboard', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authApi.login).mockReset().mockResolvedValue({
+      data: {
+        token: 'access-token', refreshToken: 'refresh-token',
+        email: 'jane@example.com', fullName: 'Jane', phoneVerified: true, maskedPhone: null,
+      },
+    } as any);
+    renderLogin();
+
+    await user.type(screen.getByLabelText(/email or mobile number/i), 'jane@example.com');
+    await user.type(screen.getByLabelText(/^password$/i), 'CorrectPassword123');
+    await user.click(screen.getByRole('button', { name: /sign in/i }));
+
+    await waitFor(() => expect(screen.getByText('Dashboard')).toBeInTheDocument());
   });
 });

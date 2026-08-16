@@ -19,6 +19,7 @@ import com.finora.service.AuditService;
 import com.finora.service.AuthorizationService;
 import com.finora.service.DataExportService;
 import com.finora.service.PasswordChangeService;
+import com.finora.service.PhoneChangeService;
 import com.finora.service.UserAccountLifecycleService;
 import com.finora.service.UserSettingsService;
 import jakarta.validation.Valid;
@@ -43,13 +44,14 @@ public class UserController {
     private final UserRepository userRepository;
     private final AuthorizationService authorizationService;
     private final PasswordChangeService passwordChangeService;
+    private final PhoneChangeService phoneChangeService;
     private final UserAccountLifecycleService accountLifecycleService;
     private final DataExportService dataExportService;
     private final AuditService auditService;
 
     public UserController(UserSettingsService userSettingsService, CurrentUser currentUser,
                            UserRepository userRepository, AuthorizationService authorizationService,
-                           PasswordChangeService passwordChangeService,
+                           PasswordChangeService passwordChangeService, PhoneChangeService phoneChangeService,
                            UserAccountLifecycleService accountLifecycleService,
                            DataExportService dataExportService, AuditService auditService) {
         this.userSettingsService = userSettingsService;
@@ -57,6 +59,7 @@ public class UserController {
         this.userRepository = userRepository;
         this.authorizationService = authorizationService;
         this.passwordChangeService = passwordChangeService;
+        this.phoneChangeService = phoneChangeService;
         this.accountLifecycleService = accountLifecycleService;
         this.dataExportService = dataExportService;
         this.auditService = auditService;
@@ -98,6 +101,29 @@ public class UserController {
             @Valid @RequestBody CompleteRequest request, HttpServletRequest httpRequest) {
         UUID currentSessionId = (UUID) httpRequest.getAttribute(JwtAuthFilter.SESSION_ID_ATTRIBUTE);
         return ApiResponse.ok(passwordChangeService.complete(currentUser.id(), request, currentSessionId));
+    }
+
+    /**
+     * The authenticated, OTP-gated Change Phone Number flow -- see PhoneChangeService's own doc
+     * comment for the full start -> verify-otp -> complete state machine these three back. Reached
+     * from VerifyPhone.tsx when Firebase can't send a code to the number currently on file.
+     */
+    @PostMapping("/phone-change/start")
+    public ApiResponse<com.finora.dto.PhoneChangeDtos.StartResponse> startPhoneChange(
+            @Valid @RequestBody com.finora.dto.PhoneChangeDtos.StartRequest request) {
+        return ApiResponse.ok(phoneChangeService.start(currentUser.id(), request));
+    }
+
+    @PostMapping("/phone-change/verify-otp")
+    public ApiResponse<com.finora.dto.PhoneChangeDtos.VerifyOtpResponse> verifyPhoneChangeOtp(
+            @Valid @RequestBody com.finora.dto.PhoneChangeDtos.VerifyOtpRequest request) {
+        return ApiResponse.ok(phoneChangeService.verifyOtp(currentUser.id(), request));
+    }
+
+    @PostMapping("/phone-change/complete")
+    public ApiResponse<com.finora.dto.PhoneChangeDtos.CompleteResponse> completePhoneChange(
+            @Valid @RequestBody com.finora.dto.PhoneChangeDtos.CompleteRequest request) {
+        return ApiResponse.ok(phoneChangeService.complete(currentUser.id(), request));
     }
 
     /**
