@@ -714,8 +714,28 @@ Recorded as R-7. The decision is the owner's; making it unconsciously is the fai
 
 ## 8a. Fino — AI Financial Intelligence Layer (V2 discovery / product proposal)
 
-**Status: parked. Post-v1.0. No implementation, no schema changes, no OpenAI integration, no new UI.**
-The September 19 GA target is independent of this item.
+> **⚠️ Conflicts with `docs/proposals/Finora_v1_Product_Decisions.md` (Approved, 2026-08-16) — flagged,
+> not reconciled.** That document puts AI (Financial Copilot, AI recommendations, forecasting, wealth
+> intelligence, AI goal/debt planning), a full pricing/billing/entitlements system (Free/Plus/Premium),
+> investment and debt-management modules, a referral system, and AI-first support **inside v1's public
+> launch scope**, positioned as a "full feature launch." None of this exists in code today — confirmed
+> by search: no subscription/billing/entitlement, copilot, investment, debt, or referral module
+> anywhere in `backend/src/main`. Taken literally, that document does not just un-park Fino — it adds
+> five to six unbuilt subsystems (billing/payments, entitlements, an AI assistant, investment tracking,
+> debt tracking, referrals) to the v1.0 release gate, which is the exact scope expansion §8's rule
+> exists to catch: *evaluate before absorbing, don't let it happen unconsciously.*
+>
+> **This plan is not resolving that conflict on its own** — that is a product decision, not an
+> engineering one. Two readings are possible and only the owner can pick: (a) the product-decisions
+> document describes the eventual full-platform vision and pricing ladder, with the actual v1.0 GA gate
+> unchanged (billing/AI/investment/debt ship incrementally after GA, same as this section already
+> assumed); or (b) the document is literally the v1.0 gate, in which case the critical path, the 81%
+> completion figure, and every date in §9 are all now wrong by a wide margin and need a full re-plan.
+> Recorded here rather than assumed either way — see the top-level report for 2026-08-16.
+
+**Status (pre-existing, pending the reconciliation above): parked. Post-v1.0. No implementation, no
+schema changes, no OpenAI integration, no new UI.** The September 19 GA target is independent of this
+item.
 
 Proposed direction, captured so the idea isn't lost while engineering capacity stays on GA:
 
