@@ -5,6 +5,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.finora.entity.User;
 import com.finora.repository.UserRepository;
 import jakarta.servlet.FilterChain;
+import jakarta.servlet.http.HttpServletMapping;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.AfterEach;
@@ -66,6 +67,13 @@ class PhoneVerificationFilterTest {
         when(request.getRequestURI()).thenReturn(path);
         when(request.getServletPath()).thenReturn(path);
         when(request.getContextPath()).thenReturn("");
+        // PathPatternRequestMatcher resolves the request path via
+        // ServletRequestPathUtils, which reads request.getHttpServletMapping() -- populated by
+        // the servlet container on every real request, but not by a bare Mockito mock. A mapping
+        // whose getMappingMatch() is anything other than PATH (the unstubbed default here, null,
+        // qualifies) matches production too: DispatcherServlet is registered at "/", not a path
+        // prefix, so MappingMatch.PATH is never what a real request in this app reports either.
+        when(request.getHttpServletMapping()).thenReturn(mock(HttpServletMapping.class));
         return request;
     }
 
