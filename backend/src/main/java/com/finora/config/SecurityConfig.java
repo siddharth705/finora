@@ -176,7 +176,7 @@ public class SecurityConfig {
                 .frameOptions(frame -> frame.deny())
                 .referrerPolicy(referrer -> referrer
                         .policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
-                .permissionsPolicy(permissions -> permissions
+                .permissionsPolicyHeader(permissions -> permissions
                         .policy("geolocation=(), microphone=(), camera=()"))
             );
 

@@ -13,7 +13,7 @@ import com.finora.repository.MerchantRepository;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.SpyBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
@@ -75,7 +75,7 @@ class MerchantLearningConfirmRaceIT extends AbstractIntegrationTest {
      * parks a caller exactly inside the check-then-act window. A {@code CyclicBarrier} on the two
      * {@code confirm()} calls would be racing the race — it would pass or fail on scheduler luck.
      */
-    @SpyBean private ConfidenceEngine confidenceEngine;
+    @MockitoSpyBean private ConfidenceEngine confidenceEngine;
 
     private record Fixture(User user, Merchant merchant, Category category) {}
 

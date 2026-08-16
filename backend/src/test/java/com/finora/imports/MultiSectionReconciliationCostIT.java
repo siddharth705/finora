@@ -23,7 +23,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.SpyBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 import jakarta.persistence.EntityManagerFactory;
 
@@ -93,8 +93,8 @@ class MultiSectionReconciliationCostIT extends AbstractIntegrationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private EntityManagerFactory entityManagerFactory;
 
-    @SpyBean private ReconciliationService reconciliationService;
-    @SpyBean private RecurringService recurringService;
+    @MockitoSpyBean private ReconciliationService reconciliationService;
+    @MockitoSpyBean private RecurringService recurringService;
     @Autowired private MerchantLearningEventRepository learningEventRepository;
     @Autowired private AuditLogRepository auditLogRepository;
     @Autowired private TransactionRepository transactionRepository;
