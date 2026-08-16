@@ -134,11 +134,19 @@ spring:
 
   # Phase C (Download My Data) is the first StreamingResponseBody endpoint in this codebase --
   # its write callback runs asynchronously, on a separate thread, after the controller method
-  # returns. Nothing previously bounded how long such a request may run; this does. 5 minutes is
-  # generous for reading every original statement file for an account out of R2/Postgres and
-  # zipping them, while still finite enough that a stuck request can't hold a container thread
-  # forever. Global, not endpoint-specific -- Spring Boot has no per-endpoint async timeout, and
-  # there's no second async endpoint yet for this to conflict with.
+  # returns. 5 minutes is generous for reading every original statement file for an account out
+  # of R2/Postgres and zipping them. Global, not endpoint-specific -- Spring Boot has no
+  # per-endpoint async timeout, and there's no second async endpoint yet for this to conflict with.
+  #
+  # Bug fix (review): the comment here used to claim this bounds "a stuck request... forever" --
+  # it doesn't. Spring's async timeout completes the AsyncContext and tells the CLIENT the
+  # request timed out; it does not interrupt the StreamingResponseBody callback's own thread,
+  # which keeps running (or hanging) on its own executor regardless. A genuinely stalled write
+  # (a hung object-storage read, a stalled client socket) is not actually bounded by this
+  # property -- only the client-visible symptom is. What this DOES do: an ordinarily slow-but-
+  # not-hung export still completing past 5 minutes gets cut off with a clean client-side
+  # timeout instead of hanging indefinitely from the CLIENT's perspective, which is a real,
+  # narrower benefit than the one the old comment claimed.
   mvc:
     async:
       request-timeout: 300000
@@ -312,12 +320,14 @@ app:
     reset-password:
       max: ${RATE_LIMIT_RESET_PASSWORD_MAX:10}
       window-seconds: ${RATE_LIMIT_RESET_PASSWORD_WINDOW_SECONDS:600}
-    # Phase C (Download My Data). Far stricter than every other bucket above -- 3/day, not
+    # Phase C (Download My Data). Far stricter than every other bucket above -- 5/day, not
     # N/minutes -- because a full export is the most expensive single call this app serves (every
     # in-scope table plus every original statement file, read and zipped) and is legitimately
-    # needed only rarely.
+    # needed only rarely. See RateLimitFilter's own comment on dataExportLimiter for why this is
+    # 5, not the original 3 -- this filter runs before the controller and cannot tell a wrong
+    # password from a right one, so the ceiling needs enough headroom for a mistyped retry.
     data-export:
-      max: ${RATE_LIMIT_DATA_EXPORT_MAX:3}
+      max: ${RATE_LIMIT_DATA_EXPORT_MAX:5}
       window-seconds: ${RATE_LIMIT_DATA_EXPORT_WINDOW_SECONDS:86400}
   import:
     # See ImportConcurrencyLimiter's own doc comment for the full reasoning. 6 is deliberately

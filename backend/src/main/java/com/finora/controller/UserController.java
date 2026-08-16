@@ -1,5 +1,6 @@
 package com.finora.controller;
 
+import com.finora.config.CorrelationIdFilter;
 import com.finora.dto.AccountLifecycleDtos.*;
 import com.finora.dto.ApiResponse;
 import com.finora.dto.MeAccessDto;
@@ -12,6 +13,7 @@ import com.finora.security.CurrentUser;
 import com.finora.security.JwtAuthFilter;
 import jakarta.servlet.http.HttpServletRequest;
 
+import java.io.IOException;
 import java.time.LocalDate;
 import java.util.Map;
 import java.util.UUID;
@@ -25,6 +27,7 @@ import com.finora.service.UserSettingsService;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -169,6 +172,14 @@ public class UserController {
      *
      * <p>{@code POST}, not {@code GET} -- matches deactivate()/deleteAccount()'s own convention
      * for a password-gated self-service action, and lets the password travel in the body.
+     *
+     * <p>Bug fix (review): a mid-stream failure used to be caught, logged and audited but then
+     * swallowed -- the lambda returned normally, and since HTTP 200 and the response headers were
+     * already committed by then, the client received what looked like a complete, successful
+     * download of a truncated/corrupt ZIP, with no error surfaced anywhere. {@code writeTo}'s own
+     * signature permits {@code IOException}, so the fix re-throws instead: Spring aborts the
+     * connection rather than completing it, which is the only way left, once bytes are already
+     * flowing, to make the client's request actually fail instead of silently succeeding.
      */
     @PostMapping("/data-export")
     public ResponseEntity<StreamingResponseBody> exportData(@Valid @RequestBody ExportDataRequest request) {
@@ -177,7 +188,14 @@ public class UserController {
         auditService.record(userId, "DATA_EXPORT_REQUESTED", "User", userId, Map.of());
 
         String fileName = "finora-data-export-" + LocalDate.now() + ".zip";
+        // Captured on this (synchronous) request thread, not read again inside the callback below:
+        // StreamingResponseBody runs its callback on a separate async-dispatch thread, and MDC is
+        // thread-local, so CorrelationIdFilter's own key is already gone (cleared in its finally,
+        // once this method returns) by the time that thread runs. Restoring it explicitly is what
+        // lets DATA_EXPORTED/DATA_EXPORT_FAILED carry the same requestId DATA_EXPORT_REQUESTED did.
+        String requestId = MDC.get(CorrelationIdFilter.MDC_KEY);
         StreamingResponseBody body = out -> {
+            if (requestId != null) MDC.put(CorrelationIdFilter.MDC_KEY, requestId);
             try {
                 dataExportService.writeZip(userId, bundle, out);
                 auditService.record(userId, "DATA_EXPORTED", "User", userId,
@@ -186,6 +204,9 @@ public class UserController {
                 log.error("Data export failed mid-stream for user {}: {}", userId, e.getMessage(), e);
                 auditService.record(userId, "DATA_EXPORT_FAILED", "User", userId,
                         Map.of("error", e.getClass().getSimpleName()));
+                throw (e instanceof IOException ioe) ? ioe : new IOException("Data export failed mid-stream", e);
+            } finally {
+                if (requestId != null) MDC.remove(CorrelationIdFilter.MDC_KEY);
             }
         };
 

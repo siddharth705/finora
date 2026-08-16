@@ -221,8 +221,6 @@ public class RuleService {
     }
 
     private RuleDto toDto(CategoryRule r) {
-        return new RuleDto(r.getId(), r.getScope().name(), r.getField().name(), r.getOperator().name(),
-                r.getComparisonValue(), r.getActionType().name(), r.getActionValue(), r.getPriority(), r.isEnabled(),
-                r.getMatchCount(), r.getLastMatchedAt());
+        return RuleDto.from(r);
     }
 }

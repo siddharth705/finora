@@ -9,13 +9,18 @@ import com.finora.dto.ImportDto.ImportSessionSummaryDto;
 import com.finora.dto.UserSettingsDto;
 import com.finora.dto.WorkspaceSettingsDto;
 import com.finora.entity.Account;
+import com.finora.entity.Category;
+import com.finora.entity.CategoryRule;
 import com.finora.entity.ImportSession;
-import com.finora.entity.StatementImport;
+import com.finora.entity.Merchant;
+import com.finora.entity.NetWorthSnapshot;
+import com.finora.entity.Transaction;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.goals.GoalService;
 import com.finora.budgets.BudgetService;
 import com.finora.imports.ImportSessionService;
+import com.finora.integrations.google.GmailConnection;
 import com.finora.integrations.google.GmailConnectionRepository;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
@@ -35,7 +40,10 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -65,11 +73,23 @@ class DataExportServiceTest {
     private UserRepository userRepository;
     private PasswordEncoder passwordEncoder;
     private AccountRepository accountRepository;
+    private TransactionRepository transactionRepository;
+    private BudgetService budgetService;
+    private GoalService goalService;
     private CategoryRepository categoryRepository;
+    private CategoryRuleRepository categoryRuleRepository;
+    private RelationshipService relationshipService;
+    private NetWorthSnapshotRepository netWorthSnapshotRepository;
+    private MerchantRepository merchantRepository;
+    private ImportJobRepository importJobRepository;
     private ImportSessionRepository importSessionRepository;
     private ImportSessionService importSessionService;
     private StatementImportRepository statementImportRepository;
     private StatementImportService statementImportService;
+    private GmailConnectionRepository gmailConnectionRepository;
+    private UserSettingsService userSettingsService;
+    private WorkspaceSettingsService workspaceSettingsService;
+    private BankManagementService bankManagementService;
     private AuditService auditService;
     private DataExportService service;
     private final UUID userId = UUID.randomUUID();
@@ -79,23 +99,23 @@ class DataExportServiceTest {
         userRepository = mock(UserRepository.class);
         passwordEncoder = mock(PasswordEncoder.class);
         accountRepository = mock(AccountRepository.class);
-        TransactionRepository transactionRepository = mock(TransactionRepository.class);
-        BudgetService budgetService = mock(BudgetService.class);
-        GoalService goalService = mock(GoalService.class);
+        transactionRepository = mock(TransactionRepository.class);
+        budgetService = mock(BudgetService.class);
+        goalService = mock(GoalService.class);
         categoryRepository = mock(CategoryRepository.class);
-        CategoryRuleRepository categoryRuleRepository = mock(CategoryRuleRepository.class);
-        RelationshipService relationshipService = mock(RelationshipService.class);
-        NetWorthSnapshotRepository netWorthSnapshotRepository = mock(NetWorthSnapshotRepository.class);
-        MerchantRepository merchantRepository = mock(MerchantRepository.class);
-        ImportJobRepository importJobRepository = mock(ImportJobRepository.class);
+        categoryRuleRepository = mock(CategoryRuleRepository.class);
+        relationshipService = mock(RelationshipService.class);
+        netWorthSnapshotRepository = mock(NetWorthSnapshotRepository.class);
+        merchantRepository = mock(MerchantRepository.class);
+        importJobRepository = mock(ImportJobRepository.class);
         importSessionRepository = mock(ImportSessionRepository.class);
         importSessionService = mock(ImportSessionService.class);
         statementImportRepository = mock(StatementImportRepository.class);
         statementImportService = mock(StatementImportService.class);
-        GmailConnectionRepository gmailConnectionRepository = mock(GmailConnectionRepository.class);
-        UserSettingsService userSettingsService = mock(UserSettingsService.class);
-        WorkspaceSettingsService workspaceSettingsService = mock(WorkspaceSettingsService.class);
-        BankManagementService bankManagementService = mock(BankManagementService.class);
+        gmailConnectionRepository = mock(GmailConnectionRepository.class);
+        userSettingsService = mock(UserSettingsService.class);
+        workspaceSettingsService = mock(WorkspaceSettingsService.class);
+        bankManagementService = mock(BankManagementService.class);
         auditService = mock(AuditService.class);
         ObjectMapper objectMapper = new ObjectMapper();
         objectMapper.registerModule(new JavaTimeModule());
@@ -104,6 +124,7 @@ class DataExportServiceTest {
         // so a test exercising one table never NPEs on every other one it doesn't care about.
         when(accountRepository.findByUserIdIncludingDeleted(any())).thenReturn(List.of());
         when(transactionRepository.findByUserId(any())).thenReturn(List.of());
+        when(transactionRepository.countByAccountForUser(any())).thenReturn(List.of());
         when(budgetService.listForUser(any())).thenReturn(List.of());
         when(goalService.listForUser(any())).thenReturn(List.of());
         when(categoryRepository.findByUserId(any())).thenReturn(List.of());
@@ -114,7 +135,7 @@ class DataExportServiceTest {
         when(importJobRepository.findByUserIdOrderByCreatedAtDesc(any(), any())).thenReturn(List.of());
         when(importSessionRepository.findByUserIdOrderByCreatedAtDesc(any())).thenReturn(List.of());
         when(statementImportService.duplicateCountsByStatementImport(any())).thenReturn(Map.of());
-        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(any())).thenReturn(List.of());
+        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(any())).thenReturn(List.of());
         when(gmailConnectionRepository.findByUserIdOrderByCreatedAtDesc(any())).thenReturn(List.of());
         when(userSettingsService.get(any()))
                 .thenReturn(new UserSettingsDto("jane@example.com", "Jane Doe", null, "light", "Asia/Kolkata",
@@ -139,6 +160,11 @@ class DataExportServiceTest {
         return u;
     }
 
+    /** Bug fix (review): used to verifyNoInteractions on only 4 of ~14 injected dependencies,
+     *  so a regression reordering buildBundle to run an expensive query before the password
+     *  check -- the exact thing this test's own name promises to catch -- would have passed
+     *  undetected as long as it didn't touch one of those specific four. Every repository/service
+     *  buildBundle can reach is checked now. */
     @Test
     void buildBundle_wrongPassword_rejectsBeforeTouchingAnyRepository() {
         when(passwordEncoder.matches(any(), any())).thenReturn(false);
@@ -148,7 +174,11 @@ class DataExportServiceTest {
                 .hasFieldOrPropertyWithValue("status", HttpStatus.BAD_REQUEST);
 
         verify(auditService).recordEvenOnRollback(eq(userId), eq("INVALID_CURRENT_PASSWORD"), eq("User"), eq(userId));
-        verifyNoInteractions(accountRepository, categoryRepository, importSessionRepository, statementImportRepository);
+        verifyNoInteractions(accountRepository, transactionRepository, budgetService, goalService, categoryRepository,
+                categoryRuleRepository, relationshipService, netWorthSnapshotRepository, merchantRepository,
+                importJobRepository, importSessionRepository, importSessionService, statementImportRepository,
+                statementImportService, gmailConnectionRepository, userSettingsService, workspaceSettingsService,
+                bankManagementService);
     }
 
     @Test
@@ -229,6 +259,35 @@ class DataExportServiceTest {
         assertThat(byId.get(multi.getId()).rowCount()).isEqualTo(5);
     }
 
+    /** Bug fix (review): buildBundle used to map every import session unguarded -- one session
+     *  whose staged JSON fails to deserialize threw ImportSessionService.readJson's uncaught
+     *  IllegalStateException straight out of buildBundle, failing the ENTIRE export over one
+     *  unrelated, unreadable session. Now caught, logged, and that one session dropped -- the
+     *  rest of the export (including the other, healthy session) still succeeds. */
+    @Test
+    void buildBundle_importSessions_oneUnreadableSessionIsDroppedNotFatal() {
+        ImportSession healthy = new ImportSession();
+        ReflectionTestUtils.setField(healthy, "id", UUID.randomUUID());
+        ReflectionTestUtils.setField(healthy, "sessionKind", ImportSession.KIND_SINGLE_ACCOUNT);
+        healthy.setFileName("healthy.csv");
+
+        ImportSession corrupted = new ImportSession();
+        ReflectionTestUtils.setField(corrupted, "id", UUID.randomUUID());
+        ReflectionTestUtils.setField(corrupted, "sessionKind", ImportSession.KIND_SINGLE_ACCOUNT);
+        corrupted.setFileName("corrupted.csv");
+
+        when(importSessionRepository.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(healthy, corrupted));
+        when(importSessionService.readStagedRows(healthy)).thenReturn(nRows(4));
+        when(importSessionService.readStagedRows(corrupted))
+                .thenThrow(new IllegalStateException("failed to deserialize stagedRowsJson"));
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password");
+
+        assertThat(bundle.importSessions()).hasSize(1);
+        assertThat(bundle.importSessions().get(0).id()).isEqualTo(healthy.getId());
+        assertThat(bundle.importSessions().get(0).rowCount()).isEqualTo(4);
+    }
+
     private static List<StagedRow> nRows(int n) {
         List<StagedRow> rows = new ArrayList<>();
         for (int i = 0; i < n; i++) rows.add(null);
@@ -239,35 +298,286 @@ class DataExportServiceTest {
         return new StagedAccountSection(null, nRows(rowCount), rowCount, 0, List.of());
     }
 
-    /** One statement's storage failure must not abort the whole export -- same "one bad row
-     *  doesn't sink the batch" discipline AccountPurgeSweepService already established for its
-     *  own per-statement loop. */
+    private static StatementImportRepository.StatementMetadata statementMetadata(UUID id, String fileName) {
+        StatementImportRepository.StatementMetadata m = mock(StatementImportRepository.StatementMetadata.class);
+        when(m.getId()).thenReturn(id);
+        when(m.getFileName()).thenReturn(fileName);
+        return m;
+    }
+
+    /** One statement's storage failure (a non-IOException, e.g. a bad object key) must not abort
+     *  the whole export -- same "one bad row doesn't sink the batch" discipline
+     *  AccountPurgeSweepService already established for its own per-statement loop. */
     @Test
     void writeZip_oneStatementFileReadFails_writesPlaceholderAndContinues() throws IOException {
-        StatementImport ok = new StatementImport();
-        ReflectionTestUtils.setField(ok, "id", UUID.randomUUID());
-        ok.setFileName("ok.csv");
-        StatementImport failing = new StatementImport();
-        ReflectionTestUtils.setField(failing, "id", UUID.randomUUID());
-        failing.setFileName("failing.pdf");
-
-        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of(failing, ok));
-        when(statementImportService.getFile(userId, ok.getId()))
+        UUID okId = UUID.randomUUID();
+        UUID failingId = UUID.randomUUID();
+        // Built as separate statements, not inline inside the when(...).thenReturn(...) call
+        // below -- each statementMetadata(...) call does its own when(...).thenReturn(...)
+        // internally, and Mockito's stubbing-in-progress state doesn't nest: calling when()
+        // again before an outer when(...) has received its thenReturn(...) throws
+        // UnfinishedStubbingException.
+        StatementImportRepository.StatementMetadata failingMeta = statementMetadata(failingId, "failing.pdf");
+        StatementImportRepository.StatementMetadata okMeta = statementMetadata(okId, "ok.csv");
+        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId))
+                .thenReturn(List.of(failingMeta, okMeta));
+        when(statementImportService.getFile(userId, okId))
                 .thenReturn(new StatementImportService.FileDownload("ok.csv", "hello".getBytes(), "text/csv"));
-        when(statementImportService.getFile(userId, failing.getId()))
+        // Not an IOException: a storage-layer failure (bad object key, missing row) is exactly
+        // the case this loop's placeholder path exists for -- see the sibling test below for the
+        // IOException (broken pipe) case, which must NOT get a placeholder.
+        when(statementImportService.getFile(userId, failingId))
                 .thenThrow(new RuntimeException("object storage unreachable"));
 
         DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password");
         Map<String, byte[]> entries = writeZipAndReadEntries(bundle);
 
-        String okEntry = "statements/" + ok.getId() + "-ok.csv";
-        String failingPlaceholder = "statements/" + failing.getId() + "-failing.pdf.MISSING.txt";
+        String okEntry = "statements/" + okId + "-ok.csv";
+        String failingPlaceholder = "statements/" + failingId + "-failing.pdf.MISSING.txt";
         assertThat(entries).containsKey(okEntry);
         assertThat(new String(entries.get(okEntry))).isEqualTo("hello");
         assertThat(entries).containsKey(failingPlaceholder);
         assertThat(new String(entries.get(failingPlaceholder))).contains("RuntimeException");
         // The failed file's own bad bytes never got a normal, unmarked entry.
-        assertThat(entries).doesNotContainKey("statements/" + failing.getId() + "-failing.pdf");
+        assertThat(entries).doesNotContainKey("statements/" + failingId + "-failing.pdf");
+    }
+
+    /** Bug fix (review): an IOException reading/writing one statement (a broken pipe / client
+     *  disconnect being the realistic case, but any IOException means the same thing -- the
+     *  STREAM is unusable) used to be caught by the same handler as an ordinary storage failure,
+     *  which then tried to write a ".MISSING.txt" placeholder onto that same broken stream --
+     *  throwing a second, uncaught exception, misattributing an ordinary client-side cancel as a
+     *  generic internal failure once it propagated out of writeZip. An IOException must propagate
+     *  directly instead, with no placeholder attempted and no later statement reached. */
+    @Test
+    void writeZip_ioExceptionMidStatement_propagatesWithoutAttemptingAPlaceholder() throws IOException {
+        UUID brokenId = UUID.randomUUID();
+        UUID neverReachedId = UUID.randomUUID();
+        StatementImportRepository.StatementMetadata brokenMeta = statementMetadata(brokenId, "broken.csv");
+        StatementImportRepository.StatementMetadata neverReachedMeta = statementMetadata(neverReachedId, "later.csv");
+        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId))
+                .thenReturn(List.of(brokenMeta, neverReachedMeta));
+        // getFile() itself can't be stubbed to throw IOException -- its real signature declares no
+        // checked exception, so Mockito rejects it (correctly: this method never throws one). The
+        // realistic source of a genuine IOException here is the ZIP output stream itself going bad
+        // mid-write (a broken pipe), so this test breaks the OutputStream instead, once real bytes
+        // start flowing for this statement. 50KB of random (incompressible) content guarantees the
+        // deflated output for this entry alone comfortably exceeds the failure threshold, regardless
+        // of exactly how the manifest/README/14 JSON entries ahead of it compress.
+        byte[] largeIncompressibleContent = new byte[50_000];
+        new java.util.Random(42).nextBytes(largeIncompressibleContent);
+        when(statementImportService.getFile(userId, brokenId))
+                .thenReturn(new StatementImportService.FileDownload("broken.csv", largeIncompressibleContent, "text/csv"));
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password");
+        OutputStream out = new FailAfterNBytesOutputStream(new ByteArrayOutputStream(), 4096);
+
+        assertThatThrownBy(() -> service.writeZip(userId, bundle, out)).isInstanceOf(IOException.class);
+        // The stream stayed broken -- the loop must not have gone on to attempt the next
+        // statement after the one that broke it.
+        verify(statementImportService, org.mockito.Mockito.never()).getFile(userId, neverReachedId);
+    }
+
+    /** Starts passing bytes through untouched, then throws on every write once a byte-count
+     *  threshold is crossed -- standing in for a client disconnecting partway through a download,
+     *  without depending on exactly which internal ZipOutputStream/Deflater call happens to be
+     *  in flight at that moment. */
+    private static final class FailAfterNBytesOutputStream extends java.io.OutputStream {
+        private final java.io.OutputStream delegate;
+        private final int failAfterBytes;
+        private int written = 0;
+
+        FailAfterNBytesOutputStream(java.io.OutputStream delegate, int failAfterBytes) {
+            this.delegate = delegate;
+            this.failAfterBytes = failAfterBytes;
+        }
+
+        @Override
+        public void write(int b) throws IOException {
+            if (written >= failAfterBytes) throw new IOException("simulated broken pipe");
+            written++;
+            delegate.write(b);
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) throws IOException {
+            if (written >= failAfterBytes) throw new IOException("simulated broken pipe");
+            written += len;
+            delegate.write(b, off, len);
+        }
+    }
+
+    /** Bug fix (review): toAccountExportEntry used to call AccountDto's 2-arg overload, which
+     *  hardcodes statementsCount/transactionsCount/lastImportedAt to 0/0/null regardless of the
+     *  account's real history -- see this test's own commit for the fix. Proves the real values
+     *  now come through, computed the same batched way AccountService.listForUser does it. */
+    @Test
+    void buildBundle_accounts_computesRealStatementAndTransactionStats() {
+        Account account = new Account();
+        UUID accountId = UUID.randomUUID();
+        ReflectionTestUtils.setField(account, "id", accountId);
+        account.setUserId(userId);
+        account.setAccountType(Account.Type.SAVINGS);
+        account.setName("Everyday Savings");
+        when(accountRepository.findByUserIdIncludingDeleted(userId)).thenReturn(List.of(account));
+
+        LocalDate period = LocalDate.of(2026, 7, 1);
+        StatementImportRepository.StatementMetadata statement = mock(StatementImportRepository.StatementMetadata.class);
+        when(statement.getId()).thenReturn(UUID.randomUUID());
+        when(statement.getAccountId()).thenReturn(accountId);
+        when(statement.getFileName()).thenReturn("july.csv");
+        when(statement.getImportedAt()).thenReturn(Instant.parse("2026-07-05T00:00:00Z"));
+        when(statement.getStatementPeriodStart()).thenReturn(period);
+        when(statement.getStatementPeriodEnd()).thenReturn(period.plusDays(30));
+        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of(statement));
+
+        TransactionRepository.AccountTransactionCount count = mock(TransactionRepository.AccountTransactionCount.class);
+        when(count.getAccountId()).thenReturn(accountId);
+        when(count.getCount()).thenReturn(42L);
+        when(transactionRepository.countByAccountForUser(userId)).thenReturn(List.of(count));
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password");
+
+        assertThat(bundle.accounts()).hasSize(1);
+        var dto = bundle.accounts().get(0).account();
+        assertThat(dto.statementsCount()).isEqualTo(1);
+        assertThat(dto.transactionsCount()).isEqualTo(42L);
+        assertThat(dto.lastImportedAt()).isEqualTo(Instant.parse("2026-07-05T00:00:00Z"));
+        assertThat(dto.lastStatementPeriodStart()).isEqualTo(period);
+    }
+
+    /** transactions.json's real transformation -- category id resolved to a name via a batched
+     *  lookup, not passed through untouched. */
+    @Test
+    void buildBundle_transactions_resolvesCategoryNameFromId() {
+        Category category = new Category();
+        UUID categoryId = UUID.randomUUID();
+        ReflectionTestUtils.setField(category, "id", categoryId);
+        category.setUserId(userId);
+        category.setName("Groceries");
+        when(categoryRepository.findByUserId(userId)).thenReturn(List.of(category));
+
+        Transaction categorized = new Transaction();
+        ReflectionTestUtils.setField(categorized, "id", UUID.randomUUID());
+        categorized.setUserId(userId);
+        categorized.setCategoryId(categoryId);
+        categorized.setTxnDate(LocalDate.of(2026, 7, 10));
+        categorized.setAmount(BigDecimal.valueOf(500));
+        categorized.setTxnType(Transaction.Type.EXPENSE);
+        categorized.setDescription("Big Bazaar");
+
+        Transaction uncategorized = new Transaction();
+        ReflectionTestUtils.setField(uncategorized, "id", UUID.randomUUID());
+        uncategorized.setUserId(userId);
+        uncategorized.setCategoryId(null);
+        uncategorized.setTxnDate(LocalDate.of(2026, 7, 11));
+        uncategorized.setAmount(BigDecimal.valueOf(100));
+        uncategorized.setTxnType(Transaction.Type.EXPENSE);
+        uncategorized.setDescription("Cash withdrawal");
+
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(categorized, uncategorized));
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password");
+
+        assertThat(bundle.transactions()).hasSize(2);
+        assertThat(bundle.transactions()).anySatisfy(t -> {
+            assertThat(t.description()).isEqualTo("Big Bazaar");
+            assertThat(t.categoryName()).isEqualTo("Groceries");
+        });
+        assertThat(bundle.transactions()).anySatisfy(t -> {
+            assertThat(t.description()).isEqualTo("Cash withdrawal");
+            assertThat(t.categoryName()).isEqualTo("Uncategorized");
+        });
+    }
+
+    /** net_worth_history.json's field mapping -- catches an argument-order mistake between
+     *  totalAssets/totalLiabilities/netWorth, which an empty-list-only test never could. */
+    @Test
+    void buildBundle_netWorthSnapshots_mapsAllFieldsCorrectly() {
+        NetWorthSnapshot snapshot = new NetWorthSnapshot();
+        ReflectionTestUtils.setField(snapshot, "id", UUID.randomUUID());
+        snapshot.setUserId(userId);
+        snapshot.setSnapshotDate(LocalDate.of(2026, 6, 30));
+        snapshot.setTotalAssets(BigDecimal.valueOf(500000));
+        snapshot.setTotalLiabilities(BigDecimal.valueOf(120000));
+        snapshot.setNetWorth(BigDecimal.valueOf(380000));
+        when(netWorthSnapshotRepository.findByUserIdOrderBySnapshotDateAsc(userId)).thenReturn(List.of(snapshot));
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password");
+
+        assertThat(bundle.netWorthSnapshots()).hasSize(1);
+        var dto = bundle.netWorthSnapshots().get(0);
+        assertThat(dto.totalAssets()).isEqualByComparingTo(BigDecimal.valueOf(500000));
+        assertThat(dto.totalLiabilities()).isEqualByComparingTo(BigDecimal.valueOf(120000));
+        assertThat(dto.netWorth()).isEqualByComparingTo(BigDecimal.valueOf(380000));
+    }
+
+    /** merchants.json's identity-only mapping -- the regression this plan's own Finding 2 exists
+     *  to catch: MerchantExportDto must never carry topCategory/topCategoryConfidence/distribution
+     *  (derived from the excluded merchant-learning tables). Structurally impossible today since
+     *  the DTO has no such fields, but this pins the identity fields it does carry actually map
+     *  correctly rather than just compiling. */
+    @Test
+    void buildBundle_merchants_mapsIdentityFieldsOnly() {
+        Merchant merchant = new Merchant();
+        ReflectionTestUtils.setField(merchant, "id", UUID.randomUUID());
+        merchant.setUserId(userId);
+        merchant.setCanonicalName("Amazon");
+        merchant.setLogoUrl("https://example.com/amazon.png");
+        merchant.setWebsite("https://amazon.in");
+        when(merchantRepository.findByUserId(userId)).thenReturn(List.of(merchant));
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password");
+
+        assertThat(bundle.merchants()).hasSize(1);
+        var dto = bundle.merchants().get(0);
+        assertThat(dto.canonicalName()).isEqualTo("Amazon");
+        assertThat(dto.website()).isEqualTo("https://amazon.in");
+        assertThat(dto.lifecycleStatus()).isEqualTo("APPROVED");
+    }
+
+    /** category_rules.json now goes through the shared RuleDto.from(CategoryRule) factory (also
+     *  used by RuleService) instead of a hand-duplicated mapping -- proves the shared path still
+     *  produces the right shape for export specifically. */
+    @Test
+    void buildBundle_categoryRules_mapsViaSharedRuleDtoFactory() {
+        CategoryRule rule = new CategoryRule();
+        ReflectionTestUtils.setField(rule, "id", UUID.randomUUID());
+        rule.setUserId(userId);
+        rule.setScope(CategoryRule.Scope.USER);
+        rule.setField(CategoryRule.Field.MERCHANT);
+        rule.setOperator(CategoryRule.Operator.CONTAINS);
+        rule.setComparisonValue("Amazon");
+        rule.setActionType(CategoryRule.ActionType.ASSIGN_CATEGORY);
+        when(categoryRuleRepository.findByUserId(userId)).thenReturn(List.of(rule));
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password");
+
+        assertThat(bundle.categoryRules()).hasSize(1);
+        var dto = bundle.categoryRules().get(0);
+        assertThat(dto.scope()).isEqualTo("USER");
+        assertThat(dto.field()).isEqualTo("MERCHANT");
+        assertThat(dto.comparisonValue()).isEqualTo("Amazon");
+    }
+
+    /** gmail_connection.json's scope-splitting logic -- grantedScopes is stored as one
+     *  space-separated string and must come back as a real list, not a single-element list
+     *  containing the whole string. */
+    @Test
+    void buildBundle_gmailConnections_splitsGrantedScopesIntoAList() {
+        GmailConnection connection = new GmailConnection();
+        connection.setUserId(userId);
+        connection.setGoogleEmail("jane@example.com");
+        connection.setGrantedScopes("https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/userinfo.email");
+        when(gmailConnectionRepository.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(connection));
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password");
+
+        assertThat(bundle.gmailConnections()).hasSize(1);
+        var dto = bundle.gmailConnections().get(0);
+        assertThat(dto.grantedScopes()).containsExactly(
+                "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/userinfo.email");
+        assertThat(dto.googleEmail()).isEqualTo("jane@example.com");
     }
 
     @Test

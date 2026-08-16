@@ -242,6 +242,7 @@ class RateLimitFilterTest {
                 "/api/v1/users/me/phone-change/verify-otp",
                 "/api/v1/users/me/phone-change/complete",
                 "/api/v1/users/me/data-export",
+                "/api/v1/users/me/account/deactivate",
         };
 
         for (String path : mustBeLimited) {
