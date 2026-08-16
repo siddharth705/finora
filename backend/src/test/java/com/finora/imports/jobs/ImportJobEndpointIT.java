@@ -117,6 +117,37 @@ class ImportJobEndpointIT extends AbstractIntegrationTest {
                 .isEqualTo("/api/v1/import/jobs/" + data.get("jobId").asText());
     }
 
+    /**
+     * Guards docs/architecture/data/statement-storage-migration.md §0.2's decision: this path
+     * writes through {@code StatementStorage} directly, never {@code StatementContentService} --
+     * the only place that compresses -- so the object it creates must be byte-for-byte what was
+     * uploaded, not gzipped. Checked two ways: the retrieved bytes equal the original exactly, and
+     * they do not even start with GZIP's magic number, so a future change that silently routed this
+     * path through compression without also updating {@link ImportJob#getCompressionType()} would
+     * fail here rather than surface later as {@code StatementContentService.read} trying to gunzip
+     * bytes whose row claims {@code NONE}.
+     */
+    @Test
+    void theStoredObjectIsUncompressed() {
+        User user = user();
+        ResponseEntity<String> accepted = restTemplate.exchange(
+                "/api/v1/import/jobs", HttpMethod.POST, upload(user, "statement.csv", CSV), String.class);
+        UUID jobId = UUID.fromString(read(accepted).get("data").get("jobId").asText());
+
+        ImportJob job = jobRepository.findById(jobId).orElseThrow();
+        assertThat(job.getCompressionType())
+                .isEqualTo(com.finora.imports.storage.CompressionType.NONE);
+
+        byte[] stored = storage.retrieve(
+                new com.finora.imports.storage.ContentAddress(job.getContentHash(), job.getObjectKey()));
+        byte[] uploaded = CSV.getBytes(StandardCharsets.UTF_8);
+
+        assertThat(stored).isEqualTo(uploaded);
+        assertThat(stored[0] & 0xFF).as("not GZIP's magic number").isNotEqualTo(0x1f);
+    }
+
+    @Autowired private com.finora.imports.storage.StatementStorage storage;
+
     @Test
     void theJobIsDurableBeforeTheResponseIsSent() {
         // The point of the whole design: if the process died right now, the work would still happen.

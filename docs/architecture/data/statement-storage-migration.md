@@ -85,14 +85,33 @@ This is not the same lifecycle bug §0's fix closed, and is not accidental:
 - **Why it is safe to leave uncompressed for now.** `ImportJob` rows are storage-cost only, not a
   correctness or lifecycle-timing hazard — the fix this review made was about WHEN bytes reach R2
   relative to user confirmation, and the async path's timing was never the problem.
-- **Follow-up, not done here.** Routing this path through compression too is a reasonable future
-  improvement — it would need either wiring `ImportJobService.accept` through
-  `StatementContentService` (which would also mean deciding whether an async-accepted upload gets
-  its own confirm-time re-compression, since accept() precedes staging/parsing for this path) or a
-  compressing variant of the raw `StatementStorage.store` call. Deliberately out of scope for this
-  review — this path is opt-in, disabled in every environment today, and expanding its behavior
-  was not what was asked for. Flagged here so it is a decision someone makes on purpose, not a gap
-  nobody wrote down.
+- **Why compressing it is not just unexplored, but in tension with BH-018 (verified 2026-08-16,
+  not merely assumed).** `StatementContentService.store` takes `byte[] content` — it hashes and
+  gzips the whole array in memory (`GzipCompression.compress` builds its output in a
+  `ByteArrayOutputStream`). `ImportJobService.accept` deliberately does NOT do that: its own class
+  doc ("BH-018's other half") explains that it switched from `file.getBytes()` to
+  `file.getInputStream()`/`getSize()` specifically so a burst of concurrent uploads costs
+  buffer-sized memory each, not file-sized, all the way up to the 10 MB cap. Wiring `accept()`
+  through `StatementContentService` as it exists today would undo that fix, not just add
+  compression alongside it. A compressing variant of the raw `StatementStorage.store` call (the
+  other option below) does not avoid this either — GZIP's deterministic-output trick
+  (`GzipCompression`, MTIME zeroed after the fact) and the pre-compression SHA-256 both currently
+  operate on a fully-resident array; a genuinely streaming version of both would be new,
+  currently-unbuilt infrastructure, not a rewire of what exists. (A streaming SHA-256 helper
+  already exists — `ContentAddress.copyAndAddress` — for exactly the reason `accept()` needs one;
+  no streaming-compatible GZIP helper does.)
+- **Follow-up, not done here.** Routing this path through compression too remains a reasonable
+  future improvement if a real need for it appears (this path is opt-in and disabled in every
+  environment today, so the tradeoff is storage cost only, never correctness) — but it would need
+  either accepting the BH-018 regression above, or building streaming-compatible hashing and
+  compression this path does not have today. Deliberately out of scope for this review, and not
+  undertaken speculatively while the path stays disabled everywhere — expanding its behavior was
+  not what was asked for, and neither is inventing infrastructure nothing yet needs. Flagged here
+  so it is a decision someone makes on purpose, not a gap nobody wrote down.
+  `ImportJobTest.compressionTypeIsAlwaysNone_regardlessOfJobState` and
+  `ImportJobEndpointIT.theStoredObjectIsUncompressed` guard the exemption itself, so a future
+  change that silently compresses this path (or drifts `getCompressionType()` from what is
+  actually written) fails a test rather than corrupting a read.
 
 ---
 
