@@ -927,6 +927,11 @@ public class ImportService {
         // failure throws before anything is persisted, so a row can never point at an object that
         // was never written.
         //
+        // This is also the FIRST time this file's bytes reach object storage at all -- staging
+        // (ImportSessionService.storeContent) deliberately keeps them in file_content, temporary
+        // database storage, until now. See that method's own doc comment for why: a session a user
+        // never confirms should never have cost an R2 write.
+        //
         // BH-025/BH-046: fileContent is set ONLY when store() came back empty (no provider
         // configured -- the row stays legacy, read from fileContent exactly as before this fix).
         // When storage IS configured, the object is the only copy; fileContent is left null
@@ -943,10 +948,22 @@ public class ImportService {
         // callers that duplicate bytes today -- confirmMultiSection() calls this once per account
         // section with the same file, and confirmReimport() calls it again with an
         // already-stored one. Both resolve to the same object instead of writing another copy.
-        java.util.Optional<com.finora.imports.storage.ContentAddress> address = statementContentService.store(fileContent);
-        if (address.isPresent()) {
-            statementImport.setContentHash(address.get().hash());
-            statementImport.setObjectKey(address.get().key());
+        //
+        // Storage review: statementContentService.store now compresses (GZIP) before the object
+        // ever reaches R2 -- see that class's own "Compression" doc section for why content_hash
+        // still identifies the ORIGINAL bytes regardless. originalSize/storedSize/compressionType
+        // are recorded purely as storage-savings metrics; nothing on the read path branches on the
+        // size fields, only on compressionType (StatementContentService.read).
+        var storedContent = statementContentService.store(fileContent,
+                com.finora.imports.StatementUpload.Format.valueOf(statementImport.getSourceFormat()).contentType());
+        if (storedContent.isPresent()) {
+            var stored = storedContent.get();
+            statementImport.setContentHash(stored.address().hash());
+            statementImport.setObjectKey(stored.address().key());
+            statementImport.setOriginalSize(stored.originalSize());
+            statementImport.setStoredSize(stored.storedSize());
+            statementImport.setCompressionType(stored.compressionType());
+            statementImport.setOriginalMimeType(stored.mimeType());
         } else {
             statementImport.setFileContent(fileContent);
         }

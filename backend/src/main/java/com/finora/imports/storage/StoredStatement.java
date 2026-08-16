@@ -9,11 +9,15 @@ package com.finora.imports.storage;
  *
  * <ul>
  *   <li><b>Addressed</b> — {@code contentHash}/{@code objectKey} set, bytes in object storage only.
- *       Every row written while a storage provider is configured, as of V76 (BH-025/BH-046):
  *       {@code file_content} is deliberately left {@code NULL} rather than duplicated into
- *       {@code BYTEA}.</li>
- *   <li><b>Legacy</b> — address null, bytes in {@code fileContent}. Every row written while no
- *       provider is configured — pre-V54 rows unconditionally, and any row since then created with
+ *       {@code BYTEA} (V76, BH-025/BH-046). As of the compression/lifecycle change described on
+ *       {@code ImportService.persistSection}, only a {@code StatementImport} row — created at
+ *       CONFIRM time — ever reaches this state; a session never does (see next).</li>
+ *   <li><b>Legacy</b> — address null, bytes in {@code fileContent}. Every {@code ImportSession}
+ *       row, always: staging keeps a file in temporary (database) storage until the user confirms,
+ *       deliberately never writing to object storage before then. Also every
+ *       {@code StatementImport} row written while no storage provider is configured — pre-V54 rows
+ *       unconditionally, and any row since then created with
  *       {@code app.statement-storage.provider} unset.</li>
  * </ul>
  *
@@ -32,4 +36,12 @@ public interface StoredStatement {
 
     /** The bytes, when still held in the database — null for an addressed row (see class doc). */
     byte[] getFileContent();
+
+    /**
+     * How the addressed object's bytes are encoded -- {@link StatementContentService#read} decodes
+     * by this, not by inspecting the bytes. Meaningless for a legacy row ({@link #getObjectKey()}
+     * null); implementations that never address an object at all may return
+     * {@link CompressionType#NONE} unconditionally rather than persisting a column nothing reads.
+     */
+    CompressionType getCompressionType();
 }
