@@ -714,28 +714,20 @@ Recorded as R-7. The decision is the owner's; making it unconsciously is the fai
 
 ## 8a. Fino — AI Financial Intelligence Layer (V2 discovery / product proposal)
 
-> **⚠️ Conflicts with `docs/proposals/Finora_v1_Product_Decisions.md` (Approved, 2026-08-16) — flagged,
-> not reconciled.** That document puts AI (Financial Copilot, AI recommendations, forecasting, wealth
-> intelligence, AI goal/debt planning), a full pricing/billing/entitlements system (Free/Plus/Premium),
-> investment and debt-management modules, a referral system, and AI-first support **inside v1's public
-> launch scope**, positioned as a "full feature launch." None of this exists in code today — confirmed
-> by search: no subscription/billing/entitlement, copilot, investment, debt, or referral module
-> anywhere in `backend/src/main`. Taken literally, that document does not just un-park Fino — it adds
-> five to six unbuilt subsystems (billing/payments, entitlements, an AI assistant, investment tracking,
-> debt tracking, referrals) to the v1.0 release gate, which is the exact scope expansion §8's rule
-> exists to catch: *evaluate before absorbing, don't let it happen unconsciously.*
->
-> **This plan is not resolving that conflict on its own** — that is a product decision, not an
-> engineering one. Two readings are possible and only the owner can pick: (a) the product-decisions
-> document describes the eventual full-platform vision and pricing ladder, with the actual v1.0 GA gate
-> unchanged (billing/AI/investment/debt ship incrementally after GA, same as this section already
-> assumed); or (b) the document is literally the v1.0 gate, in which case the critical path, the 81%
-> completion figure, and every date in §9 are all now wrong by a wide margin and need a full re-plan.
-> Recorded here rather than assumed either way — see the top-level report for 2026-08-16.
+> **Resolved 2026-08-16 — Option A.** `docs/proposals/Finora_v1_Product_Decisions.md` (Approved) is the
+> product vision and monetization direction, **not a redefinition of the GA engineering gate.** The
+> current v1.0 launch scope stands: core finance, transactions, import, Gmail integration, dashboard,
+> budgeting, goals, net worth, and the existing/basic investments and debt tracking already in the
+> plan. **AI Copilot, AI recommendations, forecasting, wealth intelligence, the referral system, and
+> full subscription/entitlement infrastructure (Plus/Premium billing) phase in after GA**, unless a
+> specific piece is explicitly promoted into the launch plan by name later — not by inference from the
+> product-decisions document. This does not change §9's dates, §2's weighting, or the 81% completion
+> figure; the conflict flagged in this section on 2026-08-16 is closed by this decision, not deferred
+> further. If Plus/Premium billing infrastructure is later pulled forward into v1.0, that pull-forward
+> needs its own explicit scope-impact evaluation per §8, the same as any other new-feature request.
 
-**Status (pre-existing, pending the reconciliation above): parked. Post-v1.0. No implementation, no
-schema changes, no OpenAI integration, no new UI.** The September 19 GA target is independent of this
-item.
+**Status: parked. Post-v1.0. No implementation, no schema changes, no OpenAI integration, no new UI.**
+The launch-gate target is independent of this item.
 
 Proposed direction, captured so the idea isn't lost while engineering capacity stays on GA:
 
@@ -1055,6 +1047,7 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-16 | **Scope conflict resolved — Option A.** `docs/proposals/Finora_v1_Product_Decisions.md` is the product vision/monetization direction, not the GA engineering gate. v1.0 launch scope is unchanged from the existing plan (core finance, transactions, import, Gmail, dashboard, budgeting, goals, net worth, existing/basic investments and debt tracking). AI Copilot, AI recommendations, forecasting, wealth intelligence, the referral system, and Plus/Premium billing/entitlements phase in post-GA, unless individually promoted into the launch plan by explicit future decision. §8a updated to record the resolution. No date, weighting, or completion-% change — this closes an ambiguity, it does not change scope | Owner's explicit decision, choosing Option A over a full-launch-scope reading (Option B) that would have required a full re-plan. Recorded per §12/§11 practice: a scope decision this consequential goes in the changelog the moment it's made, not folded silently into the next re-baseline |
 | 2026-08-16 | **PR #143 merged (phone-verification/account-recovery redesign): real Firebase OTP-send error codes now reach Sentry instead of one generic message; a reCAPTCHA-reuse-on-retry bug fixed; self-service phone number change (backend session flow mirroring `PasswordChangeService`, frontend UI) added as the actual escape hatch for the original bug report; resend cooldown, Logout escape hatch, and trust messaging added to `VerifyPhone.tsx`; a "Continue to login" CTA added to `Register.tsx`'s duplicate-account (409) error; "Welcome back" messaging added for a returning-but-unverified user landing on `/verify-phone` from `Login.tsx`. All 7 CI checks green (Backend, User frontend, Admin portal, Mobile, E2E smoke, both Cloudflare deploys). **D-21 recorded the same session**: owner pitched "First Run Experience" as the next milestone: explicit override to start now (not held for post-GA), scoped to Step 1 only -- see §11 | Closes the loop the phone-verification bug report opened, and records the next scope decision in the same session it was made, per §12's own rule |
 | 2026-08-16 | **D-7's one unblocked gap closed: `plans.ts` now shows Free/Plus/Premium, merged as PR #140.** The landing page described Free/Premium/Family/Future for four days after Product's own 08-12 taxonomy decision, caught during the same day's D-7 scoping pass. Plus/Premium's feature copy follows the entitlement mapping the same decision already locked (billing proposal §3.2), not invented; prices stay unset since pricing itself is still open. Comparison table expanded 2→3 columns for consistency with the now-3-card pricing section. Added a taxonomy-guard test so this can't drift silently again. Frontend 453/453, tsc clean, browser-verified live (all three cards, the "Growing with you" ladder, and the expanded comparison table render correctly, zero console errors). All 8 PR checks green (one E2E flake, cleared on retry) | Closing the loop the same session's own D-7 scoping pass opened -- the one piece of that pass that needed no owner decision, shipped the same day it was found |
 | 2026-08-16 | **D-7 (pricing/billing) scoped, engineering side only. `billing-subscription-entitlements-proposal.md` committed** — it existed, thorough and complete, since 2026-08-12 but was never committed, the same load-bearing-uncommitted-file risk this plan has now flagged three times. Re-verified its core claims against current code rather than trusting the 4-day-old doc forward: backend genuinely greenfield confirmed (no Plan/Subscription/Entitlement/Payment/Referral/Wallet entity, no gateway dependency anywhere, no tier field on `User`), `FeatureFlag`'s fail-open default confirmed (the exact footgun the proposal's Correction #3 warns entitlements must not inherit). **One concrete, unblocked gap found**: `plans.ts` still shows Free/Premium/Family/Future, not Product's own already-approved Free/Plus/Premium taxonomy (08-12 decision) -- small, needs no further business input, just hasn't been done yet. Everything else genuinely needs the owner's own decisions (§10 of the proposal: price points, gateway, upgrade timing, refund policy, trial terms) before more engineering can proceed. See §11's D-7 row for the full breakdown | Same discipline as every other scoping pass this session -- verify a standing claim against current code before building on it, rather than trusting a doc's own age-appropriate but now-stale-by-default framing |
