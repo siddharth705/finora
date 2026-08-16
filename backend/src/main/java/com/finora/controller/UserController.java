@@ -197,14 +197,29 @@ public class UserController {
         StreamingResponseBody body = out -> {
             if (requestId != null) MDC.put(CorrelationIdFilter.MDC_KEY, requestId);
             try {
-                dataExportService.writeZip(userId, bundle, out);
-                auditService.record(userId, "DATA_EXPORTED", "User", userId,
-                        Map.of("statementCount", bundle.statementSummaries().size()));
-            } catch (Exception e) {
-                log.error("Data export failed mid-stream for user {}: {}", userId, e.getMessage(), e);
-                auditService.record(userId, "DATA_EXPORT_FAILED", "User", userId,
-                        Map.of("error", e.getClass().getSimpleName()));
-                throw (e instanceof IOException ioe) ? ioe : new IOException("Data export failed mid-stream", e);
+                try {
+                    dataExportService.writeZip(userId, bundle, out);
+                } catch (Exception e) {
+                    log.error("Data export failed mid-stream for user {}: {}", userId, e.getMessage(), e);
+                    auditService.record(userId, "DATA_EXPORT_FAILED", "User", userId,
+                            Map.of("error", e.getClass().getSimpleName()));
+                    throw (e instanceof IOException ioe) ? ioe : new IOException("Data export failed mid-stream", e);
+                }
+                // Bug fix (self-review): this used to sit inside the try block above, so a
+                // transient failure recording success (e.g. a momentary DB blip) after writeZip
+                // had ALREADY fully delivered the ZIP was caught by the SAME handler as a real
+                // mid-stream failure -- misattributing a successful export as DATA_EXPORT_FAILED
+                // in the user's own audit trail, then attempting to throw an IOException to
+                // "abort" a connection that had already completed successfully. Every byte is on
+                // the wire by this point; there is nothing left to abort, so a failure here is
+                // logged, not misrecorded as a failure and not rethrown.
+                try {
+                    auditService.record(userId, "DATA_EXPORTED", "User", userId,
+                            Map.of("statementCount", bundle.statementSummaries().size()));
+                } catch (Exception e) {
+                    log.warn("Data export for user {} succeeded but recording the DATA_EXPORTED audit event failed: {}",
+                            userId, e.getMessage(), e);
+                }
             } finally {
                 if (requestId != null) MDC.remove(CorrelationIdFilter.MDC_KEY);
             }

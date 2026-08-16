@@ -19,7 +19,6 @@ import com.finora.dto.UserSettingsDto;
 import com.finora.dto.WorkspaceSettingsDto;
 import com.finora.entity.Account;
 import com.finora.entity.Category;
-import com.finora.entity.CategoryRule;
 import com.finora.entity.ImportSession;
 import com.finora.entity.StatementImport;
 import com.finora.entity.User;
@@ -198,7 +197,11 @@ public class DataExportService {
                 .map(a -> toAccountExportEntry(a, latestImportByAccount, statementsCountByAccount, transactionsCountByAccount))
                 .toList();
 
-        Map<UUID, String> categoryNames = categoryRepository.findByUserId(userId).stream()
+        // Fetched once and reused for both categoryNames (transactions.json's category label) and
+        // categories.json itself -- this used to query categoryRepository.findByUserId(userId)
+        // twice, a few lines apart, for the same rows.
+        List<Category> userCategories = categoryRepository.findByUserId(userId);
+        Map<UUID, String> categoryNames = userCategories.stream()
                 .collect(Collectors.toMap(Category::getId, Category::getName));
         List<TransactionDto> transactions = transactionRepository.findByUserId(userId).stream()
                 .map(t -> TransactionDto.from(t, categoryNames.getOrDefault(t.getCategoryId(), "Uncategorized")))
@@ -207,11 +210,11 @@ public class DataExportService {
         List<BudgetDto> budgets = budgetService.listForUser(userId);
         List<GoalDto> goals = goalService.listForUser(userId);
 
-        List<CategoryDto> categories = categoryRepository.findByUserId(userId).stream()
+        List<CategoryDto> categories = userCategories.stream()
                 .map(c -> new CategoryDto(c.getId(), c.getName(), c.isSystem()))
                 .toList();
         List<RuleDto> categoryRules = categoryRuleRepository.findByUserId(userId).stream()
-                .map(this::toRuleDto)
+                .map(RuleDto::from)
                 .toList();
 
         List<RelationshipDto> relationships = relationshipService.listForUser(userId);
@@ -356,10 +359,6 @@ public class DataExportService {
         ref.setStatementPeriodStart(m.getStatementPeriodStart());
         ref.setStatementPeriodEnd(m.getStatementPeriodEnd());
         return ref;
-    }
-
-    private RuleDto toRuleDto(CategoryRule r) {
-        return RuleDto.from(r);
     }
 
     /** Branches on session kind -- a MULTI_ACCOUNT session's row count has to come from {@code
