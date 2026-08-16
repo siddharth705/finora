@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
 import { X, Eye, EyeOff, CheckCircle2, Circle, ChevronDown, ChevronUp } from 'lucide-react';
 import { passwordChangeApi } from '../api/endpoints';
-import { sendPhoneVerificationCode, confirmPhoneVerificationCode, resetPhoneVerification } from '../lib/phoneAuth';
+import {
+  sendPhoneVerificationCode,
+  confirmPhoneVerificationCode,
+  resetPhoneVerification,
+  friendlySendError,
+} from '../lib/phoneAuth';
+import { reportHandledError } from '../lib/monitoring';
 import type { ConfirmationResult } from 'firebase/auth';
 
 const RECAPTCHA_CONTAINER_ID = 'change-password-recaptcha';
@@ -133,8 +139,13 @@ export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => voi
       // Logged, not just displayed -- a Firebase Auth error (e.g. sendPhoneVerificationCode
       // throwing auth/too-many-requests, auth/invalid-app-credential) has no response.data.message
       // and previously vanished into the generic fallback text with zero trace anywhere, making
-      // this exact failure mode undiagnosable from the browser alone.
+      // this exact failure mode undiagnosable from the browser alone. A backend rejection (e.g.
+      // wrong current password) already carries its own message via e.response and needs no
+      // Firebase-specific logging.
       console.error('ChangePasswordModal: submitCurrentPassword failed', e);
+      if (!e.response) {
+        reportHandledError(e, 'change-password-send-otp');
+      }
       // Bug fix: getRecaptchaVerifier() caches one RecaptchaVerifier instance at module scope and
       // previously only cleared it when the modal unmounted -- so retrying "Send code" in place
       // after ANY failure (wrong password, a network blip, anything) reused an
@@ -145,7 +156,7 @@ export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => voi
       // from passwordChangeApi.start()) -- resetPhoneVerification() is a no-op on an
       // already-null/unused verifier -- so it's safe to call unconditionally on any failure here.
       resetPhoneVerification();
-      setError(e.response?.data?.message ?? 'Could not start the password change. Please try again.');
+      setError(e.response?.data?.message ?? friendlySendError(e));
     } finally {
       setSubmitting(false);
     }

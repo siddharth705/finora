@@ -73,6 +73,12 @@ export default function Register() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set only on a 409 from register() -- the ONLY thing that status can mean here is that the
+  // email or phone already belongs to an account (see AuthService.createUserRecord's two CONFLICT
+  // throws), so there's no need to parse which field it was out of the message text: either way
+  // the right next step is the same, a direct path to sign in instead of leaving the user to
+  // notice that themselves and navigate there by hand.
+  const [showContinueLogin, setShowContinueLogin] = useState(false);
   const [loading, setLoading] = useState(false);
   // Only start showing field-level errors once the user has actually left a field -- otherwise
   // every field flashes red the instant the empty form mounts, which reads as broken rather
@@ -97,6 +103,7 @@ export default function Register() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    setShowContinueLogin(false);
     setTouched({ fullName: true, email: true, phoneNumber: true, password: true, confirmPassword: true });
 
     if (!fullNameValid) { setError('Enter your full name using letters, spaces, hyphens, or apostrophes only.'); return; }
@@ -119,6 +126,7 @@ export default function Register() {
       void navigate(phoneVerified ? '/app' : '/verify-phone');
     } catch (err: any) {
       setError(err.response?.data?.message ?? 'Registration failed.');
+      setShowContinueLogin(err.response?.status === 409);
     } finally {
       setLoading(false);
     }
@@ -191,7 +199,20 @@ export default function Register() {
           <h2 className="text-2xl font-bold text-ink mb-1">Create your account</h2>
           <p className="text-sm text-muted mb-6">Start your journey towards financial clarity</p>
 
-          {error && <p className="text-danger text-sm mb-4">{error}</p>}
+          {error && (
+            <div className="mb-4">
+              <p className="text-danger text-sm mb-1.5">{error}</p>
+              {showContinueLogin && (
+                <Link
+                  to="/login"
+                  state={{ message: 'Welcome back — sign in with your existing account below.' }}
+                  className="text-xs text-primary font-medium underline"
+                >
+                  Continue to login
+                </Link>
+              )}
+            </div>
+          )}
 
           <label htmlFor="register-fullname" className="block text-xs font-medium text-muted mb-1">Full name</label>
           <div className="relative mb-1">
