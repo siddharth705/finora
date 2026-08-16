@@ -254,6 +254,29 @@ class ImportJobEndpointIT extends AbstractIntegrationTest {
     }
 
     /**
+     * BH-008. {@code limit=0} used to reach {@code PageRequest.of(0, 0)}, which Spring Data
+     * rejects with {@code IllegalArgumentException} -- unhandled, so a routine bad query
+     * parameter 500'd rather than being clamped like every other paginated endpoint. Fixed via
+     * {@code PageBounds.safeSize} in {@code ImportJobService.recent}, backstopped by
+     * {@code GlobalExceptionHandler}'s class-wide {@code IllegalArgumentException} handler for
+     * whatever parameter nobody thought to clamp next.
+     */
+    @Test
+    void recentWithLimitZeroIsClampedNotRejected() {
+        User mine = user();
+        restTemplate.exchange("/api/v1/import/jobs", HttpMethod.POST,
+                upload(mine, "mine.csv", CSV), String.class);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/import/jobs?limit=0", HttpMethod.GET, new HttpEntity<>(bearerFor(mine)), String.class);
+
+        assertThat(response.getStatusCode())
+                .as("a bad limit must be clamped, not surfaced as a server fault")
+                .isEqualTo(HttpStatus.OK);
+        assertThat(read(response).get("data")).hasSize(1);
+    }
+
+    /**
      * The handoff the whole progress endpoint exists to enable.
      *
      * <p>The worker used to call {@code parseAndStageAnyFormat}, which persists nothing, and then
