@@ -348,7 +348,11 @@ preference for a different pattern discovered mid-implementation is not sufficie
 
 **Safety gate — confirm all four before starting:**
 - [x] C-8 Track B closed — closed 2026-08-11 (`ade05ca`), confirmed still live 2026-08-16 (`project-plan-v1.0.md` §4a). Narrowly Track B specifically, not the whole C-8 evidence-model effort — Track A/C-8.3/R2 remain open but were never part of this gate item
-- [ ] All 56 bug-hunt findings closed
+- [x] All 56 bug-hunt findings closed — confirmed 2026-08-16 (`project-plan-v1.0.md` §4/§12): BH-044
+  built and re-verified (PR #121), BH-045 remains an owner-accepted decision not an open defect.
+  **Caveat, not a reason to uncheck this specific item but worth knowing:** two real findings outside
+  the original 56 (R-19, a Bank-entity audit-lookup gap) surfaced during re-verification, neither
+  ticketed nor decided yet — see the plan for detail before treating the backlog as fully empty
 - [x] Backup/recovery validated — closed 2026-08-16, owner-confirmed (`project-plan-v1.0.md` R-4)
 - [ ] Sentry + production monitoring ready
 
