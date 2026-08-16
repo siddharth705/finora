@@ -92,13 +92,23 @@ class MerchantNormalizationEngineTest {
                     String alias = inv.getArgument(1);
                     return aliases.stream().filter(a -> alias.equals(a.getNormalizedAlias())).findFirst();
                 });
-        // saveAndFlush, not save: addAlias forces the unique-constraint check to happen where it
-        // can be caught, rather than at commit -- see its own doc comment for the concurrent-import
-        // race that made a duplicate alias roll back an entire import.
-        when(merchantAliasRepository.saveAndFlush(any(MerchantAlias.class))).thenAnswer(inv -> {
-            MerchantAlias a = inv.getArgument(0);
+        // insertIfAbsent, not save/saveAndFlush: addAlias is now an atomic INSERT ... ON CONFLICT
+        // DO NOTHING -- see its own doc comment for the poisoned-transaction race that a
+        // saveAndFlush()+catch(DataIntegrityViolationException) recovery path could not survive.
+        // A mock can't reproduce a real unique-constraint collision, so this fake just mirrors the
+        // same idempotency the real query gives: 1 (inserted) the first time, 0 (no-op) after.
+        when(merchantAliasRepository.insertIfAbsent(any(), any(), anyString())).thenAnswer(inv -> {
+            UUID merchantId = inv.getArgument(0);
+            UUID aliasUserId = inv.getArgument(1);
+            String normalizedAlias = inv.getArgument(2);
+            boolean alreadyExists = aliases.stream().anyMatch(a -> normalizedAlias.equals(a.getNormalizedAlias()));
+            if (alreadyExists) return 0;
+            MerchantAlias a = new MerchantAlias();
+            a.setMerchantId(merchantId);
+            a.setUserId(aliasUserId);
+            a.setNormalizedAlias(normalizedAlias);
             aliases.add(a);
-            return a;
+            return 1;
         });
 
         engine = new MerchantNormalizationEngine(merchantRepository, merchantAliasRepository);

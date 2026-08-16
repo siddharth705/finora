@@ -1,6 +1,5 @@
 package com.finora.service;
 
-import com.finora.entity.NetWorthSnapshot;
 import com.finora.entity.User;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.NetWorthSnapshotRepository;
@@ -26,6 +25,15 @@ import static org.mockito.Mockito.*;
  * meaningfully east or west of wherever the server happens to run could get the wrong calendar
  * date stamped on a snapshot they clicked "save" on today, from their own point of view. These
  * tests prove the fix actually consults the user's timezone rather than silently ignoring it.
+ *
+ * <p>Bug fix, second: saveSnapshotForToday() used to be findByUserIdAndSnapshotDate().orElseGet(new)
+ * then save(), guarded by a catch(DataIntegrityViolationException) that re-found and re-saved on a
+ * lost race. That shape -- write, catch, re-query inside the same call -- is what turned out to
+ * poison an ambient transaction in MerchantNormalizationEngine.addAlias; this method only escaped it
+ * by accident (no @Transactional anywhere on this call path). It is now
+ * NetWorthSnapshotRepository.upsertForToday, an atomic INSERT ... ON CONFLICT DO UPDATE, so there is
+ * no race left to simulate here -- see NetWorthSnapshotUpsertIT for real-Postgres coverage of the
+ * atomic behaviour itself (correctness of ON CONFLICT DO UPDATE isn't something a mock can prove).
  */
 class NetWorthServiceTest {
 
@@ -42,40 +50,21 @@ class NetWorthServiceTest {
         service = new NetWorthService(accountRepository, snapshotRepository, userRepository);
 
         when(accountRepository.findByUserId(any())).thenReturn(List.of());
-        when(snapshotRepository.findByUserIdAndSnapshotDate(any(), any())).thenReturn(Optional.empty());
-        when(snapshotRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
     }
 
     @Test
-    void saveSnapshotForToday_recoversGracefully_whenAConcurrentRequestWinsTheInsertRace() {
-        // Bug fix: findByUserIdAndSnapshotDate().orElseGet(new) then save() is a genuine
-        // check-then-act race -- two concurrent calls for the same user+day could both see no
-        // existing row and both try to INSERT, with net_worth_snapshots(user_id, snapshot_date)'s
-        // UNIQUE constraint (V1 migration) letting exactly one through. This simulates being the
-        // loser of that race and proves it's handled as the normal "overwrite today's snapshot"
-        // path, not an unhandled 500.
+    void saveSnapshotForToday_writesThroughTheAtomicUpsert_withNoPriorReadOfTheExistingRow() {
+        // The property that replaces the old race test: there is no more find-then-save for a
+        // concurrent caller to race against. A read here would be exactly the check-then-act this
+        // method used to have, reintroduced.
         UUID userId = UUID.randomUUID();
         when(userRepository.findById(userId)).thenReturn(Optional.empty());
 
-        NetWorthSnapshot winnersRow = new NetWorthSnapshot();
-        winnersRow.setUserId(userId);
-        winnersRow.setSnapshotDate(LocalDate.now(ZoneId.of("Asia/Kolkata")));
-
-        // First lookup (before attempting the insert): nothing yet, same as the normal path.
-        // Second lookup (inside the catch, after losing the race): the concurrent winner's row.
-        when(snapshotRepository.findByUserIdAndSnapshotDate(any(), any()))
-                .thenReturn(Optional.empty())
-                .thenReturn(Optional.of(winnersRow));
-        when(snapshotRepository.save(any()))
-                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("duplicate key"))
-                .thenAnswer(inv -> inv.getArgument(0));
-
         service.saveSnapshotForToday(userId);
 
-        // The retry updated (and saved) the winner's actual row rather than the throwaway one
-        // that failed to insert, and did so exactly once more (not looping/retrying endlessly).
-        verify(snapshotRepository, times(2)).save(any());
-        assertThat(winnersRow.getTotalAssets()).isNotNull();
+        verify(snapshotRepository, never()).findByUserIdAndSnapshotDate(any(), any());
+        verify(snapshotRepository, never()).save(any());
+        verify(snapshotRepository).upsertForToday(eq(userId), any(), any(), any(), any());
     }
 
     @Test
@@ -91,9 +80,9 @@ class NetWorthServiceTest {
 
         service.saveSnapshotForToday(userId);
 
-        ArgumentCaptor<NetWorthSnapshot> captor = ArgumentCaptor.forClass(NetWorthSnapshot.class);
-        verify(snapshotRepository).save(captor.capture());
-        assertThat(captor.getValue().getSnapshotDate()).isEqualTo(LocalDate.now(ZoneId.of("Pacific/Kiritimati")));
+        ArgumentCaptor<LocalDate> dateCaptor = ArgumentCaptor.forClass(LocalDate.class);
+        verify(snapshotRepository).upsertForToday(eq(userId), dateCaptor.capture(), any(), any(), any());
+        assertThat(dateCaptor.getValue()).isEqualTo(LocalDate.now(ZoneId.of("Pacific/Kiritimati")));
         verify(userRepository).findById(userId);
     }
 
@@ -104,9 +93,9 @@ class NetWorthServiceTest {
 
         service.saveSnapshotForToday(userId);
 
-        ArgumentCaptor<NetWorthSnapshot> captor = ArgumentCaptor.forClass(NetWorthSnapshot.class);
-        verify(snapshotRepository).save(captor.capture());
-        assertThat(captor.getValue().getSnapshotDate()).isEqualTo(LocalDate.now(ZoneId.of("Asia/Kolkata")));
+        ArgumentCaptor<LocalDate> dateCaptor = ArgumentCaptor.forClass(LocalDate.class);
+        verify(snapshotRepository).upsertForToday(eq(userId), dateCaptor.capture(), any(), any(), any());
+        assertThat(dateCaptor.getValue()).isEqualTo(LocalDate.now(ZoneId.of("Asia/Kolkata")));
     }
 
     @Test

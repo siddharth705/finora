@@ -1,7 +1,98 @@
 # Statement Storage Migration — PostgreSQL BYTEA → Cloudflare R2
 
-**Status:** Proposal — decisions recorded, not yet built
-**Scope:** Where uploaded statement files live. No parser, workflow or user-visible change.
+**Status:** Built and live. R2 storage, content-addressing, reference-aware deletion (§6), and —
+as of the 2026-08-16 storage review — compression and the confirm-time-only upload lifecycle are
+all in production. See §0 for the current state in one place; the rest of this document is the
+narrative of how it got here, kept because the reasoning it records (especially §2.1's duplication
+math and §3.2's reference-counting hazard) still governs anything that touches this code.
+**Scope:** Where uploaded statement files live. No parser or user-visible change — the stage →
+review → confirm workflow a user sees is unchanged; what changed is when, during that workflow,
+bytes reach R2.
+
+---
+
+## 0. Current lifecycle (storage review, 2026-08-16)
+
+```
+Upload statement
+  ↓
+Temporary staging only          (import_sessions.file_content — see §5.0a)
+  ↓
+User clicks Import
+  ↓
+Hash original bytes             (SHA-256, BEFORE compression — see §0.1)
+  ↓
+Compress                        (GZIP, deterministic — see §5.0a)
+  ↓
+Upload to R2
+  ↓
+Store metadata in PostgreSQL    (object_key, content_hash, original_size, stored_size,
+                                  compression_type, original_mime_type — V92)
+```
+
+A file a user has merely uploaded — staged for review, not yet confirmed — never reaches R2.
+`ImportSessionService.storeContent` writes it to `import_sessions.file_content`, which already IS
+temporary storage: self-cleaning via the existing 48h TTL sweep
+(`ImportSessionService.sweepExpiredSessions`), scoped to the owning user by the same
+`OwnershipGuard` every other session read goes through. Nothing new was built for this — the
+column and the sweep already existed; what changed is that staging stopped bypassing them.
+
+Object storage is reached for the first time at CONFIRM (`ImportService.persistSection`), and only
+then. This closes a real gap the storage review found: earlier code wrote every staged upload to R2
+immediately, before any review or confirmation, so a session a user abandoned (or was still
+reviewing) had already paid for an R2 write with nothing to show for it if it expired unconfirmed.
+
+### 0.1 Why the hash is computed before compression, not after
+
+`content_hash` is, and remains, the SHA-256 of the ORIGINAL uploaded bytes — never the compressed
+representation. This is a correctness requirement, not a style choice:
+
+- It is the document's **identity**. `ImportSessionService.findLiveSessionByContentHash` dedupes
+  the staging path on it, and a session's `content_hash` and the `StatementImport` it later
+  confirms into carry the identical value for exactly this reason.
+- For a financial-document system, it is also the **audit anchor**: it is what a user or auditor
+  would re-derive directly from the file the bank issued to confirm this is the same document.
+  Hashing the compressed representation instead would make that identity depend on this system's
+  own compression library and settings — a property neither dedup nor an audit trail can afford.
+  The compressed R2 object is a storage representation; the statement's identity has to outlive
+  whatever encoding happens to hold it at rest.
+
+The object key R2 actually uses IS derived from the compressed bytes (a separate, internal
+`ContentAddress` computed by `StatementStorage.store`) — that is fine, because the key was already
+documented as "a private layout decision" independent of identity (§3.1) before compression
+existed. `StatementContentService.store` computes both and reassembles the one that is persisted:
+original hash, storage layer's key. See that class's own "Compression" doc section for the exact
+mechanics.
+
+### 0.2 The async job-queue path is a deliberate exception, not an oversight
+
+`ImportJobService.accept` (`app.import.queue.enabled`, **off by default** — opt-in per
+environment) writes directly to `StatementStorage`, bypassing `StatementContentService` and
+therefore this compression layer entirely. Every object it creates is uncompressed;
+`ImportJob.getCompressionType()` returns `NONE` unconditionally so `StatementContentService.read`
+never tries to decompress bytes that were never compressed.
+
+This is not the same lifecycle bug §0's fix closed, and is not accidental:
+
+- **Why it writes early.** The async path exists specifically so a worker running later, in
+  another thread and possibly another Railway container, can pick up the upload — see
+  `ImportJobService`'s own class doc, "Order of operations, and why it is this order." Something
+  durable and cross-instance-visible has to hold the bytes across that handoff, and Railway's
+  container filesystem is ephemeral, so R2 is the only candidate. There is no staging/review step
+  this path skips past the way the synchronous CSV/PDF flow's staging did — accept() effectively
+  IS the earliest point at which durable storage becomes necessary for this path, not a step
+  taken before one was needed.
+- **Why it is safe to leave uncompressed for now.** `ImportJob` rows are storage-cost only, not a
+  correctness or lifecycle-timing hazard — the fix this review made was about WHEN bytes reach R2
+  relative to user confirmation, and the async path's timing was never the problem.
+- **Follow-up, not done here.** Routing this path through compression too is a reasonable future
+  improvement — it would need either wiring `ImportJobService.accept` through
+  `StatementContentService` (which would also mean deciding whether an async-accepted upload gets
+  its own confirm-time re-compression, since accept() precedes staging/parsing for this path) or a
+  compressing variant of the raw `StatementStorage.store` call. Deliberately out of scope for this
+  review — this path is opt-in, disabled in every environment today, and expanding its behavior
+  was not what was asked for. Flagged here so it is a decision someone makes on purpose, not a gap
+  nobody wrote down.
 
 ---
 
@@ -121,7 +212,13 @@ Once objects are shared, **deleting a row must not delete its object**, because 
 still reference the same content. Two cases are not hypothetical — they are the normal path:
 
 - **A session and the import it confirms hold identical bytes**, so they resolve to the same
-  object. Expiring the session must not remove the object the confirmed import depends on.
+  object. Expiring the session must not remove the object the confirmed import depends on. **As of
+  the 2026-08-16 storage review (§0), this case no longer arises for new rows** — a session never
+  writes to object storage at all, so there is no session-held reference to share in the first
+  place; the confirmed `StatementImport` is the object's only reference from the moment it is
+  created. The reasoning stays documented (and `StatementStorageSweepService` keeps checking
+  `import_sessions` for references) because rows created before this change may still be inside
+  their 48h staging window and could still carry a real `object_key` under the old behaviour.
 - **Multi-section and re-imported statements share one object by design** (§2.1). Deleting one must
   leave the others readable.
 
@@ -219,20 +316,21 @@ requiring at least one of `file_content` / `object_key` to be set. This is a rea
 a free lunch: enabling `FilesystemStatementStorage` (documented above as a dev/test provider,
 backed by Railway's ephemeral container disk) now means `file_content` is skipped for those rows
 too, so **filesystem must never be the provider in an environment relying on statement durability**
-— only R2 (or another provider backed by durable storage) satisfies that once this fix is live. R2
-being unset in production today, this changes nothing about current production behavior; it changes
-what happens the day `STATEMENT_STORAGE_PROVIDER=r2` is actually set. Phase 4's precondition is
-therefore unaffected by this change: it is still **a durable provider is configured and in use**,
-and `V55`'s self-guard, which refuses to drop the column while any row lacks a content address,
-stays as the mechanical check.
+— only R2 (or another provider backed by durable storage) satisfies that once this fix is live.
+Phase 4's precondition is therefore unaffected by this change: it is still **a durable provider is
+configured and in use**, and `V55`'s self-guard, which refuses to drop the column while any row
+lacks a content address, stays as the mechanical check.
 
-**R2 is implemented and inert.** `R2StatementStorage` speaks the S3 API through the AWS SDK, is
-selected by `app.statement-storage.provider=r2`, and does nothing at all until that is set — with
-the provider unset there is no storage bean and statements keep going to `BYTEA` exactly as before,
-which `StatementStorageWiringTest` asserts rather than assumes.
+**R2 is implemented and live in production.** `R2StatementStorage` speaks the S3 API through the
+AWS SDK, is selected by `app.statement-storage.provider=r2`, and `STATEMENT_STORAGE_PROVIDER=r2`
+is the configured value in Railway today — every confirmed statement's bytes go to R2, compressed
+(§0), with only metadata in PostgreSQL. With the provider unset there is still no storage bean and
+statements would go to `BYTEA` exactly as before (a config-only rollback, not a deploy), which
+`StatementStorageWiringTest` asserts rather than assumes — that path is what the table below
+still documents, for a fresh environment or a deliberate rollback.
 
-To turn it on, set these in Railway. The two keys come from an R2 API token (Cloudflare dashboard →
-R2 → **Manage API Tokens**) and must never be committed:
+The table below is kept as the reference for what those variables mean and how to set them,
+whether standing up a new environment or auditing the ones already configured:
 
 | Variable | Value |
 |---|---|
@@ -271,9 +369,10 @@ concrete provider.
 | Phase | Change | Reversible |
 |---|---|---|
 | **1 — BUILT** | `StatementStorage` + `ContentAddress` + `FilesystemStatementStorage`. Content-addressed, provider-selected, fully tested. | Yes — no storage change at all |
-| **2 — BUILT, since revised** | New uploads go to storage. Persist object key + content hash. Originally dual-wrote `file_content` unconditionally; **V76 (2026-08-09, BH-025/BH-046) changed this to write `file_content` only when no provider is configured** — see the "Why `file_content` still exists" note above. | Yes — old rows untouched; toggling the provider still changes only new rows |
+| **2 — BUILT, since revised** | Confirmed statements go to storage, at CONFIRM time. Persist object key + content hash. Originally dual-wrote `file_content` unconditionally; **V76 (2026-08-09, BH-025/BH-046) changed this to write `file_content` only when no provider is configured** — see the "Why `file_content` still exists" note above. | Yes — old rows untouched; toggling the provider still changes only new rows |
 | ~~**3 — backfill**~~ | ~~Backfill existing `BYTEA` into storage~~ — **REMOVED 2026-08-05, see §5.0** | n/a |
 | **4** | Drop `file_content`. Blocked on a durable provider — see §5.0. | **No** |
+| **5 — BUILT (storage review, 2026-08-16)** | Compression (GZIP, V92) + the lifecycle correction: staging (`ImportSessionService`) stopped writing to object storage at all, closing a gap where an uploaded-but-unconfirmed file had already reached R2. See §0. | Yes — a config/code rollback; no schema change is destructive (V92's new columns are nullable except `compression_type`, which defaults safely — see §0's backward-compatibility note) |
 
 Phase 1 is deliberately behaviour-preserving. It is what makes every later phase small, and it can
 ship and prove itself in production while nothing yet depends on R2.
@@ -295,6 +394,41 @@ nothing" is checked rather than claimed.
 
 Phase 4 is its own change, its own migration, its own deploy — and only once a durable provider
 is configured and every row carries a key.
+
+### 5.0a Compression and backward compatibility (V92, storage review, 2026-08-16)
+
+`StatementContentService.store` now runs bytes through GZIP (`GzipCompression`) before handing
+them to `StatementStorage`, for every confirmed statement. Two properties make this safe to turn
+on against a bucket that already has real, uncompressed objects in it — R2 is live in production
+today, so this is not a hypothetical:
+
+- **Deterministic compression.** Plain `GZIPOutputStream` embeds a wall-clock modification-time in
+  its header, so compressing identical bytes twice at different moments produces two different
+  compressed byte streams — which would silently defeat content-addressing's own dedup guarantee
+  (identical content should resolve to one object, not a new one every time it happens to be
+  re-uploaded). `GzipCompression` zeroes that header field unconditionally after compressing, the
+  same convention `gzip -n` uses for reproducible output — not a workaround, a standard one.
+- **Explicit metadata, not sniffing.** `V92` adds `original_size`, `stored_size`,
+  `original_mime_type`, and `compression_type` (`NONE`/`GZIP`, `NOT NULL DEFAULT 'NONE'`, checked)
+  to `statement_imports`. `StatementContentService.read` decompresses based on the ROW's own
+  `compression_type` column — never by inspecting the retrieved bytes for a magic number. This is
+  what makes the migration safe with **no data migration of existing R2 objects required**:
+
+  - **Every row that existed before V92** — whether its bytes are already in R2 (uncompressed, by
+    construction: compression did not exist when they were written) or still in `file_content` —
+    gets `compression_type = 'NONE'` from the column's default. `StatementContentService.read`
+    therefore does not attempt to decompress them, and reads them exactly as it always has.
+  - **`original_size`/`stored_size`/`original_mime_type` are nullable**, matching V76's precedent
+    (`file_content`/`object_key`) of not requiring a backfill: they are best-effort measurement
+    columns, not invariants an existing row has to satisfy.
+  - Verified directly, not just argued: `StatementContentServiceCompressionTest`'s
+    `anObjectStoredBeforeCompressionExisted_stillReadsCorrectly_throughEitherBackend` stores raw,
+    uncompressed bytes at a real address with `compression_type = NONE` and confirms
+    `StatementContentService.read` returns them correctly, unmodified.
+
+`content_hash` is unaffected by any of this — see §0.1 for why it is computed from the original
+bytes before compression runs, and stays that way regardless of what `compression_type` a row ends
+up recording.
 
 ### 5.1 Write ordering (not to be confused with the `file_content` dual write above)
 
@@ -358,7 +492,8 @@ Engineering input recorded when this was still open, now the basis for what got 
 ## 7. Scope
 
 - `StatementStorageService` abstraction, with R2 and local-filesystem implementations.
-- New uploads to R2; PostgreSQL keeps object key + content hash + metadata only.
+- Confirmed statements go to R2, compressed, at CONFIRM time — never at upload/staging time (§0);
+  PostgreSQL keeps object key + content hash + compression metadata only.
 - Content-addressed identity so sections and re-imports share one object.
 - ~~Deduplicating backfill of existing rows.~~ **Removed — see §5.0.** There was nothing to back
   fill, and the code was deleted rather than left untested on the statement path.
@@ -411,8 +546,11 @@ disabling autosuspend) but real friction for a JVM app in a way it is not for se
 
 ## 9. Success criteria
 
-New uploads land in R2 with only key, hash and metadata in PostgreSQL; existing files migrate with
-identical content stored once; download and re-import behave exactly as before; deleting one
-statement never breaks another's access to shared content; `file_content` is dropped only after the
-migration is verified complete; and the storage provider is swappable by configuration.
+Confirmed statements land in R2, compressed, at confirm time only — never at upload/staging —
+with only key, hash, and compression metadata in PostgreSQL; content_hash always identifies the
+original uncompressed bytes, regardless of encoding at rest (§0.1); existing files migrate with
+identical content stored once; download and re-import behave exactly as before, transparently
+decompressing when needed; deleting one statement never breaks another's access to shared content;
+`file_content` is dropped only after the migration is verified complete; and the storage provider
+is swappable by configuration.
 
