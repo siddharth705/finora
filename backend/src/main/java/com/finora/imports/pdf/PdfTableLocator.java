@@ -584,6 +584,7 @@ public class PdfTableLocator {
                     headerAnchors.add(t.x());
                     headerEnds.add(t.endX());
                 }
+                resolveDuplicateColumnNames(headerNames, headerAnchors, rows, rowIndex, ctx);
                 if (ctx != null) ctx.recordHeaders(headerNames);
                 currentHeaderSignature = signature;
                 currentRows = new ArrayList<>();
@@ -1479,6 +1480,80 @@ public class PdfTableLocator {
             if (CsvParser.parseDate(cell) != null || CsvParser.parseNumeric(cell) != null) return false;
         }
         return true;
+    }
+
+    /**
+     * Detects header cells that normalize to the SAME column name -- two cells both literally
+     * "Amount (INR)" is the real case this exists for, on a statement whose heading prints in
+     * three stacked tiers and whose accepted header line is only the bottom tier, because
+     * {@link #mergeHeaderLines} correctly refuses to fold the tier above it in (a "Cheque Number"
+     * label sits past {@link #HEADER_WRAP_MAX_COLUMN_JOIN} from anything in the bottom tier, and
+     * that refusal is deliberate -- see mergeHeaderLines's own doc comment). The bottom tier alone
+     * names its debit and credit columns identically, and {@link #bucketRow} has no way to tell
+     * them apart once that happens: every value lands under whichever of the two the row-bucketing
+     * search reaches first, silently discarding the other.
+     *
+     * <p>When a collision is found, this tries to recover the missing distinction from the tier
+     * that {@code mergeHeaderLines} refused to fold in wholesale, by looking at just the ONE label
+     * near each duplicate's own x position rather than requiring the whole line to join. This is
+     * narrower than a full merge and does not reopen the refusal above: it never runs unless two
+     * columns already collapsed to one name, so it cannot re-admit an unrelated extra column the
+     * way folding the whole tier in would.
+     *
+     * <p>The DUPLICATE_COLUMN_NAMES signal is recorded whenever a collision is found, whether or
+     * not a qualifying label turns up -- an unresolved collision is still worth knowing about, since
+     * it is exactly the shape of bug this method exists to catch.
+     */
+    private void resolveDuplicateColumnNames(List<String> headerNames, List<Float> headerAnchors,
+                                              List<List<PositionedText>> rows, int rowIndex, DocumentContext ctx) {
+        Map<String, List<Integer>> byNormalizedName = new LinkedHashMap<>();
+        for (int i = 0; i < headerNames.size(); i++) {
+            String normalized = CsvParser.normalizeHeaderCell(headerNames.get(i));
+            if (normalized.isEmpty()) continue;
+            byNormalizedName.computeIfAbsent(normalized, k -> new ArrayList<>()).add(i);
+        }
+        boolean anyDuplicate = false;
+        for (List<Integer> indices : byNormalizedName.values()) {
+            if (indices.size() < 2) continue;
+            anyDuplicate = true;
+            for (int index : indices) {
+                String qualifier = findQualifyingLabel(rows, rowIndex, headerAnchors.get(index));
+                if (qualifier != null) {
+                    headerNames.set(index, qualifier + " " + headerNames.get(index));
+                }
+            }
+        }
+        if (anyDuplicate && ctx != null) ctx.record("DUPLICATE_COLUMN_NAMES");
+    }
+
+    /**
+     * Searches up to {@link #HEADER_WRAP_MAX_LINES} lines immediately above the accepted header
+     * row for a single label near {@code anchorX}, using the same left-edge tolerance
+     * ({@link #HEADER_WRAP_MAX_COLUMN_JOIN}) {@link #mergeHeaderLines} uses to join a whole line --
+     * applied here to one column instead of requiring every cell in the candidate line to join
+     * one. A candidate line is skipped unless it independently reads as label text: no date or
+     * number ({@link #carriesNoDataValue}) and no prose-length cell ({@link #hasProseLengthCell}),
+     * which is what keeps this from picking up an unrelated caption, disclaimer, or -- worse -- an
+     * actual data row sitting above a table that never had a header line at all.
+     */
+    private String findQualifyingLabel(List<List<PositionedText>> rows, int rowIndex, float anchorX) {
+        for (int back = 1; back <= HEADER_WRAP_MAX_LINES && rowIndex - back >= 0; back++) {
+            List<PositionedText> candidate = rows.get(rowIndex - back);
+            if (candidate.isEmpty() || !carriesNoDataValue(candidate) || hasProseLengthCell(candidate)) continue;
+            PositionedText nearest = null;
+            float nearestDistance = HEADER_WRAP_MAX_COLUMN_JOIN;
+            for (PositionedText t : candidate) {
+                String text = t.text().trim();
+                if (text.isEmpty()) continue;
+                float distance = Math.abs(t.x() - anchorX);
+                if (distance <= nearestDistance) {
+                    nearest = t;
+                    nearestDistance = distance;
+                }
+            }
+            if (nearest != null) return nearest.text().trim();
+        }
+        return null;
     }
 
     /**

@@ -73,7 +73,11 @@ public class CapabilityCoverageService {
             // statement whose fixed-deposit schedule was invisible to table location entirely
             // because neither half of its header scored as one. See
             // PdfTableLocator.HEADER_WRAP_MAX_GAP.
-            "WRAPPED_HEADER");
+            "WRAPPED_HEADER",
+            // Two header cells normalizing to the same column name -- found on a real ICICI
+            // savings statement whose stacked heading names both amount columns "Amount (INR)".
+            // See PdfTableLocator.resolveDuplicateColumnNames.
+            "DUPLICATE_COLUMN_NAMES");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure
