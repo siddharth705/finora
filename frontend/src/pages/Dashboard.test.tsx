@@ -204,11 +204,22 @@ describe('Dashboard — Subscriptions & Recurring Payments', () => {
   });
 });
 
-// D-21, Step 1: "First Run Experience." A zero-transaction account (brand-new signup, or an
-// existing account that connected Gmail/created an account but never got any data in) gets a
-// welcome screen with 3 setup-path choices instead of the normal ₹0-everywhere dashboard body.
-describe('Dashboard — empty-state welcome (D-21)', () => {
-  const ACCOUNT = { id: 'acct-1', name: 'HDFC Savings', accountType: 'SAVINGS' as const, balance: 0 } as any;
+// D-21: "First Run Experience." A zero-transaction account (brand-new signup, or an existing
+// account that connected Gmail/created an account but never got any data in) sees the full
+// dashboard shell with a friendly empty state PER SECTION, rather than the original single-gate
+// welcome screen this redesign replaced (which hid the whole page behind one "pick a path" screen
+// before showing anything else) or the earlier bare "₹0 everywhere" fallback before that.
+describe('Dashboard — per-section empty states', () => {
+  // A real bank shape, not `as any` -- BankLogo reads bank.id/officialName/websiteUrl directly,
+  // and the Accounts Overview card renders it for whatever REAL accounts exist regardless of
+  // whether transactions are empty (see the next describe block below), so an incomplete fixture
+  // here would crash exactly the scenario this file needs to prove works.
+  const BANK = {
+    id: 'hdfc', officialName: 'HDFC Bank', shortName: 'HDFC', colorHex: '#004c8f', initials: 'HD',
+    logoPath: '/banks/hdfc.svg', category: 'PRIVATE' as const, websiteUrl: 'https://hdfcbank.com',
+    ifscPrefix: 'HDFC', supportedAccountTypes: ['SAVINGS'],
+  };
+  const ACCOUNT = { id: 'acct-1', name: 'HDFC Savings', accountType: 'SAVINGS' as const, balance: 0, bank: BANK } as any;
 
   beforeEach(() => {
     vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
@@ -234,53 +245,67 @@ describe('Dashboard — empty-state welcome (D-21)', () => {
     vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
   });
 
-  it('shows the welcome screen instead of the normal dashboard when there are zero transactions', async () => {
+  it('shows a friendly empty state per section, and hides Financial Health Score, when there are zero transactions', async () => {
     renderDashboard();
 
-    // The greeting reads fullName from AuthContext (real, unmocked here), not from userApi.get()
-    // -- with no login/register call in this test it falls back to "there", which is fine; this
-    // is only checking the welcome screen itself renders, not which name it shows. The greeting
-    // interpolates {greeting}, {firstName} and "👋" as separate JSX text nodes, so this checks the
-    // heading's full textContent rather than matching a single node's text.
+    // The shell itself is still here -- the greeting, the KPI row -- unlike the single-gate
+    // welcome screen this replaced, which hid all of it behind one page.
     const heading = await screen.findByRole('heading', { level: 1 });
     expect(heading.textContent).toMatch(/there/);
     expect(heading.textContent).toMatch(/👋/);
-    expect(screen.getByText('Import a statement')).toBeInTheDocument();
-    expect(screen.getByText('Connect Gmail')).toBeInTheDocument();
-    expect(screen.getByText('Add manually')).toBeInTheDocument();
-    // The normal dashboard's own KPI grid must not also render underneath.
+    expect(screen.getByText('Total Balance')).toBeInTheDocument();
+
+    expect(screen.getByText('No data yet')).toBeInTheDocument(); // Cash Flow
+    expect(screen.getByText('No spending data yet')).toBeInTheDocument(); // Spending Breakdown
+    expect(screen.getByText('No accounts yet')).toBeInTheDocument();
+    expect(screen.getByText('No transactions yet')).toBeInTheDocument();
+    expect(screen.getByText('No budgets set')).toBeInTheDocument();
+    expect(screen.getByText('No goals yet')).toBeInTheDocument();
+    // A score computed from zero transactions has nothing real behind it.
     expect(screen.queryByText('Financial Health Score')).not.toBeInTheDocument();
-    expect(screen.queryByText('Total Balance')).not.toBeInTheDocument();
   });
 
-  it('links Import a statement to the existing Import page', async () => {
+  it('still shows AI Insights and Quick Actions -- generic tips, not hidden entirely', async () => {
     renderDashboard();
-    await screen.findByText('Import a statement');
+    await screen.findByText('No transactions yet');
 
-    expect(screen.getByRole('link', { name: /import a statement/i })).toHaveAttribute('href', '/app/import');
+    expect(screen.getByText('AI Insights')).toBeInTheDocument();
+    expect(screen.getByText(/upload or import more transactions/i)).toBeInTheDocument();
+    expect(screen.getByText('Quick Actions')).toBeInTheDocument();
   });
 
-  it('links Connect Gmail to the existing Settings page', async () => {
+  it("shows a real account in Accounts Overview even when transactions are empty -- it's not gated on the same isEmpty flag", async () => {
+    vi.mocked(accountsApi.list).mockResolvedValue([ACCOUNT]);
     renderDashboard();
-    await screen.findByText('Connect Gmail');
 
-    expect(screen.getByRole('link', { name: /connect gmail/i })).toHaveAttribute('href', '/app/settings');
+    expect(await screen.findByText('HDFC Savings')).toBeInTheDocument();
+    expect(screen.queryByText('No accounts yet')).not.toBeInTheDocument();
+    // Recent Transactions is a separate section with its own, still-empty data.
+    expect(screen.getByText('No transactions yet')).toBeInTheDocument();
   });
 
-  it('opens the Add Transaction modal from Add manually', async () => {
+  it('links the Cash Flow empty state\'s Import Statement CTA to the existing Import page', async () => {
+    renderDashboard();
+    // Scoped to the Cash Flow card -- "Import Statement" is also Quick Actions' own link name,
+    // both visible on screen at once.
+    const cashFlowCard = within((await screen.findByText('No data yet')).closest('.bg-card') as HTMLElement);
+
+    expect(cashFlowCard.getByRole('link', { name: /import statement/i })).toHaveAttribute('href', '/app/import');
+  });
+
+  it('opens the Add Transaction modal from Recent Transactions\' empty-state CTA', async () => {
     vi.mocked(accountsApi.list).mockResolvedValue([ACCOUNT]);
     const user = userEvent.setup();
     renderDashboard();
-    await user.click(await screen.findByRole('button', { name: /add manually/i }));
+    await user.click(await screen.findByRole('button', { name: /\+ add transaction/i }));
 
     expect(await screen.findByRole('heading', { name: /add transaction/i })).toBeInTheDocument();
   });
 
   it('directs to Setup instead of a broken form when there are no accounts to attach a transaction to', async () => {
-    vi.mocked(accountsApi.list).mockResolvedValue([]);
     const user = userEvent.setup();
     renderDashboard();
-    await user.click(await screen.findByRole('button', { name: /add manually/i }));
+    await user.click(await screen.findByRole('button', { name: /\+ add transaction/i }));
 
     expect(await screen.findByText(/you'll need an account/i)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /add an account/i })).toHaveAttribute('href', '/app/setup');
@@ -292,13 +317,15 @@ describe('Dashboard — empty-state welcome (D-21)', () => {
     vi.mocked(transactionsApi.create).mockResolvedValue({} as any);
     const user = userEvent.setup();
     renderDashboard();
-    await user.click(await screen.findByRole('button', { name: /add manually/i }));
-    await screen.findByRole('heading', { name: /add transaction/i });
+    await user.click(await screen.findByRole('button', { name: /\+ add transaction/i }));
+    // Scoped to the modal (not the whole screen) from here on -- "Add transaction" is also the
+    // still-visible Quick Actions button's own name once the modal is open on top of it.
+    const modal = within((await screen.findByRole('heading', { name: /add transaction/i })).closest('.bg-card') as HTMLElement);
 
-    await user.type(screen.getByLabelText(/description/i), 'Coffee with a friend');
-    await user.type(screen.getByLabelText(/amount/i), '250');
-    await user.selectOptions(screen.getByLabelText(/category/i), 'Groceries');
-    await user.click(screen.getByRole('button', { name: /^add transaction$/i }));
+    await user.type(modal.getByLabelText(/description/i), 'Coffee with a friend');
+    await user.type(modal.getByLabelText(/amount/i), '250');
+    await user.selectOptions(modal.getByLabelText(/category/i), 'Groceries');
+    await user.click(modal.getByRole('button', { name: /^add transaction$/i }));
 
     await waitFor(() => expect(transactionsApi.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -314,10 +341,10 @@ describe('Dashboard — empty-state welcome (D-21)', () => {
     vi.mocked(accountsApi.list).mockResolvedValue([ACCOUNT]);
     const user = userEvent.setup();
     renderDashboard();
-    await user.click(await screen.findByRole('button', { name: /add manually/i }));
-    await screen.findByRole('heading', { name: /add transaction/i });
+    await user.click(await screen.findByRole('button', { name: /\+ add transaction/i }));
+    const modal = within((await screen.findByRole('heading', { name: /add transaction/i })).closest('.bg-card') as HTMLElement);
 
-    expect(screen.getByRole('button', { name: /^add transaction$/i })).toBeDisabled();
+    expect(modal.getByRole('button', { name: /^add transaction$/i })).toBeDisabled();
   });
 
   it('shows the backend error inline and keeps the modal open on failure', async () => {
@@ -327,12 +354,12 @@ describe('Dashboard — empty-state welcome (D-21)', () => {
     });
     const user = userEvent.setup();
     renderDashboard();
-    await user.click(await screen.findByRole('button', { name: /add manually/i }));
-    await screen.findByRole('heading', { name: /add transaction/i });
+    await user.click(await screen.findByRole('button', { name: /\+ add transaction/i }));
+    const modal = within((await screen.findByRole('heading', { name: /add transaction/i })).closest('.bg-card') as HTMLElement);
 
-    await user.type(screen.getByLabelText(/description/i), 'Coffee');
-    await user.type(screen.getByLabelText(/amount/i), '250');
-    await user.click(screen.getByRole('button', { name: /^add transaction$/i }));
+    await user.type(modal.getByLabelText(/description/i), 'Coffee');
+    await user.type(modal.getByLabelText(/amount/i), '250');
+    await user.click(modal.getByRole('button', { name: /^add transaction$/i }));
 
     expect(await screen.findByText('That amount is not valid.')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /add transaction/i })).toBeInTheDocument();
@@ -342,7 +369,7 @@ describe('Dashboard — empty-state welcome (D-21)', () => {
     vi.mocked(accountsApi.list).mockResolvedValue([ACCOUNT]);
     const user = userEvent.setup();
     renderDashboard();
-    await user.click(await screen.findByRole('button', { name: /add manually/i }));
+    await user.click(await screen.findByRole('button', { name: /\+ add transaction/i }));
     await screen.findByRole('heading', { name: /add transaction/i });
 
     await user.click(screen.getByRole('button', { name: /^cancel$/i }));
