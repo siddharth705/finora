@@ -152,6 +152,17 @@ class CapabilityCorpusCoverageTest {
                         + "preserved for a trace to exercise this, which the Synthetic Fixture Policy "
                         + "requires be synthesized, not preserved. Covered instead by "
                         + "PdfMetadataExtractorTest's fully hand-synthesized fixtures.");
+        // BLANK_COLUMN_NAME_QUALIFIED and RECOVERED_MISSING_DESCRIPTION_COLUMN are deliberately
+        // NOT listed here: the already-committed sbi-credit-card-statement trace turns out to
+        // exercise both for real (its own "( ` )" blank-currency cell, and a genuine missing-
+        // description recovery elsewhere in its composite structure) -- found by
+        // theCorpusShortfallOnlyEverShrinks the moment these were added, exactly the ratchet it
+        // exists to enforce. Motivated by a real ICICI savings e-statement either way; also
+        // covered by HeaderColumnRecoveryTest's fully hand-synthesized fixtures.
+        DECLARED_WITHOUT_A_TRACE.put("RECOVERED_MISSING_SERIAL_NUMBER_COLUMN",
+                "no trace, and none is planned -- same reasoning as BLANK_COLUMN_NAME_QUALIFIED, "
+                        + "same real document. Covered instead by HeaderColumnRecoveryTest's fully "
+                        + "hand-synthesized fixtures.");
     }
 
     /**

@@ -642,6 +642,9 @@ public class PdfTableLocator {
                     headerEnds.add(t.endX());
                 }
                 resolveDuplicateColumnNames(headerNames, headerAnchors, rows, rowIndex, ctx);
+                resolveBlankColumnNames(headerNames, headerAnchors, rows, rowIndex, ctx);
+                recoverMissingDescriptionColumn(headerNames, headerAnchors, headerEnds, rows, rowIndex, ctx);
+                recoverMissingSerialNumberColumn(headerNames, headerAnchors, headerEnds, rows, rowIndex, ctx);
                 if (ctx != null) ctx.recordHeaders(headerNames);
                 currentHeaderSignature = signature;
                 currentRows = new ArrayList<>();
@@ -1592,6 +1595,134 @@ public class PdfTableLocator {
             }
         }
         if (anyDuplicate && ctx != null) ctx.record("DUPLICATE_COLUMN_NAMES");
+    }
+
+    /**
+     * A header cell whose printed text is real but whose NORMALIZED form is blank -- a bare
+     * currency unit like "(INR)" is the real case this exists for (see
+     * {@link CsvParser#normalizeHeaderCell}: a trailing parenthetical is stripped as noise, and
+     * here the parenthetical IS the entire cell, verified on a real ICICI savings e-statement
+     * whose Balance column heading prints as "Balance" one tier up and bare "(INR)" on the
+     * accepted line). Every downstream recognizer ({@code TransactionNormalizer.recognizedColumnNames})
+     * matches only a normalized name, so a column like this is invisible everywhere below this
+     * class even though its header text looks present -- the same silent-loss shape
+     * {@link #resolveDuplicateColumnNames} exists for, just triggered by an empty name instead of
+     * a repeated one. Kept as a separate method (not folded into that one) because the trigger and
+     * the capability it reports are genuinely different signals -- a document can have one without
+     * the other -- and conflating them would make DUPLICATE_COLUMN_NAMES mean two different things.
+     * Recovered the identical way: {@link #findQualifyingLabel} searches the tier(s)
+     * {@link #mergeHeaderLines} already refused to fold in wholesale for a single label near this
+     * column's own anchor.
+     */
+    private void resolveBlankColumnNames(List<String> headerNames, List<Float> headerAnchors,
+                                          List<List<PositionedText>> rows, int rowIndex, DocumentContext ctx) {
+        boolean anyBlank = false;
+        for (int i = 0; i < headerNames.size(); i++) {
+            if (!CsvParser.normalizeHeaderCell(headerNames.get(i)).isEmpty()) continue;
+            anyBlank = true;
+            String qualifier = findQualifyingLabel(rows, rowIndex, headerAnchors.get(i));
+            if (qualifier != null) headerNames.set(i, qualifier + " " + headerNames.get(i));
+        }
+        if (anyBlank && ctx != null) ctx.record("BLANK_COLUMN_NAME_QUALIFIED");
+    }
+
+    /**
+     * A narration/remarks column that has NO representation at all on the accepted header line --
+     * not a misnamed or blank cell (the two cases above already cover those), a column that
+     * genuinely does not exist there. Verified on the same real ICICI statement
+     * {@link #resolveBlankColumnNames} is: its heading prints in three stacked tiers, and
+     * "Transaction Remarks" lives ONLY on the middle one -- the tier {@link #mergeHeaderLines}
+     * correctly and deliberately refuses to fold in wholesale (its "Cheque Number" cell sits past
+     * {@link #HEADER_WRAP_MAX_COLUMN_JOIN} from anything on the accepted bottom tier -- see that
+     * method's own doc comment for why that refusal is right). Losing the whole tier for that
+     * reason also loses the one cell on it every transaction row actually needs.
+     *
+     * <p>Deliberately narrower than "admit any cell the tier refused" -- the fix
+     * {@code mergeHeaderLines}'s own doc comment records as tried and reverted, because it
+     * re-admitted an unrelated table's own heading elsewhere in the same document. This only ever
+     * admits ONE cell, and only when its normalized text is already a recognized label from a
+     * small, curated vocabulary -- a content gate, not a position-only one -- and only when the
+     * accepted header has no such column at all yet. A line offering more than one such label is
+     * ambiguous and refused rather than guessed at.
+     *
+     * <p>Also what recovers a completely unnamed "S No." column on the same real ICICI statement
+     * -- not for its own sake (nothing downstream reads a serial number), but because leaving it
+     * unnamed is actively harmful: {@link #bucketRow}'s {@link #nearestColumn} has no maximum-
+     * distance cap, so S No.'s own digit values (the leftmost thing on every row) are nearer to
+     * the Date column's anchor than to anything else and land there instead, corrupting every
+     * row's date with a prepended serial number ("1 28.07.2026") until it no longer parses at
+     * all. Giving the column its own anchor, exactly the way Transaction Remarks is recovered
+     * below, removes the collision at its source rather than teaching bucketRow to special-case
+     * it.
+     */
+    private static final Set<String> DESCRIPTION_COLUMN_LABELS = Set.of(
+            "description", "narration", "remarks", "particulars", "transaction remarks",
+            "transaction details", "transaction description");
+    private static final Set<String> SERIAL_NUMBER_COLUMN_LABELS = Set.of(
+            "s no", "sno", "sr no", "srno", "serial no", "serial number");
+
+    private void recoverMissingDescriptionColumn(List<String> headerNames, List<Float> headerAnchors,
+            List<Float> headerEnds, List<List<PositionedText>> rows, int rowIndex, DocumentContext ctx) {
+        if (recoverMissingColumn(headerNames, headerAnchors, headerEnds, rows, rowIndex, DESCRIPTION_COLUMN_LABELS)
+                && ctx != null) {
+            ctx.record("RECOVERED_MISSING_DESCRIPTION_COLUMN");
+        }
+    }
+
+    private void recoverMissingSerialNumberColumn(List<String> headerNames, List<Float> headerAnchors,
+            List<Float> headerEnds, List<List<PositionedText>> rows, int rowIndex, DocumentContext ctx) {
+        if (recoverMissingColumn(headerNames, headerAnchors, headerEnds, rows, rowIndex, SERIAL_NUMBER_COLUMN_LABELS)
+                && ctx != null) {
+            ctx.record("RECOVERED_MISSING_SERIAL_NUMBER_COLUMN");
+        }
+    }
+
+    /**
+     * Deliberately restricted to the SINGLE line immediately above the accepted header ({@code
+     * rowIndex - 1}), unlike {@link #findQualifyingLabel}'s {@link #HEADER_WRAP_MAX_LINES}-deep
+     * search -- that method also requires proximity to a SPECIFIC existing column's anchor
+     * ({@link #HEADER_WRAP_MAX_COLUMN_JOIN}), which this method has no equivalent of (it has no
+     * existing column to be near; that is the whole reason it exists). Without a positional gate
+     * of some kind, scanning multiple lines back is unsafe: real regression, found on a real SBI
+     * credit-card statement's composite five-section layout -- a "Transaction Details" label that
+     * genuinely belongs to a DIFFERENT nearby section two lines back got attached to a section
+     * that never had one, changing where an already-tolerated rejected-prose fragment landed.
+     * Restricting to the immediately-adjacent line is what {@link #resolveDuplicateColumnNames}'s
+     * and {@link #resolveBlankColumnNames}'s real cases both actually need too -- ICICI's "S No.",
+     * "Transaction Remarks", and "Balance" qualifiers all live on the single tier directly above
+     * the accepted header -- so this is not a narrower capability, only a narrower search.
+     */
+    private boolean recoverMissingColumn(List<String> headerNames, List<Float> headerAnchors,
+            List<Float> headerEnds, List<List<PositionedText>> rows, int rowIndex, Set<String> recognizedLabels) {
+        for (String name : headerNames) {
+            if (recognizedLabels.contains(CsvParser.normalizeHeaderCell(name))) return false;
+        }
+        if (rowIndex - 1 < 0) return false;
+        List<PositionedText> candidate = rows.get(rowIndex - 1);
+        if (candidate.isEmpty() || !carriesNoDataValue(candidate) || hasProseLengthCell(candidate)) return false;
+        // Requires at least 2 non-blank cells -- a genuine header TIER (ICICI's real case: three
+        // cells, "S No." / "Cheque Number" / "Transaction Remarks", sharing one line) has more than
+        // one, where a lone caption label does not. Real regression, found on the same SBI
+        // statement this method's own doc comment describes: a rejected block's own caption prints
+        // "Transaction Details" as a single, isolated cell on its own line, immediately above where
+        // that same rejected content's "for Statement Period: ..." text lands as an orphan row --
+        // lexically identical to a real narration-column label, but structurally a caption for
+        // unrelated content, not a second tier of THIS table's header.
+        if (candidate.stream().filter(t -> !t.text().isBlank()).count() < 2) return false;
+        PositionedText found = null;
+        for (PositionedText t : candidate) {
+            String text = t.text().trim();
+            if (text.isEmpty() || !recognizedLabels.contains(CsvParser.normalizeHeaderCell(text))) continue;
+            if (found != null) return false; // more than one candidate -- ambiguous, refuse
+            found = t;
+        }
+        if (found == null) return false;
+        int insertAt = 0;
+        while (insertAt < headerAnchors.size() && headerAnchors.get(insertAt) < found.x()) insertAt++;
+        headerNames.add(insertAt, found.text().trim());
+        headerAnchors.add(insertAt, found.x());
+        headerEnds.add(insertAt, found.endX());
+        return true;
     }
 
     /**

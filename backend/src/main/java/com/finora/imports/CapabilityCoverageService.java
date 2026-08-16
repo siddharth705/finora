@@ -97,7 +97,21 @@ public class CapabilityCoverageService {
             // with 6385") rather than any "Label: Value" or grid shape -- found on the same AU
             // statement once INFERRED_TWO_LINE_DATE_BLOCK stopped discarding the auxiliary text this
             // reads. See PdfMetadataExtractor.CARD_ENDING_DIGITS.
-            "CARD_ENDING_DIGITS_IDENTITY");
+            "CARD_ENDING_DIGITS_IDENTITY",
+            // A header cell whose printed text is real but normalizes to blank (a bare currency
+            // unit like "(INR)") -- found on a real ICICI savings e-statement whose Balance column
+            // heading is invisible to every downstream recognizer as a result. See
+            // PdfTableLocator.resolveBlankColumnNames.
+            "BLANK_COLUMN_NAME_QUALIFIED",
+            // A narration/remarks column with no representation at all on the accepted header
+            // line -- found on the same real ICICI statement, whose three-tier heading puts
+            // "Transaction Remarks" on a tier mergeHeaderLines correctly refuses to fold in
+            // wholesale. See PdfTableLocator.recoverMissingDescriptionColumn.
+            "RECOVERED_MISSING_DESCRIPTION_COLUMN",
+            // An "S No." column recovered the same way, not for its own sake but because leaving
+            // it unnamed let its digit values collide with and corrupt the Date column (nearestColumn
+            // has no maximum-distance cap). See PdfTableLocator.recoverMissingSerialNumberColumn.
+            "RECOVERED_MISSING_SERIAL_NUMBER_COLUMN");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure
