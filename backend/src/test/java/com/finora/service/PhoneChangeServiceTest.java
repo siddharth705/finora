@@ -167,18 +167,43 @@ class PhoneChangeServiceTest {
                 .hasMessageContaining("scheduled for deletion");
     }
 
-    /** Defensive: User.phoneNumber has no NOT NULL constraint at the DB level, but
-     *  PhoneChangeSession.currentPhoneNumber does -- without this guard, a null here would
-     *  surface as an opaque DB-constraint 409 instead of a message naming the actual problem. */
+    /** Bug fix (review): this used to unconditionally reject a null phoneNumber -- correct when
+     *  the only way to reach this method was already having a number to change FROM, wrong since
+     *  AuthService.createGoogleUserRecord shipped, which leaves phoneNumber null by design and
+     *  routes exactly that account through this same start() to set one for the first time (see
+     *  VerifyPhone.tsx's own startVerification, which used to crash Firebase's SDK trying to send
+     *  a code to null before this fix). Regression test for that: must now succeed, not reject. */
     @Test
-    void start_onAnAccountWithNoPhoneNumberOnFile_isRejectedWithAClearMessage() {
+    void start_onAnAccountWithNoPhoneNumberOnFile_succeedsAndRecordsAnEmptyCurrentNumber() {
         User user = existingUser();
         user.setPhoneNumber(null);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(userRepository.existsByPhoneNumberAndAccountScope(eq("+919999999999"), any())).thenReturn(false);
+
+        var response = service.start(userId, new StartRequest("+919999999999"));
+
+        assertThat(response.sessionId()).isNotBlank();
+        assertThat(response.maskedPhone()).isNotBlank().doesNotContain("9999999999");
+        // "" not null: current_phone_number is NOT NULL at the DB level, and there genuinely was
+        // no prior number to record -- see PhoneChangeService.start's own comment on this.
+        verify(sessionRepository).save(argThat(s -> "".equals(s.getCurrentPhoneNumber())
+                && "+919999999999".equals(s.getRequestedPhoneNumber())));
+        verify(auditService).record(userId, "PHONE_CHANGE_STARTED", "User", userId);
+    }
+
+    /** The "already the number on your account" no-op guard only makes sense when there IS a
+     *  number on the account -- must not misfire for a first-time set just because null/blank
+     *  happens to be falsy in the same way "no real number" is. */
+    @Test
+    void start_onAnAccountWithNoPhoneNumberOnFile_stillRejectsANumberAlreadyClaimedByAnotherAccount() {
+        User user = existingUser();
+        user.setPhoneNumber(null);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(userRepository.existsByPhoneNumberAndAccountScope("+919999999999", user.getAccountScope())).thenReturn(true);
 
         assertThatThrownBy(() -> service.start(userId, new StartRequest("+919999999999")))
                 .isInstanceOf(ApiException.class)
-                .hasMessageContaining("no phone number on file");
+                .hasMessageContaining("already exists");
 
         verify(sessionRepository, never()).save(any());
     }

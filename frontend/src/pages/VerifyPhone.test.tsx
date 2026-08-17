@@ -192,6 +192,83 @@ describe('VerifyPhone', () => {
     expect(screen.queryByText('Welcome back!')).not.toBeInTheDocument();
   });
 
+  /** Bug fix (review): a Google Sign-In account reaches this page with NO phone number on file
+   *  at all (AuthService.createGoogleUserRecord leaves it null) -- unconditionally calling
+   *  sendPhoneVerificationCode(null, ...) used to crash Firebase's own SDK with a raw
+   *  TypeError, surfacing as a generic, unrecoverable-looking "Could not send a verification
+   *  code" error with no real way forward. */
+  describe('accounts with no phone number on file yet (Google Sign-In)', () => {
+    beforeEach(() => {
+      vi.mocked(userApi.get).mockReset().mockResolvedValue({
+        email: 'jane@example.com', fullName: 'Jane', lowBalanceThreshold: 2000, theme: 'system',
+        timezone: 'Asia/Kolkata', phoneNumber: null, phoneVerified: false,
+        createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null,
+      });
+    });
+
+    it('routes straight to "Add your phone number" on mount, without ever attempting to send a code', async () => {
+      renderVerifyPhone();
+
+      expect(await screen.findByText('Add your phone number')).toBeInTheDocument();
+      expect(sendPhoneVerificationCode).not.toHaveBeenCalled();
+    });
+
+    it('offers no way back to the verify screen -- there is no working state to return to', async () => {
+      renderVerifyPhone();
+      await screen.findByText('Add your phone number');
+
+      expect(screen.queryByRole('button', { name: /^back$/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /log out and try again later/i })).toBeInTheDocument();
+    });
+
+    it('logs out on click, same as the ordinary send-failure escape hatch', async () => {
+      const logout = vi.fn();
+      vi.mocked(useAuth).mockReturnValue({
+        token: 'tok', email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
+        login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), loginWithGoogle: vi.fn(), setPhoneVerified: vi.fn(), logout,
+      });
+      const user = userEvent.setup();
+      render(
+        <MemoryRouter initialEntries={['/verify-phone']}>
+          <Routes><Route path="/verify-phone" element={<VerifyPhone />} /></Routes>
+        </MemoryRouter>
+      );
+      await screen.findByText('Add your phone number');
+
+      await user.click(screen.getByRole('button', { name: /log out and try again later/i }));
+
+      expect(logout).toHaveBeenCalled();
+    });
+
+    it('submitting a number from this form starts a session and sends a Firebase code, same as the ordinary Change Number flow', async () => {
+      const user = userEvent.setup();
+      renderVerifyPhone();
+      await screen.findByText('Add your phone number');
+
+      await user.type(screen.getByPlaceholderText('XXXXXXXXXX'), '9888888888');
+      await user.click(screen.getByRole('button', { name: /send code/i }));
+
+      await waitFor(() => expect(phoneChangeApi.start).toHaveBeenCalledWith('+919888888888'));
+      await waitFor(() => expect(sendPhoneVerificationCode).toHaveBeenCalledWith('+919888888888', expect.any(String)));
+      expect(await screen.findByText(/\+•••••••••888/)).toBeInTheDocument();
+    });
+
+    it('retrying via "Didn\'t get a code? Change number" still shows the no-number state, not the ordinary Change Number one', async () => {
+      const user = userEvent.setup();
+      renderVerifyPhone();
+      await screen.findByText('Add your phone number');
+      await user.type(screen.getByPlaceholderText('XXXXXXXXXX'), '9888888888');
+      await user.click(screen.getByRole('button', { name: /send code/i }));
+      await screen.findByText(/\+•••••••••888/);
+
+      await user.click(screen.getByRole('button', { name: /didn't get a code\? change number/i }));
+
+      expect(await screen.findByText('Add your phone number')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^back$/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /log out and try again later/i })).toBeInTheDocument();
+    });
+  });
+
   describe('Change Number', () => {
     /** Gets to the "enter a new number" form -- only reachable from the sendError state, the
      *  same escape hatch Log Out is offered alongside. Does NOT render itself -- the caller

@@ -80,6 +80,14 @@ export default function VerifyPhone() {
   // put, only the form content changes, and there's no reason to lose the original session
   // (confirmation/phoneNumber above) if the user backs out.
   const [mode, setMode] = useState<'verify' | 'enterNewNumber' | 'confirmNewNumber'>('verify');
+  // Distinguishes "this account has no phone number at all yet" (a Google Sign-In account -- see
+  // AuthService.createGoogleUserRecord's own doc comment, phoneNumber is left null there) from the
+  // ordinary "the number on file is wrong/unreachable" case the Change Number detour was built
+  // for. Same form either way (PhoneChangeService.start() now accepts both, see its own doc
+  // comment), but the copy and the presence of a "Back" control need to differ: there is no
+  // working `verify` state to go back to when there was never a number to verify in the first
+  // place.
+  const [numberMissing, setNumberMissing] = useState(false);
   const [newLocalNumber, setNewLocalNumber] = useState('');
   const [newNumberTouched, setNewNumberTouched] = useState(false);
   const [changeSessionId, setChangeSessionId] = useState<string | null>(null);
@@ -123,6 +131,18 @@ export default function VerifyPhone() {
       // and handed straight to Firebase, which sends the code itself; this backend never does.
       const settings = await userApi.get();
       setPhoneNumber(settings.phoneNumber);
+      // Bug fix (review): a Google Sign-In account reaches this page with NO phone number on
+      // file at all (AuthService.createGoogleUserRecord leaves it null) -- there is nothing to
+      // send a code to yet. Unconditionally calling sendPhoneVerificationCode(null, ...) used to
+      // crash Firebase's own SDK with a raw TypeError ("'session' in null") and surface as a
+      // generic, unrecoverable-looking "Could not send a verification code" error. Route straight
+      // into the same number-entry form the OTP-failure escape hatch below already provides,
+      // instead of attempting (and failing) a send with nothing to send to.
+      if (!settings.phoneNumber) {
+        setNumberMissing(true);
+        setMode('enterNewNumber');
+        return;
+      }
       const result = await sendPhoneVerificationCode(settings.phoneNumber, RECAPTCHA_CONTAINER_ID);
       setConfirmation(result);
     } catch (err: any) {
@@ -162,6 +182,12 @@ export default function VerifyPhone() {
 
   function startChangingNumber() {
     setMode('enterNewNumber');
+    // Deliberately does NOT touch numberMissing: this is also the handler for confirmNewNumber's
+    // own "Didn't get a code? Change number" retry link, which is reachable from EITHER the
+    // ordinary escape-hatch entry (numberMissing already false, nothing to do) or the Google
+    // Sign-In first-time-set flow (numberMissing already true -- and must stay true, or the form
+    // wrongly claims a prior number exists and offers a "Back" button into a `verify` state that
+    // was never actually reached, a dead end with no sendError-gated escape hatch to show).
     setNewLocalNumber('');
     setNewNumberTouched(false);
     setChangeError(null);
@@ -359,11 +385,14 @@ export default function VerifyPhone() {
           <>
             <div className="flex items-center gap-2 mb-2">
               <ShieldCheck size={20} className="text-primary" />
-              <h1 className="text-2xl font-bold text-ink">Change your number</h1>
+              <h1 className="text-2xl font-bold text-ink">
+                {numberMissing ? 'Add your phone number' : 'Change your number'}
+              </h1>
             </div>
             <p className="text-sm text-muted mb-4">
-              Enter the mobile number you'd like to use instead. We'll send a code to confirm it's
-              yours before updating your account.
+              {numberMissing
+                ? "Your account doesn't have a mobile number on file yet. We'll send a code to confirm it's yours."
+                : "Enter the mobile number you'd like to use instead. We'll send a code to confirm it's yours before updating your account."}
             </p>
 
             {changeError && <p className="text-danger text-sm mb-4">{changeError}</p>}
@@ -413,13 +442,27 @@ export default function VerifyPhone() {
               </button>
             </form>
 
-            <button
-              type="button"
-              onClick={() => setMode('verify')}
-              className="w-full mt-3 text-xs text-primary font-medium text-center"
-            >
-              Back
-            </button>
+            {numberMissing ? (
+              // No "Back" here -- unlike the ordinary Change Number entry, there is no working
+              // `verify` mode to return to: this account never had a number to attempt sending a
+              // code to in the first place (see startVerification's own comment). Logout is the
+              // only real way out if the user doesn't want to add a number right now.
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="w-full mt-3 text-xs text-muted hover:text-ink font-medium text-center"
+              >
+                Log out and try again later
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setMode('verify')}
+                className="w-full mt-3 text-xs text-primary font-medium text-center"
+              >
+                Back
+              </button>
+            )}
           </>
         )}
 
