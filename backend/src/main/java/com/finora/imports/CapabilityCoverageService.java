@@ -127,7 +127,15 @@ public class CapabilityCoverageService {
             // (real evidence: a real AU statement's "Bill summary" widget). See the architecture
             // doc's Credit Card Direction Evidence Study addendum for the measured fire rate against
             // the real 6-document corpus.
-            "CREDIT_CARD_SUMMARY_TOTALS", "CREDIT_CARD_SUMMARY_INLINE_LABEL_VALUE");
+            "CREDIT_CARD_SUMMARY_TOTALS", "CREDIT_CARD_SUMMARY_INLINE_LABEL_VALUE",
+            // Fires only when the headerless-inference path actually removes a repeated physical
+            // row (see PdfTableLocator.bucketHeaderlessRowsWithContinuation's own doc comment for
+            // the real page-boundary-reprint artifact this protects against), never merely when
+            // that path runs -- so this answers "how many documents relied on this safety net",
+            // not "how many documents took this code path". Distinct from INFERRED_HEADERLESS_LAYOUT
+            // itself, which fires on every document that path accepts regardless of whether a
+            // duplicate was present to remove.
+            "PHYSICAL_ROW_DEDUP_EVIDENCE");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure

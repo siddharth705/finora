@@ -157,6 +157,14 @@ class CapabilityCorpusCoverageTest {
                 "no trace, and none is planned -- same reasoning as INFERRED_HEADERLESS_LAYOUT. "
                         + "Covered instead by TwoLineDateBlockInferenceTest's fully hand-synthesized "
                         + "fixtures.");
+        DECLARED_WITHOUT_A_TRACE.put("PHYSICAL_ROW_DEDUP_EVIDENCE",
+                "no trace, and none is planned -- same reasoning as INFERRED_HEADERLESS_LAYOUT: the "
+                        + "one real document known to exercise the headerless path (a real SBI savings "
+                        + "statement) contains no repeated physical row for this to remove, so no real "
+                        + "trace has ever activated it, and a synthesized trace would need to reproduce "
+                        + "the same balance-chain-scoring geometry INFERRED_HEADERLESS_LAYOUT's own "
+                        + "entry explains. Covered instead by HeaderlessLayoutInferenceTest's fully "
+                        + "hand-synthesized reprinted-row fixture.");
         DECLARED_WITHOUT_A_TRACE.put("CARD_ENDING_DIGITS_IDENTITY",
                 "no trace, and none is planned -- same reasoning as INFERRED_HEADERLESS_LAYOUT: the "
                         + "one real document that motivates it (a real AU Small Finance Bank "

@@ -413,9 +413,11 @@ public class PdfTableLocator {
      *  text (account holder/number/branch/IFSC lines, a credit-card payment-summary block, etc.)
      *  that appeared before this section's own header row, for {@link PdfMetadataExtractor} and
      *  credit-card-signal detection to scan. {@code evidence} is the row-accounting trail (see
-     *  {@link ExtractionEvidence}) -- currently populated only at the three drop points with the
-     *  strongest evidence (an unrecognized-bank document risk this class's own header-diff/marker/
-     *  footer logic already accepted, not speculative); the rest of this class's many other drop
+     *  {@link ExtractionEvidence}) -- currently populated only at the four drop points with the
+     *  strongest evidence: three in the header-based path (an unrecognized-bank document risk this
+     *  class's own header-diff/marker/footer logic already accepted, not speculative) plus the
+     *  headerless-inference path's own adjacent-duplicate drop (see
+     *  {@link #bucketHeaderlessRowsWithContinuation}); the rest of this class's many other drop
      *  points are a documented, deliberate gap, not silently assumed complete. */
     public record LocatedSection(List<String> auxiliaryText, List<Map<String, String>> rows,
                                   ExtractionEvidence evidence) {}
@@ -3131,10 +3133,14 @@ public class PdfTableLocator {
         return best;
     }
 
-    /** Rows and non-transaction text collected in the same pass -- see {@link #inferHeaderlessSection}
-     *  for why the latter matters as much as the former (it feeds product/identity classification
-     *  downstream, exactly as the header-based path's own pendingAuxiliary does). */
-    private record HeaderlessBucketResult(List<Map<String, String>> rows, List<String> auxiliaryText) {}
+    /** Rows, non-transaction text, and row-accounting evidence collected in the same pass -- see
+     *  {@link #inferHeaderlessSection} for why the auxiliary text matters as much as the rows (it
+     *  feeds product/identity classification downstream, exactly as the header-based path's own
+     *  pendingAuxiliary does). {@code droppedTransactionCandidates} is what makes the adjacent-
+     *  duplicate drop below an accountable fate instead of a silent one -- see this method's own
+     *  doc comment. */
+    private record HeaderlessBucketResult(List<Map<String, String>> rows, List<String> auxiliaryText,
+            List<DroppedCandidateRow> droppedTransactionCandidates) {}
 
     /** Buckets every row of {@code allRows} (not just the transaction-shaped subset used for role
      *  inference and scoring) against the inferred header, merging each non-transaction-shaped row
@@ -3158,11 +3164,26 @@ public class PdfTableLocator {
      *  #dedupeAdjacentIdenticalRows} exists for, applied again here so the duplicate is absent from
      *  the final staged rows too, not just from the candidates {@link #resolveDebitCreditByBalanceChain}
      *  scored. Compares only against the last TRANSACTION-shaped row, so intervening continuation
-     *  lines between the original and its reprint don't defeat the comparison. */
+     *  lines between the original and its reprint don't defeat the comparison.
+     *
+     *  <p><b>This drop, unlike {@link #dedupeAdjacentIdenticalRows}'s own, is recorded as row-
+     *  accounting evidence ({@code REPEATED_PHYSICAL_ROW_REMOVED}) and as a capability activation
+     *  ({@code PHYSICAL_ROW_DEDUP_EVIDENCE}, recorded only when a removal actually happens, not
+     *  merely when this method runs).</b> The reason code names the EVENT ("a repeated row was
+     *  removed"), not the detection mechanism that found it ("rows looked adjacent-identical") --
+     *  a name like the latter reads, out of context, as ambiguous about whether the row survived.
+     *  The two dedup passes look similar but are not the same fact: {@code dedupeAdjacentIdenticalRows}
+     *  only cleans the candidate list fed into column-role scoring -- a row it drops can still reach
+     *  this method's own independent scan of {@code allRows} and end up staged, so recording it as
+     *  "dropped from output" there would be false evidence. This method's drop is different -- it
+     *  removes the row from {@code result}, the list that becomes {@link LocatedSection#rows()} --
+     *  so this is the one point that actually corresponds to "this row will not reach the user," and
+     *  the one point where recording that fact is honest. */
     private HeaderlessBucketResult bucketHeaderlessRowsWithContinuation(List<List<PositionedText>> allRows,
             List<String> headerNames, List<Float> headerAnchors, List<Float> headerEnds, DocumentContext ctx) {
         List<Map<String, String>> result = new ArrayList<>();
         List<String> auxiliaryText = new ArrayList<>();
+        List<DroppedCandidateRow> droppedTransactionCandidates = new ArrayList<>();
         Map<String, String> currentAnchor = null;
         int continuationCount = 0;
         String previousTransactionLine = null;
@@ -3171,7 +3192,11 @@ public class PdfTableLocator {
             if (PAGE_FOOTER.matcher(rowLine).find()) continue;
             if (STATEMENT_CLOSING_MARKER.matcher(rowLine).find()) break;
             if (isTransactionShapedRow(row)) {
-                if (rowLine.equals(previousTransactionLine)) continue;
+                if (rowLine.equals(previousTransactionLine)) {
+                    recordIfTransactionShaped(row, "REPEATED_PHYSICAL_ROW_REMOVED", droppedTransactionCandidates);
+                    if (ctx != null) ctx.record("PHYSICAL_ROW_DEDUP_EVIDENCE");
+                    continue;
+                }
                 Map<String, String> bucketed = bucketRow(row, headerNames, headerAnchors, headerEnds, ctx);
                 if (bucketed.isEmpty()) continue;
                 result.add(bucketed);
@@ -3190,7 +3215,7 @@ public class PdfTableLocator {
                 auxiliaryText.add(rowLine);
             }
         }
-        return new HeaderlessBucketResult(result, auxiliaryText);
+        return new HeaderlessBucketResult(result, auxiliaryText, droppedTransactionCandidates);
     }
 
     /** Entry point for the whole INFERRED_HEADERLESS_LAYOUT capability -- see its top-level doc
@@ -3321,7 +3346,8 @@ public class PdfTableLocator {
             return null;
         }
         if (ctx != null) ctx.record("INFERRED_HEADERLESS_LAYOUT");
-        return new LocatedSection(bucketResult.auxiliaryText(), bucketResult.rows(), ExtractionEvidence.NONE);
+        return new LocatedSection(bucketResult.auxiliaryText(), bucketResult.rows(),
+                new ExtractionEvidence(bucketResult.droppedTransactionCandidates()));
     }
 
     // ===== INFERRED_TWO_LINE_DATE_BLOCK =====

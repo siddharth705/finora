@@ -965,31 +965,62 @@ actually works — no test, no claim.
   transaction, and the evidence must never be read as a count of lost money. This is the
   foundational layer for a future decision/confidence system, not a decision itself — see
   `RowAccountingValidator`'s own class-level doc comment.
-- **Supported layouts:** any document, at exactly three of `PdfTableLocator`'s many drop points —
-  the ones with zero trace at all before this capability existed, and the two the "Known
-  limitations" notes on `PAGE_BOUNDARY_ISOLATION` and `COMPOSITE_STATEMENT` above already name as
-  an acknowledged, real risk: a repeated `SECTION_MARKER` banner for the account already open, a
-  `PAGE_FOOTER`/`STATEMENT_CLOSING_MARKER` match, and a row that bucketed to nothing at all.
+- **Supported layouts:** any document, at four of `PdfTableLocator`'s many drop points. Three are in
+  the header-based path — the ones with zero trace at all before this capability existed, and the
+  two the "Known limitations" notes on `PAGE_BOUNDARY_ISOLATION` and `COMPOSITE_STATEMENT` above
+  already name as an acknowledged, real risk: a repeated `SECTION_MARKER` banner for the account
+  already open, a `PAGE_FOOTER`/`STATEMENT_CLOSING_MARKER` match, and a row that bucketed to
+  nothing at all. The fourth — `REPEATED_PHYSICAL_ROW_REMOVED` — is the first Input Fate Accounting
+  increment past the original three: `bucketHeaderlessRowsWithContinuation`'s own drop of a
+  transaction-shaped row that exactly repeats the immediately preceding one (see
+  `dedupeAdjacentIdenticalRows`'s own doc comment for the real page-boundary-reprint artifact this
+  protects against), scoped to the `INFERRED_HEADERLESS_LAYOUT` path only.
+- **A near-identical-looking dedup pass was deliberately NOT instrumented.** `PdfTableLocator` also
+  runs `dedupeAdjacentIdenticalRows` earlier in `inferHeaderlessSection`, over the candidate list fed
+  into column-role scoring — but a row that function drops can still reach
+  `bucketHeaderlessRowsWithContinuation`'s own independent scan of the full row list and end up
+  staged, so recording a drop there as "removed from output" would be evidence that doesn't match
+  what actually happened. Only `bucketHeaderlessRowsWithContinuation`'s own drop determines
+  `LocatedSection.rows()` membership, so that is the one point where recording "this will not
+  reach the user" is true by construction, and the only one wired.
 - **Implementation:** `PdfTableLocator` (`DroppedCandidateRow`, `ExtractionEvidence`,
-  `recordIfTransactionShaped`) → `LocatedSection.evidence()` → `PdfPreviewGenerator` (threaded into
-  `ImportVerifier.verify`) → `RowAccountingValidator` (`ROW_ACCOUNTING` finding, `VERIFIED` when
-  nothing was dropped, `WARNING` — never `FAILED` — when something was, with a reason-code
-  histogram in `details()`) → `ImportVerificationRecorder` (persisted; the histogram and counts are
-  allowlisted, the free-text `explanation` field is not, a gap shared with every other validator's
-  own `explanation` field, not unique to this one).
+  `recordIfTransactionShaped`, `HeaderlessBucketResult`) → `LocatedSection.evidence()` →
+  `PdfPreviewGenerator` (threaded into `ImportVerifier.verify`) → `RowAccountingValidator`
+  (`ROW_ACCOUNTING` finding, `VERIFIED` when nothing was dropped, `WARNING` — never `FAILED` — when
+  something was, with a reason-code histogram in `details()`) → `ImportVerificationRecorder`
+  (persisted; the histogram and counts are allowlisted, the free-text `explanation` field is not, a
+  gap shared with every other validator's own `explanation` field, not unique to this one). The
+  reason-code histogram is generic over any reason string, so `REPEATED_PHYSICAL_ROW_REMOVED` needed no
+  changes to `RowAccountingValidator` or the persistence allowlist to be covered correctly.
+- **Also records a capability activation, separately from the row-accounting evidence.**
+  `PHYSICAL_ROW_DEDUP_EVIDENCE` (see the Capability Registry's own `KNOWN_CAPABILITIES`) fires only
+  at the moment a removal actually happens — never merely because the `INFERRED_HEADERLESS_LAYOUT`
+  path ran, which is what `INFERRED_HEADERLESS_LAYOUT` itself already answers. This is a distinct
+  question a `droppedTransactionCandidateCount` alone cannot answer from outside a single document:
+  "how many documents in the corpus relied on this safety net at all," measured the same way every
+  other capability's real-corpus fire rate already is.
 - **Regression tests:** `RowAccountingValidatorTest`, `RowAccountingEvidencePdfTableLocatorTest`
   (including a false-positive guard: an ordinary page-footer line with no date or amount on it
-  must never generate evidence), `ImportVerificationDetailAllowlistTest`,
+  must never generate evidence), `HeaderlessLayoutInferenceTest` (the reprinted-last-row artifact
+  asserted against the output row count, the evidence it leaves behind, AND the capability
+  activation — plus a companion assertion on the duplicate-free baseline fixture that the
+  capability must NOT fire just because the code path ran), `ImportVerificationDetailAllowlistTest`,
   `ImportVerificationRecorderIT` (the reason histogram surviving a real round trip through the
   database).
 - **Maturity:** Beta — built from this document's own already-acknowledged risk notes, not fresh
-  real-document evidence of the specific failure it protects against.
-- **Known limitations:** only 3 of `PdfTableLocator`'s several drop points are wired (see the
-  Capability Backlog below for the rest); a genuinely UNCLASSIFIABLE financial-looking fragment —
-  content that never satisfies `isTransactionShapedRow`'s date-AND-amount-on-one-row requirement at
-  all (e.g. a "Date" column and an "Amount" column with no row where both are populated) — produces
-  no evidence whatsoever, a real gap distinct from what this capability already closes (see
-  `UNKNOWN_FINANCIAL_CONTENT_DETECTION` in the backlog). No page-level or duplicate-row evidence
+  real-document evidence of the specific failure it protects against. The one real document known
+  to exercise `INFERRED_HEADERLESS_LAYOUT` (a real SBI savings statement) contains no adjacent
+  duplicate rows, so `REPEATED_PHYSICAL_ROW_REMOVED` itself is verified only by the synthetic regression
+  fixture (reproducing the real page-boundary-reprint artifact `dedupeAdjacentIdenticalRows` was
+  originally built for) plus a full real-corpus regression sweep confirming no outcome shifted.
+- **Known limitations:** only 4 of `PdfTableLocator`'s several drop points are wired (see the
+  Capability Backlog below for the rest); the header-based path (the common case) has no adjacent-
+  duplicate-row mechanism at all, wired or otherwise — `REPEATED_PHYSICAL_ROW_REMOVED` only exists in the
+  minority `INFERRED_HEADERLESS_LAYOUT` path. A genuinely UNCLASSIFIABLE financial-looking
+  fragment — content that never satisfies `isTransactionShapedRow`'s date-AND-amount-on-one-row
+  requirement at all (e.g. a "Date" column and an "Amount" column with no row where both are
+  populated) — produces no evidence whatsoever, a real gap distinct from what this capability
+  already closes (see `UNKNOWN_FINANCIAL_CONTENT_DETECTION` in the backlog). No page-level evidence
   yet. No aggregate score or decision is derived from this evidence — deliberately: see "Don't fix
   it yet, root-cause it" and the Capability Backlog's own evidence-before-capability discipline.
 
@@ -1571,13 +1602,45 @@ scoring):
   its neighbors). Both need new plumbing this phase deliberately didn't add: no `StagedRow` or
   bucketed row currently carries a page reference, and `DocumentContext.pages` is a single
   whole-document integer, not a per-page breakdown.
-- Duplicate physical-row evidence — a transaction reprinted across a page boundary (a real,
-  observed PDF-generator artifact; see `dedupeAdjacentIdenticalRows`'s own doc comment for the
-  motivating document), tracked as evidence rather than silently deduplicated, so a future decision
-  layer can see it happened rather than just seeing a row count that already excludes it.
+- ~~Duplicate physical-row evidence~~ — **done**, see `ROW_ACCOUNTING_EVIDENCE`'s own entry above
+  (`REPEATED_PHYSICAL_ROW_REMOVED`). Scoped narrowly: only the `INFERRED_HEADERLESS_LAYOUT` path's own
+  adjacent-row dedup is instrumented, since that is the only adjacent-dedup mechanism that actually
+  exists anywhere in `PdfTableLocator` today — the header-based path (the common case) has none at
+  all, so a document reprinting a transaction across a page boundary in that path is neither
+  deduplicated nor evidenced. That remains open, not closed by this increment.
+- Table-formation evidence for the ICICI CC / HDFC / SBI shape — headers detected vs. tables
+  produced vs. transaction-shaped candidates vs. rows actually assigned, so a malformed-table
+  failure (the transactions never becoming rows at all) is visible as a distinct fate from every
+  fate `ROW_ACCOUNTING_EVIDENCE` already tracks, all of which presuppose a row reached the bucketing
+  stage in the first place. The next Input Fate Accounting increment.
 - OCR confidence evidence, once OCR itself exists as an acquisition path (see "Excel, Scanned PDFs
   / OCR..." below) — a recognized character is not a read one, and that distinction needs to reach
   this same evidence layer, not a separate one.
+- Severity distinction within the reason-code histogram itself. Today every reason code in
+  `droppedTransactionCandidateReasons` is presented as one undifferentiated `WARNING` — but the
+  codes already split into two categories that mean different things: **lost/unclassified**
+  candidates (`BUCKET_EMPTY` — "we saw something transaction-shaped and don't know what happened to
+  it") vs. **intentional structural removal** (`REPEATED_PHYSICAL_ROW_REMOVED` — "we identified and
+  removed a known artifact on purpose"). A reader seeing `droppedTransactionCandidateCount: 1` today
+  cannot tell which of these it was without inspecting the reason map by hand. Not attempted now —
+  recorded here rather than acted on, because a `reasonSeverity` map or a split
+  `removedStructuralRows`/`unclassifiedTransactionCandidates` count is itself a small classification
+  decision (which reason codes count as "intentional" vs. "lost") that deserves its own review once
+  there are enough reason codes for the distinction to matter, not a one-off judgment call made
+  while adding the second reason code that needs it.
+
+**Input Fate Accounting Phase 2 — fate coverage, named explicitly so "duplicate evidence is
+complete" is never mistaken for "input fate accounting is complete":**
+
+| Fate | Status |
+|---|---|
+| `EXTRACTED_TRANSACTION` (a row that reached `StagedRow`) | Existing |
+| `UNPARSEABLE_ROW` (bucketed but failed normalization) | Existing |
+| `PHYSICAL_ROW_REMOVED` (`REPEATED_PHYSICAL_ROW_REMOVED`, headerless path only) | Done this increment |
+| `STRUCTURAL_ROW_IGNORED` (`BUCKET_EMPTY`/`PAGE_FOOTER_OR_CLOSING_MARKER`/`REPEATED_ACCOUNT_BANNER`) | Partial — 3 of many drop points wired, see `ROW_ACCOUNTING_EVIDENCE`'s own "Known limitations" |
+| `TABLE_FORMATION_FAILURE` (ICICI CC / HDFC / SBI shape — the transactions never become rows at all) | Missing — next increment |
+| `UNKNOWN_FINANCIAL_CONTENT` (financial-looking content with no transaction shape to detect) | Missing — see `UNKNOWN_FINANCIAL_CONTENT_DETECTION` above |
+| `DUPLICATE_LEDGER_MATCH` (`DuplicateDetector`/`DuplicateIndex` — a different mechanism entirely: flags against the existing ledger, keeps the row, never removes it) | Existing, separately |
 
 **Phase 2 — Import Decision Engine.** Consumes ROW_ACCOUNTING plus every other existing validator
 (`BalanceChainValidator`, `StatementTotalsValidator`, `SummaryTotalsValidator`,
