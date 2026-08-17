@@ -65,6 +65,7 @@ class AuthServiceLoginTest {
         authService = new AuthService(
                 userRepository, mock(CategoryRepository.class), mock(PasswordResetTokenRepository.class),
                 reactivationTokenRepository,
+                mock(com.finora.repository.EmailVerificationTokenRepository.class),
                 mock(PasswordEncoder.class), mock(JwtService.class), authenticationManager,
                 auditService, refreshTokenService, mock(EmailProvider.class),
                 new EmailProperties(), mock(PhoneVerificationProvider.class), platformSettingsService,

@@ -14,7 +14,7 @@ import { authApi } from '../api/endpoints';
  */
 
 vi.mock('../api/endpoints', () => ({
-  authApi: { login: vi.fn(), register: vi.fn(), logout: vi.fn() },
+  authApi: { login: vi.fn(), register: vi.fn(), logout: vi.fn(), google: vi.fn() },
 }));
 
 const AUTH_RESPONSE = {
@@ -29,7 +29,7 @@ const AUTH_RESPONSE = {
 /** Exercises the real hook through a small harness, same pattern other hook-focused tests in
  *  this codebase use when there's no dedicated page already wired up to the flow being tested. */
 function Harness() {
-  const { token, email, fullName, phoneVerified, login, register, logout } = useAuth();
+  const { token, email, fullName, phoneVerified, login, register, loginWithGoogle, logout } = useAuth();
   return (
     <div>
       <p data-testid="token">{token ?? 'none'}</p>
@@ -42,6 +42,7 @@ function Harness() {
       <button onClick={() => void register('jane@example.com', 'password123', 'Jane Doe', '+919876543705' /* synthetic-ok */)}>
         Register
       </button>
+      <button onClick={() => void loginWithGoogle('fake-google-id-token')}>Sign in with Google</button>
       <button onClick={logout}>Log out</button>
     </div>
   );
@@ -61,6 +62,7 @@ describe('AuthContext', () => {
     vi.mocked(authApi.login).mockReset();
     vi.mocked(authApi.register).mockReset();
     vi.mocked(authApi.logout).mockReset();
+    vi.mocked(authApi.google).mockReset();
   });
 
   it('starts with no session when storage is empty', () => {
@@ -122,6 +124,19 @@ describe('AuthContext', () => {
     await waitFor(() => expect(screen.getByTestId('token')).toHaveTextContent('access-token-1'));
     expect(screen.getByTestId('phoneVerified')).toHaveTextContent('false');
     expect(localStorage.getItem('finora_phone_verified')).toBe('false');
+  });
+
+  it('loginWithGoogle() persists the session the same way login() does', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authApi.google).mockResolvedValue({ data: { ...AUTH_RESPONSE, phoneVerified: false } } as any);
+    renderHarness();
+
+    await user.click(screen.getByRole('button', { name: 'Sign in with Google' }));
+
+    await waitFor(() => expect(screen.getByTestId('token')).toHaveTextContent('access-token-1'));
+    expect(screen.getByTestId('phoneVerified')).toHaveTextContent('false');
+    expect(authApi.google).toHaveBeenCalledWith('fake-google-id-token');
+    expect(localStorage.getItem('finora_refresh_token')).toBeNull();
   });
 
   it('logout() clears the local session even when the best-effort server revoke call fails', async () => {

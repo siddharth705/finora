@@ -122,6 +122,13 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // token AND a Firebase-verified phone gate the expensive work, so this was never an anonymous
     // DoS -- which is why the ceiling is generous. It bounds a token holder retrying in a loop.
     private final RateLimiter resetPasswordLimiter;
+    // D-23. /auth/google does real work per call even on a rejected token -- Google's own
+    // signature/JWKS verification -- and for a first-time email, the full account-creation path
+    // (BCrypt hash, default-category seeding) that /register already sits behind a limiter for.
+    // It needs no phone number the way /register does, which makes it the CHEAPER path to spam
+    // account creation if left unguarded, not a lesser concern. Same ceiling as registerLimiter,
+    // for the same cost class.
+    private final RateLimiter googleLimiter;
     // Phase C (Download My Data). Far stricter than importStageLimiter -- 5/day, not 10/10min --
     // because a full export is strictly more expensive per call (every in-scope table plus every
     // original statement file, read and zipped) and legitimately needed far less often. Bug fix
@@ -190,6 +197,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     static final int DEFAULT_PHONE_CHANGE_MAX = 15, DEFAULT_PHONE_CHANGE_WINDOW = 600;
     static final int DEFAULT_RESET_PASSWORD_MAX = 10, DEFAULT_RESET_PASSWORD_WINDOW = 600;
     static final int DEFAULT_DATA_EXPORT_MAX = 5, DEFAULT_DATA_EXPORT_WINDOW = 86400;
+    static final int DEFAULT_GOOGLE_MAX = 5, DEFAULT_GOOGLE_WINDOW = 300;
 
     /**
      * The shipped configuration, for tests.
@@ -207,7 +215,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 DEFAULT_PASSWORD_CHANGE_MAX, DEFAULT_PASSWORD_CHANGE_WINDOW,
                 DEFAULT_PHONE_CHANGE_MAX, DEFAULT_PHONE_CHANGE_WINDOW,
                 DEFAULT_RESET_PASSWORD_MAX, DEFAULT_RESET_PASSWORD_WINDOW,
-                DEFAULT_DATA_EXPORT_MAX, DEFAULT_DATA_EXPORT_WINDOW);
+                DEFAULT_DATA_EXPORT_MAX, DEFAULT_DATA_EXPORT_WINDOW,
+                DEFAULT_GOOGLE_MAX, DEFAULT_GOOGLE_WINDOW);
     }
 
     /**
@@ -240,7 +249,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
             @Value("${app.rate-limit.reset-password.max:10}") int resetPasswordMax,
             @Value("${app.rate-limit.reset-password.window-seconds:600}") int resetPasswordWindow,
             @Value("${app.rate-limit.data-export.max:5}") int dataExportMax,
-            @Value("${app.rate-limit.data-export.window-seconds:86400}") int dataExportWindow) {
+            @Value("${app.rate-limit.data-export.window-seconds:86400}") int dataExportWindow,
+            @Value("${app.rate-limit.google.max:5}") int googleMax,
+            @Value("${app.rate-limit.google.window-seconds:300}") int googleWindow) {
         this.objectMapper = objectMapper;
         this.clientIpResolver = clientIpResolver;
         this.loginLimiter = new RateLimiter(loginMax, loginWindow);
@@ -251,9 +262,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
         this.phoneChangeLimiter = new RateLimiter(phoneChangeMax, phoneChangeWindow);
         this.resetPasswordLimiter = new RateLimiter(resetPasswordMax, resetPasswordWindow);
         this.dataExportLimiter = new RateLimiter(dataExportMax, dataExportWindow);
+        this.googleLimiter = new RateLimiter(googleMax, googleWindow);
         this.limitedEndpoints = List.of(
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/login"), loginLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/register"), registerLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/google"), googleLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/forgot-password"), forgotPasswordLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/reset-password"), resetPasswordLimiter),
                 // BH-015. This class's comment above dismissed /auth/reset-password/phone as
@@ -270,6 +283,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 // access/refresh tokens), so this bounds a token holder retrying in a loop rather
                 // than defending against an anonymous guesser.
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/reactivate"), resetPasswordLimiter),
+                // D-23. Same reasoning as reactivate directly above: an unguessable, single-use,
+                // short-TTL token gates the real cost here, so this bounds a token holder retrying
+                // in a loop rather than defending against an anonymous guesser.
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/verify-email"), resetPasswordLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/import/csv/stage"), importStageLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/import/pdf/stage"), importStageLimiter),
                 // The asynchronous upload path, sharing importStageLimiter because it is the same

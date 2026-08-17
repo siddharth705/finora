@@ -149,6 +149,20 @@
       <scope>runtime</scope>
     </dependency>
 
+    <!-- D-23: Sign in with Google (ID token verification, not the Gmail data-integration OAuth
+         flow above; see GoogleOAuthProperties' own doc comment on that distinction). Provides
+         GoogleIdTokenVerifier: signature verification against Google's published JWKS (with
+         correct caching/rotation/clock-skew handling), issuer and audience checks. Reimplementing
+         this with the JWT library already used for Finora's own tokens would mean re-deriving
+         JWKS fetching/caching and the exact claim-validation rules by hand for a security
+         boundary; Google's own audited library is the safer choice here, not the smaller
+         dependency. -->
+    <dependency>
+      <groupId>com.google.api-client</groupId>
+      <artifactId>google-api-client</artifactId>
+      <version>2.7.0</version>
+    </dependency>
+
     <!-- Validation -->
     <dependency>
       <groupId>org.springframework.boot</groupId>

@@ -17,11 +17,12 @@ public class AuthDtos {
     // apostrophes, and periods -- covers "Jean-Luc", "O'Brien", "Md. Rahman". Tolerates
     // leading/trailing whitespace here (AuthService.register() trims before saving) so a name
     // typed with stray surrounding spaces isn't rejected for something the UI already fixes up.
-    // Package-private rather than private so AdminDtos (same package) constrains the admin
-    // support-edit path with the SAME rules the user-facing path uses, instead of restating them
-    // and drifting. AdminUpdateUserRequest previously declared no constraints at all -- see its
-    // own doc comment for what that let through.
-    static final String FULL_NAME_REGEXP = "^\\s*\\p{L}[\\p{L}\\s.'-]{0,98}\\p{L}\\s*$";
+    // Public (not just package-private) so AdminDtos (same package) AND AuthService (a Google
+    // sign-in display name isn't a validated request field the way a registration form's fullName
+    // is -- see AuthService.sanitizeGoogleDisplayName) both constrain against the SAME rules
+    // instead of restating them and drifting. AdminUpdateUserRequest previously declared no
+    // constraints at all -- see its own doc comment for what that let through.
+    public static final String FULL_NAME_REGEXP = "^\\s*\\p{L}[\\p{L}\\s.'-]{0,98}\\p{L}\\s*$";
     static final String FULL_NAME_MESSAGE = "Enter a valid full name using letters, spaces, hyphens, or apostrophes only";
     static final String PHONE_REGEXP = "^\\+?[0-9]{10,15}$";
     static final String PHONE_MESSAGE = "Enter a valid phone number (10-15 digits, optional + country code)";
@@ -53,6 +54,15 @@ public class AuthDtos {
             @NotBlank String password,
             String scope
     ) {}
+
+    /**
+     * D-23: {@code idToken} is the raw Google ID token from Google Identity Services (web) or a
+     * native Google Sign-In SDK (mobile, Phase 2) -- never the frontend's own parsed claims.
+     * {@code AuthService.loginWithGoogle} verifies it server-side via
+     * {@code GoogleIdTokenVerifierService} before trusting anything it says, same discipline as
+     * {@code ResetPasswordRequest.firebaseIdToken}.
+     */
+    public record GoogleAuthRequest(@NotBlank String idToken) {}
 
     /** token = short-lived access token (15 min default); refreshToken = long-lived (30 days),
      *  used to obtain a new access token via /auth/refresh without re-entering credentials.
@@ -132,4 +142,9 @@ public class AuthDtos {
     /** token is the raw reactivation token AuthService.login() minted and returned in an
      *  AUTH_ACCOUNT_DEACTIVATED error's details map -- see AuthService.reactivate(). */
     public record ReactivateRequest(@NotBlank String token) {}
+
+    /** D-23. token is the raw verification token from a {@code /verify-email?token=...} link --
+     *  see AuthService.mintEmailVerificationToken / verifyEmail. */
+    public record VerifyEmailRequest(@NotBlank String token) {}
+    public record VerifyEmailResponse(String message) {}
 }

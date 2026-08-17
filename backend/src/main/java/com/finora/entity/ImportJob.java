@@ -487,7 +487,11 @@ public class ImportJob implements com.finora.imports.storage.StoredStatement {
      *  {@code StatementStorage} directly -- not through {@code StatementContentService.store}, the
      *  only place that compresses -- so a job's object is never gzipped. Returning anything else
      *  here would make {@code StatementContentService.read} try to decompress bytes that were
-     *  never compressed. */
+     *  never compressed. A deliberate, permanent exemption, not a gap -- see
+     *  docs/architecture/data/statement-storage-migration.md §0.2 for why (routing this path
+     *  through compression as it exists today would undo BH-018's streaming-upload fix), and
+     *  {@code ImportJobTest.compressionTypeIsAlwaysNone_regardlessOfJobState} /
+     *  {@code ImportJobEndpointIT.theStoredObjectIsUncompressed} for the tests that guard it. */
     @Override
     public com.finora.imports.storage.CompressionType getCompressionType() {
         return com.finora.imports.storage.CompressionType.NONE;

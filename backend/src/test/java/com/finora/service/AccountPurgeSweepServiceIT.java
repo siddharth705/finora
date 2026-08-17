@@ -15,6 +15,7 @@ import com.finora.imports.analysis.StatementAnalysisSessionRepository;
 import com.finora.integrations.google.GmailConnectionRepository;
 import com.finora.integrations.google.GmailConnectionService;
 import com.finora.repository.AccountReactivationTokenRepository;
+import com.finora.repository.EmailVerificationTokenRepository;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.BudgetRepository;
 import com.finora.repository.CategoryRepository;
@@ -96,6 +97,7 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
     @Autowired private PasswordChangeSessionRepository passwordChangeSessionRepository;
     @Autowired private PasswordResetTokenRepository passwordResetTokenRepository;
     @Autowired private AccountReactivationTokenRepository accountReactivationTokenRepository;
+    @Autowired private EmailVerificationTokenRepository emailVerificationTokenRepository;
     @Autowired private RefreshTokenRepository refreshTokenRepository;
     @Autowired private UserSettingsRepository userSettingsRepository;
     @Autowired private AccountRepository accountRepository;
@@ -121,6 +123,7 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
                 relationshipRepository, relationshipIdentifierRepository, netWorthSnapshotRepository,
                 importJobRepository, importSessionRepository, passwordHistoryRepository,
                 passwordChangeSessionRepository, passwordResetTokenRepository, accountReactivationTokenRepository,
+                emailVerificationTokenRepository,
                 refreshTokenRepository, userSettingsRepository, accountRepository, statementImportRepository,
                 statementImportService, statementAnalysisSessionRepository, auditService, passwordEncoder,
                 transactionTemplate);

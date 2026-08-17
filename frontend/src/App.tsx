@@ -29,6 +29,7 @@ const Login = lazy(() => import('./pages/Login'));
 const Register = lazy(() => import('./pages/Register'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
+const VerifyEmail = lazy(() => import('./pages/VerifyEmail'));
 const VerifyPhone = lazy(() => import('./pages/VerifyPhone'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Ledger = lazy(() => import('./pages/Ledger'));
@@ -124,6 +125,7 @@ export default function App() {
           <Route path="/register" element={<Register />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/verify-phone" element={<ProtectedRoute allowUnverified><VerifyPhone /></ProtectedRoute>} />
 
           {/* App (authenticated) */}

@@ -147,6 +147,7 @@ class AuthServiceAccountScopeTest {
                 mock(com.finora.repository.CategoryRepository.class),
                 mock(com.finora.repository.PasswordResetTokenRepository.class),
                 mock(com.finora.repository.AccountReactivationTokenRepository.class),
+                mock(com.finora.repository.EmailVerificationTokenRepository.class),
                 mock(org.springframework.security.crypto.password.PasswordEncoder.class),
                 mock(com.finora.security.JwtService.class),
                 mock(org.springframework.security.authentication.AuthenticationManager.class),

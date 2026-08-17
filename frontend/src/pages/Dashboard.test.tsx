@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -16,7 +16,7 @@ import type { DashboardSummary } from '../types';
 // DashboardService/RecurringService already computed; nothing rendered any of it before these
 // changes.
 vi.mock('../api/endpoints', () => ({
-  dashboardApi: { summary: vi.fn() },
+  dashboardApi: { summary: vi.fn(), journey: vi.fn() },
   accountsApi: { list: vi.fn() },
   transactionsApi: { search: vi.fn(), create: vi.fn() },
   categoriesApi: { list: vi.fn() },
@@ -50,6 +50,9 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
       'Spend Consistency': 50,
       'Cash Flow Stability': 80,
     },
+    healthScoreAvailable: true,
+    healthScoreTransactionCount: 12,
+    healthScoreMinTransactions: 10,
     spendByCategory: {},
     notifications: [],
     reportingMonth: '2026-08',
@@ -74,6 +77,10 @@ function renderDashboard() {
 describe('Dashboard — Financial Health Score', () => {
   beforeEach(() => {
     vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    // Empty by default -- FinancialJourney (a separate component with its own dedicated test
+    // file) renders nothing for an empty milestone list, so this stays out of the way of every
+    // assertion below unless a test explicitly cares about it.
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
     vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
     vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
       // totalElements > 0: this account has real history, matching every scenario these two
@@ -131,11 +138,34 @@ describe('Dashboard — Financial Health Score', () => {
     expect(await screen.findByText('28')).toBeInTheDocument();
     expect(screen.getByText('Needs Attention')).toBeInTheDocument();
   });
+
+  it("D-25 PR3-A: shows a 'Getting Started' progress state instead of a score below the transaction floor", async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      healthScore: null, healthLabel: null, healthBreakdown: {},
+      healthScoreAvailable: false, healthScoreTransactionCount: 7, healthScoreMinTransactions: 10,
+    }));
+    renderDashboard();
+
+    const heading = await screen.findByText('Financial Health Score');
+    const card = within(heading.closest('div.bg-card') as HTMLElement);
+    expect(card.getByText('Getting Started')).toBeInTheDocument();
+    expect(card.getByText('7 / 10 transactions')).toBeInTheDocument();
+    expect(card.getByText('70%')).toBeInTheDocument();
+    // Not a real score or breakdown -- rendering either here would be the exact harsh-first-
+    // impression bug this state exists to avoid. Scoped to the card itself: "Savings Rate" is
+    // also a KPI tile label elsewhere on the page, same reason the breakdown test above scopes.
+    expect(card.queryByText('out of 100')).not.toBeInTheDocument();
+    expect(card.queryByText('Savings Rate')).not.toBeInTheDocument();
+  });
 });
 
 describe('Dashboard — Subscriptions & Recurring Payments', () => {
   beforeEach(() => {
     vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    // Empty by default -- FinancialJourney (a separate component with its own dedicated test
+    // file) renders nothing for an empty milestone list, so this stays out of the way of every
+    // assertion below unless a test explicitly cares about it.
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
     vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
     vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
       // totalElements > 0: this account has real history, matching every scenario these two
@@ -156,12 +186,30 @@ describe('Dashboard — Subscriptions & Recurring Payments', () => {
     vi.mocked(reportsApi.forMonth).mockReset().mockResolvedValue({
       month: '2026-08', income: 80000, expense: 45000, categories: [],
     });
+    // Only `Date` is faked (not timers) -- RTL's findByText/waitFor poll via real setTimeout,
+    // and faking those too would hang every `await screen.findByText(...)` below. Freezing "now"
+    // makes these day-count assertions deterministic instead of drifting with whatever moment
+    // `npm test` happens to run at.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 7, 17, 12, 0, 0));
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Built from local date components, not `.toISOString()` -- Dashboard's own expectedLabel()
+  // parses `nextEstimate` as a local date (`new Date(dateStr + 'T00:00:00')`, no 'Z') and compares
+  // it against local midnight. A UTC-sliced string here would silently disagree with that by a day
+  // whenever the machine's timezone offset straddles midnight differently than UTC does -- which
+  // is exactly what made these two tests fail on a real IST machine while passing under UTC CI.
   function daysFromNow(n: number): string {
     const d = new Date();
     d.setDate(d.getDate() + n);
-    return d.toISOString().slice(0, 10);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
   }
 
   it('renders each recurring item RecurringService already detected, with its own cadence and amount', async () => {
@@ -223,6 +271,10 @@ describe('Dashboard — per-section empty states', () => {
 
   beforeEach(() => {
     vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    // Empty by default -- FinancialJourney (a separate component with its own dedicated test
+    // file) renders nothing for an empty milestone list, so this stays out of the way of every
+    // assertion below unless a test explicitly cares about it.
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
     vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
     vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
       content: [], page: 0, size: 4, totalElements: 0, totalPages: 0,
@@ -376,5 +428,46 @@ describe('Dashboard — per-section empty states', () => {
 
     expect(screen.queryByRole('heading', { name: /add transaction/i })).not.toBeInTheDocument();
     expect(transactionsApi.create).not.toHaveBeenCalled();
+  });
+});
+
+// D-25 PR3-C. FinancialJourney itself is unit-tested in its own file
+// (components/FinancialJourney.test.tsx) -- this just confirms Dashboard actually renders it,
+// and does so even in the per-section-empty-states scenario above (unlike Financial Health
+// Score, which that describe block asserts is HIDDEN under the same isEmpty condition).
+describe('Dashboard — Your Financial Journey', () => {
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({
+      milestones: [
+        { type: 'ACCOUNT_CREATED', completed: true, completedAt: '2026-08-01T00:00:00Z' },
+        { type: 'FIRST_IMPORT', completed: false, completedAt: null },
+        { type: 'FIRST_BUDGET', completed: false, completedAt: null },
+        { type: 'FIRST_GOAL', completed: false, completedAt: null },
+        { type: 'FIRST_GOAL_ACHIEVED', completed: false, completedAt: null },
+      ],
+    });
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 0, totalPages: 0,
+    });
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(insightsApi.get).mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
+      theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null,
+    });
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue([]);
+    vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('renders even with zero transactions, unlike Financial Health Score which hides in the same state', async () => {
+    renderDashboard();
+
+    expect(await screen.findByText('Your Financial Journey')).toBeInTheDocument();
+    expect(screen.getByText('1 of 5 complete')).toBeInTheDocument();
+    expect(screen.queryByText('Financial Health Score')).not.toBeInTheDocument();
   });
 });

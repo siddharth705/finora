@@ -92,9 +92,15 @@ export interface DashboardSummary {
   incomeDeltaPct: number | null;
   expenseDeltaPct: number | null;
   netDeltaPct: number | null;
-  healthScore: number;
-  healthLabel: string;
+  // D-25 PR3-A: null/empty below healthScoreMinTransactions -- a score computed from too few
+  // transactions is a harsh first impression, not a true reading. Check healthScoreAvailable
+  // before rendering these, don't infer availability from healthScore being non-null alone.
+  healthScore: number | null;
+  healthLabel: string | null;
   healthBreakdown: Record<string, number>;
+  healthScoreAvailable: boolean;
+  healthScoreTransactionCount: number;
+  healthScoreMinTransactions: number;
   spendByCategory: Record<string, number>;
   notifications: string[];
   /**
@@ -105,6 +111,18 @@ export interface DashboardSummary {
    */
   reportingMonth: string | null;
   reportingMonthIsCurrent: boolean;
+}
+
+// D-25 PR3-B/C. `type` is one of ACCOUNT_CREATED/FIRST_IMPORT/FIRST_BUDGET/FIRST_GOAL/
+// FIRST_GOAL_ACHIEVED (FinancialJourneyDto's own constants) -- left as `string`, not a union,
+// so an unrecognized future value degrades to a generic label instead of a type error.
+export interface JourneyMilestone {
+  type: string;
+  completed: boolean;
+  completedAt: string | null;
+}
+export interface FinancialJourney {
+  milestones: JourneyMilestone[];
 }
 
 export interface Budget {

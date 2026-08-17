@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { Target } from 'lucide-react';
 import { goalsApi } from '../api/endpoints';
 import type { Goal } from '../types';
+import { FinoraCard, EmptyState } from '../design-system';
 
 function fmt(n: number) {
   // Negative amounts (e.g. a month where spend exceeded income) must render as "-₹500",
@@ -81,7 +83,7 @@ export default function Goals() {
 
   return (
     <div className="space-y-4">
-      <div className="bg-card rounded p-4 shadow grid grid-cols-2 md:grid-cols-4 gap-2 items-end">
+      <FinoraCard padding="sm" className="grid grid-cols-2 md:grid-cols-4 gap-2 items-end">
         <div><label htmlFor="goal-name" className="block text-xs uppercase text-gray-500 mb-1">Name</label><input id="goal-name" value={name} onChange={(e) => setName(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" /></div>
         <div><label htmlFor="goal-target" className="block text-xs uppercase text-gray-500 mb-1">Target</label><input id="goal-target" type="number" value={target} onChange={(e) => setTarget(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" /></div>
         <div><label htmlFor="goal-starting-amount" className="block text-xs uppercase text-gray-500 mb-1">Starting amount</label><input id="goal-starting-amount" type="number" value={current} onChange={(e) => setCurrent(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" /></div>
@@ -89,17 +91,25 @@ export default function Goals() {
         <button onClick={addGoal} disabled={saving} className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded text-xs uppercase col-span-2 md:col-span-1 disabled:opacity-50">
           {saving ? 'Adding…' : 'Add Goal'}
         </button>
-      </div>
+      </FinoraCard>
       {error && <p className="text-danger text-sm">{error}</p>}
 
       <div className="space-y-3">
         {goals.length === 0 ? (
-          <p className="text-sm italic text-gray-300">No goals yet.</p>
+          <FinoraCard padding="sm">
+            <EmptyState
+              icon={Target}
+              iconBg="bg-red-100"
+              iconColor="text-red-600"
+              title="No goals yet"
+              desc="Add your first goal above to start tracking progress."
+            />
+          </FinoraCard>
         ) : (
           goals.map((g) => {
             const pct = g.targetAmount > 0 ? Math.min(100, (g.currentAmount / g.targetAmount) * 100) : 0;
             return (
-              <div key={g.id} className="bg-card rounded shadow p-4">
+              <FinoraCard key={g.id} padding="sm">
                 <div className="flex justify-between items-baseline mb-2">
                   <span className="font-serif text-lg font-semibold">{g.name}</span>
                   <span className="text-sm text-gray-500">{fmt(g.currentAmount)} / {fmt(g.targetAmount)}</span>
@@ -114,7 +124,7 @@ export default function Goals() {
                     <button onClick={() => remove(g.id)} className="border border-danger text-danger rounded px-2 py-1 uppercase">Delete</button>
                   </span>
                 </div>
-              </div>
+              </FinoraCard>
             );
           })
         )}

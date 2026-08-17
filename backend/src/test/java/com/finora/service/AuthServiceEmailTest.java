@@ -53,6 +53,7 @@ class AuthServiceEmailTest {
         authService = new AuthService(
                 userRepository, mock(CategoryRepository.class), resetTokenRepository,
                 mock(com.finora.repository.AccountReactivationTokenRepository.class),
+                mock(com.finora.repository.EmailVerificationTokenRepository.class),
                 mock(PasswordEncoder.class), mock(JwtService.class), mock(AuthenticationManager.class),
                 auditService, mock(RefreshTokenService.class), emailProvider, emailProperties,
                 mock(PhoneVerificationProvider.class), mock(PlatformSettingsService.class),

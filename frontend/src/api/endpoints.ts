@@ -2,7 +2,7 @@ import { api, rawApi, type ApiEnvelope } from './client';
 import { downloadBlob } from '../lib/download';
 import type {
 
-  Account, AccountStatementGroup, BankInfo, Budget, DashboardSummary, DetectedAccountInfo, Goal,
+  Account, AccountStatementGroup, BankInfo, Budget, DashboardSummary, DetectedAccountInfo, FinancialJourney, Goal,
   ImportSummary, ReimportResult, StagedAccountSection, StagedRow, StatementSummary, Transaction,
   WorkspaceSettings, UnparseableRow, VerificationReport,
 } from '../types';
@@ -85,6 +85,17 @@ export const authApi = {
   // AuthContext.reactivate and ReactivateAccountPrompt.tsx. Returns the same shape as login.
   reactivate: (token: string) =>
     api.post<AuthResponseDto>('/auth/reactivate', { token }),
+  // idToken is the credential Google Identity Services hands back after the user picks an
+  // account -- verified server-side (GoogleIdTokenVerifierService), never trusted as-is. Serves
+  // both registration and login: the backend auto-links to an existing account sharing the same
+  // Google-verified email, or creates one, and returns the same AuthResponseDto shape either way.
+  google: (idToken: string) =>
+    api.post<AuthResponseDto>('/auth/google', { idToken }),
+  // token is the raw verification token from a /verify-email?token=... link (register(), or a
+  // fresh one loginWithGoogle sends when it finds a matching but not-yet-verified account -- see
+  // VerifyEmail.tsx). Not authenticated: the token itself is the proof.
+  verifyEmail: (token: string) =>
+    api.post<{ message: string }>('/auth/verify-email', { token }).then((r) => r.data),
 };
 
 // Just one endpoint now -- there's no backend-triggered "send" step (Firebase's own client SDK
@@ -571,6 +582,7 @@ export const categoriesApi = {
 
 export const dashboardApi = {
   summary: () => api.get<DashboardSummary>('/dashboard/summary').then((r) => r.data),
+  journey: () => api.get<FinancialJourney>('/dashboard/journey').then((r) => r.data),
 };
 
 export interface NetWorthSnapshotPoint {
