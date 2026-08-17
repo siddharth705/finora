@@ -18,11 +18,14 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * The authenticated, OTP-gated Change Phone Number flow: enter a new number -> Firebase OTP sent
- * to and verified against THAT number -> commit. Reached from VerifyPhone.tsx's OTP-failure
- * screen -- the escape for a user whose account phone number is wrong or no longer reachable, with
- * no other self-service way to fix it (the only other writer of User.phoneNumber is
- * AdminUserService.updateProfile, an admin-only path).
+ * The authenticated, OTP-gated Change (or, for an account with none yet, Set) Phone Number flow:
+ * enter a number -> Firebase OTP sent to and verified against THAT number -> commit. Reached from
+ * VerifyPhone.tsx two ways: the OTP-failure screen's escape hatch, for a user whose account phone
+ * number is wrong or no longer reachable; and automatically, on load, for an account with no
+ * phone number on file at all -- a Google Sign-In account (see AuthService.createGoogleUserRecord)
+ * has none until it goes through exactly this flow once. Either way there is no other self-service
+ * path (the only other writer of User.phoneNumber is AdminUserService.updateProfile, an
+ * admin-only path).
  *
  * Deliberately its own service mirroring {@link PasswordChangeService}'s session-based state
  * machine rather than folded into it or into {@link AuthService} -- same reasoning
@@ -70,19 +73,19 @@ public class PhoneChangeService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
         requireActiveAccount(user);
-        if (user.getPhoneNumber() == null || user.getPhoneNumber().isBlank()) {
-            // Shouldn't be reachable in practice -- phone number is required at registration --
-            // but User.phoneNumber has no NOT NULL constraint at the DB level, same guard
-            // PasswordChangeService.start() already applies for the identical reason. Matters more
-            // here than there: current_phone_number on the session this method is about to create
-            // is NOT NULL, so skipping this would surface as an opaque 409 from the DB constraint
-            // handler instead of a message that names the actual problem.
-            throw new ApiException(HttpStatus.BAD_REQUEST,
-                    "This account has no phone number on file. Contact an administrator for help changing your phone number.");
-        }
+        // Bug fix (review): this used to unconditionally reject a null/blank phoneNumber as
+        // "shouldn't be reachable in practice" -- true for the original registration flow (phone
+        // number is required there), false since AuthService.createGoogleUserRecord shipped: a
+        // Google Sign-In account starts with NO phone number at all, by design, and VerifyPhone.tsx
+        // routes exactly that account here to set one for the first time. This method now doubles
+        // as "set" as well as "change" -- the two are the same operation from this service's own
+        // point of view (open a session, prove control of the requested number, commit it).
+        boolean hasNoNumberYet = user.getPhoneNumber() == null || user.getPhoneNumber().isBlank();
 
         String newPhoneNumber = PhoneNumbers.normalize(request.newPhoneNumber());
-        if (PhoneNumbers.sameNumber(newPhoneNumber, user.getPhoneNumber())) {
+        // Only a real "nothing to change" case when there's something to compare against --
+        // a first-time number can never already be "the same as nothing."
+        if (!hasNoNumberYet && PhoneNumbers.sameNumber(newPhoneNumber, user.getPhoneNumber())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "That's already the number on your account.");
         }
         if (userRepository.existsByPhoneNumberAndAccountScope(newPhoneNumber, user.getAccountScope())) {
@@ -94,7 +97,12 @@ public class PhoneChangeService {
         PhoneChangeSession session = new PhoneChangeSession();
         session.setUserId(userId);
         session.setStatus(PhoneChangeSession.Status.STARTED);
-        session.setCurrentPhoneNumber(user.getPhoneNumber());
+        // "" not null: current_phone_number is NOT NULL at the DB level (see this table's own
+        // migration), and there genuinely is no prior number to record for a first-time set --
+        // an honest empty value for "there wasn't one," not a fabricated placeholder. Never read
+        // back anywhere in this codebase beyond this entity's own getter, so an empty string here
+        // carries no risk of ever being displayed or compared as if it were a real number.
+        session.setCurrentPhoneNumber(hasNoNumberYet ? "" : user.getPhoneNumber());
         session.setRequestedPhoneNumber(newPhoneNumber);
         session.setExpiresAt(now.plusSeconds(sessionTtlMinutes * 60));
         session = sessionRepository.save(session);
