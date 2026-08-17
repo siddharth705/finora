@@ -124,7 +124,7 @@ public class UserAccountLifecycleService {
      * Irreversible: current-password+OTP already proven by sessionId (see PasswordChangeService.
      * consumeForAccountDeletion), sets PENDING_DELETION, revokes every session, sends a
      * no-cancel-link confirmation email. AccountPurgeSweepService purges the account
-     * AccountPurgeSweepService.MINIMUM_SAFETY_BUFFER-floored 48h later -- there is deliberately no
+     * AccountPurgeSweepService.MINIMUM_SAFETY_BUFFER-floored 6h later -- there is deliberately no
      * self-service undo (product decision), unlike deactivate() above.
      *
      * @param sessionId a PasswordChangeSession id already at OTP_VERIFIED -- the frontend drives

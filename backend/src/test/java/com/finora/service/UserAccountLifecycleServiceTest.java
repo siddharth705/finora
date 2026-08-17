@@ -154,7 +154,7 @@ class UserAccountLifecycleServiceTest {
     /** Regression test: without this, requestDeletion()'s "no cancel link" product decision was
      *  trivially reversible -- an access token already issued keeps working for up to 15 minutes
      *  past the status change (requestDeletion only revokes refresh tokens), and the account's
-     *  real password is unchanged until AccountPurgeSweepService's purge runs 48h later, so
+     *  real password is unchanged until AccountPurgeSweepService's purge runs 6h later, so
      *  deactivate() would have happily flipped a PENDING_DELETION account back to DEACTIVATED with
      *  nothing more than the same still-known current password. */
     @Test

@@ -94,15 +94,18 @@ public class AccountPurgeSweepService {
 
     private static final Logger log = LoggerFactory.getLogger(AccountPurgeSweepService.class);
 
-    /** The 48h window IS the safety buffer here, unlike {@code StatementStorageSweepService}'s
+    /** The 6h window IS the safety buffer here, unlike {@code StatementStorageSweepService}'s
      *  incidental 24h floor under a 90-day default -- see this class's own doc and {@code
-     *  UserAccountLifecycleService.requestDeletion}'s "no cancel link" product decision. */
-    static final Duration MINIMUM_SAFETY_BUFFER = Duration.ofHours(48);
+     *  UserAccountLifecycleService.requestDeletion}'s "no cancel link" product decision. Lowered
+     *  from an original 48h (2026-08-17 product decision) -- still enough room to catch a
+     *  compromised-session or mistaken deletion (the request itself requires current-password +
+     *  OTP) before data is actually gone, just without the multi-day wait. */
+    static final Duration MINIMUM_SAFETY_BUFFER = Duration.ofHours(6);
 
     @Value("${app.account-purge.sweep.enabled:true}")
     private boolean sweepEnabled;
 
-    @Value("${app.account-purge.sweep.retention-hours:48}")
+    @Value("${app.account-purge.sweep.retention-hours:6}")
     private int retentionHours;
 
     /** How many candidates one sweep run considers. Same reasoning as {@code
@@ -219,8 +222,14 @@ public class AccountPurgeSweepService {
      * <p>{@code fixedDelay}, not {@code fixedRate}: the next sweep starts after the previous one
      * finishes, so a slow run (Gmail revocation calls, per-user work) cannot pile up overlapping
      * passes.
+     *
+     * <p>15 minutes, not {@code StatementStorageSweepService}'s 6h -- that interval is negligible
+     * against a 90-day retention, but would add up to another 6h on TOP of this class's own 6h
+     * {@link #MINIMUM_SAFETY_BUFFER}, doubling the real-world wait past what "deleted in 6 hours"
+     * (the confirmation email / DeleteAccountModal copy) actually promises. 15 minutes keeps the
+     * worst case close to 6h.
      */
-    @Scheduled(fixedDelayString = "${app.account-purge.sweep.interval-ms:21600000}",
+    @Scheduled(fixedDelayString = "${app.account-purge.sweep.interval-ms:900000}",
             initialDelayString = "${app.account-purge.sweep.initial-delay-ms:300000}")
     public void scheduledSweep() {
         if (!sweepEnabled) return;

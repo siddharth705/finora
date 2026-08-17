@@ -193,7 +193,7 @@ public class ResendEmailProvider implements EmailProvider {
         String when = DEACTIVATED_AT_FORMAT.format(requestedAt.atZone(ZoneOffset.UTC));
         String html = """
                 <p>Your Finora account is scheduled for permanent deletion, requested on %s (UTC).</p>
-                <p>Your account and all your data will be permanently removed in 48 hours. This
+                <p>Your account and all your data will be permanently removed in 6 hours. This
                 cannot be undone, and there is no way to cancel this request.</p>
                 <p>If you didn't do this, contact support immediately.</p>
                 """.formatted(when);

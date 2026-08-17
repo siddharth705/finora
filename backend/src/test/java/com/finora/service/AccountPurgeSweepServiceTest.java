@@ -124,7 +124,7 @@ class AccountPurgeSweepServiceTest {
                 statementImportRepository, statementImportService, statementAnalysisSessionRepository,
                 auditService, passwordEncoder, transactionTemplate);
         ReflectionTestUtils.setField(service, "sweepEnabled", true);
-        ReflectionTestUtils.setField(service, "retentionHours", 48);
+        ReflectionTestUtils.setField(service, "retentionHours", 6);
         ReflectionTestUtils.setField(service, "batchSize", 200);
     }
 
@@ -136,7 +136,7 @@ class AccountPurgeSweepServiceTest {
         u.setPhoneNumber("+919876543210"); // synthetic-ok
         u.setPasswordHash("hashed");
         u.setStatus(User.STATUS_PENDING_DELETION);
-        u.setDeletionRequestedAt(Instant.now().minus(49, ChronoUnit.HOURS));
+        u.setDeletionRequestedAt(Instant.now().minus(7, ChronoUnit.HOURS));
         u.setDeactivationReason("TAKING_A_BREAK");
         u.setDeactivationNote("Back in a bit");
         com.finora.entity.Role role = new com.finora.entity.Role();
@@ -271,7 +271,7 @@ class AccountPurgeSweepServiceTest {
     }
 
     /** {@link AccountPurgeSweepService#MINIMUM_SAFETY_BUFFER}. Even a misconfigured retention-hours
-     *  of 0 must not make the cutoff "now" -- the 48h window is the product decision itself here,
+     *  of 0 must not make the cutoff "now" -- the 6h window is the product decision itself here,
      *  not a tunable like statement storage's 90-day default. */
     @Test
     void sweep_enforcesAMinimumSafetyBuffer_evenIfRetentionHoursIsMisconfiguredToZero() {
@@ -283,7 +283,7 @@ class AccountPurgeSweepServiceTest {
 
         org.mockito.ArgumentCaptor<Instant> cutoffCaptor = org.mockito.ArgumentCaptor.forClass(Instant.class);
         verify(userRepository).findIdsByStatusAndDeletionRequestedAtBefore(eq(User.STATUS_PENDING_DELETION), cutoffCaptor.capture(), any());
-        assertThat(cutoffCaptor.getValue()).isBefore(Instant.now().minus(47, ChronoUnit.HOURS));
+        assertThat(cutoffCaptor.getValue()).isBefore(Instant.now().minus(5, ChronoUnit.HOURS));
     }
 
     @Test

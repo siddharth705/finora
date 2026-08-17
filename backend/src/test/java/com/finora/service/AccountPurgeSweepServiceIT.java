@@ -125,7 +125,7 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
                 statementImportService, statementAnalysisSessionRepository, auditService, passwordEncoder,
                 transactionTemplate);
         ReflectionTestUtils.setField(service, "sweepEnabled", true);
-        ReflectionTestUtils.setField(service, "retentionHours", 48);
+        ReflectionTestUtils.setField(service, "retentionHours", 6);
         ReflectionTestUtils.setField(service, "batchSize", 200);
 
         User user = new User();
@@ -133,7 +133,7 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         user.setPasswordHash("irrelevant-for-this-test");
         user.setFullName("Purge Test User");
         user.setStatus(User.STATUS_PENDING_DELETION);
-        user.setDeletionRequestedAt(Instant.now().minus(49, ChronoUnit.HOURS));
+        user.setDeletionRequestedAt(Instant.now().minus(7, ChronoUnit.HOURS));
         userId = userRepository.save(user).getId();
 
         Account account = new Account();

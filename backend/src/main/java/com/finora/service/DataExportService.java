@@ -154,7 +154,7 @@ public class DataExportService {
      * PENDING_DELETION}: a suspended account has no path to a fresh login to even reach this (the
      * same "unreachable in practice" reasoning {@link AccountPurgeSweepService} itself relies on),
      * and {@code PENDING_DELETION} is exactly when a user most wants to grab their data before the
-     * 48h purge -- blocking it here would fight the point of offering it at all.
+     * 6h purge -- blocking it here would fight the point of offering it at all.
      */
     @Transactional(readOnly = true)
     public ExportBundle buildBundle(UUID userId, String currentPassword) {
