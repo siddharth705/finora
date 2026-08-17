@@ -50,6 +50,19 @@ export function apiErrorCode(err: unknown): string | null {
   return typeof code === 'string' ? code : null;
 }
 
+/**
+ * The server's error-specific payload (see ApiException's `details` map on the backend), or null
+ * for anything that isn't an answered API error. Same shape of accessor as apiErrorCode() above,
+ * for the same reason: a caller that needs to branch UI on structured evidence -- e.g.
+ * AUTH_ACCOUNT_DEACTIVATED's reactivation token -- shouldn't have to hand-write its own
+ * axios-error type cast to reach it.
+ */
+export function apiErrorDetails<T = unknown>(err: unknown): T | null {
+  if (!axios.isAxiosError(err) || !err.response) return null;
+  const details = (err.response.data as { details?: unknown } | undefined)?.details;
+  return details == null ? null : (details as T);
+}
+
 export function toUserMessage(err: unknown, fallback: string): string {
   // Firebase errors aren't axios errors and carry their own `code`.
   const code = (err as { code?: unknown } | null)?.code;
