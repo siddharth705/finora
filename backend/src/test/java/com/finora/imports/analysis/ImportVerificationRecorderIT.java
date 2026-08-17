@@ -114,6 +114,49 @@ class ImportVerificationRecorderIT extends AbstractIntegrationTest {
                 .doesNotContain("48221.50").doesNotContain("expectedBalance");
     }
 
+    /** The real shape a ROW_ACCOUNTING WARNING carries -- see {@code RowAccountingValidator}. */
+    private static ImportDto.VerificationReport rowAccountingWarning() {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("stagedTransactionCount", 124);
+        details.put("locatedRowCount", 129);
+        details.put("unparseableRowCount", 0);
+        details.put("droppedTransactionCandidateCount", 5);
+        details.put("droppedTransactionCandidateReasons", Map.of("BUCKET_EMPTY", 5L));
+        details.put("explanation", "5 rows outside the recognized transaction table had the shape "
+                + "of a transaction candidate and were discarded.");
+        return new ImportDto.VerificationReport(List.of(
+                new ImportDto.VerificationFinding("ROW_ACCOUNTING", "WARNING", details)));
+    }
+
+    @Test
+    void rowAccountingSReasonHistogramSurvivesTheRoundTripThroughTheDatabase() {
+        // This is the first evidence type a future observability pass (per-bank unknown rates,
+        // layout-drift alerts) will need to read back out of this table -- if the reason histogram
+        // doesn't survive the round trip, that future work has nothing to build on. The allowlist
+        // itself is unit-tested in ImportVerificationDetailAllowlistTest; this proves it still
+        // holds through Jackson and a real TEXT column, same as the balance-chain test above.
+        User user = user();
+        String reference = analysis(user.getId());
+
+        int written = recorder.recordForAnalysis(reference, List.of(rowAccountingWarning()));
+
+        assertThat(written).isEqualTo(1);
+        UUID sessionId = analysisRepository.findByReference(reference).orElseThrow().getId();
+        var stored = findingRepository.findByAnalysisSessionIdOrderBySectionIndexAscRuleAsc(sessionId);
+        assertThat(stored).extracting(ImportVerificationFinding::getRule).containsExactly("ROW_ACCOUNTING");
+        assertThat(stored).extracting(ImportVerificationFinding::getOutcome).containsExactly("WARNING");
+
+        String detailsJson = stored.get(0).getDetailsJson();
+        assertThat(detailsJson)
+                .as("counts and the reason histogram are the whole point of this evidence type")
+                .contains("droppedTransactionCandidateCount").contains("5")
+                .contains("droppedTransactionCandidateReasons").contains("BUCKET_EMPTY")
+                .contains("stagedTransactionCount").contains("locatedRowCount")
+                .as("our own authored prose isn't on the allowlist yet -- a pre-existing gap shared "
+                        + "with every other validator's own explanation field, not fixed here")
+                .doesNotContain("discarded");
+    }
+
     @Test
     void eachSectionOfACompositeStatementKeepsItsOwnFindings() {
         // A composite statement's sections have separate balance chains and one can verify while

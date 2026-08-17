@@ -112,7 +112,7 @@ class VerificationSurvivesStagingConversionTest {
                 com.finora.imports.product.ProductDiscovery.standard());
         PreviewGenerator previewGenerator = new PreviewGenerator(new CsvParser(), transactionNormalizer,
                 statementValidator, new ImportVerifier(new BalanceChainValidator(), new StatementTotalsValidator(),
-                new SummaryTotalsValidator(), new ColumnAmbiguityValidator()), TestRuleEngines.empty());
+                new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator()), TestRuleEngines.empty());
         ImportRuleLearningService ruleLearningService = new ImportRuleLearningService(categorizationService);
         pdfPreviewGenerator = mock(com.finora.imports.pdf.PdfPreviewGenerator.class);
         verificationRecorder = mock(ImportVerificationRecorder.class);

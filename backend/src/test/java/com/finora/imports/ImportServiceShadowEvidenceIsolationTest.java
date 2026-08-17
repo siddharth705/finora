@@ -105,7 +105,7 @@ class ImportServiceShadowEvidenceIsolationTest {
         PreviewGenerator previewGenerator = new PreviewGenerator(new CsvParser(), normalizer,
                 new StatementValidator(com.finora.imports.product.ProductDiscovery.standard()),
                 new ImportVerifier(new BalanceChainValidator(), new StatementTotalsValidator(),
-                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator()),
+                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator()),
                 TestRuleEngines.empty());
 
         ImportSession session = new ImportSession();

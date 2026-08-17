@@ -396,7 +396,7 @@ class MultiSectionZeroExtractionTest {
 
     private ImportVerifier verifier() {
         return new ImportVerifier(new BalanceChainValidator(), new StatementTotalsValidator(),
-                new SummaryTotalsValidator(), new ColumnAmbiguityValidator());
+                new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator());
     }
 
     private PdfPreviewGenerator generatorFor(Object acquirer) {

@@ -11,6 +11,7 @@ import com.finora.imports.BalanceChainValidator;
 import com.finora.imports.ColumnAmbiguityValidator;
 import com.finora.imports.DuplicateDetector;
 import com.finora.imports.ImportVerifier;
+import com.finora.imports.RowAccountingValidator;
 import com.finora.imports.StagedAccountSectionFilter;
 import com.finora.imports.StatementTotalsValidator;
 import com.finora.imports.SummaryTotalsValidator;
@@ -84,7 +85,7 @@ class ClosingBalanceCircularFinancialValidationTest {
                 new PdfMetadataExtractor(), transactionNormalizer, ProductDiscovery.standard(),
                 new ProductAttributeExtractor(),
                 new ImportVerifier(new BalanceChainValidator(), new StatementTotalsValidator(),
-                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator()),
+                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator()),
                 TestRuleEngines.empty());
     }
 

@@ -94,7 +94,7 @@ public final class CorpusProbe {
                 textExtractor, tableLocator, new PdfMetadataExtractor(), stubbedNormalizer(),
                 ProductDiscovery.standard(), new ProductAttributeExtractor(),
                 new ImportVerifier(new BalanceChainValidator(), new StatementTotalsValidator(),
-                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator()),
+                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator()),
                 TestRuleEngines.empty());
 
         var generated = generator.generateSectionsWithContext(

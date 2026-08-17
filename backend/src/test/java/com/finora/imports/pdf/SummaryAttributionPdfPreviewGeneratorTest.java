@@ -51,7 +51,7 @@ class SummaryAttributionPdfPreviewGeneratorTest {
                 new TransactionNormalizer(cat, new DuplicateDetector(repo), TestRuleEngines.empty()),
                 ProductDiscovery.standard(), new ProductAttributeExtractor(),
                 new ImportVerifier(new BalanceChainValidator(), new StatementTotalsValidator(),
-                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator()),
+                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator()),
                 TestRuleEngines.empty());
     }
 

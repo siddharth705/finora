@@ -198,7 +198,8 @@ public class PdfPreviewGenerator {
             // header to key a structured row by.
             PdfTableLocator.LocatedTable empty = tableLocator.locate(positioned, ctx);
             PdfTableLocator.LocatedSection emptySection =
-                    new PdfTableLocator.LocatedSection(empty.preTableLines(), List.of());
+                    new PdfTableLocator.LocatedSection(empty.preTableLines(), List.of(),
+                            PdfTableLocator.ExtractionEvidence.NONE);
             // Goes straight to buildLedgerSection rather than through buildSections' product-vs-
             // ledger routing: with no rows and no header at all, classification can only ever
             // return UNKNOWN, and UNKNOWN's own hasTransactions()==false would otherwise divert
@@ -409,7 +410,7 @@ public class PdfPreviewGenerator {
         var verification = importVerifier.verify(documentOrder,
                 detected == null ? null : detected.openingBalance(),
                 detected == null ? null : detected.closingBalance(),
-                printedSummary, section.rows());
+                printedSummary, section.rows(), unparseable, section.evidence().droppedTransactionCandidates());
         return new StagedAccountSection(detected, staged, staged.size(), dupCount, unparseable, verification);
     }
 

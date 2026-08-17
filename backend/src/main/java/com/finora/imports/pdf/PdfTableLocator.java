@@ -382,11 +382,43 @@ public class PdfTableLocator {
 
     public record LocatedTable(List<Map<String, String>> rows, List<String> preTableLines) {}
 
+    /** A physical row that carried a date-shaped cell AND a decimal-amount cell on the same line
+     *  (see {@link #isTransactionShapedRow}) but did not become a member of a section's own
+     *  {@code rows()} -- a structural SHAPE fact only, never a claim that the line actually was a
+     *  missing transaction ("candidate," not "missing" -- the validator downstream must never
+     *  overclaim this into "N transactions went missing"). That judgment (whether this is worth
+     *  surfacing to a user) belongs downstream, in whatever reads this list -- mirrors the same
+     *  layering the class-level doc comment on {@link LocatedSection} already establishes for
+     *  every other field here.
+     *
+     *  <p>Deliberately carries no raw text and no customer data -- only {@code reason} (a stable
+     *  machine code, e.g. {@code "BUCKET_EMPTY"}) and {@code signals} (which structural properties
+     *  were present, e.g. {@code DATE_PRESENT}/{@code AMOUNT_PRESENT}). A PDF row can carry an
+     *  account number, a merchant name, a balance -- exactly the class of data a prior real
+     *  incident already leaked into a code comment on this same statement's own last-4 digits (see
+     *  the AU auxiliaryText propagation fix). Evidence about a row's SHAPE never needs its VALUE. */
+    public record DroppedCandidateRow(String reason, java.util.Set<String> signals) {}
+
+    /** Everything {@link PdfTableLocator} can say about a section's OWN extraction -- structural,
+     *  never financial-interpretation -- beyond its rows and auxiliary text. A dedicated object
+     *  rather than more fields directly on {@link LocatedSection}, so this stays the one place new
+     *  structural evidence (dropped-candidate rows today; page coverage, layout warnings, or
+     *  further row-fate detail later) accumulates, instead of {@code LocatedSection} itself
+     *  slowly becoming a dumping ground for every future signal this class learns to compute. */
+    public record ExtractionEvidence(List<DroppedCandidateRow> droppedTransactionCandidates) {
+        static final ExtractionEvidence NONE = new ExtractionEvidence(List.of());
+    }
+
     /** One detected account/table within a document -- {@code auxiliaryText} is the free-standing
      *  text (account holder/number/branch/IFSC lines, a credit-card payment-summary block, etc.)
      *  that appeared before this section's own header row, for {@link PdfMetadataExtractor} and
-     *  credit-card-signal detection to scan. */
-    public record LocatedSection(List<String> auxiliaryText, List<Map<String, String>> rows) {}
+     *  credit-card-signal detection to scan. {@code evidence} is the row-accounting trail (see
+     *  {@link ExtractionEvidence}) -- currently populated only at the three drop points with the
+     *  strongest evidence (an unrecognized-bank document risk this class's own header-diff/marker/
+     *  footer logic already accepted, not speculative); the rest of this class's many other drop
+     *  points are a documented, deliberate gap, not silently assumed complete. */
+    public record LocatedSection(List<String> auxiliaryText, List<Map<String, String>> rows,
+                                  ExtractionEvidence evidence) {}
 
     public record LocatedDocument(List<LocatedSection> sections) {}
 
@@ -439,6 +471,11 @@ public class PdfTableLocator {
 
         List<LocatedSection> sections = new ArrayList<>();
         List<String> pendingAuxiliary = new ArrayList<>();
+        // Row-accounting evidence: physical rows that had transaction shape (a date-shaped cell
+        // and a decimal-amount cell on the same line -- see isTransactionShapedRow) but were about
+        // to be dropped with no trace at all. Threaded and reset exactly like pendingAuxiliary --
+        // see closeCurrentSection.
+        List<DroppedCandidateRow> pendingDroppedCandidates = new ArrayList<>();
         List<Map<String, String>> currentRows = null;
         List<String> headerNames = null;
         List<Float> headerAnchors = null;
@@ -535,7 +572,10 @@ public class PdfTableLocator {
                 // a genuine header-based table followed by this appendix must keep that real
                 // section, not lose it along with the boilerplate that follows.
                 if (currentRows != null) {
-                    pendingAuxiliary = closeCurrentSection(currentRows, pendingLeading, headerNames, pendingAuxiliary, sections, ctx);
+                    PendingState closed = closeCurrentSection(currentRows, pendingLeading, headerNames,
+                            pendingAuxiliary, pendingDroppedCandidates, sections, ctx);
+                    pendingAuxiliary = closed.auxiliary();
+                    pendingDroppedCandidates = closed.droppedCandidates();
                     currentRows = null;
                 }
                 // This explicit boundary supersedes any still-unresolved ACCOUNT_IDENTITY_LINE
@@ -576,13 +616,22 @@ public class PdfTableLocator {
                 pendingAccountIdCandidate = null;
                 if (sameAccountBannerRepeated) {
                     if (ctx != null) ctx.record("REPEATED_ACCOUNT_BANNER");
+                    // Row-accounting evidence: this line is about to be discarded with NO other
+                    // trace at all (unlike the "different account" path below, whose banner line
+                    // survives into the new section's own auxiliary text) -- the one case in this
+                    // block that's actually silent.
+                    recordIfTransactionShaped(row, "REPEATED_ACCOUNT_BANNER", pendingDroppedCandidates);
                     continue; // repeated per-page banner for the account already in progress
                 }
                 if (currentRows != null) {
-                    pendingAuxiliary = closeCurrentSection(currentRows, pendingLeading, headerNames, pendingAuxiliary, sections, ctx);
+                    PendingState closed = closeCurrentSection(currentRows, pendingLeading, headerNames,
+                            pendingAuxiliary, pendingDroppedCandidates, sections, ctx);
+                    pendingAuxiliary = closed.auxiliary();
+                    pendingDroppedCandidates = closed.droppedCandidates();
                     if (ctx != null) ctx.record("COMPOSITE_STATEMENT");
                 } else {
                     pendingAuxiliary = new ArrayList<>();
+                    pendingDroppedCandidates = new ArrayList<>();
                 }
                 currentRows = null;
                 headerNames = null;
@@ -706,7 +755,10 @@ public class PdfTableLocator {
                     // A different header shape, or a same-shaped header with a contradicting
                     // identity line since this section opened -- fallback signal for a new section
                     // in a document without a banner line.
-                    pendingAuxiliary = closeCurrentSection(currentRows, pendingLeading, headerNames, pendingAuxiliary, sections, ctx);
+                    PendingState closed = closeCurrentSection(currentRows, pendingLeading, headerNames,
+                            pendingAuxiliary, pendingDroppedCandidates, sections, ctx);
+                    pendingAuxiliary = closed.auxiliary();
+                    pendingDroppedCandidates = closed.droppedCandidates();
                     if (ctx != null) ctx.record("COMPOSITE_STATEMENT");
                     // Required companion to the ACCOUNT_IDENTITY_LINE block above: THIS section
                     // (the one just closed) is being replaced. If a contradicting identity line
@@ -770,10 +822,20 @@ public class PdfTableLocator {
                 pendingAuxiliary.add(rowLine);
             } else if (PAGE_FOOTER.matcher(rowLine).find() || STATEMENT_CLOSING_MARKER.matcher(rowLine).find()) {
                 if (ctx != null) ctx.record("PAGE_BOUNDARY_ISOLATION");
+                // Row-accounting evidence: acknowledged, real risk (see this pattern's own doc
+                // comment) -- a genuine transaction description that happens to also match this
+                // loose page-footer shape would otherwise vanish with zero trace at all.
+                recordIfTransactionShaped(row, "PAGE_FOOTER_OR_CLOSING_MARKER", pendingDroppedCandidates);
                 continue; // a page-number line or closing marker is never a transaction or a continuation of one
             } else {
                 Map<String, String> bucketed = bucketRow(row, headerNames, headerAnchors, headerEnds, ctx);
-                if (bucketed.isEmpty()) continue;
+                if (bucketed.isEmpty()) {
+                    // Row-accounting evidence: the row survived every structural gate up to
+                    // bucketing and still produced literally nothing -- the strongest "we don't
+                    // know what happened to this line" signal this loop has.
+                    recordIfTransactionShaped(row, "BUCKET_EMPTY", pendingDroppedCandidates);
+                    continue;
+                }
 
                 // Bug fix: a description that wraps onto a second visual row (HDFC's layout --
                 // see this method's own doc comment) used to be handled by a y-distance heuristic
@@ -918,17 +980,22 @@ public class PdfTableLocator {
             }
         }
         if (currentRows != null) {
-            List<String> leftover = closeCurrentSection(currentRows, pendingLeading, headerNames, pendingAuxiliary, sections, ctx);
-            // closeCurrentSection returns non-empty only when it just suppressed a payment-summary
-            // panel instead of staging a section (the ordinary path always returns a fresh, empty
-            // list for whatever section comes next). This is the end of the document, so there IS
-            // no next section to fold that demoted text into -- without this, a document whose
-            // FINAL section is a payment-summary panel would silently lose it, the exact class of
-            // bug e65af76 fixed elsewhere in auxiliaryText handling. Only added when a real section
-            // already exists: a document whose ONLY content was a suppressed panel must stay
-            // sections.isEmpty() so the headerless/two-line fallbacks below still get their chance.
-            if (!leftover.isEmpty() && !sections.isEmpty()) {
-                sections.add(new LocatedSection(leftover, List.of()));
+            PendingState closed = closeCurrentSection(currentRows, pendingLeading, headerNames,
+                    pendingAuxiliary, pendingDroppedCandidates, sections, ctx);
+            // closeCurrentSection's auxiliary is non-empty only when it just suppressed a
+            // payment-summary panel instead of staging a section (the ordinary path always
+            // returns a fresh, empty list for whatever section comes next). This is the end of the
+            // document, so there IS no next section to fold that demoted text into -- without
+            // this, a document whose FINAL section is a payment-summary panel would silently lose
+            // it, the exact class of bug e65af76 fixed elsewhere in auxiliaryText handling. Only
+            // added when a real section already exists: a document whose ONLY content was a
+            // suppressed panel must stay sections.isEmpty() so the headerless/two-line fallbacks
+            // below still get their chance. Out of Phase 1 scope: this leftover's own dropped-
+            // candidate evidence (closed.droppedCandidates()) has nowhere left to fold into either,
+            // and this end-of-document edge case is rare enough not to warrant one -- documented,
+            // not silently assumed complete, same as this class's other deferred drop points.
+            if (!closed.auxiliary().isEmpty() && !sections.isEmpty()) {
+                sections.add(new LocatedSection(closed.auxiliary(), List.of(), ExtractionEvidence.NONE));
             }
         }
         // INFERRED_HEADERLESS_LAYOUT. Only ever attempted once the loop above has already found
@@ -1119,6 +1186,13 @@ public class PdfTableLocator {
         return matchedPhrases.size() >= MIN_PAYMENT_SUMMARY_FIELD_MATCHES;
     }
 
+    /** Paired return for {@link #closeCurrentSection} -- {@code pendingAuxiliary}/
+     *  {@code pendingDroppedCandidates} always travel together (both carry forward unchanged on
+     *  suppression, both reset to fresh empty lists once a real section is staged), so returning
+     *  them as one record keeps that pairing from drifting apart at a call site the way two
+     *  separately-returned values could. */
+    private record PendingState(List<String> auxiliary, List<DroppedCandidateRow> droppedCandidates) {}
+
     /** Closes whatever section is currently open: flushes any pending leading narration, then
      *  either stages it as a real {@link LocatedSection} or -- when {@link
      *  #looksLikePaymentSummaryPanel} says it looks like a misdetected payment-summary panel
@@ -1126,24 +1200,25 @@ public class PdfTableLocator {
      *  the same "never lose information, just stop calling it a table" treatment {@link
      *  #inferTwoLineDateBlockSection}'s own unmatched rows already get.
      *
-     *  @return the {@code pendingAuxiliary} list the caller should keep accumulating into for
-     *  whatever comes next -- a fresh empty list after a real section is staged (its own auxiliary
-     *  text now belongs to that section), or the SAME list, with the demoted rows appended, when
-     *  suppressed -- carrying it forward is what lets a demoted panel's text still end up as
-     *  auxiliary text on the NEXT (real) section once that one closes, rather than being silently
-     *  dropped the moment the caller's own "start fresh" reset ran. */
-    private List<String> closeCurrentSection(List<Map<String, String>> currentRows, Map<String, String> pendingLeading,
-            List<String> headerNames, List<String> pendingAuxiliary, List<LocatedSection> sections, DocumentContext ctx) {
+     *  @return the {@link PendingState} the caller should keep accumulating into for whatever
+     *  comes next -- fresh empty lists after a real section is staged (its own evidence now
+     *  belongs to that section), or the SAME lists, with the demoted rows appended to
+     *  {@code auxiliary}, when suppressed -- carrying it forward is what lets a demoted panel's
+     *  text still end up as auxiliary text on the NEXT (real) section once that one closes, rather
+     *  than being silently dropped the moment the caller's own "start fresh" reset ran. */
+    private PendingState closeCurrentSection(List<Map<String, String>> currentRows, Map<String, String> pendingLeading,
+            List<String> headerNames, List<String> pendingAuxiliary,
+            List<DroppedCandidateRow> pendingDroppedCandidates, List<LocatedSection> sections, DocumentContext ctx) {
         flushPendingLeading(currentRows, pendingLeading);
         if (looksLikePaymentSummaryPanel(headerNames, currentRows)) {
             for (Map<String, String> row : currentRows) {
                 pendingAuxiliary.add(String.join(" ", row.values()));
             }
             if (ctx != null) ctx.record("PAYMENT_SUMMARY_PANEL_SUPPRESSED");
-            return pendingAuxiliary;
+            return new PendingState(pendingAuxiliary, pendingDroppedCandidates);
         }
-        sections.add(new LocatedSection(pendingAuxiliary, currentRows));
-        return new ArrayList<>();
+        sections.add(new LocatedSection(pendingAuxiliary, currentRows, new ExtractionEvidence(pendingDroppedCandidates)));
+        return new PendingState(new ArrayList<>(), new ArrayList<>());
     }
 
     /**
@@ -2814,6 +2889,26 @@ public class PdfTableLocator {
         return hasDate && hasAmount;
     }
 
+    // The only two structural facts isTransactionShapedRow's own gate can attest to -- fixed
+    // rather than computed per-call, since by construction both are true whenever that gate
+    // passes. Carried as signals, never the row's own text (see DroppedCandidateRow's own doc
+    // comment on why raw content never belongs in this evidence).
+    private static final java.util.Set<String> TRANSACTION_SHAPE_SIGNALS =
+            java.util.Set.of("DATE_PRESENT", "AMOUNT_PRESENT");
+
+    /** Row-accounting evidence: called at a drop point right before a physical row is discarded
+     *  with no other trace. Appends nothing when the row doesn't have transaction shape --
+     *  ordinary boilerplate (a page number, an address line, a disclaimer sentence) is not
+     *  evidence of anything and must not manufacture a false review signal the way flagging every
+     *  discarded line would. See {@link ExtractionEvidence}'s own doc comment for why this lives
+     *  on {@link LocatedSection} rather than being reported some other way. */
+    private void recordIfTransactionShaped(List<PositionedText> row, String reason,
+                                            List<DroppedCandidateRow> pendingDroppedCandidates) {
+        if (isTransactionShapedRow(row)) {
+            pendingDroppedCandidates.add(new DroppedCandidateRow(reason, TRANSACTION_SHAPE_SIGNALS));
+        }
+    }
+
     /** Drops the second of any two ADJACENT transaction-shaped rows whose full cell text is
      *  identical. Exists for a real artifact on the motivating document: it reprints its last
      *  transaction row again at the top of the following page, right before the statement-summary
@@ -3226,7 +3321,7 @@ public class PdfTableLocator {
             return null;
         }
         if (ctx != null) ctx.record("INFERRED_HEADERLESS_LAYOUT");
-        return new LocatedSection(bucketResult.auxiliaryText(), bucketResult.rows());
+        return new LocatedSection(bucketResult.auxiliaryText(), bucketResult.rows(), ExtractionEvidence.NONE);
     }
 
     // ===== INFERRED_TWO_LINE_DATE_BLOCK =====
@@ -3416,6 +3511,6 @@ public class PdfTableLocator {
             return null;
         }
         if (ctx != null) ctx.record("INFERRED_TWO_LINE_DATE_BLOCK");
-        return new LocatedSection(auxiliaryText, resultRows);
+        return new LocatedSection(auxiliaryText, resultRows, ExtractionEvidence.NONE);
     }
 }
