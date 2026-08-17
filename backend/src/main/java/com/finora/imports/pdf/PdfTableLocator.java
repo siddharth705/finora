@@ -195,6 +195,21 @@ public class PdfTableLocator {
     // numbers are printed with (HSBC's "100-111111-002"). See accountIdentityIn.
     private static final Pattern ACCOUNT_NUMBER_IN_MARKER = Pattern.compile("\\d[\\d-]{3,}\\d|\\d{4,}");
 
+    // A plain "Account Number: <digits>" line -- the identity signal a composite statement gives
+    // when it has NO SECTION_MARKER-shaped product banner at all (no "SAVINGS ACCOUNT -", just an
+    // ordinary account-details field, the same shape PdfMetadataExtractor.ACCOUNT_NUMBER already
+    // recognizes downstream for metadata purposes). Deliberately a SEPARATE pattern, not a shared
+    // import from that class: PdfTableLocator must not depend on PdfMetadataExtractor at all (see
+    // LocatedSection's own doc comment -- this class does not decide what a section MEANS
+    // financially, and identity/product interpretation belongs strictly downstream).
+    //
+    // Anchored at the START of the line specifically so an ordinary transaction narration that
+    // merely MENTIONS an account number mid-sentence -- a NEFT/UPI reference like "...Account No
+    // 1234567890 credited" -- can never match. A genuine identity line states the label first;   // synthetic-ok: 1-2-3-4-5-6-7-8-9-0, invented, not corpus-derived
+    // narration never does.
+    private static final Pattern ACCOUNT_IDENTITY_LINE = Pattern.compile(
+            "(?i)^\\s*(?:Account\\s*No\\.?|Account\\s*Number|A/C\\s*No\\.?)\\s*:?\\s*.*\\d{4,}");
+
     // A trailing amount (optionally Dr/Cr-suffixed) embedded at the end of an otherwise-ordinary
     // cell's text, e.g. "FUEL SURCHARGE                                  10.00 Dr" or
     // "MEDICAL 500.00 Dr" -- see splitTrailingAmountIfMissing's own doc comment for why this comes
@@ -436,6 +451,13 @@ public class PdfTableLocator {
         // later banner naming the SAME account is recognized as a repeated page header rather than
         // a new account -- see the marker-handling block below.
         String currentSectionAccountId = null;
+        // Set by the ACCOUNT_IDENTITY_LINE block below when an identity line appears mid-section
+        // and does not confirm as a repeat of currentSectionAccountId -- deliberately does NOT
+        // close the section right there (that line might just be trailing restatement text before
+        // a differently-shaped table, not a new account starting). Consulted only at the next
+        // header event, which is where sections are actually created -- see the header-diff block.
+        boolean pendingIdentityMismatch = false;
+        String pendingAccountIdCandidate = null;
         Integer lastRowPage = null; // page index of the most recently added row in currentRows
         // Parallel to lastRowPage: the y of that same row, and the line pitch the current
         // transaction block established between its date row and its first continuation -- the two
@@ -516,6 +538,12 @@ public class PdfTableLocator {
                     pendingAuxiliary = closeCurrentSection(currentRows, pendingLeading, headerNames, pendingAuxiliary, sections, ctx);
                     currentRows = null;
                 }
+                // This explicit boundary supersedes any still-unresolved ACCOUNT_IDENTITY_LINE
+                // mismatch -- see the header-diff block's own identityContradicts check. Left set,
+                // it would still be consulted by the next real header this document finds, forcing
+                // a split that has nothing to do with the identity line that set it.
+                pendingIdentityMismatch = false;
+                pendingAccountIdCandidate = null;
                 if (ctx != null) ctx.record("ILLUSTRATIVE_BLOCK_SUPPRESSED");
                 pendingAuxiliary.add(rowLine);
                 continue;
@@ -538,6 +566,14 @@ public class PdfTableLocator {
                 boolean sameAccountBannerRepeated = currentRows != null
                         && markerAccountId != null
                         && markerAccountId.equals(currentSectionAccountId);
+                // A marker banner is a stronger, explicit identity signal than a plain
+                // ACCOUNT_IDENTITY_LINE -- it settles the question either way (same account
+                // confirmed, or a new one named outright), so any earlier still-unresolved
+                // mismatch this document hasn't reached a header for yet is now moot. Left set, it
+                // would still be consulted by the next real header, forcing a split that has
+                // nothing to do with the identity line that originally set it.
+                pendingIdentityMismatch = false;
+                pendingAccountIdCandidate = null;
                 if (sameAccountBannerRepeated) {
                     if (ctx != null) ctx.record("REPEATED_ACCOUNT_BANNER");
                     continue; // repeated per-page banner for the account already in progress
@@ -562,6 +598,51 @@ public class PdfTableLocator {
                 pendingLeading = null;
                 pendingLeadingFromProximity = false;
                 leadingCount = 0;
+                pendingAuxiliary.add(rowLine);
+                continue;
+            }
+
+            // A plain identity line with no SECTION_MARKER-shaped banner around it -- the composite-
+            // statement case that banner path cannot see at all. Real bug, found by adversarial
+            // review: two different accounts sharing the same column layout, each identified only by
+            // an ordinary "Account Number: <digits>" line, previously fell through to the
+            // header-signature-equality fallback below with NO identity check whatsoever -- the
+            // second account's transactions were silently appended into the first account's section.
+            // Mirrors the SECTION_MARKER block above exactly, reusing accountIdentityIn unchanged;
+            // deliberately placed right after it and before WRAPPED_HEADER for the same reason that
+            // block already documents -- a structurally meaningful line must be classified before
+            // anything asks whether it looks like half a header.
+            Matcher accountIdentityLine = ACCOUNT_IDENTITY_LINE.matcher(rowLine);
+            if (accountIdentityLine.find()) {
+                String plainAccountId = accountIdentityIn(rowLine);
+                boolean sameAccountIdentityRepeated = currentRows != null
+                        && plainAccountId != null
+                        && plainAccountId.equals(currentSectionAccountId);
+                if (sameAccountIdentityRepeated) {
+                    if (ctx != null) ctx.record("REPEATED_ACCOUNT_BANNER");
+                    pendingAuxiliary.add(rowLine);
+                    continue;
+                }
+                if (currentRows == null) {
+                    // No section open yet -- nothing to protect against merging into. Remember
+                    // this as the identity for whatever section opens next, same as before.
+                    currentSectionAccountId = plainAccountId;
+                    pendingAuxiliary.add(rowLine);
+                    continue;
+                }
+                // A section IS open and this line did not confirm as a repeat of its account --
+                // but do NOT close here. Found by testing against a real composite statement
+                // (hdfc-composite-deposit-schedules): an "Account Number:" line restating the
+                // SAME account routinely appears as trailing text within an already-open section
+                // (a deposit-schedule table's own summary block) before a genuinely different,
+                // differently-shaped table follows -- closing immediately here split that
+                // trailing text onto the wrong side of the real boundary, losing it from the
+                // section it actually belonged to. This line is not proof a new account starts
+                // here; it is only proof that the account is no longer CONFIRMED as unchanged.
+                // Defer to the next header event -- see the header-diff block below, which is
+                // where sections are actually created and where currentRows genuinely closes.
+                pendingIdentityMismatch = true;
+                pendingAccountIdCandidate = plainAccountId;
                 pendingAuxiliary.add(rowLine);
                 continue;
             }
@@ -604,16 +685,39 @@ public class PdfTableLocator {
                     }
                 }
                 Set<String> signature = headerSignature(row);
-                if (currentRows != null && signature.equals(currentHeaderSignature)) {
+                // An unresolved ACCOUNT_IDENTITY_LINE mismatch overrides "same shape, keep
+                // appending" -- this is the actual B1 danger zone: two different accounts sharing
+                // one column layout. Without this check, a same-shaped header following a
+                // contradicting identity line would silently fall through to REPEATED_HEADER and
+                // its rows would be appended straight into the still-open (wrong) section.
+                boolean identityContradicts = currentRows != null && pendingIdentityMismatch;
+                if (currentRows != null && signature.equals(currentHeaderSignature) && !identityContradicts) {
                     if (ctx != null) ctx.record("REPEATED_HEADER");
                     continue; // repeated header of the table already in progress -- not a data row
                 }
                 if (currentRows != null) {
-                    // A different header shape with no explicit marker line -- fallback signal
-                    // for a new section in a document without a banner line.
+                    // A different header shape, or a same-shaped header with a contradicting
+                    // identity line since this section opened -- fallback signal for a new section
+                    // in a document without a banner line.
                     pendingAuxiliary = closeCurrentSection(currentRows, pendingLeading, headerNames, pendingAuxiliary, sections, ctx);
                     if (ctx != null) ctx.record("COMPOSITE_STATEMENT");
+                    // Required companion to the ACCOUNT_IDENTITY_LINE block above: THIS section
+                    // (the one just closed) is being replaced. If a contradicting identity line
+                    // caused it, carry that identity forward into the section now opening -- it's
+                    // the whole reason this split happened. Otherwise (a plain shape change with no
+                    // identity signal seen) the new section's identity is genuinely unknown -- reset
+                    // rather than let it inherit the closed section's id. Deliberately scoped to
+                    // only this branch, not the fallthrough below: when currentRows is ALREADY null
+                    // here (the very start of the document, or a header following a confirmed-open
+                    // identity line), currentSectionAccountId may have just been set moments ago and
+                    // must survive into this header so a later repeat check has something correct to
+                    // compare against -- resetting unconditionally here was a real bug, found in
+                    // self-testing: it wiped out an identity set one row earlier before it was ever
+                    // compared, turning a genuine same-account repeat into a false split.
+                    currentSectionAccountId = identityContradicts ? pendingAccountIdCandidate : null;
                 }
+                pendingIdentityMismatch = false;
+                pendingAccountIdCandidate = null;
                 headerNames = new ArrayList<>();
                 headerAnchors = new ArrayList<>();
                 headerEnds = new ArrayList<>();
