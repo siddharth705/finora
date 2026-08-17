@@ -10,6 +10,7 @@ import com.finora.imports.analysis.StatementAnalysisSessionRepository;
 import com.finora.integrations.google.GmailConnectionRepository;
 import com.finora.integrations.google.GmailConnectionService;
 import com.finora.repository.AccountReactivationTokenRepository;
+import com.finora.repository.EmailVerificationTokenRepository;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.BudgetRepository;
 import com.finora.repository.CategoryRepository;
@@ -134,6 +135,7 @@ public class AccountPurgeSweepService {
     private final PasswordChangeSessionRepository passwordChangeSessionRepository;
     private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final AccountReactivationTokenRepository accountReactivationTokenRepository;
+    private final EmailVerificationTokenRepository emailVerificationTokenRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final UserSettingsRepository userSettingsRepository;
     private final AccountRepository accountRepository;
@@ -167,6 +169,7 @@ public class AccountPurgeSweepService {
                                      PasswordChangeSessionRepository passwordChangeSessionRepository,
                                      PasswordResetTokenRepository passwordResetTokenRepository,
                                      AccountReactivationTokenRepository accountReactivationTokenRepository,
+                                     EmailVerificationTokenRepository emailVerificationTokenRepository,
                                      RefreshTokenRepository refreshTokenRepository,
                                      UserSettingsRepository userSettingsRepository,
                                      AccountRepository accountRepository,
@@ -199,6 +202,7 @@ public class AccountPurgeSweepService {
         this.passwordChangeSessionRepository = passwordChangeSessionRepository;
         this.passwordResetTokenRepository = passwordResetTokenRepository;
         this.accountReactivationTokenRepository = accountReactivationTokenRepository;
+        this.emailVerificationTokenRepository = emailVerificationTokenRepository;
         this.refreshTokenRepository = refreshTokenRepository;
         this.userSettingsRepository = userSettingsRepository;
         this.accountRepository = accountRepository;
@@ -318,6 +322,7 @@ public class AccountPurgeSweepService {
             passwordChangeSessionRepository.deleteByUserId(userId);
             passwordResetTokenRepository.deleteByUserId(userId);
             accountReactivationTokenRepository.deleteByUserId(userId);
+            emailVerificationTokenRepository.deleteByUserId(userId);
             refreshTokenRepository.deleteByUserId(userId);
             userSettingsRepository.deleteByUserId(userId);
 

@@ -197,6 +197,20 @@ app:
     #
     # Both accept 0 to disable, which exists for tests and for a deliberate, documented decision --
     # not as a convenient way to silence an inconvenient logout.
+  auth:
+    google-login:
+      # D-23: "Sign in with Google" client id(s) -- NOT app.integrations.google above, which is a
+      # separate OAuth client for the unrelated Gmail data-integration feature. See
+      # GoogleLoginProperties' own doc comment for why this needs to be a list.
+      #
+      # Unconfigured (empty) is a supported state: POST /api/v1/auth/google answers 503 and
+      # nothing else in the application is affected -- same posture as the Gmail integration when
+      # its own client id is unset.
+      #
+      # Only a client ID is needed here, never a secret: ID-token verification checks a signature
+      # against Google's own public keys, it never calls back to Google with a credential the way
+      # an authorization-code exchange does.
+      client-ids: ${GOOGLE_LOGIN_CLIENT_IDS:}
   cors:
     # Both frontends by default: the user app (frontend/, port 5173) and the admin portal
     # (admin-portal/, port 5174) -- see CorsConfig, which .trim()s each entry, so the comma
@@ -302,6 +316,13 @@ app:
     register:
       max: ${RATE_LIMIT_REGISTER_MAX:5}
       window-seconds: ${RATE_LIMIT_REGISTER_WINDOW_SECONDS:300}
+    # D-23. Same ceiling as register above and for the same reason -- a real per-call cost
+    # (Google's own signature verification, plus a full account-creation write on a first-time
+    # email) that needs no phone number the way register does, making this the cheaper path to
+    # spam account creation if left unguarded.
+    google:
+      max: ${RATE_LIMIT_GOOGLE_MAX:5}
+      window-seconds: ${RATE_LIMIT_GOOGLE_WINDOW_SECONDS:300}
     forgot-password:
       max: ${RATE_LIMIT_FORGOT_PASSWORD_MAX:5}
       window-seconds: ${RATE_LIMIT_FORGOT_PASSWORD_WINDOW_SECONDS:300}

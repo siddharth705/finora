@@ -9,6 +9,7 @@ import com.finora.imports.analysis.StatementAnalysisSessionRepository;
 import com.finora.integrations.google.GmailConnectionRepository;
 import com.finora.integrations.google.GmailConnectionService;
 import com.finora.repository.AccountReactivationTokenRepository;
+import com.finora.repository.EmailVerificationTokenRepository;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.BudgetRepository;
 import com.finora.repository.CategoryRepository;
@@ -119,7 +120,8 @@ class AccountPurgeSweepServiceTest {
                 mock(NetWorthSnapshotRepository.class), mock(ImportJobRepository.class),
                 mock(ImportSessionRepository.class), mock(PasswordHistoryRepository.class),
                 mock(PasswordChangeSessionRepository.class), mock(PasswordResetTokenRepository.class),
-                mock(AccountReactivationTokenRepository.class), mock(RefreshTokenRepository.class),
+                mock(AccountReactivationTokenRepository.class), mock(EmailVerificationTokenRepository.class),
+                mock(RefreshTokenRepository.class),
                 mock(UserSettingsRepository.class), accountRepository,
                 statementImportRepository, statementImportService, statementAnalysisSessionRepository,
                 auditService, passwordEncoder, transactionTemplate);

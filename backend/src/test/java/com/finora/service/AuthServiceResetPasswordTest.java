@@ -62,6 +62,7 @@ class AuthServiceResetPasswordTest {
         authService = new AuthService(
                 userRepository, mock(CategoryRepository.class), resetTokenRepository,
                 mock(com.finora.repository.AccountReactivationTokenRepository.class),
+                mock(com.finora.repository.EmailVerificationTokenRepository.class),
                 passwordEncoder, mock(JwtService.class), mock(AuthenticationManager.class),
                 auditService, mock(RefreshTokenService.class), emailProvider,
                 new EmailProperties(), phoneVerificationProvider, mock(PlatformSettingsService.class),

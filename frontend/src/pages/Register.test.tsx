@@ -19,6 +19,7 @@ function renderRegister() {
     phoneVerified: false,
     login: vi.fn(),
     reactivate: vi.fn(),
+    loginWithGoogle: vi.fn(),
     register: registerMock,
     setPhoneVerified: vi.fn(),
     logout: vi.fn(),

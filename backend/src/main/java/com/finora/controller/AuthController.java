@@ -7,6 +7,7 @@ import com.finora.exception.ErrorCode;
 import com.finora.exception.ApiException;
 import com.finora.dto.ApiResponse;
 import com.finora.dto.AuthDtos.*;
+import com.finora.integrations.google.login.GoogleIdTokenVerifierService;
 import com.finora.service.AuthService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -18,10 +19,13 @@ public class AuthController {
 
     private final AuthService authService;
     private final RefreshTokenCookie refreshTokenCookie;
+    private final GoogleIdTokenVerifierService googleIdTokenVerifierService;
 
-    public AuthController(AuthService authService, RefreshTokenCookie refreshTokenCookie) {
+    public AuthController(AuthService authService, RefreshTokenCookie refreshTokenCookie,
+                           GoogleIdTokenVerifierService googleIdTokenVerifierService) {
         this.refreshTokenCookie = refreshTokenCookie;
         this.authService = authService;
+        this.googleIdTokenVerifierService = googleIdTokenVerifierService;
     }
 
     /**
@@ -80,6 +84,14 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.ok(authService.resetPassword(request)));
     }
 
+    /** D-23. Confirms a {@code /verify-email?token=...} link -- see AuthService.verifyEmail. Not
+     *  authenticated: the token itself is the proof, the same posture reset-password/reactivate
+     *  already have for their own emailed/returned links. */
+    @PostMapping("/verify-email")
+    public ResponseEntity<ApiResponse<VerifyEmailResponse>> verifyEmail(@Valid @RequestBody VerifyEmailRequest request) {
+        return ResponseEntity.ok(ApiResponse.ok(authService.verifyEmail(request.token())));
+    }
+
     /**
      * Accepts the refresh token from an {@code HttpOnly} cookie or from the body, cookie first —
      * see {@link RefreshTokenCookie#resolve}. The body is optional rather than {@code @NotBlank}
@@ -123,8 +135,26 @@ public class AuthController {
                 .body(ApiResponse.ok(response));
     }
 
-    // TODO Phase 2: /oauth/google callback endpoint, /2fa/verify endpoint.
-    // Both need real provider credentials (Google OAuth client ID/secret, an OTP/TOTP library)
-    // that only make sense once you're deploying somewhere real — stubbing them here would just
-    // be dead code that looks functional but isn't.
+    /**
+     * D-23. Not an OAuth callback -- Google Identity Services (web) hands the frontend a signed ID
+     * token directly, no redirect round trip, so this endpoint just verifies and trusts it. Same
+     * shape as register()/login(): mints tokens and writes the refresh cookie, since a successful
+     * Google sign-in is exactly as much of "a session starting" as either of those.
+     *
+     * <p>Serves both new-account creation and returning-user sign-in through the one endpoint --
+     * {@code AuthService.loginWithGoogle} decides which happened by whether the verified email
+     * already has a Finora account, not something the client declares.
+     */
+    @PostMapping("/google")
+    public ResponseEntity<ApiResponse<AuthResponse>> google(@Valid @RequestBody GoogleAuthRequest request) {
+        var identity = googleIdTokenVerifierService.verify(request.idToken());
+        AuthResponse response = authService.loginWithGoogle(identity);
+        return withRefreshCookie(response.refreshToken())
+                .body(ApiResponse.ok(response, "Signed in with Google"));
+    }
+
+    // TODO Phase 2: native mobile Google Sign-In reuses this same /google endpoint -- see D-23 --
+    // and /2fa/verify. The latter needs an OTP/TOTP library that only makes sense once there's a
+    // real deployment to protect; stubbing it here would just be dead code that looks functional
+    // but isn't.
 }

@@ -19,6 +19,10 @@ interface AuthState {
     fullName: string,
     phoneNumber: string
   ) => Promise<{ phoneVerified: boolean }>;
+  // Same shape as login()/reactivate(): persists the session and reports whether the phone is
+  // already verified -- true for an auto-linked existing account, always false for a newly
+  // created one (Google sign-in never carries a phone number; see D-23).
+  loginWithGoogle: (idToken: string) => Promise<boolean>;
   setPhoneVerified: (verified: boolean) => void;
   logout: () => void;
 }
@@ -100,6 +104,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { phoneVerified: res.data.phoneVerified };
   }
 
+  async function loginWithGoogle(idToken: string): Promise<boolean> {
+    const res = await authApi.google(idToken);
+    persist(res.data);
+    return res.data.phoneVerified;
+  }
+
   function setPhoneVerified(verified: boolean) {
     safeStorage.setItem('finora_phone_verified', String(verified));
     setPhoneVerifiedState(verified);
@@ -128,7 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ token, email, fullName, phoneVerified, login, reactivate, register, setPhoneVerified, logout }}>
+    <AuthContext.Provider value={{ token, email, fullName, phoneVerified, login, reactivate, register, loginWithGoogle, setPhoneVerified, logout }}>
       {children}
     </AuthContext.Provider>
   );

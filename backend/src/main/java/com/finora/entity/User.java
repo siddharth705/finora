@@ -153,6 +153,16 @@ public class User {
     @Column(name = "phone_verified", nullable = false)
     private boolean phoneVerified = false;
 
+    // D-23. Same shape as phoneVerified above, but proven by a clicked email link
+    // (AuthService.verifyEmail) rather than an OTP -- see V93's own migration comment for why this
+    // exists: Google sign-in's auto-link only trusts a match on `email` once this is true, closing
+    // an account pre-hijacking hole that a password-only email match left open. Unlike
+    // phoneVerified, this is NOT enforced anywhere as a login gate -- a password account works
+    // exactly as it always has whether or not its email is verified; this flag only ever gates
+    // cross-method identity linking.
+    @Column(name = "email_verified", nullable = false)
+    private boolean emailVerified = false;
+
     // ACTIVE / SUSPENDED / DEACTIVATED -- see V23__user_account_status.sql (original two values)
     // and V87__account_lifecycle_status.sql (DEACTIVATED, including the widened CHECK constraint
     // -- this column is NOT free text, the DB enforces the full set too). Checked in
@@ -241,6 +251,8 @@ public class User {
     public void setPhoneNumber(String phoneNumber) { this.phoneNumber = phoneNumber; }
     public boolean isPhoneVerified() { return phoneVerified; }
     public void setPhoneVerified(boolean phoneVerified) { this.phoneVerified = phoneVerified; }
+    public boolean isEmailVerified() { return emailVerified; }
+    public void setEmailVerified(boolean emailVerified) { this.emailVerified = emailVerified; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public boolean isSuspended() { return STATUS_SUSPENDED.equals(status); }

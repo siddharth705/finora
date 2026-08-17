@@ -141,6 +141,16 @@ public class ResendEmailProvider implements EmailProvider {
     }
 
     @Override
+    public EmailResult sendEmailVerificationEmail(String toEmail, String verifyLink) {
+        String html = """
+                <p>Please verify your email address to finish setting up your Finora account.</p>
+                <p><a href="%s">Click here to verify your email</a> — this link expires in 24 hours.</p>
+                <p>If you didn't create a Finora account, you can safely ignore this email.</p>
+                """.formatted(verifyLink);
+        return send(EmailMessage.html(toEmail, "Verify your Finora email address", html));
+    }
+
+    @Override
     public EmailResult sendWelcomeEmail(String toEmail, String fullName) {
         String html = """
                 <p>Welcome to Finora, %s!</p>
