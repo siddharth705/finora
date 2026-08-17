@@ -39,6 +39,11 @@ export const authApi = {
   // authorization for this app -- see AppleAuthRequest's own doc comment on the backend.
   apple: (idToken: string, fullName?: string) =>
     api.post<AuthResponseDto>('/auth/apple', { idToken, fullName }),
+  // Completes the "Welcome back — reactivate your account?" prompt LoginScreen shows after a
+  // deactivated account's password checks out -- see AuthContext.reactivate. Returns the same
+  // shape as login.
+  reactivate: (token: string) =>
+    api.post<AuthResponseDto>('/auth/reactivate', { token }),
   forgotPassword: (email: string) =>
     api.post<{ message: string; devResetLink: string | null }>('/auth/forgot-password', { email }).then((r) => r.data),
   resolveResetPasswordPhone: (token: string) =>

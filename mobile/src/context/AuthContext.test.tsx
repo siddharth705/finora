@@ -8,6 +8,7 @@ import { authApi } from '../api/endpoints';
 jest.mock('../api/endpoints', () => ({
   authApi: {
     login: jest.fn(),
+    reactivate: jest.fn(),
     register: jest.fn(),
     google: jest.fn(),
     apple: jest.fn(),
@@ -147,6 +148,38 @@ describe('AuthContext login', () => {
 
     await act(async () => {
       await expect(auth.login('someone@example.com', 'wrong')).rejects.toThrow();
+    });
+
+    expect(view.getByTestId('token')).toHaveTextContent('none');
+    expect(await SecureStore.getItemAsync('finora_token')).toBeNull();
+  });
+});
+
+describe('AuthContext reactivate', () => {
+  it('persists the session and reports the verified flag, same as login', async () => {
+    mockedAuthApi.reactivate.mockResolvedValue({ data: SESSION } as never);
+    const view = renderAuth();
+    await settle(view);
+
+    let verified: boolean | undefined;
+    await act(async () => {
+      verified = await auth.reactivate('reactivation-token');
+    });
+
+    expect(mockedAuthApi.reactivate).toHaveBeenCalledWith('reactivation-token');
+    expect(verified).toBe(true);
+    expect(view.getByTestId('token')).toHaveTextContent('access-token');
+    expect(await SecureStore.getItemAsync('finora_token')).toBe('access-token');
+    expect(await SecureStore.getItemAsync('finora_refresh_token')).toBe('refresh-token');
+  });
+
+  it('leaves state and storage untouched when the token is stale or already used', async () => {
+    mockedAuthApi.reactivate.mockRejectedValue(new Error('expired token'));
+    const view = renderAuth();
+    await settle(view);
+
+    await act(async () => {
+      await expect(auth.reactivate('stale-token')).rejects.toThrow();
     });
 
     expect(view.getByTestId('token')).toHaveTextContent('none');

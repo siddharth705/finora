@@ -646,7 +646,11 @@ export interface UserSettings {
   // Read-only — no setter path in userApi.update below. phoneNumber/phoneVerified are the
   // OTP-verified registration number (see PhoneMaskingTest/VerifyPhone.tsx); createdAt is a fact
   // about the account, not a preference.
-  phoneNumber: string;
+  // Bug fix (review): this claimed non-nullable, which is wrong for a Google Sign-In account
+  // (see AuthService.createGoogleUserRecord's own doc comment -- phoneNumber is left null there
+  // by design) and is exactly the kind of type dishonesty that let VerifyPhone.tsx pass a real
+  // null straight into Firebase's SDK with no compiler warning anywhere in between.
+  phoneNumber: string | null;
   phoneVerified: boolean;
   createdAt: string;
   // Null until the account's password has been changed at least once -- never a guessed
