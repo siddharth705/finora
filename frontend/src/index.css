@@ -130,10 +130,22 @@ input, textarea, select {
   animation: gradientShift 6s ease infinite;
 }
 
+/* D-25 PR3-C. Dashboard's "Your Financial Journey" timeline -- each milestone row fades/slides
+   in on mount, staggered via an inline animation-delay per row (FinancialJourney.tsx). Fires on
+   mount rather than on scroll-into-view like .reveal above: this sits well within the first
+   screenful, unlike the landing page's hero content. */
+@keyframes journeyReveal {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.journey-reveal-item {
+  animation: journeyReveal 0.4s ease both;
+}
+
 /* Respect reduced-motion preferences — the reveal/float/gradient animations are decoration,
    not information, so it's safe to just skip them entirely rather than degrade gracefully. */
 @media (prefers-reduced-motion: reduce) {
-  .reveal, .reveal.reveal-visible, .float-slow, .float-slower, .animated-gradient-text {
+  .reveal, .reveal.reveal-visible, .float-slow, .float-slower, .animated-gradient-text, .journey-reveal-item {
     animation: none !important;
     opacity: 1 !important;
     transform: none !important;

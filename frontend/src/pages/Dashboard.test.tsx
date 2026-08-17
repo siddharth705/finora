@@ -16,7 +16,7 @@ import type { DashboardSummary } from '../types';
 // DashboardService/RecurringService already computed; nothing rendered any of it before these
 // changes.
 vi.mock('../api/endpoints', () => ({
-  dashboardApi: { summary: vi.fn() },
+  dashboardApi: { summary: vi.fn(), journey: vi.fn() },
   accountsApi: { list: vi.fn() },
   transactionsApi: { search: vi.fn(), create: vi.fn() },
   categoriesApi: { list: vi.fn() },
@@ -77,6 +77,10 @@ function renderDashboard() {
 describe('Dashboard — Financial Health Score', () => {
   beforeEach(() => {
     vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    // Empty by default -- FinancialJourney (a separate component with its own dedicated test
+    // file) renders nothing for an empty milestone list, so this stays out of the way of every
+    // assertion below unless a test explicitly cares about it.
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
     vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
     vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
       // totalElements > 0: this account has real history, matching every scenario these two
@@ -158,6 +162,10 @@ describe('Dashboard — Financial Health Score', () => {
 describe('Dashboard — Subscriptions & Recurring Payments', () => {
   beforeEach(() => {
     vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    // Empty by default -- FinancialJourney (a separate component with its own dedicated test
+    // file) renders nothing for an empty milestone list, so this stays out of the way of every
+    // assertion below unless a test explicitly cares about it.
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
     vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
     vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
       // totalElements > 0: this account has real history, matching every scenario these two
@@ -263,6 +271,10 @@ describe('Dashboard — per-section empty states', () => {
 
   beforeEach(() => {
     vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    // Empty by default -- FinancialJourney (a separate component with its own dedicated test
+    // file) renders nothing for an empty milestone list, so this stays out of the way of every
+    // assertion below unless a test explicitly cares about it.
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({ milestones: [] });
     vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
     vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
       content: [], page: 0, size: 4, totalElements: 0, totalPages: 0,
@@ -416,5 +428,46 @@ describe('Dashboard — per-section empty states', () => {
 
     expect(screen.queryByRole('heading', { name: /add transaction/i })).not.toBeInTheDocument();
     expect(transactionsApi.create).not.toHaveBeenCalled();
+  });
+});
+
+// D-25 PR3-C. FinancialJourney itself is unit-tested in its own file
+// (components/FinancialJourney.test.tsx) -- this just confirms Dashboard actually renders it,
+// and does so even in the per-section-empty-states scenario above (unlike Financial Health
+// Score, which that describe block asserts is HIDDEN under the same isEmpty condition).
+describe('Dashboard — Your Financial Journey', () => {
+  beforeEach(() => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(summary());
+    vi.mocked(dashboardApi.journey).mockReset().mockResolvedValue({
+      milestones: [
+        { type: 'ACCOUNT_CREATED', completed: true, completedAt: '2026-08-01T00:00:00Z' },
+        { type: 'FIRST_IMPORT', completed: false, completedAt: null },
+        { type: 'FIRST_BUDGET', completed: false, completedAt: null },
+        { type: 'FIRST_GOAL', completed: false, completedAt: null },
+        { type: 'FIRST_GOAL_ACHIEVED', completed: false, completedAt: null },
+      ],
+    });
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 0, totalPages: 0,
+    });
+    vi.mocked(goalsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(insightsApi.get).mockReset().mockResolvedValue({ sentences: [], movers: [] });
+    vi.mocked(userApi.get).mockReset().mockResolvedValue({
+      email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
+      theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null,
+    });
+    vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue([]);
+    vi.mocked(recurringApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('renders even with zero transactions, unlike Financial Health Score which hides in the same state', async () => {
+    renderDashboard();
+
+    expect(await screen.findByText('Your Financial Journey')).toBeInTheDocument();
+    expect(screen.getByText('1 of 5 complete')).toBeInTheDocument();
+    expect(screen.queryByText('Financial Health Score')).not.toBeInTheDocument();
   });
 });
