@@ -1,7 +1,7 @@
 package com.finora.imports;
 
 import com.finora.dto.ImportDto;
-import com.finora.imports.pdf.CreditCardSummaryExtractor.PrintedCreditCardSummary;
+import com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -34,9 +34,19 @@ import java.util.Map;
  * extraction's own reading of the summary panel.
  *
  * <p><b>Never infers a missing field or corrects a transaction.</b> If the panel does not print
- * enough of the five component fields to compute both sides, this reports {@code NOT_APPLICABLE}
- * rather than guessing — the same "missing validation is safer than a wrong one" discipline the
- * Credit Card Direction Evidence Study itself was built around.
+ * previous balance, purchases, payments/credits, and the total amount due, this reports
+ * {@code NOT_APPLICABLE} rather than guessing — the same "missing validation is safer than a wrong
+ * one" discipline the Credit Card Direction Evidence Study itself was built around. Cash advances
+ * and fees are the two exceptions, treated as zero when absent rather than blocking the check —
+ * see {@link CreditCardSummaryEvidence#hasReconcilableFields()}'s own doc comment for the real
+ * document (AU) that motivated extending that treatment from fees to cash advances too.
+ *
+ * <p><b>A cross-strategy disagreement outranks the equation check.</b> {@code extract} always runs
+ * both GRID and INLINE_LABEL_VALUE, and {@link CreditCardSummaryEvidence#conflictingFields()} names
+ * any field where they found different numbers. That is checked FIRST, before either
+ * {@code NOT_APPLICABLE} or the equation math: two independent readings disagreeing is itself proof
+ * one of them is wrong, regardless of whether the winning strategy's own result looks complete or
+ * would otherwise have balanced.
  */
 @Component
 public class CreditCardStatementTotalsValidator {
@@ -44,27 +54,40 @@ public class CreditCardStatementTotalsValidator {
     /** Stable machine identifier — clients group and explain by it, so it must not track wording. */
     public static final String RULE = "CREDIT_CARD_STATEMENT_TOTALS";
 
-    public ImportDto.VerificationFinding check(PrintedCreditCardSummary summary) {
+    public ImportDto.VerificationFinding check(CreditCardSummaryEvidence summary) {
         Map<String, Object> details = new LinkedHashMap<>();
+
+        if (summary != null && !summary.conflictingFields().isEmpty()) {
+            details.put("conflictingFields", summary.conflictingFields());
+            details.put("reason", "SUMMARY_EXTRACTION_CONFLICT: GRID and INLINE_LABEL_VALUE read "
+                    + "different values for the same field(s) on this statement's billing-summary "
+                    + "panel. At least one of the two readings is wrong, so neither is trusted here.");
+            return new ImportDto.VerificationFinding(RULE, "WARNING", details);
+        }
 
         if (summary == null || !summary.hasReconcilableFields()) {
             details.put("reason", "This statement's billing-summary panel did not print enough of "
-                    + "previous balance, purchases, cash advances, and payments/credits, alongside "
-                    + "the total amount due, to check them against each other.");
+                    + "previous balance, purchases, and payments/credits, alongside the total amount "
+                    + "due, to check them against each other.");
             return new ImportDto.VerificationFinding(RULE, "NOT_APPLICABLE", details);
         }
 
+        BigDecimal cashAdvances = summary.cashAdvances() == null ? BigDecimal.ZERO : summary.cashAdvances();
         BigDecimal fees = summary.fees() == null ? BigDecimal.ZERO : summary.fees();
         BigDecimal expectedTotalAmountDue = summary.previousBalance()
                 .add(summary.purchases())
-                .add(summary.cashAdvances())
+                .add(cashAdvances)
                 .add(fees)
                 .subtract(summary.paymentsAndCredits());
         BigDecimal difference = summary.totalAmountDue().subtract(expectedTotalAmountDue);
 
+        // extractionMethod: not persisted (see the allowlist), but available on the live finding for
+        // debugging and user explanation -- which strategy read these numbers is real information,
+        // just not one this validator needs to decide VERIFIED/WARNING/NOT_APPLICABLE.
+        details.put("extractionMethod", summary.extractionMethod().name());
         details.put("previousBalance", summary.previousBalance());
         details.put("purchases", summary.purchases());
-        details.put("cashAdvances", summary.cashAdvances());
+        details.put("cashAdvances", cashAdvances);
         details.put("fees", fees);
         details.put("paymentsAndCredits", summary.paymentsAndCredits());
         details.put("totalAmountDue", summary.totalAmountDue());

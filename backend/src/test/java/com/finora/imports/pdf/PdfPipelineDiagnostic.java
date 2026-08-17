@@ -176,6 +176,17 @@ class PdfPipelineDiagnostic {
                             t.y(), t.x(), t.endX(), t.text()));
             System.out.println();
         }
+        // Same as above but every page, with the page index printed -- for locating where a
+        // duplicate or conflicting label actually lives when it isn't on page 0.
+        if (Boolean.getBoolean("dumpAllPagePositions")) {
+            System.out.println("--- Raw positioned text, all pages, sorted by page/y/x ---");
+            positioned.stream()
+                    .sorted(java.util.Comparator.comparing(PositionedText::pageIndex)
+                            .thenComparing(PositionedText::y).thenComparing(PositionedText::x))
+                    .forEach(t -> System.out.printf("  page=%-3d y=%-8.1f x=%-8.1f endX=%-8.1f %s%n",
+                            t.pageIndex(), t.y(), t.x(), t.endX(), t.text()));
+            System.out.println();
+        }
 
         PdfTableLocator tableLocator = new PdfTableLocator();
         PdfTableLocator.LocatedDocument doc = tableLocator.locateAll(positioned);

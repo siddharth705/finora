@@ -10,7 +10,7 @@ import com.finora.dto.ImportDto.UnparseableRow;
 import com.finora.entity.CategoryRule;
 import com.finora.imports.CsvParser;
 import com.finora.imports.pdf.StatementSummaryExtractor.PrintedSummary;
-import com.finora.imports.pdf.CreditCardSummaryExtractor.PrintedCreditCardSummary;
+import com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence;
 import com.finora.imports.DocumentContext;
 import com.finora.imports.RowKind;
 import com.finora.imports.TransactionNormalizer;
@@ -196,7 +196,7 @@ public class PdfPreviewGenerator {
         // statement is effectively always one account, and CreditCardStatementTotalsValidator never
         // reads a section's transaction rows anyway, so handing every section the same document-
         // level reading is correct, not a simplification that loses anything.
-        PrintedCreditCardSummary printedCreditCardSummary = CreditCardSummaryExtractor.extract(positioned, ctx);
+        CreditCardSummaryEvidence printedCreditCardSummary = CreditCardSummaryExtractor.extract(positioned, ctx);
 
         if (doc.sections().isEmpty()) {
             // "Never lose information" (see the engineering principles doc) applies at the
@@ -262,7 +262,7 @@ public class PdfPreviewGenerator {
                                                       PdfTableLocator.LocatedSection section,
                                                       int sectionIndex, int sectionCount, DocumentContext ctx,
                                                       PrintedSummary printedSummary,
-                                                      PrintedCreditCardSummary printedCreditCardSummary) {
+                                                      CreditCardSummaryEvidence printedCreditCardSummary) {
         List<String> columns = section.rows().isEmpty() ? List.of() : List.copyOf(section.rows().get(0).keySet());
         ProductDiscovery.DiscoveredProduct product = productDiscovery.discover(
                 new ProductEvidenceCollector.Section(columns, section.auxiliaryText(), null,
@@ -312,7 +312,7 @@ public class PdfPreviewGenerator {
                                                     PdfTableLocator.LocatedSection section,
                                                     ProductDiscovery.DiscoveredProduct product,
                                                     DocumentContext ctx, PrintedSummary printedSummary,
-                                                    PrintedCreditCardSummary printedCreditCardSummary) {
+                                                    CreditCardSummaryEvidence printedCreditCardSummary) {
         List<StagedRow> staged = new ArrayList<>();
         // "Never lose information" (see the engineering principles doc) -- a row that fails to
         // normalize is reported with WHY, not just silently absent from the row count. Real cost

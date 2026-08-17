@@ -118,16 +118,16 @@ public class CapabilityCoverageService {
             // unrelated layouts, each producing a one-row phantom section immediately superseded by
             // the real ledger's header. See PdfTableLocator.looksLikePaymentSummaryPanel.
             "PAYMENT_SUMMARY_PANEL_SUPPRESSED",
-            // A credit-card statement's own billing-summary panel (previous balance, purchases,
-            // cash advances, fees, payments/credits, total amount due) read as a label/value grid --
-            // see CreditCardSummaryExtractor. Registered on zero real-document evidence, unlike
-            // every other entry above: the Credit Card Direction Evidence Study confirmed the
-            // underlying figures are printed on all 6 real credit-card documents, but this
-            // extractor's simple label-row/value-row grid match did not fire on any of them (see the
-            // architecture doc's Credit Card Direction Evidence Study addendum) -- kept in the
-            // registry now so a future layout-matching improvement is visible in coverage reporting
-            // the moment it starts firing, rather than needing this entry added retroactively then.
-            "CREDIT_CARD_SUMMARY_TOTALS");
+            // A credit-card statement's own billing-summary panel read via one of two independent
+            // strategies -- see CreditCardSummaryExtractor's own class doc comment for why they are
+            // kept separate rather than merged into one extractor. CREDIT_CARD_SUMMARY_TOTALS is the
+            // stacked label-row/value-row GRID strategy (real evidence: a real Axis statement's
+            // Total Payment Due figure, once a row-merge edge case in shared grid-reading logic was
+            // fixed). CREDIT_CARD_SUMMARY_INLINE_LABEL_VALUE is the label-left/value-right SAME_ROW strategy
+            // (real evidence: a real AU statement's "Bill summary" widget). See the architecture
+            // doc's Credit Card Direction Evidence Study addendum for the measured fire rate against
+            // the real 6-document corpus.
+            "CREDIT_CARD_SUMMARY_TOTALS", "CREDIT_CARD_SUMMARY_INLINE_LABEL_VALUE");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure

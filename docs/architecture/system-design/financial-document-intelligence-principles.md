@@ -1006,7 +1006,7 @@ actually works — no test, no claim.
 - **Known limitations:** matches a fixed list of English-language phrases; a statement using
   different wording for the same concept won't trigger this signal until that phrase is added.
 
-#### `CREDIT_CARD_STATEMENT_TOTALS`
+#### `CREDIT_CARD_STATEMENT_TOTALS` / `CREDIT_CARD_SUMMARY_INLINE_LABEL_VALUE`
 - **Purpose:** reconciles a credit-card statement's own billing equation —
   `previousBalance + purchases + cashAdvances + fees − paymentsAndCredits == totalAmountDue` —
   entirely from figures the statement prints about itself. Deliberately reads **zero** transaction
@@ -1015,41 +1015,78 @@ actually works — no test, no claim.
   still be readable), and `CreditCardStatementTotalsValidator`'s own class-level doc comment for the
   full reasoning. A mismatch means this extraction misread one of the five summary fields, never
   that a transaction is wrong — outcome is `VERIFIED`/`WARNING`/`NOT_APPLICABLE`, never `FAILED`.
-- **Supported layouts:** a credit-card summary panel printed as a clean label-row/value-row grid,
-  the same shape `StatementSummaryExtractor` already reads for savings statements (reused position
-  logic, widened to package-private for this reuse rather than duplicated).
-- **Implementation:** `CreditCardSummaryExtractor` (`PrintedCreditCardSummary`) →
+  `cashAdvances` and `fees` are both treated as zero when absent rather than blocking the check —
+  confirmed necessary on a real document (AU has no cash-advances line printed anywhere), not
+  assumed.
+- **Three layered defenses, each confirmed necessary against a distinct real failure — not stacked
+  speculatively.** `CreditCardSummaryExtractor` always runs both a stacked label-row/value-row
+  **GRID** (the same shape `StatementSummaryExtractor` reads for savings statements, reused position
+  logic) and a label-left/value-right **INLINE_LABEL_VALUE** layout (a real AU statement's "Bill
+  summary" widget) — never short-circuited on the first to find anything.
+    1. **Page-region scoping.** Each strategy resolves its fields per PAGE first, then uses only the
+       single page covering the most required fields — never combining fields found on different
+       pages into one answer. Confirmed necessary on two real documents: AU repeats "Opening
+       balance" on a later, unrelated page with a different number (likely a rewards-points
+       balance), and Axis's real billing total (page 0) and an unrelated fee-schedule example
+       naming "Purchase" (page 2) used to get silently combined before this existed, because each
+       field was resolved independently of which page it came from.
+    2. **Duplicate-label refusal**, applied within a page. A field is accepted only when exactly one
+       label occurrence on the winning page resolves a value for it — the pre-fix code took
+       whichever occurrence it scanned first, which happened to be correct for AU; that was luck,
+       not correctness.
+    3. **Cross-strategy conflict detection.** `CreditCardSummaryEvidence.conflictingFields()` names
+       any field where GRID and INLINE_LABEL_VALUE disagree, checked by the validator FIRST, ahead
+       of both `NOT_APPLICABLE` and the equation math. This is not redundant with page-scoping: on
+       Axis, INLINE_LABEL_VALUE's own winning page turns out to be its fee-schedule page, which
+       mentions enough money-shaped labels near enough numbers to out-score the real summary page
+       on its own, internally-consistent terms. Page-scoping stops cross-page mixing; it does
+       nothing about one wrong page that is coherent within itself. The conflict check is what
+       actually catches this — GRID (page 0) still recovers the real total, the two disagree, and
+       the validator reports `WARNING` rather than trusting either page's story.
+  Neither strategy's own result is trusted alone in any case — completeness
+  (`hasReconcilableFields()`), not "found anything", decides which one's numbers win when there is
+  no conflict.
+- **Supported layouts:** GRID's row-merge recovery (found and fixed against a real Axis statement:
+  a date-range row and its amount row sit only ~1.0pt apart in y, close enough for shared
+  row-grouping logic to merge them, which then fails the "value row must be numeric" safety check
+  until the date-shaped token is separated out and the amount recovered). INLINE_LABEL_VALUE's
+  candidate search is bounded both vertically (±3pt, from real AU offsets of 0.3–1.5pt) and
+  horizontally (≤200pt to the right, from real AU offsets of 76.9–115.5pt) — neither bound alone
+  closes the false-positive risk each was added for; the conflict check (above) is what does.
+- **Implementation:** `CreditCardSummaryExtractor` (`CreditCardSummaryEvidence`) →
   `PdfPreviewGenerator` (extracted once per document, threaded into `ImportVerifier.verify`) →
   `CreditCardStatementTotalsValidator` (`CREDIT_CARD_STATEMENT_TOTALS` finding) →
-  `ImportVerificationRecorder` (outcome persisted; every detail field is money read off the
-  statement, so none of it survives persistence by design — the same allowlist discipline that
-  already excludes `StatementTotalsValidator`'s own opening/closing balance).
-- **Regression tests:** `CreditCardSummaryExtractorTest`, `CreditCardStatementTotalsValidatorTest`,
-  `ImportVerificationRecorderIT` (confirming the money fields are correctly absent after a real
-  round trip through the database, not merely absent from the in-memory finding).
-- **Maturity:** Beta, with an important caveat below — read Known limitations before trusting a
-  `NOT_APPLICABLE` result on a specific document to mean "this bank prints nothing to check."
-- **Known limitations — real-corpus measurement, not a claim:** run against all 6 real credit-card
-  documents in the corpus, this capability fires on **zero of them today** (`NOT_APPLICABLE` on
-  every one). This is `CreditCardSummaryExtractor`'s own "refuse rather than guess" discipline
-  working as designed, not a defect: AU's real panel uses entirely different wording ("Opening
-  balance," "Total spends," "Payments & Refunds," "Fee & Charges") than the label vocabulary drawn
-  from ICICI, and its reconstructed layout interleaves labels and values across lines rather than
-  the clean 2-row grid this extractor matches; ICICI's own real layout splits its total-due value
-  onto a separate line from its other four component values, with an operator row (`+ + = −`)
-  between labels and values, which also does not match a simple adjacent label-row/value-row pair.
-  Axis spells its equation as prose rather than a grid at all. HDFC and ICICI's summary text is
-  further degraded by the same table-formation problems named in their Open Investigations above.
-  The mechanism is architecturally sound and privacy-safe (see the persistence tests), but it is
-  currently unproven against this codebase's own real corpus — kept in the registry per
-  `CapabilityCoverageService`'s own convention for a capability declared before it has a trace (see
-  `CapabilityCorpusCoverageTest`'s `DECLARED_WITHOUT_A_TRACE` entry for the honest reason), so this
-  gap stays visible in coverage reporting rather than disappearing until someone remembers to add
-  it. Widening the layout match (a multi-row grid, a prose-equation parser, per-bank label sets) is
-  deferred rather than attempted immediately, on the same "don't accumulate per-bank heuristics"
-  principle the Direction Evidence Study itself was built around — the next real document (a 7th
-  credit-card statement, ideally from a bank not already in the corpus) is what should decide the
-  next specific mechanism, not a guess made now.
+  `ImportVerificationRecorder` (outcome persisted; every money field is stripped by design, same
+  allowlist discipline that already excludes `StatementTotalsValidator`'s own balances —
+  `extractionMethod` is carried on the live finding for debugging/explanation but is not yet on the
+  persistence allowlist either, a deliberate "not yet" rather than an oversight).
+- **Regression tests:** `CreditCardSummaryExtractorTest` (19 tests: both strategies, GRID's
+  row-merge recovery and its refusal on unclassifiable content, INLINE_LABEL_VALUE's ambiguity/
+  distance/direction safety tests, duplicate-label refusal for both strategies, a cross-strategy
+  conflict test, and two page-region tests reproducing the AU and Axis shapes directly),
+  `CreditCardStatementTotalsValidatorTest` (10 tests, including the conflict outranking both
+  `NOT_APPLICABLE` and a would-otherwise-verify equation), `ImportVerificationRecorderIT`.
+- **Maturity:** Beta.
+- **Known limitations — real-corpus measurement, not a claim.** Run against all 6 real credit-card
+  documents, this capability now fires `VERIFIED` on **AU**, `WARNING` on **Axis** (a genuine
+  cross-strategy conflict, confirmed working on the real document as described above, not just the
+  synthetic regression tests built from its shape), and `NOT_APPLICABLE` on the other four —
+  **HDFC**/**ICICI** degraded by the same table-formation problems named in their Open
+  Investigations above, **Kotak**/**SBI** not yet individually diagnosed against their raw geometry
+  the way AU and Axis were. This measurement went through two intermediate, less-correct states
+  before reaching this one, worth recording for what each transition proved: an earlier version
+  reported 1/6 `VERIFIED` (AU) with no conflict detection at all; adding duplicate-label refusal
+  without page-scoping flipped AU to `NOT_APPLICABLE` (correctly catching the real duplicate, but
+  too bluntly — refusing a genuinely unrelated cross-page repeat the same way it would refuse a
+  same-page one) and flipped Axis to `WARNING` (a real conflict, previously invisible); adding
+  page-region scoping on top restored AU to `VERIFIED` for the right reason this time — grounded in
+  its real, complete page-0 cluster, not scan-order luck — while Axis correctly stayed at `WARNING`,
+  since page-scoping alone does not resolve a single wrong page that is internally self-consistent.
+  Widening INLINE_LABEL_VALUE's precision further (e.g. weighting a page by how closely its labels
+  cluster vertically, not just by field count) is deferred rather than attempted immediately on the
+  same "don't accumulate per-bank heuristics" principle this capability's own two-strategy split was
+  built around — the next real document is what should decide the next specific mechanism, not a
+  guess made now.
 
 #### `OFFSET_COLUMN_ANCHORS`
 - **Purpose:** correctly bucket a row's text into columns even when a column's header LABEL

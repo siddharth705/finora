@@ -5,7 +5,7 @@ import com.finora.dto.ImportDto.StagedRow;
 import com.finora.dto.ImportDto.UnparseableRow;
 import com.finora.imports.pdf.PdfTableLocator.DroppedCandidateRow;
 import com.finora.imports.pdf.StatementSummaryExtractor.PrintedSummary;
-import com.finora.imports.pdf.CreditCardSummaryExtractor.PrintedCreditCardSummary;
+import com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -64,7 +64,7 @@ public class ImportVerifier {
     public ImportDto.VerificationReport verify(List<StagedRow> rows, BigDecimal openingBalance,
                                                 BigDecimal closingBalance) {
         return verify(rows, openingBalance, closingBalance, PrintedSummary.NONE, List.of(), List.of(), List.of(),
-                PrintedCreditCardSummary.NONE);
+                CreditCardSummaryEvidence.NONE);
     }
 
     /**
@@ -88,7 +88,7 @@ public class ImportVerifier {
                                                 List<java.util.Map<String, String>> rawRows,
                                                 List<UnparseableRow> unparseableRows,
                                                 List<DroppedCandidateRow> droppedTransactionCandidates,
-                                                PrintedCreditCardSummary printedCreditCardSummary) {
+                                                CreditCardSummaryEvidence printedCreditCardSummary) {
         List<ImportDto.VerificationFinding> findings = new ArrayList<>();
         findings.addAll(balanceChainValidator.report(rows, openingBalance).findings());
         findings.add(statementTotalsValidator.check(rows, openingBalance, closingBalance));
