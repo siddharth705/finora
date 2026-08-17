@@ -55,6 +55,16 @@
   #     requests (session/credential state) go through this path prefix, not a specific named
   #     endpoint, since Google explicitly recommends the prefix over individual GIS URLs so a future
   #     GIS-side change doesn't silently start failing here again.
+  #     Bug fix (review): also https://www.google.com -- a SEPARATE gap from the GIS entry above,
+  #     missed when #168 fixed GIS's own CSP. reCAPTCHA Enterprise's actual verification call
+  #     (recaptcha/enterprise/clr, the network request the widget makes once rendered, not just
+  #     the script load already covered by script-src) is fetch/XHR from this page's own context,
+  #     not from inside the reCAPTCHA iframe -- so it's connect-src's problem, not frame-src's.
+  #     Missing this silently broke every phone-verification send (registration, delete-account,
+  #     phone-change, Google Sign-In's own phone step) with the widget rendering fine and the
+  #     script loading fine, but the actual verification call blocked -- reproduced live via a
+  #     real browser console showing "Connecting to 'https://www.google.com/recaptcha/enterprise/
+  #     clr?...' violates... connect-src... The action has been blocked."
   #   - frame-src allows https://www.google.com (the reCAPTCHA challenge iframe Firebase Phone
   #     Auth renders when it can't verify invisibly) and https://accounts.google.com/gsi/ (the
   #     actual "Sign in with Google" button Google renders is itself an iframe from this path, not
@@ -62,7 +72,7 @@
   #     loads).
   #   - frame-ancestors 'none' takes over X-Frame-Options' job (both do the same thing; setting
   #     both would just be two places to keep in sync).
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com https://accounts.google.com/gsi/client; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://cdn.brandfetch.io; connect-src 'self' https://api.finoratech.info https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com/gsi/ https://*.ingest.sentry.io https://*.ingest.us.sentry.io; frame-src https://www.google.com https://accounts.google.com/gsi/; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com https://accounts.google.com/gsi/client; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://cdn.brandfetch.io; connect-src 'self' https://api.finoratech.info https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com/gsi/ https://www.google.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io; frame-src https://www.google.com https://accounts.google.com/gsi/; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Referrer-Policy: strict-origin-when-cross-origin
 

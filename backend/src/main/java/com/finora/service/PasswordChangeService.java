@@ -249,9 +249,11 @@ public class PasswordChangeService {
         }
         if (user.isPendingDeletion() || user.isDeleted()) {
             // Without this, a PENDING_DELETION account's own still-valid JWT could open a real
-            // password-change flow during the 48h purge window -- irrelevant to the deletion
-            // itself (that's gated by consumeForAccountDeletion below, not this method), but a
-            // password change has no reason to be reachable for an account already leaving.
+            // password-change flow in the brief window before its own purge actually runs (or,
+            // in the crash-recovery case, before the sweep retries a purge that failed) --
+            // irrelevant to the deletion itself (that's gated by consumeForAccountDeletion below,
+            // not this method), but a password change has no reason to be reachable for an
+            // account already leaving.
             throw new ApiException(HttpStatus.FORBIDDEN, "This account is scheduled for deletion.");
         }
     }

@@ -267,7 +267,10 @@ export default function Settings() {
 
   useEffect(() => {
     userApi.get().then((u) => {
-      setPhoneNumber(u.phoneNumber);
+      // '' not null: a Google Sign-In account has no phone number on file at all (see
+      // AuthService.createGoogleUserRecord's own doc comment) -- the empty string already
+      // renders correctly below ("No phone number on file"), no separate null case needed.
+      setPhoneNumber(u.phoneNumber ?? '');
       setPhoneVerified(u.phoneVerified);
       setPasswordChangedAt(u.passwordChangedAt);
       setSignInMethod(u.signInMethod);
@@ -402,7 +405,7 @@ export default function Settings() {
   // token server-side, this just clears the browser's own httpOnly cookie best-effort and redirects.
   function handleDeleted() {
     authApi.logout().catch(() => {});
-    clearSessionAndRedirect("Your account is scheduled for deletion. You've been signed out everywhere.");
+    clearSessionAndRedirect("Your account has been permanently deleted. You've been signed out everywhere.");
   }
 
   if (loading) return <p className="text-muted">Loading…</p>;

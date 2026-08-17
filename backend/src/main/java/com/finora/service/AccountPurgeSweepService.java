@@ -51,10 +51,21 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Phase B of the account-lifecycle work. Purges (anonymizes) accounts that have sat at
- * {@code PENDING_DELETION} past the retention window -- see {@code UserAccountLifecycleService
- * .requestDeletion} for how an account gets there, and {@code User.STATUS_PENDING_DELETION}'s own
- * doc comment for the state machine.
+ * Phase B of the account-lifecycle work. Purges (anonymizes) an account -- see {@code
+ * UserAccountLifecycleService.requestDeletion} for how an account gets to {@code
+ * PENDING_DELETION} in the first place, and {@code User.STATUS_PENDING_DELETION}'s own doc
+ * comment for the state machine.
+ *
+ * <h2>Two callers, one purge</h2>
+ * {@link #purgeOne} runs twice over: {@code requestDeletion()} calls it directly, synchronously,
+ * the moment a deletion is authorized (product decision: instant, not delayed -- see that
+ * method's own doc comment for why). {@link #scheduledSweep} is no longer what makes deletion
+ * happen; it is the crash-recovery backstop for the case the synchronous call never got that far
+ * -- a process crash, an exception thrown before {@code purgeOne} could finish. Either caller
+ * reaches the exact same method, which is what makes the backstop trivial: a half-purged account
+ * is still sitting at {@code PENDING_DELETION}, and the next sweep pass re-runs {@code purgeOne}
+ * on it from scratch, tolerant of every step above having already run once (see "Idempotent by
+ * construction" below).
  *
  * <h2>Idempotent by construction, not via a job-tracking table</h2>
  * Modeled directly on {@link com.finora.imports.storage.StatementStorageSweepService}: no dedicated
@@ -95,9 +106,11 @@ public class AccountPurgeSweepService {
 
     private static final Logger log = LoggerFactory.getLogger(AccountPurgeSweepService.class);
 
-    /** The 48h window IS the safety buffer here, unlike {@code StatementStorageSweepService}'s
-     *  incidental 24h floor under a 90-day default -- see this class's own doc and {@code
-     *  UserAccountLifecycleService.requestDeletion}'s "no cancel link" product decision. */
+    /** No longer a user-facing safety window (deletion is instant -- see {@code
+     *  UserAccountLifecycleService.requestDeletion}'s own doc comment on that product decision).
+     *  What this floor still does: bound how soon the crash-recovery sweep retries an account
+     *  that got stuck at {@code PENDING_DELETION} because the synchronous purge attempt failed or
+     *  the process crashed mid-way -- see this class's own "Two callers, one purge" doc. */
     static final Duration MINIMUM_SAFETY_BUFFER = Duration.ofHours(48);
 
     @Value("${app.account-purge.sweep.enabled:true}")
@@ -268,8 +281,16 @@ public class AccountPurgeSweepService {
     /**
      * Purges one account. Order matters -- see this class's own doc on why anonymizing {@code
      * users} has to be the very last write.
+     *
+     * <p>Package-private, not private: {@code UserAccountLifecycleService.requestDeletion} (same
+     * package) calls this directly to make deletion instant -- see this class's own "Two callers,
+     * one purge" doc. No ownership check here, same trust boundary as the scheduled caller: this
+     * method takes {@code userId} on faith, safe today because both callers only ever pass an id
+     * they already own the right to act on (the sweep discovers it from a status-scoped query;
+     * requestDeletion passes the authenticated caller's own id). A future caller that passes a
+     * less-trusted id would need to add that check itself, not assume this method has it.
      */
-    private void purgeOne(UUID userId) {
+    void purgeOne(UUID userId) {
         User user = userRepository.findById(userId).orElse(null);
         if (user == null || user.isDeleted()) {
             // Nothing left to do -- an idempotent retry landing here a second time, or a row that

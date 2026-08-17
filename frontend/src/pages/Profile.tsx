@@ -35,7 +35,10 @@ export default function Profile() {
       setEmail(u.email);
       setFullName(u.fullName);
       setSavedFullName(u.fullName);
-      setPhoneNumber(u.phoneNumber);
+      // '' not null: a Google Sign-In account has no phone number on file at all (see
+      // AuthService.createGoogleUserRecord's own doc comment) -- the empty string already
+      // renders correctly below ("No phone number on file"), no separate null case needed.
+      setPhoneNumber(u.phoneNumber ?? '');
       setPhoneVerified(u.phoneVerified);
       setCreatedAt(u.createdAt);
       setPasswordChangedAt(u.passwordChangedAt);

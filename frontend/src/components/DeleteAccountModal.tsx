@@ -27,11 +27,12 @@ function friendlyFirebaseError(err: any): string {
  * a password change.
  *
  * There is deliberately no cancel link anywhere in this flow, matching the backend's product
- * decision (UserAccountLifecycleService.requestDeletion's own doc comment) -- the 48h purge delay
- * is an ops safety margin, not a user-facing undo. `onDeleted` is responsible for clearing the
- * local session and redirecting, same as DeactivateAccountModal's `onDeactivated` -- there is
- * nothing left to be signed in to once this succeeds, since requestDeletion already revoked every
- * refresh token server-side.
+ * decision (UserAccountLifecycleService.requestDeletion's own doc comment) -- deletion is
+ * instant, not delayed, so there is no window during which a self-service undo could even exist.
+ * By the time deleteAccount()'s request resolves, the account and its data are already purged.
+ * `onDeleted` is responsible for clearing the local session and redirecting, same as
+ * DeactivateAccountModal's `onDeactivated` -- there is nothing left to be signed in to once this
+ * succeeds, since requestDeletion already revoked every refresh token server-side.
  */
 
 type Step = 'password' | 'otp' | 'confirm';
@@ -226,9 +227,9 @@ export function DeleteAccountModal({ onClose, onDeleted, signInMethod }: {
               <div className="text-xs text-ink space-y-1.5">
                 <p className="font-medium">This cannot be undone.</p>
                 <p>
-                  Your account is permanently deleted in 48 hours. You'll be signed out everywhere
-                  immediately and won't be able to sign back in during that window -- there is no
-                  way to cancel this request once submitted.
+                  Your account and all your data are permanently deleted immediately. You'll be
+                  signed out everywhere right away -- there is no way to cancel this request once
+                  submitted.
                 </p>
               </div>
             </div>

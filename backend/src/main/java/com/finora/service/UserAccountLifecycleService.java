@@ -8,6 +8,7 @@ import com.finora.util.AfterCommit;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.HashMap;
@@ -32,11 +33,15 @@ public class UserAccountLifecycleService {
     private final EmailProvider emailProvider;
     private final RequestMetadata requestMetadata;
     private final PasswordChangeService passwordChangeService;
+    private final AccountPurgeSweepService accountPurgeSweepService;
+    private final TransactionTemplate transactionTemplate;
 
     public UserAccountLifecycleService(UserRepository userRepository, GoogleReauthVerifier googleReauthVerifier,
                                         RefreshTokenService refreshTokenService, AuditService auditService,
                                         EmailProvider emailProvider, RequestMetadata requestMetadata,
-                                        PasswordChangeService passwordChangeService) {
+                                        PasswordChangeService passwordChangeService,
+                                        AccountPurgeSweepService accountPurgeSweepService,
+                                        TransactionTemplate transactionTemplate) {
         this.userRepository = userRepository;
         this.googleReauthVerifier = googleReauthVerifier;
         this.refreshTokenService = refreshTokenService;
@@ -44,6 +49,8 @@ public class UserAccountLifecycleService {
         this.emailProvider = emailProvider;
         this.requestMetadata = requestMetadata;
         this.passwordChangeService = passwordChangeService;
+        this.accountPurgeSweepService = accountPurgeSweepService;
+        this.transactionTemplate = transactionTemplate;
     }
 
     /**
@@ -122,59 +129,92 @@ public class UserAccountLifecycleService {
     }
 
     /**
-     * Irreversible: current-password+OTP already proven by sessionId (see PasswordChangeService.
-     * consumeForAccountDeletion), sets PENDING_DELETION, revokes every session, sends a
-     * no-cancel-link confirmation email. AccountPurgeSweepService purges the account
-     * AccountPurgeSweepService.MINIMUM_SAFETY_BUFFER-floored 48h later -- there is deliberately no
-     * self-service undo (product decision), unlike deactivate() above.
+     * Irreversible AND instant (product decision, changed from the original 48h-delayed purge):
+     * current-password+OTP already proven by sessionId (see PasswordChangeService.
+     * consumeForAccountDeletion), and by the time this call returns the account and everything
+     * {@code AccountPurgeSweepService.purgeOne} purges/anonymizes is already gone. There is
+     * deliberately no self-service undo, unlike deactivate() above -- and now, deliberately, no
+     * waiting period during which one could exist either. The ONLY recourse for a request that
+     * was not really the account owner's own choice (a compromised session, someone else with
+     * device access) is contacting support before they act, not after -- see the confirmation
+     * email this sends once the purge has actually finished.
+     *
+     * <p>Two phases, not one {@code @Transactional} method. Phase one -- validate, consume the
+     * OTP session, mark {@code PENDING_DELETION}, revoke every session -- runs in its own short
+     * transaction via {@code transactionTemplate} and commits before anything else happens.
+     * {@link AccountPurgeSweepService#purgeOne} then runs afterward, deliberately NOT nested
+     * inside that transaction or any other: {@code purgeOne} manages its own transaction
+     * boundaries internally specifically so its outbound Gmail HTTPS call never happens with a
+     * pooled DB connection held open (the BH-016/BH-047 failure mode {@code
+     * AccountPurgeSweepService}'s own class doc warns about) -- calling it from inside a
+     * still-open {@code @Transactional} method here would silently defeat that design, since
+     * Spring would just join the caller's already-open transaction rather than honoring {@code
+     * purgeOne}'s own boundaries.
+     *
+     * <p>A failure in phase one leaves the account completely untouched (nothing committed, no
+     * email sent). A failure in {@code purgeOne} leaves it at {@code PENDING_DELETION} -- exactly
+     * where {@code AccountPurgeSweepService}'s own crash-recovery sweep already knows how to find
+     * and safely retry it from scratch, and the confirmation email below never fires for a purge
+     * that did not actually finish.
      *
      * @param sessionId a PasswordChangeSession id already at OTP_VERIFIED -- the frontend drives
      *                  the exact same start()/verifyOtp() calls ChangePasswordModal uses. No
      *                  currentPassword parameter: the session itself is that proof, same as
      *                  PasswordChangeService.complete() never re-asks for it either.
      */
-    @Transactional
     public void requestDeletion(UUID userId, String sessionId) {
-        User user = requireUser(userId);
-        requireUserScope(user);
+        String[] emailHolder = new String[1];
+        transactionTemplate.executeWithoutResult(tx -> {
+            User user = requireUser(userId);
+            requireUserScope(user);
 
-        // A suspension is an admin's call, not something a user should be able to route around
-        // via self-service deletion -- they need an admin to reactivate first, then can delete
-        // normally. Checked before consuming the OTP session so a blocked attempt doesn't burn it.
-        if (user.isSuspended()) {
-            throw new ApiException(HttpStatus.FORBIDDEN, "This account has been suspended. Contact support for assistance.");
-        }
-        if (user.isPendingDeletion()) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "Your account is already scheduled for deletion.");
-        }
-        if (user.isDeleted()) {
-            throw new ApiException(HttpStatus.NOT_FOUND, "User not found");
-        }
+            // A suspension is an admin's call, not something a user should be able to route
+            // around via self-service deletion -- they need an admin to reactivate first, then
+            // can delete normally. Checked before consuming the OTP session so a blocked attempt
+            // doesn't burn it.
+            if (user.isSuspended()) {
+                throw new ApiException(HttpStatus.FORBIDDEN, "This account has been suspended. Contact support for assistance.");
+            }
+            if (user.isPendingDeletion()) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "Your account is already scheduled for deletion.");
+            }
+            if (user.isDeleted()) {
+                throw new ApiException(HttpStatus.NOT_FOUND, "User not found");
+            }
 
-        // Proves current-password + OTP for THIS request; throws ApiException(BAD_REQUEST) if the
-        // session is invalid, expired, or not at OTP_VERIFIED. Also consumes it (DELETION_CONFIRMED)
-        // so it can never be replayed into an actual password change.
-        passwordChangeService.consumeForAccountDeletion(userId, sessionId);
+            // Proves current-password + OTP for THIS request; throws ApiException(BAD_REQUEST) if
+            // the session is invalid, expired, or not at OTP_VERIFIED. Also consumes it
+            // (DELETION_CONFIRMED) so it can never be replayed into an actual password change.
+            passwordChangeService.consumeForAccountDeletion(userId, sessionId);
 
-        Instant now = Instant.now();
-        user.setStatus(User.STATUS_PENDING_DELETION);
-        user.setDeletionRequestedAt(now);
-        user.setUpdatedAt(now);
-        userRepository.save(user);
+            Instant now = Instant.now();
+            user.setStatus(User.STATUS_PENDING_DELETION);
+            user.setDeletionRequestedAt(now);
+            user.setUpdatedAt(now);
+            userRepository.save(user);
 
-        // Same reasoning as deactivate()'s call below: status alone blocks new logins/refreshes,
-        // not an access token already issued (up to 15 minutes) -- revoke every refresh token in
-        // this transaction so the session can't outlive the access token it's currently holding.
-        refreshTokenService.revokeAllForUser(userId);
+            // Same reasoning as deactivate()'s call below: status alone blocks new logins/
+            // refreshes, not an access token already issued (up to 15 minutes) -- revoke every
+            // refresh token in this transaction so the session can't outlive the access token
+            // it's currently holding, and can't race the purge about to run.
+            refreshTokenService.revokeAllForUser(userId);
 
-        Map<String, Object> auditMetadata = requestMetadata.addTo(new HashMap<>(Map.of("method", "self_service")));
-        auditService.record(userId, "ACCOUNT_DELETION_REQUESTED", "User", userId, auditMetadata);
+            Map<String, Object> auditMetadata = requestMetadata.addTo(new HashMap<>(Map.of("method", "self_service")));
+            auditService.record(userId, "ACCOUNT_DELETION_REQUESTED", "User", userId, auditMetadata);
 
-        String email = user.getEmail();
-        AfterCommit.run("account deletion requested email", () -> {
-            EmailResult result = emailProvider.sendAccountDeletionRequestedEmail(email, now);
+            // Captured now, before purgeOne overwrites it with an anonymized placeholder address
+            // as its own last write.
+            emailHolder[0] = user.getEmail();
+        });
+
+        // Outside any transaction, deliberately -- see this method's own doc comment.
+        accountPurgeSweepService.purgeOne(userId);
+
+        String email = emailHolder[0];
+        AfterCommit.run("account deleted email", () -> {
+            EmailResult result = emailProvider.sendAccountDeletedEmail(email, Instant.now());
             auditService.record(userId, "EMAIL_SENT", "User", userId, Map.of(
-                    "type", "account_deletion_requested", "provider", result.provider().name(),
+                    "type", "account_deleted", "provider", result.provider().name(),
                     "success", result.success()));
         });
     }

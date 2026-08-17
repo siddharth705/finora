@@ -261,22 +261,26 @@ app:
     reactivation-window-days: ${ACCOUNT_REACTIVATION_WINDOW_DAYS:3}
   account-purge:
     sweep:
-      # AccountPurgeSweepService. Purges (anonymizes) accounts sitting at PENDING_DELETION past
-      # retention-hours -- see UserAccountLifecycleService.requestDeletion's "no cancel link"
-      # product decision. Off under test for the same reason every other sweep in this codebase
-      # is: a background thread purging accounts mid-test is the cross-test pollution BH-058 was
-      # about. Tests call AccountPurgeSweepService.sweep() directly.
+      # AccountPurgeSweepService. Deletion is instant now (UserAccountLifecycleService.
+      # requestDeletion calls purgeOne synchronously the moment it's authorized) -- this sweep is
+      # the crash-recovery backstop for an account that got stuck at PENDING_DELETION because that
+      # synchronous purge failed or the process crashed mid-way, not what makes deletion happen.
+      # See AccountPurgeSweepService's own "Two callers, one purge" doc. Off under test for the
+      # same reason every other sweep in this codebase is: a background thread purging accounts
+      # mid-test is the cross-test pollution BH-058 was about. Tests call
+      # AccountPurgeSweepService.sweep() directly.
       enabled: ${ACCOUNT_PURGE_SWEEP_ENABLED:true}
-      # 48h is the product decision itself, not a tunable retention period like statement
-      # storage's 90 days -- a floor of 48h is enforced in code regardless of what this is set to,
-      # see AccountPurgeSweepService.MINIMUM_SAFETY_BUFFER.
+      # No longer a user-facing product decision (deletion is instant) -- this floor now just
+      # bounds how soon a stuck, crash-recovery retry can happen, and is enforced in code
+      # regardless of what this is set to, see AccountPurgeSweepService.MINIMUM_SAFETY_BUFFER.
       retention-hours: ${ACCOUNT_PURGE_SWEEP_RETENTION_HOURS:48}
       # How many eligible accounts one run considers. Same reasoning as
       # StatementStorageSweepService's batch-size -- a backlog drains across runs rather than in
       # one unbounded pass.
       batch-size: ${ACCOUNT_PURGE_SWEEP_BATCH_SIZE:200}
       # Gmail revocation calls and per-account work make this slower than a simple row sweep --
-      # hourly by default, well inside the 48h window's own margin.
+      # hourly by default is plenty for what's now just a crash-recovery retry cadence, not a
+      # user-facing deadline.
       interval-ms: ${ACCOUNT_PURGE_SWEEP_INTERVAL_MS:21600000}
       initial-delay-ms: ${ACCOUNT_PURGE_SWEEP_INITIAL_DELAY_MS:300000}
   security:

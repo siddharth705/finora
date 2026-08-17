@@ -155,10 +155,16 @@ public class DataExportService {
     /**
      * Phase 1: proves current-password, then gathers every in-scope table except statement file
      * bytes. Deliberately does NOT block {@code SUSPENDED}/{@code DEACTIVATED}/{@code
-     * PENDING_DELETION}: a suspended account has no path to a fresh login to even reach this (the
-     * same "unreachable in practice" reasoning {@link AccountPurgeSweepService} itself relies on),
-     * and {@code PENDING_DELETION} is exactly when a user most wants to grab their data before the
-     * 48h purge -- blocking it here would fight the point of offering it at all.
+     * PENDING_DELETION}: a suspended or deactivated account has no path to a fresh login to even
+     * reach this (the same "unreachable in practice" reasoning {@link AccountPurgeSweepService}
+     * itself relies on) -- only a still-valid access token issued before the status changed
+     * (up to 15 minutes stale) can. {@code PENDING_DELETION} is the same story now that deletion
+     * is instant, not a deliberate window: it's either a sub-second state while {@code
+     * UserAccountLifecycleService.requestDeletion}'s synchronous purge is actually in flight, or
+     * an account stuck there because that purge failed and the crash-recovery sweep hasn't
+     * retried it yet. Neither case is a reason to block a best-effort export -- there's no
+     * "deliberate window" to protect anymore, and refusing one in the stuck case would only
+     * penalize a user whose purge is the one that's broken.
      */
     @Transactional(readOnly = true)
     public ExportBundle buildBundle(UUID userId, String currentPassword, String googleIdToken) {
