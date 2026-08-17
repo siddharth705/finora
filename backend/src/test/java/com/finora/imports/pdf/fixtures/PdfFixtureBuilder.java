@@ -59,6 +59,14 @@ import java.util.List;
  *   -&gt; buildParenthesizedDrCrRunningBalanceSample, buildStatementClosingMarkerSample
  * COMPOSITE_STATEMENT / MULTI_ACCOUNT
  *   -&gt; buildMultiSectionCompositeStatementSample
+ * SECTION_IDENTITY_AMBIGUOUS / Section Identity Resolver (PdfPreviewGenerator.resolveSectionIdentities)
+ *   -&gt; buildSameAccountReconciledAcrossFormattingSample (the positive case: PdfTableLocator
+ *      structurally over-splits, real identity evidence reconciles it back to one section),
+ *      buildAmbiguousSectionSplitSample (neither side has enough identity evidence to confirm
+ *      sameness OR difference, so the split is correctly left alone),
+ *      buildProbableMatchOnlyMustNotFoldSample (a PROBABLE-strength match -- same masked digits,
+ *      no strong key on either side -- must also stay split, never silently merged on a
+ *      coincidence; the adversarial-review finding that narrowed the fold condition to EXACT only)
  * CREDIT_CARD_SUMMARY_SIGNAL
  *   -&gt; buildWrappedDescriptionCreditCardSample, buildMultiSectionCompositeStatementSample,
  *      buildGridMetadataFallbackSample
@@ -431,6 +439,104 @@ public final class PdfFixtureBuilder {
                 .line("Total Amount Due 1,817.00 Minimum Due 200.00")
                 .row(ccCol, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
                 .row(ccCol, "15/07/2026", "UPI-Retailer One", "1,817.02 Dr");
+
+        return render(List.of(page));
+    }
+
+    // ==================== SECTION_IDENTITY_AMBIGUOUS / Section Identity Resolver ====================
+
+    /**
+     * The positive case the Section Identity Resolver ({@code PdfPreviewGenerator}, Layer 2 of
+     * the composite-account-merge fix) exists for: one real account, printed with a formatting
+     * quirk that makes {@code PdfTableLocator} (Layer 1, structural signals only) genuinely
+     * over-split it into two sections, which the resolver then folds back together using the
+     * REAL identity/product/institution evidence Layer 1 never has access to.
+     *
+     * <p>Each page states the account with a {@code SECTION_MARKER}-shaped banner AND a separate
+     * labelled "Account Number:" field, each matching the OTHER in formatting on its own page but
+     * differing across pages -- page 1 with dashes, page 2 without (see the two {@code .line(...)}
+     * pairs below for the exact digits). {@code accountIdentityIn}'s raw string comparison
+     * genuinely disagrees between the two dash/no-dash spellings, which is why Layer 1 splits;
+     * {@code ProductIdentity}'s digit-normalizing hash does not, which is what lets Layer 2
+     * reconcile it. Deliberately NOT a plain {@code ACCOUNT_IDENTITY_LINE}
+     * mismatch: that mechanism defers the split to the next header event, and the mismatched text
+     * always ends up in the CLOSING section's aux, never the newly-opened one's -- structurally
+     * leaving one side with zero identity evidence of its own, which no comparison could ever
+     * reconcile. A banner closes and reopens immediately instead, so both sides keep their own
+     * leading identity text -- the one shape where reconciliation is actually possible.
+     */
+    public static byte[] buildSameAccountReconciledAcrossFormattingSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 130f, 260f, 340f, 420f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("SAVINGS ACCOUNT - 1234-5678-9012")
+                .line("Account Number: 1234-5678-9012")
+                .row(col, "Date", "Description", "Debit", "Credit", "Balance")
+                .row(col, "01.01.2026", "Page1 txn 1", "500.00", "", "9500.00")
+                .row(col, "02.01.2026", "Page1 txn 2", "600.00", "", "8900.00")
+                .line("SAVINGS ACCOUNT - 123456789012")   // synthetic-ok: 1-2-3-4-5-6-7-8-9-0-1-2, invented, not corpus-derived
+                .line("Account Number: 123456789012")   // synthetic-ok: 1-2-3-4-5-6-7-8-9-0-1-2, invented, not corpus-derived
+                .row(col, "Date", "Description", "Debit", "Credit", "Balance")
+                .row(col, "05.01.2026", "Page2 txn 1", "300.00", "", "8600.00")
+                .row(col, "06.01.2026", "Page2 txn 2", "400.00", "", "8200.00");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * The honest-uncertainty case: {@code PdfTableLocator} over-splits an account with no
+     * identity signal at all before its own header (so {@code currentSectionAccountId} stays
+     * null for that section's whole life -- see that class's own documented, accepted gap), later
+     * restated once via a plain {@code ACCOUNT_IDENTITY_LINE}. Because that mismatch mechanism is
+     * deferred (see {@link #buildSameAccountReconciledAcrossFormattingSample}'s own doc comment),
+     * the restated text lands in the FIRST section's trailing aux, and the second section opens
+     * with none of its own -- genuinely nothing to compare it against, not even a masked number.
+     * Neither {@code SAME_ACCOUNT} nor {@code DIFFERENT_ACCOUNT} can be confirmed, which is
+     * exactly the case the resolver must leave alone rather than guess: {@code SECTION_IDENTITY_AMBIGUOUS}
+     * is recorded and both sections stay separate.
+     */
+    public static byte[] buildAmbiguousSectionSplitSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 130f, 260f, 340f, 420f};
+
+        PageBuilder page = new PageBuilder();
+        page.row(col, "Date", "Description", "Debit", "Credit", "Balance")
+                .row(col, "01.01.2026", "Page1 txn 1", "500.00", "", "9500.00")
+                .row(col, "02.01.2026", "Page1 txn 2", "600.00", "", "8900.00")
+                .line("Account Number: 111111111111")
+                .row(col, "Date", "Description", "Debit", "Credit", "Balance")
+                .row(col, "05.01.2026", "Page2 txn 1", "300.00", "", "8600.00")
+                .row(col, "06.01.2026", "Page2 txn 2", "400.00", "", "8200.00");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * The scenario adversarial review of the resolver found genuinely dangerous: two DIFFERENT
+     * accounts, at the same bank, whose masked last-4 digits coincide -- {@link ProductIdentity}'s
+     * own doc comment calls this "entirely ordinary" ("two deposits at the same bank ending 4521
+     * is entirely ordinary") -- and no full number is ever extracted on EITHER side (a
+     * {@code CARD_ENDING_DIGITS}-shaped sentence, not a labelled "Account Number:" field, so
+     * {@code accountNumberFullForHashingOnly} stays null and no strong key exists to settle it).
+     * {@code ProductIdentity.matches()} can only return {@code PROBABLE} here, and its own doc
+     * comment is explicit that PROBABLE "goes to the user, never to a silent merge." The resolver
+     * must leave this split and record {@code SECTION_IDENTITY_AMBIGUOUS} -- folding it would
+     * silently merge two accounts on a coincidence, exactly the P0 this whole two-layer fix
+     * exists to prevent.
+     */
+    public static byte[] buildProbableMatchOnlyMustNotFoldSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 130f, 260f, 340f, 420f};
+
+        PageBuilder page = new PageBuilder();
+        page.line("SAVINGS ACCOUNT - 111111111111")
+                .line("Please protect your credit card ending with 1234 at all times.")
+                .row(col, "Date", "Description", "Debit", "Credit", "Balance")
+                .row(col, "01.01.2026", "Page1 txn 1", "500.00", "", "9500.00")
+                .row(col, "02.01.2026", "Page1 txn 2", "600.00", "", "8900.00")
+                .line("SAVINGS ACCOUNT - 999999999999")
+                .line("Please protect your credit card ending with 1234 at all times.")
+                .row(col, "Date", "Description", "Debit", "Credit", "Balance")
+                .row(col, "05.01.2026", "Page2 txn 1", "300.00", "", "8600.00")
+                .row(col, "06.01.2026", "Page2 txn 2", "400.00", "", "8200.00");
 
         return render(List.of(page));
     }

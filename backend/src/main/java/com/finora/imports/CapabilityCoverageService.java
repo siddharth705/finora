@@ -117,7 +117,13 @@ public class CapabilityCoverageService {
             // table -- found on two real credit-card statements (Axis, HDFC) with otherwise
             // unrelated layouts, each producing a one-row phantom section immediately superseded by
             // the real ledger's header. See PdfTableLocator.looksLikePaymentSummaryPanel.
-            "PAYMENT_SUMMARY_PANEL_SUPPRESSED");
+            "PAYMENT_SUMMARY_PANEL_SUPPRESSED",
+            // Two adjacent sections PdfTableLocator structurally over-split (an account with no
+            // identity signal before its own header, later restated once) whose real identity/
+            // product/institution evidence disagrees with certainty in neither direction -- neither
+            // confirms them as one account nor confirms them as two. Left separate, never guessed.
+            // See PdfPreviewGenerator.resolveSectionIdentities.
+            "SECTION_IDENTITY_AMBIGUOUS");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure

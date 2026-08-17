@@ -189,8 +189,19 @@ public class PdfPreviewGenerator {
         // 538.00 25,000.00 Credit Count 3 1". The geometry is intact right here; the table is
         // where it stops being intact.
         PrintedSummary printedSummary = StatementSummaryExtractor.extract(positioned, ctx);
+        // Section Identity Resolver (Layer 2 of the composite-account-merge fix -- see
+        // PdfTableLocator's own ACCOUNT_IDENTITY_LINE doc comment for Layer 1). PdfTableLocator
+        // guarantees it never silently MERGES two accounts, using only text-shape signals, but that
+        // same caution means it can over-split one real account whose identity line happens to
+        // repeat in a shape its structural check also catches (a section with no identity signal
+        // at all before its own header, page-broken later by a repeated banner -- see
+        // PdfTableLocator's own documented, accepted gap). This reconciles that using the REAL
+        // identity/product/institution signals this class already computes per section, which
+        // PdfTableLocator never has access to.
+        List<PdfTableLocator.LocatedSection> sections =
+                resolveSectionIdentities(doc.sections(), filename, ctx);
 
-        if (doc.sections().isEmpty()) {
+        if (sections.isEmpty()) {
             // "Never lose information" (see the engineering principles doc) applies at the
             // whole-document level too: previously this returned a well-formed but silently empty
             // response -- indistinguishable from a genuinely blank PDF. Every non-blank line of
@@ -215,12 +226,12 @@ public class PdfPreviewGenerator {
 
         List<StagedAccountSection> result = new ArrayList<>();
         List<UnparseableRow> unparseableAcrossDocument = new ArrayList<>();
-        for (int i = 0; i < doc.sections().size(); i++) {
+        for (int i = 0; i < sections.size(); i++) {
             // Built with no summary regardless. Which section a document-level summary belongs to
             // is not answerable here -- see attributePrintedSummary below, which decides it once
             // every section exists.
-            List<StagedAccountSection> staged = buildSections(userId, filename, doc.sections().get(i),
-                    i, doc.sections().size(), ctx, PrintedSummary.NONE);
+            List<StagedAccountSection> staged = buildSections(userId, filename, sections.get(i),
+                    i, sections.size(), ctx, PrintedSummary.NONE);
             for (StagedAccountSection s : staged) unparseableAcrossDocument.addAll(s.unparseableRows());
             result.addAll(staged);
         }
@@ -539,6 +550,139 @@ public class PdfPreviewGenerator {
 
         return facts.toDetectedAccountInfo(product, suggestedAccountTypeFor(product, facts.creditCardSignals()),
                 openingBalance, closingBalance, statementStart, statementEnd, ProductAttributes.empty());
+    }
+
+    /**
+     * Section Identity Resolver: folds adjacent sections back together when the REAL
+     * identity/product/institution evidence says they are the same account, structurally
+     * over-split by {@link PdfTableLocator} (which has no access to any of those signals -- see
+     * its own class-level doc comment for why that boundary is deliberate). Runs once per
+     * document, before every other per-section decision (product classification, ledger-vs-deposit
+     * routing, ...), so nothing downstream ever has to know a fold happened.
+     *
+     * <p>Deliberately conservative in one direction only: a pair is folded ONLY on positive
+     * evidence of sameness ({@link SectionIdentityVerdict#SAME_ACCOUNT}). Everything else --
+     * confirmed different, or genuinely unclear -- is left as separate sections. An extra section
+     * the user has to notice and dismiss is a UX cost; a wrong merge corrupts real financial
+     * history. See {@link #compareSectionIdentity} for exactly what counts as which.
+     *
+     * <p>Adjacent-pair comparison only, not all-pairs: {@link PdfTableLocator} already guarantees
+     * two sections of the SAME account are never separated by a genuinely different section in
+     * between (that would itself be a silent-merge risk for whatever sits between them), so a
+     * single left-to-right pass is sufficient -- there is no "skip a like section and merge with
+     * the one two positions over" case this needs to handle.
+     */
+    private List<PdfTableLocator.LocatedSection> resolveSectionIdentities(
+            List<PdfTableLocator.LocatedSection> sections, String filename, DocumentContext ctx) {
+        if (sections.size() < 2) return sections;
+
+        List<PdfTableLocator.LocatedSection> resolved = new ArrayList<>();
+        PdfTableLocator.LocatedSection current = sections.get(0);
+        java.util.Set<String> currentColumns = normalizedColumns(current);
+        ProductIdentity currentIdentity = sectionIdentity(filename, current);
+
+        for (int i = 1; i < sections.size(); i++) {
+            PdfTableLocator.LocatedSection next = sections.get(i);
+            java.util.Set<String> nextColumns = normalizedColumns(next);
+            ProductIdentity nextIdentity = sectionIdentity(filename, next);
+            SectionIdentityVerdict verdict =
+                    compareSectionIdentity(currentColumns, currentIdentity, nextColumns, nextIdentity);
+
+            if (verdict == SectionIdentityVerdict.SAME_ACCOUNT) {
+                current = new PdfTableLocator.LocatedSection(
+                        concat(current.auxiliaryText(), next.auxiliaryText()),
+                        concat(current.rows(), next.rows()));
+                // currentColumns/currentIdentity intentionally NOT recomputed from the merged
+                // section: both sides already agreed, and the merged section's own row-map keys
+                // are identical to current's (that agreement is what SAME_ACCOUNT required).
+                continue;
+            }
+            if (verdict == SectionIdentityVerdict.AMBIGUOUS && ctx != null) {
+                ctx.record("SECTION_IDENTITY_AMBIGUOUS");
+            }
+            resolved.add(current);
+            current = next;
+            currentColumns = nextColumns;
+            currentIdentity = nextIdentity;
+        }
+        resolved.add(current);
+        return resolved;
+    }
+
+    private enum SectionIdentityVerdict { SAME_ACCOUNT, DIFFERENT_ACCOUNT, AMBIGUOUS }
+
+    /**
+     * Pure and independently testable on purpose -- the actual decision this whole resolver makes,
+     * isolated from how the identities were obtained.
+     *
+     * <ul>
+     *   <li>{@code SAME_ACCOUNT}: normalized column sets are EQUAL (a merged section's rows must
+     *       share one key set -- every row-consuming caller downstream already assumes that within
+     *       a single section), AND the identities match {@code EXACT} -- {@code PROBABLE} is
+     *       deliberately NOT enough here. Found by adversarial review: {@link ProductIdentity}'s
+     *       own doc comment for {@code Match#PROBABLE} says outright "this goes to the user, never
+     *       to a silent merge" -- a masked-number-plus-type coincidence ("two deposits at the same
+     *       bank ending 4521 is entirely ordinary") is real evidence, but not proof, and this
+     *       resolver folds sections with no review step at all. Silently merging two genuinely
+     *       different accounts on a PROBABLE match would be exactly the P0 this whole two-layer
+     *       fix exists to prevent, reopened here. A PROBABLE pair still falls through to
+     *       {@code AMBIGUOUS} below, which is the correct place for "plausible, not proven."</li>
+     *   <li>{@code DIFFERENT_ACCOUNT}: the identities carry POSITIVE disagreement -- both sides
+     *       name an institution and it differs, or both sides have a strong key and it differs.
+     *       Not merely "matches() said NONE": that also fires for plain absence of evidence, which
+     *       must not be treated as proof of difference.</li>
+     *   <li>{@code AMBIGUOUS}: everything else -- including a column mismatch on two otherwise
+     *       plausibly-matching identities (the merge is still refused; the columns disagreeing is
+     *       itself uncertainty, not confirmation either way), and including any {@code PROBABLE}
+     *       match.</li>
+     * </ul>
+     */
+    private static SectionIdentityVerdict compareSectionIdentity(
+            java.util.Set<String> columnsA, ProductIdentity a,
+            java.util.Set<String> columnsB, ProductIdentity b) {
+        ProductIdentity.Match match = a.matches(b);
+        if (columnsA.equals(columnsB) && match == ProductIdentity.Match.EXACT) {
+            return SectionIdentityVerdict.SAME_ACCOUNT;
+        }
+        boolean institutionsDisagree = a.institutionId() != null && b.institutionId() != null
+                && !a.institutionId().equals(b.institutionId());
+        boolean strongKeysDisagree = a.strongKey() != null && b.strongKey() != null
+                && !a.strongKey().equals(b.strongKey());
+        if (institutionsDisagree || strongKeysDisagree) {
+            return SectionIdentityVerdict.DIFFERENT_ACCOUNT;
+        }
+        return SectionIdentityVerdict.AMBIGUOUS;
+    }
+
+    /** A section's own identity, using the exact same metadata/bank extraction every other caller
+     *  in this class already runs -- {@code ctx} is passed as null so this throwaway comparison
+     *  pass never double-records a capability activation the section's REAL build (later, in
+     *  {@link #buildSections}) will already record for real. No deposit discriminator: this
+     *  compares whole SECTIONS against each other, not individual deposits within one. */
+    private ProductIdentity sectionIdentity(String filename, PdfTableLocator.LocatedSection section) {
+        SharedSectionFacts facts = sharedFacts(filename, section, null);
+        List<String> columns = section.rows().isEmpty() ? List.of() : List.copyOf(section.rows().get(0).keySet());
+        ProductDiscovery.DiscoveredProduct product = productDiscovery.discover(
+                new ProductEvidenceCollector.Section(columns, section.auxiliaryText(), null, section.rows().size()));
+        return ProductIdentity.of(facts.bank().id(), product.type(),
+                facts.metadata().accountNumberFullForHashingOnly(), facts.metadata().accountNumberMasked());
+    }
+
+    /** Same normalization {@code PdfTableLocator.headerSignature} applies before comparing two
+     *  headers -- reused here so two columns that print identically but for whitespace/case don't
+     *  register as a structural mismatch this resolver would otherwise refuse to fold on. */
+    private static java.util.Set<String> normalizedColumns(PdfTableLocator.LocatedSection section) {
+        if (section.rows().isEmpty()) return java.util.Set.of();
+        java.util.Set<String> columns = new java.util.LinkedHashSet<>();
+        for (String column : section.rows().get(0).keySet()) columns.add(CsvParser.normalizeHeaderCell(column));
+        return columns;
+    }
+
+    private static <T> List<T> concat(List<T> a, List<T> b) {
+        List<T> combined = new ArrayList<>(a.size() + b.size());
+        combined.addAll(a);
+        combined.addAll(b);
+        return combined;
     }
 
     /**

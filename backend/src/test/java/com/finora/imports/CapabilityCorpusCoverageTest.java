@@ -163,6 +163,12 @@ class CapabilityCorpusCoverageTest {
                 "no trace, and none is planned -- same reasoning as BLANK_COLUMN_NAME_QUALIFIED, "
                         + "same real document. Covered instead by HeaderColumnRecoveryTest's fully "
                         + "hand-synthesized fixtures.");
+        DECLARED_WITHOUT_A_TRACE.put("SECTION_IDENTITY_AMBIGUOUS",
+                "no trace, and none is planned -- same reasoning as INFERRED_HEADERLESS_LAYOUT: firing "
+                        + "requires a section that opens with no identity signal at all before its own "
+                        + "header, which no document in the current real corpus happens to be shaped "
+                        + "like. Covered instead by SectionIdentityResolverTest's fully hand-synthesized "
+                        + "fixtures, alongside the resolver's positive (fold) case on the same class.");
     }
 
     /**
