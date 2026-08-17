@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
@@ -54,6 +55,7 @@ public class GoalService {
         g.setTargetAmount(req.targetAmount());
         g.setCurrentAmount(req.currentAmount() != null ? req.currentAmount() : BigDecimal.ZERO);
         g.setTargetDate(req.targetDate());
+        markCompletedIfReached(g);
         Goal saved = goalRepository.save(g);
 
         if (g.getCurrentAmount().compareTo(BigDecimal.ZERO) > 0) {
@@ -86,6 +88,7 @@ public class GoalService {
         // directly from elsewhere in the backend.
         BigDecimal newAmount = g.getCurrentAmount().add(amount);
         g.setCurrentAmount(newAmount.compareTo(BigDecimal.ZERO) >= 0 ? newAmount : BigDecimal.ZERO);
+        markCompletedIfReached(g);
         Goal saved = goalRepository.save(g);
 
         GoalContribution gc = new GoalContribution();
@@ -107,6 +110,17 @@ public class GoalService {
 
     private Goal getOwned(UUID userId, UUID goalId) {
         return OwnershipGuard.requireOwned(goalRepository.findById(goalId), Goal::getUserId, userId, "Goal");
+    }
+
+    /** D-25 PR3-B: stamps the Financial Journey "goal achieved" milestone the first time a goal's
+     *  balance reaches its target. Deliberately one-way -- once set, a later contribution (or the
+     *  floor-at-zero path above pulling a goal back down) never clears it, same "persists
+     *  indefinitely" precedent as User.passwordChangedAt/deactivatedAt. Called from both create()
+     *  and addContribution() since either can be the write that crosses the target. */
+    private void markCompletedIfReached(Goal g) {
+        if (g.getCompletedAt() == null && g.getCurrentAmount().compareTo(g.getTargetAmount()) >= 0) {
+            g.setCompletedAt(Instant.now());
+        }
     }
 
     /** Delegates to {@link com.finora.util.UserZone} -- one of four hand-copied implementations,
