@@ -8,10 +8,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -32,6 +35,8 @@ class UserAccountLifecycleServiceTest {
     private EmailProvider emailProvider;
     private RequestMetadata requestMetadata;
     private PasswordChangeService passwordChangeService;
+    private AccountPurgeSweepService accountPurgeSweepService;
+    private TransactionTemplate transactionTemplate;
     private UserAccountLifecycleService service;
     private final UUID userId = UUID.randomUUID();
 
@@ -51,11 +56,23 @@ class UserAccountLifecycleServiceTest {
         when(requestMetadata.device()).thenReturn("Chrome on macOS");
         when(emailProvider.sendAccountDeactivatedEmail(any(), any(), any(), any()))
                 .thenReturn(EmailResult.success(ProviderType.RESEND, "test-message-id"));
-        when(emailProvider.sendAccountDeletionRequestedEmail(any(), any()))
+        when(emailProvider.sendAccountDeletedEmail(any(), any()))
                 .thenReturn(EmailResult.success(ProviderType.RESEND, "test-message-id"));
         passwordChangeService = mock(PasswordChangeService.class);
+        accountPurgeSweepService = mock(AccountPurgeSweepService.class);
+        transactionTemplate = mock(TransactionTemplate.class);
+        // Runs the real lambda passed to executeWithoutResult -- without this, requestDeletion()'s
+        // phase-one work (validation, consuming the OTP session, setting PENDING_DELETION,
+        // revoking sessions) would never actually happen. Same pattern
+        // AccountPurgeSweepServiceTest already establishes for its own bulk-delete phase.
+        doAnswer(inv -> {
+            Consumer<TransactionStatus> action = inv.getArgument(0);
+            action.accept(mock(TransactionStatus.class));
+            return null;
+        }).when(transactionTemplate).executeWithoutResult(any());
         service = new UserAccountLifecycleService(userRepository, passwordEncoder, refreshTokenService,
-                auditService, emailProvider, requestMetadata, passwordChangeService);
+                auditService, emailProvider, requestMetadata, passwordChangeService,
+                accountPurgeSweepService, transactionTemplate);
     }
 
     private User user(String accountScope) {
@@ -196,7 +213,7 @@ class UserAccountLifecycleServiceTest {
     private static final String SESSION_ID = UUID.randomUUID().toString();
 
     @Test
-    void requestDeletion_withAConsumedSession_setsStatusAndTimestampAndRevokesEverySession() {
+    void requestDeletion_withAConsumedSession_setsStatusAndTimestampAndRevokesEverySessionAndPurgesImmediately() {
         User u = user(User.SCOPE_USER);
         when(userRepository.findById(userId)).thenReturn(Optional.of(u));
 
@@ -207,7 +224,37 @@ class UserAccountLifecycleServiceTest {
         assertThat(u.getDeletionRequestedAt()).isNotNull();
         verify(refreshTokenService).revokeAllForUser(userId);
         verify(auditService).record(eq(userId), eq("ACCOUNT_DELETION_REQUESTED"), eq("User"), eq(userId), any());
-        verify(emailProvider).sendAccountDeletionRequestedEmail(eq("jane@example.com"), any(Instant.class));
+        // The actual purge (anonymize, hard-delete every owned table, finally set status=DELETED)
+        // is AccountPurgeSweepServiceTest/IT's own concern -- this test only proves it's
+        // triggered, synchronously, as part of the same requestDeletion() call, not deferred to a
+        // sweep (product decision: instant deletion, not a 48h delayed purge).
+        verify(accountPurgeSweepService).purgeOne(userId);
+        verify(emailProvider).sendAccountDeletedEmail(eq("jane@example.com"), any(Instant.class));
+    }
+
+    /** Regression test for the crash-recovery property AccountPurgeSweepService's own doc comment
+     *  promises: a purge failure (a crash, a transient Gmail API outage) must leave the account
+     *  exactly where the scheduled sweep already knows how to find and safely retry it -- not
+     *  silently reported as a success, and not sent a "deleted" confirmation for a purge that
+     *  never actually finished. */
+    @Test
+    void requestDeletion_whenPurgeThrows_propagatesAndNeverSendsTheDeletedEmail() {
+        User u = user(User.SCOPE_USER);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(u));
+        doThrow(new RuntimeException("Gmail revocation timed out"))
+                .when(accountPurgeSweepService).purgeOne(userId);
+
+        try {
+            service.requestDeletion(userId, SESSION_ID);
+        } catch (RuntimeException e) {
+            // Phase one already committed (PENDING_DELETION, tokens revoked) before the purge
+            // ran -- exactly the state the scheduled sweep's own retry-from-scratch logic expects.
+            assertThat(u.getStatus()).isEqualTo(User.STATUS_PENDING_DELETION);
+            verify(refreshTokenService).revokeAllForUser(userId);
+            verify(emailProvider, never()).sendAccountDeletedEmail(any(), any());
+            return;
+        }
+        throw new AssertionError("Expected requestDeletion() to propagate a purge failure");
     }
 
     @Test
@@ -224,6 +271,7 @@ class UserAccountLifecycleServiceTest {
             verify(userRepository, never()).save(any());
             verify(refreshTokenService, never()).revokeAllForUser(any());
             verify(auditService, never()).record(any(), eq("ACCOUNT_DELETION_REQUESTED"), any(), any(), any());
+            verify(accountPurgeSweepService, never()).purgeOne(any());
             return;
         }
         throw new AssertionError("Expected requestDeletion() to propagate the session-consumption failure");

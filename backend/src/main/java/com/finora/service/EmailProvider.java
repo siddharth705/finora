@@ -34,8 +34,8 @@ public interface EmailProvider {
      *  the email alone, that this was not them. */
     EmailResult sendAccountDeactivatedEmail(String toEmail, Instant deactivatedAt, String device, String ip);
     EmailResult sendAccountReactivatedEmail(String toEmail);
-    /** No cancel link -- the 48h purge buffer is an ops safety margin, not a user-facing undo
-     *  (product decision). Purely informational: what happened, when, and that it cannot be
-     *  reversed. */
-    EmailResult sendAccountDeletionRequestedEmail(String toEmail, Instant requestedAt);
+    /** Sent after the account and all its data have already been purged, not before -- deletion is
+     *  synchronous (product decision), so there is nothing left to warn about in advance and no
+     *  cancel window to describe. Purely informational: what happened and when. */
+    EmailResult sendAccountDeletedEmail(String toEmail, Instant deletedAt);
 }

@@ -398,7 +398,7 @@ export default function Settings() {
   // token server-side, this just clears the browser's own httpOnly cookie best-effort and redirects.
   function handleDeleted() {
     authApi.logout().catch(() => {});
-    clearSessionAndRedirect("Your account is scheduled for deletion. You've been signed out everywhere.");
+    clearSessionAndRedirect("Your account has been permanently deleted. You've been signed out everywhere.");
   }
 
   if (loading) return <p className="text-muted">Loading…</p>;
