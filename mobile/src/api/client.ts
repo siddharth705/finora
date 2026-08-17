@@ -191,6 +191,13 @@ api.interceptors.response.use(
         message: error.response.data.message,
         errorCode: error.response.data.errorCode,
         details: error.response.data.details,
+        // Whether the user themselves can fix what caused this -- computed once, backend-side,
+        // from ErrorCode.userActionRequired() (GlobalExceptionHandler), not re-derived here.
+        // Absent (undefined) for a codeless ApiException, which has no classification to offer;
+        // callers treat that the same as false, never guessing a failure into looking actionable.
+        // Mirrors the same flattening the web app's client.ts does, so a future port of a
+        // web screen that reads `err.response?.data?.userActionRequired` behaves the same here.
+        userActionRequired: error.response.data.details?.userActionRequired,
       };
     }
     return Promise.reject(error);

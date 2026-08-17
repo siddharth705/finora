@@ -23,10 +23,11 @@ export function LoginScreen({ navigation, route }: Props) {
   // Set once login() reports AUTH_ACCOUNT_DEACTIVATED -- the password already checked out (see
   // AuthService.login()'s deactivated branch), so the rest of the form is replaced by a single
   // confirm step rather than making the user re-enter anything. Mirrors the web app's
-  // reactivationToken state in Login.tsx / ReactivateAccountPrompt.tsx.
+  // reactivationToken state in Login.tsx / ReactivateAccountPrompt.tsx. Its own loading/error
+  // state reuses `loading`/`error` above rather than adding parallel state -- the reactivation
+  // view below is a plain early return that never renders alongside the sign-in form, so the two
+  // flows are never in progress, or showing a message, at the same time.
   const [reactivationToken, setReactivationToken] = useState<string | null>(null);
-  const [reactivating, setReactivating] = useState(false);
-  const [reactivateError, setReactivateError] = useState<string | null>(null);
 
   // A one-time confirmation passed by another screen (e.g. after a password reset). Read from
   // route params rather than held in state -- the Auth stack unmounts entirely once signed in,
@@ -41,14 +42,15 @@ export function LoginScreen({ navigation, route }: Props) {
   // See errorCodes.ts's own doc comment on AUTH_ACCOUNT_DEACTIVATED for why this compares
   // against a shared constant rather than a hand-typed literal here. `details` only reaches this
   // point because client.ts's response interceptor carries it through the error envelope.
+  //
+  // No explicit `setError(null)` needed on the token branch: handleSubmit already clears `error`
+  // before calling login(), and nothing sets it again before this runs -- so reusing `error` for
+  // the reactivation view (see its own state comment) can't leak a stale plain-login failure into
+  // a fresh reactivation prompt either.
   function handleAuthError(err: unknown, fallback: string) {
     const details = apiErrorDetails<{ reactivationToken?: string }>(err);
     const token = apiErrorCode(err) === AUTH_ACCOUNT_DEACTIVATED ? details?.reactivationToken : null;
     if (token) {
-      // Clears any error left over from a previous reactivation attempt -- this screen doesn't
-      // unmount between attempts the way the web app's separate ReactivateAccountPrompt component
-      // does, so a stale failure message would otherwise survive into this brand-new prompt.
-      setReactivateError(null);
       setReactivationToken(token);
     } else {
       setError(toUserMessage(err, fallback));
@@ -79,8 +81,8 @@ export function LoginScreen({ navigation, route }: Props) {
 
   async function handleReactivate() {
     if (!reactivationToken) return;
-    setReactivating(true);
-    setReactivateError(null);
+    setLoading(true);
+    setError(null);
     try {
       // No navigation on success, same reasoning as handleSubmit -- RootNavigator reacts to the
       // token AuthContext.reactivate() just persisted.
@@ -89,30 +91,33 @@ export function LoginScreen({ navigation, route }: Props) {
       // Most likely cause: the link expired (15 min) or was already used elsewhere -- either way,
       // the fix is the same one every other stale-token failure in this app uses: go back and try
       // again.
-      setReactivateError(toUserMessage(err, 'Could not reactivate your account. Please try signing in again.'));
+      setError(toUserMessage(err, 'Could not reactivate your account. Please try signing in again.'));
     } finally {
-      setReactivating(false);
+      setLoading(false);
     }
   }
 
   if (reactivationToken) {
     return (
-      <AuthScreenLayout title="Welcome back" error={reactivateError}>
+      <AuthScreenLayout title="Welcome back" error={error}>
         <Text style={[styles.body, { color: c.muted }]}>
           Your Finora account is deactivated. Sign in again to reactivate it — your data was
           retained and nothing was lost.
         </Text>
 
-        <Button label="Reactivate my account" onPress={handleReactivate} loading={reactivating} />
+        <Button label="Reactivate my account" onPress={handleReactivate} loading={loading} />
         <View style={styles.cancelRow}>
           <Button
             label="Not you? Go back"
             variant="link"
             onPress={() => {
               setReactivationToken(null);
-              setReactivateError(null);
+              // Not covered by handleAuthError's redundancy argument -- a failed handleReactivate
+              // sets `error` directly, with no equivalent of handleSubmit's leading clear on this
+              // path, so it has to be reset here or it would leak into the sign-in form.
+              setError(null);
             }}
-            disabled={reactivating}
+            disabled={loading}
           />
         </View>
 
