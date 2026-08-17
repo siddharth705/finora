@@ -206,6 +206,50 @@ class ImportVerificationRecorderIT extends AbstractIntegrationTest {
                 .isNull();
     }
 
+    /** The real shape a CREDIT_CARD_FLOW_RECONCILIATION WARNING carries -- see
+     *  {@code CreditCardFlowReconciliationValidator}. {@code evidenceLevel} is a bounded enum
+     *  constant, the same category {@code extractionMethod} is for CREDIT_CARD_STATEMENT_TOTALS --
+     *  deliberately not on the allowlist yet either, so it is expected to be stripped here too,
+     *  alongside the four money fields and the explanation prose. */
+    private static ImportDto.VerificationReport creditCardFlowReconciliationWarning() {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("evidenceLevel", "FULL_SUMMARY_RECONCILIATION");
+        details.put("expectedExpenseAmount", new BigDecimal("5000.00"));
+        details.put("observedExpenseAmount", new BigDecimal("3000.00"));
+        details.put("differenceExpenseAmount", new BigDecimal("-2000.00"));
+        details.put("expectedIncomeAmount", new BigDecimal("4000.00"));
+        details.put("observedIncomeAmount", new BigDecimal("4000.00"));
+        details.put("differenceIncomeAmount", BigDecimal.ZERO);
+        details.put("explanation", "The extracted transactions, summed by direction, do not match "
+                + "this statement's own printed purchases and/or payments/credits totals. This does "
+                + "not identify which side is wrong -- only that they disagree.");
+        return new ImportDto.VerificationReport(List.of(
+                new ImportDto.VerificationFinding("CREDIT_CARD_FLOW_RECONCILIATION", "WARNING", details)));
+    }
+
+    @Test
+    void creditCardFlowReconciliationCarriesOnlyItsOutcomeThroughPersistence_neverTheAmountsItCompares() {
+        // Same posture as CREDIT_CARD_STATEMENT_TOTALS above: every detail field this validator
+        // produces is either money read off the statement, money summed from our own extracted
+        // rows, a not-yet-allowlisted enum, or prose -- so nothing survives and writeDetails
+        // returns null outright, not merely "no money leaked".
+        User user = user();
+        String reference = analysis(user.getId());
+
+        int written = recorder.recordForAnalysis(reference, List.of(creditCardFlowReconciliationWarning()));
+
+        assertThat(written).isEqualTo(1);
+        UUID sessionId = analysisRepository.findByReference(reference).orElseThrow().getId();
+        var stored = findingRepository.findByAnalysisSessionIdOrderBySectionIndexAscRuleAsc(sessionId);
+        assertThat(stored).extracting(ImportVerificationFinding::getRule)
+                .containsExactly("CREDIT_CARD_FLOW_RECONCILIATION");
+        assertThat(stored).extracting(ImportVerificationFinding::getOutcome).containsExactly("WARNING");
+
+        assertThat(stored.get(0).getDetailsJson())
+                .as("the outcome column already carries the one fact worth persisting for this rule")
+                .isNull();
+    }
+
     @Test
     void eachSectionOfACompositeStatementKeepsItsOwnFindings() {
         // A composite statement's sections have separate balance chains and one can verify while

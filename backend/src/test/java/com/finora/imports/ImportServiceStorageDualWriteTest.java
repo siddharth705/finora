@@ -114,7 +114,7 @@ class ImportServiceStorageDualWriteTest {
                 new StatementValidator(com.finora.imports.product.ProductDiscovery.standard());
         PreviewGenerator previewGenerator = new PreviewGenerator(csvParser, transactionNormalizer, statementValidator,
                 new ImportVerifier(new BalanceChainValidator(), new StatementTotalsValidator(),
-                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator()),
+                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator(), new com.finora.imports.CreditCardFlowReconciliationValidator()),
                 TestRuleEngines.empty());
         ImportRuleLearningService ruleLearningService = new ImportRuleLearningService(categorizationService);
         var productIdentityResolver = new com.finora.imports.product.ProductIdentityResolver(accountRepository);

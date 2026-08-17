@@ -264,13 +264,18 @@ class PdfPipelineDiagnostic {
             System.out.println();
         }
 
-        PdfPreviewGenerator generator = new PdfPreviewGenerator(textExtractor, tableLocator, metadataExtractor, transactionNormalizer, com.finora.imports.product.ProductDiscovery.standard(), new com.finora.imports.product.ProductAttributeExtractor(), new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(), new com.finora.imports.StatementTotalsValidator(), new com.finora.imports.SummaryTotalsValidator(), new com.finora.imports.ColumnAmbiguityValidator(), new com.finora.imports.RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator()), com.finora.imports.TestRuleEngines.empty());
+        PdfPreviewGenerator generator = new PdfPreviewGenerator(textExtractor, tableLocator, metadataExtractor, transactionNormalizer, com.finora.imports.product.ProductDiscovery.standard(), new com.finora.imports.product.ProductAttributeExtractor(), new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(), new com.finora.imports.StatementTotalsValidator(), new com.finora.imports.SummaryTotalsValidator(), new com.finora.imports.ColumnAmbiguityValidator(), new com.finora.imports.RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator(), new com.finora.imports.CreditCardFlowReconciliationValidator()), com.finora.imports.TestRuleEngines.empty());
         var generated = generator.generateSectionsWithContext(
                 UUID.randomUUID(), pdfPath.getFileName().toString(), bytes, null);
         List<StagedAccountSection> finalSections = generated.sections();
         System.out.println("=== Final staged output: " + finalSections.size() + " account section(s) ===");
         for (var s : finalSections) {
             System.out.println("  rows=" + s.rows().size() + " account=" + s.detectedAccount());
+            if (Boolean.getBoolean("dumpStagedAmounts")) {
+                for (var row : s.rows()) {
+                    System.out.println("    amount=" + row.amount() + " type=" + row.type());
+                }
+            }
         }
         System.out.println();
         printVerificationReport(pdfPath, generated);

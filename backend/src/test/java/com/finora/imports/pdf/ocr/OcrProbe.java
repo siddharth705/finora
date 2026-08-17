@@ -75,7 +75,7 @@ final class OcrProbe {
                 new TransactionNormalizer(cat, new DuplicateDetector(repo), TestRuleEngines.empty()),
                 ProductDiscovery.standard(), new ProductAttributeExtractor(),
                 new ImportVerifier(new BalanceChainValidator(), new StatementTotalsValidator(),
-                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator()),
+                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator(), new com.finora.imports.CreditCardFlowReconciliationValidator()),
                 TestRuleEngines.empty());
     }
 
@@ -104,7 +104,7 @@ final class OcrProbe {
                 new TransactionNormalizer(cat, new DuplicateDetector(repo), TestRuleEngines.empty()),
                 ProductDiscovery.standard(), new ProductAttributeExtractor(),
                 new ImportVerifier(new BalanceChainValidator(), new StatementTotalsValidator(),
-                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator()),
+                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator(), new com.finora.imports.CreditCardFlowReconciliationValidator()),
                 TestRuleEngines.empty());
     }
 

@@ -39,19 +39,22 @@ public class ImportVerifier {
     private final ColumnAmbiguityValidator columnAmbiguityValidator;
     private final RowAccountingValidator rowAccountingValidator;
     private final CreditCardStatementTotalsValidator creditCardStatementTotalsValidator;
+    private final CreditCardFlowReconciliationValidator creditCardFlowReconciliationValidator;
 
     public ImportVerifier(BalanceChainValidator balanceChainValidator,
                            StatementTotalsValidator statementTotalsValidator,
                            SummaryTotalsValidator summaryTotalsValidator,
                            ColumnAmbiguityValidator columnAmbiguityValidator,
                            RowAccountingValidator rowAccountingValidator,
-                           CreditCardStatementTotalsValidator creditCardStatementTotalsValidator) {
+                           CreditCardStatementTotalsValidator creditCardStatementTotalsValidator,
+                           CreditCardFlowReconciliationValidator creditCardFlowReconciliationValidator) {
         this.balanceChainValidator = balanceChainValidator;
         this.statementTotalsValidator = statementTotalsValidator;
         this.summaryTotalsValidator = summaryTotalsValidator;
         this.columnAmbiguityValidator = columnAmbiguityValidator;
         this.rowAccountingValidator = rowAccountingValidator;
         this.creditCardStatementTotalsValidator = creditCardStatementTotalsValidator;
+        this.creditCardFlowReconciliationValidator = creditCardFlowReconciliationValidator;
     }
 
     /**
@@ -105,6 +108,10 @@ public class ImportVerifier {
         // an oversight: a credit-card statement's transaction table can be malformed while its
         // billing-summary panel is still readable, and this rule stays meaningful either way.
         findings.add(creditCardStatementTotalsValidator.check(printedCreditCardSummary));
+        // Reads BOTH rows and the summary panel, deliberately unlike the rule above -- see its own
+        // doc comment for what that lets it prove (transaction classification consistency) that a
+        // summary-only check cannot.
+        findings.add(creditCardFlowReconciliationValidator.check(rows, printedCreditCardSummary));
         return new ImportDto.VerificationReport(List.copyOf(findings));
     }
 

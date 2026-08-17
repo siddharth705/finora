@@ -1088,6 +1088,58 @@ actually works — no test, no claim.
   built around — the next real document is what should decide the next specific mechanism, not a
   guess made now.
 
+#### `CREDIT_CARD_FLOW_RECONCILIATION`
+- **Purpose:** checks that a credit-card statement's own EXTRACTED transactions, aggregated by
+  direction, match the PRINTED purchases and payments/credits totals from its billing-summary
+  panel — `sum(rows where type == EXPENSE) == summary.purchases()` and
+  `sum(rows where type == INCOME) == summary.paymentsAndCredits()`. This is **transaction
+  classification consistency**, not per-row direction correctness — it cannot say "row 14's
+  direction is wrong," only that the aggregate totals agree or disagree, and it never guesses which
+  side is at fault. Explicitly a narrower claim than a Cr/Dr-marker-based direction classifier would
+  be — see the Credit Card Direction Evidence Study above for why marker reliability was left
+  untouched for this increment (it varies by bank and needs its own study before being trusted).
+- **Evidence-gated, not just summary-gated.** `CreditCardFlowEvidenceLevel` records how much of the
+  billing-summary panel AND the extracted rows were actually usable — `NO_SUMMARY`,
+  `PARTIAL_SUMMARY_ONLY`, `NO_CLASSIFIED_TRANSACTIONS`, or `FULL_SUMMARY_RECONCILIATION` — because
+  "no panel at all" (HDFC), "a panel that doesn't print a purchases/payments split" (Axis), and "a
+  full panel but zero EXPENSE/INCOME rows extracted" are three different claims even though all
+  three currently resolve to the same `NOT_APPLICABLE` outcome. The third is deliberately kept apart
+  from the first two: it is a statement-format gap, while the first two are extraction failures —
+  collapsing them would hide, in a future failure-rate breakdown, that "NOT_APPLICABLE: 500" is
+  actually "400 the bank doesn't print a summary, 100 our own extraction broke." Not surfaced in the
+  UI yet; recorded now so it doesn't have to be re-derived later.
+- **Built from a confirmed real number, not a guess.** Before this validator was written, a
+  debug-only dump of staged row amounts against AU's real statement confirmed `sum(EXPENSE)` and
+  `sum(INCOME)` match `purchases`/`paymentsAndCredits` exactly — the design was validated against a
+  real document first, matching this capability area's "evidence before capability" gate.
+- **Facts, not a score.** A `WARNING` (or `VERIFIED`) finding's `details()` carries
+  `expectedExpenseAmount`/`observedExpenseAmount`/`differenceExpenseAmount` and the income-side
+  counterparts — the raw amounts and their signed difference, deliberately left uncombined into a
+  single confidence number. A `DirectionConfidenceScore` was explicitly considered and rejected for
+  this increment: per-row direction evidence quality still varies too much by bank (AU: type column
+  matches the summary; Kotak: markers are asymmetric; SBI: extraction is broken; HDFC: unassessed —
+  see the Credit Card Direction Evidence Study) to combine into one number honestly.
+- **Implementation:** `CreditCardFlowReconciliationValidator` (`CREDIT_CARD_FLOW_RECONCILIATION`
+  finding) — reads both `StagedRow` (already-normalized transactions) and the same
+  `CreditCardSummaryEvidence` `CREDIT_CARD_STATEMENT_TOTALS` reads, deliberately unlike that
+  validator, which reads zero rows. No new extraction logic: reuses the existing summary-extraction
+  and row-normalization pipelines entirely.
+- **Regression tests:** `CreditCardFlowReconciliationValidatorTest` (12 tests: exact reconciliation,
+  a mismatched-aggregate `WARNING` with its signed amount differences, factual amount evidence
+  present on the `VERIFIED` path too, an explanation-wording test confirming it never attributes the
+  mismatch to either side, all four evidence levels each independently distinguished by both outcome
+  and reason text, `NO_CLASSIFIED_TRANSACTIONS` covering both zero rows and rows present but none
+  EXPENSE/INCOME, and a non-EXPENSE/INCOME row type ignored rather than breaking the sum).
+- **Maturity:** Beta.
+- **Known limitations — real-corpus measurement, not a claim.** Run against all 6 real credit-card
+  documents: `VERIFIED` on **AU** (the exact match the design was built from), `NOT_APPLICABLE` on
+  the other five — **Axis** because its summary panel's conflict already leaves it without a
+  trusted purchases/payments split (`PARTIAL_SUMMARY_ONLY`), **HDFC**/**ICICI**/**Kotak**/**SBI**
+  because `CREDIT_CARD_STATEMENT_TOTALS` itself is already `NOT_APPLICABLE` on all four
+  (`NO_SUMMARY`) — this rule cannot see a document its sibling rule cannot see either. No document
+  in the current corpus exercises the `WARNING` (aggregate mismatch) path yet; that outcome is
+  covered only by synthetic tests until a real document surfaces it.
+
 #### `OFFSET_COLUMN_ANCHORS`
 - **Purpose:** correctly bucket a row's text into columns even when a column's header LABEL
   doesn't sit anywhere near where that column's own DATA actually starts -- plain nearest-x

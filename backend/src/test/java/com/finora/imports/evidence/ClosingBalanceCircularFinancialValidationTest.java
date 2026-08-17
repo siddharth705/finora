@@ -85,7 +85,7 @@ class ClosingBalanceCircularFinancialValidationTest {
                 new PdfMetadataExtractor(), transactionNormalizer, ProductDiscovery.standard(),
                 new ProductAttributeExtractor(),
                 new ImportVerifier(new BalanceChainValidator(), new StatementTotalsValidator(),
-                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator()),
+                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator(), new com.finora.imports.CreditCardFlowReconciliationValidator()),
                 TestRuleEngines.empty());
     }
 
