@@ -202,7 +202,7 @@ describe('VerifyPhone', () => {
       vi.mocked(userApi.get).mockReset().mockResolvedValue({
         email: 'jane@example.com', fullName: 'Jane', lowBalanceThreshold: 2000, theme: 'system',
         timezone: 'Asia/Kolkata', phoneNumber: null, phoneVerified: false,
-        createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null,
+        createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'GOOGLE',
       });
     });
 
