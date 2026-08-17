@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { PiggyBank } from 'lucide-react';
 import { budgetsApi } from '../api/endpoints';
 import type { Budget } from '../types';
+import { FinoraCard, EmptyState } from '../design-system';
 
 function fmt(n: number) {
   // Negative amounts (e.g. a month where spend exceeded income) must render as "-₹500",
@@ -55,7 +57,7 @@ export default function Budgets() {
 
   return (
     <div className="space-y-4">
-      <div className="bg-card rounded p-4 shadow flex gap-2 items-end">
+      <FinoraCard padding="sm" className="flex gap-2 items-end">
         <div>
           <label htmlFor="budget-category" className="block text-xs uppercase text-gray-500 mb-1">Category</label>
           <input id="budget-category" value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm" />
@@ -68,12 +70,18 @@ export default function Budgets() {
           {saving ? 'Saving…' : 'Set Budget'}
         </button>
         {saved && <span className="text-success text-xs">Saved.</span>}
-      </div>
+      </FinoraCard>
       {error && <p className="text-danger text-sm">{error}</p>}
 
-      <div className="bg-card rounded shadow p-4 space-y-3">
+      <FinoraCard padding="sm" className="space-y-3">
         {budgets.length === 0 ? (
-          <p className="text-sm italic text-gray-500">No budgets set yet.</p>
+          <EmptyState
+            icon={PiggyBank}
+            iconBg="bg-orange-100"
+            iconColor="text-orange-600"
+            title="No budgets set"
+            desc="Create your first budget above to start tracking spending."
+          />
         ) : (
           budgets.map((b) => {
             const pct = b.monthlyLimit > 0 ? Math.min(100, (b.spentThisMonth / b.monthlyLimit) * 100) : 0;
@@ -88,7 +96,7 @@ export default function Budgets() {
             );
           })
         )}
-      </div>
+      </FinoraCard>
     </div>
   );
 }

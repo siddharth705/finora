@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
+import { Repeat, TrendingUp } from 'lucide-react';
 import { insightsApi, recurringApi, type InsightsData, type RecurringItem } from '../api/endpoints';
+import { FinoraCard, EmptyState, SectionHeader } from '../design-system';
 
 function fmt(n: number) {
   // Negative amounts (e.g. a month where spend exceeded income) must render as "-₹500",
@@ -34,19 +36,25 @@ export default function Insights() {
         These are rule-based statistical observations from your real transaction history — not an LLM-generated assistant (that's a later milestone; see the roadmap's AI section).
       </div>
 
-      <div className="bg-card rounded shadow p-5">
-        <p className="text-xs uppercase text-gray-500 mb-3">This Month's Observations</p>
+      <FinoraCard>
+        <SectionHeader title="This Month's Observations" />
         <div className="space-y-3">
           {data.sentences.map((s, i) => (
             <p key={i} className="text-sm leading-relaxed border-l-4 border-border bg-black/[0.02] rounded p-3">{s}</p>
           ))}
         </div>
-      </div>
+      </FinoraCard>
 
-      <div className="bg-card rounded shadow p-5">
-        <p className="text-xs uppercase text-gray-500 mb-3">Recurring Payments & Subscriptions</p>
+      <FinoraCard>
+        <SectionHeader title="Recurring Payments & Subscriptions" />
         {recurring.length === 0 ? (
-          <p className="text-sm italic text-gray-500">No recurring payments detected yet — this needs at least 2 charges from the same merchant with a regular interval to spot a pattern.</p>
+          <EmptyState
+            icon={Repeat}
+            iconBg="bg-primary-light"
+            iconColor="text-primary"
+            title="No recurring payments detected yet"
+            desc="This needs at least 2 charges from the same merchant with a regular interval to spot a pattern."
+          />
         ) : (
           <div className="space-y-2">
             {recurring.map((r) => (
@@ -60,12 +68,18 @@ export default function Insights() {
             ))}
           </div>
         )}
-      </div>
+      </FinoraCard>
 
-      <div className="bg-card rounded shadow p-5">
-        <p className="text-xs uppercase text-gray-500 mb-3">Category Movers vs. Recent Average</p>
+      <FinoraCard>
+        <SectionHeader title="Category Movers vs. Recent Average" />
         {movers.length === 0 ? (
-          <p className="text-sm italic text-gray-500">Not enough history yet to compare trends — add a few months of transactions.</p>
+          <EmptyState
+            icon={TrendingUp}
+            iconBg="bg-purple-100"
+            iconColor="text-purple-600"
+            title="Not enough history yet"
+            desc="Add a few months of transactions to compare trends."
+          />
         ) : (
           <div className="space-y-2">
             {movers.map((m) => (
@@ -81,7 +95,7 @@ export default function Insights() {
             ))}
           </div>
         )}
-      </div>
+      </FinoraCard>
     </div>
   );
 }

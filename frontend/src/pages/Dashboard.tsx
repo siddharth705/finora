@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState } from 'react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Line, Doughnut } from 'react-chartjs-2';
@@ -13,6 +13,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { BankLogo } from '../components/BankLogo';
 import { AddTransactionModal } from '../components/AddTransactionModal';
+import { FinoraCard, MetricCard, EmptyState, SectionHeader, QuickActionCard, ChartContainer, Badge, baseChartOptions } from '../design-system';
 import {
   dashboardApi, accountsApi, transactionsApi, goalsApi, insightsApi, userApi, budgetsApi, reportsApi, recurringApi,
 } from '../api/endpoints';
@@ -93,28 +94,6 @@ function expectedLabel(dateStr: string): string {
   if (days === 0) return 'expected today';
   if (days === 1) return 'expected tomorrow';
   return `expected in ${days} days (${date})`;
-}
-
-/** One consistent empty-state treatment (icon + heading + subtext + a real CTA, not just italic
- *  "No X yet." text) reused across every section of the dashboard that can be empty -- Cash Flow,
- *  Spending Breakdown, and each of the four Accounts/Recent Transactions/Budget/Goals cards. Each
- *  section keeps deciding FOR ITSELF whether it's empty (existing per-section logic, unchanged);
- *  this only standardizes what showing that looks like. */
-function SectionEmptyState({
-  icon: Icon, iconBg, iconColor, title, desc, cta,
-}: {
-  icon: typeof Wallet; iconBg: string; iconColor: string; title: string; desc: string; cta: ReactNode;
-}) {
-  return (
-    <div className="flex flex-col items-center text-center py-4 px-2">
-      <div className={`w-12 h-12 rounded-full ${iconBg} flex items-center justify-center mb-3`}>
-        <Icon size={22} className={iconColor} />
-      </div>
-      <p className="text-sm font-semibold text-ink mb-1">{title}</p>
-      <p className="text-xs text-muted mb-4 max-w-[220px]">{desc}</p>
-      {cta}
-    </div>
-  );
 }
 
 export default function Dashboard() {
@@ -241,30 +220,22 @@ export default function Dashboard() {
         </p>
       </div>
 
-      {/* KPI cards */}
+      {/* KPI cards. Every card gets a deltaLabel (even Balance/Savings Rate, which never carry a
+          real delta) so MetricCard renders a muted "— vs last month" instead of a silent gap
+          where the line would otherwise just vanish. */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
         {kpis.map((k) => (
-          <div key={k.label} className="bg-card rounded-xl2 p-5 shadow-card border border-border">
-            <div className="flex items-start justify-between mb-3">
-              <p className="text-sm text-muted">{k.label}</p>
-              <div className={`w-9 h-9 rounded-full ${k.iconBg} flex items-center justify-center flex-shrink-0`}>
-                <k.icon size={17} className={k.iconColor} />
-              </div>
-            </div>
-            <p className="text-2xl font-bold text-ink mb-1">{k.value}</p>
-            {/* Two KPIs (Balance, Savings Rate) never carry a delta at all -- there's no "last
-                month's balance" comparison that means anything the way income/expense/net do.
-                A muted "— vs last month" for those, and for the three that DO have a delta field
-                but got null back (no prior month to compare against yet), keeps every card the
-                same height and never leaves a silent gap where the line used to just vanish. */}
-            {k.delta !== null && k.delta !== undefined ? (
-              <p className={`text-xs font-medium ${(k.invertDelta ? k.delta < 0 : k.delta >= 0) ? 'text-success' : 'text-danger'}`}>
-                {k.delta >= 0 ? '▲' : '▼'} {Math.abs(k.delta).toFixed(1)}% {deltaLabel}
-              </p>
-            ) : (
-              <p className="text-xs text-muted">— {deltaLabel}</p>
-            )}
-          </div>
+          <MetricCard
+            key={k.label}
+            label={k.label}
+            value={k.value}
+            icon={k.icon}
+            iconBg={k.iconBg}
+            iconColor={k.iconColor}
+            delta={k.delta}
+            deltaLabel={deltaLabel}
+            invertDelta={k.invertDelta}
+          />
         ))}
       </div>
 
@@ -274,7 +245,7 @@ export default function Dashboard() {
           from zero transactions has nothing real behind it, same reasoning Subscriptions &
           Recurring below already applies to itself. */}
       {!isEmpty && (
-      <div className="bg-card rounded-xl2 p-6 shadow-card border border-border mb-6">
+      <FinoraCard padding="lg" className="mb-6">
         <div className="flex items-center gap-2 mb-4">
           <div className="w-8 h-8 rounded-full bg-primary-light flex items-center justify-center">
             <ShieldCheck size={15} className="text-primary" />
@@ -304,12 +275,13 @@ export default function Dashboard() {
             ))}
           </div>
         </div>
-      </div>
+      </FinoraCard>
       )}
 
       {/* Cash flow + Spending breakdown */}
       <div className="grid lg:grid-cols-[1.6fr_1fr] gap-6 mb-6">
-        <div className="bg-card rounded-xl2 p-6 shadow-card border border-border">
+        <FinoraCard padding="lg">
+          {/* Not SectionHeader -- the right side is a range filter, not a "View All" link. */}
           <div className="flex items-center justify-between mb-1">
             <h2 className="font-semibold text-ink">Cash Flow Overview</h2>
             <select
@@ -325,11 +297,13 @@ export default function Dashboard() {
           <p className="text-sm text-muted mb-4">
             You've earned {fmt(summary.monthlyIncome)} and spent {fmt(summary.monthlyExpense)} {periodLabel}.
           </p>
-          <div className="h-64 flex items-center justify-center">
-            {cashFlowLoading ? (
-              <p className="text-sm text-muted">Loading trend…</p>
-            ) : cashFlowSeries.length === 0 ? (
-              <SectionEmptyState
+          <ChartContainer
+            height={256}
+            loading={cashFlowLoading}
+            loadingLabel="Loading trend…"
+            isEmpty={cashFlowSeries.length === 0}
+            emptyState={
+              <EmptyState
                 icon={LineChartIcon}
                 iconBg="bg-primary-light"
                 iconColor="text-primary"
@@ -344,20 +318,17 @@ export default function Dashboard() {
                   </Link>
                 }
               />
-            ) : (
-              <CashFlowChart series={cashFlowSeries} />
-            )}
-          </div>
-        </div>
+            }
+          >
+            <CashFlowChart series={cashFlowSeries} />
+          </ChartContainer>
+        </FinoraCard>
 
-        <div className="bg-card rounded-xl2 p-6 shadow-card border border-border flex flex-col">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-ink">Spending Breakdown</h2>
-            <Link to="/app/reports" className="text-xs text-primary font-medium">View All</Link>
-          </div>
+        <FinoraCard padding="lg" className="flex flex-col">
+          <SectionHeader title="Spending Breakdown" viewAllTo="/app/reports" />
           {categoryEntries.length === 0 ? (
             <div className="flex-1 flex items-center justify-center">
-              <SectionEmptyState
+              <EmptyState
                 icon={PieChart}
                 iconBg="bg-purple-100"
                 iconColor="text-purple-600"
@@ -402,19 +373,16 @@ export default function Dashboard() {
               </Link>
             </>
           )}
-        </div>
+        </FinoraCard>
       </div>
 
       {/* Accounts / Recent Transactions / Budget Progress / Goals */}
       <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-6 mb-6">
-        <div className="bg-card rounded-xl2 p-5 shadow-card border border-border">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-ink text-sm">Accounts Overview</h2>
-            <Link to="/app/accounts" className="text-xs text-primary font-medium">View All</Link>
-          </div>
+        <FinoraCard>
+          <SectionHeader title="Accounts Overview" viewAllTo="/app/accounts" size="sm" />
           <div className="space-y-3">
             {accounts.length === 0 ? (
-              <SectionEmptyState
+              <EmptyState
                 icon={Wallet}
                 iconBg="bg-blue-100"
                 iconColor="text-blue-600"
@@ -439,16 +407,13 @@ export default function Dashboard() {
               </div>
             ))}
           </div>
-        </div>
+        </FinoraCard>
 
-        <div className="bg-card rounded-xl2 p-5 shadow-card border border-border">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-ink text-sm">Recent Transactions</h2>
-            <Link to="/app/transactions" className="text-xs text-primary font-medium">View All</Link>
-          </div>
+        <FinoraCard>
+          <SectionHeader title="Recent Transactions" viewAllTo="/app/transactions" size="sm" />
           <div className="space-y-3">
             {recentTxns.length === 0 ? (
-              <SectionEmptyState
+              <EmptyState
                 icon={Receipt}
                 iconBg="bg-green-100"
                 iconColor="text-green-600"
@@ -483,16 +448,13 @@ export default function Dashboard() {
               );
             })}
           </div>
-        </div>
+        </FinoraCard>
 
-        <div className="bg-card rounded-xl2 p-5 shadow-card border border-border">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-ink text-sm">Budget Progress</h2>
-            <Link to="/app/budgets" className="text-xs text-primary font-medium">View All</Link>
-          </div>
+        <FinoraCard>
+          <SectionHeader title="Budget Progress" viewAllTo="/app/budgets" size="sm" />
           <div className="space-y-4">
             {budgets.length === 0 ? (
-              <SectionEmptyState
+              <EmptyState
                 icon={PiggyBank}
                 iconBg="bg-orange-100"
                 iconColor="text-orange-600"
@@ -528,16 +490,13 @@ export default function Dashboard() {
               </>
             )}
           </div>
-        </div>
+        </FinoraCard>
 
-        <div className="bg-card rounded-xl2 p-5 shadow-card border border-border">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-ink text-sm">Goals</h2>
-            <Link to="/app/goals" className="text-xs text-primary font-medium">View All</Link>
-          </div>
+        <FinoraCard>
+          <SectionHeader title="Goals" viewAllTo="/app/goals" size="sm" />
           <div className="space-y-4">
             {goals.length === 0 ? (
-              <SectionEmptyState
+              <EmptyState
                 icon={Target}
                 iconBg="bg-red-100"
                 iconColor="text-red-600"
@@ -572,7 +531,7 @@ export default function Dashboard() {
               </>
             )}
           </div>
-        </div>
+        </FinoraCard>
       </div>
 
       {/* AI Insights + Quick Actions. AI Insights used to hide entirely with nothing computed yet
@@ -581,14 +540,14 @@ export default function Dashboard() {
           new: a shortcut grid to the same destinations scattered across this page's own empty
           states and CTAs, gathered in one place the way the reference design has it. */}
       <div className="grid lg:grid-cols-[1.6fr_1fr] gap-6 mb-6">
-        <div className="bg-card rounded-xl2 shadow-card border border-border overflow-hidden">
+        <FinoraCard padding="none" className="overflow-hidden">
           <div className="flex items-center justify-between px-6 pt-5 pb-4">
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-full bg-primary-light flex items-center justify-center">
                 <Sparkles size={15} className="text-primary" />
               </div>
               <h2 className="font-semibold text-ink">AI Insights</h2>
-              <span className="text-[10px] uppercase font-semibold bg-primary/15 text-primary px-1.5 py-0.5 rounded">Beta</span>
+              <Badge label="Beta" />
             </div>
             <Link to="/app/insights" className="bg-primary text-white text-xs font-semibold rounded-lg px-4 py-2">
               View Insights
@@ -646,9 +605,9 @@ export default function Dashboard() {
               )}
             </div>
           )}
-        </div>
+        </FinoraCard>
 
-        <div className="bg-card rounded-xl2 p-5 shadow-card border border-border">
+        <FinoraCard>
           <h2 className="font-semibold text-ink text-sm mb-4">Quick Actions</h2>
           <div className="grid grid-cols-3 gap-3">
             {[
@@ -663,20 +622,11 @@ export default function Dashboard() {
               { icon: PieChart, label: 'View Reports', to: '/app/reports' },
               { icon: TrendingUp, label: 'Manage Goals', to: '/app/goals' },
               { icon: LineChartIcon, label: 'Investments', to: '/app/investments' },
-            ].map((action) => {
-              const className = 'flex flex-col items-center gap-1.5 text-center p-3 rounded-lg bg-bg hover:bg-primary-light text-ink hover:text-primary transition-colors';
-              const body = (
-                <>
-                  <action.icon size={18} />
-                  <span className="text-[11px] font-medium leading-tight">{action.label}</span>
-                </>
-              );
-              return action.to
-                ? <Link key={action.label} to={action.to} className={className}>{body}</Link>
-                : <button key={action.label} type="button" onClick={action.onClick} className={className}>{body}</button>;
-            })}
+            ].map((action) => (
+              <QuickActionCard key={action.label} icon={action.icon} label={action.label} to={action.to} onClick={action.onClick} />
+            ))}
           </div>
-        </div>
+        </FinoraCard>
       </div>
 
       {/* Subscriptions & Recurring Payments — RecurringService.detectForUser has computed this
@@ -685,7 +635,7 @@ export default function Dashboard() {
           this data ever reached a screen. Read-only surfacing, same as Financial Health Score and
           AI Insights above -- no new detection logic, just showing what already exists. */}
       {upcomingRecurring.length > 0 && (
-        <div className="bg-card rounded-xl2 shadow-card border border-border mb-6 overflow-hidden">
+        <FinoraCard padding="none" className="mb-6 overflow-hidden">
           <div className="flex items-center gap-2 px-6 pt-5 pb-4">
             <div className="w-8 h-8 rounded-full bg-primary-light flex items-center justify-center">
               <Repeat size={15} className="text-primary" />
@@ -697,9 +647,7 @@ export default function Dashboard() {
               <li key={r.merchant} className="flex items-center justify-between text-sm">
                 <div>
                   <span className="text-ink font-medium">{r.merchant}</span>
-                  <span className="text-[10px] uppercase bg-primary/15 text-primary px-1.5 py-0.5 rounded ml-2">
-                    {r.label}
-                  </span>
+                  <Badge label={r.label} className="ml-2" />
                 </div>
                 <div className="text-right">
                   <p className="text-ink font-medium">{fmt(r.averageAmount)}</p>
@@ -708,7 +656,7 @@ export default function Dashboard() {
               </li>
             ))}
           </ul>
-        </div>
+        </FinoraCard>
       )}
 
       {/* Floating action button — was purely decorative before (no onClick at all). Statement
@@ -741,8 +689,7 @@ function CashFlowChart({ series }: { series: { month: string; income: number; ex
         ],
       }}
       options={{
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'bottom', labels: { boxWidth: 8, boxHeight: 8, usePointStyle: true } } },
+        ...baseChartOptions,
         // fmt(), not string concatenation: a negative tick must render as "-₹500", not "₹-500".
         // Dormant while this chart plots only income and expense (non-negative by construction in
         // DashboardService) and live the moment the component or this options object is reused
