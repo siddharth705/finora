@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -178,13 +178,23 @@ describe('Dashboard — Subscriptions & Recurring Payments', () => {
     vi.mocked(reportsApi.forMonth).mockReset().mockResolvedValue({
       month: '2026-08', income: 80000, expense: 45000, categories: [],
     });
+    // Only `Date` is faked (not timers) -- RTL's findByText/waitFor poll via real setTimeout,
+    // and faking those too would hang every `await screen.findByText(...)` below. Freezing "now"
+    // makes these day-count assertions deterministic instead of drifting with whatever moment
+    // `npm test` happens to run at.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 7, 17, 12, 0, 0));
   });
 
-  // Bug fix: .toISOString() returns the UTC calendar date, but Dashboard.tsx's expectedLabel()
-  // compares against LOCAL midnight -- the two disagree for roughly 5.5 hours overnight IST
-  // (UTC has not yet rolled to the next day while local time already has), which made
-  // daysFromNow(0) intermittently build "yesterday" in UTC while the app considered it "today"
-  // locally. Local date components instead, matching expectedLabel()'s own local-date semantics.
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Built from local date components, not `.toISOString()` -- Dashboard's own expectedLabel()
+  // parses `nextEstimate` as a local date (`new Date(dateStr + 'T00:00:00')`, no 'Z') and compares
+  // it against local midnight. A UTC-sliced string here would silently disagree with that by a day
+  // whenever the machine's timezone offset straddles midnight differently than UTC does -- which
+  // is exactly what made these two tests fail on a real IST machine while passing under UTC CI.
   function daysFromNow(n: number): string {
     const d = new Date();
     d.setDate(d.getDate() + n);
