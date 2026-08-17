@@ -340,7 +340,7 @@ build — unlike a `VITE_*` variable change, this one takes effect without a red
 | App | Variable | Required in prod? | Purpose |
 |---|---|---|---|
 | `frontend/` | `VITE_API_BASE_URL` | **Yes** | Backend's absolute origin for every API call |
-| `frontend/` | `VITE_BRANDFETCH_CLIENT_ID` | No | Optional bank-logo lookups; unset just skips that step |
+| `frontend/` | `VITE_LOGODEV_TOKEN` | No | Optional bank- and merchant-logo lookups (BankLogo.tsx, MerchantLogo.tsx) via Logo.dev; unset just skips that step. Free-tier commercial use needs attribution -- see `frontend/.env.example` |
 | `frontend/` | `VITE_GOOGLE_LOGIN_CLIENT_ID` | No | D-23 "Sign in with Google" web OAuth client id (`GoogleSignInButton.tsx`) — must match one of the backend's `GOOGLE_LOGIN_CLIENT_IDS` above. Unset hides the Google button entirely rather than rendering one that can't work. |
 | `admin-portal/` | `VITE_API_BASE_URL` | **Yes** | Same as above, this app's own API client |
 | `admin-portal/` | `VITE_BACKEND_ORIGIN` | Yes, if Diagnostics' Swagger/Actuator links are used | Direct human-facing links that can't go through the API client |

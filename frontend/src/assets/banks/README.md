@@ -5,10 +5,10 @@ This folder is intentionally empty in this build.
 Finora's `BankLogo` component (`frontend/src/components/BankLogo.tsx`) resolves a bank's logo
 through a provider chain, in this order:
 
-1. **Brandfetch** (https://brandfetch.com) -- a real, always-current official logo, fetched from
-   their free Logo API (500k requests/month, no attribution required) using the bank's official
-   domain (`BankInfo.websiteUrl`, already in the registry). Only active if you've set
-   `VITE_BRANDFETCH_CLIENT_ID` -- see `frontend/.env.example`. Skipped entirely if unset.
+1. **Logo.dev** (https://logo.dev) -- a real, always-current official logo, fetched from their
+   Logo API using the bank's official domain (`BankInfo.websiteUrl`, already in the registry).
+   Only active if you've set `VITE_LOGODEV_TOKEN` -- see `frontend/.env.example`, which also has
+   the free-tier attribution caveat. Skipped entirely if unset.
 2. **A local SVG dropped in here**, named after the bank's slug -- the same filename as the last
    path segment of its `logoPath` in `backend/src/main/java/com/finora/util/BankRegistry.java`,
    e.g.:
@@ -20,7 +20,12 @@ through a provider chain, in this order:
    either of the above existed. Always available, never requires network access or a file drop.
 
 No code changes are needed for either step 1 or step 2 to start working -- `BankLogo.tsx` picks
-up a configured client ID or a matching local file automatically on the next build. See
+up a configured token or a matching local file automatically on the next build. See
 `BankRegistry.all()` for the full list of slugs currently registered, and `BankLogo.tsx`'s own
 comment for exactly how the three stages hand off to each other (including a timeout so a
-slow/unreachable Brandfetch never blocks the local/initials fallback).
+slow/unreachable Logo.dev never blocks the local/initials fallback).
+
+The same `VITE_LOGODEV_TOKEN` also drives `MerchantLogo.tsx` (`frontend/src/components/`),
+which looks up a transaction's merchant by name rather than domain -- no local-asset stage for
+that one (a per-merchant SVG catalog isn't practical the way a ~40-bank one is), just Logo.dev
+then a colored-initials badge.
