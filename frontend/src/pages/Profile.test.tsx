@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Profile from './Profile';
 import { userApi } from '../api/endpoints';
+import type { UserSettings } from '../api/endpoints';
 
 // Profile/Settings split: this page owns identity facts (name/email/phone/member-since) and a
 // read-only security summary. Settings.test.tsx covers the settings-behavior half (preferences,
@@ -12,7 +13,7 @@ vi.mock('../api/endpoints', () => ({
   userApi: { get: vi.fn(), update: vi.fn() },
 }));
 
-function userSettings(overrides: Partial<Record<string, unknown>> = {}) {
+function userSettings(overrides: Partial<UserSettings> = {}): UserSettings {
   return {
     email: 'amy@example.com',
     fullName: 'Amy Santiago',
@@ -23,6 +24,7 @@ function userSettings(overrides: Partial<Record<string, unknown>> = {}) {
     phoneVerified: true,
     createdAt: '2026-05-01T00:00:00Z',
     passwordChangedAt: null,
+    signInMethod: 'PASSWORD',
     ...overrides,
   };
 }

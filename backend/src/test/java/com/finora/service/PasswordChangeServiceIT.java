@@ -70,14 +70,14 @@ class PasswordChangeServiceIT extends AbstractIntegrationTest {
 
     @Test
     void start_wrongPassword_stillPersistsTheAuditRow_becauseNoRollbackForApiExceptionAlreadyCoversIt() {
-        assertThrows(ApiException.class, () -> service.start(userId, new StartRequest("definitely-the-wrong-password")));
+        assertThrows(ApiException.class, () -> service.start(userId, new StartRequest("definitely-the-wrong-password", null)));
 
         assertThat(actionsFor(userId)).contains("INVALID_CURRENT_PASSWORD");
     }
 
     @Test
     void verifyOtp_phoneMismatch_stillPersistsTheAuditRow_becauseNoRollbackForApiExceptionAlreadyCoversIt() {
-        StartResponse start = service.start(userId, new StartRequest(PASSWORD));
+        StartResponse start = service.start(userId, new StartRequest(PASSWORD, null));
         // A validly-signed fake token, just for the WRONG phone number -- reaches the
         // phoneNumbersMatch() check (unlike an unrecognized token, which 401s earlier in
         // PhoneVerificationProvider itself) and fails it, which is what reaches INVALID_OTP.

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { X, AlertTriangle } from 'lucide-react';
 import { passwordChangeApi, accountLifecycleApi } from '../api/endpoints';
 import { sendPhoneVerificationCode, confirmPhoneVerificationCode, resetPhoneVerification } from '../lib/phoneAuth';
+import { GoogleReauthPrompt } from './GoogleReauthPrompt';
 import type { ConfirmationResult } from 'firebase/auth';
 
 const RECAPTCHA_CONTAINER_ID = 'delete-account-recaptcha';
@@ -36,9 +37,10 @@ function friendlyFirebaseError(err: any): string {
 
 type Step = 'password' | 'otp' | 'confirm';
 
-export function DeleteAccountModal({ onClose, onDeleted }: {
+export function DeleteAccountModal({ onClose, onDeleted, signInMethod }: {
   onClose: () => void;
   onDeleted: () => void;
+  signInMethod: 'PASSWORD' | 'GOOGLE';
 }) {
   const [step, setStep] = useState<Step>('password');
   const [submitting, setSubmitting] = useState(false);
@@ -57,25 +59,32 @@ export function DeleteAccountModal({ onClose, onDeleted }: {
 
   const otpValid = /^\d{6}$/.test(otp);
 
-  async function submitCurrentPassword() {
-    if (currentPassword.length === 0 || submitting) return;
+  // Shared by both re-auth paths -- see ChangePasswordModal's identical startWithCredential,
+  // including its identical reasoning for the submitting guard below.
+  async function startWithCredential(currentPasswordArg: string | null, googleIdToken: string | null) {
+    if (submitting) return;
     setSubmitting(true);
     setError(null);
     try {
-      const res = await passwordChangeApi.start(currentPassword);
+      const res = await passwordChangeApi.start(currentPasswordArg, googleIdToken);
       setSessionId(res.sessionId);
       setMaskedPhone(res.maskedPhone);
       const result = await sendPhoneVerificationCode(res.phoneNumber, RECAPTCHA_CONTAINER_ID);
       setConfirmation(result);
       setStep('otp');
     } catch (e: any) {
-      console.error('DeleteAccountModal: submitCurrentPassword failed', e);
+      console.error('DeleteAccountModal: startWithCredential failed', e);
       // See ChangePasswordModal's identical call for why this is unconditional on any failure here.
       resetPhoneVerification();
       setError(e.response?.data?.message ?? 'Could not start account deletion. Please try again.');
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function submitCurrentPassword() {
+    if (currentPassword.length === 0 || submitting) return;
+    void startWithCredential(currentPassword, null);
   }
 
   async function submitOtp() {
@@ -132,7 +141,23 @@ export function DeleteAccountModal({ onClose, onDeleted }: {
             not just inside the 'otp' step's JSX. */}
         <div id={RECAPTCHA_CONTAINER_ID} />
 
-        {step === 'password' && (
+        {step === 'password' && signInMethod === 'GOOGLE' && (
+          <div className="space-y-3">
+            <p className="text-xs text-muted">Deleting your account is permanent and cannot be undone.</p>
+            <GoogleReauthPrompt
+              onCredential={(idToken) => startWithCredential(null, idToken)}
+              onError={setError}
+            />
+            {error && <p className="text-danger text-xs">{error}</p>}
+            <div className="flex items-center justify-end pt-3 border-t border-border">
+              <button onClick={onClose} className="text-muted hover:text-ink text-xs uppercase font-medium px-3 py-2">
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === 'password' && signInMethod === 'PASSWORD' && (
           <div className="space-y-3">
             <p className="text-xs text-muted">
               Deleting your account is permanent and cannot be undone. Enter your current password

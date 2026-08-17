@@ -676,7 +676,7 @@ public class AuthService {
         if (isNewAccount && !platformSettingsService.getEntity().isRegistrationsEnabled()) {
             throw new ApiException(HttpStatus.FORBIDDEN, "New registrations are currently disabled.");
         }
-        User user = existing.orElseGet(() -> createOAuthUserRecord(email, displayName));
+        User user = existing.orElseGet(() -> createOAuthUserRecord(email, displayName, provider));
         if (!isNewAccount) {
             if (!user.isEmailVerified()) {
                 String verifyLink = emailProperties.resolveBaseUrl(null) + "/verify-email?token="
@@ -708,21 +708,23 @@ public class AuthService {
                 user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()));
     }
 
-    /** Provider-specific labels/audit-action names {@link #loginWithOAuthIdentity} needs — the
-     *  only things that actually differ between {@link #loginWithGoogle} and
+    /** Provider-specific labels/audit-action names/signInMethod {@link #loginWithOAuthIdentity}
+     *  needs — the only things that actually differ between {@link #loginWithGoogle} and
      *  {@link #loginWithApple}. */
     private enum OAuthProvider {
-        GOOGLE("Google", "USER_REGISTERED_GOOGLE", "USER_LOGIN_GOOGLE"),
-        APPLE("Apple", "USER_REGISTERED_APPLE", "USER_LOGIN_APPLE");
+        GOOGLE("Google", "USER_REGISTERED_GOOGLE", "USER_LOGIN_GOOGLE", User.SIGN_IN_METHOD_GOOGLE),
+        APPLE("Apple", "USER_REGISTERED_APPLE", "USER_LOGIN_APPLE", User.SIGN_IN_METHOD_APPLE);
 
         private final String label;
         private final String registeredAuditAction;
         private final String loginAuditAction;
+        private final String signInMethod;
 
-        OAuthProvider(String label, String registeredAuditAction, String loginAuditAction) {
+        OAuthProvider(String label, String registeredAuditAction, String loginAuditAction, String signInMethod) {
             this.label = label;
             this.registeredAuditAction = registeredAuditAction;
             this.loginAuditAction = loginAuditAction;
+            this.signInMethod = signInMethod;
         }
     }
 
@@ -733,11 +735,18 @@ public class AuthService {
      * default-category seeding as every other creation path; uniqueness is already established by
      * the caller's own lookup miss immediately before this runs.
      */
-    private User createOAuthUserRecord(String email, String displayName) {
+    private User createOAuthUserRecord(String email, String displayName, OAuthProvider provider) {
         User user = new User();
         user.setEmail(email);
         user.setAccountScope(User.SCOPE_USER);
         user.setPasswordHash(passwordEncoder.encode(randomUnguessablePassword()));
+        // The durable marker every "re-enter your current password" gate elsewhere in this
+        // codebase reads via GoogleReauthVerifier -- see User.signInMethod's own doc comment,
+        // including the D-26 gap it names: GoogleReauthVerifier itself doesn't yet know how to
+        // re-verify an APPLE account, so that gate degrades gracefully (an ordinary "incorrect
+        // password" outcome) rather than crashing, but doesn't actually let an Apple user back in
+        // -- unscoped follow-up work, not part of this change.
+        user.setSignInMethod(provider.signInMethod);
         user.setFullName(sanitizeOAuthDisplayName(displayName, email));
         // phoneNumber left null -- see loginWithOAuthIdentity's own doc comment on why, and how it
         // gets collected. The column is nullable (unique, but NULL is never equal to NULL under a
@@ -774,7 +783,7 @@ public class AuthService {
 
     /**
      * A value long and random enough that brute-forcing it is not a realistic path into an
-     * account whose owner never set a real password — see {@link #createGoogleUserRecord}'s own
+     * account whose owner never set a real password — see {@link #createOAuthUserRecord}'s own
      * doc comment. 256 bits from the same {@link SecureRandom} generator this class already uses
      * for reset/reactivation tokens, base64-encoded (44 characters, safely under BCrypt's 72-byte
      * input limit).
@@ -1123,11 +1132,36 @@ public class AuthService {
         User user = userRepository.findById(prt.getUserId())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
         if (user.getPhoneNumber() == null || user.getPhoneNumber().isBlank()) {
-            // Shouldn't be reachable in practice -- phone number is required at both
-            // registration and admin-create time -- but User.phoneNumber has no NOT NULL
-            // constraint at the DB level (V8), so this is a real, if unlikely, state to guard.
-            throw new ApiException(HttpStatus.BAD_REQUEST,
-                    "This account has no phone number on file. Contact an administrator for help resetting your password.");
+            // Bug fix (review): this used to say "contact an administrator" unconditionally --
+            // accurate for the state it was written to guard (phone number is required at both
+            // registration and admin-create time, so a missing one used to be a genuine anomaly),
+            // but stale since AuthService.createOAuthUserRecord shipped: a Google or Apple
+            // Sign-In account has no phone number and, just as relevantly here, no password of
+            // its own to reset either (its passwordHash is a random value nobody knows -- see
+            // createOAuthUserRecord's own comment). "Forgot password" doesn't apply to an
+            // account that was never given one; the actionable answer is to use the same OAuth
+            // provider again, not to wait on an administrator who has nothing to fix.
+            //
+            // Second review catch: the first version of this fix asserted "signs in with Google"
+            // unconditionally, without checking user.isGoogleAccount() -- wrong for the "real, if
+            // unlikely" PASSWORD-method account with a missing phone number this guard's own
+            // original comment already anticipated (phoneNumber has no DB-level NOT NULL). Such
+            // an account has a real password and no Google identity to fall back to, so telling
+            // it to "choose Sign in with Google instead" would be actively wrong, not just
+            // unhelpful -- the old administrator message is still the honest answer for that case.
+            // ResetPassword.tsx's own "Back to sign in" link is always visible on this screen
+            // either way, so this message only needs to explain why, not add a new escape hatch.
+            //
+            // D-26 addition: extended to isAppleAccount() the same way -- an Apple-created
+            // account hits this exact path (forgot-password is reachable by email from any
+            // device, including web, even though Apple Sign-In itself is mobile-only), and would
+            // otherwise get the same wrong "contact an administrator" message a Google account
+            // used to.
+            String reauthProviderLabel = user.isGoogleAccount() ? "Google" : user.isAppleAccount() ? "Apple" : null;
+            throw new ApiException(HttpStatus.BAD_REQUEST, reauthProviderLabel != null
+                    ? "This account signs in with " + reauthProviderLabel + " and doesn't have a password to reset. "
+                            + "Go back and choose \"Sign in with " + reauthProviderLabel + "\" instead."
+                    : "This account has no phone number on file. Contact an administrator for help resetting your password.");
         }
         // BH-015, KNOWN AND DELIBERATELY STILL OPEN. This returns the account's phone number in
         // full to anyone holding a valid reset link, where register() and login() -- both of which

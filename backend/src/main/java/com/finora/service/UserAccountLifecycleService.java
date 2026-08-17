@@ -6,7 +6,6 @@ import com.finora.exception.ApiException;
 import com.finora.repository.UserRepository;
 import com.finora.util.AfterCommit;
 import org.springframework.http.HttpStatus;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -28,7 +27,7 @@ import java.util.UUID;
 public class UserAccountLifecycleService {
 
     private final UserRepository userRepository;
-    private final PasswordEncoder passwordEncoder;
+    private final GoogleReauthVerifier googleReauthVerifier;
     private final RefreshTokenService refreshTokenService;
     private final AuditService auditService;
     private final EmailProvider emailProvider;
@@ -37,14 +36,14 @@ public class UserAccountLifecycleService {
     private final AccountPurgeSweepService accountPurgeSweepService;
     private final TransactionTemplate transactionTemplate;
 
-    public UserAccountLifecycleService(UserRepository userRepository, PasswordEncoder passwordEncoder,
+    public UserAccountLifecycleService(UserRepository userRepository, GoogleReauthVerifier googleReauthVerifier,
                                         RefreshTokenService refreshTokenService, AuditService auditService,
                                         EmailProvider emailProvider, RequestMetadata requestMetadata,
                                         PasswordChangeService passwordChangeService,
                                         AccountPurgeSweepService accountPurgeSweepService,
                                         TransactionTemplate transactionTemplate) {
         this.userRepository = userRepository;
-        this.passwordEncoder = passwordEncoder;
+        this.googleReauthVerifier = googleReauthVerifier;
         this.refreshTokenService = refreshTokenService;
         this.auditService = auditService;
         this.emailProvider = emailProvider;
@@ -67,7 +66,7 @@ public class UserAccountLifecycleService {
      * @param note optional free text alongside the reason; never validated beyond length (DTO).
      */
     @Transactional
-    public void deactivate(UUID userId, String currentPassword, String reason, String note) {
+    public void deactivate(UUID userId, String currentPassword, String googleIdToken, String reason, String note) {
         User user = requireUser(userId);
         requireUserScope(user);
 
@@ -86,13 +85,15 @@ public class UserAccountLifecycleService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "'" + reason + "' is not a recognized deactivation reason.");
         }
 
-        if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
+        if (!googleReauthVerifier.verify(user, currentPassword, googleIdToken)) {
             // recordEvenOnRollback, not record: deactivate() is plain @Transactional (no
             // noRollbackFor), so a bare record() here would be rolled back along with everything
             // else the moment ApiException propagates -- see AuditService.recordEvenOnRollback's
             // own doc comment for the DataExportService bug this is the same shape as.
             auditService.recordEvenOnRollback(userId, "INVALID_CURRENT_PASSWORD", "User", userId);
-            throw new ApiException(HttpStatus.BAD_REQUEST, "Current password is incorrect.");
+            throw new ApiException(HttpStatus.BAD_REQUEST, user.isGoogleAccount()
+                    ? "We couldn't verify your Google account. Please try again."
+                    : "Current password is incorrect.");
         }
 
         Instant now = Instant.now();
