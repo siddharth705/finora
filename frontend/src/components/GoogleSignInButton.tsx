@@ -15,8 +15,8 @@ interface GoogleSignInButtonProps {
 
 // D-23: renders Google's own Identity Services button. Deliberately NOT rendered at all when
 // VITE_GOOGLE_LOGIN_CLIENT_ID is unset (isGoogleLoginConfigured()) -- same "unconfigured is a
-// supported state, degrade silently" posture as BankLogo's Brandfetch fallback and Firebase's
-// lazy init elsewhere in this codebase, rather than shipping a button that can't work.
+// supported state, degrade silently" posture as BankLogo/MerchantLogo's Logo.dev fallback and
+// Firebase's lazy init elsewhere in this codebase, rather than shipping a button that can't work.
 export function GoogleSignInButton({ text, onCredential, onError }: GoogleSignInButtonProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);

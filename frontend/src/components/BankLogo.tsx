@@ -26,11 +26,11 @@ function resolveLocalLogoUrl(logoPath: string): string | null {
   return null;
 }
 
-const BRANDFETCH_CLIENT_ID = import.meta.env.VITE_BRANDFETCH_CLIENT_ID;
+const LOGODEV_TOKEN = import.meta.env.VITE_LOGODEV_TOKEN;
 // A bit more generous than the "1-2 seconds" asked for -- long enough that a normal CDN response
-// isn't cut off early, short enough that a slow/unreachable Brandfetch never leaves a user
-// staring at an empty spot on the page.
-const BRANDFETCH_TIMEOUT_MS = 1500;
+// isn't cut off early, short enough that a slow/unreachable Logo.dev never leaves a user staring
+// at an empty spot on the page.
+const LOGODEV_TIMEOUT_MS = 1500;
 
 export function extractDomain(websiteUrl: string | null): string | null {
   if (!websiteUrl) return null;
@@ -41,51 +41,57 @@ export function extractDomain(websiteUrl: string | null): string | null {
   }
 }
 
-export function brandfetchUrl(domain: string | null, sizePx: number, clientId: string | undefined): string | null {
-  if (!clientId || !domain) return null;
-  // Bug fix: verified against Brandfetch's current docs (docs.brandfetch.com/logo-api/overview).
-  // Two things were off from their actual, current URL format:
-  // 1. Missing the explicit `domain/` type prefix -- their docs: "To avoid potential naming
-  //    collisions between identifier types, you can use explicit type routes with the pattern
-  //    {type}/{identifier}." A bare domain still works today via their auto-detection fallback
-  //    (domain is checked first), but isn't the format they actually recommend.
-  // 2. `/w/{size}/h/{size}/` had width before height -- every single documented example
-  //    (sizing, retina, combined with type/theme) uses `/h/{h}/w/{w}/`, never the reverse. Since
-  //    this app always requests a square logo (w === h), a positional parser bug here wouldn't
-  //    have been visible in the actual pixels either way -- but there's no reason to rely on
-  //    order-independence that was never actually confirmed, when the documented order is known.
-  return `https://cdn.brandfetch.io/domain/${domain}/h/${sizePx}/w/${sizePx}/logo?c=${clientId}`;
+export function logoDevUrl(domain: string | null, sizePx: number, token: string | undefined): string | null {
+  if (!token || !domain) return null;
+  // https://www.logo.dev/docs/logo-images/get -- a bare domain is the default identifier type
+  // (no `domain/` prefix, unlike `name/`, `ticker/`, `crypto/`, `isin/`). `format=png` rather than
+  // the default `jpg` so a logo with a transparent background actually shows this component's own
+  // background/initials through it instead of an opaque rectangle. `fallback=404` turns a miss
+  // into a real `onError` -- Logo.dev's own default (`fallback=monogram`) returns 200 with a
+  // generic monogram, which would look like a real logo and pre-empt the local-SVG/initials
+  // chain below, throwing away the bank's actual brand color for a monogram in Logo.dev's own
+  // gray theme instead.
+  return `https://img.logo.dev/${domain}?token=${token}&size=${sizePx}&format=png&fallback=404`;
 }
 
-type Stage = 'brandfetch' | 'local' | 'initials';
+type Stage = 'logodev' | 'local' | 'initials';
 
 /**
- * Circuit breaker: once Brandfetch has actually rejected a request, stop asking it for the rest of
+ * Circuit breaker: once Logo.dev has actually rejected a request, stop asking it for the rest of
  * this page session.
  *
- * Every logo on a page resolves independently, so a Brandfetch outage or a rejected client ID cost
- * one failed round-trip PER BANK -- an accounts list with eight banks fired eight requests that
- * were all going to fail for the same reason, each one burning its own 1.5s timeout before falling
- * back, and each one logging its own console error. Observed in production as a wall of
- * `403 (Forbidden)` entries.
+ * Every logo on a page resolves independently, so a Logo.dev outage or a rejected token cost one
+ * failed round-trip PER BANK -- an accounts list with eight banks fired eight requests that were
+ * all going to fail for the same reason, each one burning its own 1.5s timeout before falling
+ * back, and each one logging its own console error. Observed in production (under the previous
+ * Brandfetch integration this replaced) as a wall of `403 (Forbidden)` entries -- the same failure
+ * shape applies to any third-party logo CDN, which is why this breaker carried over rather than
+ * being re-derived from scratch.
  *
  * Deliberately tripped only by a real error response, not by the timeout: a timeout is one slow
  * request and may not repeat, while a 403/404 is the CDN telling us this configuration will not
  * work. Module-level rather than React state because it is a fact about the CDN, not about any one
  * component, and it must outlive every unmount.
  *
+ * This reasoning holds specifically because the bank registry is small and fixed (see
+ * BankRegistry.all() on the backend) -- a real token/config problem shows up identically across
+ * every bank on the page. `MerchantLogo` deliberately does NOT carry the same breaker: a
+ * transaction's merchant name missing from Logo.dev's catalog is the ordinary, expected outcome
+ * for most rows (cash withdrawals, UPI references, unrecognized local vendors), not a signal that
+ * the whole integration is broken -- see that component's own comment.
+ *
  * Not persisted beyond the page session on purpose. Whatever caused the rejection -- an expired
- * client ID, a domain not on the key's allowlist -- is fixable server-side, and a reload should
- * pick that up rather than a stale localStorage flag suppressing it for days.
+ * token, a domain not on the key's allowlist -- is fixable server-side, and a reload should pick
+ * that up rather than a stale localStorage flag suppressing it for days.
  */
-let brandfetchRejected = false;
+let logoDevRejected = false;
 
 /**
- * Provider-chain logo resolution, per the brief: Brandfetch (a real, always-current official
- * logo, via their free Logo API) -> a locally dropped-in SVG (see src/assets/banks/README.md)
- * -> a colored-initials badge. Every page just renders <BankLogo bank={x.bank} /> exactly as
- * before -- which provider actually served the pixels is entirely this component's business, so
- * no page needs its own logo-loading logic.
+ * Provider-chain logo resolution, per the brief: Logo.dev (a real, always-current official logo,
+ * via their Logo API) -> a locally dropped-in SVG (see src/assets/banks/README.md) -> a
+ * colored-initials badge. Every page just renders <BankLogo bank={x.bank} /> exactly as before --
+ * which provider actually served the pixels is entirely this component's business, so no page
+ * needs its own logo-loading logic.
  *
  * `bank` (not a bare `bankId`) stays the prop here rather than resolving metadata from an id
  * internally: every caller already has the full, server-resolved BankInfo sitting on the
@@ -94,12 +100,18 @@ let brandfetchRejected = false;
  * Accepting a bare id here would mean duplicating that same registry data into a second,
  * client-side cache just to look it back up, which is more moving parts for no real benefit.
  *
- * Brandfetch is opt-in via VITE_BRANDFETCH_CLIENT_ID (see .env.example). Their Logo API is free
- * (500k requests/month, no attribution required) but does mean a runtime call to a third-party
- * CDN -- a real change from this app's previous "everything local" posture, called out
- * explicitly since it's not something to slip in unannounced. Without a client ID configured,
- * this stage is skipped entirely and the component behaves exactly as it did before Brandfetch
- * existed (local asset, then initials) -- nothing breaks for anyone who hasn't set it up.
+ * Logo.dev is opt-in via VITE_LOGODEV_TOKEN (see .env.example) -- a publishable key, safe to
+ * ship client-side, but still a runtime call to a third-party CDN, a real change from this app's
+ * previous "everything local" posture, called out explicitly since it's not something to slip in
+ * unannounced. Without a token configured, this stage is skipped entirely and the component
+ * behaves exactly as it did before any logo CDN existed (local asset, then initials) -- nothing
+ * breaks for anyone who hasn't set it up.
+ *
+ * <b>Attribution.</b> Logo.dev's free tier requires a visible attribution link back to Logo.dev
+ * for commercial use (their docs, not verifiable live as of this writing -- see this file's
+ * git history / the PR that introduced this for the caveat). Finora is a commercial product, so
+ * that link needs to exist somewhere in the shipped app before this goes to production on the
+ * free tier; it does not exist yet as of this change. Flagged rather than silently assumed away.
  */
 export function BankLogo({ bank, size = 40, className = '' }: BankLogoProps) {
   const isUnknown = bank.id === 'OTHER' || !bank.officialName;
@@ -107,49 +119,49 @@ export function BankLogo({ bank, size = 40, className = '' }: BankLogoProps) {
   // Fetched at 2x the rendered size (min 64px) so it stays crisp on high-DPI screens without
   // the caller having to think about it.
   const sizePx = Math.max(64, Math.round(size * 2));
-  // Null once the circuit breaker has tripped, which skips the Brandfetch stage entirely for every
+  // Null once the circuit breaker has tripped, which skips the Logo.dev stage entirely for every
   // logo mounted afterwards -- straight to the local asset or initials, no request, no timeout.
-  const brandfetchSrc = brandfetchRejected ? null : brandfetchUrl(domain, sizePx, BRANDFETCH_CLIENT_ID);
+  const logoDevSrc = logoDevRejected ? null : logoDevUrl(domain, sizePx, LOGODEV_TOKEN);
 
-  const [stage, setStage] = useState<Stage>(() => (brandfetchSrc ? 'brandfetch' : 'local'));
+  const [stage, setStage] = useState<Stage>(() => (logoDevSrc ? 'logodev' : 'local'));
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Reset to the top of the provider chain whenever the bank itself changes -- e.g. scrolling
   // through a list of account cards, each a different bank -- otherwise a card that previously
   // fell all the way back to "initials" for one bank would incorrectly start there for the next.
   useEffect(() => {
-    setStage(brandfetchSrc ? 'brandfetch' : 'local');
+    setStage(logoDevSrc ? 'logodev' : 'local');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bank.id]);
 
-  // Brandfetch timeout: if it hasn't loaded (or failed) within BRANDFETCH_TIMEOUT_MS, don't keep
-  // the user waiting on a slow/unreachable third-party CDN -- move on to the local/initials
-  // fallback. Cleared by onLoad/onError below if Brandfetch responds first either way.
+  // Logo.dev timeout: if it hasn't loaded (or failed) within LOGODEV_TIMEOUT_MS, don't keep the
+  // user waiting on a slow/unreachable third-party CDN -- move on to the local/initials fallback.
+  // Cleared by onLoad/onError below if Logo.dev responds first either way.
   useEffect(() => {
-    if (stage !== 'brandfetch') return undefined;
-    timeoutRef.current = setTimeout(() => setStage('local'), BRANDFETCH_TIMEOUT_MS);
+    if (stage !== 'logodev') return undefined;
+    timeoutRef.current = setTimeout(() => setStage('local'), LOGODEV_TIMEOUT_MS);
     return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
   }, [stage, bank.id]);
 
-  function clearBrandfetchTimeout() {
+  function clearLogoDevTimeout() {
     if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
   }
 
-  if (stage === 'brandfetch' && brandfetchSrc) {
+  if (stage === 'logodev' && logoDevSrc) {
     return (
       <img
-        src={brandfetchSrc}
+        src={logoDevSrc}
         alt={bank.officialName ?? bank.shortName}
         title={bank.officialName ?? bank.shortName}
         className={`rounded-xl object-contain flex-shrink-0 ${className}`}
         style={{ width: size, height: size }}
-        onLoad={clearBrandfetchTimeout}
+        onLoad={clearLogoDevTimeout}
         onError={() => {
-          clearBrandfetchTimeout();
-          // A real rejection (403 for a bad/domain-restricted client ID, 404 for an unknown
-          // domain) means every other logo on this page is about to fail the same way. Trip the
-          // breaker so they don't all have to find that out individually.
-          brandfetchRejected = true;
+          clearLogoDevTimeout();
+          // A real rejection (403 for a bad/domain-restricted token, 404 with fallback=404 for an
+          // unrecognized domain) means every other logo on this page is about to fail the same
+          // way. Trip the breaker so they don't all have to find that out individually.
+          logoDevRejected = true;
           setStage('local');
         }}
       />

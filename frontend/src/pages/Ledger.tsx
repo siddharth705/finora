@@ -4,6 +4,7 @@ import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-quer
 import { Pencil, Trash2, X, ChevronLeft, ChevronRight, HelpCircle } from 'lucide-react';
 import { transactionsApi, categoriesApi, type TransactionFilters, type UpdateTransactionPayload, type TransactionExplanation } from '../api/endpoints';
 import { AskOnceCard } from '../components/AskOnceCard';
+import { MerchantLogo } from '../components/MerchantLogo';
 import type { Transaction } from '../types';
 
 function fmt(n: number) {
@@ -154,9 +155,14 @@ export default function Ledger() {
                 <tr key={t.id} className="border-b border-dashed">
                   <td className="p-2">{t.date}</td>
                   <td className="p-2">
-                    {t.description || t.merchant}
-                    {t.needsCategoryReview && <span className="text-[10px] uppercase bg-warning-bg text-warning px-1.5 py-0.5 rounded ml-1">needs review</span>}
-                    {t.recurring && <span className="text-[10px] uppercase bg-primary/15 text-primary px-1.5 py-0.5 rounded ml-1">recurring</span>}
+                    <div className="flex items-center gap-2">
+                      <MerchantLogo merchant={t.merchant} size={22} />
+                      <span className="truncate min-w-0 flex-1">
+                        {t.description || t.merchant}
+                        {t.needsCategoryReview && <span className="text-[10px] uppercase bg-warning-bg text-warning px-1.5 py-0.5 rounded ml-1">needs review</span>}
+                        {t.recurring && <span className="text-[10px] uppercase bg-primary/15 text-primary px-1.5 py-0.5 rounded ml-1">recurring</span>}
+                      </span>
+                    </div>
                   </td>
                   <td className="p-2 text-gray-500">
                     {t.categoryName}
