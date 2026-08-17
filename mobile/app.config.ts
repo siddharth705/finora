@@ -101,6 +101,22 @@ const config: ExpoConfig = {
     '@react-native-firebase/app',
     '@react-native-firebase/auth',
     './plugins/withRNFirebaseDisableSPM',
+    // D-23 Phase 2. Called with NO options, deliberately: given options, this plugin wants a raw
+    // `iosUrlScheme` (Google's "reversed client id" for a NON-Firebase-registered OAuth client) --
+    // called bare like this, it instead reads Google Sign-In's iOS URL scheme and Android OAuth
+    // client straight out of the SAME GoogleService-Info.plist / google-services.json this project
+    // already downloads per-developer for @react-native-firebase/auth's phone-OTP flow (see the
+    // conditional googleServicesFile keys on ios/android above) -- one set of credentials, one
+    // download step, not a second gitignored-file convention to document and keep in sync.
+    // Requires the Firebase project's own "Google" sign-in provider to actually be enabled (not
+    // yet, as of this writing -- see GoogleLoginProperties' own doc comment on the equivalent
+    // backend-side unconfigured state); until then this plugin still runs, it just has nothing new
+    // to read out of the config files.
+    '@react-native-google-signin/google-signin',
+    // D-23 Phase 2 / D-26. Adds the "Sign In with Apple" iOS entitlement -- no options, no
+    // credentials needed at build time (Apple's own private key/Services ID only matter to the
+    // BACKEND verifier, at sign-in time, not to this entitlement). Safe to list unconditionally.
+    'expo-apple-authentication',
     [
       'expo-build-properties',
       {

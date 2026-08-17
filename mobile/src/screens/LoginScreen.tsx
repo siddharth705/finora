@@ -1,8 +1,10 @@
 import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { AppleSignInButton } from '../components/AppleSignInButton';
 import { AuthScreenLayout } from '../components/AuthScreenLayout';
 import { Button } from '../components/Button';
+import { GoogleSignInButton, isGoogleSignInConfigured } from '../components/GoogleSignInButton';
 import { TextField } from '../components/TextField';
 import { useAuth } from '../context/AuthContext';
 import { toUserMessage } from '../lib/apiError';
@@ -13,7 +15,7 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'Login'>;
 
 export function LoginScreen({ navigation, route }: Props) {
   const c = useTheme();
-  const { login } = useAuth();
+  const { login, loginWithGoogle, loginWithApple } = useAuth();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -50,6 +52,32 @@ export function LoginScreen({ navigation, route }: Props) {
       setLoading(false);
     }
   }
+
+  // Same "no navigation on success" reasoning as handleSubmit above -- RootNavigator swaps stacks
+  // off AuthContext state, not an imperative call here.
+  async function handleGoogleCredential(idToken: string) {
+    setError(null);
+    try {
+      await loginWithGoogle(idToken);
+    } catch (err) {
+      setError(toUserMessage(err, 'Sign in with Google failed.'));
+    }
+  }
+
+  async function handleAppleCredential(idToken: string, fullName?: string) {
+    setError(null);
+    try {
+      await loginWithApple(idToken, fullName);
+    } catch (err) {
+      setError(toUserMessage(err, 'Sign in with Apple failed.'));
+    }
+  }
+
+  // Apple's button has no client-side "configured" flag the way Google's does (webClientId) --
+  // its backend counterpart degrades the same way Google's did pre-Railway-config (a real 503
+  // surfaced through handleAppleCredential's catch), so it's always shown on iOS. The divider
+  // only needs to know whether ANYTHING will render under it.
+  const showSocialSignIn = isGoogleSignInConfigured() || Platform.OS === 'ios';
 
   return (
     <AuthScreenLayout
@@ -97,6 +125,20 @@ export function LoginScreen({ navigation, route }: Props) {
 
       <Button label="Sign in" onPress={handleSubmit} loading={loading} />
 
+      {showSocialSignIn ? (
+        <>
+          <View style={styles.dividerRow}>
+            <View style={[styles.dividerLine, { backgroundColor: c.border }]} />
+            <Text style={[styles.dividerText, { color: c.muted }]}>OR</Text>
+            <View style={[styles.dividerLine, { backgroundColor: c.border }]} />
+          </View>
+          <View style={styles.socialStack}>
+            <GoogleSignInButton onCredential={handleGoogleCredential} onError={setError} />
+            <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
+          </View>
+        </>
+      ) : null}
+
       <View style={[styles.notice, { backgroundColor: c.primaryLight }]}>
         <Text style={[styles.noticeText, { color: c.ink }]}>
           Your financial data is encrypted and securely protected.
@@ -110,6 +152,24 @@ const styles = StyleSheet.create({
   forgotRow: {
     alignSelf: 'flex-end',
     marginBottom: spacing.md,
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+    gap: spacing.sm,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+  },
+  dividerText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  socialStack: {
+    gap: spacing.sm,
   },
   notice: {
     borderRadius: 8,

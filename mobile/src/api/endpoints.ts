@@ -29,6 +29,16 @@ export const authApi = {
     api.post<AuthResponseDto>('/auth/register', { email, password, fullName, phoneNumber }),
   login: (identifier: string, password: string) =>
     api.post<AuthResponseDto>('/auth/login', { identifier, password }),
+  // D-23 Phase 2. idToken is the raw credential from @react-native-google-signin/google-signin --
+  // verified server-side (GoogleIdTokenVerifierService), never trusted client-side. Same endpoint
+  // web's GoogleSignInButton already calls; see frontend/src/api/endpoints.ts's own copy.
+  google: (idToken: string) => api.post<AuthResponseDto>('/auth/google', { idToken }),
+  // D-23 Phase 2 / D-26 (iOS only). idToken is the raw credential from
+  // expo-apple-authentication's signInAsync(). fullName is optional and NOT part of the token --
+  // Apple hands it to the CLIENT, not the backend, and only on the user's very first
+  // authorization for this app -- see AppleAuthRequest's own doc comment on the backend.
+  apple: (idToken: string, fullName?: string) =>
+    api.post<AuthResponseDto>('/auth/apple', { idToken, fullName }),
   forgotPassword: (email: string) =>
     api.post<{ message: string; devResetLink: string | null }>('/auth/forgot-password', { email }).then((r) => r.data),
   resolveResetPasswordPhone: (token: string) =>

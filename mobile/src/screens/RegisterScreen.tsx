@@ -1,8 +1,11 @@
 import { useMemo, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import { AppleSignInButton } from '../components/AppleSignInButton';
 import { AuthScreenLayout } from '../components/AuthScreenLayout';
 import { Button } from '../components/Button';
+import { GoogleSignInButton, isGoogleSignInConfigured } from '../components/GoogleSignInButton';
 import { TextField } from '../components/TextField';
 import { useAuth } from '../context/AuthContext';
 import { toUserMessage } from '../lib/apiError';
@@ -19,7 +22,7 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'Register'>;
 
 export function RegisterScreen({ navigation }: Props) {
   const c = useTheme();
-  const { register } = useAuth();
+  const { register, loginWithGoogle, loginWithApple } = useAuth();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -68,6 +71,28 @@ export function RegisterScreen({ navigation }: Props) {
       setLoading(false);
     }
   }
+
+  // No navigation on success, same reasoning as handleSubmit above.
+  async function handleGoogleCredential(idToken: string) {
+    setError(null);
+    try {
+      await loginWithGoogle(idToken);
+    } catch (err) {
+      setError(toUserMessage(err, 'Sign up with Google failed.'));
+    }
+  }
+
+  async function handleAppleCredential(idToken: string, fullName?: string) {
+    setError(null);
+    try {
+      await loginWithApple(idToken, fullName);
+    } catch (err) {
+      setError(toUserMessage(err, 'Sign up with Apple failed.'));
+    }
+  }
+
+  // See LoginScreen's own comment on why this doesn't need an Apple-specific "configured" check.
+  const showSocialSignIn = isGoogleSignInConfigured() || Platform.OS === 'ios';
 
   return (
     <AuthScreenLayout
@@ -163,6 +188,24 @@ export function RegisterScreen({ navigation }: Props) {
 
       <Button label="Create account" onPress={handleSubmit} loading={loading} disabled={!formValid} />
 
+      {showSocialSignIn ? (
+        <>
+          <View style={styles.dividerRow}>
+            <View style={[styles.dividerLine, { backgroundColor: c.border }]} />
+            <Text style={[styles.dividerText, { color: c.muted }]}>OR</Text>
+            <View style={[styles.dividerLine, { backgroundColor: c.border }]} />
+          </View>
+          <View style={styles.socialStack}>
+            <GoogleSignInButton onCredential={handleGoogleCredential} onError={setError} />
+            <AppleSignInButton
+              buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_UP}
+              onCredential={handleAppleCredential}
+              onError={setError}
+            />
+          </View>
+        </>
+      ) : null}
+
       {/* The web form gates submission on an explicit Terms & Privacy checkbox. Those pages are
           marketing routes that aren't part of the mobile app, so there's nothing to link to yet;
           the checkbox is deliberately omitted rather than shown pointing nowhere. Restore it
@@ -180,6 +223,24 @@ export function RegisterScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   strengthWrap: {
     marginBottom: spacing.sm,
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+    gap: spacing.sm,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+  },
+  dividerText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  socialStack: {
+    gap: spacing.sm,
   },
   strengthBars: {
     flexDirection: 'row',

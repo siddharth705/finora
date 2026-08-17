@@ -211,6 +211,17 @@ app:
       # against Google's own public keys, it never calls back to Google with a credential the way
       # an authorization-code exchange does.
       client-ids: ${GOOGLE_LOGIN_CLIENT_IDS:}
+    apple-login:
+      # D-23 Phase 2: "Sign in with Apple" -- see AppleLoginProperties' own doc comment for why
+      # this holds bundle identifiers (e.g. com.finora.app) rather than a Google-style OAuth
+      # client id, and why it's a list even though D-26 only put Apple on iOS.
+      #
+      # Unconfigured (empty) is a supported state: POST /api/v1/auth/apple answers 503 and
+      # nothing else in the application is affected -- same posture as google-login above.
+      #
+      # As with Google, only an identifier is needed here, never a secret: ID-token verification
+      # checks a signature against Apple's own published JWKS.
+      client-ids: ${APPLE_LOGIN_CLIENT_IDS:}
   cors:
     # Both frontends by default: the user app (frontend/, port 5173) and the admin portal
     # (admin-portal/, port 5174) -- see CorsConfig, which .trim()s each entry, so the comma
@@ -323,6 +334,10 @@ app:
     google:
       max: ${RATE_LIMIT_GOOGLE_MAX:5}
       window-seconds: ${RATE_LIMIT_GOOGLE_WINDOW_SECONDS:300}
+    # D-23 Phase 2. Apple's counterpart to google above -- same ceiling, same reasoning.
+    apple:
+      max: ${RATE_LIMIT_APPLE_MAX:5}
+      window-seconds: ${RATE_LIMIT_APPLE_WINDOW_SECONDS:300}
     forgot-password:
       max: ${RATE_LIMIT_FORGOT_PASSWORD_MAX:5}
       window-seconds: ${RATE_LIMIT_FORGOT_PASSWORD_WINDOW_SECONDS:300}

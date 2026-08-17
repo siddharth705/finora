@@ -354,7 +354,7 @@ class RateLimitFilterTest {
      * narrower test slice, a refactor, an ops change relying on env vars alone) would have
      * silently reverted to the 3/day ceiling this PR explicitly fixed. Reflects over every
      * {@code @Value}-annotated parameter on the full constructor and checks its SpEL fallback
-     * against the corresponding DEFAULT_* constant, so any future drift on ANY of the 16 -- not
+     * against the corresponding DEFAULT_* constant, so any future drift on ANY of them -- not
      * just this one -- fails loudly here instead of silently in a deploy that happens to omit
      * application.yml.
      */
@@ -378,7 +378,9 @@ class RateLimitFilterTest {
                 Map.entry("app.rate-limit.data-export.max", DEFAULT_DATA_EXPORT_MAX),
                 Map.entry("app.rate-limit.data-export.window-seconds", DEFAULT_DATA_EXPORT_WINDOW),
                 Map.entry("app.rate-limit.google.max", DEFAULT_GOOGLE_MAX),
-                Map.entry("app.rate-limit.google.window-seconds", DEFAULT_GOOGLE_WINDOW));
+                Map.entry("app.rate-limit.google.window-seconds", DEFAULT_GOOGLE_WINDOW),
+                Map.entry("app.rate-limit.apple.max", DEFAULT_APPLE_MAX),
+                Map.entry("app.rate-limit.apple.window-seconds", DEFAULT_APPLE_WINDOW));
 
         Constructor<?> springConstructor = Arrays.stream(RateLimitFilter.class.getDeclaredConstructors())
                 .filter(c -> c.getParameterCount() > 2)

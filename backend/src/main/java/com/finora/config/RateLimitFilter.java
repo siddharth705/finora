@@ -129,6 +129,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // account creation if left unguarded, not a lesser concern. Same ceiling as registerLimiter,
     // for the same cost class.
     private final RateLimiter googleLimiter;
+    // D-23 Phase 2. Apple's counterpart to googleLimiter, same reasoning and same ceiling: real
+    // work per call (JWKS-backed signature verification) and, for a first-time email, the full
+    // account-creation path -- the cheapest way to spam account creation if left unguarded.
+    private final RateLimiter appleLimiter;
     // Phase C (Download My Data). Far stricter than importStageLimiter -- 5/day, not 10/10min --
     // because a full export is strictly more expensive per call (every in-scope table plus every
     // original statement file, read and zipped) and legitimately needed far less often. Bug fix
@@ -198,6 +202,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     static final int DEFAULT_RESET_PASSWORD_MAX = 10, DEFAULT_RESET_PASSWORD_WINDOW = 600;
     static final int DEFAULT_DATA_EXPORT_MAX = 5, DEFAULT_DATA_EXPORT_WINDOW = 86400;
     static final int DEFAULT_GOOGLE_MAX = 5, DEFAULT_GOOGLE_WINDOW = 300;
+    static final int DEFAULT_APPLE_MAX = 5, DEFAULT_APPLE_WINDOW = 300;
 
     /**
      * The shipped configuration, for tests.
@@ -216,7 +221,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 DEFAULT_PHONE_CHANGE_MAX, DEFAULT_PHONE_CHANGE_WINDOW,
                 DEFAULT_RESET_PASSWORD_MAX, DEFAULT_RESET_PASSWORD_WINDOW,
                 DEFAULT_DATA_EXPORT_MAX, DEFAULT_DATA_EXPORT_WINDOW,
-                DEFAULT_GOOGLE_MAX, DEFAULT_GOOGLE_WINDOW);
+                DEFAULT_GOOGLE_MAX, DEFAULT_GOOGLE_WINDOW,
+                DEFAULT_APPLE_MAX, DEFAULT_APPLE_WINDOW);
     }
 
     /**
@@ -251,7 +257,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
             @Value("${app.rate-limit.data-export.max:5}") int dataExportMax,
             @Value("${app.rate-limit.data-export.window-seconds:86400}") int dataExportWindow,
             @Value("${app.rate-limit.google.max:5}") int googleMax,
-            @Value("${app.rate-limit.google.window-seconds:300}") int googleWindow) {
+            @Value("${app.rate-limit.google.window-seconds:300}") int googleWindow,
+            @Value("${app.rate-limit.apple.max:5}") int appleMax,
+            @Value("${app.rate-limit.apple.window-seconds:300}") int appleWindow) {
         this.objectMapper = objectMapper;
         this.clientIpResolver = clientIpResolver;
         this.loginLimiter = new RateLimiter(loginMax, loginWindow);
@@ -263,10 +271,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
         this.resetPasswordLimiter = new RateLimiter(resetPasswordMax, resetPasswordWindow);
         this.dataExportLimiter = new RateLimiter(dataExportMax, dataExportWindow);
         this.googleLimiter = new RateLimiter(googleMax, googleWindow);
+        this.appleLimiter = new RateLimiter(appleMax, appleWindow);
         this.limitedEndpoints = List.of(
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/login"), loginLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/register"), registerLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/google"), googleLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/apple"), appleLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/forgot-password"), forgotPasswordLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/reset-password"), resetPasswordLimiter),
                 // BH-015. This class's comment above dismissed /auth/reset-password/phone as

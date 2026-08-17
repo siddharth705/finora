@@ -7,6 +7,7 @@ import com.finora.exception.ErrorCode;
 import com.finora.exception.ApiException;
 import com.finora.dto.ApiResponse;
 import com.finora.dto.AuthDtos.*;
+import com.finora.integrations.apple.login.AppleIdTokenVerifierService;
 import com.finora.integrations.google.login.GoogleIdTokenVerifierService;
 import com.finora.service.AuthService;
 import jakarta.validation.Valid;
@@ -20,12 +21,15 @@ public class AuthController {
     private final AuthService authService;
     private final RefreshTokenCookie refreshTokenCookie;
     private final GoogleIdTokenVerifierService googleIdTokenVerifierService;
+    private final AppleIdTokenVerifierService appleIdTokenVerifierService;
 
     public AuthController(AuthService authService, RefreshTokenCookie refreshTokenCookie,
-                           GoogleIdTokenVerifierService googleIdTokenVerifierService) {
+                           GoogleIdTokenVerifierService googleIdTokenVerifierService,
+                           AppleIdTokenVerifierService appleIdTokenVerifierService) {
         this.refreshTokenCookie = refreshTokenCookie;
         this.authService = authService;
         this.googleIdTokenVerifierService = googleIdTokenVerifierService;
+        this.appleIdTokenVerifierService = appleIdTokenVerifierService;
     }
 
     /**
@@ -153,8 +157,24 @@ public class AuthController {
                 .body(ApiResponse.ok(response, "Signed in with Google"));
     }
 
-    // TODO Phase 2: native mobile Google Sign-In reuses this same /google endpoint -- see D-23 --
-    // and /2fa/verify. The latter needs an OTP/TOTP library that only makes sense once there's a
-    // real deployment to protect; stubbing it here would just be dead code that looks functional
-    // but isn't.
+    /**
+     * D-23 Phase 2. Same shape as {@link #google}, Apple's counterpart -- native
+     * {@code AuthenticationServices} (via {@code expo-apple-authentication}) hands the client a
+     * signed identity token directly, this endpoint verifies and trusts it. {@code fullName} is
+     * forwarded straight through to {@code AuthService.loginWithApple} entirely unvalidated at
+     * this layer -- see {@code AppleAuthRequest}'s own doc comment for why it's optional, where it
+     * actually comes from, and why a DTO-level format check would be actively wrong here.
+     */
+    @PostMapping("/apple")
+    public ResponseEntity<ApiResponse<AuthResponse>> apple(@Valid @RequestBody AppleAuthRequest request) {
+        var identity = appleIdTokenVerifierService.verify(request.idToken());
+        AuthResponse response = authService.loginWithApple(identity, request.fullName());
+        return withRefreshCookie(response.refreshToken())
+                .body(ApiResponse.ok(response, "Signed in with Apple"));
+    }
+
+    // TODO: /2fa/verify needs an OTP/TOTP library that only makes sense once there's a real
+    // deployment to protect; stubbing it here would just be dead code that looks functional but
+    // isn't. (The other half of the old Phase 2 TODO here -- native mobile Google Sign-In reusing
+    // /google, plus Apple's new /apple above -- is this endpoint list; see D-23/D-26.)
 }
