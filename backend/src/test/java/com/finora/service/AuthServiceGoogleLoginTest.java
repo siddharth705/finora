@@ -45,6 +45,7 @@ class AuthServiceGoogleLoginTest {
     private com.finora.repository.EmailVerificationTokenRepository emailVerificationTokenRepository;
     private EmailProvider emailProvider;
     private AuditService auditService;
+    private PlatformSettingsService platformSettingsService;
     private AuthService authService;
     private final UUID userId = UUID.randomUUID();
 
@@ -74,7 +75,7 @@ class AuthServiceGoogleLoginTest {
         emailProvider = mock(EmailProvider.class);
         when(emailProvider.sendEmailVerificationEmail(any(), any()))
                 .thenReturn(EmailResult.success(ProviderType.RESEND, "test-message-id"));
-        var platformSettingsService = mock(PlatformSettingsService.class);
+        platformSettingsService = mock(PlatformSettingsService.class);
         when(platformSettingsService.getEntity()).thenReturn(new com.finora.entity.PlatformSettings());
 
         authService = new AuthService(
@@ -170,6 +171,36 @@ class AuthServiceGoogleLoginTest {
         // Long enough that it isn't a short, guessable placeholder -- 32 random bytes, base64
         // encoded, is 44 characters.
         assertThat(rawPasswordCaptor.getValue()).hasSize(44);
+    }
+
+    @Test
+    @DisplayName("self-review fix: a NEW account via Google is refused, same as register(), when an admin has disabled public registrations")
+    void newAccount_whenRegistrationsAreDisabled_isRefused() {
+        var settings = new com.finora.entity.PlatformSettings();
+        settings.setRegistrationsEnabled(false);
+        when(platformSettingsService.getEntity()).thenReturn(settings);
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("amy@example.test", "USER"))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> authService.loginWithGoogle(new GoogleIdentity("amy@example.test", "Amy")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("disabled");
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    @DisplayName("the registrations-disabled gate does NOT block signing into an EXISTING account -- that isn't a new registration")
+    void existingAccount_signsInEvenWhenRegistrationsAreDisabled() {
+        var settings = new com.finora.entity.PlatformSettings();
+        settings.setRegistrationsEnabled(false);
+        when(platformSettingsService.getEntity()).thenReturn(settings);
+        User existing = existingUser("jane@example.com", User.STATUS_ACTIVE);
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("jane@example.com", "USER"))
+                .thenReturn(Optional.of(existing));
+
+        var response = authService.loginWithGoogle(new GoogleIdentity("jane@example.com", "Jane Doe"));
+
+        assertThat(response.email()).isEqualTo("jane@example.com");
     }
 
     @Test

@@ -15,6 +15,11 @@
 -- ORM, which always writes an explicit value, or any future raw INSERT that doesn't) starts
 -- unverified until AuthService.verifyEmail actually confirms it -- mirroring phone_verified
 -- (V8__phone_otp_verification.sql)'s own column shape exactly.
+--
+-- Safe against `users` being the single most heavily-hit table in the app, same reasoning
+-- V89__audit_log_redaction.sql's own comment already gives for a similar ALTER on a populated
+-- table: on Postgres 11+, ADD COLUMN ... DEFAULT <constant> and ALTER COLUMN ... SET DEFAULT are
+-- both fast, metadata-only changes -- no table rewrite, no long-held lock either statement.
 ALTER TABLE users ADD COLUMN email_verified BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE users ALTER COLUMN email_verified SET DEFAULT false;
 

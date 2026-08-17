@@ -602,6 +602,14 @@ public class AuthService {
         String email = identity.email().trim().toLowerCase();
         Optional<User> existing = findUserByEmailIgnoreCaseSafely(email, User.SCOPE_USER);
         boolean isNewAccount = existing.isEmpty();
+        // Self-review finding: this is public self-service signup exactly like register()'s own
+        // check just above -- omitting it here meant an admin disabling public registrations
+        // (a live, no-redeploy operational control -- see PlatformSettingsService) closed the
+        // password door while leaving this one wide open. Scoped to NEW accounts only, same as
+        // register(): auto-linking into an EXISTING account isn't a new registration.
+        if (isNewAccount && !platformSettingsService.getEntity().isRegistrationsEnabled()) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "New registrations are currently disabled.");
+        }
         User user = existing.orElseGet(() -> createGoogleUserRecord(email, identity.name()));
         if (!isNewAccount) {
             if (!user.isEmailVerified()) {
