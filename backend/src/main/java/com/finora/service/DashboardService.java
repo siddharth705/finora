@@ -163,6 +163,7 @@ public class DashboardService {
                 incomeCur, expenseCur, netCur, savingsRate,
                 pct(incomeCur, incomePrior), pct(expenseCur, expensePrior), pct(netCur, netPrior),
                 health.score(), health.label(), health.breakdown(),
+                health.available(), health.transactionCount(), health.minTransactions(),
                 spendByCategory, notifications,
                 // Which month everything above actually describes. Without these the client had no
                 // choice but to guess, and it guessed "this month" -- see Bug 05.
@@ -211,13 +212,31 @@ public class DashboardService {
                 .multiply(BigDecimal.valueOf(100)).doubleValue();
     }
 
-    private record HealthResult(int score, String label, Map<String, Double> breakdown) {}
+    // D-25 PR3-A. Owner's choice among the proposal's own options (transaction count vs. time
+    // span vs. either): a flat transaction count, checked against `active` -- the same
+    // RefundNetting-reportable list every other figure in this method is already computed from,
+    // so "10 transactions" means the same 10 a user would see on the Ledger, not some other count.
+    static final int MIN_TRANSACTIONS_FOR_HEALTH_SCORE = 10;
+
+    private record HealthResult(Integer score, String label, Map<String, Double> breakdown,
+                                 boolean available, int transactionCount, int minTransactions) {}
 
     /** Weighted composite: savings rate 25%, debt utilization 20%, emergency fund 25%,
-     *  spend consistency 15%, cash flow stability 15% — identical weighting to the prototype. */
+     *  spend consistency 15%, cash flow stability 15% — identical weighting to the prototype.
+     *
+     *  Below {@link #MIN_TRANSACTIONS_FOR_HEALTH_SCORE}, returns unavailable rather than a
+     *  computed-but-misleading score: a thin-data user can land under 40 ("Needs Attention") by
+     *  construction (e.g. {@code cashFlowScore} hits 0% the moment one month's expenses exceed
+     *  income, which is routine for someone who just imported one statement before any income
+     *  shows up in it) -- not a true reading of their finances, just an artifact of too little
+     *  data. D-19's own {@code isEmpty} gate already hides this section entirely at zero
+     *  transactions; this covers the gap between zero and "enough," which that gate never did. */
     private HealthResult computeHealthScore(List<Account> accounts, List<Transaction> active,
                                              List<String> months, BigDecimal liquid,
                                              RefundNetting refunds) {
+        if (active.size() < MIN_TRANSACTIONS_FOR_HEALTH_SCORE) {
+            return new HealthResult(null, null, Map.of(), false, active.size(), MIN_TRANSACTIONS_FOR_HEALTH_SCORE);
+        }
         List<String> last6 = months.size() > 6 ? months.subList(months.size() - 6, months.size()) : months;
 
         // BH-005: the same netting the headline KPIs use. The score's savings-rate and cash-flow
@@ -267,7 +286,7 @@ public class DashboardService {
         breakdown.put("Spend Consistency", consistencyScore);
         breakdown.put("Cash Flow Stability", cashFlowScore);
 
-        return new HealthResult(overall, label, breakdown);
+        return new HealthResult(overall, label, breakdown, true, active.size(), MIN_TRANSACTIONS_FOR_HEALTH_SCORE);
     }
 
     private long countNonNegativeMonths(List<BigDecimal> income, List<BigDecimal> expense) {

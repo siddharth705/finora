@@ -283,6 +283,49 @@ class DashboardServiceTest {
     }
 
     @Test
+    @DisplayName("D-25 PR3-A: below the floor, the health score is unavailable rather than misleadingly low")
+    void summarize_healthScoreIsUnavailable_belowTheTransactionFloor() {
+        // 9 transactions -- one short of MIN_TRANSACTIONS_FOR_HEALTH_SCORE (10). Deliberately an
+        // expense-heavy mix that would otherwise score low (cashFlowScore hits 0% the moment one
+        // month's expenses exceed income), so passing this test for the RIGHT reason (unavailable,
+        // not "happens to still be a low but computed score") actually matters.
+        LocalDate july = LocalDate.of(2026, 7, 15);
+        List<Transaction> nineTxns = new java.util.ArrayList<>();
+        for (int i = 0; i < 9; i++) {
+            nineTxns.add(txn(new BigDecimal("500.00"), Transaction.Type.EXPENSE, july, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(nineTxns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.healthScoreAvailable()).isFalse();
+        assertThat(summary.healthScore()).isNull();
+        assertThat(summary.healthLabel()).isNull();
+        assertThat(summary.healthBreakdown()).isEmpty();
+        assertThat(summary.healthScoreTransactionCount()).isEqualTo(9);
+        assertThat(summary.healthScoreMinTransactions()).isEqualTo(10);
+    }
+
+    @Test
+    @DisplayName("D-25 PR3-A: exactly the floor's transaction count computes a real score")
+    void summarize_healthScoreIsAvailable_atExactlyTheTransactionFloor() {
+        LocalDate july = LocalDate.of(2026, 7, 15);
+        List<Transaction> tenTxns = new java.util.ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            tenTxns.add(txn(new BigDecimal("500.00"), Transaction.Type.INCOME, july, Transaction.ReconciliationStatus.OK));
+        }
+        when(transactionRepository.findByUserId(userId)).thenReturn(tenTxns);
+
+        DashboardSummaryDto summary = dashboardService.summarize(userId);
+
+        assertThat(summary.healthScoreAvailable()).isTrue();
+        assertThat(summary.healthScore()).isNotNull();
+        assertThat(summary.healthLabel()).isNotNull();
+        assertThat(summary.healthBreakdown()).isNotEmpty();
+        assertThat(summary.healthScoreTransactionCount()).isEqualTo(10);
+    }
+
+    @Test
     void summarize_fallsBackSafely_whenTheStoredTimezoneIsMalformed() {
         // UserSettingsService.update() now rejects a malformed timezone up front, but this proves
         // the read-time fallback here is a real backstop, not just a comment -- a row that already
