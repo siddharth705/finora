@@ -7,6 +7,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import logoMark from '../assets/logo-mark.png';
 import { PasswordInput } from '../components/PasswordInput';
+import { GoogleSignInButton } from '../components/GoogleSignInButton';
 
 const FEATURES = [
   { icon: ShieldCheck, iconBg: 'bg-blue-100', iconColor: 'text-blue-600', title: 'Secure & Private', desc: 'Your data is encrypted and bank-level secure.' },
@@ -64,7 +65,7 @@ const FULL_NAME_PATTERN = /^[\p{L}][\p{L}\s.'-]{0,98}[\p{L}]$/u;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function Register() {
-  const { register } = useAuth();
+  const { register, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -127,6 +128,26 @@ export default function Register() {
     } catch (err: any) {
       setError(err.response?.data?.message ?? 'Registration failed.');
       setShowContinueLogin(err.response?.status === 409);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Same account-status gate login()/register() go through (AuthService.enforceAccountIsSignable)
+  // answers every status failure -- suspended, deactivated, pending-deletion -- as 403, which is
+  // exactly the "this email already belongs to an account, go sign in instead" situation
+  // showContinueLogin's existing link already covers; reused here rather than building a second
+  // reactivation flow into this page (Login.tsx already has one).
+  async function handleGoogleCredential(idToken: string) {
+    setError(null);
+    setShowContinueLogin(false);
+    setLoading(true);
+    try {
+      const phoneVerified = await loginWithGoogle(idToken);
+      void navigate(phoneVerified ? '/app' : '/verify-phone');
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? 'Google sign-in failed.');
+      setShowContinueLogin(err.response?.status === 403);
     } finally {
       setLoading(false);
     }
@@ -364,6 +385,14 @@ export default function Register() {
             {loading ? 'Creating account…' : 'Create account'}
             {!loading && <ArrowRight size={15} />}
           </button>
+
+          <div className="flex items-center gap-3 my-5">
+            <div className="flex-1 h-px bg-border" />
+            <span className="text-xs text-muted">OR</span>
+            <div className="flex-1 h-px bg-border" />
+          </div>
+
+          <GoogleSignInButton text="signup_with" onCredential={handleGoogleCredential} onError={setError} />
 
           <p className="text-sm mt-4 text-center text-muted">
             Already have an account? <Link to="/login" className="text-primary font-medium">Sign in</Link>

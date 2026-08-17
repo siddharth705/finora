@@ -237,9 +237,11 @@ class RateLimitFilterTest {
         String[] mustBeLimited = {
                 "/api/v1/auth/login",
                 "/api/v1/auth/register",
+                "/api/v1/auth/google",
                 "/api/v1/auth/forgot-password",
                 "/api/v1/auth/reset-password",
                 "/api/v1/auth/reset-password/phone",
+                "/api/v1/auth/verify-email",
                 "/api/v1/import/csv/stage",
                 "/api/v1/import/pdf/stage",
                 "/api/v1/import/jobs",
@@ -374,7 +376,9 @@ class RateLimitFilterTest {
                 Map.entry("app.rate-limit.reset-password.max", DEFAULT_RESET_PASSWORD_MAX),
                 Map.entry("app.rate-limit.reset-password.window-seconds", DEFAULT_RESET_PASSWORD_WINDOW),
                 Map.entry("app.rate-limit.data-export.max", DEFAULT_DATA_EXPORT_MAX),
-                Map.entry("app.rate-limit.data-export.window-seconds", DEFAULT_DATA_EXPORT_WINDOW));
+                Map.entry("app.rate-limit.data-export.window-seconds", DEFAULT_DATA_EXPORT_WINDOW),
+                Map.entry("app.rate-limit.google.max", DEFAULT_GOOGLE_MAX),
+                Map.entry("app.rate-limit.google.window-seconds", DEFAULT_GOOGLE_WINDOW));
 
         Constructor<?> springConstructor = Arrays.stream(RateLimitFilter.class.getDeclaredConstructors())
                 .filter(c -> c.getParameterCount() > 2)

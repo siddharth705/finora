@@ -18,6 +18,12 @@ interface ImportMetaEnv {
   // an error, which is what keeps local dev and the test suite free of network calls. See
   // lib/monitoring.ts.
   readonly VITE_SENTRY_DSN?: string;
+  // Optional, same "unconfigured is supported" reasoning -- unset hides the Google button
+  // entirely (GoogleSignInButton.tsx) rather than rendering one that can't work. This is Google's
+  // OAuth client ID for the web app (D-23), a public value safe to ship client-side, and a
+  // separate registration from the Gmail-sync integration's own client id (server-side only,
+  // never exposed here).
+  readonly VITE_GOOGLE_LOGIN_CLIENT_ID?: string;
 }
 
 interface ImportMeta {
