@@ -50,6 +50,9 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
       'Spend Consistency': 50,
       'Cash Flow Stability': 80,
     },
+    healthScoreAvailable: true,
+    healthScoreTransactionCount: 12,
+    healthScoreMinTransactions: 10,
     spendByCategory: {},
     notifications: [],
     reportingMonth: '2026-08',
@@ -130,6 +133,25 @@ describe('Dashboard — Financial Health Score', () => {
 
     expect(await screen.findByText('28')).toBeInTheDocument();
     expect(screen.getByText('Needs Attention')).toBeInTheDocument();
+  });
+
+  it("D-25 PR3-A: shows a 'Getting Started' progress state instead of a score below the transaction floor", async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      healthScore: null, healthLabel: null, healthBreakdown: {},
+      healthScoreAvailable: false, healthScoreTransactionCount: 7, healthScoreMinTransactions: 10,
+    }));
+    renderDashboard();
+
+    const heading = await screen.findByText('Financial Health Score');
+    const card = within(heading.closest('div.bg-card') as HTMLElement);
+    expect(card.getByText('Getting Started')).toBeInTheDocument();
+    expect(card.getByText('7 / 10 transactions')).toBeInTheDocument();
+    expect(card.getByText('70%')).toBeInTheDocument();
+    // Not a real score or breakdown -- rendering either here would be the exact harsh-first-
+    // impression bug this state exists to avoid. Scoped to the card itself: "Savings Rate" is
+    // also a KPI tile label elsewhere on the page, same reason the breakdown test above scopes.
+    expect(card.queryByText('out of 100')).not.toBeInTheDocument();
+    expect(card.queryByText('Savings Rate')).not.toBeInTheDocument();
   });
 });
 

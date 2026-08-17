@@ -243,7 +243,12 @@ export default function Dashboard() {
           (score, label, a 5-component breakdown), sent to the frontend on every load; nothing
           rendered it until now. D-19 Step 1. Hidden entirely while isEmpty -- a score computed
           from zero transactions has nothing real behind it, same reasoning Subscriptions &
-          Recurring below already applies to itself. */}
+          Recurring below already applies to itself. D-25 PR3-A: below isEmpty is not the whole
+          gap -- a handful of transactions can still score under 40 ("Needs Attention") by
+          construction, a harsh first impression over incomplete data rather than a true reading.
+          healthScoreAvailable (a real transaction-count floor, not just isEmpty) covers the
+          thin-but-not-zero range isEmpty never did, showing onboarding progress instead of a
+          number. */}
       {!isEmpty && (
       <FinoraCard padding="lg" className="mb-6">
         <div className="flex items-center gap-2 mb-4">
@@ -252,29 +257,55 @@ export default function Dashboard() {
           </div>
           <h2 className="font-semibold text-ink">Financial Health Score</h2>
         </div>
-        <div className="grid md:grid-cols-[auto_1fr] gap-6 items-center">
-          <div className="text-center md:text-left">
-            <p className={`text-4xl font-bold ${healthColor(summary.healthLabel)}`}>{summary.healthScore}</p>
-            <p className="text-xs text-muted">out of 100</p>
-            <p className={`text-sm font-medium mt-1 ${healthColor(summary.healthLabel)}`}>{summary.healthLabel}</p>
+        {summary.healthScoreAvailable ? (
+          <div className="grid md:grid-cols-[auto_1fr] gap-6 items-center">
+            <div className="text-center md:text-left">
+              <p className={`text-4xl font-bold ${healthColor(summary.healthLabel!)}`}>{summary.healthScore}</p>
+              <p className="text-xs text-muted">out of 100</p>
+              <p className={`text-sm font-medium mt-1 ${healthColor(summary.healthLabel!)}`}>{summary.healthLabel}</p>
+            </div>
+            <div className="space-y-2.5">
+              {Object.entries(summary.healthBreakdown).map(([name, score]) => (
+                <div key={name}>
+                  <div className="flex justify-between items-baseline mb-1">
+                    <span className="text-xs text-ink">{name}</span>
+                    <span className="text-xs text-muted">{Math.round(score)}%</span>
+                  </div>
+                  <div className="h-1.5 bg-bg rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${healthBarColor(summary.healthLabel!)}`}
+                      style={{ width: `${Math.max(0, Math.min(100, score))}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
-          <div className="space-y-2.5">
-            {Object.entries(summary.healthBreakdown).map(([name, score]) => (
-              <div key={name}>
-                <div className="flex justify-between items-baseline mb-1">
-                  <span className="text-xs text-ink">{name}</span>
-                  <span className="text-xs text-muted">{Math.round(score)}%</span>
-                </div>
-                <div className="h-1.5 bg-bg rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full ${healthBarColor(summary.healthLabel)}`}
-                    style={{ width: `${Math.max(0, Math.min(100, score))}%` }}
-                  />
-                </div>
+        ) : (
+          <div className="flex flex-col items-center text-center py-4 px-2">
+            <div className="w-12 h-12 rounded-full bg-primary-light flex items-center justify-center mb-3">
+              <ShieldCheck size={22} className="text-primary" />
+            </div>
+            <p className="text-sm font-semibold text-ink mb-1">Getting Started</p>
+            <p className="text-xs text-muted mb-4 max-w-[240px]">
+              Import more transactions to unlock your Financial Health Score.
+            </p>
+            <div className="w-full max-w-[240px]">
+              <div className="flex justify-between text-xs text-muted mb-1.5">
+                <span>{summary.healthScoreTransactionCount} / {summary.healthScoreMinTransactions} transactions</span>
+                <span>
+                  {Math.round(Math.min(100, (summary.healthScoreTransactionCount / summary.healthScoreMinTransactions) * 100))}%
+                </span>
               </div>
-            ))}
+              <div className="h-1.5 bg-bg rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary rounded-full"
+                  style={{ width: `${Math.min(100, (summary.healthScoreTransactionCount / summary.healthScoreMinTransactions) * 100)}%` }}
+                />
+              </div>
+            </div>
           </div>
-        </div>
+        )}
       </FinoraCard>
       )}
 
