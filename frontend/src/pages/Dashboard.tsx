@@ -13,6 +13,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { BankLogo } from '../components/BankLogo';
 import { AddTransactionModal } from '../components/AddTransactionModal';
+import { FinancialJourney } from '../components/FinancialJourney';
 import { FinoraCard, MetricCard, EmptyState, SectionHeader, QuickActionCard, ChartContainer, Badge, baseChartOptions } from '../design-system';
 import {
   dashboardApi, accountsApi, transactionsApi, goalsApi, insightsApi, userApi, budgetsApi, reportsApi, recurringApi,
@@ -308,6 +309,11 @@ export default function Dashboard() {
         )}
       </FinoraCard>
       )}
+
+      {/* D-25 PR3-C. Deliberately NOT gated on isEmpty like Health Score above -- ACCOUNT_CREATED
+          is already true the moment a user signs up, so a brand-new account is exactly the case
+          this is most useful for. */}
+      <FinancialJourney />
 
       {/* Cash flow + Spending breakdown */}
       <div className="grid lg:grid-cols-[1.6fr_1fr] gap-6 mb-6">
