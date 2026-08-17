@@ -656,6 +656,12 @@ export interface UserSettings {
   // Null until the account's password has been changed at least once -- never a guessed
   // fallback date (see the backend User.passwordChangedAt's own doc comment).
   passwordChangedAt: string | null;
+  // 'PASSWORD' or 'GOOGLE' -- see the backend User.signInMethod's own doc comment. A 'GOOGLE'
+  // account's passwordHash is a random value nobody, including the user, ever knows, so every
+  // "re-enter your current password" modal (ChangePasswordModal, DeleteAccountModal,
+  // DeactivateAccountModal, ExportDataModal) reads this to decide whether to render a password
+  // field or a GoogleSignInButton instead.
+  signInMethod: 'PASSWORD' | 'GOOGLE';
 }
 export const userApi = {
   get: () => api.get<UserSettings>('/users/me').then((r) => r.data),
@@ -672,9 +678,12 @@ export const userApi = {
 // returns the real phone number to hand to Firebase directly; verifyOtp() sends the resulting ID
 // token, never a code.
 export const passwordChangeApi = {
-  start: (currentPassword: string) =>
+  // Exactly one of the two is required -- currentPassword for an ordinary account, googleIdToken
+  // (a fresh Google Identity Services credential) for one created via Sign in with Google. See
+  // the backend's GoogleReauthVerifier, which is what actually enforces that.
+  start: (currentPassword: string | null, googleIdToken: string | null) =>
     api.post<{ sessionId: string; phoneNumber: string; maskedPhone: string }>(
-      '/users/me/password-change/start', { currentPassword }
+      '/users/me/password-change/start', { currentPassword, googleIdToken }
     ).then((r) => r.data),
   verifyOtp: (sessionId: string, firebaseIdToken: string) =>
     api.post<{ message: string }>(
@@ -718,8 +727,10 @@ export const phoneChangeApi = {
 // The self-service account lifecycle -- see UserAccountLifecycleService on the backend for
 // deactivate (today) and delete-request/purge (Phase B, to follow).
 export const accountLifecycleApi = {
-  deactivate: (currentPassword: string, reason: string, note?: string) =>
-    api.post<{ message: string }>('/users/me/account/deactivate', { currentPassword, reason, note }).then((r) => r.data),
+  // Exactly one of currentPassword/googleIdToken is required -- see passwordChangeApi.start's
+  // identical shape and the backend's GoogleReauthVerifier.
+  deactivate: (currentPassword: string | null, googleIdToken: string | null, reason: string, note?: string) =>
+    api.post<{ message: string }>('/users/me/account/deactivate', { currentPassword, googleIdToken, reason, note }).then((r) => r.data),
   // sessionId proves current-password+OTP -- see PasswordChangeService.consumeForAccountDeletion,
   // reused via the same DELETION_CONFIRMED-gated session DeleteAccountModal builds up through
   // passwordChangeApi.start/verifyOtp.
@@ -731,9 +742,9 @@ export const accountLifecycleApi = {
   // rather than being read back out of Content-Disposition -- nothing else in this codebase parses
   // that header either (statementImportsApi.downloadFile above takes its filename from the caller
   // instead), and the two dates can only disagree by the moment the request straddles midnight.
-  exportData: async (currentPassword: string) => {
+  exportData: async (currentPassword: string | null, googleIdToken: string | null) => {
     try {
-      const res = await api.post('/users/me/data-export', { currentPassword }, { responseType: 'blob' });
+      const res = await api.post('/users/me/data-export', { currentPassword, googleIdToken }, { responseType: 'blob' });
       downloadBlob(res.data as Blob, `finora-data-export-${new Date().toISOString().slice(0, 10)}.zip`);
     } catch (err) {
       // responseType: 'blob' applies to error responses too -- see withBlobErrorMessage's own doc

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
 import { accountLifecycleApi } from '../api/endpoints';
+import { GoogleReauthPrompt } from './GoogleReauthPrompt';
 
 /**
  * "Download My Data" (Phase C) -- current password only, same re-auth tier as
@@ -13,23 +14,33 @@ import { accountLifecycleApi } from '../api/endpoints';
  * accountLifecycleApi.exportData() triggers the browser download itself on success, so there is
  * no separate success step here; the modal just closes.
  */
-export function ExportDataModal({ onClose }: { onClose: () => void }) {
+export function ExportDataModal({ onClose, signInMethod }: {
+  onClose: () => void;
+  signInMethod: 'PASSWORD' | 'GOOGLE';
+}) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (currentPassword.length === 0) { setError('Enter your current password.'); return; }
+  // Shared by both re-auth paths -- see ChangePasswordModal's identical startWithCredential,
+  // including its identical reasoning for the submitting guard below.
+  async function submitWithCredential(currentPasswordArg: string | null, googleIdToken: string | null) {
+    if (submitting) return;
     setSubmitting(true);
     setError(null);
     try {
-      await accountLifecycleApi.exportData(currentPassword);
+      await accountLifecycleApi.exportData(currentPasswordArg, googleIdToken);
       onClose();
     } catch (err: any) {
       setError(err.response?.data?.message ?? 'Could not prepare your export. Please try again.');
       setSubmitting(false);
     }
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (currentPassword.length === 0) { setError('Enter your current password.'); return; }
+    void submitWithCredential(currentPassword, null);
   }
 
   return (
@@ -46,22 +57,34 @@ export function ExportDataModal({ onClose }: { onClose: () => void }) {
           <p className="text-xs text-muted">
             Downloads a ZIP of everything in your account — accounts, transactions, budgets,
             goals, and your original bank statement files — along with a manifest explaining
-            exactly what's included. Enter your current password to confirm.
+            exactly what's included.
+            {signInMethod === 'PASSWORD' ? ' Enter your current password to confirm.' : ' Verify with Google to confirm.'}
           </p>
-          <div>
-            <label htmlFor="export-current-password" className="block text-xs uppercase text-muted mb-1">
-              Current password
-            </label>
-            <input
-              id="export-current-password"
-              type="password"
-              autoComplete="current-password"
-              value={currentPassword}
-              onChange={(e) => { setCurrentPassword(e.target.value); setError(null); }}
-              disabled={submitting}
-              className="bg-card text-ink w-full border border-border rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+
+          {signInMethod === 'PASSWORD' && (
+            <div>
+              <label htmlFor="export-current-password" className="block text-xs uppercase text-muted mb-1">
+                Current password
+              </label>
+              <input
+                id="export-current-password"
+                type="password"
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={(e) => { setCurrentPassword(e.target.value); setError(null); }}
+                disabled={submitting}
+                className="bg-card text-ink w-full border border-border rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+              />
+            </div>
+          )}
+
+          {signInMethod === 'GOOGLE' && (
+            <GoogleReauthPrompt
+              onCredential={(idToken) => submitWithCredential(null, idToken)}
+              onError={setError}
             />
-          </div>
+          )}
+
           {error && <p className="text-danger text-xs">{error}</p>}
           <div className="flex justify-end gap-2 pt-2">
             <button
@@ -72,13 +95,15 @@ export function ExportDataModal({ onClose }: { onClose: () => void }) {
             >
               Cancel
             </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
-            >
-              {submitting ? 'Preparing your export…' : 'Export My Data'}
-            </button>
+            {signInMethod === 'PASSWORD' && (
+              <button
+                type="submit"
+                disabled={submitting}
+                className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
+              >
+                {submitting ? 'Preparing your export…' : 'Export My Data'}
+              </button>
+            )}
           </div>
         </form>
       </div>

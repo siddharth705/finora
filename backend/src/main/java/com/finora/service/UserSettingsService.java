@@ -71,6 +71,7 @@ public class UserSettingsService {
 
     private UserSettingsDto toDto(User u) {
         return new UserSettingsDto(u.getEmail(), u.getFullName(), u.getLowBalanceThreshold(), u.getTheme(),
-                u.getTimezone(), u.getPhoneNumber(), u.isPhoneVerified(), u.getCreatedAt(), u.getPasswordChangedAt());
+                u.getTimezone(), u.getPhoneNumber(), u.isPhoneVerified(), u.getCreatedAt(), u.getPasswordChangedAt(),
+                u.getSignInMethod());
     }
 }

@@ -149,7 +149,7 @@ public class UserController {
      *  local session immediately after this succeeds (there is nothing left to be signed in to). */
     @PostMapping("/account/deactivate")
     public ApiResponse<DeactivateResponse> deactivate(@Valid @RequestBody DeactivateRequest request) {
-        accountLifecycleService.deactivate(currentUser.id(), request.currentPassword(), request.reason(), request.note());
+        accountLifecycleService.deactivate(currentUser.id(), request.currentPassword(), request.googleIdToken(), request.reason(), request.note());
         return ApiResponse.ok(new DeactivateResponse(
                 "Your account has been deactivated. Sign in again any time to reactivate it."));
     }
@@ -185,7 +185,7 @@ public class UserController {
     @PostMapping("/data-export")
     public ResponseEntity<StreamingResponseBody> exportData(@Valid @RequestBody ExportDataRequest request) {
         UUID userId = currentUser.id();
-        DataExportService.ExportBundle bundle = dataExportService.buildBundle(userId, request.currentPassword());
+        DataExportService.ExportBundle bundle = dataExportService.buildBundle(userId, request.currentPassword(), request.googleIdToken());
         auditService.record(userId, "DATA_EXPORT_REQUESTED", "User", userId, Map.of());
 
         String fileName = "finora-data-export-" + LocalDate.now() + ".zip";

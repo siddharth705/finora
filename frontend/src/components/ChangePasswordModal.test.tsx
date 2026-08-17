@@ -17,8 +17,8 @@ vi.mock('../lib/phoneAuth', () => ({
 
 const FAKE_CONFIRMATION = { confirm: vi.fn() } as any;
 
-function renderModal(onClose = vi.fn(), onSuccess = vi.fn()) {
-  return { onClose, onSuccess, ...render(<ChangePasswordModal onClose={onClose} onSuccess={onSuccess} />) };
+function renderModal(onClose = vi.fn(), onSuccess = vi.fn(), signInMethod: 'PASSWORD' | 'GOOGLE' = 'PASSWORD') {
+  return { onClose, onSuccess, ...render(<ChangePasswordModal onClose={onClose} onSuccess={onSuccess} signInMethod={signInMethod} />) };
 }
 
 async function advanceToOtpStep(user: ReturnType<typeof userEvent.setup>) {
@@ -67,7 +67,7 @@ describe('ChangePasswordModal', () => {
 
       await advanceToOtpStep(user);
 
-      expect(passwordChangeApi.start).toHaveBeenCalledWith('OldPass123!');
+      expect(passwordChangeApi.start).toHaveBeenCalledWith('OldPass123!', null);
       expect(sendPhoneVerificationCode).toHaveBeenCalledWith('+919876543705', expect.any(String));
       expect(screen.getByText(/\+•••••••••705/)).toBeInTheDocument();
     });
