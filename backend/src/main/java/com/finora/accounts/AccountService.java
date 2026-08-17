@@ -1,10 +1,10 @@
 package com.finora.accounts;
 
 import com.finora.entity.Account;
-import com.finora.entity.StatementImport;
 import com.finora.exception.ApiException;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.StatementImportRepository;
+import com.finora.repository.StatementImportRepository.StatementMetadata;
 import com.finora.repository.TransactionRepository;
 import com.finora.security.OwnershipGuard;
 import com.finora.service.AuditService;
@@ -44,10 +44,13 @@ public class AccountService {
 
         // One query for every import this user has ever made -- used for both "last imported" /
         // "statement period" (latest per account) and "N statements" (count per account),
-        // avoiding an N+1 query (one per account) for either.
-        Map<UUID, StatementImport> latestImportByAccount = new HashMap<>();
+        // avoiding an N+1 query (one per account) for either. Metadata projection, not the
+        // entity-returning finder: see StatementImportRepository.StatementMetadata's own doc
+        // comment for why this method in particular (called on every account-list page view) was
+        // the hottest of the six callers found still loading fileContent eagerly through it.
+        Map<UUID, StatementMetadata> latestImportByAccount = new HashMap<>();
         Map<UUID, Integer> statementsCountByAccount = new HashMap<>();
-        for (StatementImport imp : statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)) {
+        for (StatementMetadata imp : statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)) {
             latestImportByAccount.putIfAbsent(imp.getAccountId(), imp);
             statementsCountByAccount.merge(imp.getAccountId(), 1, Integer::sum);
         }
@@ -61,9 +64,15 @@ public class AccountService {
                         TransactionRepository.AccountTransactionCount::getCount));
 
         return accounts.stream()
-                .map(a -> AccountDto.from(a, bankManagementService.resolve(a.getBankId()), latestImportByAccount.get(a.getId()),
-                        statementsCountByAccount.getOrDefault(a.getId(), 0),
-                        transactionsCountByAccount.getOrDefault(a.getId(), 0L)))
+                .map(a -> {
+                    StatementMetadata latestImport = latestImportByAccount.get(a.getId());
+                    return AccountDto.from(a, bankManagementService.resolve(a.getBankId()),
+                            latestImport == null ? null : latestImport.getImportedAt(),
+                            latestImport == null ? null : latestImport.getStatementPeriodStart(),
+                            latestImport == null ? null : latestImport.getStatementPeriodEnd(),
+                            statementsCountByAccount.getOrDefault(a.getId(), 0),
+                            transactionsCountByAccount.getOrDefault(a.getId(), 0L));
+                })
                 .toList();
     }
 

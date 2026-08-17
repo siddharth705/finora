@@ -1,7 +1,6 @@
 package com.finora.service;
 
 import com.finora.entity.Relationship;
-import com.finora.entity.StatementImport;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.goals.GoalRepository;
@@ -98,7 +97,8 @@ class AccountPurgeSweepServiceTest {
         // statements) never NPE in a test that isn't specifically exercising them.
         when(relationshipRepository.findByUserId(any())).thenReturn(List.<Relationship>of());
         when(accountRepository.findByUserIdIncludingDeleted(any())).thenReturn(List.of());
-        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(any())).thenReturn(List.<StatementImport>of());
+        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(any()))
+                .thenReturn(List.<StatementImportRepository.StatementMetadata>of());
 
         transactionTemplate = mock(TransactionTemplate.class);
         // Runs the real lambda passed to executeWithoutResult -- without this, none of the
@@ -153,13 +153,24 @@ class AccountPurgeSweepServiceTest {
         when(userRepository.findById(userId)).thenReturn(java.util.Optional.of(user));
     }
 
+    private StatementImportRepository.StatementMetadata statementMetadata(UUID id) {
+        StatementImportRepository.StatementMetadata m = mock(StatementImportRepository.StatementMetadata.class);
+        when(m.getId()).thenReturn(id);
+        return m;
+    }
+
     @Test
     void sweep_purgesAnEligibleAccount_gmailDisconnectBeforeBulkDeleteBeforeStatementsBeforeFinalAnonymizeWrite() {
         User user = pendingDeletionUser();
         stubOneCandidate(user);
-        StatementImport statement = new StatementImport();
-        ReflectionTestUtils.setField(statement, "id", UUID.randomUUID());
-        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of(statement));
+        // Captured before the mock is built, not read off it via statement.getId() below: that
+        // call would invoke a method on a DIFFERENT mock while inOrder.verify(statementImportService)
+        // is mid-setup for its own next call, which corrupts Mockito's ongoing-stubbing/verification
+        // tracking (UnfinishedStubbingException) -- the original entity-based version of this test
+        // never hit this because a plain StatementImport POJO's getId() wasn't a mock invocation.
+        UUID statementId = UUID.randomUUID();
+        StatementImportRepository.StatementMetadata statement = statementMetadata(statementId);
+        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of(statement));
 
         AccountPurgeSweepService.Result result = service.sweep();
 
@@ -169,7 +180,7 @@ class AccountPurgeSweepServiceTest {
         InOrder inOrder = inOrder(gmailConnectionService, transactionRepository, statementImportService, userRepository);
         inOrder.verify(gmailConnectionService).disconnect(userId);
         inOrder.verify(transactionRepository).hardDeleteByUserId(userId);
-        inOrder.verify(statementImportService).delete(userId, statement.getId());
+        inOrder.verify(statementImportService).delete(userId, statementId);
         inOrder.verify(userRepository).save(argThat(u -> User.STATUS_DELETED.equals(u.getStatus())));
 
         assertThat(user.getStatus()).isEqualTo(User.STATUS_DELETED);
@@ -308,19 +319,25 @@ class AccountPurgeSweepServiceTest {
     void sweep_oneFailedStatementPurge_attemptsEveryStatement_butDoesNotFinalizeTheUser() {
         User user = pendingDeletionUser();
         stubOneCandidate(user);
-        StatementImport ok = new StatementImport();
-        ReflectionTestUtils.setField(ok, "id", UUID.randomUUID());
-        StatementImport failing = new StatementImport();
-        ReflectionTestUtils.setField(failing, "id", UUID.randomUUID());
-        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of(failing, ok));
-        doThrow(new RuntimeException("boom")).when(statementImportService).delete(userId, failing.getId());
+        // ids captured before the mocks are built, not read off them via .getId() below: that
+        // would invoke a method on one mock while doThrow(...).when(statementImportService)/
+        // verify(statementImportService) is mid-setup for its own next call on a DIFFERENT mock,
+        // which corrupts Mockito's ongoing-stubbing/verification tracking
+        // (UnfinishedStubbingException) -- the original entity-based version of this test never
+        // hit this because a plain StatementImport POJO's getId() wasn't a mock invocation.
+        UUID okId = UUID.randomUUID();
+        UUID failingId = UUID.randomUUID();
+        StatementImportRepository.StatementMetadata ok = statementMetadata(okId);
+        StatementImportRepository.StatementMetadata failing = statementMetadata(failingId);
+        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of(failing, ok));
+        doThrow(new RuntimeException("boom")).when(statementImportService).delete(userId, failingId);
 
         AccountPurgeSweepService.Result result = service.sweep();
 
         assertThat(result.purged()).isZero();
         assertThat(result.failed()).isEqualTo(1);
         // Best-effort: the OTHER statement was still attempted despite the earlier one failing.
-        verify(statementImportService).delete(userId, ok.getId());
+        verify(statementImportService).delete(userId, okId);
         // Not finalized -- left exactly where the next sweep's PENDING_DELETION discovery query
         // will find it again, so the failed statement gets retried rather than stranded forever.
         assertThat(user.getStatus()).isEqualTo(User.STATUS_PENDING_DELETION);

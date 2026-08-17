@@ -2,7 +2,6 @@ package com.finora.imports;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finora.dto.ImportDto.UnparseableRow;
-import com.finora.entity.StatementImport;
 import com.finora.repository.StatementImportRepository;
 import org.junit.jupiter.api.Test;
 
@@ -11,6 +10,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class CapabilityCoverageServiceTest {
 
@@ -18,11 +18,11 @@ class CapabilityCoverageServiceTest {
     private final CapabilityCoverageService service =
             new CapabilityCoverageService(mock(StatementImportRepository.class), objectMapper);
 
-    private StatementImport importWith(String capabilitiesJson, String unparseableJson) {
-        StatementImport si = new StatementImport();
-        si.setActivatedCapabilitiesJson(capabilitiesJson);
-        si.setUnparseableSummaryJson(unparseableJson);
-        return si;
+    private StatementImportRepository.CapabilityData importWith(String capabilitiesJson, String unparseableJson) {
+        StatementImportRepository.CapabilityData d = mock(StatementImportRepository.CapabilityData.class);
+        when(d.getActivatedCapabilitiesJson()).thenReturn(capabilitiesJson);
+        when(d.getUnparseableSummaryJson()).thenReturn(unparseableJson);
+        return d;
     }
 
     private String capabilities(String... names) {

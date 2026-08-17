@@ -3,13 +3,13 @@ package com.finora.service;
 import com.finora.dto.AnalyticsDto;
 import com.finora.entity.MerchantCategoryLearning;
 import com.finora.entity.MerchantLearningAudit;
-import com.finora.entity.StatementImport;
 import com.finora.entity.Transaction;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.MerchantCategoryLearningRepository;
 import com.finora.repository.MerchantLearningAuditRepository;
 import com.finora.repository.MerchantRepository;
 import com.finora.repository.StatementImportRepository;
+import com.finora.repository.StatementImportRepository.StatementMetadata;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.util.UserZone;
@@ -195,9 +195,12 @@ public class AnalyticsService {
     /** Aggregated over StatementImport -- no new table. lastImportedAt is null for a user who's
      *  never imported anything, not epoch-zero or some other silent stand-in. */
     public AnalyticsDto.ImportStatistics importStatistics(UUID userId) {
-        List<StatementImport> imports = statementImportRepository.findByUserIdOrderByImportedAtDesc(userId);
-        int totalTransactionsImported = imports.stream().mapToInt(StatementImport::getTransactionsImported).sum();
-        int totalTransactionsSkipped = imports.stream().mapToInt(StatementImport::getTransactionsSkipped).sum();
+        // Metadata projection, not the entity-returning finder: see
+        // StatementImportRepository.StatementMetadata's own doc comment for the rest of that
+        // finder's removal.
+        List<StatementMetadata> imports = statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId);
+        int totalTransactionsImported = imports.stream().mapToInt(StatementMetadata::getTransactionsImported).sum();
+        int totalTransactionsSkipped = imports.stream().mapToInt(StatementMetadata::getTransactionsSkipped).sum();
         var lastImportedAt = imports.isEmpty() ? null : imports.get(0).getImportedAt(); // already ordered desc
         return new AnalyticsDto.ImportStatistics(imports.size(), totalTransactionsImported, totalTransactionsSkipped, lastImportedAt);
     }

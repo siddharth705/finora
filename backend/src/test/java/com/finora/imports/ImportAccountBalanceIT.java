@@ -4,7 +4,6 @@ import com.finora.AbstractIntegrationTest;
 import com.finora.dto.ImportDto.ConfirmRequest;
 import com.finora.dto.ImportDto.ConfirmedRow;
 import com.finora.entity.Account;
-import com.finora.entity.StatementImport;
 import com.finora.entity.User;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.StatementImportRepository;
@@ -197,8 +196,8 @@ class ImportAccountBalanceIT extends AbstractIntegrationTest {
                 row("SALARY", "500.00", "INCOME"));
         assertThat(balanceOf(f)).isEqualByComparingTo("1455.00");
 
-        List<StatementImport> imports =
-                statementImportRepository.findByUserIdOrderByImportedAtDesc(f.user().getId());
+        List<StatementImportRepository.StatementMetadata> imports =
+                statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(f.user().getId());
         assertThat(imports).hasSize(1);
         statementImportService.delete(f.user().getId(), imports.get(0).getId());
 
@@ -218,8 +217,8 @@ class ImportAccountBalanceIT extends AbstractIntegrationTest {
                 row("SALARY", "500.00", "INCOME"));
         assertThat(balanceOf(f)).isEqualByComparingTo("1455.00");
 
-        List<StatementImport> imports =
-                statementImportRepository.findByUserIdOrderByImportedAtDesc(f.user().getId());
+        List<StatementImportRepository.StatementMetadata> imports =
+                statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(f.user().getId());
         statementImportService.delete(f.user().getId(), imports.get(0).getId());
 
         assertThat(balanceOf(f))

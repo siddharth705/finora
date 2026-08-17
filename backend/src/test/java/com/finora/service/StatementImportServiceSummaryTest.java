@@ -67,6 +67,16 @@ class StatementImportServiceSummaryTest {
         return s;
     }
 
+    /** listGroupedByAccount() reads the fileContent-free projection, not the entity -- see
+     *  StatementImportRepository.StatementMetadata's own doc comment. */
+    private StatementImportRepository.StatementMetadata statementMetadata(UUID id, UUID accountId) {
+        StatementImportRepository.StatementMetadata m = mock(StatementImportRepository.StatementMetadata.class);
+        when(m.getId()).thenReturn(id);
+        when(m.getAccountId()).thenReturn(accountId);
+        when(m.getFileName()).thenReturn("statement.csv");
+        return m;
+    }
+
     private Transaction transaction(Transaction.ReconciliationStatus status) {
         Transaction t = new Transaction();
         ReflectionTestUtils.setField(t, "id", UUID.randomUUID());
@@ -116,8 +126,14 @@ class StatementImportServiceSummaryTest {
         account.setAccountType(Account.Type.SAVINGS);
         when(accountRepository.findByUserIdIncludingDeleted(userId)).thenReturn(List.of(account));
 
-        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)).thenReturn(
-                List.of(statement(statementAId, accountId), statement(statementBId, accountId)));
+        // Built as separate statements, not inline inside the when(...).thenReturn(...) call
+        // below -- each statementMetadata(...) call does its own when(...).thenReturn(...)
+        // internally, and Mockito's stubbing-in-progress state doesn't nest: calling when() again
+        // before an outer when(...) has received its thenReturn(...) throws
+        // UnfinishedStubbingException.
+        var metaA = statementMetadata(statementAId, accountId);
+        var metaB = statementMetadata(statementBId, accountId);
+        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of(metaA, metaB));
 
         StatementImportDuplicateCount rowA = mock(StatementImportDuplicateCount.class);
         when(rowA.getStatementImportId()).thenReturn(statementAId);
