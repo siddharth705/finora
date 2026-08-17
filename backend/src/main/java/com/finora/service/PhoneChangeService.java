@@ -83,9 +83,10 @@ public class PhoneChangeService {
         boolean hasNoNumberYet = user.getPhoneNumber() == null || user.getPhoneNumber().isBlank();
 
         String newPhoneNumber = PhoneNumbers.normalize(request.newPhoneNumber());
-        // Only a real "nothing to change" case when there's something to compare against --
-        // a first-time number can never already be "the same as nothing."
-        if (!hasNoNumberYet && PhoneNumbers.sameNumber(newPhoneNumber, user.getPhoneNumber())) {
+        // No separate hasNoNumberYet check needed here: PhoneNumbers.sameNumber() already returns
+        // false whenever either side is null or blank (see its own doc comment), so a first-time
+        // number is never mistaken for "the same as" a phone number that doesn't exist yet.
+        if (PhoneNumbers.sameNumber(newPhoneNumber, user.getPhoneNumber())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "That's already the number on your account.");
         }
         if (userRepository.existsByPhoneNumberAndAccountScope(newPhoneNumber, user.getAccountScope())) {

@@ -252,6 +252,21 @@ describe('VerifyPhone', () => {
       await waitFor(() => expect(sendPhoneVerificationCode).toHaveBeenCalledWith('+919888888888', expect.any(String)));
       expect(await screen.findByText(/\+•••••••••888/)).toBeInTheDocument();
     });
+
+    it('retrying via "Didn\'t get a code? Change number" still shows the no-number state, not the ordinary Change Number one', async () => {
+      const user = userEvent.setup();
+      renderVerifyPhone();
+      await screen.findByText('Add your phone number');
+      await user.type(screen.getByPlaceholderText('XXXXXXXXXX'), '9888888888');
+      await user.click(screen.getByRole('button', { name: /send code/i }));
+      await screen.findByText(/\+•••••••••888/);
+
+      await user.click(screen.getByRole('button', { name: /didn't get a code\? change number/i }));
+
+      expect(await screen.findByText('Add your phone number')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^back$/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /log out and try again later/i })).toBeInTheDocument();
+    });
   });
 
   describe('Change Number', () => {

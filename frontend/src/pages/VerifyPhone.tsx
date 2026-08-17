@@ -182,10 +182,12 @@ export default function VerifyPhone() {
 
   function startChangingNumber() {
     setMode('enterNewNumber');
-    // Explicit, not just "already false": this is the ordinary escape-hatch entry into this
-    // form (a wrong/unreachable existing number), not the auto-redirect for an account with none
-    // at all -- see numberMissing's own doc comment.
-    setNumberMissing(false);
+    // Deliberately does NOT touch numberMissing: this is also the handler for confirmNewNumber's
+    // own "Didn't get a code? Change number" retry link, which is reachable from EITHER the
+    // ordinary escape-hatch entry (numberMissing already false, nothing to do) or the Google
+    // Sign-In first-time-set flow (numberMissing already true -- and must stay true, or the form
+    // wrongly claims a prior number exists and offers a "Back" button into a `verify` state that
+    // was never actually reached, a dead end with no sendError-gated escape hatch to show).
     setNewLocalNumber('');
     setNewNumberTouched(false);
     setChangeError(null);
