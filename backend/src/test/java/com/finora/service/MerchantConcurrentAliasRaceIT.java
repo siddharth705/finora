@@ -10,7 +10,7 @@ import com.finora.util.CategoryRules;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.SpyBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -51,7 +51,7 @@ import static org.mockito.Mockito.doAnswer;
  * <p>{@link MerchantLearningConfirmRaceIT} already answered this question for the same shape of bug
  * (BH-053) and left the answer in its own class comment: <i>"A {@code CyclicBarrier} on the two ...
  * calls would be racing the race -- it would pass or fail on scheduler luck."</i> This test uses the
- * same deterministic technique that class does: a {@code @SpyBean} hook that pauses the first caller
+ * same deterministic technique that class does: a {@code @MockitoSpyBean} hook that pauses the first caller
  * AFTER its insert has been issued (and is therefore genuinely holding the row lock) but BEFORE its
  * transaction commits, so the second caller's insert is REALLY blocked at the database on that lock,
  * not merely scheduled to run around the same time.
@@ -80,7 +80,7 @@ class MerchantConcurrentAliasRaceIT extends AbstractIntegrationTest {
      *  native SQL {@link MerchantAliasRepository#insertIfAbsent} runs, directly through the
      *  {@code EntityManager}, so the row lock it takes (and the blocking behaviour the second
      *  caller depends on) is the real thing, not a simulation. */
-    @SpyBean private MerchantAliasRepository merchantAliasRepository;
+    @MockitoSpyBean private MerchantAliasRepository merchantAliasRepository;
 
     private static final String FIRST_THREAD = "alias-race-first";
     private static final String DESCRIPTION = "NOVELMERCHANT ALPHA STORE";
