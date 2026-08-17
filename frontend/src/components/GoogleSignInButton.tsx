@@ -41,10 +41,16 @@ export function GoogleSignInButton({ text, onCredential, onError }: GoogleSignIn
             void onCredentialRef.current(response.credential);
           },
         });
+        // GIS requires a pixel value here, not a percentage -- '100%' produced a silent
+        // "[GSI_LOGGER]: Provided button width is invalid" console warning in production and fell
+        // back to some GIS-internal default instead of actually filling the container. Measure the
+        // real rendered width and cap at Google's documented max of 400px:
+        // https://developers.google.com/identity/gsi/web/reference/js-reference#width
+        const measuredWidth = Math.min(Math.round(containerRef.current.getBoundingClientRect().width), 400);
         accountsId.renderButton(containerRef.current, {
           theme: 'outline',
           size: 'large',
-          width: '100%',
+          width: String(measuredWidth),
           text,
         });
         setReady(true);
