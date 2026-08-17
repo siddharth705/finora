@@ -46,6 +46,10 @@ export function LoginScreen({ navigation, route }: Props) {
       ?.details;
     const token = apiErrorCode(err) === AUTH_ACCOUNT_DEACTIVATED ? details?.reactivationToken : null;
     if (token) {
+      // Clears any error left over from a previous reactivation attempt -- this screen doesn't
+      // unmount between attempts the way the web app's separate ReactivateAccountPrompt component
+      // does, so a stale failure message would otherwise survive into this brand-new prompt.
+      setReactivateError(null);
       setReactivationToken(token);
     } else {
       setError(toUserMessage(err, fallback));
@@ -105,7 +109,10 @@ export function LoginScreen({ navigation, route }: Props) {
           <Button
             label="Not you? Go back"
             variant="link"
-            onPress={() => setReactivationToken(null)}
+            onPress={() => {
+              setReactivationToken(null);
+              setReactivateError(null);
+            }}
             disabled={reactivating}
           />
         </View>
