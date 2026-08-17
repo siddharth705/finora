@@ -40,6 +40,7 @@ public class PasswordChangeService {
     private final UserRepository userRepository;
     private final PasswordChangeSessionRepository sessionRepository;
     private final PasswordEncoder passwordEncoder;
+    private final GoogleReauthVerifier googleReauthVerifier;
     private final PhoneVerificationProvider phoneVerificationProvider;
     private final RefreshTokenService refreshTokenService;
     private final AuditService auditService;
@@ -47,12 +48,14 @@ public class PasswordChangeService {
     private final PasswordHistoryService passwordHistoryService;
 
     public PasswordChangeService(UserRepository userRepository, PasswordChangeSessionRepository sessionRepository,
-                                  PasswordEncoder passwordEncoder, PhoneVerificationProvider phoneVerificationProvider,
+                                  PasswordEncoder passwordEncoder, GoogleReauthVerifier googleReauthVerifier,
+                                  PhoneVerificationProvider phoneVerificationProvider,
                                   RefreshTokenService refreshTokenService, AuditService auditService,
                                   EmailProvider emailProvider, PasswordHistoryService passwordHistoryService) {
         this.userRepository = userRepository;
         this.sessionRepository = sessionRepository;
         this.passwordEncoder = passwordEncoder;
+        this.googleReauthVerifier = googleReauthVerifier;
         this.phoneVerificationProvider = phoneVerificationProvider;
         this.refreshTokenService = refreshTokenService;
         this.auditService = auditService;
@@ -73,16 +76,20 @@ public class PasswordChangeService {
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
 
         requireActiveAccount(user);
-        if (!passwordEncoder.matches(request.currentPassword(), user.getPasswordHash())) {
+        if (!googleReauthVerifier.verify(user, request.currentPassword(), request.googleIdToken())) {
             auditService.record(userId, "INVALID_CURRENT_PASSWORD", "User", userId);
-            throw new ApiException(HttpStatus.BAD_REQUEST, "Current password is incorrect.");
+            throw new ApiException(HttpStatus.BAD_REQUEST, user.isGoogleAccount()
+                    ? "We couldn't verify your Google account. Please try again."
+                    : "Current password is incorrect.");
         }
         if (user.getPhoneNumber() == null || user.getPhoneNumber().isBlank()) {
-            // Shouldn't be reachable in practice -- phone number is required at registration --
-            // but User.phoneNumber has no NOT NULL constraint at the DB level, same guard
-            // AuthService.resolveResetPasswordPhone already applies for the identical reason.
+            // Reachable today only for a Google Sign-In account that verified above but has not
+            // yet gone through VerifyPhone.tsx's own "Add your phone number" flow -- every other
+            // account has a phone number required at registration. See
+            // AuthService.resolveResetPasswordPhone for the identical guard on the reset-password
+            // path.
             throw new ApiException(HttpStatus.BAD_REQUEST,
-                    "This account has no phone number on file. Contact an administrator for help changing your password.");
+                    "Add a phone number to your account before changing your password or deleting your account.");
         }
 
         Instant now = Instant.now();
@@ -184,6 +191,14 @@ public class PasswordChangeService {
 
         Instant now = Instant.now();
         user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+        // Review catch: a GOOGLE-method account can reach this step by verifying with a fresh
+        // Google credential instead of a current password (see GoogleReauthVerifier) -- if it
+        // does, it now has a real, user-chosen password for the first time. Without this, the
+        // account would be stuck as GOOGLE forever: every future re-auth (this same flow,
+        // deactivate, delete, export) would keep demanding a fresh Google Sign-In and ignore the
+        // password just set here. Unconditional, not just for Google accounts -- an already-
+        // PASSWORD account setting a new password is still, correctly, a PASSWORD account.
+        user.setSignInMethod(User.SIGN_IN_METHOD_PASSWORD);
         user.setUpdatedAt(now);
         user.setPasswordChangedAt(now);
         userRepository.save(user);

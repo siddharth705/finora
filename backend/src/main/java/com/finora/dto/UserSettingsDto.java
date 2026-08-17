@@ -15,7 +15,13 @@ public record UserSettingsDto(
         // Null until the account's password has been changed at least once (via Change Password
         // or the forgot-password flow) — see User.passwordChangedAt's own doc comment. Security's
         // "Last changed" only renders when this is non-null, never a guessed fallback date.
-        Instant passwordChangedAt
+        Instant passwordChangedAt,
+        // "PASSWORD" or "GOOGLE" -- see User.signInMethod's own doc comment. Lets the frontend
+        // decide, before the user even opens a modal, whether Change Password/Delete Account/
+        // Export Data should ask for a current password or offer a fresh Sign in with Google
+        // button instead -- see GoogleReauthVerifier, which is what the backend actually checks
+        // against regardless of what this field says.
+        String signInMethod
 ) {
     /**
      * <p>Bug fix: this record declared NO constraints at all, and UserController.update() applied

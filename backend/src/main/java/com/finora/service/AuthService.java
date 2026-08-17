@@ -654,6 +654,9 @@ public class AuthService {
         user.setEmail(email);
         user.setAccountScope(User.SCOPE_USER);
         user.setPasswordHash(passwordEncoder.encode(randomUnguessablePassword()));
+        // The durable marker every "re-enter your current password" gate elsewhere in this
+        // codebase reads via GoogleReauthVerifier -- see User.signInMethod's own doc comment.
+        user.setSignInMethod(User.SIGN_IN_METHOD_GOOGLE);
         user.setFullName(sanitizeGoogleDisplayName(displayName, email));
         // phoneNumber left null -- see loginWithGoogle's own doc comment on why, and how it gets
         // collected. The column is nullable (unique, but NULL is never equal to NULL under a
@@ -1037,11 +1040,28 @@ public class AuthService {
         User user = userRepository.findById(prt.getUserId())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
         if (user.getPhoneNumber() == null || user.getPhoneNumber().isBlank()) {
-            // Shouldn't be reachable in practice -- phone number is required at both
-            // registration and admin-create time -- but User.phoneNumber has no NOT NULL
-            // constraint at the DB level (V8), so this is a real, if unlikely, state to guard.
-            throw new ApiException(HttpStatus.BAD_REQUEST,
-                    "This account has no phone number on file. Contact an administrator for help resetting your password.");
+            // Bug fix (review): this used to say "contact an administrator" unconditionally --
+            // accurate for the state it was written to guard (phone number is required at both
+            // registration and admin-create time, so a missing one used to be a genuine anomaly),
+            // but stale since AuthService.createGoogleUserRecord shipped: a Google Sign-In
+            // account has no phone number and, just as relevantly here, no password of its own to
+            // reset either (its passwordHash is a random value nobody knows -- see
+            // createGoogleUserRecord's own comment). "Forgot password" doesn't apply to an
+            // account that was never given one; the actionable answer is to use Google Sign-In,
+            // not to wait on an administrator who has nothing to fix.
+            //
+            // Second review catch: the first version of this fix asserted "signs in with Google"
+            // unconditionally, without checking user.isGoogleAccount() -- wrong for the "real, if
+            // unlikely" PASSWORD-method account with a missing phone number this guard's own
+            // original comment already anticipated (phoneNumber has no DB-level NOT NULL). Such
+            // an account has a real password and no Google identity to fall back to, so telling
+            // it to "choose Sign in with Google instead" would be actively wrong, not just
+            // unhelpful -- the old administrator message is still the honest answer for that case.
+            // ResetPassword.tsx's own "Back to sign in" link is always visible on this screen
+            // either way, so this message only needs to explain why, not add a new escape hatch.
+            throw new ApiException(HttpStatus.BAD_REQUEST, user.isGoogleAccount()
+                    ? "This account signs in with Google and doesn't have a password to reset. Go back and choose \"Sign in with Google\" instead."
+                    : "This account has no phone number on file. Contact an administrator for help resetting your password.");
         }
         // BH-015, KNOWN AND DELIBERATELY STILL OPEN. This returns the account's phone number in
         // full to anyone holding a valid reset link, where register() and login() -- both of which

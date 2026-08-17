@@ -94,7 +94,7 @@ describe('Dashboard — Financial Health Score', () => {
     vi.mocked(userApi.get).mockReset().mockResolvedValue({
       email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
       theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
-      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null,
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
     });
     vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
     vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue(['2026-08']);
@@ -179,7 +179,7 @@ describe('Dashboard — Subscriptions & Recurring Payments', () => {
     vi.mocked(userApi.get).mockReset().mockResolvedValue({
       email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
       theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
-      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null,
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
     });
     vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
     vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue(['2026-08']);
@@ -289,7 +289,7 @@ describe('Dashboard — per-section empty states', () => {
     vi.mocked(userApi.get).mockReset().mockResolvedValue({
       email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
       theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
-      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null,
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
     });
     vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
     vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue([]);
@@ -456,7 +456,7 @@ describe('Dashboard — Your Financial Journey', () => {
     vi.mocked(userApi.get).mockReset().mockResolvedValue({
       email: 'amy@example.test', fullName: 'Amy Santiago', lowBalanceThreshold: 2000,
       theme: 'system', timezone: 'Asia/Kolkata', phoneNumber: '+919876500000',
-      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null,
+      phoneVerified: true, createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
     });
     vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
     vi.mocked(reportsApi.availableMonths).mockReset().mockResolvedValue([]);

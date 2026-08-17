@@ -45,7 +45,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -97,7 +96,7 @@ public class DataExportService {
     private static final Logger log = LoggerFactory.getLogger(DataExportService.class);
 
     private final UserRepository userRepository;
-    private final PasswordEncoder passwordEncoder;
+    private final GoogleReauthVerifier googleReauthVerifier;
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
     private final BudgetService budgetService;
@@ -119,7 +118,7 @@ public class DataExportService {
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
 
-    public DataExportService(UserRepository userRepository, PasswordEncoder passwordEncoder,
+    public DataExportService(UserRepository userRepository, GoogleReauthVerifier googleReauthVerifier,
                               AccountRepository accountRepository, TransactionRepository transactionRepository,
                               BudgetService budgetService, GoalService goalService, CategoryRepository categoryRepository,
                               CategoryRuleRepository categoryRuleRepository, RelationshipService relationshipService,
@@ -130,7 +129,7 @@ public class DataExportService {
                               UserSettingsService userSettingsService, WorkspaceSettingsService workspaceSettingsService,
                               BankManagementService bankManagementService, AuditService auditService, ObjectMapper objectMapper) {
         this.userRepository = userRepository;
-        this.passwordEncoder = passwordEncoder;
+        this.googleReauthVerifier = googleReauthVerifier;
         this.accountRepository = accountRepository;
         this.transactionRepository = transactionRepository;
         this.budgetService = budgetService;
@@ -162,16 +161,18 @@ public class DataExportService {
      * 48h purge -- blocking it here would fight the point of offering it at all.
      */
     @Transactional(readOnly = true)
-    public ExportBundle buildBundle(UUID userId, String currentPassword) {
+    public ExportBundle buildBundle(UUID userId, String currentPassword, String googleIdToken) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
-        if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
+        if (!googleReauthVerifier.verify(user, currentPassword, googleIdToken)) {
             // recordEvenOnRollback, not record: this method is @Transactional(readOnly = true),
             // and throwing ApiException right after a plain record() call would roll the audit
             // write back along with the (nonexistent) rest of this transaction -- see that
             // method's own doc comment for how this was actually caught.
             auditService.recordEvenOnRollback(userId, "INVALID_CURRENT_PASSWORD", "User", userId);
-            throw new ApiException(HttpStatus.BAD_REQUEST, "Current password is incorrect.");
+            throw new ApiException(HttpStatus.BAD_REQUEST, user.isGoogleAccount()
+                    ? "We couldn't verify your Google account. Please try again."
+                    : "Current password is incorrect.");
         }
 
         // Mirrors AccountPurgeSweepService.purgeOne()'s own table order.

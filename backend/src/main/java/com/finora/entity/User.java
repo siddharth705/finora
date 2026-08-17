@@ -48,6 +48,20 @@ public class User {
     @Column(name = "password_hash", nullable = false)
     private String passwordHash;
 
+    /** Which credential this account actually proves control with -- {@code PASSWORD} for every
+     *  account created through registration or admin-create (a real, user-chosen password), or
+     *  {@code GOOGLE} for one created through {@code AuthService#loginWithGoogle}, whose
+     *  passwordHash is a random value nobody, including the user, ever knows. Every "re-enter
+     *  your current password" gate elsewhere in this codebase (PasswordChangeService.start,
+     *  UserAccountLifecycleService.deactivate, DataExportService.buildBundle) reads this to
+     *  decide whether to ask for that password or verify a fresh Google Sign-In instead -- see
+     *  GoogleReauthVerifier, which is what actually does that check. */
+    @Column(name = "sign_in_method", nullable = false, length = 20)
+    private String signInMethod = SIGN_IN_METHOD_PASSWORD;
+
+    public static final String SIGN_IN_METHOD_PASSWORD = "PASSWORD";
+    public static final String SIGN_IN_METHOD_GOOGLE = "GOOGLE";
+
     @Column(name = "full_name", nullable = false)
     private String fullName;
 
@@ -228,6 +242,9 @@ public class User {
     public void setEmail(String email) { this.email = email; }
     public String getPasswordHash() { return passwordHash; }
     public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
+    public String getSignInMethod() { return signInMethod; }
+    public void setSignInMethod(String signInMethod) { this.signInMethod = signInMethod; }
+    public boolean isGoogleAccount() { return SIGN_IN_METHOD_GOOGLE.equals(signInMethod); }
     public String getFullName() { return fullName; }
     public void setFullName(String fullName) { this.fullName = fullName; }
     public String getRole() { return role; }

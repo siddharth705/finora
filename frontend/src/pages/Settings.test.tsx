@@ -6,6 +6,7 @@ import Settings from './Settings';
 import { ThemeProvider } from '../context/ThemeContext';
 import { AuthProvider } from '../context/AuthContext';
 import { userApi, workspaceApi, analyticsApi, deviceApi, accountLifecycleApi, authApi, gmailApi } from '../api/endpoints';
+import type { UserSettings } from '../api/endpoints';
 
 // v1 scope is capabilities-first: every section on this page reflects a real, backed setting or
 // fact (see Settings.tsx's own top-of-file comment). These tests cover the real save paths, the
@@ -37,7 +38,7 @@ function gmailStatus(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-function userSettings(overrides: Partial<Record<string, unknown>> = {}) {
+function userSettings(overrides: Partial<UserSettings> = {}): UserSettings {
   return {
     email: 'amy@example.com',
     fullName: 'Amy Santiago',
@@ -48,6 +49,7 @@ function userSettings(overrides: Partial<Record<string, unknown>> = {}) {
     phoneVerified: true,
     createdAt: '2026-05-01T00:00:00Z',
     passwordChangedAt: null,
+    signInMethod: 'PASSWORD',
     ...overrides,
   };
 }
@@ -329,7 +331,7 @@ describe('Settings', () => {
       await user.click(submitButtons[submitButtons.length - 1]);
 
       await waitFor(() => expect(accountLifecycleApi.deactivate)
-        .toHaveBeenCalledWith('CorrectPassword123', 'TAKING_A_BREAK', undefined));
+        .toHaveBeenCalledWith('CorrectPassword123', null, 'TAKING_A_BREAK', undefined));
     });
 
     it('hands the reactivation reason to the login page via a hard redirect, not router state', async () => {
@@ -418,7 +420,7 @@ describe('Settings', () => {
       await user.click(submitButtons[submitButtons.length - 1]);
 
       await waitFor(() => expect(accountLifecycleApi.deactivate)
-        .toHaveBeenCalledWith('CorrectPassword123', 'PRIVACY_CONCERNS', 'Not comfortable with data retention'));
+        .toHaveBeenCalledWith('CorrectPassword123', null, 'PRIVACY_CONCERNS', 'Not comfortable with data retention'));
     });
 
     it('closes without calling the API when cancelled', async () => {

@@ -4,6 +4,8 @@ import com.finora.dto.PasswordChangeDtos.*;
 import com.finora.entity.PasswordChangeSession;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
+import com.finora.integrations.google.login.GoogleIdTokenVerifierService;
+import com.finora.integrations.google.login.GoogleIdentity;
 import com.finora.repository.PasswordChangeSessionRepository;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,6 +35,7 @@ class PasswordChangeServiceTest {
     private UserRepository userRepository;
     private PasswordChangeSessionRepository sessionRepository;
     private PasswordEncoder passwordEncoder;
+    private GoogleIdTokenVerifierService googleIdTokenVerifierService;
     private PhoneVerificationProvider phoneVerificationProvider;
     private RefreshTokenService refreshTokenService;
     private AuditService auditService;
@@ -50,6 +53,7 @@ class PasswordChangeServiceTest {
         userRepository = mock(UserRepository.class);
         sessionRepository = mock(PasswordChangeSessionRepository.class);
         passwordEncoder = mock(PasswordEncoder.class);
+        googleIdTokenVerifierService = mock(GoogleIdTokenVerifierService.class);
         phoneVerificationProvider = mock(PhoneVerificationProvider.class);
         refreshTokenService = mock(RefreshTokenService.class);
         auditService = mock(AuditService.class);
@@ -72,6 +76,7 @@ class PasswordChangeServiceTest {
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
         service = new PasswordChangeService(userRepository, sessionRepository, passwordEncoder,
+                new GoogleReauthVerifier(passwordEncoder, googleIdTokenVerifierService),
                 phoneVerificationProvider, refreshTokenService, auditService, emailProvider,
                 mock(PasswordHistoryService.class));
     }
@@ -79,6 +84,7 @@ class PasswordChangeServiceTest {
     private User existingUser() {
         User u = new User();
         ReflectionTestUtils.setField(u, "id", userId);
+        u.setEmail("jane@example.com");
         u.setPasswordHash("hashed-old-password");
         u.setPhoneNumber("+919876543210");
         return u;
@@ -105,7 +111,7 @@ class PasswordChangeServiceTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("OldPass123!", "hashed-old-password")).thenReturn(true);
 
-        var response = service.start(userId, new StartRequest("OldPass123!"));
+        var response = service.start(userId, new StartRequest("OldPass123!", null));
 
         assertThat(response.sessionId()).isNotBlank();
         assertThat(response.phoneNumber()).isEqualTo("+919876543210");
@@ -119,7 +125,7 @@ class PasswordChangeServiceTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser()));
         when(passwordEncoder.matches("WrongPassword", "hashed-old-password")).thenReturn(false);
 
-        assertThatThrownBy(() -> service.start(userId, new StartRequest("WrongPassword")))
+        assertThatThrownBy(() -> service.start(userId, new StartRequest("WrongPassword", null)))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Current password is incorrect");
 
@@ -128,12 +134,55 @@ class PasswordChangeServiceTest {
     }
 
     @Test
+    void start_onAGoogleAccount_verifiesAFreshGoogleTokenInsteadOfAPassword() {
+        User user = existingUser();
+        user.setSignInMethod(User.SIGN_IN_METHOD_GOOGLE);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(googleIdTokenVerifierService.verify("fresh-google-token"))
+                .thenReturn(new GoogleIdentity(user.getEmail(), "Jane"));
+
+        var response = service.start(userId, new StartRequest(null, "fresh-google-token"));
+
+        assertThat(response.sessionId()).isNotBlank();
+        verify(passwordEncoder, never()).matches(any(), any());
+        verify(auditService).record(userId, "CURRENT_PASSWORD_VERIFIED", "User", userId);
+    }
+
+    @Test
+    void start_onAGoogleAccount_rejectsATokenThatVerifiesToADifferentEmail() {
+        User user = existingUser();
+        user.setSignInMethod(User.SIGN_IN_METHOD_GOOGLE);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(googleIdTokenVerifierService.verify("someone-elses-token"))
+                .thenReturn(new GoogleIdentity("someone-else@example.com", "Someone Else"));
+
+        assertThatThrownBy(() -> service.start(userId, new StartRequest(null, "someone-elses-token")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("verify your Google account");
+
+        verify(auditService).record(userId, "INVALID_CURRENT_PASSWORD", "User", userId);
+        verify(sessionRepository, never()).save(any());
+    }
+
+    @Test
+    void start_onAGoogleAccount_ignoresACurrentPasswordEvenIfOneWereSomehowSupplied() {
+        User user = existingUser();
+        user.setSignInMethod(User.SIGN_IN_METHOD_GOOGLE);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> service.start(userId, new StartRequest("hashed-old-password", null)))
+                .isInstanceOf(ApiException.class);
+
+        verify(passwordEncoder, never()).matches(any(), any());
+    }
+
+    @Test
     void start_onASuspendedAccount_isRejectedBeforeEvenCheckingThePassword() {
         User user = existingUser();
         user.setStatus("SUSPENDED");
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
-        assertThatThrownBy(() -> service.start(userId, new StartRequest("OldPass123!")))
+        assertThatThrownBy(() -> service.start(userId, new StartRequest("OldPass123!", null)))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("suspended");
 
@@ -523,7 +572,7 @@ class PasswordChangeServiceTest {
         user.setStatus(User.STATUS_PENDING_DELETION);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
-        assertThatThrownBy(() -> service.start(userId, new StartRequest("OldPass123!")))
+        assertThatThrownBy(() -> service.start(userId, new StartRequest("OldPass123!", null)))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("scheduled for deletion");
 

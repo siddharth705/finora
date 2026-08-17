@@ -125,6 +125,12 @@ export default function Settings() {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [phoneVerified, setPhoneVerified] = useState(false);
   const [passwordChangedAt, setPasswordChangedAt] = useState<string | null>(null);
+  // 'PASSWORD' until userApi.get() resolves -- every "re-enter your current password" modal below
+  // gates its Google-vs-password branch on this, so defaulting to the ordinary (more common) case
+  // means a slow load never flashes the Google button for a password account or vice versa in the
+  // split second before the real value arrives; the modals aren't openable until then anyway
+  // (their Manage Your Account buttons live below this same load).
+  const [signInMethod, setSignInMethod] = useState<'PASSWORD' | 'GOOGLE'>('PASSWORD');
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [deactivateOpen, setDeactivateOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -264,6 +270,7 @@ export default function Settings() {
       setPhoneNumber(u.phoneNumber);
       setPhoneVerified(u.phoneVerified);
       setPasswordChangedAt(u.passwordChangedAt);
+      setSignInMethod(u.signInMethod);
       setLowBalanceThreshold(String(u.lowBalanceThreshold));
       setSavedLowBalanceThreshold(String(u.lowBalanceThreshold));
       setTimezone(u.timezone);
@@ -758,6 +765,7 @@ export default function Settings() {
         <ChangePasswordModal
           onClose={() => setChangePasswordOpen(false)}
           onSuccess={() => setPasswordChangedAt(new Date().toISOString())}
+          signInMethod={signInMethod}
         />
       )}
 
@@ -765,6 +773,7 @@ export default function Settings() {
         <DeactivateAccountModal
           onClose={() => setDeactivateOpen(false)}
           onDeactivated={handleDeactivated}
+          signInMethod={signInMethod}
         />
       )}
 
@@ -772,10 +781,11 @@ export default function Settings() {
         <DeleteAccountModal
           onClose={() => setDeleteOpen(false)}
           onDeleted={handleDeleted}
+          signInMethod={signInMethod}
         />
       )}
 
-      {exportOpen && <ExportDataModal onClose={() => setExportOpen(false)} />}
+      {exportOpen && <ExportDataModal onClose={() => setExportOpen(false)} signInMethod={signInMethod} />}
     </div>
   );
 }
