@@ -620,6 +620,13 @@ public class PdfTableLocator {
                         && plainAccountId.equals(currentSectionAccountId);
                 if (sameAccountIdentityRepeated) {
                     if (ctx != null) ctx.record("REPEATED_ACCOUNT_BANNER");
+                    // Reconfirming the section's own id clears any stale mismatch an EARLIER,
+                    // different-looking identity line left pending (e.g. a stray misread digit
+                    // run) -- found by adversarial review. Left set, a same-shaped header right
+                    // after this line would still be forced to split on account of the
+                    // already-superseded earlier mismatch, not this line's own confirmation.
+                    pendingIdentityMismatch = false;
+                    pendingAccountIdCandidate = null;
                     pendingAuxiliary.add(rowLine);
                     continue;
                 }

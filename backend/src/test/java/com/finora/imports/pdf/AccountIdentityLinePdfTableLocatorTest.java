@@ -108,6 +108,14 @@ class AccountIdentityLinePdfTableLocatorTest {
 
     // ==================== Test 2: same account, repeated across a page break ====================
 
+    /**
+     * Guarantee scope, precisely: this only holds once the section's account id has actually been
+     * CONFIRMED (an identity line was seen before this section's own header opened, as below).
+     * When no identity line precedes the header at all, a later repeat can't be confirmed against
+     * anything and this layer over-splits instead -- see
+     * {@link #anAccountWithNoIdentityBeforeItsHeader_thenARepeatedBannerLater_currentlyOverSplits}
+     * for that documented, accepted gap.
+     */
     @Test
     void sameAccountNumberRepeated_acrossAPageBreak_staysOneSection() {
         List<PositionedText> positioned = new ArrayList<>();
@@ -129,6 +137,73 @@ class AccountIdentityLinePdfTableLocatorTest {
         assertThat(ctx.capabilities().stream().map(c -> c.capability()))
                 .contains("REPEATED_ACCOUNT_BANNER", "REPEATED_HEADER")
                 .doesNotContain("COMPOSITE_STATEMENT");
+    }
+
+    /**
+     * A confirmed identity survives an intervening, unconfirmed one: id 111 established, a
+     * different-looking (e.g. stray misread digit run) 222 appears next and is not yet proof of
+     * anything, then 111 reappears and reconfirms the section unchanged. Found by adversarial
+     * review of the first version of this fix: the reconfirmation branch didn't clear the
+     * mismatch 222 left pending, so a same-shaped header right after this line still forced a
+     * split on account of the already-superseded 222 sighting, not the just-confirmed 111 one.
+     */
+    @Test
+    void aConfirmedIdentityReconfirmingItself_clearsAnEarlierUnconfirmedMismatch() {
+        List<PositionedText> positioned = new ArrayList<>();
+        positioned.add(line("Account Number: 111111111111", 90f));
+        positioned.addAll(ledgerHeader(110f));
+        positioned.addAll(ledgerRow("01.01.2026", "txn 1", "500.00", "9500.00", 130f));
+        positioned.add(line("Account Number: 222222222222", 150f));
+        positioned.add(line("Account Number: 111111111111", 165f));
+        positioned.addAll(ledgerHeader(190f));
+        positioned.addAll(ledgerRow("05.01.2026", "txn 2", "300.00", "8600.00", 210f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        assertThat(doc.sections()).as("the reconfirmed account stays one section").hasSize(1);
+        assertThat(doc.sections().get(0).rows()).hasSize(2);
+    }
+
+    /**
+     * A known, accepted gap, not a bug: when a section opens with NO preceding identity signal at
+     * all (no SECTION_MARKER banner, no ACCOUNT_IDENTITY_LINE before its own header),
+     * {@code currentSectionAccountId} stays null for that section's whole life. A later identity
+     * line can then never be CONFIRMED as a repeat -- there is nothing to compare it against --
+     * so it is treated the same as a genuine mismatch would be, and a same-shaped header right
+     * after forces an unnecessary split.
+     *
+     * <p>This cannot be tightened without reopening the original P0: the only way to tell "this
+     * identity line restates the still-unidentified account already in progress" apart from "this
+     * identity line names a genuinely NEW account, about to continue under a coincidentally
+     * identical column layout" is by comparing it against a KNOWN identity -- and by definition
+     * there isn't one yet. Trusting the identity line either way here would silently reopen the
+     * merge risk this whole layer exists to close, for exactly the accounts least protected by
+     * anything else (no marker, no leading identity line). Over-splitting is the safe direction;
+     * reconciling it needs the real identity/product/institution comparison Layer 2 -- not this
+     * layer -- was always scoped to do. See the plan's own note: "Layer 1 guarantees no silent
+     * merging, but may now occasionally over-split... Layer 2 reconciles that."
+     */
+    @Test
+    void anAccountWithNoIdentityBeforeItsHeader_thenARepeatedBannerLater_currentlyOverSplits() {
+        List<PositionedText> positioned = new ArrayList<>();
+        positioned.addAll(ledgerHeader(110f));
+        positioned.addAll(ledgerRow("01.01.2026", "Page1 txn 1", "500.00", "9500.00", 130f));
+        positioned.addAll(ledgerRow("02.01.2026", "Page1 txn 2", "600.00", "8900.00", 150f));
+        positioned.add(line("Account Number: 111111111111", 170f));
+        positioned.addAll(ledgerHeader(190f));
+        positioned.addAll(ledgerRow("05.01.2026", "Page2 txn 1", "300.00", "8600.00", 210f));
+        positioned.addAll(ledgerRow("06.01.2026", "Page2 txn 2", "400.00", "8200.00", 230f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        // Documents the CURRENT behavior -- 2 sections, not 1 -- so a change to this (in either
+        // direction) is a deliberate decision, not an accidental regression nobody notices.
+        assertThat(doc.sections()).as("known gap: over-splits without a leading identity signal").hasSize(2);
+        assertThat(doc.sections().get(0).rows()).hasSize(2);
+        assertThat(doc.sections().get(1).rows()).hasSize(2);
+        assertThat(ctx.capabilities().stream().map(c -> c.capability())).contains("COMPOSITE_STATEMENT");
     }
 
     // ==================== Test 3: trailing identity restatement (the regression) ====================
