@@ -126,9 +126,19 @@ class AppleIdTokenVerifierServiceTest {
     @Test
     @DisplayName("an expired token is refused")
     void expiredToken_isRefused() {
-        String token = validToken(b -> b.expiration(new Date(System.currentTimeMillis() - 60_000)));
+        // Must be older than the verifier's own clockSkewSeconds(300) tolerance -- see that
+        // constant's own comment for why it exists -- or this asserts the wrong thing entirely.
+        String token = validToken(b -> b.expiration(new Date(System.currentTimeMillis() - 600_000)));
 
         assertThatThrownBy(() -> service.verify(token)).isInstanceOf(ApiException.class);
+    }
+
+    @Test
+    @DisplayName("a token expired only moments ago is still accepted -- within the clock-skew tolerance, same as Google's own verifier")
+    void tokenExpiredWithinClockSkewTolerance_stillVerifies() {
+        String token = validToken(b -> b.expiration(new Date(System.currentTimeMillis() - 60_000)));
+
+        assertThat(service.verify(token).email()).isEqualTo("amy@example.test");
     }
 
     @Test

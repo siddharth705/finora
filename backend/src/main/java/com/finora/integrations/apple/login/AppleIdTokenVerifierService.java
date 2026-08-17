@@ -67,14 +67,22 @@ public class AppleIdTokenVerifierService {
             jws = Jwts.parser()
                     .keyLocator(this::resolveSigningKey)
                     .requireIssuer(APPLE_ISSUER)
+                    // Second self-review pass: jjwt's own default is ZERO clock-skew tolerance,
+                    // unlike GoogleIdTokenVerifier -- confirmed against google-oauth-client's
+                    // actual source, not assumed -- which defaults to 300s
+                    // (IdTokenVerifier.DEFAULT_TIME_SKEW_SECONDS) precisely because a JWT's
+                    // issuer and this JVM's clock are never perfectly synchronized. Matching that
+                    // tolerance here avoids Apple sign-in spuriously failing as "expired" under
+                    // ordinary clock drift that Google sign-in would have tolerated.
+                    .clockSkewSeconds(300)
                     .build()
                     .parseSignedClaims(idTokenString);
         } catch (JwtException | IllegalArgumentException e) {
             // IllegalArgumentException: a string that isn't even shaped like a JWT, same as the
             // Google verifier's own catch. JwtException covers a bad signature, an unresolvable
             // key id (resolveSigningKey below throws SecurityException, itself a JwtException),
-            // a wrong issuer (requireIssuer above) and an expired token, all in one place -- jjwt
-            // checks expiration against the real clock by default, nothing extra needed here.
+            // a wrong issuer (requireIssuer above) and an expired token (against the real clock,
+            // widened by clockSkewSeconds above), all in one place.
             log.warn("Apple ID token verification failed", e);
             throw invalidToken();
         }
