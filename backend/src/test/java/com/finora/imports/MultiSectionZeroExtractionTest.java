@@ -396,7 +396,7 @@ class MultiSectionZeroExtractionTest {
 
     private ImportVerifier verifier() {
         return new ImportVerifier(new BalanceChainValidator(), new StatementTotalsValidator(),
-                new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator());
+                new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator());
     }
 
     private PdfPreviewGenerator generatorFor(Object acquirer) {

@@ -170,7 +170,12 @@ def main() -> int:
                  "Real customer statements must live outside the working tree. Keep the corpus\n"
                  "elsewhere and pass an absolute path.")
 
-    pdfs = sorted(corpus.glob("*.pdf"), key=lambda p: p.name)
+    # Real statements arrive named however the bank or the customer named them (e.g.
+    # "SBI Credit Card.PDF") -- glob("*.pdf") is case-sensitive regardless of the underlying
+    # filesystem, so it silently drops uppercase-extension files. Filtering by suffix instead
+    # catches every case.
+    pdfs = sorted((p for p in corpus.iterdir() if p.is_file() and p.suffix.lower() == ".pdf"),
+                  key=lambda p: p.name)
     if not pdfs:
         sys.exit(f"no .pdf files in {corpus}")
 

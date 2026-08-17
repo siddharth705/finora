@@ -45,7 +45,7 @@ class DepositAttributeExtractionPdfPreviewGeneratorTest {
         PdfPreviewGenerator generator = new PdfPreviewGenerator(new PdfTextExtractor(), new PdfTableLocator(),
                 new PdfMetadataExtractor(), normalizer,
                 com.finora.imports.product.ProductDiscovery.standard(),
-                new com.finora.imports.product.ProductAttributeExtractor(), new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(), new com.finora.imports.StatementTotalsValidator(), new com.finora.imports.SummaryTotalsValidator(), new com.finora.imports.ColumnAmbiguityValidator(), new com.finora.imports.RowAccountingValidator()),
+                new com.finora.imports.product.ProductAttributeExtractor(), new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(), new com.finora.imports.StatementTotalsValidator(), new com.finora.imports.SummaryTotalsValidator(), new com.finora.imports.ColumnAmbiguityValidator(), new com.finora.imports.RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator()),
                 com.finora.imports.TestRuleEngines.empty());
 
         return generator.generateSections(UUID.randomUUID(), "combined.pdf",

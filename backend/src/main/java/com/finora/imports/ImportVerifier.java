@@ -5,6 +5,7 @@ import com.finora.dto.ImportDto.StagedRow;
 import com.finora.dto.ImportDto.UnparseableRow;
 import com.finora.imports.pdf.PdfTableLocator.DroppedCandidateRow;
 import com.finora.imports.pdf.StatementSummaryExtractor.PrintedSummary;
+import com.finora.imports.pdf.CreditCardSummaryExtractor.PrintedCreditCardSummary;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -37,17 +38,20 @@ public class ImportVerifier {
     private final SummaryTotalsValidator summaryTotalsValidator;
     private final ColumnAmbiguityValidator columnAmbiguityValidator;
     private final RowAccountingValidator rowAccountingValidator;
+    private final CreditCardStatementTotalsValidator creditCardStatementTotalsValidator;
 
     public ImportVerifier(BalanceChainValidator balanceChainValidator,
                            StatementTotalsValidator statementTotalsValidator,
                            SummaryTotalsValidator summaryTotalsValidator,
                            ColumnAmbiguityValidator columnAmbiguityValidator,
-                           RowAccountingValidator rowAccountingValidator) {
+                           RowAccountingValidator rowAccountingValidator,
+                           CreditCardStatementTotalsValidator creditCardStatementTotalsValidator) {
         this.balanceChainValidator = balanceChainValidator;
         this.statementTotalsValidator = statementTotalsValidator;
         this.summaryTotalsValidator = summaryTotalsValidator;
         this.columnAmbiguityValidator = columnAmbiguityValidator;
         this.rowAccountingValidator = rowAccountingValidator;
+        this.creditCardStatementTotalsValidator = creditCardStatementTotalsValidator;
     }
 
     /**
@@ -59,7 +63,8 @@ public class ImportVerifier {
      */
     public ImportDto.VerificationReport verify(List<StagedRow> rows, BigDecimal openingBalance,
                                                 BigDecimal closingBalance) {
-        return verify(rows, openingBalance, closingBalance, PrintedSummary.NONE, List.of(), List.of(), List.of());
+        return verify(rows, openingBalance, closingBalance, PrintedSummary.NONE, List.of(), List.of(), List.of(),
+                PrintedCreditCardSummary.NONE);
     }
 
     /**
@@ -82,7 +87,8 @@ public class ImportVerifier {
                                                 BigDecimal closingBalance, PrintedSummary printedSummary,
                                                 List<java.util.Map<String, String>> rawRows,
                                                 List<UnparseableRow> unparseableRows,
-                                                List<DroppedCandidateRow> droppedTransactionCandidates) {
+                                                List<DroppedCandidateRow> droppedTransactionCandidates,
+                                                PrintedCreditCardSummary printedCreditCardSummary) {
         List<ImportDto.VerificationFinding> findings = new ArrayList<>();
         findings.addAll(balanceChainValidator.report(rows, openingBalance).findings());
         findings.add(statementTotalsValidator.check(rows, openingBalance, closingBalance));
@@ -95,6 +101,10 @@ public class ImportVerifier {
         // still ambiguous -- every other rule here sees values whose reading is already settled.
         findings.add(columnAmbiguityValidator.check(rawRows));
         findings.add(rowAccountingValidator.check(rows, unparseableRows, droppedTransactionCandidates, locatedRowCount));
+        // Reads no row at all -- see the validator's own doc comment for why that is the point, not
+        // an oversight: a credit-card statement's transaction table can be malformed while its
+        // billing-summary panel is still readable, and this rule stays meaningful either way.
+        findings.add(creditCardStatementTotalsValidator.check(printedCreditCardSummary));
         return new ImportDto.VerificationReport(List.copyOf(findings));
     }
 

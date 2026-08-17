@@ -117,7 +117,17 @@ public class CapabilityCoverageService {
             // table -- found on two real credit-card statements (Axis, HDFC) with otherwise
             // unrelated layouts, each producing a one-row phantom section immediately superseded by
             // the real ledger's header. See PdfTableLocator.looksLikePaymentSummaryPanel.
-            "PAYMENT_SUMMARY_PANEL_SUPPRESSED");
+            "PAYMENT_SUMMARY_PANEL_SUPPRESSED",
+            // A credit-card statement's own billing-summary panel (previous balance, purchases,
+            // cash advances, fees, payments/credits, total amount due) read as a label/value grid --
+            // see CreditCardSummaryExtractor. Registered on zero real-document evidence, unlike
+            // every other entry above: the Credit Card Direction Evidence Study confirmed the
+            // underlying figures are printed on all 6 real credit-card documents, but this
+            // extractor's simple label-row/value-row grid match did not fire on any of them (see the
+            // architecture doc's Credit Card Direction Evidence Study addendum) -- kept in the
+            // registry now so a future layout-matching improvement is visible in coverage reporting
+            // the moment it starts firing, rather than needing this entry added retroactively then.
+            "CREDIT_CARD_SUMMARY_TOTALS");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure

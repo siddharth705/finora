@@ -10,6 +10,7 @@ import com.finora.dto.ImportDto.UnparseableRow;
 import com.finora.entity.CategoryRule;
 import com.finora.imports.CsvParser;
 import com.finora.imports.pdf.StatementSummaryExtractor.PrintedSummary;
+import com.finora.imports.pdf.CreditCardSummaryExtractor.PrintedCreditCardSummary;
 import com.finora.imports.DocumentContext;
 import com.finora.imports.RowKind;
 import com.finora.imports.TransactionNormalizer;
@@ -189,6 +190,13 @@ public class PdfPreviewGenerator {
         // 538.00 25,000.00 Credit Count 3 1". The geometry is intact right here; the table is
         // where it stops being intact.
         PrintedSummary printedSummary = StatementSummaryExtractor.extract(positioned, ctx);
+        // Read the same way and for the same reason as printedSummary above: a credit-card billing
+        // panel has its own column layout distinct from the transaction table's. Unlike
+        // printedSummary, this is never re-attributed per section below -- a real credit-card
+        // statement is effectively always one account, and CreditCardStatementTotalsValidator never
+        // reads a section's transaction rows anyway, so handing every section the same document-
+        // level reading is correct, not a simplification that loses anything.
+        PrintedCreditCardSummary printedCreditCardSummary = CreditCardSummaryExtractor.extract(positioned, ctx);
 
         if (doc.sections().isEmpty()) {
             // "Never lose information" (see the engineering principles doc) applies at the
@@ -210,7 +218,8 @@ public class PdfPreviewGenerator {
             // The summary IS this section's: no table was recognised, so the document is one
             // section and there is no other candidate it could describe. Withholding it here left
             // the contradiction -- printed activity, nothing staged -- with nothing to state it.
-            StagedAccountSection section = buildLedgerSection(userId, filename, emptySection, unknown, ctx, printedSummary);
+            StagedAccountSection section = buildLedgerSection(userId, filename, emptySection, unknown, ctx,
+                    printedSummary, printedCreditCardSummary);
             return new PdfGenerationResult(List.of(surfaceUnrecognizedText(section, empty.preTableLines())), ctx);
         }
 
@@ -221,7 +230,7 @@ public class PdfPreviewGenerator {
             // is not answerable here -- see attributePrintedSummary below, which decides it once
             // every section exists.
             List<StagedAccountSection> staged = buildSections(userId, filename, doc.sections().get(i),
-                    i, doc.sections().size(), ctx, PrintedSummary.NONE);
+                    i, doc.sections().size(), ctx, PrintedSummary.NONE, printedCreditCardSummary);
             for (StagedAccountSection s : staged) unparseableAcrossDocument.addAll(s.unparseableRows());
             result.addAll(staged);
         }
@@ -252,7 +261,8 @@ public class PdfPreviewGenerator {
     private List<StagedAccountSection> buildSections(UUID userId, String filename,
                                                       PdfTableLocator.LocatedSection section,
                                                       int sectionIndex, int sectionCount, DocumentContext ctx,
-                                                      PrintedSummary printedSummary) {
+                                                      PrintedSummary printedSummary,
+                                                      PrintedCreditCardSummary printedCreditCardSummary) {
         List<String> columns = section.rows().isEmpty() ? List.of() : List.copyOf(section.rows().get(0).keySet());
         ProductDiscovery.DiscoveredProduct product = productDiscovery.discover(
                 new ProductEvidenceCollector.Section(columns, section.auxiliaryText(), null,
@@ -270,7 +280,8 @@ public class PdfPreviewGenerator {
         if (product.validation().isValidated() && !product.type().hasTransactions()) {
             return buildProductSections(filename, section, product, ctx);
         }
-        return List.of(buildLedgerSection(userId, filename, section, product, ctx, printedSummary));
+        return List.of(buildLedgerSection(userId, filename, section, product, ctx, printedSummary,
+                printedCreditCardSummary));
     }
 
     /**
@@ -300,7 +311,8 @@ public class PdfPreviewGenerator {
     private StagedAccountSection buildLedgerSection(UUID userId, String filename,
                                                     PdfTableLocator.LocatedSection section,
                                                     ProductDiscovery.DiscoveredProduct product,
-                                                    DocumentContext ctx, PrintedSummary printedSummary) {
+                                                    DocumentContext ctx, PrintedSummary printedSummary,
+                                                    PrintedCreditCardSummary printedCreditCardSummary) {
         List<StagedRow> staged = new ArrayList<>();
         // "Never lose information" (see the engineering principles doc) -- a row that fails to
         // normalize is reported with WHY, not just silently absent from the row count. Real cost
@@ -410,7 +422,8 @@ public class PdfPreviewGenerator {
         var verification = importVerifier.verify(documentOrder,
                 detected == null ? null : detected.openingBalance(),
                 detected == null ? null : detected.closingBalance(),
-                printedSummary, section.rows(), unparseable, section.evidence().droppedTransactionCandidates());
+                printedSummary, section.rows(), unparseable, section.evidence().droppedTransactionCandidates(),
+                printedCreditCardSummary);
         return new StagedAccountSection(detected, staged, staged.size(), dupCount, unparseable, verification);
     }
 

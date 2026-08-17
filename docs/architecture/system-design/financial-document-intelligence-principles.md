@@ -1006,6 +1006,51 @@ actually works — no test, no claim.
 - **Known limitations:** matches a fixed list of English-language phrases; a statement using
   different wording for the same concept won't trigger this signal until that phrase is added.
 
+#### `CREDIT_CARD_STATEMENT_TOTALS`
+- **Purpose:** reconciles a credit-card statement's own billing equation —
+  `previousBalance + purchases + cashAdvances + fees − paymentsAndCredits == totalAmountDue` —
+  entirely from figures the statement prints about itself. Deliberately reads **zero** transaction
+  rows: see the Credit Card Direction Evidence Study above for why (half the real credit-card
+  corpus has a transaction table that does not form correctly, while its billing-summary panel may
+  still be readable), and `CreditCardStatementTotalsValidator`'s own class-level doc comment for the
+  full reasoning. A mismatch means this extraction misread one of the five summary fields, never
+  that a transaction is wrong — outcome is `VERIFIED`/`WARNING`/`NOT_APPLICABLE`, never `FAILED`.
+- **Supported layouts:** a credit-card summary panel printed as a clean label-row/value-row grid,
+  the same shape `StatementSummaryExtractor` already reads for savings statements (reused position
+  logic, widened to package-private for this reuse rather than duplicated).
+- **Implementation:** `CreditCardSummaryExtractor` (`PrintedCreditCardSummary`) →
+  `PdfPreviewGenerator` (extracted once per document, threaded into `ImportVerifier.verify`) →
+  `CreditCardStatementTotalsValidator` (`CREDIT_CARD_STATEMENT_TOTALS` finding) →
+  `ImportVerificationRecorder` (outcome persisted; every detail field is money read off the
+  statement, so none of it survives persistence by design — the same allowlist discipline that
+  already excludes `StatementTotalsValidator`'s own opening/closing balance).
+- **Regression tests:** `CreditCardSummaryExtractorTest`, `CreditCardStatementTotalsValidatorTest`,
+  `ImportVerificationRecorderIT` (confirming the money fields are correctly absent after a real
+  round trip through the database, not merely absent from the in-memory finding).
+- **Maturity:** Beta, with an important caveat below — read Known limitations before trusting a
+  `NOT_APPLICABLE` result on a specific document to mean "this bank prints nothing to check."
+- **Known limitations — real-corpus measurement, not a claim:** run against all 6 real credit-card
+  documents in the corpus, this capability fires on **zero of them today** (`NOT_APPLICABLE` on
+  every one). This is `CreditCardSummaryExtractor`'s own "refuse rather than guess" discipline
+  working as designed, not a defect: AU's real panel uses entirely different wording ("Opening
+  balance," "Total spends," "Payments & Refunds," "Fee & Charges") than the label vocabulary drawn
+  from ICICI, and its reconstructed layout interleaves labels and values across lines rather than
+  the clean 2-row grid this extractor matches; ICICI's own real layout splits its total-due value
+  onto a separate line from its other four component values, with an operator row (`+ + = −`)
+  between labels and values, which also does not match a simple adjacent label-row/value-row pair.
+  Axis spells its equation as prose rather than a grid at all. HDFC and ICICI's summary text is
+  further degraded by the same table-formation problems named in their Open Investigations above.
+  The mechanism is architecturally sound and privacy-safe (see the persistence tests), but it is
+  currently unproven against this codebase's own real corpus — kept in the registry per
+  `CapabilityCoverageService`'s own convention for a capability declared before it has a trace (see
+  `CapabilityCorpusCoverageTest`'s `DECLARED_WITHOUT_A_TRACE` entry for the honest reason), so this
+  gap stays visible in coverage reporting rather than disappearing until someone remembers to add
+  it. Widening the layout match (a multi-row grid, a prose-equation parser, per-bank label sets) is
+  deferred rather than attempted immediately, on the same "don't accumulate per-bank heuristics"
+  principle the Direction Evidence Study itself was built around — the next real document (a 7th
+  credit-card statement, ideally from a bank not already in the corpus) is what should decide the
+  next specific mechanism, not a guess made now.
+
 #### `OFFSET_COLUMN_ANCHORS`
 - **Purpose:** correctly bucket a row's text into columns even when a column's header LABEL
   doesn't sit anywhere near where that column's own DATA actually starts -- plain nearest-x
@@ -1269,6 +1314,133 @@ actually works — no test, no claim.
   second real document confirming the general shape before a specific mechanism is designed, per
   "Evidence before capability" — tracked in the Capability Backlog below, not attempted here.
 
+#### Open Investigation: ICICI CC header-merging (only 3 rows recovered, real count unknown)
+- **Status:** root-caused via `PdfPipelineDiagnostic` against the real file, deliberately **not
+  fixed yet** — same discipline as the HDFC entry above: this is a table-detection design problem,
+  not a one-line patch.
+- **Symptom:** `ICICI CC.pdf` (a real 9-page credit-card statement) buckets only 6 raw rows in
+  total across the whole document, of which only 3 survive normalization. A 9-page statement
+  producing 3 transactions is implausible on its face.
+- **Root cause (confirmed via `PdfPipelineDiagnostic`):** the opposite defect from the HDFC entry
+  above. HDFC's table never recognizes where it *ends*; this document's table never forms correctly
+  because header-anchor detection *merges three visually distinct, unrelated mini-tables on the
+  same page* into one column set: `[Reward, Intl.#, Date, SPENDS OVERVIEW, SerNo., Transaction
+  Details, Amount (in`)]`. `Reward`/`Intl.#` belong to a separate Rewards-points summary panel,
+  `SPENDS OVERVIEW` is a spending-breakdown panel's heading, and `SerNo.`/`Transaction
+  Details`/`Amount` are the actual transaction table's real columns — three separate visual tables,
+  one merged (wrong) column-anchor set. Once merged, real per-row content stops aligning under any
+  of these anchors closely enough to bucket, which is why the whole 9-page document yields only 6
+  raw rows: the dropped rows are visibly not transactions — `{Reward=Points, Intl.#=amount}` (data
+  from the rewards panel), `{Date=5241XXXXXXXX5001, SPENDS OVERVIEW=53%}` (a masked card number
+  under `Date`), and a multi-paragraph disclaimer footer under `Date`/`SPENDS OVERVIEW` — all
+  boilerplate that happened to align with the merged anchors, while the real transaction rows
+  apparently did not align with any of them and were never bucketed at all (not even as a
+  `BUCKET_EMPTY` drop `ROW_ACCOUNTING` could see — they never reached that check).
+- **Which of the three paths this needs:** a **table-detection pipeline gap** in `PdfTableLocator`,
+  the mirror image of the HDFC gap — that one is "doesn't know when a table ends," this one is
+  "doesn't know that two nearby header-shaped lines belong to two different tables, not one." Some
+  notion of visual/positional separation between distinct header-shaped lines is missing.
+- **Correction to this document's own earlier draft:** an earlier version of the Corpus Failure
+  Classification section below speculated that `HSBC.pdf` (also Category B) might share this root
+  cause and could be investigated together. Diagnosing `HSBC.pdf` the same way disproves that:
+  HSBC's detected header — `[Balance, Date, Transaction Details, Deposits, Withdrawals]` — is a
+  single, legitimate, correctly-formed transaction header, not a merge of unrelated panels. HSBC's
+  near-zero row count (4 raw rows across 4 pages) has a different, not-yet-diagnosed cause. Recorded
+  here so the wrong claim doesn't stand uncorrected once evidence contradicted it.
+
+### Corpus Failure Classification
+
+`ROW_ACCOUNTING_EVIDENCE`'s own corpus sweep (21/21 real documents, all `VERIFIED`) surfaced a
+trap: a clean row-accounting result says nothing about the 4 documents in the same corpus with
+known problems, because none of their failure mechanisms run through the 3 drop points that
+capability watches. Fixing them in whatever order they happen to be looked at ("fix ICICI CC, then
+Bandhan, then ICICI Savings") risks the same three PDFs being patched with three unrelated,
+one-off mechanisms. This section classifies each one first, by the evidence already on hand from
+`corpus-run.py`'s own JSON record, before any fix is attempted:
+
+| Category | Meaning |
+|---|---|
+| A — Extraction failure | Rows exist in the table but the parser misses some of them |
+| B — Recognition failure | The transaction table itself is never identified as a table |
+| C — Validation failure | Rows are extracted, but a printed total or balance disagrees |
+| D — Classification failure | Wrong account, product, or bank identity |
+| E — Evidence gap | The engine cannot explain what happened, or a heuristic misfires |
+
+| Document | Observed | Category | Basis |
+|---|---|---|---|
+| `Bandhan bank.pdf` | 3 rows / 7 pages, flagged `suspectedIncompleteByPageRatio` | **E — heuristic false positive, not a bug** | `BALANCE_CHAIN`, `STATEMENT_TOTALS`, and `SUMMARY_TOTALS` are all `VERIFIED` for this document — the printed totals independently confirm 3 rows is the correct count. The page-ratio suspicion heuristic is wrong here, not the extraction. |
+| `HSBC.pdf` | 0 rows / 4 pages, `LAYOUT_UNSUPPORTED` | **B — recognition failure** | 238 positioned text runs exist (text is present) but no header-based or fallback table-detection capability fired at all. The table structure itself was never recognized. |
+| `ICICI CC.pdf` | 3 rows / 9 pages, `PARSED_INCOMPLETE` | **B — recognition failure** | Root-caused (see the Open Investigation entry above): header-anchor detection merges three unrelated mini-tables on the page into one wrong column set, so real transaction rows never align under it. `ROW_ACCOUNTING` is `VERIFIED` here precisely because nothing transaction-shaped ever reached the 3 wired drop points — the loss is upstream of them, in table formation itself. |
+| `ICICI saving.pdf` | 11 rows / 2 pages, `PARSED_RECONCILIATION_FAILED` | **C — validation failure** | `BALANCE_CHAIN` is `VERIFIED` (the 11 extracted rows are internally consistent) but `STATEMENT_TOTALS` is `FAILED` (the printed total disagrees with what was extracted). This is real, measured evidence of a discrepancy — not a guess — and the strongest candidate for an actual missing/extra-row bug in the current corpus. |
+| `Shivani_HDFC.pdf` (RD section) | 0 rows, RD detected at 0.95 confidence | **Product scope, not a bug** | The recurring-deposit section is correctly identified as `RECURRING_DEPOSIT` at high confidence; extracting its schedule was never attempted because RD table extraction is intentionally unbuilt (see `INFERRED_TWO_LINE_DATE_BLOCK` and related capabilities, none of which target RD schedules). Correct classification, deferred scope — do not treat as an extraction bug. |
+
+Next investigation order, now justified by category rather than by list position: `ICICI CC.pdf`
+is root-caused (see the Open Investigation entry above — a header-merging defect, not a missing
+header). `HSBC.pdf` shares category B on paper but not the same mechanism — its header is correctly
+formed, so its near-zero row count needs its own separate diagnosis, not a shared fix.
+`ICICI saving.pdf` is a separate, category-C problem and needs its own investigation: the row count
+is plausible, so the bug (if any) is in which 11 rows were kept or how the printed total compares,
+not in whether a table was found at all.
+
+### Credit Card Direction Evidence Study (investigation only — no validator built)
+
+`BalanceChainValidator` gives real direction protection on statements with a printed running
+balance; every credit-card statement in the real corpus is `NOT_APPLICABLE` for it, since none
+print one. Before designing any credit-card-specific mechanism, this is an evidence pass over all 6
+real credit-card documents (`corpus-run.py`'s `PdfPipelineDiagnostic`, temporarily extended to print
+up to 5 sample raw rows per section — a small, generic addition to that tool, kept for future
+debugging, not a one-off script) asking what direction signals actually exist, and which are
+trustworthy enough to build on. No new validator or heuristic was written for this — the goal was
+only to find out whether a deterministic answer is possible before committing to one.
+
+**Per-row signal, by document** (structural shape only — no real transaction description, merchant
+name, or customer name is reproduced here; see "Describe, don't quote" discipline):
+
+| Document | Per-row direction signal found | Assessment |
+|---|---|---|
+| AU Credit Card | A dedicated `Type` column holding the literal string `Cr` or `Dr`, corroborated independently by a `+` prefix on the amount for credit rows (`LEADING_PLUS_CREDIT`) | **Deterministic** — two independent signals agree on every sampled row |
+| Axis Credit | A bare `Dr`/`Cr` suffix inside the amount cell itself (`DR_CR_SUFFIX`) | **Likely deterministic**, same mechanism as AU's, already a recognized capability — the 5-row sample happened to be all `Dr`; not yet confirmed against a genuine credit/payment row in *this* document |
+| Kotak CC | An explicit `Cr` suffix appears on credit/payment rows; ordinary purchase rows carry **no suffix at all** | **Asymmetric, not fully deterministic** — direction for a debit row is inferred by the *absence* of a marker, not stated by one. This is exactly the shape of heuristic that can misclassify silently (e.g. an extraction glitch that drops the `Cr` suffix on a real credit row would make it look like an ordinary, unmarked debit) |
+| HDFC credit | N/A — not assessable | Table formation is already broken here (see the existing Open Investigation above, 2/40 rows); direction-signal quality can't be judged on a table that doesn't form correctly in the first place |
+| ICICI CC | No per-row marker of any kind on the real transaction columns | Table formation is also broken here (see the Open Investigation above); even once fixed, this document's transaction rows show no per-row Cr/Dr signal at all — direction would have to come from elsewhere |
+| SBI Credit Card | Section 0's direction column header itself is garbled (a broken currency-symbol glyph as the column name, values truncated to a bare `C`); Section 1's columns collapse further — description, amount, and a trailing `D`/`C` marker all merged into one field | **Not reliably assessable** — column detection is degraded in both of this document's sections, a new, not-yet-investigated extraction problem in its own right |
+
+**The generalizable signal: all 6 documents print an account-summary equation.** Every one of the 6,
+regardless of per-row marker quality, prints some form of `Previous Balance − Payments/Credits +
+Purchases + Cash Advance (+ Fees/Charges) = Total Amount Due` in its summary block (confirmed by
+reading each document's own auxiliary text, not assumed). This is structurally the same shape
+`StatementTotalsValidator` already checks for savings statements — an aggregate arithmetic identity,
+not a per-row heuristic. It doesn't require trusting any single row's marker; it only requires that
+the *sum* of rows classified as spends and the *sum* of rows classified as payments/credits
+reconcile against a value the bank itself printed.
+
+**Answering the study's core question — is a deterministic solution possible?** Yes, without
+inventing a new per-row heuristic. The per-row signal quality is genuinely mixed (AU and likely Axis
+are strong; Kotak is asymmetric; HDFC, ICICI, and SBI can't be judged yet because their tables don't
+form correctly). But the aggregate summary equation is present on all 6 real documents today and
+needs no per-row trust at all — it is the same "compare a derived total against a printed value"
+pattern already proven safe in this codebase. A credit-card equivalent of `StatementTotalsValidator`
+built against that equation would give VERIFIED/WARNING evidence on every document that has one,
+independent of whether any individual row's Cr/Dr marker can be trusted.
+
+**Proposed outcome model, for when this is actually built (not now):**
+- **VERIFIED** — the printed summary equation reconciles against the derived purchase/payment
+  totals, or (independently) a per-row marker is present and internally consistent (both AU-style
+  signals agree).
+- **WARNING** — the printed equation does not reconcile. A real, measured discrepancy, the same
+  posture `StatementTotalsValidator` already takes — never a claim about which specific row is
+  wrong.
+- **UNKNOWN, not a default assumption** — no printed summary equation was found *and* no per-row
+  marker exists. The explicit requirement from this study: the engine must say "we cannot determine
+  direction here" rather than silently assume Dr (Kotak's own asymmetric pattern is the cautionary
+  example of exactly that assumption).
+
+**What this study also confirms, unprompted:** half the credit-card corpus (HDFC, ICICI, SBI) can't
+be evaluated for direction-signal quality *at all* until their table-formation problems are fixed —
+which is independent evidence for prioritizing table/financial-region-formation evidence alongside
+or before a direction validator, not just Row Accounting Evidence, since none of these three
+documents' rows are even reliable enough yet to classify.
+
 ### Capability Backlog (generated from real-document validation, not yet built)
 
 Real documents keep producing evidence even when no capability gets written from it immediately —
@@ -1280,7 +1452,8 @@ real document, with an honest evidence count; it graduates to the Capability Reg
 | Capability (candidate name) | Evidence | Priority | Why deferred |
 |---|---|---|---|
 | `ACCOUNT_NUMBER_RECOGNITION` | 6 of 7 real statements in the Aug 2026 validation pass | High | Recurring, not a one-off — `ACCOUNT_NUMBER`/`ACCOUNT_NUMBER_TRAILING_LABEL` only match an explicit "Account Number" label; real statements embed it mid-sentence ("Statement for A/c XXXXXXXXX1455"), under an unrelated label ("Alternate Account Number"), or as a masked card number never labeled "Account Number" at all. Needs its own evidence-gathering pass across these real shapes before a mechanism is designed. |
-| Credit-card table boundary detection (`PdfTableLocator`) | 1 statement (HDFC Tata Neu Plus — see the Open Investigation above) | High | High-impact (2/40 rows parsed) but single-document evidence for the *general* shape of the fix; needs a second real document before a specific mechanism (vs. another one-off marker pattern) is justified. |
+| Credit-card table boundary detection — table doesn't know when it ends (`PdfTableLocator`) | 1 statement (HDFC Tata Neu Plus — see the Open Investigation above) | High | High-impact (2/40 rows parsed) but single-document evidence for the *general* shape of the fix; needs a second real document before a specific mechanism (vs. another one-off marker pattern) is justified. |
+| Credit-card table boundary detection — distinct mini-tables merge into one header (`PdfTableLocator`) | 1 statement (ICICI CC — see the Open Investigation above) | High | The mirror-image defect of the HDFC entry above: not "doesn't know when to stop," but "treats two nearby unrelated header-shaped lines as one table." High-impact (a 9-page statement yields 3 rows) but single-document evidence; kept as its own backlog entry rather than folded into the HDFC one because the mechanism differs, not just the symptom. |
 | `VALUE` → trailing label → trailing value (composite account-holder line) | 1 statement (HDFC: `"<card number> Credit Card No. <NAME>"`) | Low | Genuinely a structural pattern, not an HDFC quirk — could recur as `"Loan Number XXXXXXXX Borrower Name"` or similar on another institution's export. Documented as an observed shape to watch for (see the deferred-evidence test in `PdfMetadataExtractorTest`), not built on one document's strength. |
 | Scrambled / split multi-row credit-summary grid | 1 statement (same HDFC file) | Low | The specific column/row scrambling in this one document isn't yet known to generalize; a naive fix was verified to produce a *wrong* value (₹200 instead of ₹78,000), which is worse than the current null — see that same deferred-evidence test's doc comment for the full reasoning. |
 | Embedded narration reference numbers | 1 statement (Canara — reference number embedded inside free-text transaction narration, not a dedicated column) | Medium | Would need free-text mining rather than column-based extraction — a materially different mechanism from every existing capability, not a small extension of one. |

@@ -163,6 +163,19 @@ class PdfPipelineDiagnostic {
         PdfTextExtractor textExtractor = new PdfTextExtractor();
         List<PositionedText> positioned = textExtractor.extract(bytes);
         System.out.println("Stage 1 -- Text extraction: " + positioned.size() + " positioned text runs");
+        // Auxiliary text (printed further below, per section) is already a lossy, line-joined
+        // reconstruction -- it collapses real x/y geometry into a single string per visual row, so
+        // it can misrepresent a genuinely multi-column layout as if labels and values were simply
+        // interleaved. -DdumpPage0Positions=true prints the raw runs this class's extractors
+        // actually see, coordinates intact, for exactly the case that reconstruction can mislead.
+        if (Boolean.getBoolean("dumpPage0Positions")) {
+            System.out.println("--- Raw positioned text, page 0, sorted by y then x ---");
+            positioned.stream().filter(t -> t.pageIndex() == 0)
+                    .sorted(java.util.Comparator.comparing(PositionedText::y).thenComparing(PositionedText::x))
+                    .forEach(t -> System.out.printf("  y=%-8.1f x=%-8.1f endX=%-8.1f %s%n",
+                            t.y(), t.x(), t.endX(), t.text()));
+            System.out.println();
+        }
 
         PdfTableLocator tableLocator = new PdfTableLocator();
         PdfTableLocator.LocatedDocument doc = tableLocator.locateAll(positioned);
@@ -184,6 +197,10 @@ class PdfPipelineDiagnostic {
             System.out.println("--- Section " + i + " -----------------------------------------");
             System.out.println("  Raw bucketed rows: " + section.rows().size());
             System.out.println("  Detected table columns: " + detectedColumns(section));
+            System.out.println("  Sample rows (first 5, full values -- for inspecting real column"
+                    + " content, e.g. a Type/Cr-Dr field, that a capability flag alone doesn't show):");
+            section.rows().stream().limit(5)
+                    .forEach(row -> System.out.println("    " + row));
             System.out.println("  Auxiliary text (" + section.auxiliaryText().size() + " lines):");
             section.auxiliaryText().forEach(line -> System.out.println("    | " + line));
 
@@ -236,7 +253,7 @@ class PdfPipelineDiagnostic {
             System.out.println();
         }
 
-        PdfPreviewGenerator generator = new PdfPreviewGenerator(textExtractor, tableLocator, metadataExtractor, transactionNormalizer, com.finora.imports.product.ProductDiscovery.standard(), new com.finora.imports.product.ProductAttributeExtractor(), new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(), new com.finora.imports.StatementTotalsValidator(), new com.finora.imports.SummaryTotalsValidator(), new com.finora.imports.ColumnAmbiguityValidator(), new com.finora.imports.RowAccountingValidator()), com.finora.imports.TestRuleEngines.empty());
+        PdfPreviewGenerator generator = new PdfPreviewGenerator(textExtractor, tableLocator, metadataExtractor, transactionNormalizer, com.finora.imports.product.ProductDiscovery.standard(), new com.finora.imports.product.ProductAttributeExtractor(), new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(), new com.finora.imports.StatementTotalsValidator(), new com.finora.imports.SummaryTotalsValidator(), new com.finora.imports.ColumnAmbiguityValidator(), new com.finora.imports.RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator()), com.finora.imports.TestRuleEngines.empty());
         var generated = generator.generateSectionsWithContext(
                 UUID.randomUUID(), pdfPath.getFileName().toString(), bytes, null);
         List<StagedAccountSection> finalSections = generated.sections();

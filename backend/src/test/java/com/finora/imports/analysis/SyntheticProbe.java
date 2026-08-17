@@ -53,7 +53,7 @@ public final class SyntheticProbe {
                 new TransactionNormalizer(cat, new DuplicateDetector(repo), TestRuleEngines.empty()),
                 ProductDiscovery.standard(), new ProductAttributeExtractor(),
                 new ImportVerifier(new BalanceChainValidator(), new StatementTotalsValidator(),
-                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator()),
+                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator()),
                 TestRuleEngines.empty());
     }
 

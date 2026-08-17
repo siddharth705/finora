@@ -116,6 +116,14 @@ class CapabilityCorpusCoverageTest {
         DECLARED_WITHOUT_A_TRACE.put("GRID_METADATA_TRAILING_LABEL", "no trace");
         DECLARED_WITHOUT_A_TRACE.put("FINANCIAL_PRODUCT_CLASSIFICATION", "no trace");
         DECLARED_WITHOUT_A_TRACE.put("PRINTED_SUMMARY_TOTALS", "no trace; newly registered");
+        DECLARED_WITHOUT_A_TRACE.put("CREDIT_CARD_SUMMARY_TOTALS",
+                "no trace, and none is honest to capture yet -- the Credit Card Direction Evidence "
+                        + "Study confirmed all 6 real credit-card documents print the figures this "
+                        + "reads, but CreditCardSummaryExtractor's label-row/value-row grid match "
+                        + "did not fire on any of them (see the architecture doc's addendum to that "
+                        + "study). A synthetic trace would only prove the grid-matching code works "
+                        + "on geometry invented to fit it, not on a real layout -- worthless as "
+                        + "regression evidence for the actual gap.");
         // RIGHT_ALIGNED_AMOUNTS was here, with the note "either the three traces genuinely avoid
         // right-aligned amount columns, or the recording sits on a path they do not take. Measure
         // before capturing." It was measured, and the answer was a third thing: the two HDFC
