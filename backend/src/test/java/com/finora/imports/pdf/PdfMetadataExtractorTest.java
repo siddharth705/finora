@@ -303,6 +303,73 @@ class PdfMetadataExtractorTest {
     }
 
     /**
+     * Bug fix, verified against a real AU Small Finance Bank credit-card statement: the due date
+     * is printed directly after its own label, on the SAME line, with unrelated text both before
+     * it (a "Pay Now" call-to-action) and after it (the next field's own value) -- not a separate
+     * later line the way the multi-column-grid test above exercises. {@code findGridValue} used
+     * to only ever search lines AFTER the label line, so a value sitting on the label's own line
+     * was skipped outright and this fell through to null.
+     */
+    @Test
+    void extract_findsPaymentDueDate_whenTheValueIsInlineOnTheLabelsOwnLine() {
+        var metadata = extractor.extract(List.of("Pay Now Payment due date 08 May 2026 Rs.0.00 EMIs"));
+
+        assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 5, 8));
+    }
+
+    /**
+     * Bug fix, verified against a real ICICI Bank credit-card statement: the grid's due-date
+     * VALUE prints month name FIRST ("July 29, 2026") -- the reverse token order of every other
+     * date shape this class already parses, which all put the day first. Neither DATE_LIKE's
+     * candidate-detection regex nor DATE_FORMATS' parser recognized this order at all before.
+     */
+    @Test
+    void extract_findsPaymentDueDate_inMonthNameFirstFormat() {
+        var metadata = extractor.extract(List.of(
+                "Some text PAYMENT DUE DATE more text",
+                "unrelated line",
+                "July 29, 2026 Scan to Pay using"));
+
+        assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 7, 29));
+    }
+
+    /**
+     * Bug fix, verified against a real Kotak Mahindra Bank credit-card statement: the due date is
+     * stated as a single imperative sentence, "Remember to pay by &lt;date&gt;", with neither the
+     * word "Due" nor "Date" anywhere in it -- so neither {@code PAYMENT_DUE_DATE} nor
+     * {@code GRID_DUE_DATE_LABEL} can ever match this line at all. A genuinely different real
+     * phrasing, not a formatting variant of an already-covered one.
+     */
+    @Test
+    void extract_findsPaymentDueDate_fromARememberToPayBySentence() {
+        var metadata = extractor.extract(List.of("Remember to pay by 02-Apr-2026"));
+
+        assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 4, 2));
+    }
+
+    /**
+     * Adversarial-review regression guard, verified against a real Axis Bank "Neo Rupay"
+     * statement: the whole payment-summary block collapses onto ONE scrambled line where the
+     * SAME numeric token appears twice -- once right after "Total Payment Due", again right
+     * after "Credit Limit" -- a duplicate from the document's own column scrambling, not two
+     * genuinely different amounts. A same-line search here (the mechanism added for the
+     * inline-due-date fix above) was verified to confidently return the Total Payment Due figure
+     * AS the credit limit -- actively wrong, not just incomplete, and worse than the null this
+     * asserts. This is why the credit-limit grid fallback's own call site deliberately passes
+     * {@code line.length()} rather than the label match's end -- so it never searches the same
+     * line the way the due-date fallback now does. Kept here the same way this file's other
+     * "doesNotYetFind..." tests are: so a later, well-meaning extension of the same-line search
+     * to credit limit gets caught producing a wrong value instead of silently shipping one.
+     */
+    @Test
+    void extract_doesNotFindCreditLimit_whenTheSameValueIsDuplicatedAcrossTwoLabelsInAScrambledLine() {
+        var metadata = extractor.extract(List.of(
+                "Some Label =Total Payment Due 10,081.99 Dr Credit Limit Available Credit Limit 10,081.99 1,978.00"));
+
+        assertThat(metadata.creditLimit()).isNull();
+    }
+
+    /**
      * Bug fix, verified against a real HDFC "Tata Neu Plus" statement: two compounding real
      * gaps, both exposed by this exact document. First, its Credit Limit is a WHOLE rupee amount
      * with no decimal places ("78,000", not "78,000.00") -- AMOUNT_LIKE originally required a

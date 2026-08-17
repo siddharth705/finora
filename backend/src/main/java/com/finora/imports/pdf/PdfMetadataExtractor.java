@@ -116,6 +116,16 @@ public class PdfMetadataExtractor {
     private static final Pattern CARD_ENDING_DIGITS =
             Pattern.compile("(?i)credit\\s+card\\s+ending\\s+(?:with|in)\\s+(\\d{4})\\b");
 
+    // REMEMBER_TO_PAY_BY: a genuinely different due-date shape from every pattern above -- neither
+    // a "Label: Value" line (PAYMENT_DUE_DATE) nor a grid with "due date" text anywhere near the
+    // value (GRID_DUE_DATE_LABEL) -- verified against a real Kotak Mahindra Bank credit-card
+    // statement, whose payment-summary block states the due date as a single imperative sentence,
+    // "Remember to pay by <date>", with neither the word "Due" nor "Date" anywhere in it. The whole
+    // document's ONLY due-date-bearing sentence, so first match wins with no ambiguity to guard
+    // against, the same as CARD_ENDING_DIGITS above.
+    private static final Pattern REMEMBER_TO_PAY_BY =
+            Pattern.compile("(?i)remember\\s+to\\s+pay\\s+by\\s+(\\S+)");
+
     private static final DateTimeFormatter[] DATE_FORMATS = {
             DateTimeFormatter.ofPattern("dd-MM-yyyy"),
             DateTimeFormatter.ofPattern("dd/MM/yyyy"),
@@ -123,6 +133,17 @@ public class PdfMetadataExtractor {
             // (see GRID_DUE_DATE_LABEL's own doc comment for why it isn't a plain "Label: Value" line).
             DateTimeFormatter.ofPattern("d MMM, yyyy", Locale.ENGLISH),
             DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH),
+            // "July 29, 2026" -- a real ICICI Bank credit-card statement's Payment Due Date grid
+            // value, month name FIRST rather than day first. Every format above puts the day
+            // before the month name; this is the reverse token order, not a formatting variant of
+            // an existing one -- see DATE_LIKE's own matching alternative, added for the same
+            // document, for why the value wasn't even reaching parseDate before this.
+            DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.ENGLISH),
+            // "02-Apr-2026" -- a real Kotak Mahindra Bank credit-card statement's due-date value,
+            // hyphen-separated with an abbreviated MONTH NAME in the middle position rather than a
+            // numeric month ("dd-MM-yyyy" above requires digits there). See REMEMBER_TO_PAY_BY's
+            // own doc comment for the sentence this value comes from.
+            DateTimeFormatter.ofPattern("d-MMM-yyyy", Locale.ENGLISH),
     };
 
     // Some real statements (verified against an actual HDFC "Tata Neu Plus" credit card export)
@@ -144,8 +165,13 @@ public class PdfMetadataExtractor {
     // Statement Period range) -- findGridValue's own range-exclusion (see its doc comment) is what
     // keeps this from grabbing the period's start date instead of the real due date.
     private static final Pattern GRID_DUE_DATE_LABEL = Pattern.compile("(?i)\\bdue\\s+date\\b");
+    // Third alternative: month name FIRST ("July 29, 2026") -- see DATE_FORMATS' "MMMM d, yyyy"
+    // entry for the real ICICI Bank grid this shape comes from. Requires a comma before the year
+    // specifically (unlike the day-first alternative, where the comma is optional) since a bare
+    // "July 2026" with no day at all is a statement-period-style month, not a specific due date.
     private static final Pattern DATE_LIKE = Pattern.compile(
-            "\\b\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}\\b|\\b\\d{1,2}\\s+[A-Za-z]{3,9}\\.?,?\\s+\\d{4}\\b");
+            "\\b\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}\\b|\\b\\d{1,2}\\s+[A-Za-z]{3,9}\\.?,?\\s+\\d{4}\\b"
+            + "|\\b[A-Za-z]{3,9}\\s+\\d{1,2},\\s+\\d{4}\\b");
     // A date immediately preceded or followed by " - " is one half of an explicit range (e.g. a
     // Statement Period column, "24/06/2026 - 22/07/2026") -- excluded from findGridValue's
     // date-shape scan so a standalone field like Payment Due Date is never confused with the
@@ -360,18 +386,43 @@ public class PdfMetadataExtractor {
                 }
             }
 
-            if (paymentDueDate == null && GRID_DUE_DATE_LABEL.matcher(line).find()) {
-                String value = findGridValue(preTableLines, i, DATE_LIKE, DATE_RANGE_MEMBER);
-                if (value != null) paymentDueDate = parseDate(value);
-                if (ctx != null && paymentDueDate != null) ctx.record("GRID_METADATA_FALLBACK");
-                continue;
+            if (paymentDueDate == null) {
+                Matcher rememberMatch = REMEMBER_TO_PAY_BY.matcher(line);
+                if (rememberMatch.find()) {
+                    LocalDate parsedDueDate = parseDate(rememberMatch.group(1));
+                    if (parsedDueDate != null) { paymentDueDate = parsedDueDate; continue; }
+                }
             }
 
-            if (creditLimit == null && GRID_CREDIT_LIMIT_LABEL.matcher(line).find()) {
-                String value = findGridValue(preTableLines, i, AMOUNT_LIKE, null);
-                if (value != null) creditLimit = com.finora.imports.CsvParser.parseNumeric(value);
-                if (ctx != null && creditLimit != null) ctx.record("GRID_METADATA_FALLBACK");
-                continue;
+            if (paymentDueDate == null) {
+                Matcher dueDateLabelMatch = GRID_DUE_DATE_LABEL.matcher(line);
+                if (dueDateLabelMatch.find()) {
+                    String value = findGridValue(preTableLines, i, dueDateLabelMatch.end(), DATE_LIKE, DATE_RANGE_MEMBER);
+                    if (value != null) paymentDueDate = parseDate(value);
+                    if (ctx != null && paymentDueDate != null) ctx.record("GRID_METADATA_FALLBACK");
+                    continue;
+                }
+            }
+
+            if (creditLimit == null) {
+                Matcher creditLimitLabelMatch = GRID_CREDIT_LIMIT_LABEL.matcher(line);
+                if (creditLimitLabelMatch.find()) {
+                    // Deliberately NOT creditLimitLabelMatch.end() -- verified against a real Axis
+                    // Bank "Neo Rupay" statement that a same-line search here is actively unsafe,
+                    // not just incomplete: its payment-summary line has "...=Total Payment Due
+                    // 10,081.99 Dr Credit Limit Available Credit Limit 10,081.99 1,978.00
+                    // 29,752.76..." -- the SAME "10,081.99" token duplicated across two label
+                    // positions by this document's own scrambled column order, not two genuinely
+                    // different amounts. A same-line search here would confidently return the
+                    // Total Payment Due figure as the credit limit. line.length() keeps this
+                    // fallback exactly as conservative as it was before -- next lines only -- same
+                    // "wrong is worse than null" reasoning already documented for HDFC's own
+                    // scrambled credit-limit grid.
+                    String value = findGridValue(preTableLines, i, line.length(), AMOUNT_LIKE, null);
+                    if (value != null) creditLimit = com.finora.imports.CsvParser.parseNumeric(value);
+                    if (ctx != null && creditLimit != null) ctx.record("GRID_METADATA_FALLBACK");
+                    continue;
+                }
             }
 
             // GRID_METADATA_TRAILING_LABEL fallbacks (see that constant's own doc comment) -- only
@@ -450,23 +501,41 @@ public class PdfMetadataExtractor {
     }
 
     /** Shared by every grid-metadata fallback (see {@link #GRID_DUE_DATE_LABEL}/
-     *  {@link #GRID_CREDIT_LIMIT_LABEL}'s own doc comments): scans the few lines after a label
-     *  line for the first substring matching {@code valuePattern}, skipping any match that also
-     *  matches {@code exclude} (e.g. a date that's one half of an explicit range -- null to skip
-     *  no matches), and returns the raw matched text -- null (not a thrown exception) if nothing
+     *  {@link #GRID_CREDIT_LIMIT_LABEL}'s own doc comments): first checks the label's own line for
+     *  an inline value starting right after the label text, then the few lines after it, for the
+     *  first substring matching {@code valuePattern} -- skipping any match that also matches
+     *  {@code exclude} (e.g. a date that's one half of an explicit range -- null to skip no
+     *  matches) -- and returns the raw matched text, or null (not a thrown exception) if nothing
      *  usable turns up within the window, same "genuinely null when the file didn't carry enough
      *  signal" discipline every other field here follows. Bounded to a few lines so it can't
-     *  wander into unrelated text further down the page. */
-    private String findGridValue(List<String> lines, int labelLineIndex, Pattern valuePattern, Pattern exclude) {
+     *  wander into unrelated text further down the page.
+     *
+     *  @param searchFromInLabelLine the offset into the label line to start searching from --
+     *      the label match's own end, so the value scan can never re-match part of the label text
+     *      itself. Bug fix: verified against a real AU Small Finance Bank credit-card statement,
+     *      whose real due-date value is printed directly after its label on the SAME line ("...Pay
+     *      Now Payment due date 08 May 2026 ...EMIs"), not on a separate later line at all -- this
+     *      method previously only ever looked at lines AFTER the label line, so a value sitting on
+     *      the label's own line was skipped outright and this fell through to null. */
+    private String findGridValue(List<String> lines, int labelLineIndex, int searchFromInLabelLine,
+                                  Pattern valuePattern, Pattern exclude) {
+        String value = findInLine(lines.get(labelLineIndex).substring(searchFromInLabelLine), valuePattern, exclude);
+        if (value != null) return value;
+
         int end = Math.min(lines.size(), labelLineIndex + 1 + GRID_VALUE_SEARCH_WINDOW);
         for (int j = labelLineIndex + 1; j < end; j++) {
-            String candidateLine = lines.get(j);
-            Matcher m = valuePattern.matcher(candidateLine);
-            while (m.find()) {
-                if (exclude == null || !exclude.matcher(candidateLine.substring(
-                        Math.max(0, m.start() - 3), Math.min(candidateLine.length(), m.end() + 3))).find()) {
-                    return m.group();
-                }
+            value = findInLine(lines.get(j), valuePattern, exclude);
+            if (value != null) return value;
+        }
+        return null;
+    }
+
+    private String findInLine(String line, Pattern valuePattern, Pattern exclude) {
+        Matcher m = valuePattern.matcher(line);
+        while (m.find()) {
+            if (exclude == null || !exclude.matcher(line.substring(
+                    Math.max(0, m.start() - 3), Math.min(line.length(), m.end() + 3))).find()) {
+                return m.group();
             }
         }
         return null;
