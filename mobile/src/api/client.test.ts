@@ -99,3 +99,43 @@ describe('401 handling', () => {
     expect(attemptedRefresh()).toBe(true);
   });
 });
+
+describe('error envelope details', () => {
+  /**
+   * Regression test, mirroring the web app's client.test.ts. The error-shape reduction below
+   * used to drop everything except message and errorCode -- AUTH_ACCOUNT_DEACTIVATED's
+   * reactivation token (carried in `details`, see ApiException/ApiResponse on the backend) would
+   * have reached this interceptor and then been silently discarded before LoginScreen ever saw
+   * it, making the reactivation flow unreachable from the app.
+   */
+  function rejectedHandler() {
+    const { api } = require('./client');
+    return (api.interceptors.response as unknown as {
+      handlers: { rejected: (e: unknown) => Promise<unknown> }[];
+    }).handlers[0].rejected;
+  }
+
+  beforeEach(() => {
+    jest.resetModules();
+  });
+
+  it('surfaces details from the error envelope, not just message and errorCode', async () => {
+    const caught = await rejectedHandler()({
+      response: {
+        status: 403,
+        data: {
+          message: 'Your account is deactivated.',
+          errorCode: 'AUTH_007',
+          details: { reactivationToken: 'reactivation-token' },
+        },
+      },
+      config: { url: '/auth/login', headers: {} },
+    }).catch((e: unknown) => e);
+
+    expect((caught as any).response.data).toEqual({
+      message: 'Your account is deactivated.',
+      errorCode: 'AUTH_007',
+      details: { reactivationToken: 'reactivation-token' },
+    });
+  });
+});

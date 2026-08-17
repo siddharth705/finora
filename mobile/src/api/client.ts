@@ -181,10 +181,17 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    // Error responses use the same envelope ({success:false, message, errorCode}) -- surface the
-    // message where callers already expect err.response.data.message.
+    // Error responses use the same envelope ({success:false, message, errorCode, details}) --
+    // surface the message where callers already expect err.response.data.message. `details` is
+    // carried through too (not just message/errorCode): AUTH_ACCOUNT_DEACTIVATED's reactivation
+    // token travels there (see ApiException/ApiResponse on the backend), same as the web app's
+    // client.ts -- dropping it silently would make the reactivation flow unreachable here too.
     if (error.response?.data?.message) {
-      error.response.data = { message: error.response.data.message, errorCode: error.response.data.errorCode };
+      error.response.data = {
+        message: error.response.data.message,
+        errorCode: error.response.data.errorCode,
+        details: error.response.data.details,
+      };
     }
     return Promise.reject(error);
   }
