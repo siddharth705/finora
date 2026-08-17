@@ -5,7 +5,7 @@ import { AuthScreenLayout } from '../components/AuthScreenLayout';
 import { Button } from '../components/Button';
 import { TextField } from '../components/TextField';
 import { useAuth } from '../context/AuthContext';
-import { apiErrorCode, toUserMessage } from '../lib/apiError';
+import { apiErrorCode, apiErrorDetails, toUserMessage } from '../lib/apiError';
 import { AUTH_ACCOUNT_DEACTIVATED } from '../api/errorCodes';
 import { spacing, useTheme } from '../theme';
 import type { AuthStackParamList } from '../navigation/types';
@@ -42,8 +42,7 @@ export function LoginScreen({ navigation, route }: Props) {
   // against a shared constant rather than a hand-typed literal here. `details` only reaches this
   // point because client.ts's response interceptor carries it through the error envelope.
   function handleAuthError(err: unknown, fallback: string) {
-    const details = (err as { response?: { data?: { details?: { reactivationToken?: string } } } })?.response?.data
-      ?.details;
+    const details = apiErrorDetails<{ reactivationToken?: string }>(err);
     const token = apiErrorCode(err) === AUTH_ACCOUNT_DEACTIVATED ? details?.reactivationToken : null;
     if (token) {
       // Clears any error left over from a previous reactivation attempt -- this screen doesn't

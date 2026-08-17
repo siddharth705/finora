@@ -1,5 +1,5 @@
 import { AxiosError, AxiosHeaders } from 'axios';
-import { apiErrorCode, isOffline, toUserMessage } from './apiError';
+import { apiErrorCode, apiErrorDetails, isOffline, toUserMessage } from './apiError';
 import { PDF_PASSWORD_REQUIRED } from '../api/errorCodes';
 
 function axiosErrorWithResponse(status: number, data: unknown): AxiosError {
@@ -102,5 +102,24 @@ describe('apiErrorCode', () => {
     expect(apiErrorCode(networkError())).toBeNull();
     expect(apiErrorCode(new Error('kaboom'))).toBeNull();
     expect(apiErrorCode({ code: 'auth/code-expired' })).toBeNull();
+  });
+});
+
+describe('apiErrorDetails', () => {
+  it('returns the server error details so a screen can act on structured evidence', () => {
+    // The reactivation token is the reason this exists: LoginScreen has to pull it out of the
+    // envelope to drive the "Welcome back" prompt, not just display a message.
+    expect(
+      apiErrorDetails<{ reactivationToken: string }>(
+        axiosErrorWithResponse(403, { errorCode: 'AUTH_007', details: { reactivationToken: 'tok-123' } })
+      )
+    ).toEqual({ reactivationToken: 'tok-123' });
+  });
+
+  it('is null for anything without a details payload', () => {
+    expect(apiErrorDetails(axiosErrorWithResponse(500, {}))).toBeNull();
+    expect(apiErrorDetails(axiosErrorWithResponse(400, { message: 'no details here' }))).toBeNull();
+    expect(apiErrorDetails(networkError())).toBeNull();
+    expect(apiErrorDetails(new Error('kaboom'))).toBeNull();
   });
 });
