@@ -435,4 +435,27 @@ class ImportJobTest {
         assertThat(ImportJob.Status.QUEUED.isInFlight()).isFalse();
         assertThat(ImportJob.Status.QUEUED.isTerminal()).isFalse();
     }
+
+    /**
+     * Guards the exemption recorded in {@link ImportJob#getCompressionType()} and
+     * docs/architecture/data/statement-storage-migration.md §0.2: {@code ImportJobService.accept()}
+     * writes to {@code StatementStorage} directly, never through {@code StatementContentService} --
+     * the only place that compresses -- so a job's object is never gzipped, in every state a job can
+     * reach, not just the freshly-enqueued one. {@code StatementContentService.read} decompresses (or
+     * not) strictly by this column, so a value that drifted from reality on even one status would
+     * make that read path try to gunzip bytes that were never compressed.
+     */
+    @Test
+    void compressionTypeIsAlwaysNone_regardlessOfJobState() {
+        ImportJob job = job();
+        assertThat(job.getCompressionType()).isEqualTo(com.finora.imports.storage.CompressionType.NONE);
+
+        job.markClaimed("worker", Instant.now());
+        job.advanceTo(ImportJob.Status.IMPORTING);
+        job.complete(UUID.randomUUID(), Instant.now());
+
+        assertThat(job.getCompressionType())
+                .as("terminal state must not change what the async path's read-back decodes by")
+                .isEqualTo(com.finora.imports.storage.CompressionType.NONE);
+    }
 }

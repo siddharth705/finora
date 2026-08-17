@@ -103,9 +103,15 @@ export interface DashboardSummary {
   incomeDeltaPct: number | null;
   expenseDeltaPct: number | null;
   netDeltaPct: number | null;
-  healthScore: number;
-  healthLabel: string;
+  // D-25 PR3-A (web only so far): null/empty below healthScoreMinTransactions. Mobile doesn't
+  // render the health score at all yet, but the type has to stay in sync with the shared backend
+  // response shape.
+  healthScore: number | null;
+  healthLabel: string | null;
   healthBreakdown: Record<string, number>;
+  healthScoreAvailable: boolean;
+  healthScoreTransactionCount: number;
+  healthScoreMinTransactions: number;
   spendByCategory: Record<string, number>;
   notifications: string[];
   /**

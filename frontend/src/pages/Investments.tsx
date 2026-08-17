@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Doughnut, Line } from 'react-chartjs-2';
 import { Chart as ChartJS, ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend } from 'chart.js';
+import { LineChart as LineChartIcon, TrendingUp, TrendingDown, Wallet } from 'lucide-react';
 import { accountsApi, networthApi, type NetWorthData } from '../api/endpoints';
 import type { Account } from '../types';
 import { formatDate } from '../utils/date';
+import { FinoraCard, MetricCard, EmptyState, SectionHeader, ChartContainer, baseChartOptions } from '../design-system';
 
 ChartJS.register(ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend);
 
@@ -122,39 +124,39 @@ export default function Investments() {
         </div>
       )}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <div className="bg-card rounded p-4 shadow border-l-4 border-primary">
-          <p className="text-[10px] uppercase text-gray-500 mb-1">Total Investments</p>
-          <p className="text-xl font-semibold">{fmt(totalInvestments)}</p>
-        </div>
-        <div className="bg-card rounded p-4 shadow border-l-4 border-success">
-          <p className="text-[10px] uppercase text-gray-500 mb-1">Net Worth</p>
-          <p className="text-xl font-semibold text-success">{fmt(netWorth?.netWorth ?? 0)}</p>
-        </div>
-        <div className="bg-card rounded p-4 shadow border-l-4 border-danger">
-          <p className="text-[10px] uppercase text-gray-500 mb-1">Liabilities</p>
-          <p className="text-xl font-semibold text-danger">{fmt(netWorth?.totalLiabilities ?? 0)}</p>
-        </div>
+        <MetricCard label="Total Investments" value={fmt(totalInvestments)} icon={LineChartIcon} iconBg="bg-primary-light" iconColor="text-primary" />
+        <MetricCard label="Net Worth" value={fmt(netWorth?.netWorth ?? 0)} icon={TrendingUp} iconBg="bg-green-100" iconColor="text-green-600" valueColor="text-success" />
+        <MetricCard label="Liabilities" value={fmt(netWorth?.totalLiabilities ?? 0)} icon={TrendingDown} iconBg="bg-red-100" iconColor="text-red-600" valueColor="text-danger" />
       </div>
 
       <div className="grid md:grid-cols-2 gap-6">
-        <div className="bg-card rounded p-5 shadow">
-          <p className="text-xs uppercase text-gray-500 mb-3">Allocation</p>
-          {holdings.length === 0 ? (
-            <p className="text-sm italic text-gray-500">No investment accounts added yet.</p>
-          ) : (
-            <div className="max-w-xs mx-auto">
-              <Doughnut
-                data={{
-                  labels: holdings.map((h) => h.name),
-                  datasets: [{ data: holdings.map((h) => h.balance), backgroundColor: holdings.map((_, i) => COLORS[i % COLORS.length]) }],
-                }}
+        <FinoraCard>
+          <SectionHeader title="Allocation" />
+          <ChartContainer
+            height={224}
+            isEmpty={holdings.length === 0}
+            emptyState={
+              <EmptyState
+                icon={Wallet}
+                iconBg="bg-blue-100"
+                iconColor="text-blue-600"
+                title="No investments yet"
+                desc="Add your first investment or asset below to see its allocation."
               />
-            </div>
-          )}
-        </div>
-        <div className="bg-card rounded p-5 shadow">
-          <div className="flex justify-between items-center mb-3">
-            <p className="text-xs uppercase text-gray-500">Net Worth Trend</p>
+            }
+          >
+            <Doughnut
+              data={{
+                labels: holdings.map((h) => h.name),
+                datasets: [{ data: holdings.map((h) => h.balance), backgroundColor: holdings.map((_, i) => COLORS[i % COLORS.length]) }],
+              }}
+              options={{ ...baseChartOptions }}
+            />
+          </ChartContainer>
+        </FinoraCard>
+        <FinoraCard>
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="font-semibold text-ink">Net Worth Trend</h2>
             <button
               onClick={saveSnapshot}
               disabled={savingSnapshot}
@@ -163,31 +165,39 @@ export default function Investments() {
               {savingSnapshot ? 'Saving…' : "Save Today's Snapshot"}
             </button>
           </div>
-          {!netWorth || netWorth.history.length < 2 ? (
-            <p className="text-sm italic text-gray-500">
-              Save a snapshot periodically to build a net worth trend — history starts accumulating from when you begin saving snapshots.
-            </p>
-          ) : (
+          <ChartContainer
+            height={224}
+            isEmpty={!netWorth || netWorth.history.length < 2}
+            emptyState={
+              <EmptyState
+                icon={TrendingUp}
+                iconBg="bg-primary-light"
+                iconColor="text-primary"
+                title="Start tracking your trend"
+                desc="Save a snapshot periodically to build a net worth trend — history starts accumulating from when you begin saving snapshots."
+              />
+            }
+          >
             <Line
               data={{
-                labels: netWorth.history.map((h) => h.date),
+                labels: netWorth?.history.map((h) => h.date) ?? [],
                 datasets: [{
                   label: 'Net Worth',
-                  data: netWorth.history.map((h) => h.netWorth),
+                  data: netWorth?.history.map((h) => h.netWorth) ?? [],
                   borderColor: '#a9803a',
                   backgroundColor: 'rgba(169,128,58,0.15)',
                   fill: true,
                   tension: 0.3,
                 }],
               }}
-              options={{ plugins: { legend: { display: false } } }}
+              options={{ ...baseChartOptions, plugins: { legend: { display: false } } }}
             />
-          )}
-        </div>
+          </ChartContainer>
+        </FinoraCard>
       </div>
 
-      <div className="bg-card rounded shadow p-5">
-        <p className="text-xs uppercase text-gray-500 mb-4">Add Investment / Asset</p>
+      <FinoraCard>
+        <SectionHeader title="Add Investment / Asset" />
         <div className="grid md:grid-cols-4 gap-2 items-end mb-4">
           <div>
             <label htmlFor="investment-name" className="block text-xs uppercase text-gray-500 mb-1">Name</label>
@@ -207,7 +217,13 @@ export default function Investments() {
         </div>
 
         {holdings.length === 0 ? (
-          <p className="text-sm italic text-gray-500">No holdings yet.</p>
+          <EmptyState
+            icon={Wallet}
+            iconBg="bg-blue-100"
+            iconColor="text-blue-600"
+            title="No holdings yet"
+            desc="Add your first investment or asset above."
+          />
         ) : (
           <div className="space-y-2">
             {holdings.map((h) => (
@@ -224,7 +240,7 @@ export default function Investments() {
             ))}
           </div>
         )}
-      </div>
+      </FinoraCard>
     </div>
   );
 }

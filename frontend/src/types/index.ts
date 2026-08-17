@@ -92,9 +92,15 @@ export interface DashboardSummary {
   incomeDeltaPct: number | null;
   expenseDeltaPct: number | null;
   netDeltaPct: number | null;
-  healthScore: number;
-  healthLabel: string;
+  // D-25 PR3-A: null/empty below healthScoreMinTransactions -- a score computed from too few
+  // transactions is a harsh first impression, not a true reading. Check healthScoreAvailable
+  // before rendering these, don't infer availability from healthScore being non-null alone.
+  healthScore: number | null;
+  healthLabel: string | null;
   healthBreakdown: Record<string, number>;
+  healthScoreAvailable: boolean;
+  healthScoreTransactionCount: number;
+  healthScoreMinTransactions: number;
   spendByCategory: Record<string, number>;
   notifications: string[];
   /**

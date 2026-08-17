@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -50,6 +50,9 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
       'Spend Consistency': 50,
       'Cash Flow Stability': 80,
     },
+    healthScoreAvailable: true,
+    healthScoreTransactionCount: 12,
+    healthScoreMinTransactions: 10,
     spendByCategory: {},
     notifications: [],
     reportingMonth: '2026-08',
@@ -131,6 +134,25 @@ describe('Dashboard — Financial Health Score', () => {
     expect(await screen.findByText('28')).toBeInTheDocument();
     expect(screen.getByText('Needs Attention')).toBeInTheDocument();
   });
+
+  it("D-25 PR3-A: shows a 'Getting Started' progress state instead of a score below the transaction floor", async () => {
+    vi.mocked(dashboardApi.summary).mockResolvedValue(summary({
+      healthScore: null, healthLabel: null, healthBreakdown: {},
+      healthScoreAvailable: false, healthScoreTransactionCount: 7, healthScoreMinTransactions: 10,
+    }));
+    renderDashboard();
+
+    const heading = await screen.findByText('Financial Health Score');
+    const card = within(heading.closest('div.bg-card') as HTMLElement);
+    expect(card.getByText('Getting Started')).toBeInTheDocument();
+    expect(card.getByText('7 / 10 transactions')).toBeInTheDocument();
+    expect(card.getByText('70%')).toBeInTheDocument();
+    // Not a real score or breakdown -- rendering either here would be the exact harsh-first-
+    // impression bug this state exists to avoid. Scoped to the card itself: "Savings Rate" is
+    // also a KPI tile label elsewhere on the page, same reason the breakdown test above scopes.
+    expect(card.queryByText('out of 100')).not.toBeInTheDocument();
+    expect(card.queryByText('Savings Rate')).not.toBeInTheDocument();
+  });
 });
 
 describe('Dashboard — Subscriptions & Recurring Payments', () => {
@@ -156,12 +178,30 @@ describe('Dashboard — Subscriptions & Recurring Payments', () => {
     vi.mocked(reportsApi.forMonth).mockReset().mockResolvedValue({
       month: '2026-08', income: 80000, expense: 45000, categories: [],
     });
+    // Only `Date` is faked (not timers) -- RTL's findByText/waitFor poll via real setTimeout,
+    // and faking those too would hang every `await screen.findByText(...)` below. Freezing "now"
+    // makes these day-count assertions deterministic instead of drifting with whatever moment
+    // `npm test` happens to run at.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 7, 17, 12, 0, 0));
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Built from local date components, not `.toISOString()` -- Dashboard's own expectedLabel()
+  // parses `nextEstimate` as a local date (`new Date(dateStr + 'T00:00:00')`, no 'Z') and compares
+  // it against local midnight. A UTC-sliced string here would silently disagree with that by a day
+  // whenever the machine's timezone offset straddles midnight differently than UTC does -- which
+  // is exactly what made these two tests fail on a real IST machine while passing under UTC CI.
   function daysFromNow(n: number): string {
     const d = new Date();
     d.setDate(d.getDate() + n);
-    return d.toISOString().slice(0, 10);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
   }
 
   it('renders each recurring item RecurringService already detected, with its own cadence and amount', async () => {

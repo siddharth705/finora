@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { ArrowDownCircle, ArrowUpCircle, PiggyBank, PieChart, UploadCloud } from 'lucide-react';
 import { reportsApi, type ReportData } from '../api/endpoints';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
 import { downloadBlob, toCsv } from '../lib/download';
+import { FinoraCard, MetricCard, EmptyState, SectionHeader } from '../design-system';
 
 function fmt(n: number) {
   // Negative amounts (e.g. a month where spend exceeded income) must render as "-₹500",
@@ -55,12 +58,27 @@ export default function Reports() {
   if (error) return <p className="text-muted">Couldn't load reports — please try again later.</p>;
 
   if (months.length === 0) {
-    return <p className="text-muted">No transactions yet — add some in the Ledger or Import a statement to see reports.</p>;
+    return (
+      <FinoraCard padding="lg" className="max-w-md mx-auto my-12">
+        <EmptyState
+          icon={PieChart}
+          iconBg="bg-purple-100"
+          iconColor="text-purple-600"
+          title="No reports yet"
+          desc="Add transactions in the Ledger or import a statement to see your monthly reports."
+          cta={
+            <Link to="/app/import" className="inline-flex items-center gap-1.5 bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold">
+              <UploadCloud size={14} /> Import Statement
+            </Link>
+          }
+        />
+      </FinoraCard>
+    );
   }
 
   return (
     <div className="space-y-6">
-      <div className="bg-card rounded p-4 shadow flex flex-wrap items-end gap-3 justify-between">
+      <FinoraCard padding="sm" className="flex flex-wrap items-end gap-3 justify-between">
         <div>
           <label htmlFor="reports-month" className="block text-xs uppercase text-gray-500 mb-1">Month</label>
           <select id="reports-month" value={month} onChange={(e) => setMonth(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm">
@@ -75,29 +93,26 @@ export default function Reports() {
             Print / PDF
           </button>
         </div>
-      </div>
+      </FinoraCard>
 
       {report && (
         <>
           <div className="grid grid-cols-3 gap-4">
-            <div className="bg-card rounded p-4 shadow border-l-4 border-success">
-              <p className="text-[10px] uppercase text-gray-500 mb-1">Income</p>
-              <p className="text-xl font-semibold text-success">{fmt(report.income)}</p>
-            </div>
-            <div className="bg-card rounded p-4 shadow border-l-4 border-danger">
-              <p className="text-[10px] uppercase text-gray-500 mb-1">Expense</p>
-              <p className="text-xl font-semibold text-danger">{fmt(report.expense)}</p>
-            </div>
-            <div className="bg-card rounded p-4 shadow border-l-4 border-primary">
-              <p className="text-[10px] uppercase text-gray-500 mb-1">Net</p>
-              <p className="text-xl font-semibold">{fmt(report.income - report.expense)}</p>
-            </div>
+            <MetricCard label="Income" value={fmt(report.income)} icon={ArrowDownCircle} iconBg="bg-green-100" iconColor="text-green-600" valueColor="text-success" />
+            <MetricCard label="Expense" value={fmt(report.expense)} icon={ArrowUpCircle} iconBg="bg-red-100" iconColor="text-red-600" valueColor="text-danger" />
+            <MetricCard label="Net" value={fmt(report.income - report.expense)} icon={PiggyBank} iconBg="bg-primary-light" iconColor="text-primary" />
           </div>
 
-          <div className="bg-card rounded shadow p-5">
-            <p className="text-xs uppercase text-gray-500 mb-3">Category Breakdown</p>
+          <FinoraCard>
+            <SectionHeader title="Category Breakdown" />
             {report.categories.length === 0 ? (
-              <p className="text-sm italic text-gray-500">No expenses recorded this month.</p>
+              <EmptyState
+                icon={PieChart}
+                iconBg="bg-purple-100"
+                iconColor="text-purple-600"
+                title="No expenses recorded"
+                desc="Nothing was spent this month in any category."
+              />
             ) : (
               <div className="space-y-2">
                 {report.categories.map((c) => {
@@ -114,7 +129,7 @@ export default function Reports() {
                 })}
               </div>
             )}
-          </div>
+          </FinoraCard>
         </>
       )}
     </div>
