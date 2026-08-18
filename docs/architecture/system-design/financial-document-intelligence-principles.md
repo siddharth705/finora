@@ -603,9 +603,12 @@ Done
 
 Planned
 • Excel
-• Scanned PDFs / OCR
 • Images
 • Handwritten Statements
+
+Scanned PDFs / OCR — CORRECTED: no longer "Planned" in the same sense as the above. The
+acquisition/routing architecture is built and end-to-end tested (`TEXT_ACQUISITION_ROUTING`
+below); the one missing piece is a deployed recognition engine.
 ```
 
 This list moves whenever a capability changes stage. It is the actual measure of progress this
@@ -1780,9 +1783,11 @@ scoring):
   "observed symptoms are not stable identifiers of failure class" above for why diagnosing it
   properly matters more than fixing it on a schedule. HDFC and HSBC are no longer in the "needs
   fixing" set at all.
-- OCR confidence evidence, once OCR itself exists as an acquisition path (see "Excel, Scanned PDFs
-  / OCR..." below) — a recognized character is not a read one, and that distinction needs to reach
-  this same evidence layer, not a separate one.
+- OCR confidence evidence, once a recognition engine is actually deployed — CORRECTED: the
+  acquisition path itself (routing, the safe `IMPORT_SCANNED_OCR_REQUIRED` failure, proven
+  interchangeability with native extraction) already exists; see `TEXT_ACQUISITION_ROUTING` below.
+  What's still missing is an engine to produce a confidence value from — a recognized character is
+  not a read one, and that distinction needs to reach this same evidence layer, not a separate one.
 - Severity distinction within the reason-code histogram itself. Today every reason code in
   `droppedTransactionCandidateReasons` is presented as one undifferentiated `WARNING` — but the
   codes already split into two categories that mean different things: **lost/unclassified**
@@ -1819,13 +1824,65 @@ building an aggregating decision on top of one just-landed evidence type would r
 "weighting policy invented before there is anything to calibrate it against" mistake
 `ImportVerifier`'s own doc comment already warns against for `VerificationReport`.
 
-#### Excel, Scanned PDFs / OCR, Images, Handwritten Statements — Planned
+#### `TEXT_ACQUISITION_ROUTING`
+- **Purpose:** decide, per document, whether to read text from the PDF's own text layer or hand it
+  to a recognition engine, without any downstream stage (`PdfTableLocator` onward) needing to know
+  which one answered. Not OCR itself — the seam OCR plugs into. See `DocumentTextAcquirer`'s own
+  doc comment: "Acquisition is not a financial decision... An acquirer reports what it found and
+  how sure it is. It has no authority to declare a figure correct."
+- **Supported layouts:** any document. Native extraction (`NativePdfAcquirer`, wrapping the
+  existing `PdfTextExtractor`) always runs first; only when it returns zero text runs does
+  `RoutingTextAcquirer` try any registered `RecognisingTextAcquirer` beans, in Spring-injection
+  order, skipping ones whose `supports()` is false and catching a failing recogniser's
+  `IOException`/`RuntimeException` to try the next. Any native text at all — even one run — is
+  treated as sufficient and a recogniser is never consulted; documented as a safety property, not a
+  preference, since mixed-provenance (`NATIVE_PLUS_OCR`) has no measurement behind it and would
+  produce "a document whose provenance is confident and wrong." Deliberately whole-document, not
+  per-page, for the same reason. No confidence threshold either — `RoutingTextAcquirer`'s own doc
+  comment notes a real measurement (OCR-3A) of Tesseract reporting ~0.96 confidence on a row the
+  pipeline then got wrong, so confidence has been shown not to predict financial correctness.
+- **Implementation:** `com.finora.imports.pdf.acquisition` (`DocumentTextAcquirer`,
+  `AcquiredDocument`, `RoutingTextAcquirer` `@Primary`, `NativePdfAcquirer`,
+  `RecognisingTextAcquirer` marker interface) → `PositionedText.source()` / `TextSource`
+  (`NATIVE_PDF` / `OCR` / `NATIVE_PLUS_OCR`) → `PdfPreviewGenerator` (constructor now takes a
+  `DocumentTextAcquirer`; a legacy `PdfTextExtractor` constructor is kept only so pre-existing
+  tests don't need rewriting) → `DocumentContext.hasNoExtractableText()` →
+  `ExtractionCheck.rejectIfNothingWasExtracted`, which throws `IMPORT_SCANNED_OCR_REQUIRED`
+  (`IMPORT_010`) ahead of the generic no-header/no-transactions errors, because it is the one thing
+  knowable with certainty from an absence of text.
+- **Regression tests:** `RoutingTextAcquirerTest` (ordering, fallthrough, and the rejections
+  above), `ImageOnlyDocumentTest` (the `ExtractionCheck` discrimination — an image-only document
+  reports it is an image, a text-bearing document with no table still reports a layout problem, an
+  unrecorded count is never treated as an image, and the message is held to never claiming
+  "scanned," "OCR," or "bank statement" — none of those follow from an absence of text),
+  `ScannedDocumentRoutingTest` — the end-to-end proof: the SAME scanned PDF run through the real
+  `PdfPreviewGenerator` produces `hasNoExtractableText()` with no engine deployed, and a
+  byte-identical ledger to the native original once one is (`TesseractRecogniser`, test-only,
+  gated on `TesseractEngine.available()`).
+- **Maturity:** Beta — the routing architecture, the safety properties, and interchangeability with
+  native extraction are all proven end-to-end against a real statement. What has NOT shipped is a
+  production recognition engine: `TesseractRecogniser`/`TesseractEngine` exist only under
+  `src/test/.../pdf/ocr/`, not `src/main`; `RoutingTextAcquirer`'s `recognisers` list is genuinely
+  empty in the live Spring context today. First real-document motivation: `HSBC DB.pdf` — confirmed
+  image-only (2 raster images per page inside Form XObjects, zero fonts, zero text-show operators)
+  via both a plain unmodified `PDFTextStripper` and a structural operator/resource census, which
+  rules out a bug in Finora's own extractor rather than a genuine absence of a text layer.
+- **Known limitations:** no engine is deployed, so an image-only PDF today correctly reports
+  `IMPORT_SCANNED_OCR_REQUIRED` and goes no further — a safe, honest failure, not a silent one, but
+  still a failure from the user's perspective. Which engine (Tesseract, PaddleOCR, a cloud API),
+  where it runs (embedded vs. a separate worker), and whether it is automatic or user-triggered are
+  open deployment decisions with no evidence behind them yet — deliberately not decided here (see
+  "Don't fix it yet, root-cause it").
+
+#### Excel, Images, Handwritten Statements — Planned
 - **Purpose:** additional document formats, each requiring a new implementation of the early
   pipeline stages (Classification, Layout Understanding) feeding the same downstream stages
   (Validation, Confidence, Review, Import Session) — see "Financial Document, not PDF" above.
 - **Supported layouts / Implementation / Regression tests:** none yet — genuinely not started.
 - **Maturity:** Planned, explicitly out of scope until a real driver exists (see "What I would not
-  do right now" discipline this document has followed since Phase 0).
+  do right now" discipline this document has followed since Phase 0). CORRECTED: Scanned PDFs / OCR
+  used to be grouped in this same "Planned" bucket; it no longer belongs here — see
+  `TEXT_ACQUISITION_ROUTING` above.
 - **Known limitations:** N/A — not yet attempted.
 
 Update this section whenever a capability moves stage — it's the thing to look at instead of
@@ -1839,10 +1896,12 @@ Two axes, neither of which is "which bank":
   columns, single-amount-column variants not yet seen, merchant-category columns, additional date
   formats, leading (not just trailing) narration continuation.
 - **More document types**, once there's a real driver: CSV already exists (predates this
-  document, already generic); Excel, scanned PDFs, and OCR are explicitly out of scope until then
-  — see the existing PDF package doc's own reasoning for deferring OCR once already. Each new
-  format is a new implementation of the early pipeline stages (Classification, Layout
-  Understanding) feeding the same downstream stages — see "Financial Document, not PDF" above.
+  document, already generic); Excel, Images, and Handwritten Statements are explicitly out of
+  scope until then. Scanned PDFs / OCR is a partial exception — CORRECTED: the acquisition/routing
+  architecture already exists and is end-to-end tested (`TEXT_ACQUISITION_ROUTING` above); only a
+  deployed recognition engine remains out of scope. Each new format is a new implementation of the
+  early pipeline stages (Classification, Layout Understanding) feeding the same downstream stages —
+  see "Financial Document, not PDF" above.
 
 Every addition here gets a synthetic fixture and (transiently) a real-document diagnostic pass —
 same process as Phase 1.
@@ -1877,8 +1936,9 @@ Delete Real Document
   — only because a real document used it. Every hint in `TransactionNormalizer`'s hint arrays
   should be traceable to the real file that motivated it (see that class's own comments for the
   pattern — every existing entry already follows this).
-- Don't build corrupted-document / OCR-noise tests before OCR exists (see "Excel, Scanned PDFs /
-  OCR... — Planned" above) — there's nothing yet for those tests to protect.
+- Don't build corrupted-document / OCR-noise tests before a recognition engine is actually deployed
+  (see `TEXT_ACQUISITION_ROUTING` above — the routing architecture exists, but no real engine runs
+  in production yet) — there's nothing real yet for those tests to protect.
 - Don't build Excel/OFX/QFX/CAMT.053/MT940 regression suites before those parsers exist — a test
   corpus for a parser that hasn't been written is a spec, not a corpus, and inverts the order that
   has worked for every capability so far.
