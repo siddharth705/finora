@@ -1453,7 +1453,7 @@ actually works — no test, no claim.
   transaction can happen on some other document — and that needs its own real-document evidence
   before design work resumes, per "Evidence before capability," not more re-measurement of this one.
 
-#### Open Investigation: ICICI CC row-grouping collision (only 3 rows recovered, real count unknown)
+#### Open Investigation: ICICI CC row-grouping collision — CLOSED, re-verified against the rendered PDF and the statement's own printed total: the anomaly is real, the transaction loss it was assumed to cause is not
 - **Status:** root cause identified at the exact decision point, via a `wrappedHeaderAt` DEBUG trace
   plus a raw-coordinate dump against the real file — **not fixed**, and this entry itself is a
   correction of an earlier, less precise diagnosis (below). Same discipline as the HDFC entry
@@ -1479,15 +1479,38 @@ actually works — no test, no claim.
   stage (`looksLikeHeaderRow`, `wrappedHeaderAt`) then behaves correctly given that already-wrong
   input: a 7-cell row that legitimately scores as a header, because it is one, plus one foreign
   cell. The irreversible decision is `groupIntoRows`'s row-grouping pass, not header detection.
-- **What remains genuinely unexplained.** Why the real per-page transaction rows overwhelmingly fail
-  to bucket at all — only 6 raw rows total from a 9-page statement, most of which are visibly not
-  transactions (a masked card number, a multi-paragraph disclaimer) — is NOT resolved by the finding
-  above. The corrupted header explains why bucketing is unreliable; it does not by itself explain
-  why so few rows bucket to anything, including under the wrong anchors. That is a separate,
-  not-yet-traced downstream question this verification pass deliberately did not chase further.
-- **Which of the three paths this needs:** a **table-detection pipeline gap**, but in `groupIntoRows`
-  specifically, not header-anchor merging — some notion of "these two text runs are Y-coincident by
-  layout accident, not because they are the same printed line" is missing from row grouping itself.
+- **What was flagged as unexplained is now resolved, and it dissolves the premise of this
+  investigation.** "Only 6 raw rows from a 9-page statement" was treated as implausible on its
+  face, the same extraction-volume reasoning this document's own principle (below) exists to warn
+  against. Read directly: this is a rewards-heavy "Coral" card statement whose 9 pages are almost
+  entirely marketing (pages 2-3: iPhone/education-loan/cashback offers), MITC boilerplate (page 2),
+  a grievance-redressal notice (page 3), and generic interest/MAD/late-fee calculation worked
+  examples printed on every such statement regardless of what the cardholder actually did (pages
+  4-9 -- illustrative `Sep 20, 2023`/`Oct 08, 2023` transactions, not this cardholder's real ones).
+  Exactly one page (page 1) carries this statement's real transaction table. A 9-page document with
+  one page of real content and eight of boilerplate is not evidence of a bucketing failure; it is
+  what this specific product's statement template looks like.
+- **The transaction count itself is independently, arithmetically confirmed complete.** The
+  statement's own printed summary states `Previous Balance ₹0.00 + Purchases/Charges ₹7,362.70 −
+  Cash Advances ₹0.00 − Payments/Credits ₹0.00`. The three transactions Finora already stages —
+  ₹1,652.00 + ₹2,999.00 + ₹2,711.70 — sum to exactly ₹7,362.70. This is not a plausibility
+  argument; it is the bank's own arithmetic, and it leaves no room for a fourth transaction to
+  exist anywhere in this statement. **Real count: 3. Staged count: 3. Nothing was lost.**
+- **The `groupIntoRows` Y-tolerance anomaly above is real and stays documented as real** — the
+  coordinate trace (a 2.3pt gap against a 3.0pt tolerance, folding an unrelated "Spends Overview"
+  heading into the real 6-column header) is not in question and is not being retracted. What is
+  corrected is the CONSEQUENCE drawn from it: a corrupted 7-cell header, with one foreign cell
+  no real data row's coordinates ever land near, is a harmless extra column, not a mechanism that
+  displaced or lost any of this document's three real transactions. The anomaly is confirmed;
+  the failure it was assumed to cause is not. This document is reclassified from Category B
+  (recognition failure) to Category A (extraction is correct) in the table below.
+- **Which of the three paths this needs:** none, for THIS document — reclassified to Category A.
+  The underlying `groupIntoRows` Y-tolerance gap (no notion of "these two text runs are
+  Y-coincident by layout accident, not because they are the same printed line") remains a real,
+  single-document-confirmed structural anomaly, kept in the Capability Backlog below at Low
+  priority: it is confirmed to occur, but no longer has ANY real document showing it cause a wrong
+  result. A future document that both triggers it AND loses a transaction because of it would
+  justify revisiting; this one does not.
 - **Correction to this document's own earlier draft (kept, still accurate):** an earlier version of
   the Corpus Failure Classification section below speculated that `HSBC.pdf` (also Category B) might
   share this root cause. Diagnosing `HSBC.pdf` the same way disproves that: HSBC's detected header —
@@ -1581,19 +1604,22 @@ one-off mechanisms. This section classifies each one first, by the evidence alre
 |---|---|---|---|
 | `Bandhan bank.pdf` | 3 rows / 7 pages, flagged `suspectedIncompleteByPageRatio` | **E — heuristic false positive, not a bug** | `BALANCE_CHAIN`, `STATEMENT_TOTALS`, and `SUMMARY_TOTALS` are all `VERIFIED` for this document — the printed totals independently confirm 3 rows is the correct count. The page-ratio suspicion heuristic is wrong here, not the extraction. |
 | `HSBC.pdf` | 0 rows / 4 pages, `LAYOUT_UNSUPPORTED` | **A — extraction is correct, not a failure** | Corrected after re-diagnosis (see the Open Investigation correction above): the header IS correctly recognized (`[Balance, Date, Transaction Details, Deposits, Withdrawals]`). Verified against the rendered PDF page directly, not just extracted text — this account's statement prints exactly one line for the period ("BALANCE BROUGHT FORWARD"/"CLOSING BALANCE" at the same value) and explicitly states `Transaction Turnover: 0.00/0.00` and `Transaction Count: 0/0`. Zero transactions occurred; zero staged rows is the bank's own stated truth, not a parser gap. The `LAYOUT_UNSUPPORTED` label itself is now known stale and should not be trusted for this document. |
-| `ICICI CC.pdf` | 3 rows / 9 pages, `PARSED_INCOMPLETE` | **B — recognition failure** | Root-caused (see the Open Investigation entry above): `groupIntoRows`'s Y-tolerance folds one unrelated nearby panel heading into the real transaction header's own row, so header detection accepts a corrupted 7-cell header. `ROW_ACCOUNTING` is `VERIFIED` here precisely because nothing transaction-shaped ever reached the 3 wired drop points — the loss is upstream of them, in table formation itself. |
+| `ICICI CC.pdf` | 3 rows / 9 pages, `PARSED_INCOMPLETE` | **A — extraction is correct, not a failure** | CORRECTED (see the Open Investigation entry above): `groupIntoRows`'s Y-tolerance genuinely does fold an unrelated nearby panel heading into the real transaction header's own row, producing a corrupted 7-cell header — that coordinate-level finding stands. What was wrong was the conclusion drawn from it. Verified against the rendered PDF and the statement's own printed total (`Purchases/Charges ₹7,362.70`, exactly the sum of the 3 staged transactions): this document has exactly 3 real transactions this period, and all 3 are correctly captured. The 9-page length is the product's own marketing/MITC/illustrative-worked-example template, not evidence of missing pages of real content. |
 | `ICICI saving.pdf` | 11 rows / 2 pages, `PARSED_RECONCILIATION_FAILED` | **C — validation failure** | `BALANCE_CHAIN` is `VERIFIED` (the 11 extracted rows are internally consistent) but `STATEMENT_TOTALS` is `FAILED` (the printed total disagrees with what was extracted). This is real, measured evidence of a discrepancy — not a guess — and the strongest candidate for an actual missing/extra-row bug in the current corpus. |
 | `Shivani_HDFC.pdf` (RD section) | 0 rows, RD detected at 0.95 confidence | **Product scope, not a bug** | The recurring-deposit section is correctly identified as `RECURRING_DEPOSIT` at high confidence; extracting its schedule was never attempted because RD table extraction is intentionally unbuilt (see `INFERRED_TWO_LINE_DATE_BLOCK` and related capabilities, none of which target RD schedules). Correct classification, deferred scope — do not treat as an extraction bug. |
 
 Next investigation order, now justified by category rather than by list position: `ICICI CC.pdf`
-is root-caused (see the Open Investigation entry above — a `groupIntoRows` row-grouping collision,
-not a missing header, and not header-anchor merging either). `HSBC.pdf` no longer belongs in this
-list at all — re-diagnosed against the rendered PDF page directly and found to be Category A: the
-account had zero transactions this period, printed explicitly as `Transaction Count: 0` on the
-statement itself, so zero staged rows is correct behavior, not a bug needing a fix.
-`ICICI saving.pdf` is a separate, category-C problem and needs its own investigation: the row count
-is plausible, so the bug (if any) is in which 11 rows were kept or how the printed total compares,
-not in whether a table was found at all.
+no longer belongs in this list at all — re-diagnosed against the rendered PDF and the statement's
+own printed total and found to be Category A, the same correction HSBC.pdf and HDFC credit.pdf
+already received (see the Open Investigation entries above and the "extraction volume is not
+evidence" principle below). `HSBC.pdf` also no longer belongs in this list — re-diagnosed against
+the rendered PDF page directly and found to be Category A: the account had zero transactions this
+period, printed explicitly as `Transaction Count: 0` on the statement itself, so zero staged rows
+is correct behavior, not a bug needing a fix.
+`ICICI saving.pdf` is the only entry remaining in this table with a real, unresolved category —
+a separate, category-C problem and needs its own investigation: the row count is plausible, so the
+bug (if any) is in which 11 rows were kept or how the printed total compares, not in whether a
+table was found at all.
 
 ### Credit Card Direction Evidence Study (investigation only — no validator built)
 
@@ -1615,7 +1641,7 @@ name, or customer name is reproduced here; see "Describe, don't quote" disciplin
 | Axis Credit | A bare `Dr`/`Cr` suffix inside the amount cell itself (`DR_CR_SUFFIX`) | **Likely deterministic**, same mechanism as AU's, already a recognized capability — the 5-row sample happened to be all `Dr`; not yet confirmed against a genuine credit/payment row in *this* document |
 | Kotak CC | An explicit `Cr` suffix appears on credit/payment rows; ordinary purchase rows carry **no suffix at all** | **Asymmetric, not fully deterministic** — direction for a debit row is inferred by the *absence* of a marker, not stated by one. This is exactly the shape of heuristic that can misclassify silently (e.g. an extraction glitch that drops the `Cr` suffix on a real credit row would make it look like an ordinary, unmarked debit) |
 | HDFC credit | A `+` prefix on the credit/payment row's amount (`LEADING_PLUS_CREDIT`, already a recognized capability, confirmed firing on this real document) | **Likely deterministic, same mechanism as AU's, but on a much smaller confirmed sample** — this document has exactly 2 real transactions total (table formation is confirmed CORRECT, not broken — see the Open Investigation's closure), one credit/payment row and one debit row, so there is only one credit-direction row to confirm the marker against, not the multi-row sample AU offered |
-| ICICI CC | No per-row marker of any kind on the real transaction columns | Table formation is also broken here (see the Open Investigation above); even once fixed, this document's transaction rows show no per-row Cr/Dr signal at all — direction would have to come from elsewhere |
+| ICICI CC | No per-row marker of any kind on the real transaction columns | Table formation is CORRECTED (see the Open Investigation's own closure above — all 3 real transactions are correctly captured, table formation was never actually broken); this document's transaction rows genuinely show no per-row Cr/Dr signal at all regardless — direction would have to come from elsewhere |
 | SBI Credit Card | Section 0's direction column header itself is garbled (a broken currency-symbol glyph as the column name, values truncated to a bare `C`); Section 1's columns collapse further — description, amount, and a trailing `D`/`C` marker all merged into one field | **Not reliably assessable** — column detection is degraded in both of this document's sections, a new, not-yet-investigated extraction problem in its own right |
 
 **The generalizable signal: all 6 documents print an account-summary equation.** Every one of the 6,
@@ -1669,7 +1695,7 @@ real document, with an honest evidence count; it graduates to the Capability Reg
 |---|---|---|---|
 | `ACCOUNT_NUMBER_RECOGNITION` | 6 of 7 real statements in the Aug 2026 validation pass | High | Recurring, not a one-off — `ACCOUNT_NUMBER`/`ACCOUNT_NUMBER_TRAILING_LABEL` only match an explicit "Account Number" label; real statements embed it mid-sentence ("Statement for A/c XXXXXXXXX1455"), under an unrelated label ("Alternate Account Number"), or as a masked card number never labeled "Account Number" at all. Needs its own evidence-gathering pass across these real shapes before a mechanism is designed. |
 | ~~Credit-card table boundary detection — table doesn't know when it ends~~ | 1 statement (HDFC Tata Neu Plus) | ~~High~~ **Downgraded to Low / theoretical** | **Closed as a transaction-loss risk** — re-verified against the rendered PDF (see the Open Investigation's closure): both of this document's real transactions are captured correctly; the trailing content that bucketing continues into is harmless noise, rejected by `TransactionNormalizer`'s existing date-parsing safety net, not a source of missing or phantom transactions. The underlying structural gap (`PdfTableLocator` has no signal for "no longer more of the same table") is still real, but has not been shown to produce a wrong result on any real document — kept here as a theoretical risk needing its own real-document evidence before any design work, not removed outright, but no longer treated as a confirmed transaction-loss bug. |
-| Row-grouping Y-tolerance collision — an unrelated nearby line folds into a real header's own row (`PdfTableLocator.groupIntoRows`) | 1 statement (ICICI CC — see the Open Investigation above) | High | Confirmed via coordinates, not the header-anchor-merging mechanism this entry originally named (`wrappedHeaderAt` was traced and never merged anything on this document). The actual defect: two text runs 2.3pt apart in y, `ROW_Y_TOLERANCE` (3.0pt), get treated as one physical row despite being unrelated printed elements. High-impact (a 9-page statement yields 3 rows) but single-document evidence, and a real fix mechanism (e.g. requiring x-proximity or contiguous column coverage, not just y-proximity) isn't designed yet — needs a second real document before one is justified. |
+| ~~Row-grouping Y-tolerance collision — an unrelated nearby line folds into a real header's own row (`PdfTableLocator.groupIntoRows`)~~ | 1 statement (ICICI CC — see the Open Investigation above) | ~~High~~ **Downgraded to Low / theoretical** | Confirmed via coordinates, not the header-anchor-merging mechanism this entry originally named (`wrappedHeaderAt` was traced and never merged anything on this document). The actual defect is real: two text runs 2.3pt apart in y, `ROW_Y_TOLERANCE` (3.0pt), get treated as one physical row despite being unrelated printed elements. CORRECTED: originally rated High on the assumption this caused transaction loss (a 9-page statement yielding only 3 rows). Re-verified against the rendered PDF and the statement's own printed total (`Purchases/Charges ₹7,362.70`, exactly the sum of the 3 staged transactions) — the corrupted header's foreign 7th cell is never populated by any real row; all 3 of this document's real transactions are correctly captured. Same shape as the HDFC table-boundary entry above: a real structural gap, confirmed to occur, not shown to produce a wrong result on any real document — kept as a theoretical risk, not removed outright. |
 | `VALUE` → trailing label → trailing value (composite account-holder line) | 1 statement (HDFC: `"<card number> Credit Card No. <NAME>"`) | Low | Genuinely a structural pattern, not an HDFC quirk — could recur as `"Loan Number XXXXXXXX Borrower Name"` or similar on another institution's export. Documented as an observed shape to watch for (see the deferred-evidence test in `PdfMetadataExtractorTest`), not built on one document's strength. |
 | Scrambled / split multi-row credit-summary grid | 1 statement (same HDFC file) | Low | The specific column/row scrambling in this one document isn't yet known to generalize; a naive fix was verified to produce a *wrong* value (₹200 instead of ₹78,000), which is worse than the current null — see that same deferred-evidence test's doc comment for the full reasoning. |
 | Embedded narration reference numbers | 1 statement (Canara — reference number embedded inside free-text transaction narration, not a dedicated column) | Medium | Would need free-text mining rather than column-based extraction — a materially different mechanism from every existing capability, not a small extension of one. |
@@ -1772,15 +1798,17 @@ scoring):
       "table doesn't know when it ends" symptom describes harmless noise that
       `TransactionNormalizer` already rejects, not a transaction-loss bug.
     - **Commit 2B — Header Formation Evidence** (not started, and its original motivating cases —
-      HSBC and, less directly, HDFC — are both now known not to need it): once a physical row is
+      HSBC, HDFC, and now ICICI CC — are all now known not to need it): once a physical row is
       accepted as a header, facts about ITS structure — x-span, whether its cells plausibly belong
       to one visual region — the header-specific anomaly signal (`HEADER_ROW_STRUCTURAL_ANOMALY`)
-      that Commit 2A deliberately left out. With ICICI CC now the only confirmed real failure in
-      the corpus, and its own root cause already traced to `groupIntoRows` rather than header
-      formation, this phase currently has no real document motivating it either — see the
-      "observed symptoms" principle again before starting it on inference alone.
-  Fixing ICICI CC's real extraction remains deferred, deliberately, past all of the above — see
-  "observed symptoms are not stable identifiers of failure class" above for why diagnosing it
+      that Commit 2A deliberately left out. CORRECTED: ICICI CC was carried here as "the only
+      confirmed real failure in the corpus" — re-verified against the rendered PDF and the
+      statement's own printed total and found to be Category A (all 3 real transactions correctly
+      captured; see the Open Investigation's own closure above). This phase currently has no real
+      document motivating it at all — see the "observed symptoms" principle again before starting
+      it on inference alone.
+  ICICI CC's "real extraction" needs no fix: CORRECTED, see the Open Investigation's own closure
+  above — "observed symptoms are not stable identifiers of failure class" above for why diagnosing it
   properly matters more than fixing it on a schedule. HDFC and HSBC are no longer in the "needs
   fixing" set at all.
 - OCR confidence evidence, once a recognition engine is actually deployed — CORRECTED: the
