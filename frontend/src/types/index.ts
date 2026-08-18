@@ -246,16 +246,26 @@ export type FinancialProductType =
   | 'LOAN' | 'INSURANCE' | 'FOREX_CARD'
   | 'UNKNOWN';
 
+// A rule-based (never weighted) reliability status -- see ImportReliabilityStatus on the
+// backend for the exact derivation. Mirrors that enum's three values.
+export type ImportReliabilityStatus = 'CLEAN' | 'REVIEW_RECOMMENDED' | 'NEEDS_ATTENTION';
+
 // Whether an import can be proven faithful to the statement it came from, and on what basis --
 // see ImportDto.VerificationReport on the backend, and
 // docs/engineering/import-verification-framework.md for the reasoning.
 //
-// Deliberately has NO document-level status. The backend removed it because deriving one verdict
-// from several rules is an aggregator's job and no aggregator exists yet; the UI must not
-// reinvent it, or it becomes a second source of truth that can disagree with the findings it
-// claims to summarise.
+// Deliberately has NO document-level status derived from GUESSING at weights. The backend
+// removed the original aggregator idea for exactly that reason -- see its own correction note.
+// CORRECTED: `reliabilityStatus` below is that aggregator, now built. It does not reintroduce
+// the risk the paragraph above described, because it is a deterministic OR over facts already
+// on this report (a finding's own outcome, `headerReconstructionUncertain`, `textSource`), never
+// a synthesized score -- the UI still must not compute its OWN second opinion of what these
+// findings mean, and now doesn't have to: it can render the one server-computed value instead.
 export interface VerificationReport {
   findings: VerificationFinding[];
+  headerReconstructionUncertain: boolean;
+  textSource: 'NATIVE_PDF' | 'OCR' | 'NATIVE_PLUS_OCR' | null;
+  reliabilityStatus: ImportReliabilityStatus | null;
 }
 
 // One check's result. `rule` is a stable machine identifier ("BALANCE_CHAIN"), never a label --

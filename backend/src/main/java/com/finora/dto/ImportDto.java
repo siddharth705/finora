@@ -1,6 +1,7 @@
 package com.finora.dto;
 
 import com.finora.accounts.AccountDto;
+import com.finora.imports.ImportReliabilityStatus;
 import com.finora.imports.RowKind;
 
 import java.math.BigDecimal;
@@ -267,15 +268,37 @@ public class ImportDto {
      * derived field here -- an additive change -- rather than this shipping an authoritative-looking
      * field that nothing authoritative computes.
      *
+     * <p><b>Correction (import reliability status):</b> the aggregator described above now exists,
+     * as {@code reliabilityStatus} below, computed by {@code ImportReliabilityStatusDeriver}. It
+     * does not contradict the paragraph above -- it invents no weights and needs no calibration
+     * data, because it is a deterministic OR over facts this report and the pipeline already
+     * carry (a finding's own outcome, whether header reconstruction was uncertain, whether OCR was
+     * used), not a synthesized score. {@code headerReconstructionUncertain} and {@code textSource}
+     * are carried here, not just fed into the derivation once, because
+     * {@link com.finora.imports.ImportVerifier#reviseSummaryTotals} rebuilds a report later from
+     * only the report itself and needs to recompute {@code reliabilityStatus} without re-deriving
+     * these two facts from scratch.
+     *
      * <p>Deliberately carries no human-readable prose. A sentence baked in here would be composed
      * for whichever screen existed when it was written, and web, mobile and admin all want to say
      * this differently -- structured facts are what let each decide. The server still composes a
      * sentence for its own logs; that one is not part of the contract.
      *
      * <p>See docs/engineering/import-verification-framework.md for why the aggregation that will
-     * eventually compute {@code status} from several findings is NOT being built yet.
+     * eventually compute {@code status} from several findings is NOT being built yet. CORRECTED:
+     * it has since been built, in the rule-based form described above -- see that doc's own
+     * correction note.
      */
-    public record VerificationReport(List<VerificationFinding> findings) {}
+    public record VerificationReport(List<VerificationFinding> findings,
+            boolean headerReconstructionUncertain, String textSource,
+            ImportReliabilityStatus reliabilityStatus) {
+        /** Legacy overload -- keeps every existing direct-construction call site (tests, mostly)
+         *  compiling untouched, defaulting to "nothing computed a status", same pattern as {@link
+         *  StagedAccountSection}'s own legacy constructor. */
+        public VerificationReport(List<VerificationFinding> findings) {
+            this(findings, false, null, null);
+        }
+    }
 
     /**
      * One check's result. {@code rule} is a stable machine identifier ("BALANCE_CHAIN"), never a
@@ -284,8 +307,11 @@ public class ImportDto {
      *
      * <p>{@code outcome} is this rule's verdict about its OWN domain (PASS / WARNING / FAILED /
      * NOT_APPLICABLE). A rule judging what it measured is legitimate; what does not compose is a
-     * document-level verdict derived from several rules, which is why this report has no top-level
-     * status field -- see {@link VerificationReport}.
+     * document-level verdict derived from several rules by INVENTING a weight for each -- see
+     * {@link VerificationReport}. CORRECTED: that report now carries a {@code reliabilityStatus}
+     * field, but it is not this kind of composition -- see the correction note on
+     * {@link VerificationReport} for why a rule-based OR over existing facts is a different, and
+     * allowed, thing.
      *
      * <p>{@code details} is a per-rule payload rather than a fixed shape, because the checks this
      * will hold are not all row-centric. The balance chain reports per-row discrepancies; a

@@ -2,6 +2,7 @@ package com.finora.imports;
 
 import com.finora.dto.ImportDto.CapabilityActivation;
 import com.finora.dto.ImportDto.FinancialDocumentMetadata;
+import com.finora.imports.pdf.TextSource;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -36,6 +37,10 @@ public class DocumentContext {
     private int pages;
     // Null until acquisition records one -- see recordExtractedRuns.
     private Integer extractedRuns;
+    // Null until acquisition records one, same optionality as extractedRuns -- the CSV path never
+    // constructs an AcquiredDocument, so it never calls recordTextSource, and null there means
+    // "not applicable", not "unknown".
+    private TextSource textSource;
     private int tables;
     // What failed to parse, as a reason/shape histogram -- a fact of this parse run exactly like
     // the header list or the capability activations, and recorded the same way. Never the rows
@@ -84,6 +89,23 @@ public class DocumentContext {
     /** Null when nothing recorded it, which is not the same as zero -- see hasNoExtractableText. */
     public Integer extractedRuns() {
         return extractedRuns;
+    }
+
+    /**
+     * How this document's text was obtained -- native extraction, OCR, or both. A provenance
+     * FACT, same as {@link #recordExtractedRuns}, not a judgement: {@code TextSource}'s own doc
+     * comment is explicit that acquisition supplies evidence, it does not decide whether that
+     * evidence is trustworthy. Recorded here (rather than only ever a local variable at the
+     * acquisition call site) so it survives to the point {@code ImportVerifier.verify()} runs,
+     * which is not the same call frame.
+     */
+    public void recordTextSource(TextSource source) {
+        this.textSource = source;
+    }
+
+    /** Null when nothing recorded it -- the CSV path, or a call site that predates this field. */
+    public TextSource textSource() {
+        return textSource;
     }
 
     /**

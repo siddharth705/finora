@@ -179,10 +179,17 @@ public class PdfPreviewGenerator {
         // Acquisition, not extraction: this may be the PDF's own text layer or characters
         // recognised from its pixels, and nothing below this line is allowed to care which. See
         // RoutingTextAcquirer for which one runs and why.
-        List<PositionedText> positioned = textAcquirer.acquire(fileBytes, password).runs();
+        com.finora.imports.pdf.acquisition.AcquiredDocument acquired = textAcquirer.acquire(fileBytes, password);
+        List<PositionedText> positioned = acquired.runs();
         // A count, never the text. Lets ExtractionCheck tell "the pages carry no text" from
         // "we read plenty and could not make a table of it" -- see DocumentContext.
-        if (ctx != null) ctx.recordExtractedRuns(positioned.size());
+        if (ctx != null) {
+            ctx.recordExtractedRuns(positioned.size());
+            // Provenance, not a judgement -- see DocumentContext.recordTextSource's own doc
+            // comment. Recorded here because this is the one place the AcquiredDocument itself
+            // (not just its runs) is ever in scope.
+            ctx.recordTextSource(acquired.source());
+        }
         PdfTableLocator.LocatedDocument doc = tableLocator.locateAll(positioned, ctx);
         // Read from the positioned runs rather than from the located table: the summary grid has
         // its own column layout, so bucketing it against the TRANSACTION table's anchors shreds it
@@ -423,7 +430,8 @@ public class PdfPreviewGenerator {
                 detected == null ? null : detected.openingBalance(),
                 detected == null ? null : detected.closingBalance(),
                 printedSummary, section.rows(), unparseable, section.evidence().droppedTransactionCandidates(),
-                printedCreditCardSummary);
+                printedCreditCardSummary,
+                section.evidence().headerReconstructionFindings(), ctx.textSource());
         return new StagedAccountSection(detected, staged, staged.size(), dupCount, unparseable, verification);
     }
 

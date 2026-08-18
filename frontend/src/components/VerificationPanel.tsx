@@ -10,11 +10,15 @@ import type { BalanceChainDetails, VerificationFinding, VerificationReport } fro
  * direction, and the preview looked entirely normal — because nothing compared the numbers to the
  * statement's own arithmetic. This panel is where that comparison becomes visible.
  *
- * <b>Deliberately shows no document-level verdict.</b> The backend removed its overall status
- * because deriving one from several rules is an aggregator's job, and no aggregator exists yet.
- * Reinventing "Verified / Warning / Failed" here would recreate exactly the second source of truth
- * that was removed — one that could disagree with the findings it claims to summarise. The heading
- * therefore describes the findings ("2 findings"), it does not judge the import.
+ * <b>Shows a document-level verdict now, but a server-computed one.</b> The backend originally had
+ * no overall status because deriving one from several rules is an aggregator's job, and none
+ * existed. CORRECTED: `reliabilityStatus` is that aggregator now, computed once on the server from
+ * facts the findings below already carry (a finding's own outcome, header-reconstruction
+ * uncertainty, OCR provenance) -- never a weight, never a score. This panel renders that value
+ * rather than computing its own, which is a fix for the exact "second source of truth" risk this
+ * comment used to warn about: the badge below used to be an ephemeral client-side guess; now it
+ * is the one canonical answer, displayed, not reinvented. The fallback branch (`reliabilityStatus`
+ * null) keeps the old client-side heuristic alive only for a report from before this field existed.
  *
  * <b>Collapsed by default.</b> The common case is a clean import, where a single line is the whole
  * message and per-row balances are noise. Detail is one click away for the case that needs it.
@@ -30,6 +34,9 @@ export function VerificationPanel({ verification }: { verification: Verification
   if (findings.length === 0) return null;
 
   const notable = findings.filter((f) => f.outcome === 'WARNING' || f.outcome === 'FAILED');
+  // Legacy fallback only -- used when the server never computed reliabilityStatus (a report from
+  // before this field existed). Left as ephemeral client logic on purpose: it must not be
+  // strengthened into a permanent second implementation of the same derivation.
   const allClear = notable.length === 0 && findings.some((f) => f.outcome === 'VERIFIED');
 
   return (
@@ -44,7 +51,21 @@ export function VerificationPanel({ verification }: { verification: Verification
                   : <ChevronRight size={15} className="text-muted flex-shrink-0" />}
         <span className="text-sm font-semibold text-ink">Statement verification</span>
         <span className="ml-auto inline-flex items-center gap-1.5 text-xs">
-          {allClear ? (
+          {verification.reliabilityStatus === 'CLEAN' ? (
+            <span className="inline-flex items-center gap-1.5 text-success">
+              <CheckCircle2 size={14} /> Imported successfully
+            </span>
+          ) : verification.reliabilityStatus === 'NEEDS_ATTENTION' ? (
+            <span className="inline-flex items-center gap-1.5 text-danger">
+              <AlertTriangle size={14} /> Import needs attention
+            </span>
+          ) : verification.reliabilityStatus === 'REVIEW_RECOMMENDED' ? (
+            // Deliberately not "review recommended" -- reads as something went wrong. This status
+            // fires on OCR alone as often as on an actual finding, and most OCR reads are fine.
+            <span className="inline-flex items-center gap-1.5 text-warning">
+              <AlertTriangle size={14} /> Imported with notes
+            </span>
+          ) : allClear ? (
             <span className="inline-flex items-center gap-1.5 text-success">
               <CheckCircle2 size={14} /> Running balance verified
             </span>
@@ -63,6 +84,16 @@ export function VerificationPanel({ verification }: { verification: Verification
 
       {expanded && (
         <div className="mt-3 pt-3 border-t border-border space-y-4">
+          {/* The one fact that explains a REVIEW_RECOMMENDED status when every finding below is
+              otherwise clean -- OCR provenance lives on the report itself, not as a finding, so
+              without this line an OCR-only "review recommended" verdict has nothing visible to
+              point at. */}
+          {(verification.textSource === 'OCR' || verification.textSource === 'NATIVE_PLUS_OCR') && (
+            <p className="text-xs text-muted">
+              This statement was read using OCR (scanned-image recognition), not the document's own
+              text. Recognition can misread characters in ways a text-based read cannot.
+            </p>
+          )}
           {findings.map((finding, i) => <Finding key={`${finding.rule}-${i}`} finding={finding} />)}
         </div>
       )}

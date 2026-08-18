@@ -55,7 +55,11 @@ Each of these was raised, considered, and deferred for a stated reason — they 
 - **Finding severity** — generalise now what would be BREAKING later; severity is additive.
 - **An aggregator / overall status** — combining rules needs a weighting policy, and one invented
   before there is anything to calibrate it against is a guess wearing an authoritative face.
+  CORRECTED: a rule-based (not weighted) status now exists — see "Correction: a rule-based
+  reliability status now exists" below for why it doesn't reintroduce this exact risk.
 - **Confidence scores** — no calibration data exists; a fabricated number is worse than none.
+  Still true: `ImportReliabilityStatus` is not a confidence score, it has three named states, not
+  a number, and none of them is calibrated against anything — see the correction below.
 - **Separating `rule` from a richer `Diagnosis { code, evidence }`** — worth doing if one rule ever
   needs to report several diagnoses at once. None does yet.
 
@@ -176,6 +180,23 @@ So the aggregator does not exist, and building one now would mean inventing weig
 policy for a single validator with nothing to weigh it against. It waits until a second validator
 exists. What does NOT wait is the wire format: `VerificationReport` already carries a list of
 findings, so adding validators later appends to it and changes nothing else.
+
+### Correction: a rule-based reliability status now exists
+
+By the time this framework had seven validators (not the four this document's header still names
+— `ROW_ACCOUNTING`, `CREDIT_CARD_STATEMENT_TOTALS` and `CREDIT_CARD_FLOW_RECONCILIATION` shipped
+after this document was last updated), a status *was* built: `ImportReliabilityStatus`
+(`CLEAN`/`REVIEW_RECOMMENDED`/`NEEDS_ATTENTION`), computed by `ImportReliabilityStatusDeriver` and
+carried on `VerificationReport.reliabilityStatus`.
+
+This is not the "weighting policy... guess wearing an authoritative face" the bullet above (and
+"Deliberately not built") warns against, and it is worth being precise about why. It invents no
+weights and needs no calibration data — every one of its three outcomes is a deterministic OR over
+facts this pipeline already computes (a finding's own outcome, whether a multi-line header failed
+to reconstruct, whether OCR was used), never a synthesized number. The distinction the "aggregator"
+concern above is really about is between **combining evidence by invented weight** (rejected,
+correctly) and **combining evidence by named, explainable rule** (what got built). See
+`ImportReliabilityStatus`'s own doc comment for the exact three rules.
 
 ### Deferred: a separate `severity` on each finding
 
