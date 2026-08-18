@@ -9,6 +9,8 @@ import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.pdfbox.text.TextPosition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -29,6 +31,26 @@ import java.util.List;
 public class PdfTextExtractor {
 
     private static final Logger log = LoggerFactory.getLogger(PdfTextExtractor.class);
+
+    // SEC-02 (docs/quality/bug-reports/2026-08-19-security-review-findings.md) default, mirrored
+    // in application.yml's app.import.pdf.max-pages -- keeping both in sync is why the property
+    // string embeds this constant rather than repeating the number.
+    private static final int DEFAULT_MAX_PAGES = 500;
+
+    private final int maxPages;
+
+    /** Test/manual-construction convenience -- every one of this class's ~40 existing call sites
+     *  predates the page-count ceiling below and has no reason to care what it's set to. */
+    public PdfTextExtractor() {
+        this(DEFAULT_MAX_PAGES);
+    }
+
+    /** {@code @Autowired} because there are now two constructors and Spring will not guess between
+     *  them (see PdfPreviewGenerator's own constructor for the identical situation and reasoning). */
+    @Autowired
+    public PdfTextExtractor(@Value("${app.import.pdf.max-pages:" + DEFAULT_MAX_PAGES + "}") int maxPages) {
+        this.maxPages = maxPages;
+    }
 
     /** Unprotected documents, and every caller that predates password support. */
     public List<PositionedText> extract(byte[] fileBytes) throws IOException {
@@ -58,6 +80,7 @@ public class PdfTextExtractor {
         List<PositionedText> result = new ArrayList<>();
         // PDFBox treats "" as "no password", which is exactly the previous behaviour.
         try (PDDocument document = loadOrExplain(fileBytes, passwordSupplied ? password : "", passwordSupplied)) {
+            requirePageCountWithinLimit(document);
             PDFTextStripper stripper = new PDFTextStripper() {
                 @Override
                 protected void writeString(String string, List<TextPosition> textPositions) throws IOException {
@@ -80,6 +103,23 @@ public class PdfTextExtractor {
             stripper.getText(document); // return value discarded -- writeString() above is what we actually want
         }
         return result;
+    }
+
+    /**
+     * SEC-02. Checked right after {@link Loader#loadPDF}, which has already parsed the document's
+     * object/page graph, and before {@code stripper.getText()} -- the full walk across every
+     * page's content stream, which is where an unbounded page count turns into unbounded time and
+     * memory. Page count, not file size: the 10MB multipart cap (application.yml) already bounds
+     * what was uploaded, but says nothing about what a small, spec-valid, highly compressed PDF
+     * expands into once PDFBox decompresses it.
+     */
+    private void requirePageCountWithinLimit(PDDocument document) {
+        int pages = document.getNumberOfPages();
+        if (pages > maxPages) {
+            log.warn("Rejecting a {}-page PDF -- exceeds the {}-page ceiling checked before full-text extraction",
+                    pages, maxPages);
+            throw new ApiException(ErrorCode.IMPORT_PDF_TOO_LARGE);
+        }
     }
 
     private PDDocument loadOrExplain(byte[] fileBytes, String password, boolean passwordSupplied) throws IOException {

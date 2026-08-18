@@ -63,6 +63,12 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
 
     List<Transaction> findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc(UUID userId);
 
+    /** SEC-06 (docs/quality/bug-reports/2026-08-19-security-review-findings.md) -- the idempotency
+     *  check TransactionService.create() runs before inserting a new row. See V97's migration
+     *  comment for why this is scoped by userId as well as the key: the column has no cross-user
+     *  uniqueness of its own, only per-user, same as every other per-user identifier in this app. */
+    java.util.Optional<Transaction> findByUserIdAndIdempotencyKey(UUID userId, String idempotencyKey);
+
     List<Transaction> findByUserIdAndTxnDateBetween(UUID userId, LocalDate from, LocalDate to);
 
     /**
