@@ -31,6 +31,13 @@ interface AuthState {
     fullName: string,
     phoneNumber: string
   ) => Promise<{ phoneVerified: boolean }>;
+  // D-23 Phase 2. Mirrors frontend/src/context/AuthContext.tsx's own loginWithGoogle exactly --
+  // same contract, same persist() reuse.
+  loginWithGoogle: (idToken: string) => Promise<boolean>;
+  // D-26 (iOS only). fullName is optional because expo-apple-authentication only hands it to the
+  // CALLER on the user's very first authorization for this app -- see GoogleSignInButton's sibling
+  // AppleSignInButton for where it's actually captured.
+  loginWithApple: (idToken: string, fullName?: string) => Promise<boolean>;
   setPhoneVerified: (verified: boolean) => void;
   logout: () => void;
 }
@@ -148,6 +155,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { phoneVerified: res.data.phoneVerified };
   }
 
+  async function loginWithGoogle(idToken: string): Promise<boolean> {
+    const res = await authApi.google(idToken);
+    await persist(res.data);
+    return res.data.phoneVerified;
+  }
+
+  async function loginWithApple(idToken: string, fullName?: string): Promise<boolean> {
+    const res = await authApi.apple(idToken, fullName);
+    await persist(res.data);
+    return res.data.phoneVerified;
+  }
+
   function setPhoneVerified(verified: boolean) {
     void safeStorage.setItem(PHONE_VERIFIED_KEY, String(verified));
     setPhoneVerifiedState(verified);
@@ -189,7 +208,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ bootstrapping, token, email, fullName, phoneVerified, login, reactivate, register, setPhoneVerified, logout }}
+      value={{
+        bootstrapping, token, email, fullName, phoneVerified,
+        login, reactivate, register, loginWithGoogle, loginWithApple, setPhoneVerified, logout,
+      }}
     >
       {children}
     </AuthContext.Provider>

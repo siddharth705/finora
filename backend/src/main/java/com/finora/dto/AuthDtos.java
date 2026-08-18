@@ -64,6 +64,33 @@ public class AuthDtos {
      */
     public record GoogleAuthRequest(@NotBlank String idToken) {}
 
+    /**
+     * D-23 Phase 2: {@code idToken} is the raw Apple identity token from native
+     * {@code AuthenticationServices} Sign In with Apple ({@code expo-apple-authentication} on
+     * mobile) -- never the frontend's own parsed claims, same discipline as
+     * {@link GoogleAuthRequest#idToken}. {@code AuthService.loginWithApple} verifies it
+     * server-side via {@code AppleIdTokenVerifierService} before trusting anything it says.
+     *
+     * <p>{@code fullName} is optional and NOT part of the token: Apple's identity token never
+     * carries a name claim at all, and hands the display name to the client separately, only on
+     * the user's very first authorization for this app -- see {@code AppleIdentity}'s own doc
+     * comment. Every subsequent sign-in this will legitimately be {@code null}.
+     *
+     * <p>Deliberately UNVALIDATED here, unlike {@link RegisterRequest#fullName} -- self-review
+     * finding: a {@code @Pattern} at this layer would reject the whole request (a 400, no session
+     * issued) on any value that doesn't match, including ones Apple's own name formatter could
+     * plausibly hand back (an empty or whitespace-only string, for a components object that's
+     * non-null but has every field null). {@code AuthService.sanitizeOAuthDisplayName} already
+     * validates and safely falls back to the email address for exactly this case -- the same
+     * fallback a missing/invalid Google {@code name} claim gets, which never had a DTO-level gate
+     * to trip in the first place. Hard-failing the entire sign-in over a cosmetic display name
+     * would make this the ONE thing that turns "just use the email" into "you can't sign in."
+     */
+    public record AppleAuthRequest(
+            @NotBlank String idToken,
+            String fullName
+    ) {}
+
     /** token = short-lived access token (15 min default); refreshToken = long-lived (30 days),
      *  used to obtain a new access token via /auth/refresh without re-entering credentials.
      *  phoneVerified tells the frontend right after login/register whether to prompt for OTP

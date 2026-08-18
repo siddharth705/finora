@@ -163,6 +163,21 @@
       <version>2.7.0</version>
     </dependency>
 
+    <!-- D-23 Phase 2: Sign in with Apple (ID token verification). Apple, unlike Google, has no
+         first-party Java verification library; google-api-client's GoogleIdTokenVerifier above
+         has no Apple equivalent. jwks-rsa is the standard, focused library for exactly the piece
+         that's genuinely hard to get right by hand: fetching Apple's published JWKS, resolving the
+         right key by `kid`, and caching/rotating them. It hands back a java.security.PublicKey;
+         the JWT parsing and signature/claim verification itself is done with jjwt (already a
+         dependency, used for Finora's own tokens), same division of labor as Google's verifier
+         used above: a small, audited library for key resolution, this codebase's own JWT
+         tooling for the rest. -->
+    <dependency>
+      <groupId>com.auth0</groupId>
+      <artifactId>jwks-rsa</artifactId>
+      <version>0.22.2</version>
+    </dependency>
+
     <!-- Validation -->
     <dependency>
       <groupId>org.springframework.boot</groupId>

@@ -82,7 +82,17 @@ export interface ApiEnvelope<T> {
 // Auth endpoints never need (and shouldn't receive) a Bearer token — sending a stale one
 // serves no purpose here since these are all permitAll server-side, and not sending it at all
 // is simply cleaner than relying on the backend to ignore a token that isn't relevant.
-const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password', '/auth/reactivate'];
+//
+// D-23/D-26 self-review finding: /auth/google was missing here despite being live since Phase 1
+// (PR #160) -- a verification failure on it (a stale/expired/wrong-audience Google credential)
+// would have gone through the SAME refresh-retry path this list exists to keep auth endpoints
+// out of, risking the exact "stale refresh token treated as theft, every session revoked"
+// incident this file's own 401-handling comment describes. Caught by scripts/check-client-auth-
+// policy.py, which requires this list to agree, entry-for-entry, across all three API clients.
+// /auth/apple is listed here too even though this app never calls it (Apple Sign-In is iOS-only,
+// see D-26) -- the checker treats this list as a declared policy, not a per-app usage log, so
+// admin-portal's copy carries it for the same reason.
+const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password', '/auth/reactivate', '/auth/google', '/auth/apple'];
 
 api.interceptors.request.use((config) => {
   const isAuthEndpoint = AUTH_ENDPOINTS_NO_TOKEN.some((path) => config.url?.includes(path));

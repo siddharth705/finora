@@ -599,7 +599,73 @@ public class AuthService {
      */
     @Transactional(noRollbackFor = ApiException.class)
     public AuthResponse loginWithGoogle(com.finora.integrations.google.login.GoogleIdentity identity) {
-        String email = identity.email().trim().toLowerCase();
+        return loginWithOAuthIdentity(identity.email(), identity.name(), OAuthProvider.GOOGLE);
+    }
+
+    /**
+     * D-23 Phase 2. Everything {@link #loginWithGoogle}'s own doc comment says applies here
+     * unchanged — same auto-link-into-a-verified-account behavior, same pre-hijacking protection
+     * on an unverified existing account, same registrations-enabled gate scoped to new accounts
+     * only — {@link #loginWithOAuthIdentity} is the one body both methods share.
+     *
+     * <p>The one real difference is {@code clientProvidedFullName}. Unlike Google's ID token,
+     * Apple's never carries a name claim at all (see {@link
+     * com.finora.integrations.apple.login.AppleIdentity}'s own doc comment) — Apple hands the
+     * display name to the client, not the backend, and only on the user's very first
+     * authorization for this app. The client (native {@code AuthenticationServices} UI) has to
+     * capture and forward it itself; every subsequent sign-in, this parameter will be {@code null}
+     * and the same email fallback {@link #sanitizeOAuthDisplayName} already applies for Google
+     * covers it.
+     */
+    @Transactional(noRollbackFor = ApiException.class)
+    public AuthResponse loginWithApple(com.finora.integrations.apple.login.AppleIdentity identity,
+                                        String clientProvidedFullName) {
+        return loginWithOAuthIdentity(identity.email(), clientProvidedFullName, OAuthProvider.APPLE);
+    }
+
+    /**
+     * Shared body for {@link #loginWithGoogle} and {@link #loginWithApple} — originally
+     * Google-only, generalized here since D-26 requires Apple sign-in to behave identically in
+     * every way that matters (account matching, pre-hijacking protection, the registrations gate),
+     * differing only in provider-facing labels and audit action names.
+     *
+     * <p><b>Auto-link, not reject — but only into a VERIFIED account.</b> A verified OAuth email
+     * matching an existing Finora account signs into THAT account, rather than being refused or
+     * silently creating a duplicate — chosen because the provider's own {@code email_verified}
+     * claim is the same trust basis "Sign in with Google"/"Sign in with Apple" relies on
+     * everywhere. See D-23's own record for the alternative considered and why it lost. {@link
+     * com.finora.integrations.google.login.GoogleIdTokenVerifierService} and {@link
+     * com.finora.integrations.apple.login.AppleIdTokenVerifierService} both refuse an unverified
+     * email before this method is ever reached, so there is no unverified-OAuth-email case to
+     * handle here.
+     *
+     * <p><b>Self-review finding, fixed here:</b> the auto-link above assumed the EXISTING account's
+     * own email had equally strong proof behind it — it didn't. Password registration
+     * ({@code createUserRecord}) never verified email ownership, so an attacker could pre-register
+     * a victim's email with a password of their own choosing; when the real victim later signed in
+     * with Google or Apple, auto-link would have signed them straight into the attacker's account,
+     * which the attacker still holds the password to (the classic OAuth "pre-hijacking" attack).
+     * This method now refuses to auto-link into an existing account whose {@code emailVerified} is
+     * still false — see {@link User#isEmailVerified()} and V93's own migration comment — and
+     * instead mints and sends a fresh verification link to that address (reusing {@link
+     * #mintEmailVerificationToken}), so the real owner (the only person who can read that inbox)
+     * has a genuine path forward: verify, then try signing in again.
+     *
+     * <p><b>Phone verification stays mandatory</b>, same as every other signup path — a newly
+     * created OAuth account gets {@code phoneNumber = null}, {@code phoneVerified = false}, and
+     * this response's own {@code phoneVerified} field routes the frontend to {@code /verify-phone}
+     * exactly as it already does for a password signup. Collecting that first phone number reuses
+     * the existing {@code PhoneChangeService} flow — already reachable by a phone-unverified user
+     * per {@code PhoneVerificationFilter}'s own allowlist — rather than a new screen.
+     *
+     * <p><b>{@code noRollbackFor} is load-bearing</b> on both {@link #loginWithGoogle} and
+     * {@link #loginWithApple}, exactly as it is on {@link #login} and {@link #refresh} — see those
+     * methods' own doc comments for why. This method itself carries no transactional annotation:
+     * it joins whichever of the two callers' transactions is already open, and the rollback rule
+     * has to live on that boundary, not here.
+     */
+    private AuthResponse loginWithOAuthIdentity(String rawEmail, String displayName, OAuthProvider provider) {
+        String email = rawEmail.trim().toLowerCase();
         Optional<User> existing = findUserByEmailIgnoreCaseSafely(email, User.SCOPE_USER);
         boolean isNewAccount = existing.isEmpty();
         // Self-review finding: this is public self-service signup exactly like register()'s own
@@ -610,14 +676,14 @@ public class AuthService {
         if (isNewAccount && !platformSettingsService.getEntity().isRegistrationsEnabled()) {
             throw new ApiException(HttpStatus.FORBIDDEN, "New registrations are currently disabled.");
         }
-        User user = existing.orElseGet(() -> createGoogleUserRecord(email, identity.name()));
+        User user = existing.orElseGet(() -> createOAuthUserRecord(email, displayName, provider));
         if (!isNewAccount) {
             if (!user.isEmailVerified()) {
                 String verifyLink = emailProperties.resolveBaseUrl(null) + "/verify-email?token="
                         + mintEmailVerificationToken(user.getId());
                 UUID unverifiedUserId = user.getId();
                 String unverifiedEmail = user.getEmail();
-                AfterCommit.run("email verification email (Google sign-in conflict)", () -> {
+                AfterCommit.run("email verification email (" + provider.label + " sign-in conflict)", () -> {
                     EmailResult result = emailProvider.sendEmailVerificationEmail(unverifiedEmail, verifyLink);
                     auditService.record(unverifiedUserId, "EMAIL_SENT", "User", unverifiedUserId, Map.of(
                             "type", "email_verification", "provider", result.provider().name(),
@@ -626,12 +692,12 @@ public class AuthService {
                 throw new ApiException(HttpStatus.FORBIDDEN,
                         "An account with this email already exists but hasn't been verified yet. "
                                 + "We've sent a new verification link to your email -- check your inbox, "
-                                + "then try Sign in with Google again.");
+                                + "then try Sign in with " + provider.label + " again.");
             }
             enforceAccountIsSignable(user);
         }
 
-        auditService.record(user.getId(), isNewAccount ? "USER_REGISTERED_GOOGLE" : "USER_LOGIN_GOOGLE",
+        auditService.record(user.getId(), isNewAccount ? provider.registeredAuditAction : provider.loginAuditAction,
                 "User", user.getId());
 
         var issued = refreshTokenService.issue(user.getId());
@@ -642,29 +708,53 @@ public class AuthService {
                 user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()));
     }
 
+    /** Provider-specific labels/audit-action names/signInMethod {@link #loginWithOAuthIdentity}
+     *  needs — the only things that actually differ between {@link #loginWithGoogle} and
+     *  {@link #loginWithApple}. */
+    private enum OAuthProvider {
+        GOOGLE("Google", "USER_REGISTERED_GOOGLE", "USER_LOGIN_GOOGLE", User.SIGN_IN_METHOD_GOOGLE),
+        APPLE("Apple", "USER_REGISTERED_APPLE", "USER_LOGIN_APPLE", User.SIGN_IN_METHOD_APPLE);
+
+        private final String label;
+        private final String registeredAuditAction;
+        private final String loginAuditAction;
+        private final String signInMethod;
+
+        OAuthProvider(String label, String registeredAuditAction, String loginAuditAction, String signInMethod) {
+            this.label = label;
+            this.registeredAuditAction = registeredAuditAction;
+            this.loginAuditAction = loginAuditAction;
+            this.signInMethod = signInMethod;
+        }
+    }
+
     /**
-     * New-account creation for {@link #loginWithGoogle} — deliberately not a call into
+     * New-account creation for {@link #loginWithOAuthIdentity} — deliberately not a call into
      * {@link #createUserRecord}, since that method's contract requires a {@link RegisterRequest}
      * (a real password, a phone number), neither of which exist on this path. Shares the same
      * default-category seeding as every other creation path; uniqueness is already established by
      * the caller's own lookup miss immediately before this runs.
      */
-    private User createGoogleUserRecord(String email, String displayName) {
+    private User createOAuthUserRecord(String email, String displayName, OAuthProvider provider) {
         User user = new User();
         user.setEmail(email);
         user.setAccountScope(User.SCOPE_USER);
         user.setPasswordHash(passwordEncoder.encode(randomUnguessablePassword()));
         // The durable marker every "re-enter your current password" gate elsewhere in this
-        // codebase reads via GoogleReauthVerifier -- see User.signInMethod's own doc comment.
-        user.setSignInMethod(User.SIGN_IN_METHOD_GOOGLE);
-        user.setFullName(sanitizeGoogleDisplayName(displayName, email));
-        // phoneNumber left null -- see loginWithGoogle's own doc comment on why, and how it gets
-        // collected. The column is nullable (unique, but NULL is never equal to NULL under a
+        // codebase reads via GoogleReauthVerifier -- see User.signInMethod's own doc comment,
+        // including the D-26 gap it names: GoogleReauthVerifier itself doesn't yet know how to
+        // re-verify an APPLE account, so that gate degrades gracefully (an ordinary "incorrect
+        // password" outcome) rather than crashing, but doesn't actually let an Apple user back in
+        // -- unscoped follow-up work, not part of this change.
+        user.setSignInMethod(provider.signInMethod);
+        user.setFullName(sanitizeOAuthDisplayName(displayName, email));
+        // phoneNumber left null -- see loginWithOAuthIdentity's own doc comment on why, and how it
+        // gets collected. The column is nullable (unique, but NULL is never equal to NULL under a
         // Postgres unique constraint), so this needs no schema change.
-        // A brand-new account created FROM a Google sign-in has no separate password anyone else
-        // could hold, so there is nothing to "pre-hijack" here -- Google's own verified-email
-        // claim is itself sufficient proof for this account, unlike the existing-account auto-link
-        // case loginWithGoogle's own doc comment covers.
+        // A brand-new account created FROM an OAuth sign-in has no separate password anyone else
+        // could hold, so there is nothing to "pre-hijack" here -- the provider's own
+        // verified-email claim is itself sufficient proof for this account, unlike the
+        // existing-account auto-link case loginWithOAuthIdentity's own doc comment covers.
         user.setEmailVerified(true);
         user = userRepository.save(user);
         passwordHistoryService.record(user.getId(), user.getPasswordHash());
@@ -673,16 +763,18 @@ public class AuthService {
     }
 
     /**
-     * Google's {@code name} claim is self-reported by the account holder to Google, not something
-     * Google itself constrains the way {@link RegisterRequest#fullName} is by its own
-     * {@code @Pattern} — every other account-creation path in this class enforces
+     * An OAuth provider's {@code name}/display-name value is self-reported by the account holder,
+     * not something the provider itself constrains the way {@link RegisterRequest#fullName} is by
+     * its own {@code @Pattern} — every other account-creation path in this class enforces
      * {@link AuthDtos#FULL_NAME_REGEXP} (letters, spaces, hyphens, apostrophes, periods, capped
      * length) before anything reaches the database, and this one shouldn't be the exception just
-     * because the value arrived from a JWT claim instead of a form field. Falls back to the email
-     * address — the same fallback {@link #createGoogleUserRecord} already used for a genuinely
-     * missing name — rather than storing whatever Google handed back unchecked.
+     * because the value arrived from a JWT claim (Google) or a native sign-in UI (Apple) instead
+     * of a form field. Falls back to the email address — the same fallback
+     * {@link #createOAuthUserRecord} already used for a genuinely missing name (Apple, every time
+     * after the first authorization) — rather than storing whatever the provider handed back
+     * unchecked.
      */
-    private String sanitizeGoogleDisplayName(String displayName, String email) {
+    private String sanitizeOAuthDisplayName(String displayName, String email) {
         if (displayName != null && displayName.matches(AuthDtos.FULL_NAME_REGEXP)) {
             return displayName.trim();
         }
@@ -691,7 +783,7 @@ public class AuthService {
 
     /**
      * A value long and random enough that brute-forcing it is not a realistic path into an
-     * account whose owner never set a real password — see {@link #createGoogleUserRecord}'s own
+     * account whose owner never set a real password — see {@link #createOAuthUserRecord}'s own
      * doc comment. 256 bits from the same {@link SecureRandom} generator this class already uses
      * for reset/reactivation tokens, base64-encoded (44 characters, safely under BCrypt's 72-byte
      * input limit).
@@ -1043,12 +1135,12 @@ public class AuthService {
             // Bug fix (review): this used to say "contact an administrator" unconditionally --
             // accurate for the state it was written to guard (phone number is required at both
             // registration and admin-create time, so a missing one used to be a genuine anomaly),
-            // but stale since AuthService.createGoogleUserRecord shipped: a Google Sign-In
-            // account has no phone number and, just as relevantly here, no password of its own to
-            // reset either (its passwordHash is a random value nobody knows -- see
-            // createGoogleUserRecord's own comment). "Forgot password" doesn't apply to an
-            // account that was never given one; the actionable answer is to use Google Sign-In,
-            // not to wait on an administrator who has nothing to fix.
+            // but stale since AuthService.createOAuthUserRecord shipped: a Google or Apple
+            // Sign-In account has no phone number and, just as relevantly here, no password of
+            // its own to reset either (its passwordHash is a random value nobody knows -- see
+            // createOAuthUserRecord's own comment). "Forgot password" doesn't apply to an
+            // account that was never given one; the actionable answer is to use the same OAuth
+            // provider again, not to wait on an administrator who has nothing to fix.
             //
             // Second review catch: the first version of this fix asserted "signs in with Google"
             // unconditionally, without checking user.isGoogleAccount() -- wrong for the "real, if
@@ -1059,8 +1151,16 @@ public class AuthService {
             // unhelpful -- the old administrator message is still the honest answer for that case.
             // ResetPassword.tsx's own "Back to sign in" link is always visible on this screen
             // either way, so this message only needs to explain why, not add a new escape hatch.
-            throw new ApiException(HttpStatus.BAD_REQUEST, user.isGoogleAccount()
-                    ? "This account signs in with Google and doesn't have a password to reset. Go back and choose \"Sign in with Google\" instead."
+            //
+            // D-26 addition: extended to isAppleAccount() the same way -- an Apple-created
+            // account hits this exact path (forgot-password is reachable by email from any
+            // device, including web, even though Apple Sign-In itself is mobile-only), and would
+            // otherwise get the same wrong "contact an administrator" message a Google account
+            // used to.
+            String reauthProviderLabel = user.isGoogleAccount() ? "Google" : user.isAppleAccount() ? "Apple" : null;
+            throw new ApiException(HttpStatus.BAD_REQUEST, reauthProviderLabel != null
+                    ? "This account signs in with " + reauthProviderLabel + " and doesn't have a password to reset. "
+                            + "Go back and choose \"Sign in with " + reauthProviderLabel + "\" instead."
                     : "This account has no phone number on file. Contact an administrator for help resetting your password.");
         }
         // BH-015, KNOWN AND DELIBERATELY STILL OPEN. This returns the account's phone number in

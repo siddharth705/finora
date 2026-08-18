@@ -49,18 +49,29 @@ public class User {
     private String passwordHash;
 
     /** Which credential this account actually proves control with -- {@code PASSWORD} for every
-     *  account created through registration or admin-create (a real, user-chosen password), or
-     *  {@code GOOGLE} for one created through {@code AuthService#loginWithGoogle}, whose
-     *  passwordHash is a random value nobody, including the user, ever knows. Every "re-enter
-     *  your current password" gate elsewhere in this codebase (PasswordChangeService.start,
-     *  UserAccountLifecycleService.deactivate, DataExportService.buildBundle) reads this to
-     *  decide whether to ask for that password or verify a fresh Google Sign-In instead -- see
-     *  GoogleReauthVerifier, which is what actually does that check. */
+     *  account created through registration or admin-create (a real, user-chosen password),
+     *  {@code GOOGLE} for one created through {@code AuthService#loginWithGoogle}, or
+     *  {@code APPLE} for one created through {@code AuthService#loginWithApple} -- both OAuth
+     *  cases share the same shape (a random passwordHash nobody, including the user, ever
+     *  knows). Every "re-enter your current password" gate elsewhere in this codebase
+     *  (PasswordChangeService.start, UserAccountLifecycleService.deactivate,
+     *  DataExportService.buildBundle) reads this to decide whether to ask for that password or
+     *  verify a fresh sign-in instead -- see GoogleReauthVerifier, which is what actually does
+     *  that check.
+     *
+     *  <p><b>D-26 gap, not yet closed:</b> GoogleReauthVerifier only knows how to re-verify a
+     *  GOOGLE account; an APPLE account falls through to its password branch and always fails
+     *  gracefully (a normal "incorrect password" outcome, not a crash) -- the same degraded
+     *  experience a GOOGLE account already has on {@code mobile/ChangePasswordSheet.tsx}, which
+     *  PR #175 never extended to mobile either. Building real Apple re-auth (a fresh Apple ID
+     *  token verified server-side, the Apple counterpart to what GoogleReauthVerifier already
+     *  does) is unscoped, follow-up work, not part of D-23 Phase 2 / D-26. */
     @Column(name = "sign_in_method", nullable = false, length = 20)
     private String signInMethod = SIGN_IN_METHOD_PASSWORD;
 
     public static final String SIGN_IN_METHOD_PASSWORD = "PASSWORD";
     public static final String SIGN_IN_METHOD_GOOGLE = "GOOGLE";
+    public static final String SIGN_IN_METHOD_APPLE = "APPLE";
 
     @Column(name = "full_name", nullable = false)
     private String fullName;
@@ -245,6 +256,7 @@ public class User {
     public String getSignInMethod() { return signInMethod; }
     public void setSignInMethod(String signInMethod) { this.signInMethod = signInMethod; }
     public boolean isGoogleAccount() { return SIGN_IN_METHOD_GOOGLE.equals(signInMethod); }
+    public boolean isAppleAccount() { return SIGN_IN_METHOD_APPLE.equals(signInMethod); }
     public String getFullName() { return fullName; }
     public void setFullName(String fullName) { this.fullName = fullName; }
     public String getRole() { return role; }

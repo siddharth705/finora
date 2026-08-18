@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { LoginScreen } from './LoginScreen';
 import { AUTH_ACCOUNT_DEACTIVATED } from '../api/errorCodes';
+import { ThemeProvider } from '../theme';
 import type { AuthStackParamList } from '../navigation/types';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
@@ -12,18 +13,32 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 const mockLogin = jest.fn();
 const mockReactivate = jest.fn();
+const mockLoginWithGoogle = jest.fn();
+const mockLoginWithApple = jest.fn();
 jest.mock('../context/AuthContext', () => ({
-  useAuth: () => ({ login: mockLogin, reactivate: mockReactivate }),
+  useAuth: () => ({
+    login: mockLogin,
+    reactivate: mockReactivate,
+    loginWithGoogle: mockLoginWithGoogle,
+    loginWithApple: mockLoginWithApple,
+  }),
 }));
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'Login'>;
 
 const mockNavigate = jest.fn();
 
+// D-23 Phase 2 / D-26: LoginScreen now also renders GoogleSignInButton/AppleSignInButton, both of
+// which read the resolved theme via useThemeSetting() -- without a real provider here they throw
+// "must be used within ThemeProvider" before this file's own reactivation-flow assertions ever run.
 function renderScreen() {
   const navigation = { navigate: mockNavigate } as unknown as Props['navigation'];
   const route = { key: 'Login', name: 'Login', params: undefined } as Props['route'];
-  return render(<LoginScreen navigation={navigation} route={route} />);
+  return render(
+    <ThemeProvider>
+      <LoginScreen navigation={navigation} route={route} />
+    </ThemeProvider>
+  );
 }
 
 /** Matches what apiErrorCode()/apiErrorDetails() read: an axios error carrying both. */

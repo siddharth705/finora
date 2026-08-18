@@ -63,7 +63,12 @@ export interface ApiEnvelope<T> {
 // same origin in a future deployment.
 const TOKEN_KEY = 'finora_admin_token';
 
-const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password', '/auth/reactivate'];
+// D-23/D-26: /auth/google and /auth/apple listed here even though this app never calls either --
+// scripts/check-client-auth-policy.py requires all three API clients (frontend, admin-portal,
+// mobile) to agree on this list entry-for-entry, treating it as a declared policy rather than a
+// per-app usage log. See frontend/src/api/client.ts's own copy of this comment for the real bug
+// this check exists to prevent.
+const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password', '/auth/reactivate', '/auth/google', '/auth/apple'];
 
 api.interceptors.request.use((config) => {
   const isAuthEndpoint = AUTH_ENDPOINTS_NO_TOKEN.some((path) => config.url?.includes(path));

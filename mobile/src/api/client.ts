@@ -36,7 +36,12 @@ export interface ApiEnvelope<T> {
   requestId: string | null;
 }
 
-const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password', '/auth/reactivate'];
+// D-23 Phase 2: /auth/google and /auth/apple added alongside login/register -- both mint a
+// session before any token exists, same as those two, and both being LISTED here matters for
+// more than just the outbound Authorization header (see the 401-handling comment further down):
+// a verification failure on either (a stale/expired/wrong-audience credential) must be treated as
+// "this sign-in attempt failed", never routed into the refresh-token retry path.
+const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password', '/auth/reactivate', '/auth/google', '/auth/apple'];
 
 const TOKEN_KEY = 'finora_token';
 const REFRESH_TOKEN_KEY = 'finora_refresh_token';
