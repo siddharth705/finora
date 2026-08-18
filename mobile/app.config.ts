@@ -117,6 +117,13 @@ const config: ExpoConfig = {
     // credentials needed at build time (Apple's own private key/Services ID only matter to the
     // BACKEND verifier, at sign-in time, not to this entitlement). Safe to list unconditionally.
     'expo-apple-authentication',
+    // SEC-09 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Optional app-lock
+    // (Settings > Security) -- faceIDPermission supplies iOS's required NSFaceIDUsageDescription;
+    // Android's biometric prompt needs no equivalent build-time config. See src/lib/appLock.ts.
+    [
+      'expo-local-authentication',
+      { faceIDPermission: 'Allow Finora to use Face ID to unlock the app.' },
+    ],
     [
       'expo-build-properties',
       {
