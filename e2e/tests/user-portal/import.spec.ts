@@ -145,26 +145,12 @@ test.describe('Phase 1 — statement upload', () => {
       await expect(review.getByText('16-Jan-2026')).toBeVisible();
       await expect(review.getByText('₹45000')).toBeVisible();
 
-      /**
-       * ACKNOWLEDGED GAP, asserted rather than hidden.
-       *
-       * Every description arrives EMPTY. The merged heading names this column "Transaction
-       * Remarks", and `TransactionNormalizer` resolves the description with
-       * `CsvParser.firstNonBlank`, which compares each hint against the WHOLE normalized column
-       * name — "transaction remarks" is not "remarks", so it matches nothing and the description
-       * silently becomes "". It is the same whole-cell-versus-per-word mismatch already fixed
-       * three times in the engine (`isDateColumn`, `isAmountColumn`, `hasDateValue`), reaching a
-       * fourth place now that wrapped headings produce compound column names.
-       *
-       * Not fixed here, and not reachable on any real document yet: across the 18-statement
-       * corpus, wrapped headings appear only on deposit schedules, which stage no transactions.
-       * It becomes live the first time a bank wraps a heading over a TRANSACTION table, and the
-       * failure will be silent — rows import, descriptions are blank, nothing errors. Asserting
-       * the emptiness is what makes this test fail loudly on the day someone fixes it, so the fix
-       * is noticed rather than absorbed.
-       */
+      // The merged heading names this column "Transaction Remarks". `fce9f159` added that exact
+      // compound name to TransactionNormalizer's DESCRIPTION_HINTS (verified against a real ICICI
+      // savings e-statement), so `CsvParser.firstNonBlank`'s whole-cell match now hits it directly
+      // and the description resolves instead of silently going blank.
       const firstDescription = review.getByRole('row').nth(1).getByRole('cell').nth(2);
-      await expect(firstDescription).toHaveText(/^\s*(low confidence)?\s*$/i);
+      await expect(firstDescription).toHaveText(/^UPI PAYMENT GROCER\s*(low confidence)?\s*$/i);
     });
 });
 
