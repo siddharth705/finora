@@ -49,11 +49,17 @@ afterEach(() => {
 /** The real native AppState module never fires a 'change' event under the test runner (there's
  *  no bridge), so it's a safe no-op for every other test here -- but the two foreground tests
  *  below need to actually trigger the listener AppLockGate registers, so they capture it directly
- *  rather than trying to simulate a real native event. */
+ *  rather than trying to simulate a real native event.
+ *
+ *  Driving it through the SAME listener callback both times (not just mutating
+ *  AppState.currentState directly) matters: the component's own "was I in the background" memory
+ *  is a ref written INSIDE that callback (`appState.current = next`), not a read of the module's
+ *  live value -- so a background transition has to go through the listener too, or the later
+ *  foreground call has nothing to compare against and never detects a transition at all. */
 let appStateListener: ((status: AppStateStatus) => void) | undefined;
 
 function goToBackground() {
-  AppState.currentState = 'background';
+  appStateListener?.('background');
 }
 
 function returnToForeground() {
@@ -135,14 +141,25 @@ describe('AppLockGate', () => {
   // AppLockSection (Settings) writes straight to SecureStore with no shared state or event bridge
   // back to this component, so a cached value read once at mount would go stale the moment the
   // user flips the toggle without restarting the app.
+  //
+  // Both tests spy on appLock.isEnabled() directly rather than writing to SecureStore and racing
+  // it against the component's own read -- this component reads the setting TWICE (once from the
+  // mount effect, once from the foreground listener), and an unsynchronized SecureStore write from
+  // the test can land before either read, making a test pass for the wrong reason (the mount
+  // effect happening to see the new value, rather than the foreground listener actually re-reading
+  // it -- this is exactly what happened on the first version of these two tests, caught only by
+  // deliberately reverting the fix locally and finding they still passed against the bug).
+  // Queuing exact resolved values per call removes the race and pins down which read is which.
   describe('the setting can change mid-session, without an app restart', () => {
     it('engages on the very next foreground after being turned ON mid-session', async () => {
       await signIn();
-      // Starts OFF -- the mount effect's auto-prompt must not be what locks it later.
+      const isEnabledSpy = jest.spyOn(appLock, 'isEnabled').mockResolvedValueOnce(false);
       renderGate();
       expect(await screen.findByText('protected content')).toBeTruthy();
+      await waitFor(() => expect(isEnabledSpy).toHaveBeenCalledTimes(1));
 
-      await appLock.setEnabled(true);
+      // Simulates the toggle having been turned on in Settings since the mount check above.
+      isEnabledSpy.mockResolvedValueOnce(true);
       goToBackground();
       mockedAuthenticateAsync.mockResolvedValueOnce({ success: false, error: 'authentication_failed' });
       await act(async () => returnToForeground());
@@ -152,7 +169,7 @@ describe('AppLockGate', () => {
 
     it('does not lock on the next foreground after being turned OFF mid-session', async () => {
       await signIn();
-      await enableAppLock();
+      const isEnabledSpy = jest.spyOn(appLock, 'isEnabled').mockResolvedValueOnce(true);
       mockedAuthenticateAsync.mockResolvedValueOnce({ success: true });
       renderGate();
       // Let the mount-time auto-prompt actually happen and resolve before moving on -- waiting on
@@ -162,12 +179,14 @@ describe('AppLockGate', () => {
       await waitFor(() => expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(1));
       await waitFor(() => expect(screen.queryByText(LOCK_TEXT)).toBeNull());
 
-      await appLock.setEnabled(false);
+      // Simulates the toggle having been turned off in Settings since the mount check above.
+      isEnabledSpy.mockResolvedValueOnce(false);
       goToBackground();
       await act(async () => returnToForeground());
 
-      // Give any (incorrect) re-lock a chance to happen before asserting it didn't.
-      await waitFor(() => expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(1));
+      // Give the foreground check a chance to actually run before asserting no re-lock happened.
+      await waitFor(() => expect(isEnabledSpy).toHaveBeenCalledTimes(2));
+      expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(1);
       expect(screen.queryByText(LOCK_TEXT)).toBeNull();
       expect(screen.getByText('protected content')).toBeTruthy();
     });
