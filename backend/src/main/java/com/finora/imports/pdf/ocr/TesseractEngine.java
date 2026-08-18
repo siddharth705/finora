@@ -73,6 +73,11 @@ public final class TesseractEngine implements OcrEngine {
     public List<RecognisedText> recognise(byte[] pdf, int dpi) throws IOException {
         List<RecognisedText> runs = new ArrayList<>();
         Path work = Files.createTempDirectory("tesseract-eval-");
+        // finally, not just a trailing call: this now runs against real uploaded statements, and a
+        // page that fails to render/recognise must not leave its rasterised image -- a real
+        // customer document -- sitting in the temp directory permanently. Under test/evaluation
+        // scope this cost was a rare, developer-visible inconvenience; in production it is a
+        // silent, unbounded disk and privacy liability.
         try (PDDocument in = Loader.loadPDF(pdf)) {
             PDFRenderer renderer = new PDFRenderer(in);
             for (int page = 0; page < in.getNumberOfPages(); page++) {
@@ -84,8 +89,9 @@ public final class TesseractEngine implements OcrEngine {
                 float scale = size.getWidth() / image.getWidth();
                 runs.addAll(parse(run(png), page, scale));
             }
+        } finally {
+            deleteRecursively(work);
         }
-        deleteRecursively(work);
         return runs;
     }
 
