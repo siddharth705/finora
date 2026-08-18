@@ -1,8 +1,9 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { Text } from 'react-native';
+import { AppState, Text, type AppStateStatus } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import * as appLock from '../lib/appLock';
 import { AppLockGate } from './AppLockGate';
 import { AuthProvider } from '../context/AuthContext';
 import { ThemeProvider } from '../theme';
@@ -30,6 +31,33 @@ async function signIn() {
 
 async function enableAppLock() {
   await SecureStore.setItemAsync('finora_app_lock_enabled', 'true');
+}
+
+beforeEach(() => {
+  appStateListener = undefined;
+  AppState.currentState = 'active';
+  jest.spyOn(AppState, 'addEventListener').mockImplementation((event, listener) => {
+    if (event === 'change') appStateListener = listener as (status: AppStateStatus) => void;
+    return { remove: jest.fn() };
+  });
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
+});
+
+/** The real native AppState module never fires a 'change' event under the test runner (there's
+ *  no bridge), so it's a safe no-op for every other test here -- but the two foreground tests
+ *  below need to actually trigger the listener AppLockGate registers, so they capture it directly
+ *  rather than trying to simulate a real native event. */
+let appStateListener: ((status: AppStateStatus) => void) | undefined;
+
+function goToBackground() {
+  AppState.currentState = 'background';
+}
+
+function returnToForeground() {
+  appStateListener?.('active');
 }
 
 function renderGate(children = <Text>protected content</Text>) {
@@ -101,6 +129,48 @@ describe('AppLockGate', () => {
 
     await waitFor(() => expect(screen.getByText(LOCK_TEXT)).toBeTruthy());
     expect(screen.getByText('Sign Out')).toBeTruthy();
+  });
+
+  // Regression coverage: AppLockGate must not cache the setting in state across the session --
+  // AppLockSection (Settings) writes straight to SecureStore with no shared state or event bridge
+  // back to this component, so a cached value read once at mount would go stale the moment the
+  // user flips the toggle without restarting the app.
+  describe('the setting can change mid-session, without an app restart', () => {
+    it('engages on the very next foreground after being turned ON mid-session', async () => {
+      await signIn();
+      // Starts OFF -- the mount effect's auto-prompt must not be what locks it later.
+      renderGate();
+      expect(await screen.findByText('protected content')).toBeTruthy();
+
+      await appLock.setEnabled(true);
+      goToBackground();
+      mockedAuthenticateAsync.mockResolvedValueOnce({ success: false, error: 'authentication_failed' });
+      await act(async () => returnToForeground());
+
+      await waitFor(() => expect(screen.getByText(LOCK_TEXT)).toBeTruthy());
+    });
+
+    it('does not lock on the next foreground after being turned OFF mid-session', async () => {
+      await signIn();
+      await enableAppLock();
+      mockedAuthenticateAsync.mockResolvedValueOnce({ success: true });
+      renderGate();
+      // Let the mount-time auto-prompt actually happen and resolve before moving on -- waiting on
+      // the mock call first (rather than going straight for "lock text is gone", which is
+      // trivially true before the effect has even run) is what proves it really unlocked rather
+      // than never having locked in the first place.
+      await waitFor(() => expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(screen.queryByText(LOCK_TEXT)).toBeNull());
+
+      await appLock.setEnabled(false);
+      goToBackground();
+      await act(async () => returnToForeground());
+
+      // Give any (incorrect) re-lock a chance to happen before asserting it didn't.
+      await waitFor(() => expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(1));
+      expect(screen.queryByText(LOCK_TEXT)).toBeNull();
+      expect(screen.getByText('protected content')).toBeTruthy();
+    });
   });
 });
 

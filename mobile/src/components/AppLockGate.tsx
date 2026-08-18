@@ -17,14 +17,32 @@ import { spacing, useTheme } from '../theme';
  * Deliberately does nothing when there is no session (token === null) -- locking the LOGIN screen
  * behind a biometric prompt protects nothing (there's no data behind it yet) and would just be a
  * confusing extra step before someone can even sign in.
+ *
+ * Reads appLock.isEnabled() fresh at both check points rather than caching it in state -- the
+ * setting is toggled from a different component (AppLockSection, in Settings) with no shared
+ * state between them, so a cached value would go stale the moment someone flips it mid-session.
  */
+// Sentinel initial value for `checkedForToken` below -- distinct from any real token AND from
+// `null` (the signed-out value), so the very first render never accidentally matches `token`.
+const NEVER_CHECKED = Symbol('app-lock-never-checked');
+
 export function AppLockGate({ children }: { children: ReactNode }) {
   const { bootstrapping, token, logout } = useAuth();
   const c = useTheme();
-  const [lockEnabled, setLockEnabled] = useState(false);
   const [locked, setLocked] = useState(false);
   const [authenticating, setAuthenticating] = useState(false);
   const appState = useRef(AppState.currentState);
+  // Which token the last completed appLock.isEnabled() check applies to -- compared against the
+  // current `token` below (`checked`) rather than a separate true/false flag, so there's no
+  // "reset to not-checked" to perform synchronously when a session ends: a stale value here simply
+  // stops matching `token` the moment a new one is set. Matters for a logout-then-different-login
+  // within the same app session, since this component never unmounts across that transition and a
+  // leftover match from the PRIOR session would skip the gate below exactly like the cold-start
+  // race it exists to close.
+  const [checkedToken, setCheckedToken] = useState<string | null | typeof NEVER_CHECKED>(
+    NEVER_CHECKED
+  );
+  const checked = checkedToken === token;
 
   const tryUnlock = useCallback(async () => {
     setAuthenticating(true);
@@ -49,32 +67,60 @@ export function AppLockGate({ children }: { children: ReactNode }) {
 
   // Reads the per-device setting once auth has finished bootstrapping and there's a session to
   // protect -- see appLock.ts's own comment on why this lives outside the account's server-side
-  // settings and has to be readable before anything is unlocked.
+  // settings and has to be readable before anything is unlocked. Records which token this check
+  // resolved for regardless of the outcome, so the render gate above knows the decision is in and
+  // it's safe to show `children` when the setting turns out to be off.
   useEffect(() => {
     if (bootstrapping || token === null) return;
     let cancelled = false;
     void appLock.isEnabled().then((enabled) => {
       if (cancelled) return;
-      setLockEnabled(enabled);
-      if (enabled) lockAndPrompt();
+      setCheckedToken(token);
+      // Explicit either way, not just "if (enabled) lockAndPrompt()" -- `locked` is state on this
+      // long-lived component, not per-session, so without an explicit false here a PRIOR session
+      // that ended while still locked (e.g. logging out from the lock screen's own Sign Out
+      // button) would leave a new sign-in that never enabled the setting stuck looking locked.
+      if (enabled) {
+        lockAndPrompt();
+      } else {
+        setLocked(false);
+      }
     });
     return () => {
       cancelled = true;
     };
   }, [bootstrapping, token, lockAndPrompt]);
 
+  // Reads appLock.isEnabled() fresh on every foreground transition rather than trusting a cached
+  // value from the mount effect above -- AppLockSection (Settings) writes the setting directly to
+  // SecureStore with no shared state or event bridge back to this component, so a value captured
+  // once at cold start would go stale the moment the user flips the toggle in the same session:
+  // turning it ON wouldn't engage until the app was fully killed and relaunched, and turning it
+  // OFF wouldn't stop the next foreground prompt from firing anyway.
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next: AppStateStatus) => {
       const cameToForeground = appState.current.match(/inactive|background/) && next === 'active';
       appState.current = next;
-      if (cameToForeground && lockEnabled && token !== null) {
-        lockAndPrompt();
+      if (cameToForeground && token !== null) {
+        void appLock.isEnabled().then((enabled) => {
+          if (enabled) lockAndPrompt();
+        });
       }
     });
     return () => subscription.remove();
-  }, [lockEnabled, token, lockAndPrompt]);
+  }, [token, lockAndPrompt]);
 
-  if (bootstrapping || token === null || !locked) {
+  if (bootstrapping || token === null) {
+    return <>{children}</>;
+  }
+  // Session present but the check for THIS token hasn't resolved yet -- render nothing rather
+  // than `children`, closing the cold-start race where RootNavigator would otherwise be paintable
+  // for one commit before a lock-enabled session gets locked (and the equivalent race on a fresh
+  // login right after a different session's logout, within the same app process).
+  if (!checked) {
+    return null;
+  }
+  if (!locked) {
     return <>{children}</>;
   }
 
