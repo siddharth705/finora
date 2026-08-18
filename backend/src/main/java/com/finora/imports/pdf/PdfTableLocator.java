@@ -12,6 +12,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -475,10 +476,27 @@ public class PdfTableLocator {
      *                                      confirmed on a real document), positive whenever {@code
      *                                      groupIntoRows} joined members that were not printed on
      *                                      the exact same baseline.
+     * @param cellCountDistribution         row size (cell count) mapped to how many rows had that
+     *                                      size, across the whole document -- the strongest signal
+     *                                      found while building this, and the reason it is kept in
+     *                                      the evidence itself rather than left for a caller to
+     *                                      recompute from raw rows. A real, measured example of what
+     *                                      it can show that {@code maxCellsInRow} alone cannot: on a
+     *                                      real ICICI CC statement, size 7 appears in exactly ONE
+     *                                      row -- {@code {..., 5=4, 7=1}}, nothing at size 6 at all
+     *                                      -- while on real AU and BOB statements, each document's
+     *                                      own largest row size recurs 3-4 times ({@code {..., 5=7,
+     *                                      6=4}}, {@code {..., 5=1, 6=3}}). Reported as an observed
+     *                                      difference, not a rule: one broken document and two
+     *                                      working ones is not enough evidence to define what
+     *                                      "recurs" or "singleton" means in general, only enough to
+     *                                      say this document's own distribution looked different
+     *                                      from those two documents' own distributions.
      */
     public record PhysicalRowFormationEvidence(int textRuns, int physicalRowsCreated, int totalPhysicalCells,
                                                  double averageCellsPerRow, int maxCellsInRow,
-                                                 float maxPhysicalRowVerticalExtent) {}
+                                                 float maxPhysicalRowVerticalExtent,
+                                                 Map<Integer, Integer> cellCountDistribution) {}
 
     public record LocatedDocument(List<LocatedSection> sections,
                                    PhysicalRowFormationEvidence physicalRowFormationEvidence) {}
@@ -1565,14 +1583,8 @@ public class PdfTableLocator {
      *  this was raw, non-direction-adjusted PDF space) put the bottom of the page first, which
      *  left the header row stranded mid-list with the real transaction rows on one side of it and
      *  the real metadata lines on the other -- exactly backwards from what locate() expects.
-     *  Then left-to-right (ascending x) within a row.
-     *
-     *  <p>Package-private, not private -- {@link PdfPipelineDiagnostic}, in the same package, calls
-     *  this directly to print a per-row cell-count distribution ("Stage 1b" in its output). That is
-     *  diagnostic-only visibility, the same "facts, not a verdict" posture as
-     *  {@link PhysicalRowFormationEvidence} itself: nothing outside the diagnostic tool depends on
-     *  this being callable, and no production code path changed to allow it. */
-    List<List<PositionedText>> groupIntoRows(List<PositionedText> positionedText) {
+     *  Then left-to-right (ascending x) within a row. */
+    private List<List<PositionedText>> groupIntoRows(List<PositionedText> positionedText) {
         List<PositionedText> sorted = new ArrayList<>(positionedText);
         sorted.sort((a, b) -> {
             if (a.pageIndex() != b.pageIndex()) return Integer.compare(a.pageIndex(), b.pageIndex());
@@ -1607,14 +1619,23 @@ public class PdfTableLocator {
      *  fact, computable from the return value alone, so this needed no change to {@code
      *  groupIntoRows} itself and carries the same "did not alter extraction" guarantee every other
      *  evidence-only addition in this class has. See {@link PhysicalRowFormationEvidence}'s own doc
-     *  comment for what this is and is not used for. */
+     *  comment for what this is and is not used for.
+     *
+     *  <p>{@code cellCountDistribution} is captured here, in the evidence itself, rather than
+     *  recomputed wherever it is needed -- the earlier version of this method left it out and made
+     *  {@link PdfPipelineDiagnostic} call {@code groupIntoRows} directly to reconstruct it, which
+     *  needed widening that method's visibility purely to serve a diagnostic. Capturing it here
+     *  instead means {@code groupIntoRows} stays {@code private} -- an implementation detail again,
+     *  not a visibility compromise made for one caller's convenience. */
     private PhysicalRowFormationEvidence measurePhysicalRowFormation(int textRuns, List<List<PositionedText>> rows) {
         int totalPhysicalCells = 0;
         int maxCellsInRow = 0;
         float maxVerticalExtent = 0f;
+        Map<Integer, Integer> cellCountDistribution = new TreeMap<>();
         for (List<PositionedText> row : rows) {
             totalPhysicalCells += row.size();
             maxCellsInRow = Math.max(maxCellsInRow, row.size());
+            cellCountDistribution.merge(row.size(), 1, Integer::sum);
             if (row.size() < 2) continue;
             float minY = Float.MAX_VALUE;
             float maxY = -Float.MAX_VALUE;
@@ -1626,7 +1647,7 @@ public class PdfTableLocator {
         }
         double averageCellsPerRow = rows.isEmpty() ? 0.0 : (double) totalPhysicalCells / rows.size();
         return new PhysicalRowFormationEvidence(textRuns, rows.size(), totalPhysicalCells,
-                averageCellsPerRow, maxCellsInRow, maxVerticalExtent);
+                averageCellsPerRow, maxCellsInRow, maxVerticalExtent, cellCountDistribution);
     }
 
     /** A header reconstructed from several visual lines, and how many lines past the first the

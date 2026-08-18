@@ -1650,42 +1650,49 @@ scoring):
       entry — this is an observation about row formation, not a detection capability, and giving it
       a capability-style name would have implied an interpretation it doesn't make.
       `PdfTableLocator.PhysicalRowFormationEvidence(textRuns, physicalRowsCreated,
-      totalPhysicalCells, averageCellsPerRow, maxCellsInRow, maxPhysicalRowVerticalExtent)`,
-      document-level (`groupIntoRows` runs once for the whole document, before sections exist),
-      computed by `measurePhysicalRowFormation` as a pure post-processing read of `groupIntoRows`'
-      own output — no change to how rows are formed. Fields are named for what they measure, not
-      for a verdict (`maxPhysicalRowVerticalExtent`, not "spread" or "anomaly") — real evidence
-      gathered while building this showed why that restraint matters: a clean document (BOB) reaches
-      1.4pt; two structurally sound, WORKING documents (AU, HDFC credit) reach 2.9pt and 2.8pt; the
-      one confirmed-corrupted document (ICICI CC) reaches 3.0pt, the tolerance ceiling. **Good and
-      bad documents are not cleanly separated by this number alone** — a threshold invented from
-      this evidence would have misclassified AU. `totalPhysicalCells`/`averageCellsPerRow` exist
-      because `maxCellsInRow` alone can't tell "one outsized row among many ordinary ones" apart from
-      "every row runs this large," and those are different stories. A `-DdumpCellDistribution=true`
-      flag on `PdfPipelineDiagnostic` (diagnostic-only, not part of the evidence record itself)
-      prints the full per-row-size histogram; run against the real corpus it surfaced something more
-      textured than any single number: ICICI CC's 7-cell row is a true singleton outlier
-      (`{...5=4, 7=1}` — nothing at size 6 at all), while AU's and BOB's own maximums each recur 3-4
-      times (`{...5=7, 6=4}`, `{...5=1, 6=3}`) — a natural, repeated row shape, not an anomaly. That
-      distinction — isolated singleton vs. recurring shape — looks like a more promising signal than
-      any of the raw aggregates, but no validator was built on it; it is recorded as an observation
-      for whoever runs the corpus study below. Not yet threaded into `PdfPreviewGenerator` or
-      `ImportVerifier` — visible today only via `PdfPipelineDiagnostic`'s "Stage 1b" line. No RULE
-      constant, no `VerificationFinding`, no capability-activation string: recording the fact is the
-      whole scope of this increment. Tests: `PhysicalRowFormationEvidenceTest` (a clean uniform
-      fixture, the ICICI CC shape reproduced at invented coordinates, the just-outside-tolerance
-      mirror case, one outsized row among ordinary ones to prove the average resists what the
-      maximum cannot, and an empty document).
+      totalPhysicalCells, averageCellsPerRow, maxCellsInRow, maxPhysicalRowVerticalExtent,
+      cellCountDistribution)`, document-level (`groupIntoRows` runs once for the whole document,
+      before sections exist), computed by `measurePhysicalRowFormation` as a pure post-processing
+      read of `groupIntoRows`' own output — no change to how rows are formed, and `groupIntoRows`
+      itself stays `private`: an earlier version of this evidence widened it to package-private
+      purely so `PdfPipelineDiagnostic` could reconstruct a histogram from it, which meant a
+      production method's visibility was compromised to serve one diagnostic caller's convenience;
+      moving the histogram into the evidence record itself removed the need for that widening
+      entirely. Fields are named for what they measure, not for a verdict
+      (`maxPhysicalRowVerticalExtent`, not "spread" or "anomaly") — real evidence gathered while
+      building this showed why that restraint matters: a clean document (BOB) reaches 1.4pt; two
+      structurally sound, WORKING documents (AU, HDFC credit) reach 2.9pt and 2.8pt; the one
+      confirmed-corrupted document (ICICI CC) reaches 3.0pt, the tolerance ceiling. **Good and bad
+      documents are not cleanly separated by this number alone** — a threshold invented from this
+      evidence would have misclassified AU. `totalPhysicalCells`/`averageCellsPerRow` exist because
+      `maxCellsInRow` alone can't tell "one outsized row among many ordinary ones" apart from "every
+      row runs this large," and those are different stories; `cellCountDistribution` (row size →
+      row count, kept in the evidence record itself rather than recomputed by callers) is the
+      strongest signal found while building this. A real, measured example, stated as an observed
+      difference rather than a rule (one broken document and two working ones is not a population
+      large enough to define "outlier" or "recurring" in general): ICICI CC's own real distribution
+      contains a size-7 row exactly once (`{..., 5=4, 7=1}` — nothing at size 6 at all), while AU's
+      and BOB's own largest row sizes each recur 3-4 times in their own distributions (`{..., 5=7,
+      6=4}`, `{..., 5=1, 6=3}`) — this document's own distribution looked different from those two
+      documents' own distributions, which is as far as three data points can honestly speak. A
+      `-DdumpCellDistribution=true` flag on `PdfPipelineDiagnostic` prints the histogram straight off
+      the evidence record. No RULE constant, no `VerificationFinding`, no capability-activation
+      string: recording the fact is the whole scope of this increment. Tests:
+      `PhysicalRowFormationEvidenceTest` (a clean uniform fixture, the ICICI CC shape reproduced at
+      invented coordinates, the just-outside-tolerance mirror case, one outsized row among ordinary
+      ones to prove the average resists what the maximum cannot, and an empty document — each also
+      asserting `cellCountDistribution` directly).
     - **Recommended before designing any evidence category further — a Physical Layout Corpus
       Study, not a fix.** Run `-DdumpCellDistribution=true` (and the existing raw-position dumps)
       across BOB, AU, ICICI CC, HDFC credit, and HSBC, and compare distributions side by side —
-      physical row count, the cell-count histogram shape (singleton outlier vs. recurring size),
-      max cells, x-span, and vertical extent — before choosing which of these facts, if any, becomes
-      a validator's input. Only two of the five facts this study would need
-      (`maxPhysicalRowVerticalExtent`, cell-count distribution) exist yet; x-span (detecting a row
-      that spans multiple unrelated visual regions, not just an unusual y) is deliberately not built
-      — a future `PhysicalRowRegionDiversity`-shaped signal, not attempted until this study exists to
-      justify a specific mechanism.
+      physical row count, the cell-count distribution shape, max cells, x-span, and vertical extent
+      — before choosing which of these facts, if any, becomes a validator's input. Ask how
+      successful and failed documents differ structurally, not what threshold would separate them —
+      the latter question assumes a separation this small a sample cannot support. Only two of the
+      five facts this study would need (`maxPhysicalRowVerticalExtent`, `cellCountDistribution`)
+      exist yet; x-span (detecting a row that spans multiple unrelated visual regions, not just an
+      unusual y) is deliberately not built — a future `PhysicalRowRegionDiversity`-shaped signal, not
+      attempted until this study exists to justify a specific mechanism.
     - **Commit 2B — Header Formation Evidence** (not started): once a physical row is accepted as a
       header, facts about ITS structure — x-span, whether its cells plausibly belong to one visual
       region — the header-specific anomaly signal (`HEADER_ROW_STRUCTURAL_ANOMALY`) that Commit 2A

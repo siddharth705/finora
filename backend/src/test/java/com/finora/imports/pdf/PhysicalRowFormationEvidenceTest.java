@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
@@ -57,6 +58,7 @@ class PhysicalRowFormationEvidenceTest {
         assertThat(evidence.averageCellsPerRow()).isEqualTo(3.0, within(0.001));
         assertThat(evidence.maxCellsInRow()).isEqualTo(3);
         assertThat(evidence.maxPhysicalRowVerticalExtent()).isZero();
+        assertThat(evidence.cellCountDistribution()).isEqualTo(Map.of(3, 2));
     }
 
     @Test
@@ -85,6 +87,10 @@ class PhysicalRowFormationEvidenceTest {
         assertThat(evidence.maxPhysicalRowVerticalExtent())
                 .as("the merged row's members span 200.0 to 202.5 -- a real, measurable 2.5pt extent")
                 .isEqualTo(2.5f);
+        assertThat(evidence.cellCountDistribution())
+                .as("the merged 4-cell row does not recur -- reproducing the real ICICI CC shape, "
+                        + "where the merged row's own size appeared nowhere else in the document")
+                .isEqualTo(Map.of(4, 1, 3, 1));
     }
 
     @Test
@@ -139,6 +145,10 @@ class PhysicalRowFormationEvidenceTest {
                 .as("the average stays near the ordinary rows' own size (2) rather than near the "
                         + "outlier's (6) -- exactly the context a bare maximum cannot provide")
                 .isEqualTo(2.8, within(0.001));
+        assertThat(evidence.cellCountDistribution())
+                .as("the distribution is the most direct reading of the same fact: size 2 recurs "
+                        + "four times, size 6 appears exactly once")
+                .isEqualTo(Map.of(2, 4, 6, 1));
     }
 
     @Test
@@ -153,5 +163,6 @@ class PhysicalRowFormationEvidenceTest {
         assertThat(evidence.averageCellsPerRow()).isZero();
         assertThat(evidence.maxCellsInRow()).isZero();
         assertThat(evidence.maxPhysicalRowVerticalExtent()).isZero();
+        assertThat(evidence.cellCountDistribution()).isEmpty();
     }
 }

@@ -198,15 +198,12 @@ class PdfPipelineDiagnostic {
                 rowFormation.totalPhysicalCells(), rowFormation.averageCellsPerRow(),
                 rowFormation.maxCellsInRow(), rowFormation.maxPhysicalRowVerticalExtent());
         // -DdumpCellDistribution=true: a per-row-size histogram, the context a single maximum or
-        // average cannot provide on its own (see PhysicalRowFormationEvidence's own doc comment for
-        // why that context matters -- a maximum alone cannot tell "one outsized row among many
-        // ordinary ones" apart from "every row runs this large", and those are different stories).
+        // average cannot provide on its own -- see PhysicalRowFormationEvidence.cellCountDistribution's
+        // own doc comment for why that context matters. Read straight off the evidence record itself
+        // rather than recomputed here, so this diagnostic needed no access to groupIntoRows at all.
         if (Boolean.getBoolean("dumpCellDistribution")) {
-            Map<Integer, Integer> histogram = new java.util.TreeMap<>();
-            for (List<PositionedText> row : tableLocator.groupIntoRows(positioned)) {
-                histogram.merge(row.size(), 1, Integer::sum);
-            }
-            System.out.println("  Cell-count distribution (row size -> row count): " + histogram);
+            System.out.println("  Cell-count distribution (row size -> row count): "
+                    + rowFormation.cellCountDistribution());
         }
         System.out.println("Stage 2 -- Table location: " + doc.sections().size() + " section(s) found");
         if (doc.sections().size() > 1) {
