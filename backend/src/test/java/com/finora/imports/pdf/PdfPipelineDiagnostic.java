@@ -190,6 +190,24 @@ class PdfPipelineDiagnostic {
 
         PdfTableLocator tableLocator = new PdfTableLocator();
         PdfTableLocator.LocatedDocument doc = tableLocator.locateAll(positioned);
+        PdfTableLocator.PhysicalRowFormationEvidence rowFormation = doc.physicalRowFormationEvidence();
+        System.out.printf("Stage 1b -- Physical row formation: %d text runs -> %d rows, "
+                        + "totalCells=%d, averageCellsPerRow=%.2f, maxCellsInRow=%d, "
+                        + "maxPhysicalRowVerticalExtent=%.1f%n",
+                rowFormation.textRuns(), rowFormation.physicalRowsCreated(),
+                rowFormation.totalPhysicalCells(), rowFormation.averageCellsPerRow(),
+                rowFormation.maxCellsInRow(), rowFormation.maxPhysicalRowVerticalExtent());
+        // -DdumpCellDistribution=true: a per-row-size histogram, the context a single maximum or
+        // average cannot provide on its own (see PhysicalRowFormationEvidence's own doc comment for
+        // why that context matters -- a maximum alone cannot tell "one outsized row among many
+        // ordinary ones" apart from "every row runs this large", and those are different stories).
+        if (Boolean.getBoolean("dumpCellDistribution")) {
+            Map<Integer, Integer> histogram = new java.util.TreeMap<>();
+            for (List<PositionedText> row : tableLocator.groupIntoRows(positioned)) {
+                histogram.merge(row.size(), 1, Integer::sum);
+            }
+            System.out.println("  Cell-count distribution (row size -> row count): " + histogram);
+        }
         System.out.println("Stage 2 -- Table location: " + doc.sections().size() + " section(s) found");
         if (doc.sections().size() > 1) {
             System.out.println("  [CAPABILITY] COMPOSITE_STATEMENT / MULTI_ACCOUNT -- more than one section detected");

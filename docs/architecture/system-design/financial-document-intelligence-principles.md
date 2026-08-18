@@ -1402,71 +1402,102 @@ actually works — no test, no claim.
   the deposit sections are *not accounts* (true, and the regression that mattered) rather than that
   they are deposits (unprovable from a fixture whose evidence was redacted away).
 
-#### Open Investigation: HDFC credit-card table over-extension (only 2/40 rows parsed)
-- **Status:** root-caused, deliberately **not fixed yet** — this needs real design work, not a
-  same-session patch (see "Don't fix it yet, root-cause it" below).
-- **Symptom:** a real HDFC "Tata Neu Plus" credit card statement staged only 2 transactions out of
-  40 raw bucketed rows, 38 dropped. Initially mischaracterized (in an earlier draft of this
-  document) as a metadata gap — it is not. `accountHolderName`/`creditLimit` being null on this
-  same file are a separate, already-documented issue (see `GRID_METADATA_TRAILING_LABEL`'s
-  deferred-evidence tests above); this entry is about the transaction TABLE itself.
-- **Root cause (confirmed via `PdfPipelineDiagnostic` against the real file):** `PdfTableLocator`
-  never recognizes where this document's real transaction table ENDS. Once bucketing starts, it
-  continues — under the same `[TRANSACTION DESCRIPTION, DATE & TIME, AMOUNT, PI, Base NeuCoins*]`
-  header — straight through "Benefits on your card," the "IMPORTANT INFORMATION" bullet list, a
-  completely different NeuCoins summary table, Terms & Conditions text, a GST entry table, a
-  "Useful Links" table, and the digital-signature block at the very end of the document. Of the 40
-  rows this produces, only 2 contain anything that resembles a real transaction date — the other
-  38 are all later, unrelated content misbucketed as if it were more rows of the same table.
-  Neither existing trailer-exclusion mechanism catches this: `PAGE_FOOTER`/`STATEMENT_CLOSING_MARKER`
-  both require a specific recognizable marker (a page-footer pattern, "End of Statement" text)
-  that this document's real trailer simply doesn't contain.
-- **Which of the three paths this needs:** not a metadata capability extension (nothing in
-  `PdfMetadataExtractor` is involved) and not a new leaf capability either — this is a
-  **table-detection pipeline gap** in `PdfTableLocator` itself: some notion of "this no longer
-  looks like more of the same table" is missing entirely for the case where trailing content is
-  neither a page footer nor a closing marker, just structurally different text (long free-form
-  sentences, a second table with a different header, a signature block).
-- **Why this isn't being fixed inline:** a hasty heuristic (e.g. "stop after N rows with no
-  date-like value") risks silently breaking the legitimate multi-page tables
-  `PAGE_BOUNDARY_ISOLATION`/`REPEATED_HEADER` already handle correctly for other real documents —
-  the exact failure mode "Prefer generalization over accumulation" warns against. This needs a
-  second real document confirming the general shape before a specific mechanism is designed, per
-  "Evidence before capability" — tracked in the Capability Backlog below, not attempted here.
+#### Open Investigation: HDFC credit-card table boundary (symptom re-measured, stale numbers corrected)
+- **Status:** root cause still under investigation — **not fixed**, and the symptom this entry
+  originally measured has since changed underneath it. Recorded here rather than silently
+  corrected, because stale numbers left standing would have shaped the design of Table Formation
+  Evidence around a shape this document no longer produces.
+- **What this entry used to say:** a real HDFC "Tata Neu Plus" credit-card statement staged only 2
+  transactions out of 40 raw bucketed rows, 38 dropped, with `PdfTableLocator` never recognizing
+  where the real transaction table ends — bucketing continued under the transaction header straight
+  through unrelated trailing content (a benefits list, a NeuCoins summary table, Terms &
+  Conditions, a GST table, a signature block).
+- **Current observation (re-measured against the real file, same corpus document, current code):**
+  `PdfTableLocator` now reports **1 section, 4 raw bucketed rows, 2 survive normalization** — not
+  40/38. The 40/38 symptom is **stale and not currently reproducible**. This is not being reported
+  as fixed: the surviving evidence suggests the same underlying gap (no signal for "this no longer
+  looks like more of the same table") is still present, just manifesting differently. One of the
+  two dropped rows now carries an enormous merged Description — the trailing benefits/NeuCoins/T&C/
+  GST content that used to spread across ~38 separate garbage rows now appears to have been folded,
+  via the continuation-merge machinery (`mergeInto`/`MAX_BLOCK_CONTINUATION_ROWS`), into a much
+  smaller number of oversized rows instead of many small ones. That machinery was extended for
+  unrelated reasons elsewhere this session; nothing here confirms it was extended correctly for
+  this document, only that it changed this document's observable symptom.
+- **What is confirmed vs. not:** confirmed — the numbers in the original write-up no longer match
+  the real document. Not confirmed — whether the table-boundary gap itself was narrowed, whether
+  the new smaller-but-still-wrong output is actually more correct, or whether continuation-merging
+  is now silently absorbing content it should refuse the same way the original bug silently
+  bucketed it. Needs its own fresh diagnostic pass, not assumed from this correction alone.
+- **Which of the three paths this needs:** unchanged from the original diagnosis — not a metadata
+  capability extension, not a new leaf capability, but a **table-detection pipeline gap** in
+  `PdfTableLocator`: some notion of "this no longer looks like more of the same table" is missing
+  for trailing content that is neither a page footer nor a closing marker.
+- **Why this isn't being fixed inline:** unchanged — a hasty heuristic risks silently breaking the
+  legitimate multi-page tables `PAGE_BOUNDARY_ISOLATION`/`REPEATED_HEADER` already handle correctly
+  elsewhere in the corpus, the exact failure mode "Prefer generalization over accumulation" warns
+  against. Tracked in the Capability Backlog below, not attempted here.
 
-#### Open Investigation: ICICI CC header-merging (only 3 rows recovered, real count unknown)
-- **Status:** root-caused via `PdfPipelineDiagnostic` against the real file, deliberately **not
-  fixed yet** — same discipline as the HDFC entry above: this is a table-detection design problem,
-  not a one-line patch.
+#### Open Investigation: ICICI CC row-grouping collision (only 3 rows recovered, real count unknown)
+- **Status:** root cause identified at the exact decision point, via a `wrappedHeaderAt` DEBUG trace
+  plus a raw-coordinate dump against the real file — **not fixed**, and this entry itself is a
+  correction of an earlier, less precise diagnosis (below). Same discipline as the HDFC entry
+  above: this is a table-detection design problem, not a one-line patch.
 - **Symptom:** `ICICI CC.pdf` (a real 9-page credit-card statement) buckets only 6 raw rows in
   total across the whole document, of which only 3 survive normalization. A 9-page statement
   producing 3 transactions is implausible on its face.
-- **Root cause (confirmed via `PdfPipelineDiagnostic`):** the opposite defect from the HDFC entry
-  above. HDFC's table never recognizes where it *ends*; this document's table never forms correctly
-  because header-anchor detection *merges three visually distinct, unrelated mini-tables on the
-  same page* into one column set: `[Reward, Intl.#, Date, SPENDS OVERVIEW, SerNo., Transaction
-  Details, Amount (in`)]`. `Reward`/`Intl.#` belong to a separate Rewards-points summary panel,
-  `SPENDS OVERVIEW` is a spending-breakdown panel's heading, and `SerNo.`/`Transaction
-  Details`/`Amount` are the actual transaction table's real columns — three separate visual tables,
-  one merged (wrong) column-anchor set. Once merged, real per-row content stops aligning under any
-  of these anchors closely enough to bucket, which is why the whole 9-page document yields only 6
-  raw rows: the dropped rows are visibly not transactions — `{Reward=Points, Intl.#=amount}` (data
-  from the rewards panel), `{Date=5241XXXXXXXX5001, SPENDS OVERVIEW=53%}` (a masked card number
-  under `Date`), and a multi-paragraph disclaimer footer under `Date`/`SPENDS OVERVIEW` — all
-  boilerplate that happened to align with the merged anchors, while the real transaction rows
-  apparently did not align with any of them and were never bucketed at all (not even as a
-  `BUCKET_EMPTY` drop `ROW_ACCOUNTING` could see — they never reached that check).
-- **Which of the three paths this needs:** a **table-detection pipeline gap** in `PdfTableLocator`,
-  the mirror image of the HDFC gap — that one is "doesn't know when a table ends," this one is
-  "doesn't know that two nearby header-shaped lines belong to two different tables, not one." Some
-  notion of visual/positional separation between distinct header-shaped lines is missing.
-- **Correction to this document's own earlier draft:** an earlier version of the Corpus Failure
-  Classification section below speculated that `HSBC.pdf` (also Category B) might share this root
-  cause and could be investigated together. Diagnosing `HSBC.pdf` the same way disproves that:
-  HSBC's detected header — `[Balance, Date, Transaction Details, Deposits, Withdrawals]` — is a
-  single, legitimate, correctly-formed transaction header, not a merge of unrelated panels. HSBC's
-  near-zero row count (4 raw rows across 4 pages) has a different, not-yet-diagnosed cause. Recorded
-  here so the wrong claim doesn't stand uncorrected once evidence contradicted it.
+- **Root cause, confirmed with coordinates — and it is NOT header-merging.** The previous version of
+  this entry theorized that header-anchor detection (`wrappedHeaderAt`'s multi-line merge) fused
+  three separate mini-table headers into one. A DEBUG trace of every `wrappedHeaderAt` decision on
+  this document shows it never merged anything here at all — every candidate on this page was
+  either accepted or refused as a single line, with zero `MERGED across N lines` events. The real
+  defect is one stage EARLIER, in `groupIntoRows` — the step that decides which physical text runs
+  belong to the same visual row, by grouping anything within `ROW_Y_TOLERANCE` (3.0pt) of each
+  other. Raw coordinates from the real document: the transaction table's own genuine 6-column
+  header — `Date` (x=207.8), `SerNo.` (x=262.4), `Transaction Details` (x=305.3), `Reward` (x=443.2),
+  `Intl.#` (x=485.7), `Amount (in`)` (x=521.9) — all sit at y=376.2, a legitimate single header row
+  (`Reward` and `Intl.#` are genuine columns of THIS table — a per-transaction rewards-points and
+  international-transaction indicator, not a separate panel, correcting the previous entry's
+  attribution). A completely unrelated element, the heading of a nearby "Spends Overview" summary
+  box, sits at x=89.1, **y=373.9** — only 2.3pt above the real header, inside the 3.0pt tolerance —
+  so `groupIntoRows` folds it into the same row before header detection ever runs. Every later
+  stage (`looksLikeHeaderRow`, `wrappedHeaderAt`) then behaves correctly given that already-wrong
+  input: a 7-cell row that legitimately scores as a header, because it is one, plus one foreign
+  cell. The irreversible decision is `groupIntoRows`'s row-grouping pass, not header detection.
+- **What remains genuinely unexplained.** Why the real per-page transaction rows overwhelmingly fail
+  to bucket at all — only 6 raw rows total from a 9-page statement, most of which are visibly not
+  transactions (a masked card number, a multi-paragraph disclaimer) — is NOT resolved by the finding
+  above. The corrupted header explains why bucketing is unreliable; it does not by itself explain
+  why so few rows bucket to anything, including under the wrong anchors. That is a separate,
+  not-yet-traced downstream question this verification pass deliberately did not chase further.
+- **Which of the three paths this needs:** a **table-detection pipeline gap**, but in `groupIntoRows`
+  specifically, not header-anchor merging — some notion of "these two text runs are Y-coincident by
+  layout accident, not because they are the same printed line" is missing from row grouping itself.
+- **Correction to this document's own earlier draft (kept, still accurate):** an earlier version of
+  the Corpus Failure Classification section below speculated that `HSBC.pdf` (also Category B) might
+  share this root cause. Diagnosing `HSBC.pdf` the same way disproves that: HSBC's detected header —
+  `[Balance, Date, Transaction Details, Deposits, Withdrawals]` — is a single, legitimate,
+  correctly-formed transaction header, not a row-grouping collision. HSBC's near-zero row count (4
+  raw rows across 4 pages) has a different, not-yet-diagnosed cause.
+
+#### Principle: observed symptoms are not stable identifiers of failure class
+
+Both entries above were corrected once against fresh evidence — HDFC's own numbers changed
+underneath an unrelated later change, and ICICI CC's diagnosed MECHANISM (not just its numbers)
+turned out to be wrong despite the SYMPTOM (a merged-looking header) being exactly what the original
+diagnosis described. Both corrections trace to the same mistake: reasoning from what a symptom
+LOOKS like, rather than tracing to the specific pipeline decision that produced it.
+
+**Observed symptoms are not stable identifiers of failure class. Diagnostics must be based on the
+earliest irreversible pipeline decision** — the specific point where a fact about the document
+became fixed and everything downstream merely acted on it correctly, given already-wrong input. For
+ICICI CC that point is `groupIntoRows`' Y-tolerance check, not `wrappedHeaderAt` (which never fired
+a merge on this document at all, confirmed via its own DEBUG trace) and not "header selection"
+(which does not exist as a concept in this codebase — see `PdfTableLocator`'s header-detection loop,
+a single linear first-match-wins scan, never a competition among candidates). A symptom can persist
+across an unrelated code change (HDFC's numbers moved), and a symptom can resemble a mechanism it
+was never produced by (ICICI CC's header "looked" merged the way `wrappedHeaderAt` merges headers,
+but was not). Design evidence and fixes around the traced decision, never around the symptom's own
+shape.
 
 ### Corpus Failure Classification
 
@@ -1490,14 +1521,15 @@ one-off mechanisms. This section classifies each one first, by the evidence alre
 |---|---|---|---|
 | `Bandhan bank.pdf` | 3 rows / 7 pages, flagged `suspectedIncompleteByPageRatio` | **E — heuristic false positive, not a bug** | `BALANCE_CHAIN`, `STATEMENT_TOTALS`, and `SUMMARY_TOTALS` are all `VERIFIED` for this document — the printed totals independently confirm 3 rows is the correct count. The page-ratio suspicion heuristic is wrong here, not the extraction. |
 | `HSBC.pdf` | 0 rows / 4 pages, `LAYOUT_UNSUPPORTED` | **B — recognition failure** | 238 positioned text runs exist (text is present) but no header-based or fallback table-detection capability fired at all. The table structure itself was never recognized. |
-| `ICICI CC.pdf` | 3 rows / 9 pages, `PARSED_INCOMPLETE` | **B — recognition failure** | Root-caused (see the Open Investigation entry above): header-anchor detection merges three unrelated mini-tables on the page into one wrong column set, so real transaction rows never align under it. `ROW_ACCOUNTING` is `VERIFIED` here precisely because nothing transaction-shaped ever reached the 3 wired drop points — the loss is upstream of them, in table formation itself. |
+| `ICICI CC.pdf` | 3 rows / 9 pages, `PARSED_INCOMPLETE` | **B — recognition failure** | Root-caused (see the Open Investigation entry above): `groupIntoRows`'s Y-tolerance folds one unrelated nearby panel heading into the real transaction header's own row, so header detection accepts a corrupted 7-cell header. `ROW_ACCOUNTING` is `VERIFIED` here precisely because nothing transaction-shaped ever reached the 3 wired drop points — the loss is upstream of them, in table formation itself. |
 | `ICICI saving.pdf` | 11 rows / 2 pages, `PARSED_RECONCILIATION_FAILED` | **C — validation failure** | `BALANCE_CHAIN` is `VERIFIED` (the 11 extracted rows are internally consistent) but `STATEMENT_TOTALS` is `FAILED` (the printed total disagrees with what was extracted). This is real, measured evidence of a discrepancy — not a guess — and the strongest candidate for an actual missing/extra-row bug in the current corpus. |
 | `Shivani_HDFC.pdf` (RD section) | 0 rows, RD detected at 0.95 confidence | **Product scope, not a bug** | The recurring-deposit section is correctly identified as `RECURRING_DEPOSIT` at high confidence; extracting its schedule was never attempted because RD table extraction is intentionally unbuilt (see `INFERRED_TWO_LINE_DATE_BLOCK` and related capabilities, none of which target RD schedules). Correct classification, deferred scope — do not treat as an extraction bug. |
 
 Next investigation order, now justified by category rather than by list position: `ICICI CC.pdf`
-is root-caused (see the Open Investigation entry above — a header-merging defect, not a missing
-header). `HSBC.pdf` shares category B on paper but not the same mechanism — its header is correctly
-formed, so its near-zero row count needs its own separate diagnosis, not a shared fix.
+is root-caused (see the Open Investigation entry above — a `groupIntoRows` row-grouping collision,
+not a missing header, and not header-anchor merging either). `HSBC.pdf` shares category B on paper
+but not the same mechanism — its header is correctly formed, so its near-zero row count needs its
+own separate diagnosis, not a shared fix.
 `ICICI saving.pdf` is a separate, category-C problem and needs its own investigation: the row count
 is plausible, so the bug (if any) is in which 11 rows were kept or how the printed total compares,
 not in whether a table was found at all.
@@ -1572,8 +1604,8 @@ real document, with an honest evidence count; it graduates to the Capability Reg
 | Capability (candidate name) | Evidence | Priority | Why deferred |
 |---|---|---|---|
 | `ACCOUNT_NUMBER_RECOGNITION` | 6 of 7 real statements in the Aug 2026 validation pass | High | Recurring, not a one-off — `ACCOUNT_NUMBER`/`ACCOUNT_NUMBER_TRAILING_LABEL` only match an explicit "Account Number" label; real statements embed it mid-sentence ("Statement for A/c XXXXXXXXX1455"), under an unrelated label ("Alternate Account Number"), or as a masked card number never labeled "Account Number" at all. Needs its own evidence-gathering pass across these real shapes before a mechanism is designed. |
-| Credit-card table boundary detection — table doesn't know when it ends (`PdfTableLocator`) | 1 statement (HDFC Tata Neu Plus — see the Open Investigation above) | High | High-impact (2/40 rows parsed) but single-document evidence for the *general* shape of the fix; needs a second real document before a specific mechanism (vs. another one-off marker pattern) is justified. |
-| Credit-card table boundary detection — distinct mini-tables merge into one header (`PdfTableLocator`) | 1 statement (ICICI CC — see the Open Investigation above) | High | The mirror-image defect of the HDFC entry above: not "doesn't know when to stop," but "treats two nearby unrelated header-shaped lines as one table." High-impact (a 9-page statement yields 3 rows) but single-document evidence; kept as its own backlog entry rather than folded into the HDFC one because the mechanism differs, not just the symptom. |
+| Credit-card table boundary detection — table doesn't know when it ends (`PdfTableLocator`) | 1 statement (HDFC Tata Neu Plus — see the Open Investigation above) | High | Impact re-measured and now smaller than originally recorded (4 raw rows, 2 dropped — not 40/38; see the Open Investigation's own correction), but the suspected mechanism (no signal for "no longer more of the same table") is unconfirmed either way. Single-document evidence for the *general* shape of a fix; needs a second real document before a specific mechanism is justified. |
+| Row-grouping Y-tolerance collision — an unrelated nearby line folds into a real header's own row (`PdfTableLocator.groupIntoRows`) | 1 statement (ICICI CC — see the Open Investigation above) | High | Confirmed via coordinates, not the header-anchor-merging mechanism this entry originally named (`wrappedHeaderAt` was traced and never merged anything on this document). The actual defect: two text runs 2.3pt apart in y, `ROW_Y_TOLERANCE` (3.0pt), get treated as one physical row despite being unrelated printed elements. High-impact (a 9-page statement yields 3 rows) but single-document evidence, and a real fix mechanism (e.g. requiring x-proximity or contiguous column coverage, not just y-proximity) isn't designed yet — needs a second real document before one is justified. |
 | `VALUE` → trailing label → trailing value (composite account-holder line) | 1 statement (HDFC: `"<card number> Credit Card No. <NAME>"`) | Low | Genuinely a structural pattern, not an HDFC quirk — could recur as `"Loan Number XXXXXXXX Borrower Name"` or similar on another institution's export. Documented as an observed shape to watch for (see the deferred-evidence test in `PdfMetadataExtractorTest`), not built on one document's strength. |
 | Scrambled / split multi-row credit-summary grid | 1 statement (same HDFC file) | Low | The specific column/row scrambling in this one document isn't yet known to generalize; a naive fix was verified to produce a *wrong* value (₹200 instead of ₹78,000), which is worse than the current null — see that same deferred-evidence test's doc comment for the full reasoning. |
 | Embedded narration reference numbers | 1 statement (Canara — reference number embedded inside free-text transaction narration, not a dedicated column) | Medium | Would need free-text mining rather than column-based extraction — a materially different mechanism from every existing capability, not a small extension of one. |
@@ -1608,11 +1640,62 @@ scoring):
   exists anywhere in `PdfTableLocator` today — the header-based path (the common case) has none at
   all, so a document reprinting a transaction across a page boundary in that path is neither
   deduplicated nor evidenced. That remains open, not closed by this increment.
-- Table-formation evidence for the ICICI CC / HDFC / SBI shape — headers detected vs. tables
-  produced vs. transaction-shaped candidates vs. rows actually assigned, so a malformed-table
-  failure (the transactions never becoming rows at all) is visible as a distinct fate from every
-  fate `ROW_ACCOUNTING_EVIDENCE` already tracks, all of which presuppose a row reached the bucketing
-  stage in the first place. The next Input Fate Accounting increment.
+- ~~Table Formation Evidence~~ — **redirected, not built as originally scoped.** The original plan
+  (header candidates seen vs. selected, competing tables) assumed a table-SELECTION architecture
+  that does not exist: `PdfTableLocator`'s header detection is a single linear, first-match-wins
+  scan, never a competition among candidates — confirmed by tracing `wrappedHeaderAt` against the
+  real ICICI CC file and finding it never merged anything for that document at all. The real defect
+  traced one layer EARLIER, to `groupIntoRows`. Renamed and re-sequenced as a result:
+    - **Commit 2A — Physical Row Formation Evidence** (done). Deliberately not a Capability Registry
+      entry — this is an observation about row formation, not a detection capability, and giving it
+      a capability-style name would have implied an interpretation it doesn't make.
+      `PdfTableLocator.PhysicalRowFormationEvidence(textRuns, physicalRowsCreated,
+      totalPhysicalCells, averageCellsPerRow, maxCellsInRow, maxPhysicalRowVerticalExtent)`,
+      document-level (`groupIntoRows` runs once for the whole document, before sections exist),
+      computed by `measurePhysicalRowFormation` as a pure post-processing read of `groupIntoRows`'
+      own output — no change to how rows are formed. Fields are named for what they measure, not
+      for a verdict (`maxPhysicalRowVerticalExtent`, not "spread" or "anomaly") — real evidence
+      gathered while building this showed why that restraint matters: a clean document (BOB) reaches
+      1.4pt; two structurally sound, WORKING documents (AU, HDFC credit) reach 2.9pt and 2.8pt; the
+      one confirmed-corrupted document (ICICI CC) reaches 3.0pt, the tolerance ceiling. **Good and
+      bad documents are not cleanly separated by this number alone** — a threshold invented from
+      this evidence would have misclassified AU. `totalPhysicalCells`/`averageCellsPerRow` exist
+      because `maxCellsInRow` alone can't tell "one outsized row among many ordinary ones" apart from
+      "every row runs this large," and those are different stories. A `-DdumpCellDistribution=true`
+      flag on `PdfPipelineDiagnostic` (diagnostic-only, not part of the evidence record itself)
+      prints the full per-row-size histogram; run against the real corpus it surfaced something more
+      textured than any single number: ICICI CC's 7-cell row is a true singleton outlier
+      (`{...5=4, 7=1}` — nothing at size 6 at all), while AU's and BOB's own maximums each recur 3-4
+      times (`{...5=7, 6=4}`, `{...5=1, 6=3}`) — a natural, repeated row shape, not an anomaly. That
+      distinction — isolated singleton vs. recurring shape — looks like a more promising signal than
+      any of the raw aggregates, but no validator was built on it; it is recorded as an observation
+      for whoever runs the corpus study below. Not yet threaded into `PdfPreviewGenerator` or
+      `ImportVerifier` — visible today only via `PdfPipelineDiagnostic`'s "Stage 1b" line. No RULE
+      constant, no `VerificationFinding`, no capability-activation string: recording the fact is the
+      whole scope of this increment. Tests: `PhysicalRowFormationEvidenceTest` (a clean uniform
+      fixture, the ICICI CC shape reproduced at invented coordinates, the just-outside-tolerance
+      mirror case, one outsized row among ordinary ones to prove the average resists what the
+      maximum cannot, and an empty document).
+    - **Recommended before designing any evidence category further — a Physical Layout Corpus
+      Study, not a fix.** Run `-DdumpCellDistribution=true` (and the existing raw-position dumps)
+      across BOB, AU, ICICI CC, HDFC credit, and HSBC, and compare distributions side by side —
+      physical row count, the cell-count histogram shape (singleton outlier vs. recurring size),
+      max cells, x-span, and vertical extent — before choosing which of these facts, if any, becomes
+      a validator's input. Only two of the five facts this study would need
+      (`maxPhysicalRowVerticalExtent`, cell-count distribution) exist yet; x-span (detecting a row
+      that spans multiple unrelated visual regions, not just an unusual y) is deliberately not built
+      — a future `PhysicalRowRegionDiversity`-shaped signal, not attempted until this study exists to
+      justify a specific mechanism.
+    - **Commit 2B — Header Formation Evidence** (not started): once a physical row is accepted as a
+      header, facts about ITS structure — x-span, whether its cells plausibly belong to one visual
+      region — the header-specific anomaly signal (`HEADER_ROW_STRUCTURAL_ANOMALY`) that Commit 2A
+      deliberately left out, since a header's own structure is a fact about header ACCEPTANCE, not
+      about row formation.
+    - **Commit 2C — Row Fate Completion**: combine physical-row evidence, `ROW_ACCOUNTING_EVIDENCE`,
+      and header-formation evidence into the fate-coverage table below.
+  Fixing ICICI CC, HDFC, or SBI's real extraction is explicitly deferred past all three — see
+  "observed symptoms are not stable identifiers of failure class" above for why diagnosing each one
+  properly matters more than fixing them on a schedule.
 - OCR confidence evidence, once OCR itself exists as an acquisition path (see "Excel, Scanned PDFs
   / OCR..." below) — a recognized character is not a read one, and that distinction needs to reach
   this same evidence layer, not a separate one.
@@ -1638,7 +1721,8 @@ complete" is never mistaken for "input fate accounting is complete":**
 | `UNPARSEABLE_ROW` (bucketed but failed normalization) | Existing |
 | `PHYSICAL_ROW_REMOVED` (`REPEATED_PHYSICAL_ROW_REMOVED`, headerless path only) | Done this increment |
 | `STRUCTURAL_ROW_IGNORED` (`BUCKET_EMPTY`/`PAGE_FOOTER_OR_CLOSING_MARKER`/`REPEATED_ACCOUNT_BANNER`) | Partial — 3 of many drop points wired, see `ROW_ACCOUNTING_EVIDENCE`'s own "Known limitations" |
-| `TABLE_FORMATION_FAILURE` (ICICI CC / HDFC / SBI shape — the transactions never become rows at all) | Missing — next increment |
+| `PHYSICAL_ROW_MISFORMED` (`groupIntoRows` fuses unrelated text runs into one row before header/table logic runs — the ICICI CC shape) | Facts recorded (`PhysicalRowFormationEvidence`, Commit 2A above), no verdict yet |
+| `TABLE_FORMATION_FAILURE` (a header-accepting row with anomalous structure, or a table that never resolves rows despite a good header — the HDFC/SBI shape) | Missing — Commit 2B |
 | `UNKNOWN_FINANCIAL_CONTENT` (financial-looking content with no transaction shape to detect) | Missing — see `UNKNOWN_FINANCIAL_CONTENT_DETECTION` above |
 | `DUPLICATE_LEDGER_MATCH` (`DuplicateDetector`/`DuplicateIndex` — a different mechanism entirely: flags against the existing ledger, keeps the row, never removes it) | Existing, separately |
 

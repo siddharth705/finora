@@ -422,7 +422,66 @@ public class PdfTableLocator {
     public record LocatedSection(List<String> auxiliaryText, List<Map<String, String>> rows,
                                   ExtractionEvidence evidence) {}
 
-    public record LocatedDocument(List<LocatedSection> sections) {}
+    /**
+     * Structural facts about how {@link #groupIntoRows} turned this document's raw text runs into
+     * physical rows -- computed once, for the WHOLE document, before any section or header logic
+     * runs. Deliberately document-level, not per-section: {@code groupIntoRows} groups the entire
+     * document's text in one pass, before sections are even determined, so there is no per-section
+     * moment to attribute this to.
+     *
+     * <p><b>Why this exists, and why it is scoped this narrowly.</b> A real ICICI CC statement's
+     * header formed incorrectly not because header detection chose wrong, but because
+     * {@code groupIntoRows} had already fused one unrelated summary-panel heading into the real
+     * header's own row before header logic ever ran -- two text runs 2.3pt apart in y, inside
+     * {@link #ROW_Y_TOLERANCE} (3.0pt), treated as one physical line. That is the earliest
+     * irreversible decision in the whole pipeline for that document; every stage downstream
+     * (`looksLikeHeaderRow`, `wrappedHeaderAt`) then behaved correctly given already-corrupted
+     * input. This is Phase 1 of Input Fate Accounting's next layer -- Physical Row Formation
+     * Evidence -- deliberately starting BEFORE header/table detection, not at it.
+     *
+     * <p><b>Measurements, not a verdict -- deliberately named to say so.</b> {@code
+     * maxPhysicalRowVerticalExtent} is named for what it measures, not for what it might mean: real
+     * corpus evidence gathered while building this shows a large value does NOT reliably mean
+     * something is wrong -- a real, working AU statement reaches 2.9pt, almost indistinguishable
+     * from the real, confirmed-broken ICICI CC statement's 3.0pt. A name like "spread" or
+     * "anomaly" would have implied a verdict this single number cannot support. The same caution
+     * applies to {@code maxCellsInRow}: on its own a maximum can describe two very different
+     * distributions equally (one unusually large row among many normal ones, vs. every row running
+     * large) -- {@code totalPhysicalCells} and {@code averageCellsPerRow} exist so a future reader
+     * is not left guessing which shape produced the maximum. No validator reads any of this yet, on
+     * purpose -- see "Evidence before capability": a specific mechanism for what counts as anomalous
+     * needs more real documents establishing it, the same gate every other capability in this file
+     * was built under.
+     *
+     * @param textRuns                      {@code positionedText.size()} -- the raw input {@code
+     *                                      groupIntoRows} started from.
+     * @param physicalRowsCreated           how many physical rows {@code groupIntoRows} produced.
+     * @param totalPhysicalCells            sum of every row's own member count, across the whole
+     *                                      document -- together with {@code physicalRowsCreated},
+     *                                      this is what {@code averageCellsPerRow} is derived from.
+     * @param averageCellsPerRow            {@code totalPhysicalCells / physicalRowsCreated}, zero
+     *                                      when there are no rows -- the context {@code
+     *                                      maxCellsInRow} alone cannot provide: a document whose
+     *                                      rows are mostly small with one large outlier looks
+     *                                      identical to a maximum-only reading of a document whose
+     *                                      rows are uniformly large, and those are different shapes.
+     * @param maxCellsInRow                 the largest single row's member count, across the whole
+     *                                      document -- an oversized row is the shape an over-merge
+     *                                      (of either kind: many genuinely-adjacent cells, or
+     *                                      several unrelated elements) takes.
+     * @param maxPhysicalRowVerticalExtent  the largest y-difference between any two members of the
+     *                                      SAME formed row, across the whole document -- zero when
+     *                                      every row's members share one y (the common case,
+     *                                      confirmed on a real document), positive whenever {@code
+     *                                      groupIntoRows} joined members that were not printed on
+     *                                      the exact same baseline.
+     */
+    public record PhysicalRowFormationEvidence(int textRuns, int physicalRowsCreated, int totalPhysicalCells,
+                                                 double averageCellsPerRow, int maxCellsInRow,
+                                                 float maxPhysicalRowVerticalExtent) {}
+
+    public record LocatedDocument(List<LocatedSection> sections,
+                                   PhysicalRowFormationEvidence physicalRowFormationEvidence) {}
 
     /** Single-table convenience wrapper over {@link #locateAll} for the common single-section
      *  case -- returns the FIRST section found (or an empty table with all text treated as
@@ -470,6 +529,8 @@ public class PdfTableLocator {
             ctx.recordPages(maxPageIndex + 1);
         }
         List<List<PositionedText>> rows = groupIntoRows(positionedText);
+        PhysicalRowFormationEvidence physicalRowFormationEvidence =
+                measurePhysicalRowFormation(positionedText.size(), rows);
 
         List<LocatedSection> sections = new ArrayList<>();
         List<String> pendingAuxiliary = new ArrayList<>();
@@ -1012,7 +1073,7 @@ public class PdfTableLocator {
             if (inferred != null) sections.add(inferred);
         }
         if (ctx != null) ctx.recordTables(sections.size());
-        return new LocatedDocument(sections);
+        return new LocatedDocument(sections, physicalRowFormationEvidence);
     }
 
     /**
@@ -1504,8 +1565,14 @@ public class PdfTableLocator {
      *  this was raw, non-direction-adjusted PDF space) put the bottom of the page first, which
      *  left the header row stranded mid-list with the real transaction rows on one side of it and
      *  the real metadata lines on the other -- exactly backwards from what locate() expects.
-     *  Then left-to-right (ascending x) within a row. */
-    private List<List<PositionedText>> groupIntoRows(List<PositionedText> positionedText) {
+     *  Then left-to-right (ascending x) within a row.
+     *
+     *  <p>Package-private, not private -- {@link PdfPipelineDiagnostic}, in the same package, calls
+     *  this directly to print a per-row cell-count distribution ("Stage 1b" in its output). That is
+     *  diagnostic-only visibility, the same "facts, not a verdict" posture as
+     *  {@link PhysicalRowFormationEvidence} itself: nothing outside the diagnostic tool depends on
+     *  this being callable, and no production code path changed to allow it. */
+    List<List<PositionedText>> groupIntoRows(List<PositionedText> positionedText) {
         List<PositionedText> sorted = new ArrayList<>(positionedText);
         sorted.sort((a, b) -> {
             if (a.pageIndex() != b.pageIndex()) return Integer.compare(a.pageIndex(), b.pageIndex());
@@ -1531,6 +1598,35 @@ public class PdfTableLocator {
         }
         if (!current.isEmpty()) rows.add(current);
         return rows;
+    }
+
+    /** Measures {@link #groupIntoRows}' own output after the fact -- reads the rows it already
+     *  produced, changes nothing about how they were formed. {@code maxPhysicalRowVerticalExtent}
+     *  is computed as max(y) - min(y) across each row's own members, not against {@code
+     *  groupIntoRows}' internal anchor (its first member) -- an equivalent measure of the same
+     *  fact, computable from the return value alone, so this needed no change to {@code
+     *  groupIntoRows} itself and carries the same "did not alter extraction" guarantee every other
+     *  evidence-only addition in this class has. See {@link PhysicalRowFormationEvidence}'s own doc
+     *  comment for what this is and is not used for. */
+    private PhysicalRowFormationEvidence measurePhysicalRowFormation(int textRuns, List<List<PositionedText>> rows) {
+        int totalPhysicalCells = 0;
+        int maxCellsInRow = 0;
+        float maxVerticalExtent = 0f;
+        for (List<PositionedText> row : rows) {
+            totalPhysicalCells += row.size();
+            maxCellsInRow = Math.max(maxCellsInRow, row.size());
+            if (row.size() < 2) continue;
+            float minY = Float.MAX_VALUE;
+            float maxY = -Float.MAX_VALUE;
+            for (PositionedText t : row) {
+                minY = Math.min(minY, t.y());
+                maxY = Math.max(maxY, t.y());
+            }
+            maxVerticalExtent = Math.max(maxVerticalExtent, maxY - minY);
+        }
+        double averageCellsPerRow = rows.isEmpty() ? 0.0 : (double) totalPhysicalCells / rows.size();
+        return new PhysicalRowFormationEvidence(textRuns, rows.size(), totalPhysicalCells,
+                averageCellsPerRow, maxCellsInRow, maxVerticalExtent);
     }
 
     /** A header reconstructed from several visual lines, and how many lines past the first the
