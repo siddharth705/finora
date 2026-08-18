@@ -608,7 +608,9 @@ Planned
 
 Scanned PDFs / OCR — CORRECTED: no longer "Planned" in the same sense as the above. The
 acquisition/routing architecture is built and end-to-end tested (`TEXT_ACQUISITION_ROUTING`
-below); the one missing piece is a deployed recognition engine.
+below). CORRECTED AGAIN: a recognition engine (Tesseract) is now deployed — see
+`TEXT_ACQUISITION_ROUTING`'s own Maturity note below for what that changed and what is still
+open.
 ```
 
 This list moves whenever a capability changes stage. It is the actual measure of progress this
@@ -1885,22 +1887,31 @@ building an aggregating decision on top of one just-landed evidence type would r
   "scanned," "OCR," or "bank statement" — none of those follow from an absence of text),
   `ScannedDocumentRoutingTest` — the end-to-end proof: the SAME scanned PDF run through the real
   `PdfPreviewGenerator` produces `hasNoExtractableText()` with no engine deployed, and a
-  byte-identical ledger to the native original once one is (`TesseractRecogniser`, test-only,
-  gated on `TesseractEngine.available()`).
+  byte-identical ledger to the native original once one is. CORRECTED: `TesseractRecogniser` is no
+  longer test-only — see the Maturity note below.
 - **Maturity:** Beta — the routing architecture, the safety properties, and interchangeability with
-  native extraction are all proven end-to-end against a real statement. What has NOT shipped is a
-  production recognition engine: `TesseractRecogniser`/`TesseractEngine` exist only under
-  `src/test/.../pdf/ocr/`, not `src/main`; `RoutingTextAcquirer`'s `recognisers` list is genuinely
-  empty in the live Spring context today. First real-document motivation: `HSBC DB.pdf` — confirmed
-  image-only (2 raster images per page inside Form XObjects, zero fonts, zero text-show operators)
-  via both a plain unmodified `PDFTextStripper` and a structural operator/resource census, which
-  rules out a bug in Finora's own extractor rather than a genuine absence of a text layer.
-- **Known limitations:** no engine is deployed, so an image-only PDF today correctly reports
-  `IMPORT_SCANNED_OCR_REQUIRED` and goes no further — a safe, honest failure, not a silent one, but
-  still a failure from the user's perspective. Which engine (Tesseract, PaddleOCR, a cloud API),
-  where it runs (embedded vs. a separate worker), and whether it is automatic or user-triggered are
-  open deployment decisions with no evidence behind them yet — deliberately not decided here (see
-  "Don't fix it yet, root-cause it").
+  native extraction are all proven end-to-end against a real statement. CORRECTED: a production
+  recognition engine has now shipped (OCR-5, `docs/engineering/import/ocr-engine-evaluation.md`).
+  `TesseractRecogniser`/`TesseractEngine`/`OcrEngine`/`RunAssembler`/`RecognisedTextAdapter` moved
+  from `src/test/.../pdf/ocr/` to `src/main` under the same package;
+  `TesseractRecogniser` is an unconditional `@Component`, and `tesseract-ocr` is installed in the
+  production Docker image. `RoutingTextAcquirer`'s injected `recognisers` list is `[TesseractRecogniser]`
+  in the live Spring context, asserted by `AcquisitionWiringIT.theDeployedRecogniserIsTesseract`
+  (previously `noRecogniserShipsByDefault`, which asserted the opposite). First real-document
+  motivation: `HSBC DB.pdf` — confirmed image-only (2 raster images per page inside Form XObjects,
+  zero fonts, zero text-show operators) via both a plain unmodified `PDFTextStripper` and a
+  structural operator/resource census, which rules out a bug in Finora's own extractor rather than
+  a genuine absence of a text layer.
+- **Known limitations:** CORRECTED — an image-only PDF no longer unconditionally reports
+  `IMPORT_SCANNED_OCR_REQUIRED`; it does so only if Tesseract itself cannot recognise anything
+  (`recognisers` non-empty but every recogniser's `supports()`/`acquire()` still yields zero runs,
+  or the binary is absent on that specific machine — `supports()` reports this honestly rather
+  than crashing). Two limitations remain, both unrelated to whether the engine is deployed: the
+  Dr/Cr-suffix amount-assembly gap pinned by `TesseractRunAssemblyTest`, and no UI/API surfacing of
+  "this import used OCR" yet, even though `TextSource.OCR`/`AcquiredDocument.recognisedRuns()`
+  already carry that provenance through to `PositionedText`. Which engine to deploy, where it
+  runs, and whether registration should be unconditional were the open deployment decisions named
+  here; they are now decided (Tesseract, embedded in the app image, unconditional — see OCR-5).
 
 #### Excel, Images, Handwritten Statements — Planned
 - **Purpose:** additional document formats, each requiring a new implementation of the early
@@ -1926,10 +1937,11 @@ Two axes, neither of which is "which bank":
 - **More document types**, once there's a real driver: CSV already exists (predates this
   document, already generic); Excel, Images, and Handwritten Statements are explicitly out of
   scope until then. Scanned PDFs / OCR is a partial exception — CORRECTED: the acquisition/routing
-  architecture already exists and is end-to-end tested (`TEXT_ACQUISITION_ROUTING` above); only a
-  deployed recognition engine remains out of scope. Each new format is a new implementation of the
-  early pipeline stages (Classification, Layout Understanding) feeding the same downstream stages —
-  see "Financial Document, not PDF" above.
+  architecture already exists and is end-to-end tested (`TEXT_ACQUISITION_ROUTING` above).
+  CORRECTED AGAIN: a recognition engine (Tesseract) is now deployed too (OCR-5) — see
+  `TEXT_ACQUISITION_ROUTING`'s Maturity note above for what remains open. Each new format is a new
+  implementation of the early pipeline stages (Classification, Layout Understanding) feeding the
+  same downstream stages — see "Financial Document, not PDF" above.
 
 Every addition here gets a synthetic fixture and (transiently) a real-document diagnostic pass —
 same process as Phase 1.

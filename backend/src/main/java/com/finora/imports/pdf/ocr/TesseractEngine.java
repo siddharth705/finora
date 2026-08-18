@@ -21,10 +21,15 @@ import java.util.List;
  * <h2>The whole adapter</h2>
  *
  * This is the one file OCR-3A predicted would be needed to evaluate an engine: rasterise, recognise,
- * convert coordinates, hand back {@link OcrEngine.RecognisedText}. Nothing in production changed to
- * accommodate it, no dependency entered the build, and the harness it plugs into was written and
- * calibrated before Tesseract was installed. If this file had needed to reach into the parser, the
- * acquisition-strategy claim would have been wrong.
+ * convert coordinates, hand back {@link OcrEngine.RecognisedText}. Nothing in the parser or the
+ * rest of the pipeline changed to accommodate it, no library dependency entered the build, and the
+ * harness it plugs into was written and calibrated before Tesseract was installed. If this file had
+ * needed to reach into the parser, the acquisition-strategy claim would have been wrong.
+ *
+ * <p>Promoted from test to main scope only once OCR-3A/3B's evidence justified deploying it (see
+ * {@code TesseractRecogniser}). The binary itself is still an operational dependency of the
+ * deployment, not this class: {@link #available()} reports its absence rather than assuming it,
+ * exactly as it did under evaluation.
  *
  * <h2>Why the command line rather than a Python binding</h2>
  *

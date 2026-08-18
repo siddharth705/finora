@@ -57,17 +57,24 @@ a reason to widen OCR-2A.
 
 ## Milestones
 
+CORRECTED: this table originally planned OCR-3 through OCR-7 as "engine adapter" /
+"native/OCR semantic comparison" / "confidence and contradiction handling" / "routing and
+profiling" / "production rollout" — five milestones that don't correspond to how the work actually
+sequenced. The real history, in detail, lives in
+[ocr-engine-evaluation.md](../../engineering/import/ocr-engine-evaluation.md); this table is kept
+reconciled to it rather than to the original plan.
+
 | | | Status |
 |---|---|---|
 | OCR-1 | Acquisition seam and provenance | done |
 | OCR-2 | Toolchain feasibility | done |
 | OCR-2A | Synthetic ground truth and acquisition validation contract | done |
-| OCR-2B | Scanned fixture generation and determinism | |
-| OCR-3 | OCR engine adapter | |
-| OCR-4 | Native/OCR semantic comparison | |
-| OCR-5 | Confidence and contradiction handling | |
-| OCR-6 | Routing and profiling | |
-| OCR-7 | Production rollout | |
+| OCR-2B | Scanned fixture generation and determinism | done |
+| OCR-2D | Image-only detection (`hasNoExtractableText`) | done |
+| OCR-3A | Engine evaluation harness; Tesseract 5.5.3 measured viable, not yet sufficient | done |
+| OCR-3B | Run assembly (word-level → phrase-level runs); 300 DPI settled | done |
+| OCR-4 | Routing (`RoutingTextAcquirer`, native-first, zero engines shipped) | done |
+| OCR-5 | Production deployment (Tesseract installed, `TesseractRecogniser` promoted to `@Component`) | done |
 
 ### Routing is blocked on evidence, not on effort
 

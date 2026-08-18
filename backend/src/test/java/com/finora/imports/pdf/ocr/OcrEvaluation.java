@@ -44,7 +44,7 @@ public final class OcrEvaluation {
     private OcrEvaluation() {}
 
     /**
-     * The resolution OCR is evaluated at, and the one a production acquirer would have to use.
+     * The resolution OCR is evaluated at, and the one the production acquirer actually uses.
      *
      * <p>Not a preference. Swept over ten statement layouts at both resolutions, 150 DPI never
      * exceeds seven of ten on ledger equivalence at ANY assembly threshold, while 300 DPI reaches
@@ -56,8 +56,12 @@ public final class OcrEvaluation {
      * <p>{@link ScannedPdfFixture#DEFAULT_DPI} stays at 150 deliberately: it describes what a
      * scanner produces, which is the input OCR has to cope with, not the resolution OCR should
      * rasterise at. The two numbers answer different questions and should not be shared.
+     *
+     * <p>Delegates to {@link TesseractRecogniser#OCR_DPI} rather than declaring its own value, now
+     * that class is the one actually rasterising in production -- one measured number, not two
+     * copies of it that could quietly drift apart.
      */
-    public static final int OCR_DPI = 300;
+    public static final int OCR_DPI = TesseractRecogniser.OCR_DPI;
 
     /** Everything one engine produced for one document, including what it could not report. */
     public record Observation(String engine, String json, int runsRecognised, Float meanConfidence,
