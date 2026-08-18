@@ -900,6 +900,26 @@ public class PdfTableLocator {
             }
 
             if (currentRows == null) {
+                // Row-accounting evidence: no section has opened yet, so this row is about to be
+                // folded into pendingAuxiliary with no trace at all -- the same silent-loss shape
+                // BUCKET_EMPTY and PAGE_FOOTER_OR_CLOSING_MARKER below already guard against, just
+                // before the document's first header is ever found. Real motivating case: a real
+                // HSBC credit-card statement whose only transaction sits on a page whose column
+                // header renders as part of a background image with no extractable text at all
+                // (confirmed by direct inspection, not row-count inference), while a later,
+                // unrelated page's table header IS extractable and becomes the section that wins.
+                //
+                // Uses looksLikeFinancialActivityCandidate, NOT isTransactionShapedRow -- measured
+                // against that real statement, isTransactionShapedRow returns false here, because
+                // its date prints without a year ("30JUN") and CsvParser.parseDate requires one.
+                // isTransactionShapedRow is also what inferHeaderlessSection uses to decide what to
+                // STAGE, so loosening its date check to catch this would loosen real import
+                // behaviour, not just evidence -- a materially different risk. See
+                // looksLikeFinancialActivityCandidate's own doc comment for the evidence-only/
+                // staging split this exists to preserve, and PRE_HEADER_ACTIVITY_CANDIDATE
+                // specifically for why this needs a THIRD signal (description-like text) that
+                // BUCKET_EMPTY/PAGE_FOOTER_OR_CLOSING_MARKER/REPEATED_ACCOUNT_BANNER do not.
+                recordIfFinancialActivityCandidate(row, "PRE_HEADER_ACTIVITY_CANDIDATE", pendingDroppedCandidates);
                 pendingAuxiliary.add(rowLine);
             } else if (PAGE_FOOTER.matcher(rowLine).find() || STATEMENT_CLOSING_MARKER.matcher(rowLine).find()) {
                 if (ctx != null) ctx.record("PAGE_BOUNDARY_ISOLATION");
@@ -3027,6 +3047,128 @@ public class PdfTableLocator {
                                             List<DroppedCandidateRow> pendingDroppedCandidates) {
         if (isTransactionShapedRow(row)) {
             pendingDroppedCandidates.add(new DroppedCandidateRow(reason, TRANSACTION_SHAPE_SIGNALS));
+        }
+    }
+
+    // A bare day+month token with no year -- "30JUN"/"30 JUN"/"30-JUN" -- the shape a real HSBC
+    // credit-card statement prints its transaction dates in, relying on the statement period
+    // printed once elsewhere for the year. Matched against real month abbreviations specifically
+    // (not just "digits then letters") to stay narrow: CsvParser.DATE_FORMATS has no yearless
+    // pattern, and is not getting one here either -- see looksLikeFinancialActivityCandidate's own
+    // doc comment for why this stays local to evidence, never reaching date parsing itself.
+    private static final Pattern WEAK_DAY_MONTH = Pattern.compile(
+            "(?i)^\\d{1,2}[\\s-]?(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)$");
+
+    /**
+     * A deliberately SEPARATE, more permissive question from {@link #isTransactionShapedRow}:
+     * "does this row look like it might be financial activity worth a human's attention" is not
+     * "should this row be imported as a transaction", and the two must never share one
+     * implementation. {@code isTransactionShapedRow} is also the gate {@link
+     * #inferHeaderlessSection} uses to decide what to actually STAGE -- loosening ITS date check
+     * to accept a yearless "30JUN" would loosen what that path is willing to import too, an
+     * entirely different risk with an entirely different cost of being wrong. This method is read
+     * only by evidence recording (see {@link #recordIfFinancialActivityCandidate}); it must never
+     * be called from any staging or normalization path.
+     *
+     * <p>Requires THREE signals, not {@code isTransactionShapedRow}'s two: a date (the same
+     * {@link CsvParser#parseDate} check, OR the weaker {@link #WEAK_DAY_MONTH} shape), an amount,
+     * AND a description-like cell distinct from both. The third signal exists because two is not
+     * enough here specifically: a real Loan Summary/EMI-schedule table row (e.g. a loan's own
+     * booking date and principal amount) has a genuine date and a genuine amount and would
+     * otherwise misfire this detector on every such table -- confirmed against a real HSBC
+     * credit-card statement's own Loan Summary table, whose rows fail {@code
+     * TransactionNormalizer} for the unrelated reason that "Loan Booking Date" is not a recognized
+     * transaction-date column. A description-like cell (multiple words, or one long alphanumeric
+     * token -- see {@link #looksLikeDescriptionText}) does not fully close this gap: a loan row's
+     * own merchant-name cell can look identical in shape to real narration. What actually keeps
+     * this narrow is where it's called from -- only rows scanned BEFORE the document's first
+     * accepted header, where a table's own data rows essentially never appear (a header prints
+     * before its rows, by construction), so the residual risk is a loan-shaped row accidentally
+     * appearing pre-header, not every loan table in the corpus.
+     *
+     * <p>On top of the three-signal gate, ALSO refuses outright when any cell names a
+     * non-transaction financial product ({@link #NON_TRANSACTION_PRODUCT_HINTS} -- loan, EMI/
+     * instalment, fixed/recurring deposit, maturity, premium/policy, mutual-fund folio/NAV). Those
+     * products belong to their own future domains (Loans/Liabilities, Investments/Deposits), not
+     * the transaction ledger this evidence exists to protect, and each one carries its own genuine
+     * date and amount by construction -- exactly the shape a plain three-signal gate cannot tell
+     * apart from a real transaction.
+     *
+     * <p>Deliberately excludes two common words precisely BECAUSE they are common: "interest" and
+     * "deposit" are both legitimate real-transaction vocabulary on an ordinary savings account
+     * ("INTEREST CREDITED", "SB INT", "CASH DEPOSIT" -- the latter is even one of {@code
+     * HEADER_HINTS}' own real column names). This list can only ever trade one risk for the other
+     * -- a keyword that's too broad silently suppresses evidence of a REAL missing transaction,
+     * which this whole rule exists to catch in the first place, the exact "false success" class
+     * judged worse than a false warning. So the list stays narrow and product-specific: single
+     * words unlikely to appear in ordinary transaction narration ("loan", "principal", "emi",
+     * "tenure", "maturity", ...), plus a few multi-word phrases ("fixed deposit", "interest rate")
+     * that are safe specifically because they require the WHOLE cell to match, not a substring --
+     * see {@link #matchesAnyHint}'s own two-tier behaviour. Grow this list only against a real
+     * document that needs it, the same discipline {@code HEADER_HINTS} has followed throughout.
+     */
+    private boolean looksLikeFinancialActivityCandidate(List<PositionedText> row) {
+        boolean hasDate = false;
+        boolean hasAmount = false;
+        boolean hasDescription = false;
+        for (PositionedText cell : row) {
+            String text = cell.text().trim();
+            if (text.isEmpty()) continue;
+            if (matchesAnyHint(text, NON_TRANSACTION_PRODUCT_HINTS)) return false;
+            boolean isDate = CsvParser.parseDate(text) != null || WEAK_DAY_MONTH.matcher(text).matches();
+            boolean isAmount = text.contains(".") && CsvParser.parseNumeric(text) != null;
+            if (isDate) hasDate = true;
+            if (isAmount) hasAmount = true;
+            if (!isDate && !isAmount && looksLikeDescriptionText(text)) hasDescription = true;
+        }
+        return hasDate && hasAmount && hasDescription;
+    }
+
+    // Named financial products this evidence must stay out of, not just the Loan Summary table
+    // that originally motivated the three-signal gate above -- an FD/RD/EMI/insurance row has its
+    // own genuine date and amount just as legitimately, and belongs to a future Loans/Liabilities
+    // or Investments/Deposits domain, never the transaction ledger. Reuses matchesAnyHint (already
+    // used for HEADER_HINTS) so single-word and multi-word entries are both matched consistently
+    // with the rest of this class, per-cell rather than as a whole-row substring search.
+    //
+    // A RISK-CONTROL LAYER, NOT A CLASSIFICATION SYSTEM -- this list only prevents an obvious
+    // loan/FD/RD/EMI-shaped row from being counted as evidence of a MISSING TRANSACTION. It does
+    // not identify, classify, or route those rows anywhere; a document whose only content is a
+    // Loan Summary table is not "handled" by this list, it is simply not miscounted as a lost
+    // transaction. Real loan/FD/RD/EMI classification -- recognizing these as their own financial
+    // products and feeding them to a future Loans/Liabilities or Investments/Deposits domain --
+    // does not exist yet anywhere in this codebase. Don't read a hit against this list as "this
+    // document's loan data was captured" a year from now; it wasn't, on purpose, out of scope here.
+    private static final List<String> NON_TRANSACTION_PRODUCT_HINTS = List.of(
+            "loan", "principal", "emi", "tenure", "instalment", "installment", "maturity",
+            "premium", "policy", "folio", "nav",
+            "loan booking", "fixed deposit", "recurring deposit",
+            "interest rate", "interest calculation");
+
+    /** Free-form narration, distinguished from a short structured label or value: either multiple
+     *  whitespace-separated words (a bill-payment narration followed by its own long alphanumeric
+     *  reference token), or one long token that mixes letters and digits on its own (a reference
+     *  string a word-count check alone would miss). A bare short word ("CR", "Fee", "Dr") satisfies
+     *  neither and is not description text. */
+    private boolean looksLikeDescriptionText(String text) {
+        String[] words = text.split("\\s+");
+        if (words.length >= 2) return true;
+        return text.length() >= 8 && text.chars().anyMatch(Character::isLetter)
+                && text.chars().anyMatch(Character::isDigit);
+    }
+
+    // Three signals, not isTransactionShapedRow's two -- see looksLikeFinancialActivityCandidate's
+    // own doc comment for why DESCRIPTION_PRESENT is required here specifically.
+    private static final java.util.Set<String> FINANCIAL_ACTIVITY_CANDIDATE_SIGNALS =
+            java.util.Set.of("DATE_PRESENT", "AMOUNT_PRESENT", "DESCRIPTION_PRESENT");
+
+    /** Same shape as {@link #recordIfTransactionShaped}, backed by the more permissive/narrower-
+     *  scoped {@link #looksLikeFinancialActivityCandidate} instead -- see that method's own doc
+     *  comment for why the two gates are deliberately not the same implementation. */
+    private void recordIfFinancialActivityCandidate(List<PositionedText> row, String reason,
+                                                      List<DroppedCandidateRow> pendingDroppedCandidates) {
+        if (looksLikeFinancialActivityCandidate(row)) {
+            pendingDroppedCandidates.add(new DroppedCandidateRow(reason, FINANCIAL_ACTIVITY_CANDIDATE_SIGNALS));
         }
     }
 

@@ -71,6 +71,19 @@ public class RowAccountingValidator {
             return new ImportDto.VerificationFinding(RULE, "NOT_APPLICABLE", details);
         }
 
+        // unparseableCount deliberately does NOT gate VERIFIED vs WARNING below, even though it
+        // sits right there in details. Tried, and reverted: an unparseable row was already
+        // bucketed into whatever table this document's header-scan accepted, and that table is
+        // not necessarily a transaction ledger -- a Loan Summary/EMI-schedule table has its own
+        // real date and amount columns, fails this parser's TransactionNormalizer for the same
+        // structural reason a real transaction row would, and is not evidence anything was lost.
+        // Counting it toward WARNING made every document with a non-transaction financial table
+        // report "unexplained activity" whether or not one actually existed. This rule stays
+        // scoped to droppedTransactionCandidates, which only ever fires from a row that had
+        // date+amount SHAPE and never got a chance to belong to any table at all -- a narrower,
+        // more defensible signal. See PRE_HEADER_ACTIVITY_CANDIDATE's own doc comment (on
+        // PdfTableLocator's looksLikeFinancialActivityCandidate) for the follow-up mechanism that
+        // targets pre-header rows specifically, without this false-positive class.
         if (dropped.isEmpty()) {
             details.put("explanation", "Every row this parser located has an accounted-for fate.");
             return new ImportDto.VerificationFinding(RULE, "VERIFIED", details);

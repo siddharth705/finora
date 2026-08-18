@@ -9,17 +9,19 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Row-accounting evidence: the three drop points in {@link PdfTableLocator#locateAll} wired to
+ * Row-accounting evidence: the four drop points in {@link PdfTableLocator#locateAll} wired to
  * record a {@link PdfTableLocator.DroppedCandidateRow} when the discarded line has transaction
- * shape (a date-shaped cell and a decimal-amount cell on the same row -- see
- * {@code isTransactionShapedRow}'s own doc comment). Every fixture below is fully hand-synthesized
+ * shape. Three use {@code isTransactionShapedRow} (a date-shaped cell and a decimal-amount cell on
+ * the same row); the fourth (PRE_HEADER_ACTIVITY_CANDIDATE) deliberately uses a separate, more
+ * permissive detector, {@code looksLikeFinancialActivityCandidate} -- see that method's own doc
+ * comment for why it is not the same implementation. Every fixture below is fully hand-synthesized
  * -- invented account numbers, dates, and amounts -- per the Synthetic Fixture Policy; no value
  * from any real document appears here.
  *
  * <p>Deliberately narrow, matching {@link PdfTableLocator.LocatedSection}'s own doc comment: only
- * three of this class's many drop points are wired (the ones with zero trace at all before this
- * change, and the two the engineering-principles doc already documents as an acknowledged risk).
- * The rest are a documented, deliberate gap, not silently assumed complete.
+ * four of this class's many drop points are wired (the ones with zero trace at all before this
+ * change, plus PRE_HEADER_ACTIVITY_CANDIDATE below). The rest are a documented, deliberate gap,
+ * not silently assumed complete.
  */
 class RowAccountingEvidencePdfTableLocatorTest {
 
@@ -152,6 +154,164 @@ class RowAccountingEvidencePdfTableLocatorTest {
 
         assertThat(doc.sections()).hasSize(1);
         assertThat(doc.sections().get(0).rows()).hasSize(2);
+        assertThat(doc.sections().get(0).evidence().droppedTransactionCandidates()).isEmpty();
+    }
+
+    /**
+     * PRE_HEADER_ACTIVITY_CANDIDATE. Real shape, found against a real HSBC credit-card statement:
+     * its one real transaction sits on a page whose own column header renders as part of a
+     * background image (no extractable text at all), so the document's first RECOGNIZED header is
+     * a later, unrelated table -- here, a differently-shaped ledger on the same page as the real
+     * transaction row, standing in for that unrelated later table. Before this branch was wired,
+     * this row vanished into {@code pendingAuxiliary} with zero trace.
+     *
+     * <p>Deliberately uses {@code isTransactionShapedRow}'s date format ("30JUN", no year) rather
+     * than a full date: measured directly against the real statement, {@code isTransactionShapedRow}
+     * returns false on this exact row (its {@code CsvParser.parseDate} check requires a year), which
+     * is why this branch is backed by the separate, more permissive {@code
+     * looksLikeFinancialActivityCandidate} instead -- see that method's own doc comment.
+     */
+    @Test
+    void aWeaklyDatedActivityRowBeforeTheFirstAcceptedHeader_isRecordedAsDroppedEvidence() {
+        List<PositionedText> positioned = new ArrayList<>();
+        // No header has been accepted yet when this row is scanned -- it has to fail
+        // looksLikeHeaderRow on its own (no date/header-name hints at all) to reach the branch
+        // under test rather than being absorbed as a wrapped-header candidate.
+        List<PositionedText> earlyTransaction = new ArrayList<>();
+        earlyTransaction.add(run("30JUN", 71f, 42f, 90f));
+        earlyTransaction.add(run("BBPS PMT reference12345", 120f, 90f, 90f));
+        earlyTransaction.add(run("1,582.00", 380f, 60f, 90f));
+        positioned.addAll(earlyTransaction);
+        positioned.addAll(ledgerHeader(110f));
+        positioned.addAll(ledgerRow("01.01.2026", "Coffee Shop", "50.00", "9950.00", 130f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        assertThat(doc.sections()).hasSize(1);
+        assertThat(doc.sections().get(0).rows()).hasSize(1);
+        var dropped = doc.sections().get(0).evidence().droppedTransactionCandidates();
+        assertThat(dropped).hasSize(1);
+        assertThat(dropped.get(0).reason()).isEqualTo("PRE_HEADER_ACTIVITY_CANDIDATE");
+        assertThat(dropped.get(0).signals()).contains("DATE_PRESENT", "AMOUNT_PRESENT", "DESCRIPTION_PRESENT");
+    }
+
+    /**
+     * False-positive safety, mirroring {@link #anOrdinaryPageFooterWithNoDateOrAmount_neverGeneratesDroppedCandidateEvidence}:
+     * ordinary pre-header boilerplate (an account-holder name line, with no date and no amount
+     * anywhere on it) must not generate evidence just because it precedes the first header.
+     */
+    @Test
+    void ordinaryPreHeaderTextWithNoDateOrAmount_neverGeneratesDroppedCandidateEvidence() {
+        List<PositionedText> positioned = new ArrayList<>();
+        positioned.add(line("MR JOHN SMITH", 90f));
+        positioned.addAll(ledgerHeader(110f));
+        positioned.addAll(ledgerRow("01.01.2026", "Coffee Shop", "50.00", "9950.00", 130f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        assertThat(doc.sections()).hasSize(1);
+        assertThat(doc.sections().get(0).rows()).hasSize(1);
+        assertThat(doc.sections().get(0).evidence().droppedTransactionCandidates()).isEmpty();
+    }
+
+    /**
+     * The false-positive class this evidence is deliberately narrower than {@code
+     * isTransactionShapedRow} to avoid: a loan/EMI-style row with a genuine date and a genuine
+     * amount (a loan booking date and a principal, structurally identical to a transaction date
+     * and amount) but no third, description-like cell -- exactly the shape a real HSBC credit-card
+     * statement's own Loan Summary table row has. Two signals alone must not be enough here, unlike
+     * {@code isTransactionShapedRow}'s own two-signal gate -- see {@code
+     * looksLikeFinancialActivityCandidate}'s own doc comment for why a third signal is required
+     * specifically at this drop point.
+     */
+    @Test
+    void aDateAndAmountWithNoDescriptiveText_neverGeneratesActivityCandidateEvidence() {
+        List<PositionedText> positioned = new ArrayList<>();
+        List<PositionedText> loanShapedRow = new ArrayList<>();
+        loanShapedRow.add(run("26 FEB 2026", 71f, 60f, 90f));
+        loanShapedRow.add(run("11946.11", 380f, 60f, 90f));
+        positioned.addAll(loanShapedRow);
+        positioned.addAll(ledgerHeader(110f));
+        positioned.addAll(ledgerRow("01.01.2026", "Coffee Shop", "50.00", "9950.00", 130f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        assertThat(doc.sections()).hasSize(1);
+        assertThat(doc.sections().get(0).rows()).hasSize(1);
+        assertThat(doc.sections().get(0).evidence().droppedTransactionCandidates()).isEmpty();
+    }
+
+    /**
+     * Named-product false-positive guard: a Recurring Deposit row that WOULD otherwise satisfy all
+     * three signals (date, amount, and a description-like cell) is still refused, because
+     * "Recurring Deposit" is one of {@code NON_TRANSACTION_PRODUCT_HINTS} -- an RD belongs to a
+     * future Investments/Deposits domain, not the transaction ledger.
+     */
+    @Test
+    void aRecurringDepositRow_neverGeneratesActivityCandidateEvidence() {
+        List<PositionedText> positioned = new ArrayList<>();
+        List<PositionedText> rdRow = new ArrayList<>();
+        rdRow.add(run("15 MAR 2026", 71f, 60f, 90f));
+        rdRow.add(run("Recurring Deposit", 120f, 90f, 90f));
+        rdRow.add(run("50000.00", 380f, 60f, 90f));
+        positioned.addAll(rdRow);
+        positioned.addAll(ledgerHeader(110f));
+        positioned.addAll(ledgerRow("01.01.2026", "Coffee Shop", "50.00", "9950.00", 130f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        assertThat(doc.sections()).hasSize(1);
+        assertThat(doc.sections().get(0).rows()).hasSize(1);
+        assertThat(doc.sections().get(0).evidence().droppedTransactionCandidates()).isEmpty();
+    }
+
+    /**
+     * Named-product false-positive guard: a Fixed Deposit row, same shape as the RD guard above.
+     */
+    @Test
+    void aFixedDepositRow_neverGeneratesActivityCandidateEvidence() {
+        List<PositionedText> positioned = new ArrayList<>();
+        List<PositionedText> fdRow = new ArrayList<>();
+        fdRow.add(run("10 JAN 2026", 71f, 60f, 90f));
+        fdRow.add(run("Fixed Deposit", 120f, 90f, 90f));
+        fdRow.add(run("100000.00", 380f, 60f, 90f));
+        positioned.addAll(fdRow);
+        positioned.addAll(ledgerHeader(110f));
+        positioned.addAll(ledgerRow("01.01.2026", "Coffee Shop", "50.00", "9950.00", 130f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        assertThat(doc.sections()).hasSize(1);
+        assertThat(doc.sections().get(0).rows()).hasSize(1);
+        assertThat(doc.sections().get(0).evidence().droppedTransactionCandidates()).isEmpty();
+    }
+
+    /**
+     * Named-product false-positive guard: an EMI schedule row. "EMI" matches as a single word
+     * within the multi-word description cell, unlike the multi-word RD/FD hints above which
+     * require the whole cell to match -- see {@code matchesAnyHint}'s own two-tier behaviour.
+     */
+    @Test
+    void anEmiScheduleRow_neverGeneratesActivityCandidateEvidence() {
+        List<PositionedText> positioned = new ArrayList<>();
+        List<PositionedText> emiRow = new ArrayList<>();
+        emiRow.add(run("05 FEB 2026", 71f, 60f, 90f));
+        emiRow.add(run("EMI Payment", 120f, 90f, 90f));
+        emiRow.add(run("4082.00", 380f, 60f, 90f));
+        positioned.addAll(emiRow);
+        positioned.addAll(ledgerHeader(110f));
+        positioned.addAll(ledgerRow("01.01.2026", "Coffee Shop", "50.00", "9950.00", 130f));
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        assertThat(doc.sections()).hasSize(1);
+        assertThat(doc.sections().get(0).rows()).hasSize(1);
         assertThat(doc.sections().get(0).evidence().droppedTransactionCandidates()).isEmpty();
     }
 }

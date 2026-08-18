@@ -94,6 +94,14 @@ class RowAccountingValidatorTest {
         assertThat(explanation).contains("candidate");
     }
 
+    /**
+     * Deliberately does NOT drive the verdict. Real counterexample found against HSBC CC's own
+     * Loan Summary table: its rows are genuinely bucketed and genuinely fail {@code
+     * TransactionNormalizer} (it has no recognized transaction-date column), which would make
+     * {@code unparseableCount} misclassify a document with a non-transaction financial table --
+     * and no missing transaction at all -- as "unexplained activity". See {@link
+     * RowAccountingValidator}'s own doc comment on why this was tried and reverted.
+     */
     @Test
     void includesUnparseableRowCountAsContext_withoutAffectingTheVerdict() {
         List<UnparseableRow> unparseable = List.of(new UnparseableRow(Map.of("Date", "bad"), "no amount"));
