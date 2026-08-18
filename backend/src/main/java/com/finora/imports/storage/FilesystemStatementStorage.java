@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -37,6 +38,17 @@ public class FilesystemStatementStorage implements StatementStorage {
 
     public FilesystemStatementStorage(@Value("${app.statement-storage.filesystem.root}") String root) {
         this.root = Path.of(root).toAbsolutePath().normalize();
+        // store()'s own doc comment claims "root always exists by construction" -- this is what
+        // makes that literally true, rather than an invariant every caller of this constructor
+        // (a fresh checkout's local dev setup, a CI runner, a test's own @TestPropertySource
+        // pointing at a fresh ${java.io.tmpdir} subdirectory) had to separately remember to
+        // uphold. Idempotent, so a root that already exists is a no-op.
+        try {
+            Files.createDirectories(this.root);
+        } catch (IOException e) {
+            throw new UncheckedIOException(
+                    "Could not create the statement storage root directory: " + this.root, e);
+        }
     }
 
     /**
