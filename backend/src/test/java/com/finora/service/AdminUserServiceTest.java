@@ -11,6 +11,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -230,5 +232,41 @@ class AdminUserServiceTest {
         assertThat(target.getTimezone()).isEqualTo("Asia/Kolkata");
         verify(userRepository).save(target);
         verify(auditService).record(eq(targetId), eq("USER_PROFILE_UPDATED_BY_ADMIN"), eq("User"), eq(targetId), any());
+    }
+
+    /**
+     * SEC-12 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Field names only,
+     * not before/after values -- see updateProfile()'s own comment for why. This is what makes the
+     * audit trail reconstructable at all: before this, the metadata carried only who/when, and two
+     * edits to the same account were indistinguishable from the audit row alone.
+     */
+    @Test
+    void updateProfile_recordsWhichFieldsActuallyChanged() {
+        User target = user(targetId, "ACTIVE");
+        target.setPhoneNumber("+919876500001");
+        target.setTimezone("Asia/Kolkata");
+        when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
+
+        adminUserService.updateProfile(adminId, targetId,
+                new AdminUpdateUserRequest("New Name", null, java.math.BigDecimal.valueOf(500), "Asia/Tokyo"));
+
+        @SuppressWarnings("unchecked")
+        var metadata = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(auditService).record(eq(targetId), eq("USER_PROFILE_UPDATED_BY_ADMIN"), eq("User"), eq(targetId), metadata.capture());
+        assertThat((List<String>) metadata.getValue().get("changedFields"))
+                .containsExactlyInAnyOrder("fullName", "lowBalanceThreshold", "timezone");
+    }
+
+    @Test
+    void updateProfile_recordsAnEmptyChangedFieldsList_whenNothingWasActuallySupplied() {
+        User target = user(targetId, "ACTIVE");
+        when(userRepository.findById(targetId)).thenReturn(Optional.of(target));
+
+        adminUserService.updateProfile(adminId, targetId, new AdminUpdateUserRequest(null, null, null, null));
+
+        @SuppressWarnings("unchecked")
+        var metadata = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(auditService).record(eq(targetId), eq("USER_PROFILE_UPDATED_BY_ADMIN"), eq("User"), eq(targetId), metadata.capture());
+        assertThat((List<String>) metadata.getValue().get("changedFields")).isEmpty();
     }
 }
