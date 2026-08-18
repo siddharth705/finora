@@ -4,8 +4,10 @@ import com.finora.dto.ImportDto;
 import com.finora.dto.ImportDto.StagedRow;
 import com.finora.dto.ImportDto.UnparseableRow;
 import com.finora.imports.pdf.PdfTableLocator.DroppedCandidateRow;
+import com.finora.imports.pdf.PdfTableLocator.HeaderReconstructionFinding;
 import com.finora.imports.pdf.StatementSummaryExtractor.PrintedSummary;
 import com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence;
+import com.finora.imports.pdf.TextSource;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -21,6 +23,14 @@ import java.util.List;
  * Combining several rules into a single judgement needs a weighting policy, and a weighting policy
  * invented before there is anything to calibrate it against is a guess with an authoritative
  * appearance. See docs/engineering/import-verification-framework.md.
+ *
+ * <p><b>Correction (import reliability status):</b> assembly above is still exactly what this
+ * class does with the 7 validators' findings -- unchanged. What's new is a narrow, separately-
+ * computed {@code reliabilityStatus} layered on top by {@link ImportReliabilityStatusDeriver},
+ * a distinct concern from the "weighting policy" rejected above: it invents no weights and needs
+ * no calibration data, because each of its three outcomes is a deterministic OR over facts this
+ * class already has (a finding's own outcome, header-reconstruction uncertainty, OCR provenance)
+ * -- not a synthesized score. See {@link ImportDto.VerificationReport}'s own correction note.
  *
  * <p>What this class does earn its place for is that the two staging paths, CSV and PDF, must run
  * the same rules with the same inputs. Before it existed each producer called one validator
@@ -66,8 +76,10 @@ public class ImportVerifier {
      */
     public ImportDto.VerificationReport verify(List<StagedRow> rows, BigDecimal openingBalance,
                                                 BigDecimal closingBalance) {
+        // List.of()/null: the CSV path this overload serves has neither header-reconstruction
+        // findings (a PDF-only concept) nor OCR provenance (a PDF-acquisition-only concept).
         return verify(rows, openingBalance, closingBalance, PrintedSummary.NONE, List.of(), List.of(), List.of(),
-                CreditCardSummaryEvidence.NONE);
+                CreditCardSummaryEvidence.NONE, List.of(), null);
     }
 
     /**
@@ -85,13 +97,22 @@ public class ImportVerifier {
      * @param droppedTransactionCandidates rows discarded before ever reaching normalization, but
      *                        with transaction shape -- see
      *                        {@link com.finora.imports.pdf.PdfTableLocator.DroppedCandidateRow}.
+     * @param headerReconstructionFindings evidence that a multi-line header candidate failed to
+     *                        merge and a low-confidence fallback was accepted instead -- see
+     *                        {@link HeaderReconstructionFinding}. Feeds {@code reliabilityStatus}
+     *                        only; never null from {@code PdfPreviewGenerator}, but {@code List.of()}
+     *                        from the CSV-facing overload, which has no such concept.
+     * @param textSource how this document's text was acquired -- native, OCR, or both. Feeds
+     *                        {@code reliabilityStatus} only; null from the CSV-facing overload.
      */
     public ImportDto.VerificationReport verify(List<StagedRow> rows, BigDecimal openingBalance,
                                                 BigDecimal closingBalance, PrintedSummary printedSummary,
                                                 List<java.util.Map<String, String>> rawRows,
                                                 List<UnparseableRow> unparseableRows,
                                                 List<DroppedCandidateRow> droppedTransactionCandidates,
-                                                CreditCardSummaryEvidence printedCreditCardSummary) {
+                                                CreditCardSummaryEvidence printedCreditCardSummary,
+                                                List<HeaderReconstructionFinding> headerReconstructionFindings,
+                                                TextSource textSource) {
         List<ImportDto.VerificationFinding> findings = new ArrayList<>();
         findings.addAll(balanceChainValidator.report(rows, openingBalance).findings());
         findings.add(statementTotalsValidator.check(rows, openingBalance, closingBalance));
@@ -112,7 +133,14 @@ public class ImportVerifier {
         // doc comment for what that lets it prove (transaction classification consistency) that a
         // summary-only check cannot.
         findings.add(creditCardFlowReconciliationValidator.check(rows, printedCreditCardSummary));
-        return new ImportDto.VerificationReport(List.copyOf(findings));
+
+        boolean headerReconstructionUncertain = headerReconstructionFindings != null
+                && !headerReconstructionFindings.isEmpty();
+        List<ImportDto.VerificationFinding> assembled = List.copyOf(findings);
+        ImportReliabilityStatus reliabilityStatus = ImportReliabilityStatusDeriver.derive(assembled,
+                headerReconstructionUncertain, textSource);
+        return new ImportDto.VerificationReport(assembled, headerReconstructionUncertain,
+                textSource == null ? null : textSource.name(), reliabilityStatus);
     }
 
     /**
@@ -129,6 +157,14 @@ public class ImportVerifier {
      * question with better information. Every other finding is carried through untouched, in
      * order: a report is assembled, not aggregated, and reordering it would change what a client
      * renders first for no reason.
+     *
+     * <p>{@code reliabilityStatus} IS recomputed, though -- SUMMARY_TOTALS can flip between
+     * FAILED/WARNING/VERIFIED here, and a stale status would silently disagree with the findings
+     * it's supposed to summarise. This method has no access to the original {@code
+     * headerReconstructionFindings}/{@code textSource} (only {@code List<StagedAccountSection>} at
+     * its own call site), which is exactly why {@link ImportDto.VerificationReport} carries those
+     * two facts on itself -- recomputed from {@code report.headerReconstructionUncertain()}/
+     * {@code report.textSource()}, not re-derived from scratch.
      */
     public ImportDto.VerificationReport reviseSummaryTotals(ImportDto.VerificationReport report,
                                                             List<StagedRow> rows,
@@ -141,6 +177,11 @@ public class ImportVerifier {
                     ? summaryTotalsValidator.check(rows, printedSummary, locatedRowCount)
                     : finding);
         }
-        return new ImportDto.VerificationReport(List.copyOf(revised));
+        List<ImportDto.VerificationFinding> assembled = List.copyOf(revised);
+        TextSource textSource = report.textSource() == null ? null : TextSource.valueOf(report.textSource());
+        ImportReliabilityStatus reliabilityStatus = ImportReliabilityStatusDeriver.derive(assembled,
+                report.headerReconstructionUncertain(), textSource);
+        return new ImportDto.VerificationReport(assembled, report.headerReconstructionUncertain(),
+                report.textSource(), reliabilityStatus);
     }
 }

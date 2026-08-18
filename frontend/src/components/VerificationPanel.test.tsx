@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { VerificationPanel } from './VerificationPanel';
-import type { VerificationReport } from '../types';
+import type { VerificationFinding, VerificationReport } from '../types';
 
 /**
  * The panel's job is to be honest about what was and wasn't proven, so these tests are written
@@ -10,26 +10,29 @@ import type { VerificationReport } from '../types';
  * rather than around rendering details.
  */
 describe('VerificationPanel', () => {
-  const verified: VerificationReport = {
-    findings: [{
-      rule: 'BALANCE_CHAIN',
-      outcome: 'VERIFIED',
-      details: { rowsChecked: 127, rowsWithBalance: 127, anchoredOnOpeningBalance: true, discrepancies: [] },
-    }],
-  };
+  // reliabilityStatus null throughout this helper -- these tests exercise the LEGACY fallback
+  // badge logic (allClear/notable), which only runs when the server never computed a status. The
+  // server-computed badge has its own coverage below.
+  const report = (findings: VerificationFinding[]): VerificationReport => ({
+    findings, headerReconstructionUncertain: false, textSource: null, reliabilityStatus: null,
+  });
 
-  const withFindings: VerificationReport = {
-    findings: [{
-      rule: 'BALANCE_CHAIN',
-      outcome: 'WARNING',
-      details: {
-        rowsChecked: 127, rowsWithBalance: 127, anchoredOnOpeningBalance: false,
-        discrepancies: [
-          { rowIndex: 16, expectedBalance: 54220, actualBalance: 54656, difference: 436 },
-        ],
-      },
-    }],
-  };
+  const verified: VerificationReport = report([{
+    rule: 'BALANCE_CHAIN',
+    outcome: 'VERIFIED',
+    details: { rowsChecked: 127, rowsWithBalance: 127, anchoredOnOpeningBalance: true, discrepancies: [] },
+  }]);
+
+  const withFindings: VerificationReport = report([{
+    rule: 'BALANCE_CHAIN',
+    outcome: 'WARNING',
+    details: {
+      rowsChecked: 127, rowsWithBalance: 127, anchoredOnOpeningBalance: false,
+      discrepancies: [
+        { rowIndex: 16, expectedBalance: 54220, actualBalance: 54656, difference: 436 },
+      ],
+    },
+  }]);
 
   it('renders nothing when verification was never performed', () => {
     // Null means not checked. A reassuring tick here would claim a check that never happened, and
@@ -39,7 +42,7 @@ describe('VerificationPanel', () => {
   });
 
   it('renders nothing when there are no findings at all', () => {
-    const { container } = render(<VerificationPanel verification={{ findings: [] }} />);
+    const { container } = render(<VerificationPanel verification={report([])} />);
     expect(container).toBeEmptyDOMElement();
   });
 
@@ -103,9 +106,9 @@ describe('VerificationPanel', () => {
     // then off COLUMN_AMBIGUITY, each time because the rule it named stopped being unknown when
     // that validator shipped -- which is the behaviour under test working, not a flaky test.
     const user = userEvent.setup();
-    render(<VerificationPanel verification={{
-      findings: [{ rule: 'CURRENCY_CONSISTENCY', outcome: 'FAILED', details: { row: 17 } }],
-    }} />);
+    render(<VerificationPanel verification={report(
+      [{ rule: 'CURRENCY_CONSISTENCY', outcome: 'FAILED', details: { row: 17 } }],
+    )} />);
 
     await user.click(screen.getByRole('button', { name: /Statement verification/ }));
 
@@ -115,12 +118,10 @@ describe('VerificationPanel', () => {
   });
 
   it('reports a not-applicable check as unchecked rather than as a pass', async () => {
-    render(<VerificationPanel verification={{
-      findings: [{
-        rule: 'BALANCE_CHAIN', outcome: 'NOT_APPLICABLE',
-        details: { rowsChecked: 0, rowsWithBalance: 0, anchoredOnOpeningBalance: false, discrepancies: [] },
-      }],
-    }} />);
+    render(<VerificationPanel verification={report([{
+      rule: 'BALANCE_CHAIN', outcome: 'NOT_APPLICABLE',
+      details: { rowsChecked: 0, rowsWithBalance: 0, anchoredOnOpeningBalance: false, discrepancies: [] },
+    }])} />);
 
     expect(screen.getByText(/Couldn't be checked/)).toBeInTheDocument();
     expect(screen.queryByText(/verified/i)).not.toBeInTheDocument();
@@ -130,22 +131,54 @@ describe('VerificationPanel', () => {
     // the fields the statement actually printed appear -- here it gave counts but no totals, and a
     // row of dashes for the totals would read as a comparison that was made and passed.
     const user = userEvent.setup();
-    render(<VerificationPanel verification={{
-      findings: [{
-        rule: 'SUMMARY_TOTALS', outcome: 'FAILED',
-        details: {
-          printedCreditCount: 1, parsedCreditCount: 0,
-          printedDebitCount: 3, parsedDebitCount: 4,
-          suspectedCause: 'DIRECTION',
-          explanation: 'At least one is being read as money moving the wrong way.',
-        },
-      }],
-    }} />);
+    render(<VerificationPanel verification={report([{
+      rule: 'SUMMARY_TOTALS', outcome: 'FAILED',
+      details: {
+        printedCreditCount: 1, parsedCreditCount: 0,
+        printedDebitCount: 3, parsedDebitCount: 4,
+        suspectedCause: 'DIRECTION',
+        explanation: 'At least one is being read as money moving the wrong way.',
+      },
+    }])} />);
 
     await user.click(screen.getByRole('button', { name: /Statement verification/ }));
 
     expect(screen.getByText(/The bank's own totals/)).toBeInTheDocument();
     expect(screen.getByText(/wrong way/)).toBeInTheDocument();
     expect(screen.queryByText(/Money in/)).not.toBeInTheDocument();
+  });
+
+  it('shows the server-computed status badge, not the client-side fallback, when one is present', () => {
+    // findings are all VERIFIED here -- if the panel were still computing its own badge, this
+    // would render "Running balance verified" too, and the test wouldn't distinguish the two
+    // code paths. NEEDS_ATTENTION with clean findings only happens via header-reconstruction/OCR
+    // provenance, which is exactly the case a client-side findings-only heuristic cannot see.
+    render(<VerificationPanel verification={{
+      findings: [{
+        rule: 'BALANCE_CHAIN', outcome: 'VERIFIED',
+        details: { rowsChecked: 1, rowsWithBalance: 1, anchoredOnOpeningBalance: true, discrepancies: [] },
+      }],
+      headerReconstructionUncertain: true, textSource: 'NATIVE_PDF', reliabilityStatus: 'NEEDS_ATTENTION',
+    }} />);
+
+    expect(screen.getByText(/Import needs attention/)).toBeInTheDocument();
+    expect(screen.queryByText(/Running balance verified/)).not.toBeInTheDocument();
+  });
+
+  it('explains an OCR-driven review status with a visible reason, not just the badge', async () => {
+    const user = userEvent.setup();
+    render(<VerificationPanel verification={{
+      findings: [{
+        rule: 'BALANCE_CHAIN', outcome: 'VERIFIED',
+        details: { rowsChecked: 1, rowsWithBalance: 1, anchoredOnOpeningBalance: true, discrepancies: [] },
+      }],
+      headerReconstructionUncertain: false, textSource: 'OCR', reliabilityStatus: 'REVIEW_RECOMMENDED',
+    }} />);
+
+    expect(screen.getByText(/Imported with notes/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Statement verification/ }));
+    // Without this line, an OCR-only REVIEW_RECOMMENDED would show a badge with every finding
+    // below it VERIFIED -- inexplicable, since OCR provenance isn't a finding at all.
+    expect(screen.getByText(/read using OCR/)).toBeInTheDocument();
   });
 });

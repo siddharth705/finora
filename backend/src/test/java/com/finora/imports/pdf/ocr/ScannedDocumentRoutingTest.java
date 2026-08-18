@@ -72,6 +72,39 @@ class ScannedDocumentRoutingTest {
                 .isEqualTo(rows(fromNative));
     }
 
+    /**
+     * The end-to-end proof that OCR provenance reaches {@code reliabilityStatus}, not just a unit
+     * test against synthetic inputs: routing -> {@code DocumentContext.recordTextSource} ->
+     * {@code ImportVerifier} -> {@code ImportReliabilityStatusDeriver}, on a real acquired
+     * document. A different fixture from the test above, deliberately: {@code
+     * buildReferenceNumberAndBalanceSample}'s own balances don't reconcile (it exists to test
+     * reference-number/balance-column layout, not financial consistency), so it reports
+     * NEEDS_ATTENTION on FAILED findings regardless of acquisition path and can't isolate OCR's
+     * own contribution. This fixture prints totals that DO reconcile, so native reads CLEAN and
+     * only acquisition differs between the two runs.
+     */
+    @Test
+    void ocrAcquisitionAloneAsksForReviewEvenWhenTheLedgerMatchesExactly() throws Exception {
+        byte[] source = PdfFixtureBuilder.buildReconciledSummaryNoBalanceColumnSample();
+        byte[] scanned = ScannedPdfFixture.scan(source);
+
+        var fromNative = generator(false).generateSectionsWithContext(
+                UUID.randomUUID(), "native.pdf", source, null);
+        var fromScan = generator(true).generateSectionsWithContext(
+                UUID.randomUUID(), "scanned.pdf", scanned, null);
+
+        assertThat(rows(fromScan))
+                .as("a scanned statement and its native original must reach the same ledger")
+                .isNotEmpty()
+                .isEqualTo(rows(fromNative));
+
+        assertThat(fromNative.sections().get(0).verification().reliabilityStatus())
+                .isEqualTo(com.finora.imports.ImportReliabilityStatus.CLEAN);
+        assertThat(fromScan.sections().get(0).verification().reliabilityStatus())
+                .as("OCR acquisition alone is enough to ask for review, even when the ledger matches exactly")
+                .isEqualTo(com.finora.imports.ImportReliabilityStatus.REVIEW_RECOMMENDED);
+    }
+
     /** And a native document is untouched by having an engine available. */
     @Test
     void deployingAnEngineDoesNotChangeANativeDocument() throws Exception {
