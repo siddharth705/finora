@@ -242,8 +242,16 @@ test.describe('Phase 10 — one user cannot see or shape another', () => {
       blocking.map((r) => r.table_name),
       'The set of tables that would block deleting a user has changed. If you added one, give it ' +
       'ON DELETE CASCADE unless it is an audit trail (those use SET NULL). If you fixed one, ' +
-      'remove it from this list. There is no account-deletion feature yet; this exists so the one ' +
-      'that eventually ships inherits a known list instead of a sequence of constraint violations.'
-    ).toEqual(['category_rules', 'password_change_sessions', 'password_history', 'relationships']);
+      'remove it from this list. Account deletion (UserAccountLifecycleService.requestDeletion / ' +
+      'AccountPurgeSweepService.purgeOne) never issues a raw DELETE FROM users -- it soft-deletes ' +
+      'and anonymizes instead -- so this stays a diagnostic against that scenario, not a ' +
+      'regression it has hit yet.'
+    ).toEqual([
+      'category_rules',
+      'password_change_sessions',
+      'password_history',
+      'phone_change_sessions',
+      'relationships',
+    ]);
   });
 });
