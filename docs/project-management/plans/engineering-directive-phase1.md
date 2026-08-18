@@ -46,6 +46,14 @@ Developing without a structured Git workflow is our highest technical risk. Ever
 
 **2. Branching Strategy**
 
+> **Reality check (updated):** The GitFlow model below reflects the original Phase 1
+> engineering directive. The repository has since adopted a trunk-based workflow instead —
+> `main` as the trunk, short-lived `feature/*` / `fix/*` / `chore/*` / `ci/*` / `docs/*`
+> branches, and releases as tags on `main` rather than a `release/*` branch. The current,
+> authoritative branching rules are maintained in
+> [`CONTRIBUTING.md`](../../../CONTRIBUTING.md#branching-strategy). The diagram below is
+> preserved as historical context for the original design decision, not as current practice.
+
 Direct commits to `main` or `develop` are strictly prohibited. We will adopt the following workflow:
 
 ```
@@ -132,6 +140,26 @@ Every feature developed after Phase 1 must strictly follow these engineering gui
 3. **Database Migration Control:** Direct manual edits to local or shared database schemas are prohibited. All schema modifications must be committed as versioned migration scripts via Flyway / Liquibase.
 4. **API Type-Safety Contract:** All backend REST endpoints must expose OpenAPI/Swagger specs (`/swagger-ui.html`). Frontend API interfaces must be generated or strongly typed directly against backend DTO models.
 5. **Centralized Exception Handling:** Global exception handlers (`@ControllerAdvice` / custom error boundaries) must catch errors and return uniform JSON error responses across the application.
+
+---
+
+## Existing Engineering Capabilities
+
+The following platform capabilities have since been built and documented elsewhere. Future
+phases should extend these rather than re-proposing parallel implementations from scratch.
+
+**Financial data integrity** — audit logging (`AuditLog` entity/repository) and document
+extraction fidelity are covered by
+[`financial-document-intelligence-principles.md`](../../architecture/system-design/financial-document-intelligence-principles.md),
+notably its "Never lose information" principle.
+
+**Observability** — Spring Boot Actuator health endpoints, Prometheus metrics via Micrometer,
+a `DatabaseHealthProvider`, and a `CorrelationIdFilter` for request tracing are already in the
+backend.
+
+**Deployment safety** — environment configuration, Docker Compose, and Railway deployment
+procedures are maintained in
+[`deployment-guide.md`](../../operations/deployment/deployment-guide.md).
 
 ---
 

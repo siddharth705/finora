@@ -96,10 +96,13 @@ main (the trunk; releases are tags on it)
   convention, not something tooling enforces.
 
 **This section used to describe a full gitflow** — a long-lived `develop` integration branch and
-`release/*` branches cut from it. That was never adopted: no `develop` branch has ever existed on
-the remote, and every pull request in the repository's history targets `main`. It is recorded here
-rather than quietly deleted because the instruction to "branch off `develop`" was followed by nobody
-and could not have been, and anyone who tried would have been debugging their own setup.
+`release/*` branches cut from it, matching the original proposal in
+[`docs/project-management/plans/engineering-directive-phase1.md`](docs/project-management/plans/engineering-directive-phase1.md).
+That was never adopted: no `develop` branch has ever existed on the remote, and every pull request
+in the repository's history targets `main`. It is recorded here rather than quietly deleted
+because the instruction to "branch off `develop`" was followed by nobody and could not have been,
+and anyone who tried would have been debugging their own setup. The branching strategy in this
+file supersedes that original proposal; the directive doc keeps a pointer back here.
 
 If a long-lived integration branch is wanted later, that is a decision to make deliberately — the
 trunk-based flow above is what the project actually does today.
