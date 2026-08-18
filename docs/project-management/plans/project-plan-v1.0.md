@@ -71,7 +71,7 @@ whose remaining 10% is the part that corrupts a balance is not 90% done for laun
 | 1 | Core product (auth, ledger, accounts, budgets, goals, dashboard, reports, admin portal) | 20% | 95% | 19.0 | A few unmigrated TanStack pages. (Password-policy convergence — D-6 — checked 2026-08-14: no drift existed, nothing to converge) |
 | 2 | Import pipeline (M1 reliability + M2 at-scale) | 20% | 78% | 15.6 | `PdfTableLocator` (1,358 lines) and `imports/product/` (14 classes) still **never reviewed** — the largest unquantified risk in the repo. A new, small, appropriately-scoped gap logged this morning (non-text header row on a real SBI statement), not built ad hoc |
 | 3 | **Financial correctness defects** | 10% | **90%** ▲ | 9.0 | All six original P0s (BH-001/003/004/005/006 + BH-023) CLOSED–VERIFIED and merged, including a real defect found in BH-006's own fix and corrected same night (see §12 changelog). Remainder is Round 2's unreviewed surface, not open tickets |
-| 4 | Security & privacy | 12% | 90% ▲ | 10.8 | BH-014, 017, 025, 032, 036, 037, 039, 046 all merged (three more confirmed closed 08-14 — see §4). Remainder is entirely non-bug-hunt now: no malware scan, no edge headers, no secret manager |
+| 4 | Security & privacy | 12% | 90% | 10.8 | BH-014, 017, 025, 032, 036, 037, 039, 046 all merged (three more confirmed closed 08-14 — see §4). **% held, not recomputed 2026-08-19** — an 11-agent security review (§4b) found 0 HIGH but 18 new MEDIUM/LOW hardening gaps (no malware scan, no edge headers, no secret manager, plus SEC-01…SEC-18); weighting those against this row honestly needs the owner's own sequencing call on which are launch-relevant, which §4b records but doesn't resolve |
 | 5 | Testing & QA readiness | 12% | 85% ▲ | 10.2 | BH-050, 053, 058 (swept) closed; suite at 2383+ tests. `e2e-nightly.yml` runs nightly and on-demand, confirmed green against a real triggered run (BH-048, §4) — the "never actually executed" framing carried in this row was itself stale, corrected 2026-08-14 |
 | 6 | Infrastructure & production readiness | 14% | 57% | 8.0 | **Unchanged across multiple reports now.** No restore drill, no load test, no secret manager, V73/V74 never applied to a non-test database |
 | 7 | Mobile app | 12% | 68% ▲ | 8.2 | **Apple enrolment submitted** (Individual) overnight — first real movement on the item flagged in every prior report. Google Play still not started. Still no confirmed run on a physical device |
@@ -460,6 +460,59 @@ checked" principle in reverse: unchecked *closed* work doesn't raise anything ei
 already handles it correctly, per the trace-tooling investigation closed 2026-08-11 — not a code
 gap); `"-"` placeholder noise in unparseable routing (cosmetic); CSV plural-header gap in
 `AMOUNT_HEADER_HINTS`.
+
+---
+
+## 4b. Security review — hardening backlog (new, 2026-08-19)
+
+**Why this section exists.** A vendor static-analysis tool ("CodeFlow") produced a 61-issue report
+for this repo. Spot-checking its "HIGH" findings against actual source found most were fabricated
+(quoted code that doesn't exist in the cited file) or keyword-matched false positives
+(`SpringApplication.run()` flagged as "dynamic code execution"). That report was discarded. In its
+place, an 11-agent, three-pass, read-only review ran directly against the code — full detail and
+methodology in
+[`2026-08-19-security-review-findings.md`](../../quality/bug-reports/2026-08-19-security-review-findings.md).
+**Reviewed `main` @ `9de2f7b4`, 17 commits behind `origin/main` at review time** — not yet re-checked
+against anything landed since.
+
+**Result: 0 HIGH/directly-exploitable findings, 18 MEDIUM/LOW hardening gaps (SEC-01…SEC-18).** Core
+controls — IDOR/ownership, admin RBAC, JWT/session handling, OAuth pre-hijack protection, query
+parameterization, CSRF, session fixation — were all checked directly and hold. The 18 items are
+**absences of a control, not broken ones** (no MFA yet, no idempotency key yet, no PDF decompression
+guard yet), which is a materially different risk class from what the vendor report implied. **Not
+itself a bug-hunt (no BH-0XX IDs) and not yet folded into §10's release gates** — sequencing below is
+the owner's own prioritization, recorded here rather than assumed by this plan.
+
+**Sprint 1 — Financial correctness** (highest priority: transaction integrity over general hardening)
+1. **SEC-06** — manual-transaction idempotency key (mirror the `import_sessions` unique-content-hash
+   pattern, V79 — same mechanism, unapplied to `POST /transactions`)
+2. **SEC-13** — application-level upper bound on manual transaction amount
+3. **SEC-02** — PDF import resource limits (page-count/decompressed-size ceiling before full parse)
+
+**Sprint 2 — Account security**
+4. **SEC-01** — move access token off `localStorage` (short-lived token + the HttpOnly refresh cookie
+   this app already has, rather than a full BFF rearchitecture)
+5. **SEC-07** — forgot-password timing-oracle fix (equalize response timing between existing/missing
+   accounts)
+6. **SEC-03** — admin-portal MFA (TOTP or WebAuthn/passkeys + recovery codes) — closing a gap on an
+   already-deployed surface, not a pre-launch gate (§1: deployment is real, currently unpopulated by
+   real customers)
+
+**Sprint 3 — Security maturity**
+7. **SEC-12** — admin audit entries capture what changed, not just who/when
+8. **SEC-10** — generic key/cert pattern in `.gitignore`
+9. **SEC-11** — CORS origin validation added to `ProductionConfigValidator`
+10. **SEC-16** — `/auth/refresh` added to the rate-limiter list, for consistency
+11. **SEC-04, SEC-05, SEC-14, SEC-15** — remaining LOW items (tracked BH-015 phone disclosure,
+    admin-endpoint pagination cap, register-enumeration message, password complexity)
+
+**Sprint 4 — Mobile hardening**, ranked by the owner as biometric lock > root detection > screenshot
+protection > certificate pinning (biometric is both the highest security value and the best UX; root
+detection is bypassable so lower-value than it looks; pinning deferred as usually a later-stage item)
+12. **SEC-09** — biometric app-lock
+13. **SEC-08** — root/jailbreak detection
+14. **SEC-17** — screenshot/screen-recording protection on balance/statement screens
+15. **SEC-18** — certificate-pinning evaluation
 
 ---
 
@@ -1050,6 +1103,7 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-19 | **Independent security review run to replace a discredited vendor report; 18-item hardening backlog added at §4b, owner-prioritized into 4 sprints.** A CodeFlow static-analysis report claiming 61 issues was spot-checked and found substantially fabricated (quoted code that doesn't exist in the cited files; framework boilerplate flagged via keyword matching). In its place, an 11-agent, three-pass, read-only review ran directly against `main` @ `9de2f7b4` (17 commits behind `origin/main` at review time): a tight exploitable-only pass (0 findings — core IDOR/RBAC/JWT/OAuth controls held), then two broadened passes covering defense-in-depth gaps and previously-uncovered areas (business logic/financial integrity, CSRF/enumeration, admin-role-escalation, mobile hardening, rate-limiting consistency), yielding 18 MEDIUM/LOW findings and 0 HIGH. Full detail in [`2026-08-19-security-review-findings.md`](../../quality/bug-reports/2026-08-19-security-review-findings.md). Owner reviewed the findings and sequenced them: Sprint 1 (financial correctness — transaction idempotency, amount bounds, PDF resource limits) ranked above Sprint 2 (account security — token storage, timing oracle, admin MFA) ranked above Sprint 3 (security maturity) and Sprint 4 (mobile hardening, itself ranked biometric lock > root detection > screenshot protection > cert pinning). §2 row 4's completion % held at 90%, not recomputed — weighting 18 new absence-of-control items against an existing bug-hunt-based figure needs the same owner sequencing call already captured in §4b, not a number asserted here | Same "verify before acting, record findings honestly, no product decisions made for the owner" discipline this plan already applies everywhere else — the vendor report would have wasted a remediation pass on fabricated issues had it not been checked first, and the sprint order is the owner's own call, recorded rather than assumed |
 | 2026-08-17 | **D-23 Phase 2 (mobile Google Sign-In) and D-26 (Apple Sign-In for iOS) built together, single PR, not yet merged.** Owner chose "build everything together" over sequencing options (Android-Google-only first, or the backend Apple verifier first) when asked how to pace Phase 2. Backend: `AppleIdTokenVerifierService` (new, mirrors the Google verifier, uses `com.auth0:jwks-rsa` since Apple has no first-party Java verification library), `POST /api/v1/auth/apple`, its own rate limiter and config; `AuthService.loginWithGoogle`/`loginWithApple` unified into one shared `loginWithOAuthIdentity` method rather than duplicating the security-sensitive account-hijack-protection body a second time. Mobile: `@react-native-google-signin/google-signin` + `expo-apple-authentication` installed, wired into `app.config.ts` (Google's config plugin reads the SAME Firebase credential files already used for phone-OTP, no new download convention), official brand-compliant buttons wired into `LoginScreen`/`RegisterScreen`. Backend suite 3000/3000, mobile suite 324/324. Self-review before commit caught and fixed one real bug (a DTO-level `@Pattern` on Apple's optional `fullName` that would have hard-failed the entire sign-in on an edge-case name-formatter value, instead of the safe email fallback one layer down already provides) and surfaced one pre-existing, explicitly out-of-scope gap (mobile has no reactivation-flow UI for ANY sign-in method yet, not something this PR introduces). Full detail in §11's D-23/D-26 rows. Real device testing still needs the owner to register OAuth clients in Google Cloud Console and Apple Developer Portal — not something this session can do | Direct execution of the owner's already-made D-23/D-26 decisions, logged per §12's "every merge gets a changelog row" practice; the self-review finding gets its own line per this plan's standing rule that a real bug found and fixed pre-merge is worth recording, not just silently fixed |
 | 2026-08-17 | **PR3-C merged (Your Financial Journey dashboard section) — PR #167, squash `84be206`.** `Dashboard.tsx` now renders D-25's 5 milestones as a vertical connector timeline (new `FinancialJourney.tsx` component, own dedicated test file), backed by PR3-B's `/dashboard/journey`. Event-based date labels ("Completed 2 days ago", falling back to a calendar date past ~30 days) — no fixed Day-N schedule, per D-25's own resolution. A small staggered fade/slide-in reveal on mount (new `journeyReveal` keyframe in `index.css`, respects `prefers-reduced-motion`). Deliberately **not** gated on `isEmpty` the way Financial Health Score is — `ACCOUNT_CREATED` is true from signup, so a brand-new account is exactly the case this is most useful for. Full suite (539/539), `tsc`/`eslint` clean, browser-verified live against an isolated backend+DB: watched a fresh signup go from 1/5 to 4/5 complete after creating a budget and a fully-funded goal via the real API, in both dark and light theme. This closes out D-22's original PR3 scope — PR3-D (funnel/analytics tracking) remains separate and un-started | Direct execution of D-25's already-decided scope, not a new decision; logged per §12's "every merge gets a changelog row" practice, same as PR3-A/PR3-B above |
 | 2026-08-17 | **D-26 decided: Phase 2 (mobile Google Sign-In) will also build Sign in with Apple for iOS, in the same phase.** Raised the moment D-23 Phase 1 shipped, before any Phase 2 scoping or code — Apple's own Guideline 4.8 requires Sign in with Apple once a third-party login is offered, confirmed via live search against Apple's current published guideline rather than assumed. Owner chose to build both together for iOS rather than deferring iOS's Google Sign-In or dropping it; Android is unaffected (Play Store has no equivalent rule) and proceeds with Google Sign-In alone. Widens Phase 2's real scope beyond D-23's original "just reuse the same backend endpoint, different client SDK" framing — a second backend token verifier and a second native SDK are now part of it. No date committed yet; Phase 2 has not started | Same "surface the real fork before building, not after" discipline as D-23's own three forks — an App Store rejection discovered after building would have cost far more than a five-minute check before scoping did |
