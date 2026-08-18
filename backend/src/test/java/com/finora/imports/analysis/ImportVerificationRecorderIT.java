@@ -114,6 +114,142 @@ class ImportVerificationRecorderIT extends AbstractIntegrationTest {
                 .doesNotContain("48221.50").doesNotContain("expectedBalance");
     }
 
+    /** The real shape a ROW_ACCOUNTING WARNING carries -- see {@code RowAccountingValidator}. */
+    private static ImportDto.VerificationReport rowAccountingWarning() {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("stagedTransactionCount", 124);
+        details.put("locatedRowCount", 129);
+        details.put("unparseableRowCount", 0);
+        details.put("droppedTransactionCandidateCount", 5);
+        details.put("droppedTransactionCandidateReasons", Map.of("BUCKET_EMPTY", 5L));
+        details.put("explanation", "5 rows outside the recognized transaction table had the shape "
+                + "of a transaction candidate and were discarded.");
+        return new ImportDto.VerificationReport(List.of(
+                new ImportDto.VerificationFinding("ROW_ACCOUNTING", "WARNING", details)));
+    }
+
+    @Test
+    void rowAccountingSReasonHistogramSurvivesTheRoundTripThroughTheDatabase() {
+        // This is the first evidence type a future observability pass (per-bank unknown rates,
+        // layout-drift alerts) will need to read back out of this table -- if the reason histogram
+        // doesn't survive the round trip, that future work has nothing to build on. The allowlist
+        // itself is unit-tested in ImportVerificationDetailAllowlistTest; this proves it still
+        // holds through Jackson and a real TEXT column, same as the balance-chain test above.
+        User user = user();
+        String reference = analysis(user.getId());
+
+        int written = recorder.recordForAnalysis(reference, List.of(rowAccountingWarning()));
+
+        assertThat(written).isEqualTo(1);
+        UUID sessionId = analysisRepository.findByReference(reference).orElseThrow().getId();
+        var stored = findingRepository.findByAnalysisSessionIdOrderBySectionIndexAscRuleAsc(sessionId);
+        assertThat(stored).extracting(ImportVerificationFinding::getRule).containsExactly("ROW_ACCOUNTING");
+        assertThat(stored).extracting(ImportVerificationFinding::getOutcome).containsExactly("WARNING");
+
+        String detailsJson = stored.get(0).getDetailsJson();
+        assertThat(detailsJson)
+                .as("counts and the reason histogram are the whole point of this evidence type")
+                .contains("droppedTransactionCandidateCount").contains("5")
+                .contains("droppedTransactionCandidateReasons").contains("BUCKET_EMPTY")
+                .contains("stagedTransactionCount").contains("locatedRowCount")
+                .as("our own authored prose isn't on the allowlist yet -- a pre-existing gap shared "
+                        + "with every other validator's own explanation field, not fixed here")
+                .doesNotContain("discarded");
+    }
+
+    /** The real shape a CREDIT_CARD_STATEMENT_TOTALS WARNING carries -- see
+     *  {@code CreditCardStatementTotalsValidator}. Every field but {@code explanation} is money read
+     *  off the statement's own billing-summary panel, which is exactly why none of it is expected
+     *  to survive persistence -- see the test below. */
+    private static ImportDto.VerificationReport creditCardStatementTotalsWarning() {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("previousBalance", new BigDecimal("10000.00"));
+        details.put("purchases", new BigDecimal("5000.00"));
+        details.put("cashAdvances", BigDecimal.ZERO);
+        details.put("fees", new BigDecimal("100.00"));
+        details.put("paymentsAndCredits", new BigDecimal("2000.00"));
+        details.put("totalAmountDue", new BigDecimal("13500.00"));
+        details.put("expectedTotalAmountDue", new BigDecimal("13100.00"));
+        details.put("difference", new BigDecimal("400.00"));
+        details.put("explanation", "The previous balance, purchases, cash advances, fees, and "
+                + "payments/credits this statement prints about itself do not add up to its own "
+                + "printed total amount due.");
+        return new ImportDto.VerificationReport(List.of(
+                new ImportDto.VerificationFinding("CREDIT_CARD_STATEMENT_TOTALS", "WARNING", details)));
+    }
+
+    @Test
+    void creditCardStatementTotalsCarriesOnlyItsOutcomeThroughPersistence_neverTheMoneyItReconciles() {
+        // Unlike ROW_ACCOUNTING's counts, every detail field this validator produces is money read
+        // straight off the statement -- the same category StatementTotalsValidator's own
+        // openingBalance/closingBalance/totalCredits/totalDebits already stay off the allowlist for
+        // (see whatComesBackOutOfTheColumnCarriesNoBalances above). This confirms that stripping is
+        // deliberate and consistent for this validator too, not an oversight to "fix" later by
+        // widening the allowlist to include a real account balance.
+        User user = user();
+        String reference = analysis(user.getId());
+
+        int written = recorder.recordForAnalysis(reference, List.of(creditCardStatementTotalsWarning()));
+
+        assertThat(written).isEqualTo(1);
+        UUID sessionId = analysisRepository.findByReference(reference).orElseThrow().getId();
+        var stored = findingRepository.findByAnalysisSessionIdOrderBySectionIndexAscRuleAsc(sessionId);
+        assertThat(stored).extracting(ImportVerificationFinding::getRule)
+                .containsExactly("CREDIT_CARD_STATEMENT_TOTALS");
+        assertThat(stored).extracting(ImportVerificationFinding::getOutcome).containsExactly("WARNING");
+
+        // Every field this validator produces is money, so nothing on the allowlist matches and
+        // writeDetails returns null outright -- see its own doc comment ("null when nothing
+        // structural survived"). Not merely "no money leaked": literally no details column at all.
+        assertThat(stored.get(0).getDetailsJson())
+                .as("the outcome column already carries the one fact worth persisting for this rule")
+                .isNull();
+    }
+
+    /** The real shape a CREDIT_CARD_FLOW_RECONCILIATION WARNING carries -- see
+     *  {@code CreditCardFlowReconciliationValidator}. {@code evidenceLevel} is a bounded enum
+     *  constant, the same category {@code extractionMethod} is for CREDIT_CARD_STATEMENT_TOTALS --
+     *  deliberately not on the allowlist yet either, so it is expected to be stripped here too,
+     *  alongside the four money fields and the explanation prose. */
+    private static ImportDto.VerificationReport creditCardFlowReconciliationWarning() {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("evidenceLevel", "FULL_SUMMARY_RECONCILIATION");
+        details.put("expectedExpenseAmount", new BigDecimal("5000.00"));
+        details.put("observedExpenseAmount", new BigDecimal("3000.00"));
+        details.put("differenceExpenseAmount", new BigDecimal("-2000.00"));
+        details.put("expectedIncomeAmount", new BigDecimal("4000.00"));
+        details.put("observedIncomeAmount", new BigDecimal("4000.00"));
+        details.put("differenceIncomeAmount", BigDecimal.ZERO);
+        details.put("explanation", "The extracted transactions, summed by direction, do not match "
+                + "this statement's own printed purchases and/or payments/credits totals. This does "
+                + "not identify which side is wrong -- only that they disagree.");
+        return new ImportDto.VerificationReport(List.of(
+                new ImportDto.VerificationFinding("CREDIT_CARD_FLOW_RECONCILIATION", "WARNING", details)));
+    }
+
+    @Test
+    void creditCardFlowReconciliationCarriesOnlyItsOutcomeThroughPersistence_neverTheAmountsItCompares() {
+        // Same posture as CREDIT_CARD_STATEMENT_TOTALS above: every detail field this validator
+        // produces is either money read off the statement, money summed from our own extracted
+        // rows, a not-yet-allowlisted enum, or prose -- so nothing survives and writeDetails
+        // returns null outright, not merely "no money leaked".
+        User user = user();
+        String reference = analysis(user.getId());
+
+        int written = recorder.recordForAnalysis(reference, List.of(creditCardFlowReconciliationWarning()));
+
+        assertThat(written).isEqualTo(1);
+        UUID sessionId = analysisRepository.findByReference(reference).orElseThrow().getId();
+        var stored = findingRepository.findByAnalysisSessionIdOrderBySectionIndexAscRuleAsc(sessionId);
+        assertThat(stored).extracting(ImportVerificationFinding::getRule)
+                .containsExactly("CREDIT_CARD_FLOW_RECONCILIATION");
+        assertThat(stored).extracting(ImportVerificationFinding::getOutcome).containsExactly("WARNING");
+
+        assertThat(stored.get(0).getDetailsJson())
+                .as("the outcome column already carries the one fact worth persisting for this rule")
+                .isNull();
+    }
+
     @Test
     void eachSectionOfACompositeStatementKeepsItsOwnFindings() {
         // A composite statement's sections have separate balance chains and one can verify while

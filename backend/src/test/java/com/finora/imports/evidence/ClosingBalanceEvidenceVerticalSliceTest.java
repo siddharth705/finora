@@ -10,6 +10,7 @@ import com.finora.imports.ClosingBalanceGuard;
 import com.finora.imports.ColumnAmbiguityValidator;
 import com.finora.imports.DuplicateDetector;
 import com.finora.imports.ImportVerifier;
+import com.finora.imports.RowAccountingValidator;
 import com.finora.imports.StatementTotalsValidator;
 import com.finora.imports.SummaryTotalsValidator;
 import com.finora.imports.TestRuleEngines;
@@ -91,7 +92,7 @@ class ClosingBalanceEvidenceVerticalSliceTest {
                 new PdfMetadataExtractor(), transactionNormalizer, ProductDiscovery.standard(),
                 new ProductAttributeExtractor(),
                 new ImportVerifier(new BalanceChainValidator(), new StatementTotalsValidator(),
-                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator()),
+                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator(), new com.finora.imports.CreditCardFlowReconciliationValidator()),
                 TestRuleEngines.empty());
     }
 

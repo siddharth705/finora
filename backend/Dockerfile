@@ -9,6 +9,14 @@ RUN mvn package -DskipTests -B
 FROM eclipse-temurin:25-jre-alpine
 WORKDIR /app
 
+# The engine behind TesseractRecogniser (com.finora.imports.pdf.ocr) -- an operational dependency
+# of THIS deployment, not a library the build pulls in. See
+# docs/engineering/import/ocr-engine-evaluation.md for the evidence that justified deploying it:
+# measured through the real parser, not just for character accuracy. -data-eng is separate from
+# the engine package because Alpine ships trained-data packages per language rather than bundling
+# English into the base install.
+RUN apk add --no-cache tesseract-ocr tesseract-ocr-data-eng
+
 # Which commit this image was built from, surfaced by Platform Diagnostics.
 #
 # git-commit-id-maven-plugin cannot supply it here: it reads a .git directory at build time, and

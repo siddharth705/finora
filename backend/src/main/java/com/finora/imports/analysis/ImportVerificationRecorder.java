@@ -71,6 +71,9 @@ public class ImportVerificationRecorder {
             // "66 located, 0 staged" says the table was read and every row rejected, which is a
             // different failure from "0 located, 0 staged".
             "stagedTransactionCount", "locatedRowCount",
+            // ROW_ACCOUNTING's own counts -- same category as the pair above: facts about how many
+            // of OUR rows landed in which bucket, never a value read off the statement.
+            "unparseableRowCount", "droppedTransactionCandidateCount",
             "suspectedCause");
 
     /**
@@ -87,6 +90,16 @@ public class ImportVerificationRecorder {
      * actionable rather than merely present.
      */
     private static final Set<String> VOCABULARY_LIST_KEYS = Set.of("mismatches");
+
+    /**
+     * Reason-code histograms, kept whole: every key is one of {@code PdfTableLocator}'s own stable
+     * machine codes (e.g. {@code "PAGE_FOOTER_OR_CLOSING_MARKER"}), every value a count of our own
+     * rows -- neither can hold a balance, an amount, a narration or a cell copied out of the
+     * document, the same guarantee {@link #STRUCTURAL_KEYS} makes for a single count. This is the
+     * one piece of ROW_ACCOUNTING evidence that answers "why", not just "how many" -- without it,
+     * a persisted WARNING says something was dropped and nothing about which kind.
+     */
+    private static final Set<String> HISTOGRAM_KEYS = Set.of("droppedTransactionCandidateReasons");
 
     /** {@code reason} explains why a rule could not run. Our own prose, but bounded on principle. */
     private static final int MAX_REASON_LENGTH = 200;
@@ -314,7 +327,7 @@ public class ImportVerificationRecorder {
      * Rebuilds a rule's details from structural facts only.
      *
      * <p>Pure, static and independently testable on purpose — see the class comment. Anything not
-     * named in one of the three allowlists above is absent from the result by construction, so a
+     * named in one of the four allowlists above is absent from the result by construction, so a
      * detail key added by a future rule does not reach the database until someone decides it should.
      */
     public static Map<String, Object> structuralDetailsOf(Map<String, Object> details) {
@@ -333,6 +346,13 @@ public class ImportVerificationRecorder {
             } else if (VOCABULARY_LIST_KEYS.contains(key) && value instanceof Collection<?> items) {
                 safe.put(key, items.stream().filter(java.util.Objects::nonNull)
                         .map(Object::toString).toList());
+            } else if (HISTOGRAM_KEYS.contains(key) && value instanceof Map<?, ?> counts) {
+                // Both halves already structural (reason code -> our own row count), so the whole
+                // map survives -- re-keyed through toString() only to satisfy the JSON writer,
+                // never because the values need shaping the way a Collection's contents did above.
+                Map<String, Object> copy = new LinkedHashMap<>();
+                for (Map.Entry<?, ?> e : counts.entrySet()) copy.put(String.valueOf(e.getKey()), e.getValue());
+                safe.put(key, copy);
             } else if ("reason".equals(key) && value instanceof String reason) {
                 safe.put(key, reason.length() <= MAX_REASON_LENGTH
                         ? reason : reason.substring(0, MAX_REASON_LENGTH) + "…");

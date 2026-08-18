@@ -6,11 +6,13 @@ import java.util.List;
 /**
  * A candidate character recogniser, as the evaluation sees it.
  *
- * <h2>Evaluation scope, deliberately</h2>
+ * <h2>Evaluation scope, originally</h2>
  *
- * This lives in test sources. Nothing in production depends on it, and no engine dependency enters
- * the build because of it. The point of OCR-3A is to decide WHICH engine, and an interface that
- * production already used would have pre-committed to the answer.
+ * OCR-3A defined this in test sources deliberately: the point was to decide WHICH engine, and an
+ * interface production already used would have pre-committed to the answer. It moved to main
+ * scope only once that decision was made (see {@code TesseractRecogniser}) — the contract itself
+ * is unchanged, and {@code OcrScorecardEmitter}'s comparison of candidates still lives in test
+ * sources against this same interface.
  *
  * <p>Kept minimal on purpose: a candidate is asked for text with positions and confidence, and
  * nothing else. Anything richer would encode one engine's model of a document into the contract

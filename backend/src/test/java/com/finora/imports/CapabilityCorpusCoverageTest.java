@@ -116,6 +116,18 @@ class CapabilityCorpusCoverageTest {
         DECLARED_WITHOUT_A_TRACE.put("GRID_METADATA_TRAILING_LABEL", "no trace");
         DECLARED_WITHOUT_A_TRACE.put("FINANCIAL_PRODUCT_CLASSIFICATION", "no trace");
         DECLARED_WITHOUT_A_TRACE.put("PRINTED_SUMMARY_TOTALS", "no trace; newly registered");
+        DECLARED_WITHOUT_A_TRACE.put("CREDIT_CARD_SUMMARY_TOTALS",
+                "no trace yet -- CreditCardSummaryExtractorTest exercises the GRID strategy on "
+                        + "synthetic fixtures reproducing real observed shapes (a clean stacked grid, "
+                        + "and the row-merge recovery motivated by a real Axis statement), but no "
+                        + "committed trace fixture exists for either yet. See the architecture doc's "
+                        + "Credit Card Direction Evidence Study addendum for the measured real-corpus "
+                        + "fire rate.");
+        DECLARED_WITHOUT_A_TRACE.put("CREDIT_CARD_SUMMARY_INLINE_LABEL_VALUE",
+                "no trace yet -- same situation as CREDIT_CARD_SUMMARY_TOTALS above, for the "
+                        + "INLINE_LABEL_VALUE strategy motivated by a real AU statement's label-left/value-right "
+                        + "layout. Covered by synthetic fixtures in CreditCardSummaryExtractorTest, "
+                        + "not yet by a committed real-document trace.");
         // RIGHT_ALIGNED_AMOUNTS was here, with the note "either the three traces genuinely avoid
         // right-aligned amount columns, or the recording sits on a path they do not take. Measure
         // before capturing." It was measured, and the answer was a third thing: the two HDFC
@@ -145,6 +157,14 @@ class CapabilityCorpusCoverageTest {
                 "no trace, and none is planned -- same reasoning as INFERRED_HEADERLESS_LAYOUT. "
                         + "Covered instead by TwoLineDateBlockInferenceTest's fully hand-synthesized "
                         + "fixtures.");
+        DECLARED_WITHOUT_A_TRACE.put("PHYSICAL_ROW_DEDUP_EVIDENCE",
+                "no trace, and none is planned -- same reasoning as INFERRED_HEADERLESS_LAYOUT: the "
+                        + "one real document known to exercise the headerless path (a real SBI savings "
+                        + "statement) contains no repeated physical row for this to remove, so no real "
+                        + "trace has ever activated it, and a synthesized trace would need to reproduce "
+                        + "the same balance-chain-scoring geometry INFERRED_HEADERLESS_LAYOUT's own "
+                        + "entry explains. Covered instead by HeaderlessLayoutInferenceTest's fully "
+                        + "hand-synthesized reprinted-row fixture.");
         DECLARED_WITHOUT_A_TRACE.put("CARD_ENDING_DIGITS_IDENTITY",
                 "no trace, and none is planned -- same reasoning as INFERRED_HEADERLESS_LAYOUT: the "
                         + "one real document that motivates it (a real AU Small Finance Bank "

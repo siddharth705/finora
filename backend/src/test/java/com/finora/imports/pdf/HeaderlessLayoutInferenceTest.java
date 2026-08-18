@@ -88,8 +88,12 @@ class HeaderlessLayoutInferenceTest {
         assertThat(staged.get(1)).containsEntry("Credit", "20000.00");
         assertThat(staged.get(2)).containsEntry("Debit", "1500.00");
         assertThat(staged.get(4)).containsEntry("Credit", "200.00").containsEntry("Balance", "27900.00");
-        assertThat(ctx.capabilities().stream().map(c -> c.capability()))
-                .contains("INFERRED_HEADERLESS_LAYOUT");
+        List<String> capabilities = ctx.capabilities().stream().map(c -> c.capability()).toList();
+        assertThat(capabilities).contains("INFERRED_HEADERLESS_LAYOUT");
+        assertThat(capabilities)
+                .as("this baseline document has no repeated row -- the capability marker must not "
+                        + "fire just because the headerless path ran, only when it actually removes one")
+                .doesNotContain("PHYSICAL_ROW_DEDUP_EVIDENCE");
     }
 
     @Test
@@ -109,6 +113,31 @@ class HeaderlessLayoutInferenceTest {
         assertThat(doc.sections().get(0).rows()).hasSize(5);
         assertThat(ctx.capabilities().stream().map(c -> c.capability()))
                 .contains("INFERRED_HEADERLESS_LAYOUT");
+    }
+
+    @Test
+    void adjacentDuplicateRow_isRecordedAsRowAccountingEvidenceRatherThanSilentlyDropped() {
+        // Same fixture as adjacentDuplicateRow_isDroppedFromOutputAndScoring -- this asserts the
+        // Input Fate Accounting side of the same drop: the reprint must not just be absent from
+        // output, it must leave a trace RowAccountingValidator can turn into a WARNING.
+        List<PositionedText> positioned = new ArrayList<>();
+        List<List<PositionedText>> rows = baselineTransactions();
+        rows.add(transaction("05/01/2026", "REFUND FROM ONLINE MERCHANT STORE", "-", "200.00", "27900.00", 388f));
+        for (List<PositionedText> row : rows) positioned.addAll(row);
+
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
+
+        List<PdfTableLocator.DroppedCandidateRow> dropped =
+                doc.sections().get(0).evidence().droppedTransactionCandidates();
+        assertThat(dropped).hasSize(1);
+        assertThat(dropped.get(0).reason()).isEqualTo("REPEATED_PHYSICAL_ROW_REMOVED");
+        assertThat(dropped.get(0).signals()).containsExactlyInAnyOrder("DATE_PRESENT", "AMOUNT_PRESENT");
+        assertThat(ctx.capabilities().stream().map(c -> c.capability()))
+                .as("recorded only because a removal actually happened, not merely because this "
+                        + "code path ran -- a future corpus sweep can distinguish 'path exercised, "
+                        + "nothing to remove' from 'path exercised, this safety net fired'")
+                .contains("PHYSICAL_ROW_DEDUP_EVIDENCE");
     }
 
     @Test
