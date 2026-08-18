@@ -400,14 +400,43 @@ public class PdfTableLocator {
      *  the AU auxiliaryText propagation fix). Evidence about a row's SHAPE never needs its VALUE. */
     public record DroppedCandidateRow(String reason, java.util.Set<String> signals) {}
 
+    /**
+     * A section whose own accepted header may be an incomplete fallback, not the document's real
+     * transaction header -- built from a real corpus study, not a hypothesis. Deliberately narrow:
+     * fires only when ALL THREE hold together, because each alone was measured and rejected --
+     * see {@link #LOW_CONFIDENCE_TRANSACTION_HEADER_COLUMN_COUNT}'s own doc comment for exactly
+     * what the corpus study found. Never claims the section IS wrong, only that reconstruction
+     * left uncertainty a reviewer should see -- the same "candidate, not a claim" posture
+     * {@link DroppedCandidateRow} already takes. {@code vocabularySignals} carries which {@link
+     * #AMOUNT_COLUMN_HINTS} words were present on the row that failed to merge (never the row's
+     * own text -- see {@code DroppedCandidateRow}'s own doc comment on why raw content never
+     * belongs in this evidence).
+     *
+     * <p>{@code sectionIndex} exists because a document is not one verdict -- a real SBI credit-
+     * card statement's first section (a primary cardholder's own transactions) reconstructs
+     * correctly while its second (a supplementary cardholder's transactions, introduced by a
+     * banner mid-document) does not; a document-level signal alone would have reported that
+     * document as healthy, exactly the class of blind spot a per-section total would create.
+     * Deliberately does NOT carry an unparseable-row count: that fact belongs to normalization
+     * (see {@code TransactionNormalizer}), a stage this class does not reach -- correlate this
+     * finding's {@code sectionIndex} against that section's own {@code StagedAccountSection}
+     * (built later, by {@code PdfPreviewGenerator}) rather than have this record guess at, or
+     * be silently stale about, a fact it cannot itself observe.
+     */
+    public record HeaderReconstructionFinding(String reason, int sectionIndex,
+                                                java.util.Set<String> vocabularySignals,
+                                                int acceptedHeaderColumnCount) {}
+
     /** Everything {@link PdfTableLocator} can say about a section's OWN extraction -- structural,
      *  never financial-interpretation -- beyond its rows and auxiliary text. A dedicated object
      *  rather than more fields directly on {@link LocatedSection}, so this stays the one place new
-     *  structural evidence (dropped-candidate rows today; page coverage, layout warnings, or
-     *  further row-fate detail later) accumulates, instead of {@code LocatedSection} itself
-     *  slowly becoming a dumping ground for every future signal this class learns to compute. */
-    public record ExtractionEvidence(List<DroppedCandidateRow> droppedTransactionCandidates) {
-        static final ExtractionEvidence NONE = new ExtractionEvidence(List.of());
+     *  structural evidence (dropped-candidate rows, header-reconstruction findings today; page
+     *  coverage or further row-fate detail later) accumulates, instead of {@code LocatedSection}
+     *  itself slowly becoming a dumping ground for every future signal this class learns to
+     *  compute. */
+    public record ExtractionEvidence(List<DroppedCandidateRow> droppedTransactionCandidates,
+                                      List<HeaderReconstructionFinding> headerReconstructionFindings) {
+        static final ExtractionEvidence NONE = new ExtractionEvidence(List.of(), List.of());
     }
 
     /** One detected account/table within a document -- {@code auxiliaryText} is the free-standing
@@ -557,6 +586,12 @@ public class PdfTableLocator {
         // to be dropped with no trace at all. Threaded and reset exactly like pendingAuxiliary --
         // see closeCurrentSection.
         List<DroppedCandidateRow> pendingDroppedCandidates = new ArrayList<>();
+        // Header-reconstruction evidence: rows that failed a multi-line header merge while already
+        // carrying strong transaction-ledger vocabulary (see recordIfHeaderReconstructionCandidate).
+        // Threaded and reset exactly like pendingDroppedCandidates -- see closeCurrentSection, which
+        // is the only place this turns into a HeaderReconstructionFinding, once the section's own
+        // accepted column count is known.
+        List<java.util.Set<String>> pendingHeaderReconstructionVocab = new ArrayList<>();
         List<Map<String, String>> currentRows = null;
         List<String> headerNames = null;
         List<Float> headerAnchors = null;
@@ -654,9 +689,10 @@ public class PdfTableLocator {
                 // section, not lose it along with the boilerplate that follows.
                 if (currentRows != null) {
                     PendingState closed = closeCurrentSection(currentRows, pendingLeading, headerNames,
-                            pendingAuxiliary, pendingDroppedCandidates, sections, ctx);
+                            pendingAuxiliary, pendingDroppedCandidates, pendingHeaderReconstructionVocab, sections, ctx);
                     pendingAuxiliary = closed.auxiliary();
                     pendingDroppedCandidates = closed.droppedCandidates();
+                    pendingHeaderReconstructionVocab = closed.headerReconstructionVocab();
                     currentRows = null;
                 }
                 // This explicit boundary supersedes any still-unresolved ACCOUNT_IDENTITY_LINE
@@ -706,13 +742,15 @@ public class PdfTableLocator {
                 }
                 if (currentRows != null) {
                     PendingState closed = closeCurrentSection(currentRows, pendingLeading, headerNames,
-                            pendingAuxiliary, pendingDroppedCandidates, sections, ctx);
+                            pendingAuxiliary, pendingDroppedCandidates, pendingHeaderReconstructionVocab, sections, ctx);
                     pendingAuxiliary = closed.auxiliary();
                     pendingDroppedCandidates = closed.droppedCandidates();
+                    pendingHeaderReconstructionVocab = closed.headerReconstructionVocab();
                     if (ctx != null) ctx.record("COMPOSITE_STATEMENT");
                 } else {
                     pendingAuxiliary = new ArrayList<>();
                     pendingDroppedCandidates = new ArrayList<>();
+                    pendingHeaderReconstructionVocab = new ArrayList<>();
                 }
                 currentRows = null;
                 headerNames = null;
@@ -801,10 +839,24 @@ public class PdfTableLocator {
             // scores, the merge can only RENAME columns that were going to exist anyway, so it runs
             // under a much stricter one (P-001 Fix B, measured on a real Central Bank of India
             // statement whose header's second band was otherwise consumed as a data row).
-            WrappedHeader wrapped = wrappedHeaderAt(rows, rowIndex, looksLikeHeaderRow(row));
+            boolean rowAlreadyScoresAlone = looksLikeHeaderRow(row);
+            WrappedHeader wrapped = wrappedHeaderAt(rows, rowIndex, rowAlreadyScoresAlone);
             if (wrapped != null) {
                 headerRow = wrapped.row();
                 wrappedHeaderLines = wrapped.extraLines();
+            } else if (!rowAlreadyScoresAlone && carriesNoDataValue(row)) {
+                // Header-reconstruction evidence: this row did not score as a header alone AND a
+                // multi-line merge with what follows it failed. carriesNoDataValue is required here
+                // too, not just inside wrappedHeaderAt itself -- without it, this branch is also
+                // reached by every ORDINARY transaction data row in the document (wrappedHeaderAt
+                // returns null immediately for any row carrying a date or number, which is every
+                // real transaction), and a narration that happens to mention two amount words
+                // ("UPI CREDIT TRANSFER BALANCE ADJUSTMENT") would wrongly record evidence against
+                // a row that was never a header candidate at all. Recorded here, not decided here --
+                // see recordIfHeaderReconstructionCandidate's own doc comment for the vocabulary
+                // gate, and closeCurrentSection for the only place this can turn into a real finding
+                // (once this section's own accepted column count is known).
+                recordIfHeaderReconstructionCandidate(row, pendingHeaderReconstructionVocab);
             }
             if (looksLikeHeaderRow(headerRow)) {
                 row = headerRow;
@@ -837,9 +889,10 @@ public class PdfTableLocator {
                     // identity line since this section opened -- fallback signal for a new section
                     // in a document without a banner line.
                     PendingState closed = closeCurrentSection(currentRows, pendingLeading, headerNames,
-                            pendingAuxiliary, pendingDroppedCandidates, sections, ctx);
+                            pendingAuxiliary, pendingDroppedCandidates, pendingHeaderReconstructionVocab, sections, ctx);
                     pendingAuxiliary = closed.auxiliary();
                     pendingDroppedCandidates = closed.droppedCandidates();
+                    pendingHeaderReconstructionVocab = closed.headerReconstructionVocab();
                     if (ctx != null) ctx.record("COMPOSITE_STATEMENT");
                     // Required companion to the ACCOUNT_IDENTITY_LINE block above: THIS section
                     // (the one just closed) is being replaced. If a contradicting identity line
@@ -1082,7 +1135,7 @@ public class PdfTableLocator {
         }
         if (currentRows != null) {
             PendingState closed = closeCurrentSection(currentRows, pendingLeading, headerNames,
-                    pendingAuxiliary, pendingDroppedCandidates, sections, ctx);
+                    pendingAuxiliary, pendingDroppedCandidates, pendingHeaderReconstructionVocab, sections, ctx);
             // closeCurrentSection's auxiliary is non-empty only when it just suppressed a
             // payment-summary panel instead of staging a section (the ordinary path always
             // returns a fresh, empty list for whatever section comes next). This is the end of the
@@ -1288,11 +1341,29 @@ public class PdfTableLocator {
     }
 
     /** Paired return for {@link #closeCurrentSection} -- {@code pendingAuxiliary}/
-     *  {@code pendingDroppedCandidates} always travel together (both carry forward unchanged on
-     *  suppression, both reset to fresh empty lists once a real section is staged), so returning
-     *  them as one record keeps that pairing from drifting apart at a call site the way two
-     *  separately-returned values could. */
-    private record PendingState(List<String> auxiliary, List<DroppedCandidateRow> droppedCandidates) {}
+     *  {@code pendingDroppedCandidates}/{@code pendingHeaderReconstructionVocab} always travel
+     *  together (all carry forward unchanged on suppression, all reset to fresh empty lists once a
+     *  real section is staged), so returning them as one record keeps that pairing from drifting
+     *  apart at a call site the way three separately-returned values could. */
+    private record PendingState(List<String> auxiliary, List<DroppedCandidateRow> droppedCandidates,
+                                 List<java.util.Set<String>> headerReconstructionVocab) {}
+
+    /**
+     * Column count below which an accepted header is treated as a suspiciously small fallback,
+     * not just a genuinely small real table. Evidence threshold derived from a real corpus study
+     * (24 real documents), not a universal rule about PDF statements -- a document with a real
+     * "Date | Amount | Description" 3-column ledger is completely normal and must not be flagged
+     * on column count alone (measured directly: several correct documents in the study corpus
+     * stage against 4-column headers). This constant is read ONLY alongside {@link
+     * #recordIfHeaderReconstructionCandidate}'s own vocabulary signal in {@link
+     * #closeCurrentSection} -- see {@link HeaderReconstructionFinding}'s own doc comment for why
+     * neither condition alone was trustworthy in the corpus measurement (a low column count with
+     * no vocabulary evidence, or vocabulary evidence with a normal column count, both occur on
+     * real, correctly-extracted documents). Six months from now, do not read a document clearing
+     * this threshold as proof its header is wrong -- it is one of two required signals, not a
+     * verdict by itself.
+     */
+    private static final int LOW_CONFIDENCE_TRANSACTION_HEADER_COLUMN_COUNT = 3;
 
     /** Closes whatever section is currently open: flushes any pending leading narration, then
      *  either stages it as a real {@link LocatedSection} or -- when {@link
@@ -1300,6 +1371,14 @@ public class PdfTableLocator {
      *  instead of a genuine transaction table -- folds its rows back into auxiliary text instead,
      *  the same "never lose information, just stop calling it a table" treatment {@link
      *  #inferTwoLineDateBlockSection}'s own unmatched rows already get.
+     *
+     *  <p>Also where {@link HeaderReconstructionFinding} is actually built, and the only place it
+     *  can be: the section's own accepted column count (the union of every staged row's keys,
+     *  matching {@code detectedColumns}'s already-established approach elsewhere in this package)
+     *  is not known until every row belonging to it has been collected. Fires only when the
+     *  column count clears {@link #LOW_CONFIDENCE_TRANSACTION_HEADER_COLUMN_COUNT} AND at least
+     *  one qualifying row was recorded during the scan that just closed -- see {@link
+     *  #recordIfHeaderReconstructionCandidate} for what qualifies.
      *
      *  @return the {@link PendingState} the caller should keep accumulating into for whatever
      *  comes next -- fresh empty lists after a real section is staged (its own evidence now
@@ -1309,17 +1388,30 @@ public class PdfTableLocator {
      *  than being silently dropped the moment the caller's own "start fresh" reset ran. */
     private PendingState closeCurrentSection(List<Map<String, String>> currentRows, Map<String, String> pendingLeading,
             List<String> headerNames, List<String> pendingAuxiliary,
-            List<DroppedCandidateRow> pendingDroppedCandidates, List<LocatedSection> sections, DocumentContext ctx) {
+            List<DroppedCandidateRow> pendingDroppedCandidates,
+            List<java.util.Set<String>> pendingHeaderReconstructionVocab,
+            List<LocatedSection> sections, DocumentContext ctx) {
         flushPendingLeading(currentRows, pendingLeading);
         if (looksLikePaymentSummaryPanel(headerNames, currentRows)) {
             for (Map<String, String> row : currentRows) {
                 pendingAuxiliary.add(String.join(" ", row.values()));
             }
             if (ctx != null) ctx.record("PAYMENT_SUMMARY_PANEL_SUPPRESSED");
-            return new PendingState(pendingAuxiliary, pendingDroppedCandidates);
+            return new PendingState(pendingAuxiliary, pendingDroppedCandidates, pendingHeaderReconstructionVocab);
         }
-        sections.add(new LocatedSection(pendingAuxiliary, currentRows, new ExtractionEvidence(pendingDroppedCandidates)));
-        return new PendingState(new ArrayList<>(), new ArrayList<>());
+        java.util.Set<String> acceptedColumns = new java.util.LinkedHashSet<>();
+        for (Map<String, String> row : currentRows) acceptedColumns.addAll(row.keySet());
+        List<HeaderReconstructionFinding> headerFindings = new ArrayList<>();
+        if (!pendingHeaderReconstructionVocab.isEmpty()
+                && acceptedColumns.size() <= LOW_CONFIDENCE_TRANSACTION_HEADER_COLUMN_COUNT) {
+            java.util.Set<String> combinedVocab = new java.util.LinkedHashSet<>();
+            for (java.util.Set<String> vocab : pendingHeaderReconstructionVocab) combinedVocab.addAll(vocab);
+            headerFindings.add(new HeaderReconstructionFinding(
+                    "TRANSACTION_HEADER_RECONSTRUCTION_UNCERTAIN", sections.size(), combinedVocab, acceptedColumns.size()));
+        }
+        sections.add(new LocatedSection(pendingAuxiliary, currentRows,
+                new ExtractionEvidence(pendingDroppedCandidates, headerFindings)));
+        return new PendingState(new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
     }
 
     /**
@@ -3172,6 +3264,34 @@ public class PdfTableLocator {
         }
     }
 
+    /**
+     * Header-reconstruction evidence: records a row's transaction-ledger vocabulary when it failed
+     * a multi-line header merge (see the caller's own comment for exactly when this is invoked).
+     * Corpus-measured gate, not a guess: requires TWO OR MORE DISTINCT {@link #AMOUNT_COLUMN_HINTS}
+     * words, not just an occurrence count -- a real document's own two-column-layout tariff/legal
+     * pages repeat a single word ("credit" appearing in "Credit Card Number", "Credit Limit",
+     * "Available Credit Limit") often enough that a plain count alone produced false positives in
+     * the corpus study this evidence is built from. Distinct-word diversity alone was ALSO measured
+     * and found insufficient by itself (a real, correctly-extracted document's own account-summary
+     * grid can legitimately combine two or three of these words) -- see {@link
+     * #LOW_CONFIDENCE_TRANSACTION_HEADER_COLUMN_COUNT}'s own doc comment for the second signal this
+     * is only ever combined with, in {@link #closeCurrentSection}, never here alone.
+     */
+    private void recordIfHeaderReconstructionCandidate(List<PositionedText> row,
+                                                         List<java.util.Set<String>> pendingHeaderReconstructionVocab) {
+        java.util.Set<String> distinctWords = new java.util.LinkedHashSet<>();
+        for (PositionedText cell : row) {
+            String text = cell.text().trim();
+            if (text.isEmpty()) continue;
+            for (String word : AMOUNT_COLUMN_HINTS) {
+                if (matchesAnyHint(text, List.of(word))) distinctWords.add(word);
+            }
+        }
+        if (distinctWords.size() >= 2) {
+            pendingHeaderReconstructionVocab.add(distinctWords);
+        }
+    }
+
     /** Drops the second of any two ADJACENT transaction-shaped rows whose full cell text is
      *  identical. Exists for a real artifact on the motivating document: it reprints its last
      *  transaction row again at the top of the following page, right before the statement-summary
@@ -3607,8 +3727,11 @@ public class PdfTableLocator {
             return null;
         }
         if (ctx != null) ctx.record("INFERRED_HEADERLESS_LAYOUT");
+        // Header-reconstruction evidence is out of scope for this path: there is no header-merge
+        // decision to have failed here at all, by construction -- this path only ever runs once
+        // the header-based loop has already found nothing across the WHOLE document.
         return new LocatedSection(bucketResult.auxiliaryText(), bucketResult.rows(),
-                new ExtractionEvidence(bucketResult.droppedTransactionCandidates()));
+                new ExtractionEvidence(bucketResult.droppedTransactionCandidates(), List.of()));
     }
 
     // ===== INFERRED_TWO_LINE_DATE_BLOCK =====
