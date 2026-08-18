@@ -461,7 +461,27 @@
                 Docker daemon now, which was already the documented expectation.
 
              2. api.version. See the docker.api.version property for why. It has to be passed to the
-                forked test JVM as a system property; setting it in the parent shell does nothing. -->
+                forked test JVM as a system property; setting it in the parent shell does nothing.
+
+             3. spring.profiles.active. application.yml resolves this as
+                `${SPRING_PROFILES_ACTIVE:dev}` — nothing in this pom or in ci.yml's "Run tests"
+                step ever set that variable, so every test run, in CI and locally, has always
+                booted under the "dev" profile. application-test.yml — which documents itself as
+                globally disabling six background schedulers under test (the merchant-learning
+                queue, import-session cleanup, the statement-storage sweep, the account-purge
+                sweep, audit-log redaction, and Gmail state-cleanup/discovery) — was consequently
+                dead configuration: it never actually loaded. Those schedulers ran live, on their
+                real default intervals, against the same shared Testcontainers Postgres every IT
+                class uses, for the whole life of the suite. Confirmed empirically, not assumed: a
+                live "scheduling-1" thread was caught mid-suite calling
+                MerchantLearningEventWorker.recoverAbandoned(), which only a genuinely enabled,
+                unmocked scheduler can do, and every context-boot log line in that run reported
+                "profile is active: dev", none "test". That is what made MerchantLearningQueueIT
+                intermittently flaky under the full suite (never in isolation, where no other IT
+                class exists to bring up a live, default-configured worker) and put every other
+                test relying on the same documented-but-inert defaults at identical risk. Set here,
+                as a system property for the same reason api.version is: this is what the forked
+                test JVM actually reads, not the parent shell's environment. -->
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <configuration>
@@ -474,6 +494,7 @@
           </includes>
           <systemPropertyVariables>
             <api.version>${docker.api.version}</api.version>
+            <spring.profiles.active>test</spring.profiles.active>
           </systemPropertyVariables>
         </configuration>
       </plugin>
