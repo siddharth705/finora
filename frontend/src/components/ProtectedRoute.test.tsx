@@ -36,7 +36,7 @@ describe('ProtectedRoute', () => {
   });
 
   it('redirects to /login when there is no token', () => {
-    vi.mocked(useAuth).mockReturnValue({ token: null, phoneVerified: false } as ReturnType<typeof useAuth>);
+    vi.mocked(useAuth).mockReturnValue({ token: null, bootstrapping: false, phoneVerified: false } as ReturnType<typeof useAuth>);
 
     renderProtected();
 
@@ -44,8 +44,26 @@ describe('ProtectedRoute', () => {
     expect(screen.queryByText('Protected content')).not.toBeInTheDocument();
   });
 
+  /**
+   * SEC-01 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). The access token no
+   * longer survives a reload on its own (AuthContext's own comment on its bootstrap effect) -- a
+   * returning, still-logged-in user has `token: null` for one round trip while that effect asks
+   * the HttpOnly refresh cookie for a fresh one. Redirecting to /login on that gap, the way the
+   * "no token" case above correctly does once bootstrapping is actually done, would sign a
+   * genuinely logged-in user out on every single reload.
+   */
+  it('renders neither the protected content nor a redirect while still bootstrapping', () => {
+    vi.mocked(useAuth).mockReturnValue({ token: null, bootstrapping: true, phoneVerified: false } as ReturnType<typeof useAuth>);
+
+    renderProtected();
+
+    expect(screen.queryByText('Protected content')).not.toBeInTheDocument();
+    expect(screen.queryByText('Login page')).not.toBeInTheDocument();
+    expect(screen.queryByText('Verify phone page')).not.toBeInTheDocument();
+  });
+
   it('redirects to /verify-phone when authenticated but not phone-verified', () => {
-    vi.mocked(useAuth).mockReturnValue({ token: 'tok', phoneVerified: false } as ReturnType<typeof useAuth>);
+    vi.mocked(useAuth).mockReturnValue({ token: 'tok', bootstrapping: false, phoneVerified: false } as ReturnType<typeof useAuth>);
 
     renderProtected();
 
@@ -54,7 +72,7 @@ describe('ProtectedRoute', () => {
   });
 
   it('renders the protected content once authenticated and phone-verified', () => {
-    vi.mocked(useAuth).mockReturnValue({ token: 'tok', phoneVerified: true } as ReturnType<typeof useAuth>);
+    vi.mocked(useAuth).mockReturnValue({ token: 'tok', bootstrapping: false, phoneVerified: true } as ReturnType<typeof useAuth>);
 
     renderProtected();
 
@@ -62,7 +80,7 @@ describe('ProtectedRoute', () => {
   });
 
   it('allows an unverified user through when allowUnverified is set (e.g. the verify-phone screen itself)', () => {
-    vi.mocked(useAuth).mockReturnValue({ token: 'tok', phoneVerified: false } as ReturnType<typeof useAuth>);
+    vi.mocked(useAuth).mockReturnValue({ token: 'tok', bootstrapping: false, phoneVerified: false } as ReturnType<typeof useAuth>);
 
     renderProtected(true);
 

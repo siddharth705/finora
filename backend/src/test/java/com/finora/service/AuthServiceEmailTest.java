@@ -58,7 +58,13 @@ class AuthServiceEmailTest {
                 auditService, mock(RefreshTokenService.class), emailProvider, emailProperties,
                 mock(PhoneVerificationProvider.class), mock(PlatformSettingsService.class),
                 mock(PasswordHistoryService.class), new IdentityLookup(userRepository),
-                mock(com.finora.config.RequestMetadata.class)
+                mock(com.finora.config.RequestMetadata.class),
+                // SEC-07: same-thread executor -- runs the dispatched email/audit work
+                // synchronously so assertions against it don't race a real background thread.
+                Runnable::run,
+                // SEC-03: no MFA gate interference for tests unrelated to it -- an
+                // unstubbed mock's isEnabled() returns false by default.
+                mock(AdminMfaService.class)
         );
     }
 
@@ -74,6 +80,46 @@ class AuthServiceEmailTest {
         assertThat(response.devResetLink()).isNull();
         verify(auditService).record(eq(userId), eq("EMAIL_SENT"), eq("User"), eq(userId),
                 argThat(metadata -> "password_reset".equals(metadata.get("type")) && Boolean.TRUE.equals(metadata.get("success"))));
+    }
+
+    /**
+     * SEC-07 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). The other tests
+     * in this file use a same-thread executor for determinism, which -- correctly -- makes them
+     * unable to tell a dispatched call from an inline one. This test uses a capturing executor
+     * instead, specifically to prove the property those others can't: forgotPassword() returns
+     * without the send having happened yet, and the send only happens once the captured work is
+     * actually run. Before this fix, the send was called inline, synchronously, before the method
+     * returned -- indistinguishable from the "no matching account" branch only in payload, not in
+     * how long either one took.
+     */
+    @Test
+    void forgotPassword_dispatchesTheEmailSendRatherThanBlockingOnItInline() {
+        java.util.concurrent.atomic.AtomicReference<Runnable> captured = new java.util.concurrent.atomic.AtomicReference<>();
+        AuthService dispatchingAuthService = new AuthService(
+                userRepository, mock(CategoryRepository.class), resetTokenRepository,
+                mock(com.finora.repository.AccountReactivationTokenRepository.class),
+                mock(com.finora.repository.EmailVerificationTokenRepository.class),
+                mock(PasswordEncoder.class), mock(JwtService.class), mock(AuthenticationManager.class),
+                auditService, mock(RefreshTokenService.class), emailProvider, emailProperties,
+                mock(PhoneVerificationProvider.class), mock(PlatformSettingsService.class),
+                mock(PasswordHistoryService.class), new IdentityLookup(userRepository),
+                mock(com.finora.config.RequestMetadata.class),
+                captured::set, // records the work instead of running it
+                mock(AdminMfaService.class)
+        );
+        when(emailProvider.isConfigured()).thenReturn(true);
+        when(emailProvider.sendPasswordResetEmail(any(), any()))
+                .thenReturn(EmailResult.success(ProviderType.RESEND, "test-message-id"));
+
+        dispatchingAuthService.forgotPassword(new ForgotPasswordRequest("test@example.com", "USER"), null);
+
+        // The method has already returned, and the send has NOT happened yet.
+        verify(emailProvider, never()).sendPasswordResetEmail(any(), any());
+        assertThat(captured.get()).as("the send must have been submitted to the executor").isNotNull();
+
+        captured.get().run();
+
+        verify(emailProvider).sendPasswordResetEmail(eq("test@example.com"), contains("/reset-password?token="));
     }
 
     @Test

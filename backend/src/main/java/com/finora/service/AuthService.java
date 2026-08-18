@@ -21,6 +21,7 @@ import com.finora.util.PhoneMasking;
 import com.finora.util.PhoneNumbers;
 import com.finora.util.AfterCommit;
 import com.finora.util.TokenHasher;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.IncorrectResultSizeDataAccessException;
 import org.springframework.http.HttpStatus;
@@ -38,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.Executor;
 
 @Service
 public class AuthService {
@@ -117,6 +119,11 @@ public class AuthService {
     private final PasswordHistoryService passwordHistoryService;
     private final IdentityLookup identityLookup;
     private final RequestMetadata requestMetadata;
+    // SEC-07: dispatches the forgotPassword() email send off the request thread -- see
+    // BackgroundWorkConfig.authEmailExecutor's own doc comment for why.
+    private final Executor authEmailExecutor;
+    // SEC-03: the MFA gate login() checks and completeMfaLogin() resolves against.
+    private final AdminMfaService adminMfaService;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public AuthService(UserRepository userRepository, CategoryRepository categoryRepository,
@@ -129,7 +136,9 @@ public class AuthService {
                         PhoneVerificationProvider phoneVerificationProvider,
                         PlatformSettingsService platformSettingsService,
                         PasswordHistoryService passwordHistoryService,
-                        IdentityLookup identityLookup, RequestMetadata requestMetadata) {
+                        IdentityLookup identityLookup, RequestMetadata requestMetadata,
+                        @Qualifier("authEmailExecutor") Executor authEmailExecutor,
+                        AdminMfaService adminMfaService) {
         this.userRepository = userRepository;
         this.categoryRepository = categoryRepository;
         this.resetTokenRepository = resetTokenRepository;
@@ -148,6 +157,8 @@ public class AuthService {
         this.passwordHistoryService = passwordHistoryService;
         this.identityLookup = identityLookup;
         this.requestMetadata = requestMetadata;
+        this.authEmailExecutor = authEmailExecutor;
+        this.adminMfaService = adminMfaService;
     }
 
     @Transactional
@@ -501,10 +512,45 @@ public class AuthService {
             userRepository.save(user);
         }
 
-        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId());
+        // SEC-03 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Checked only
+        // AFTER the password has already verified, for the same oracle reason enforceAccountIsSignable
+        // is positioned where it is: checking earlier would let an unauthenticated caller learn
+        // "this admin account has MFA enabled" (or exists at all) for the cost of a guess. USER_LOGIN
+        // is deliberately NOT recorded here -- a session has not actually been established yet, only
+        // the first factor; see completeMfaLogin for where it lands once the second one succeeds.
+        if (User.SCOPE_ADMIN.equalsIgnoreCase(user.getAccountScope()) && adminMfaService.isEnabled(user.getId())) {
+            String challengeToken = adminMfaService.issueChallenge(user.getId());
+            throw new ApiException(HttpStatus.FORBIDDEN, ErrorCode.AUTH_MFA_REQUIRED,
+                    ErrorCode.AUTH_MFA_REQUIRED.defaultMessage(), Map.of("mfaChallengeToken", challengeToken));
+        }
 
-        // Refresh token first: it is what mints the session, and the access token has to carry
-        // that session's id in its sid claim.
+        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId());
+        return issueSessionTokens(user);
+    }
+
+    /**
+     * SEC-03. Second step of the two-factor flow {@link #login} starts by throwing
+     * {@code AUTH_MFA_REQUIRED} -- the frontend calls this once it has both the challenge token
+     * from that error's details and a code from the user's authenticator app (or a recovery code).
+     * {@link AdminMfaService#verifyChallenge} does all the actual proving and consumes the
+     * challenge; this method's only job is finishing what {@code login()} started once that
+     * succeeds, which is why USER_LOGIN is recorded HERE and not in login() itself -- this is the
+     * moment a session actually begins.
+     */
+    @Transactional
+    public AuthResponse completeMfaLogin(String challengeToken, String code) {
+        UUID userId = adminMfaService.verifyChallenge(challengeToken, code);
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
+        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId(), Map.of("mfa", true));
+        return issueSessionTokens(user);
+    }
+
+    /** Refresh token first: it is what mints the session, and the access token has to carry that
+     *  session's id in its sid claim. Shared by {@link #login} (no MFA in the way) and
+     *  {@link #completeMfaLogin} (MFA just satisfied) -- both are "a session begins now," which is
+     *  exactly the one thing this method does. */
+    private AuthResponse issueSessionTokens(User user) {
         var issued = refreshTokenService.issue(user.getId());
         String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId(),
                 user.getAccountScope());
@@ -1101,14 +1147,25 @@ public class AuthService {
         if (emailProvider.isConfigured()) {
             // BH-016: after commit -- see register(). The reset token row must be durable before
             // the link reaches the user's inbox anyway, or a fast click could arrive ahead of it.
+            //
+            // SEC-07 (docs/quality/bug-reports/2026-08-19-security-review-findings.md): the actual
+            // send is dispatched onto authEmailExecutor from INSIDE the after-commit callback,
+            // rather than called directly here. AfterCommit's own callback still runs synchronously
+            // on the request thread at commit time (that part is unavoidable -- Spring invokes
+            // registered synchronizations inline), but submitting to the executor is a cheap,
+            // near-instant in-memory hand-off, not a network round trip -- the callback returns
+            // before the email provider's HTTP call has even started. Without this, the
+            // existing-account branch blocked the response on a real outbound API call while the
+            // non-existing-account branch below returned after one SELECT: an easily measurable,
+            // remote account-enumeration timing oracle on an unauthenticated endpoint.
             UUID resetUserId = userOpt.get().getId();
             String resetEmail = userOpt.get().getEmail();
-            AfterCommit.run("password reset email", () -> {
+            AfterCommit.run("password reset email", () -> authEmailExecutor.execute(() -> {
                 EmailResult resetEmailResult = emailProvider.sendPasswordResetEmail(resetEmail, resetLink);
                 auditService.record(resetUserId, "EMAIL_SENT", "User", resetUserId, Map.of(
                         "type", "password_reset", "provider", resetEmailResult.provider().name(),
                         "success", resetEmailResult.success()));
-            });
+            }));
             // Real email exists — no reason to also hand the link back in the API response.
             return new ForgotPasswordResponse(genericMessage, null);
         }

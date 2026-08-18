@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
 import { userApi } from '../api/endpoints';
 import { safeStorage } from '../lib/safeStorage';
+import { getAccessToken } from '../api/client';
 
 export type ThemeSetting = 'light' | 'dark' | 'system';
 
@@ -54,14 +55,18 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // when actually signed in, since /users/me would otherwise 401 on the public pages
   // (Landing/Login/Register) that also mount this provider. ThemeProvider wraps AuthProvider
   // (see App.tsx), so it can't call useAuth() to react to login/logout directly -- it instead
-  // re-runs this sync on the AUTH_CHANGED_EVENT AuthContext dispatches after login/register,
-  // not just once on mount. Without this, a theme saved from another device was only ever
-  // pulled in if the tab happened to load fresh with a token already present -- logging in
-  // during the same SPA session left the theme on whatever it was pre-login until a full
-  // page reload.
+  // re-runs this sync on the AUTH_CHANGED_EVENT AuthContext dispatches after login/register AND
+  // after its own SEC-01 bootstrap (a silent refresh recovering an existing session on reload) --
+  // not just once on mount. Without this, a theme saved from another device was only ever pulled
+  // in if the tab happened to load fresh with a token already present -- logging in during the
+  // same SPA session left the theme on whatever it was pre-login until a full page reload.
+  //
+  // SEC-01: the presence check reads client.ts's in-memory accessToken (via getAccessToken())
+  // rather than safeStorage -- the token itself no longer lives in storage at all, so a stale
+  // localStorage read here would silently skip this sync forever, on every login, not just once.
   useEffect(() => {
     function syncFromServer() {
-      if (!safeStorage.getItem('finora_token')) return;
+      if (!getAccessToken()) return;
       userApi
         .get()
         .then((u) => {
@@ -81,7 +86,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     safeStorage.setItem(STORAGE_KEY, next);
     // Best-effort remote persistence, same pattern as AuthContext.logout(): the local UI change
     // applies immediately and never waits on (or gets rolled back by) the network call.
-    if (safeStorage.getItem('finora_token')) {
+    if (getAccessToken()) {
       userApi.update({ theme: next }).catch(() => {});
     }
   }

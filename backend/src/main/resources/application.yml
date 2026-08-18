@@ -369,6 +369,14 @@ app:
     data-export:
       max: ${RATE_LIMIT_DATA_EXPORT_MAX:5}
       window-seconds: ${RATE_LIMIT_DATA_EXPORT_WINDOW_SECONDS:86400}
+    # SEC-03 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Same ceiling class
+    # as reset-password/reactivate above: an unguessable, short-TTL, single-use challenge token
+    # already gates reaching this endpoint, so this bounds a token holder retrying in a loop, not
+    # a raw brute-force stopper on the 6-digit code space -- the challenge's own 5-minute expiry
+    # already makes exhausting that space over the network infeasible regardless of any limiter.
+    mfa-verify:
+      max: ${RATE_LIMIT_MFA_VERIFY_MAX:10}
+      window-seconds: ${RATE_LIMIT_MFA_VERIFY_WINDOW_SECONDS:600}
   import:
     # See ImportConcurrencyLimiter's own doc comment for the full reasoning. 6 is deliberately
     # conservative relative to DB_POOL_MAX_SIZE (10, see the datasource config above) -- leaves

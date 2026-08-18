@@ -7,6 +7,7 @@ import { ThemeProvider } from '../context/ThemeContext';
 import { AuthProvider } from '../context/AuthContext';
 import { userApi, workspaceApi, analyticsApi, deviceApi, accountLifecycleApi, authApi, gmailApi } from '../api/endpoints';
 import type { UserSettings } from '../api/endpoints';
+import { getAccessToken, setAccessToken } from '../api/client';
 
 // v1 scope is capabilities-first: every section on this page reflects a real, backed setting or
 // fact (see Settings.tsx's own top-of-file comment). These tests cover the real save paths, the
@@ -22,7 +23,10 @@ vi.mock('../api/endpoints', () => ({
   analyticsApi: { importStatistics: vi.fn() },
   deviceApi: { list: vi.fn(), revoke: vi.fn() },
   accountLifecycleApi: { deactivate: vi.fn() },
-  authApi: { logout: vi.fn() },
+  // SEC-01: AuthProvider (real, not mocked, in this file's harness) now attempts a silent
+  // /auth/refresh on mount -- rejecting by default here keeps every test's starting state
+  // "no recovered session," same as before this existed.
+  authApi: { logout: vi.fn(), refresh: vi.fn().mockRejectedValue(new Error('no session')) },
   gmailApi: {
     status: vi.fn(), connect: vi.fn(), disconnect: vi.fn(), syncNow: vi.fn(),
     reviewQueue: vi.fn(), approve: vi.fn(), reject: vi.fn(),
@@ -87,10 +91,11 @@ function renderSettings() {
 
 describe('Settings', () => {
   beforeEach(() => {
-    // The deactivate-flow tests write finora_session_ended_reason/finora_token via logout()'s
-    // real localStorage calls (AuthProvider is the real provider here, not mocked) -- without this
-    // clear, whichever ran first leaks its written keys into the next test's assertions.
+    // The deactivate-flow tests write finora_session_ended_reason (storage) and clear the
+    // in-memory access token via logout()'s real calls (AuthProvider is the real provider here,
+    // not mocked) -- without these resets, whichever ran first leaks into the next test.
     localStorage.clear();
+    setAccessToken(null);
     vi.mocked(userApi.get).mockReset().mockResolvedValue(userSettings());
     vi.mocked(userApi.update).mockReset().mockResolvedValue(userSettings());
     vi.mocked(workspaceApi.getSettings).mockReset().mockResolvedValue({ autoApplyConfidenceThreshold: 90, updatedAt: '2026-05-01T00:00:00Z' });
@@ -372,7 +377,7 @@ describe('Settings', () => {
 
       await waitFor(() => expect(localStorage.getItem('finora_session_ended_reason'))
         .toBe('Your account has been deactivated. Sign in again any time to reactivate it.'));
-      expect(localStorage.getItem('finora_token')).toBeNull();
+      expect(getAccessToken()).toBeNull();
       // The cookie-clearing half of the fix -- best-effort, but it must actually be attempted.
       expect(authApi.logout).toHaveBeenCalled();
     });

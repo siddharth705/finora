@@ -126,6 +126,23 @@ public enum ErrorCode {
     AUTH_ACCOUNT_DEACTIVATED("AUTH_007", HttpStatus.FORBIDDEN,
             "This account is deactivated."),
 
+    // SEC-03 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Same shape as
+    // AUTH_ACCOUNT_DEACTIVATED just above: the frontend has to TELL THIS APART from an ordinary
+    // login failure, because the response carries a short-lived challenge token (ApiException's
+    // details map, "mfaChallengeToken") the login form needs to complete the second step against
+    // POST /auth/mfa/verify -- a plain "invalid credentials" would strand the user with a correct
+    // password and no way forward. Thrown only after the password has already been verified (see
+    // AuthService.login()), so it never becomes an account-existence or MFA-enrollment oracle for
+    // an unauthenticated caller.
+    AUTH_MFA_REQUIRED("AUTH_008", HttpStatus.FORBIDDEN,
+            "Enter the code from your authenticator app to finish signing in."),
+    // Deliberately the SAME code+message for "wrong TOTP code" and "wrong/expired/already-used
+    // recovery code" and "expired/unknown challenge token" -- MfaController's one entry point for
+    // all three, same reasoning AUTH_INVALID_CREDENTIALS already applies to login(): distinguishing
+    // them would tell an attacker which guess got closer.
+    AUTH_MFA_INVALID_CODE("AUTH_009", HttpStatus.UNAUTHORIZED,
+            "That code didn't work. Check your authenticator app and try again."),
+
     // Generic fallbacks — used by GlobalExceptionHandler when no more specific code applies
     VALIDATION_ERROR("VAL_001", HttpStatus.BAD_REQUEST, "Validation failed"),
     NOT_FOUND("GEN_001", HttpStatus.NOT_FOUND, "No such endpoint"),

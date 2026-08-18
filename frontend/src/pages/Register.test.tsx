@@ -14,6 +14,7 @@ const registerMock = vi.fn();
 function renderRegister() {
   vi.mocked(useAuth).mockReturnValue({
     token: null,
+    bootstrapping: false,
     email: null,
     fullName: null,
     phoneVerified: false,
