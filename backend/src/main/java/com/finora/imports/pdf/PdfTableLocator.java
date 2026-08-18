@@ -1623,10 +1623,12 @@ public class PdfTableLocator {
      *
      *  <p>{@code cellCountDistribution} is captured here, in the evidence itself, rather than
      *  recomputed wherever it is needed -- the earlier version of this method left it out and made
-     *  {@link PdfPipelineDiagnostic} call {@code groupIntoRows} directly to reconstruct it, which
-     *  needed widening that method's visibility purely to serve a diagnostic. Capturing it here
-     *  instead means {@code groupIntoRows} stays {@code private} -- an implementation detail again,
-     *  not a visibility compromise made for one caller's convenience. */
+     *  {@code PdfPipelineDiagnostic} (a test-only diagnostic, hence {@code @code} rather than
+     *  {@code @link}: it is not resolvable from this module's own main sources) call {@code
+     *  groupIntoRows} directly to reconstruct it, which needed widening that method's visibility
+     *  purely to serve a diagnostic. Capturing it here instead means {@code groupIntoRows} stays
+     *  {@code private} -- an implementation detail again, not a visibility compromise made for one
+     *  caller's convenience. */
     private PhysicalRowFormationEvidence measurePhysicalRowFormation(int textRuns, List<List<PositionedText>> rows) {
         int totalPhysicalCells = 0;
         int maxCellsInRow = 0;
