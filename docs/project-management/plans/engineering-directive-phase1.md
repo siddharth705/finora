@@ -2,6 +2,11 @@
 
 ## Phase 1 — Architectural Foundation & Engineering Directive
 
+> This document is the architecture vision and Phase 1 directive — it does not track current
+> execution status. For where the project actually stands (completion, risks, dependencies,
+> release gates), see the living plan:
+> [`project-plan-v1.0.md`](project-plan-v1.0.md).
+
 ### Executive Summary
 
 As Finora evolves, we must align on a critical strategic objective before implementing additional business features.
