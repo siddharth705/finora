@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { api, normalizeApiBase } from './client';
+import { api, normalizeApiBase, getAdminToken, setAdminToken } from './client';
 
 const refreshMock = vi.fn();
 vi.mock('./endpoints', () => ({
@@ -41,6 +41,9 @@ function rejectedHandler() {
 describe('api response interceptor', () => {
   beforeEach(() => {
     localStorage.clear();
+    // SEC-01: the access token is now a module-level variable (not localStorage), so
+    // localStorage.clear() alone no longer resets it between tests.
+    setAdminToken(null);
   });
 
   it('does not clear the session for a 401 from /auth/login (wrong credentials, not an expired session)', async () => {
@@ -73,7 +76,7 @@ describe('api response interceptor', () => {
   it('shares one refresh call across multiple 401s that arrive at the same time, instead of one per request', async () => {
     // BH-012: what says "this browser has a session" is now the ACCESS token. The refresh token
     // lives only in the HttpOnly cookie and this app cannot read it.
-    localStorage.setItem('finora_admin_token', 'the-stale-access-token');
+    setAdminToken('the-stale-access-token');
     refreshMock.mockReset();
     refreshMock.mockResolvedValue({ token: 'new-access-token', refreshToken: 'new-refresh-token' });
 
@@ -92,7 +95,7 @@ describe('api response interceptor', () => {
     ]);
 
     expect(refreshMock).toHaveBeenCalledTimes(1);
-    expect(localStorage.getItem('finora_admin_token')).toBe('new-access-token');
+    expect(getAdminToken()).toBe('new-access-token');
   });
 
   /** BH-012: refresh is called with NO argument. The token is in an HttpOnly cookie the browser
@@ -100,7 +103,7 @@ describe('api response interceptor', () => {
    *  credential it is not supposed to be able to read. Mirrors frontend/src/api/client.test.ts's
    *  identical assertion. */
   it('asks for a refresh without supplying a token', async () => {
-    localStorage.setItem('finora_admin_token', 'the-stale-access-token');
+    setAdminToken('the-stale-access-token');
     refreshMock.mockReset();
     refreshMock.mockResolvedValue({ token: 'new-access-token', refreshToken: 'ignored-by-web' });
 
@@ -120,7 +123,7 @@ describe('api response interceptor', () => {
    * once. Same fix, same shape, as the user frontend's client.ts.
    */
   it('hands the backend reason for a real session expiry to the login page', async () => {
-    localStorage.setItem('finora_admin_token', 'an-expired-access-token');
+    setAdminToken('an-expired-access-token');
     refreshMock.mockReset();
     refreshMock.mockRejectedValue({
       response: {
@@ -139,7 +142,7 @@ describe('api response interceptor', () => {
 
     expect(localStorage.getItem('finora_admin_session_ended_reason'))
       .toBe('For your security, all sessions were signed out. Please sign in again.');
-    expect(localStorage.getItem('finora_admin_token')).toBeNull();
+    expect(getAdminToken()).toBeNull();
   });
 
   it('falls back to generic copy when there was no access token to attempt a refresh with', async () => {

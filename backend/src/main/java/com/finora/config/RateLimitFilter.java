@@ -149,6 +149,13 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // per-token: it does not stop an attacker who rotates IPs, only one retrying from the same
     // one. See resetPasswordLimiter's own comment for the same, more honestly-scoped claim.
     private final RateLimiter dataExportLimiter;
+    // SEC-03 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Same reasoning as
+    // resetPasswordLimiter/reactivate/verify-email directly above: an unguessable, short-TTL,
+    // single-use challenge token (AdminMfaService.issueChallenge) already gates reaching this
+    // endpoint at all, so this bounds a token holder retrying in a loop -- not a raw brute-force
+    // stopper on the 6-digit code space, which the challenge's own 5-minute expiry already makes
+    // infeasible to exhaust over the network regardless of any limiter.
+    private final RateLimiter mfaVerifyLimiter;
     // Bug fix: this used to be `new ObjectMapper()` -- a second, freshly-constructed mapper with
     // none of the auto-configuration Spring Boot's own JacksonAutoConfiguration applies to its
     // managed ObjectMapper bean (in particular, no JavaTimeModule). ApiResponse.timestamp is a
@@ -203,6 +210,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     static final int DEFAULT_DATA_EXPORT_MAX = 5, DEFAULT_DATA_EXPORT_WINDOW = 86400;
     static final int DEFAULT_GOOGLE_MAX = 5, DEFAULT_GOOGLE_WINDOW = 300;
     static final int DEFAULT_APPLE_MAX = 5, DEFAULT_APPLE_WINDOW = 300;
+    static final int DEFAULT_MFA_VERIFY_MAX = 10, DEFAULT_MFA_VERIFY_WINDOW = 600;
 
     /**
      * The shipped configuration, for tests.
@@ -222,7 +230,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 DEFAULT_RESET_PASSWORD_MAX, DEFAULT_RESET_PASSWORD_WINDOW,
                 DEFAULT_DATA_EXPORT_MAX, DEFAULT_DATA_EXPORT_WINDOW,
                 DEFAULT_GOOGLE_MAX, DEFAULT_GOOGLE_WINDOW,
-                DEFAULT_APPLE_MAX, DEFAULT_APPLE_WINDOW);
+                DEFAULT_APPLE_MAX, DEFAULT_APPLE_WINDOW,
+                DEFAULT_MFA_VERIFY_MAX, DEFAULT_MFA_VERIFY_WINDOW);
     }
 
     /**
@@ -259,7 +268,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
             @Value("${app.rate-limit.google.max:5}") int googleMax,
             @Value("${app.rate-limit.google.window-seconds:300}") int googleWindow,
             @Value("${app.rate-limit.apple.max:5}") int appleMax,
-            @Value("${app.rate-limit.apple.window-seconds:300}") int appleWindow) {
+            @Value("${app.rate-limit.apple.window-seconds:300}") int appleWindow,
+            @Value("${app.rate-limit.mfa-verify.max:10}") int mfaVerifyMax,
+            @Value("${app.rate-limit.mfa-verify.window-seconds:600}") int mfaVerifyWindow) {
         this.objectMapper = objectMapper;
         this.clientIpResolver = clientIpResolver;
         this.loginLimiter = new RateLimiter(loginMax, loginWindow);
@@ -272,6 +283,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         this.dataExportLimiter = new RateLimiter(dataExportMax, dataExportWindow);
         this.googleLimiter = new RateLimiter(googleMax, googleWindow);
         this.appleLimiter = new RateLimiter(appleMax, appleWindow);
+        this.mfaVerifyLimiter = new RateLimiter(mfaVerifyMax, mfaVerifyWindow);
         this.limitedEndpoints = List.of(
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/login"), loginLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/register"), registerLimiter),
@@ -330,7 +342,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/phone-change/start"), phoneChangeLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/phone-change/verify-otp"), phoneChangeLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/phone-change/complete"), phoneChangeLimiter),
-                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/data-export"), dataExportLimiter));
+                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/data-export"), dataExportLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/mfa/verify"), mfaVerifyLimiter));
     }
 
     @Override

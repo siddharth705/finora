@@ -54,6 +54,19 @@ public class AuthController {
                 .body(ApiResponse.ok(response, "Signed in"));
     }
 
+    /**
+     * SEC-03 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Second step of
+     * the flow login() starts by throwing AUTH_MFA_REQUIRED (challenge token in its details map)
+     * -- same AuthResponse shape and refresh-cookie handling as login()/reactivate() themselves,
+     * so the client's success path doesn't need to special-case where the tokens came from.
+     */
+    @PostMapping("/mfa/verify")
+    public ResponseEntity<ApiResponse<AuthResponse>> verifyMfa(@Valid @RequestBody MfaVerifyRequest request) {
+        AuthResponse response = authService.completeMfaLogin(request.challengeToken(), request.code());
+        return withRefreshCookie(response.refreshToken())
+                .body(ApiResponse.ok(response, "Signed in"));
+    }
+
     /** Completes the "Welcome back — reactivate your account?" confirmation Login.tsx shows after
      *  a deactivated account's password checks out (login() throws AUTH_ACCOUNT_DEACTIVATED with
      *  a reactivation token in its details map). Same AuthResponse shape and refresh-cookie
