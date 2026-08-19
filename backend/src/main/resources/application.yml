@@ -380,6 +380,13 @@ app:
     # block waiting for a processing slot. ImportConcurrencyLimiter now rejects immediately
     # instead of waiting (see its own doc comment), so that wait no longer exists and the
     # property was removed rather than left configuring nothing.
+    pdf:
+      # SEC-02 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Read by
+      # PdfTextExtractor, checked right after PDFBox loads the document and before the full-text
+      # extraction pass. 500 is far above any real bank statement (even a multi-year one) and far
+      # below anything that costs meaningful time/memory to strip -- the same clamp-generously
+      # discipline PageBounds already applies to read endpoints, here applied to an upload.
+      max-pages: ${IMPORT_PDF_MAX_PAGES:500}
   statement-storage:
     # Phase 2 of docs/engineering/statement-storage-migration.md. The V54 content_hash/object_key
     # columns exist and the import pipeline IS wired to this layer -- ImportService,

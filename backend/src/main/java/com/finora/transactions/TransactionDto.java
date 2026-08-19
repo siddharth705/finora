@@ -46,11 +46,26 @@ public record TransactionDto(
     private static final String TAGS_COUNT_MESSAGE = "A transaction can have at most 20 tags";
     private static final String TAG_SIZE_MESSAGE = "Each tag can't exceed 255 characters";
 
+    /**
+     * SEC-06 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). {@code
+     * idempotencyKey} is optional and additive -- see V97's migration comment for the full design
+     * reasoning. This canonical constructor carries it as the last field; the shorter constructor
+     * below preserves every existing 7-arg call site (production clients that don't send a key yet,
+     * and the large existing test suite) rather than forcing an unrelated change on all of them for
+     * one new, optional field.
+     */
     public record CreateRequest(UUID accountId, String categoryName, LocalDate date,
                                  @Size(max = 500, message = DESCRIPTION_SIZE_MESSAGE) String description,
                                  BigDecimal amount, String type,
                                  @Size(max = 20, message = TAGS_COUNT_MESSAGE)
-                                 List<@Size(max = 255, message = TAG_SIZE_MESSAGE) String> tags) {}
+                                 List<@Size(max = 255, message = TAG_SIZE_MESSAGE) String> tags,
+                                 @Size(max = 255, message = "Idempotency key can't exceed 255 characters")
+                                 String idempotencyKey) {
+        public CreateRequest(UUID accountId, String categoryName, LocalDate date, String description,
+                              BigDecimal amount, String type, List<String> tags) {
+            this(accountId, categoryName, date, description, amount, type, tags, null);
+        }
+    }
 
     /**
      * Full-edit payload for the Transactions page's Edit action. Deliberately excludes accountId:

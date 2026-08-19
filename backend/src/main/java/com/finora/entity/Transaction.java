@@ -176,6 +176,13 @@ public class Transaction extends BaseEntity {
     @Column(name = "balance_after")
     private BigDecimal balanceAfter;
 
+    // SEC-06 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Client-generated,
+    // set only by TransactionService.create()'s manual-entry path -- see V97's own doc comment for
+    // why this is a request identifier, not a content hash like StatementImport/ImportJob use.
+    // Null for every CSV/PDF/Gmail-imported row and for any manual transaction created before V97.
+    @Column(name = "idempotency_key")
+    private String idempotencyKey;
+
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
     public UUID getAccountId() { return accountId; }
@@ -239,4 +246,6 @@ public class Transaction extends BaseEntity {
     public void setReferenceNumber(String referenceNumber) { this.referenceNumber = referenceNumber; }
     public BigDecimal getBalanceAfter() { return balanceAfter; }
     public void setBalanceAfter(BigDecimal balanceAfter) { this.balanceAfter = balanceAfter; }
+    public String getIdempotencyKey() { return idempotencyKey; }
+    public void setIdempotencyKey(String idempotencyKey) { this.idempotencyKey = idempotencyKey; }
 }

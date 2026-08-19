@@ -6,6 +6,7 @@ import com.finora.entity.Category;
 import com.finora.entity.Transaction;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
+import com.finora.exception.ErrorCode;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.TransactionRepository;
@@ -164,8 +165,43 @@ public class TransactionService {
         // else in the app treats a since-deleted account as no longer live.
     }
 
+    /**
+     * SEC-06 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Checked first, and
+     * deliberately a plain findByUserIdAndIdempotencyKey rather than an insert-and-catch: the
+     * common case (no key, or a genuinely first attempt) must not pay for an exception path, and
+     * this mirrors the "check first, let the database catch the race" shape ImportJobService.accept
+     * and ImportSessionService.parseAndStageWithSession already use for the equivalent import-side
+     * check (see V74/V97's own migration comments). A concurrent duplicate that slips past this
+     * read loses the race at the unique index (V97) instead, and gets GlobalExceptionHandler's
+     * existing 409 for DataIntegrityViolationException -- the same outcome the import-side callers
+     * already accept, and a retry of that same request lands on this early-return branch instead.
+     *
+     * <p>The lookup itself sees soft-deleted rows on purpose (see the repository method's own doc
+     * comment), and a match found there is only ever returned once {@link #requireSameRequest} has
+     * confirmed the replay's fields agree with what was recorded the first time -- a key match
+     * alone is not sufficient, see that method's doc comment.
+     */
     @Transactional
     public TransactionDto create(UUID userId, TransactionDto.CreateRequest req) {
+        // Blank normalized to null up front, and reused below for both the check and the persisted
+        // value -- an empty string is not a real key (V97's index would otherwise start treating
+        // "every caller that sends an empty string" as one colliding identity), and a caller that
+        // omits the field entirely already sends null, so both spellings of "no key" must behave
+        // identically rather than one of them silently opting into idempotency by accident.
+        String idempotencyKey = (req.idempotencyKey() == null || req.idempotencyKey().isBlank())
+                ? null : req.idempotencyKey();
+        if (idempotencyKey != null) {
+            Transaction existing = transactionRepository
+                    .findByUserIdAndIdempotencyKey(userId, idempotencyKey)
+                    .orElse(null);
+            if (existing != null) {
+                String categoryName = categoryRepository.findById(existing.getCategoryId())
+                        .map(Category::getName).orElse("Uncategorized");
+                requireSameRequest(existing, req, categoryName);
+                return TransactionDto.from(existing, categoryName);
+            }
+        }
+
         // Bug fix: req.accountId() used to go straight onto the transaction with no check that it
         // actually belongs to userId -- every other entry point into an Account (AccountService's
         // own getOwned, and this class's own getOwned for transactions) verifies ownership before
@@ -180,11 +216,12 @@ public class TransactionService {
         t.setTxnDate(req.date());
         t.setDescription(req.description());
         t.setMerchant(CategoryRules.extractMerchant(req.description()));
-        requirePositiveAmount(req.amount());
+        requireAmountWithinBounds(req.amount());
         t.setAmount(req.amount());
         t.setTxnType(com.finora.util.EnumParsing.parse(Transaction.Type.class, req.type(), "type"));
         t.setTags(req.tags());
         t.setSource(Transaction.Source.MANUAL);
+        t.setIdempotencyKey(idempotencyKey);
 
         String categoryName = req.categoryName();
         Category category;
@@ -244,6 +281,30 @@ public class TransactionService {
         return TransactionDto.from(saved, category.getName());
     }
 
+    /**
+     * Bug fix (gap review of SEC-06): the replay check above used to return {@code existing}
+     * unconditionally the moment the key matched, with no check that the rest of the request
+     * actually matches what was recorded under that key the first time. An idempotency key
+     * identifies one logical request -- replaying it is only correct when the request really is a
+     * replay of that same request. A client bug that resent the same key with a different amount
+     * or account would otherwise silently get back the stale original instead of a rejection.
+     *
+     * <p>Compared against the fields a genuine retry actually resends -- account, amount, type,
+     * date, description, and (only when the caller supplies one) category. Not tags/notes: those
+     * are free-form annotations whose presence doesn't change which financial event this is.
+     */
+    private void requireSameRequest(Transaction existing, TransactionDto.CreateRequest req, String existingCategoryName) {
+        boolean matches = existing.getAccountId().equals(req.accountId())
+                && req.amount() != null && existing.getAmount().compareTo(req.amount()) == 0
+                && existing.getTxnType().name().equalsIgnoreCase(req.type())
+                && java.util.Objects.equals(existing.getTxnDate(), req.date())
+                && java.util.Objects.equals(existing.getDescription(), req.description())
+                && (req.categoryName() == null || req.categoryName().equals(existingCategoryName));
+        if (!matches) {
+            throw new ApiException(ErrorCode.TXN_IDEMPOTENCY_KEY_REUSED);
+        }
+    }
+
     /** Real-time transaction alert SMS -- scoped deliberately to this one manual-entry path, not
      *  bulk statement import (CsvImportService/PdfImportService never call create(), so a 200-row
      *  statement import never fires 200 SMS). Requires a verified phone number, same trust bar as
@@ -286,16 +347,35 @@ public class TransactionService {
     }
 
     /**
+     * SEC-13 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). The DB column
+     * (NUMERIC(14,2)) already stops anything past 12 integer digits, but as a raw
+     * DataIntegrityViolationException rather than a validation error naming the field -- and 12
+     * digits (nearly a trillion) is not "a bound," it is the column simply running out of room.
+     * This is the actual sanity ceiling: a manually entered amount above what any real bank
+     * statement would plausibly contain, rejected with a message the user can act on instead of a
+     * generic 409.
+     */
+    private static final BigDecimal MAX_TRANSACTION_AMOUNT = new BigDecimal("999999999.99");
+
+    /**
      * The whole balance-sign convention (see balanceDelta's doc comment) assumes amount is
      * always a non-negative magnitude, with direction encoded solely by the transaction's type.
      * A negative amount would silently double-invert that math -- e.g. an EXPENSE of -500 on a
      * savings account would ADD 500 to the balance instead of subtracting it. CSV imports are
      * already safe (CsvImportService.parseRow takes the absolute value), but nothing previously
-     * stopped this from reaching the manual create/edit paths.
+     * stopped this from reaching the manual create/edit paths. The upper bound is SEC-13, added
+     * alongside this method rather than as a separate check -- both are the same question (is this
+     * a real transaction amount?), and splitting them across two validation layers (this one a
+     * service-level ApiException, an upper bound as a Bean Validation annotation on the DTO) would
+     * mean a reader has to check two places to know what "valid amount" means here.
      */
-    private void requirePositiveAmount(BigDecimal amount) {
+    private void requireAmountWithinBounds(BigDecimal amount) {
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Amount must be greater than zero");
+        }
+        if (amount.compareTo(MAX_TRANSACTION_AMOUNT) > 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "Amount can't exceed " + MAX_TRANSACTION_AMOUNT + " for a single transaction");
         }
     }
 
@@ -317,7 +397,7 @@ public class TransactionService {
         if (req.description() != null) t.setDescription(req.description());
         if (req.merchant() != null) t.setMerchant(req.merchant());
         if (req.amount() != null) {
-            requirePositiveAmount(req.amount());
+            requireAmountWithinBounds(req.amount());
             t.setAmount(req.amount());
         }
         if (req.type() != null) t.setTxnType(com.finora.util.EnumParsing.parse(Transaction.Type.class, req.type(), "type"));

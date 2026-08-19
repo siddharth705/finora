@@ -24,6 +24,15 @@ public enum ErrorCode {
     TXN_DUPLICATE("TXN_001", HttpStatus.CONFLICT, "Duplicate transaction detected"),
     TXN_NOT_FOUND("TXN_002", HttpStatus.NOT_FOUND, "Transaction not found"),
     TXN_FORBIDDEN("TXN_003", HttpStatus.FORBIDDEN, "This transaction does not belong to you"),
+    // Bug fix (gap review of SEC-06): TransactionService.create()'s idempotency replay check used
+    // to return whatever transaction the key mapped to unconditionally, with no check that the
+    // REST of the request -- amount, account, type, date, description, category -- matched what
+    // was recorded under that key the first time. A client bug that resent a key with a different
+    // amount or account silently got back the stale original instead of a rejection, exactly the
+    // "resolves quietly to whatever's there" failure V97's own migration comment says an
+    // idempotency key must not permit.
+    TXN_IDEMPOTENCY_KEY_REUSED("TXN_004", HttpStatus.CONFLICT,
+            "This idempotency key was already used for a different request."),
 
     // Statement import (com.finora.imports)
     IMPORT_NO_HEADER_DETECTED("IMPORT_001", HttpStatus.UNPROCESSABLE_ENTITY, "Could not find a transaction table in this file", true),
@@ -87,6 +96,16 @@ public enum ErrorCode {
     // actively wrong -- the import already succeeded, nothing needs re-uploading.
     IMPORT_SESSION_ALREADY_CONFIRMED("IMPORT_012", HttpStatus.BAD_REQUEST,
             "This import has already been reviewed and confirmed."),
+    // SEC-02 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). The multipart
+    // max-file-size cap (application.yml, app.import.pdf.max-pages's sibling property) bounds the
+    // UPLOADED bytes, not what PDFBox materializes once it decompresses the document's object/page
+    // graph -- a small, spec-valid PDF with an extreme page count is not caught by that cap.
+    // PdfTextExtractor checks this immediately after Loader.loadPDF, before the expensive
+    // full-document stripper.getText() pass. Same treatment as IMPORT_CORRUPT_PDF: userActionRequired
+    // because "split it up" is a real, followable instruction, unlike a genuinely corrupt file.
+    IMPORT_PDF_TOO_LARGE("IMPORT_013", HttpStatus.UNPROCESSABLE_ENTITY,
+            "This PDF has too many pages to process. Split it into smaller files (e.g. by date range) "
+                    + "and import each one separately.", true),
 
     // Accounts
     ACCOUNT_NOT_FOUND("ACC_001", HttpStatus.NOT_FOUND, "Account not found"),
