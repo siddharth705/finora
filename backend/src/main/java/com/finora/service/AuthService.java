@@ -518,7 +518,16 @@ public class AuthService {
         // "this admin account has MFA enabled" (or exists at all) for the cost of a guess. USER_LOGIN
         // is deliberately NOT recorded here -- a session has not actually been established yet, only
         // the first factor; see completeMfaLogin for where it lands once the second one succeeds.
-        if (User.SCOPE_ADMIN.equalsIgnoreCase(user.getAccountScope()) && adminMfaService.isEnabled(user.getId())) {
+        //
+        // adminMfaService.isFeatureEnabled() is checked FIRST, short-circuiting isEnabled()
+        // entirely -- see that method's own doc comment. Sid: keep this flag off until the admin
+        // portal has an MFA UI (enrollment, verification, recovery); until then even a credential
+        // row that somehow exists (enrolled before this flag existed, or written directly to the
+        // database) must not gate login, since there would be no way for that admin to complete
+        // the second step and no self-service way back in.
+        if (adminMfaService.isFeatureEnabled()
+                && User.SCOPE_ADMIN.equalsIgnoreCase(user.getAccountScope())
+                && adminMfaService.isEnabled(user.getId())) {
             String challengeToken = adminMfaService.issueChallenge(user.getId());
             throw new ApiException(HttpStatus.FORBIDDEN, ErrorCode.AUTH_MFA_REQUIRED,
                     ErrorCode.AUTH_MFA_REQUIRED.defaultMessage(), Map.of("mfaChallengeToken", challengeToken));
@@ -539,6 +548,13 @@ public class AuthService {
      */
     @Transactional
     public AuthResponse completeMfaLogin(String challengeToken, String code) {
+        // Same flag login() checks -- with it off, login() never issues a challenge token in the
+        // first place, so this only matters for a token issued before the flag was turned off, or
+        // a direct call with a guessed/stale one. Either way, refuse rather than resolve it: there
+        // is no admin-portal UI to have gotten a challenge token from.
+        if (!adminMfaService.isFeatureEnabled()) {
+            throw new ApiException(ErrorCode.AUTH_MFA_NOT_AVAILABLE);
+        }
         UUID userId = adminMfaService.verifyChallenge(challengeToken, code);
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));

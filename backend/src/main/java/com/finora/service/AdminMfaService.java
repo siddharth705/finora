@@ -15,6 +15,7 @@ import com.finora.repository.UserRepository;
 import com.finora.security.crypto.EncryptionService;
 import com.finora.security.mfa.TotpGenerator;
 import com.finora.util.TokenHasher;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -59,6 +60,19 @@ public class AdminMfaService {
     private static final int RECOVERY_CODE_COUNT = 10;
     private static final int CHALLENGE_TTL_MINUTES = 5;
 
+    /**
+     * Off by default. The MFA implementation itself (this class, TotpGenerator, AuthService's
+     * gate) is complete and RFC 6238-tested, but the admin portal has no enrollment/verification/
+     * recovery UI yet -- an admin (or anyone testing) who called {@link #beginEnrollment}/
+     * {@link #confirm} directly today would have MFA required on their very next login with no
+     * way to complete it through the web app, a real lockout with no self-service way back in.
+     * Set ADMIN_MFA_ENABLED=true only once that UI exists. See {@link #requireFeatureEnabled()}
+     * for how every entry point below defers to this, and {@code AuthService.login()}/
+     * {@code completeMfaLogin()} for the same gate on the login side.
+     */
+    @Value("${app.admin-mfa.enabled:false}")
+    private boolean featureEnabled;
+
     private final AdminTotpCredentialRepository credentialRepository;
     private final AdminMfaRecoveryCodeRepository recoveryCodeRepository;
     private final AdminMfaChallengeRepository challengeRepository;
@@ -84,8 +98,27 @@ public class AdminMfaService {
         this.auditService = auditService;
     }
 
+    /** Single source of truth for whether the feature is reachable at all -- {@code
+     *  AuthService.login()}/{@code completeMfaLogin()} defer to this rather than keeping their
+     *  own copy of the same {@code app.admin-mfa.enabled} property, so the two can never
+     *  disagree about it. */
+    public boolean isFeatureEnabled() {
+        return featureEnabled;
+    }
+
+    /** Every public entry point below calls this first, including {@link #isEnabled} -- the
+     *  point is not just to stop new enrollment while the flag is off, it's that NOTHING about
+     *  this feature responds normally, {@code /admin-mfa/status} included, so a direct caller
+     *  gets an unambiguous "not available" rather than a status page that quietly looks usable. */
+    private void requireFeatureEnabled() {
+        if (!featureEnabled) {
+            throw new ApiException(ErrorCode.AUTH_MFA_NOT_AVAILABLE);
+        }
+    }
+
     @Transactional(readOnly = true)
     public boolean isEnabled(UUID userId) {
+        requireFeatureEnabled();
         return credentialRepository.findByUserId(userId).map(AdminTotpCredential::isEnabled).orElse(false);
     }
 
@@ -99,6 +132,7 @@ public class AdminMfaService {
      */
     @Transactional
     public EnrollResponse beginEnrollment(UUID userId) {
+        requireFeatureEnabled();
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
 
@@ -127,6 +161,7 @@ public class AdminMfaService {
      */
     @Transactional
     public ConfirmResponse confirm(UUID userId, String code) {
+        requireFeatureEnabled();
         AdminTotpCredential credential = credentialRepository.findByUserId(userId)
                 .filter(c -> !c.isEnabled())
                 .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST,
@@ -159,6 +194,7 @@ public class AdminMfaService {
      *  exactly that: whoever can do this can turn a two-factor account back into a one-factor one. */
     @Transactional
     public void disable(UUID userId, String currentPassword, String googleIdToken) {
+        requireFeatureEnabled();
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
         if (!googleReauthVerifier.verify(user, currentPassword, googleIdToken)) {

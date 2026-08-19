@@ -7,6 +7,7 @@ import com.finora.entity.AdminMfaRecoveryCode;
 import com.finora.entity.AdminTotpCredential;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
+import com.finora.exception.ErrorCode;
 import com.finora.repository.AdminMfaChallengeRepository;
 import com.finora.repository.AdminMfaRecoveryCodeRepository;
 import com.finora.repository.AdminTotpCredentialRepository;
@@ -56,6 +57,10 @@ class AdminMfaServiceTest {
         auditService = mock(AuditService.class);
         service = new AdminMfaService(credentialRepository, recoveryCodeRepository, challengeRepository,
                 userRepository, encryptionService, googleReauthVerifier, auditService);
+        // @Value never runs outside a Spring context -- every test in this file exercises the
+        // underlying MFA logic itself, so the feature flag is on here. See the "feature flag"
+        // section below for flag-off behavior, which sets this back to false per test.
+        ReflectionTestUtils.setField(service, "featureEnabled", true);
 
         when(encryptionService.encrypt(any())).thenReturn(ENCRYPTED);
         when(encryptionService.decrypt(any())).thenReturn(SECRET);
@@ -304,5 +309,63 @@ class AdminMfaServiceTest {
         assertThatThrownBy(() -> service.verifyChallenge("raw-challenge-token", "000000"))
                 .isInstanceOf(ApiException.class);
         assertThat(challenge.getUsedAt()).isNull();
+    }
+
+    // --- feature flag (app.admin-mfa.enabled) ---
+    //
+    // Sid's decision: keep this off until the admin portal has an MFA UI (enrollment,
+    // verification, recovery) -- calling enroll/confirm directly today would require MFA on the
+    // next login with no way to complete it through the web app. Every entry point below must
+    // refuse outright, not just decline to change state, so a direct caller gets an unambiguous
+    // "not available" rather than a status page that quietly looks usable.
+
+    @Test
+    void isFeatureEnabled_reflectsTheFlag() {
+        assertThat(service.isFeatureEnabled()).isTrue(); // set true in setUp() for this file's other tests
+
+        ReflectionTestUtils.setField(service, "featureEnabled", false);
+        assertThat(service.isFeatureEnabled()).isFalse();
+    }
+
+    @Test
+    void isEnabled_whenFeatureDisabled_throwsNotAvailable_insteadOfCheckingTheCredentialTable() {
+        ReflectionTestUtils.setField(service, "featureEnabled", false);
+
+        assertThatThrownBy(() -> service.isEnabled(userId))
+                .isInstanceOfSatisfying(ApiException.class,
+                        e -> assertThat(e.getCode()).isEqualTo(ErrorCode.AUTH_MFA_NOT_AVAILABLE));
+        verifyNoInteractions(credentialRepository);
+    }
+
+    @Test
+    void beginEnrollment_whenFeatureDisabled_throwsNotAvailable_andStartsNothing() {
+        ReflectionTestUtils.setField(service, "featureEnabled", false);
+
+        assertThatThrownBy(() -> service.beginEnrollment(userId))
+                .isInstanceOfSatisfying(ApiException.class,
+                        e -> assertThat(e.getCode()).isEqualTo(ErrorCode.AUTH_MFA_NOT_AVAILABLE));
+        verify(credentialRepository, never()).save(any());
+    }
+
+    @Test
+    void confirm_whenFeatureDisabled_throwsNotAvailable_andEnablesNothing() {
+        ReflectionTestUtils.setField(service, "featureEnabled", false);
+
+        assertThatThrownBy(() -> service.confirm(userId, "123456"))
+                .isInstanceOfSatisfying(ApiException.class,
+                        e -> assertThat(e.getCode()).isEqualTo(ErrorCode.AUTH_MFA_NOT_AVAILABLE));
+        verifyNoInteractions(credentialRepository);
+    }
+
+    @Test
+    void disable_whenFeatureDisabled_throwsNotAvailable_andDeletesNothing() {
+        ReflectionTestUtils.setField(service, "featureEnabled", false);
+
+        assertThatThrownBy(() -> service.disable(userId, "correct-password", null))
+                .isInstanceOfSatisfying(ApiException.class,
+                        e -> assertThat(e.getCode()).isEqualTo(ErrorCode.AUTH_MFA_NOT_AVAILABLE));
+        verify(credentialRepository, never()).deleteByUserId(any());
+        verify(recoveryCodeRepository, never()).deleteByUserId(any());
+        verifyNoInteractions(googleReauthVerifier);
     }
 }

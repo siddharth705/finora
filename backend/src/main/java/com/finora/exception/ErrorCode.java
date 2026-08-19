@@ -143,6 +143,15 @@ public enum ErrorCode {
     AUTH_MFA_INVALID_CODE("AUTH_009", HttpStatus.UNAUTHORIZED,
             "That code didn't work. Check your authenticator app and try again."),
 
+    // Follow-up to SEC-03: the backend above is complete and tested, but the admin portal has no
+    // enrollment/verification/recovery UI yet -- flipping app.admin-mfa.enabled on without one
+    // would risk locking an admin out with no self-service way back in (see
+    // AdminMfaService.requireFeatureEnabled's own doc comment). Every AdminMfaService entry point,
+    // and AuthService's login()/completeMfaLogin() gate, refuse with this code while the flag is
+    // off (default), so the feature is unreachable end to end rather than merely undocumented.
+    AUTH_MFA_NOT_AVAILABLE("AUTH_010", HttpStatus.NOT_FOUND,
+            "Admin MFA is not available yet."),
+
     // Generic fallbacks — used by GlobalExceptionHandler when no more specific code applies
     VALIDATION_ERROR("VAL_001", HttpStatus.BAD_REQUEST, "Validation failed"),
     NOT_FOUND("GEN_001", HttpStatus.NOT_FOUND, "No such endpoint"),

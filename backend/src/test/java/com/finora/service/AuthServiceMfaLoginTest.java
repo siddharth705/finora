@@ -57,6 +57,10 @@ class AuthServiceMfaLoginTest {
         when(platformSettingsService.getEntity()).thenReturn(new com.finora.entity.PlatformSettings());
         auditService = mock(AuditService.class);
         adminMfaService = mock(AdminMfaService.class);
+        // app.admin-mfa.enabled -- on here so every test below exercises the gate's own placement
+        // and behavior exactly as it worked before that flag existed. See the "feature flag"
+        // section for flag-off behavior, which overrides this to false per test.
+        when(adminMfaService.isFeatureEnabled()).thenReturn(true);
 
         authService = new AuthService(
                 userRepository, mock(CategoryRepository.class), mock(PasswordResetTokenRepository.class),
@@ -154,6 +158,44 @@ class AuthServiceMfaLoginTest {
 
         assertThatThrownBy(() -> authService.completeMfaLogin("raw-challenge-token", "000000"))
                 .isInstanceOf(ApiException.class);
+        verify(refreshTokenService, never()).issue(any());
+        verify(auditService, never()).record(any(), eq("USER_LOGIN"), any(), any(), any());
+    }
+
+    // --- feature flag (app.admin-mfa.enabled) ---
+    //
+    // Sid's decision: keep this off until the admin portal has an MFA UI. login() must not get
+    // stuck requiring an MFA step that has no UI -- even for an admin whose credential row
+    // somehow exists (enrolled before this flag existed, or written directly to the database) --
+    // so with the flag off, login() must skip the gate entirely rather than ask AdminMfaService
+    // whether that account has MFA enabled.
+
+    @Test
+    void login_forAnAdminWithMfaEnabled_butFeatureFlagOff_signsInNormally_neverConsultingMfaState() {
+        User admin = adminUser();
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("admin@example.com", "ADMIN")).thenReturn(Optional.of(admin));
+        when(adminMfaService.isFeatureEnabled()).thenReturn(false);
+        // Deliberately stubbed true, to prove login() doesn't even ask -- the flag check short-
+        // circuits isEnabled() the same way SCOPE_ADMIN itself does for a consumer account.
+        when(adminMfaService.isEnabled(userId)).thenReturn(true);
+
+        AuthResponse response = authService.login(new LoginRequest("admin@example.com", "the-right-password", "ADMIN"));
+
+        assertThat(response.refreshToken()).isEqualTo("test-refresh-token");
+        verify(adminMfaService, never()).isEnabled(any());
+        verify(adminMfaService, never()).issueChallenge(any());
+        verify(auditService).record(userId, "USER_LOGIN", "User", userId);
+    }
+
+    @Test
+    void completeMfaLogin_whenFeatureFlagOff_throwsNotAvailable_withoutConsultingAnyChallenge() {
+        when(adminMfaService.isFeatureEnabled()).thenReturn(false);
+
+        assertThatThrownBy(() -> authService.completeMfaLogin("raw-challenge-token", "123456"))
+                .isInstanceOfSatisfying(ApiException.class,
+                        e -> assertThat(e.getCode()).isEqualTo(ErrorCode.AUTH_MFA_NOT_AVAILABLE));
+
+        verify(adminMfaService, never()).verifyChallenge(any(), any());
         verify(refreshTokenService, never()).issue(any());
         verify(auditService, never()).record(any(), eq("USER_LOGIN"), any(), any(), any());
     }

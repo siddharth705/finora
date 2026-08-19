@@ -270,6 +270,15 @@ app:
     # "contact support" rejection instead of a token-bearing reactivation prompt.
     reactivation-window-enabled: ${ACCOUNT_REACTIVATION_WINDOW_ENABLED:false}
     reactivation-window-days: ${ACCOUNT_REACTIVATION_WINDOW_DAYS:3}
+  admin-mfa:
+    # Off by default. AdminMfaService/AdminMfaController/AuthService's login() gate are complete
+    # and RFC 6238-tested, but the admin portal has no enrollment/verification/recovery UI yet --
+    # an admin (or anyone testing) who called the enroll/confirm endpoints directly today would
+    # have MFA required on their very next login with no way to complete it through the web app,
+    # a real lockout with no self-service way back in. See AdminMfaService.requireFeatureEnabled
+    # for how every entry point defers to this flag. Set ADMIN_MFA_ENABLED=true only once that
+    # UI ships.
+    enabled: ${ADMIN_MFA_ENABLED:false}
   account-purge:
     sweep:
       # AccountPurgeSweepService. Deletion is instant now (UserAccountLifecycleService.
