@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { authApi, meApi } from '../api/endpoints';
-import { clearAdminSession, getAdminToken, persistAdminSession } from '../api/client';
+import { clearAdminSession, getAdminToken, persistAdminSession, refreshAccessToken } from '../api/client';
 import { safeStorage } from '../lib/safeStorage';
 
 // Any one of these being present is enough to open the admin shell -- deliberately not "must be
@@ -132,12 +132,18 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
   // admin is recovered by attempting one silent refresh on mount before any of the existing
   // phoneVerified/loadAccess logic runs. A failure here (no cookie, or an expired/already-consumed
   // one) is the ordinary "not logged in" case for a first visit or a genuinely ended session.
+  //
+  // Bug fix: calls client.ts's refreshAccessToken() rather than authApi.refresh() directly -- see
+  // that function's own comment for why a raw call here is a real bug. React.StrictMode
+  // double-invokes this effect on every real mount, and the cleanup below only gates the state
+  // updates that follow, not the network request the first invocation already sent -- so a raw
+  // authApi.refresh() call here sent two real requests racing to rotate the same refresh token.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       let refreshedToken: string;
       try {
-        const refreshed = await authApi.refresh();
+        const refreshed = await refreshAccessToken();
         if (cancelled) return;
         persistAdminSession(refreshed.token);
         refreshedToken = refreshed.token;

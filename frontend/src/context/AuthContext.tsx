@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import { authApi, userApi } from '../api/endpoints';
 import { AUTH_CHANGED_EVENT } from './ThemeContext';
 import { safeStorage } from '../lib/safeStorage';
-import { getAccessToken, setAccessToken } from '../api/client';
+import { getAccessToken, setAccessToken, refreshAccessToken } from '../api/client';
 
 interface AuthState {
   token: string | null;
@@ -163,16 +163,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   //
   // A failure here (no cookie, or an expired/already-consumed one) is the ordinary "not logged in"
   // case for a first visit or a genuinely ended session -- not logged or surfaced as an error.
+  //
+  // Bug fix: calls client.ts's refreshAccessToken() rather than authApi.refresh() directly -- see
+  // that function's own comment for why a raw call here is a real bug, not just a style
+  // inconsistency. React.StrictMode double-invokes this effect on every real mount, and the
+  // cleanup below only gates the state updates that follow, not the network request already sent
+  // by the first invocation -- so a raw authApi.refresh() call here sends two real requests
+  // racing to rotate the SAME refresh token. refreshAccessToken() already sets the access token
+  // itself on success, so this effect no longer needs its own setAccessToken call.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const refreshed = await authApi.refresh();
+        const token = await refreshAccessToken();
         if (cancelled) return;
-        setAccessToken(refreshed.token);
         const profile = await userApi.get();
         if (cancelled) return;
-        setToken(refreshed.token);
+        setToken(token);
         setEmail(profile.email);
         setFullName(profile.fullName);
         setPhoneVerifiedState(profile.phoneVerified);

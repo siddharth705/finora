@@ -187,6 +187,17 @@ function unwrapEnvelope(response: any) {
 // This promise de-duplicates concurrent 401s WITHIN one tab: the access token expires while the
 // tab is idle, several components refetch on focus, and each would otherwise start its own
 // refresh.
+//
+// Bug fix: AuthContext.tsx's own bootstrap effect used to call authApi.refresh() directly instead
+// of through this function -- the one call site in the app that bypassed both this de-dupe AND
+// the cross-tab lock below. Harmless-looking (it runs once, on mount) until React.StrictMode
+// (main.tsx) double-invokes that effect on every real mount: the cleanup between the two
+// invocations only sets a `cancelled` flag, which gates the CALLBACK, not the network request --
+// by the time it runs, the first invocation's authApi.refresh() call has already gone out over
+// the wire. Two real requests race to rotate the SAME not-yet-rotated refresh token, exactly the
+// shape this file's own rotate()-doc-comment and BH-013 describe, just from one tab mounting
+// twice instead of two tabs mounting once. Routing the bootstrap effect through this function
+// closes it the same way BH-013 closed the two-tab case: serialized, not raced.
 let refreshInFlight: Promise<string> | null = null;
 
 // BH-013. The in-tab promise above is not enough, and the gap is not exotic -- it is two open
@@ -215,7 +226,7 @@ let refreshInFlight: Promise<string> | null = null;
 // call presents a still-valid, not-yet-consumed token and succeeds as an ordinary rotation of its
 // own, rather than being flagged as reuse. One extra network round trip in the rare concurrent
 // case, in exchange for not needing shared storage at all.
-async function refreshAccessToken(): Promise<string> {
+export async function refreshAccessToken(): Promise<string> {
   if (!refreshInFlight) {
     refreshInFlight = withCrossTabLock(async () => {
       const { authApi } = await import('./endpoints');

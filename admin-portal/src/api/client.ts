@@ -152,7 +152,17 @@ let refreshInFlight: Promise<{ token: string; refreshToken: string }> | null = n
 // no body at all now (see endpoints.ts). Matches frontend/src/api/client.ts's
 // refreshAccessToken() exactly, minus that app's cross-tab Web Locks coordination, which is a
 // separate concern (BH-013) out of scope for this migration.
-function refreshAccessToken(): Promise<{ token: string; refreshToken: string }> {
+//
+// Bug fix: exported so AdminAuthContext.tsx's own bootstrap effect can call this instead of
+// authApi.refresh() directly -- see frontend/src/api/client.ts's matching refreshAccessToken()
+// comment for why a raw call there is a real bug. Same shape here: React.StrictMode
+// double-invokes that effect on every real mount, and its cleanup only gates the state updates
+// that follow, not the network request the first invocation already sent -- so a raw
+// authApi.refresh() call raced two real requests against the same not-yet-rotated refresh token.
+// This function's refreshInFlight de-dupe (this file's own comment above) closes that within one
+// tab; it does not add BH-013's cross-tab lock, which stays the deliberately separate, deferred
+// concern this comment already names.
+export function refreshAccessToken(): Promise<{ token: string; refreshToken: string }> {
   if (!refreshInFlight) {
     refreshInFlight = (async () => {
       const { authApi } = await import('./endpoints');
