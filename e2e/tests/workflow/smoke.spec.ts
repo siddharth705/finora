@@ -140,12 +140,12 @@ test.describe('@smoke — the product works end to end', () => {
   test('8. signing out takes the session with it', async ({ userPage, allowConsoleErrors }) => {
     allowConsoleErrors('requests start failing once the session is gone, which is the point');
 
-    const logout = userPage.getByRole('button', { name: /log ?out|sign ?out/i }).first();
-    if (await logout.isVisible().catch(() => false)) {
-      await logout.click();
-    } else {
-      await userPage.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
-    }
+    // "Log out" lives inside the TopBar profile dropdown (TopBar.tsx), closed by default --
+    // open it before the button is clickable. Under SEC-01 the access token is an in-memory
+    // module variable and the refresh token is an HttpOnly cookie, so an `evaluate` fallback
+    // that only clears localStorage/sessionStorage wouldn't actually end the session.
+    await userPage.getByRole('button', { name: 'Profile & help' }).click();
+    await userPage.getByRole('button', { name: /log ?out|sign ?out/i }).first().click();
 
     await userPage.goto('/app', { waitUntil: 'commit' }).catch(() => {});
     await expect(userPage).toHaveURL(/\/login/, { timeout: 20_000 });
