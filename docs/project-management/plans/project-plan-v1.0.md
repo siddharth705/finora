@@ -487,7 +487,11 @@ the owner's own prioritization, recorded here rather than assumed by this plan.
 1. **SEC-06** — manual-transaction idempotency key (mirror the `import_sessions` unique-content-hash
    pattern, V79 — same mechanism, unapplied to `POST /transactions`)
 2. **SEC-13** — application-level upper bound on manual transaction amount
-3. **SEC-02** — PDF import resource limits (page-count/decompressed-size ceiling before full parse)
+3. **SEC-02** — PDF import resource limits (page-count/decompressed-size ceiling before full parse).
+   **Partial mitigation, not a full close**: the page-count ceiling checks after `Loader.loadPDF`
+   returns, so it does not protect against a pathological/compression-bomb-style PDF exhausting memory
+   *inside* `Loader.loadPDF()` itself, before the ceiling check ever runs. Disclosed as a known
+   remaining gap, not silently treated as closed.
 
 **Sprint 2 — Account security**
 4. **SEC-01** — move access token off `localStorage` (short-lived token + the HttpOnly refresh cookie
@@ -496,7 +500,13 @@ the owner's own prioritization, recorded here rather than assumed by this plan.
    accounts)
 6. **SEC-03** — admin-portal MFA (TOTP or WebAuthn/passkeys + recovery codes) — closing a gap on an
    already-deployed surface, not a pre-launch gate (§1: deployment is real, currently unpopulated by
-   real customers)
+   real customers). **Backend complete in PR #187 (TOTP enroll/confirm/disable, login-time challenge,
+   all tested) — enforcement deferred behind a new `ADMIN_MFA_ENABLED` config flag, defaulting to
+   `false`, until the admin-portal frontend has its own MFA UI.** Reasoning, recorded verbatim from
+   the implementing session: enabling MFA without UI support risks locking out administrators who
+   enroll via a direct API call with no way to complete the challenge through the web app. **Status is
+   "backend complete, enforcement deferred behind flag," not fully closed.** Open follow-up, not yet
+   started: **admin-portal MFA UI (enrollment, verification, recovery-code flow)**.
 
 **Sprint 3 — Security maturity**
 7. **SEC-12** — admin audit entries capture what changed, not just who/when
@@ -512,7 +522,30 @@ detection is bypassable so lower-value than it looks; pinning deferred as usuall
 12. **SEC-09** — biometric app-lock
 13. **SEC-08** — root/jailbreak detection
 14. **SEC-17** — screenshot/screen-recording protection on balance/statement screens
-15. **SEC-18** — certificate-pinning evaluation
+15. **SEC-18** — certificate-pinning evaluation. **Deliberately deferred**, not fixed, pending real
+    production certificate material and a rotation runbook — pinning against a certificate this
+    project can't yet rotate safely is worse than no pinning. See
+    [`2026-08-19-sec-18-certificate-pinning-deferral.md`](../../quality/bug-reports/2026-08-19-sec-18-certificate-pinning-deferral.md)
+    (added in PR #189).
+
+**Post-implementation gap review (2026-08-19, second pass across PRs #186–#189, before merge).** An
+independent gap-review pass across all four sprint PRs, run before any of them merged, surfaced three
+items worth recording here rather than letting them land silently inside the sprint PRs themselves:
+
+- **Sprint 1 (PR #186) — two real bugs in the new transaction idempotency-key logic, being fixed as a
+  follow-up commit on that same PR before it merges, not hidden gaps left for later.** (a) A
+  soft-delete interaction: `Transaction`'s `@SQLRestriction("deleted_at IS NULL")` means a retry
+  against an idempotency key whose original transaction was soft-deleted hits the unique index and
+  fails with a generic 409, instead of correctly resolving. (b) Reusing an idempotency key with a
+  *different* request body silently returned the stale original transaction instead of being
+  rejected — the key was checked for existence, not compared against the new request's content.
+- **SEC-02 partial mitigation** — see the Sprint 1 item above; not a new finding, recorded there.
+- **SEC-18 deliberate deferral** — see the Sprint 4 item above; not a new finding, recorded there.
+
+**Merge order.** This docs PR ([#185](https://github.com/siddharth705/finora/pull/185)) is intended to
+merge before or alongside the four sprint PRs (#186–#189): each sprint PR's code comments cite
+[`2026-08-19-security-review-findings.md`](../../quality/bug-reports/2026-08-19-security-review-findings.md)
+by path, and those citations only resolve once this PR lands on `main`.
 
 ---
 
@@ -1103,6 +1136,7 @@ On any report from an engineering session, review, deployment or bug hunt:
 
 | Date | Change | Why |
 |---|---|---|
+| 2026-08-19 | **§4b updated with an admin-MFA rollout decision, two follow-up bugs from an independent gap review of PRs #186–#189, and two disclosed partial-mitigation items — all before any of the four sprint PRs merge.** SEC-03 (admin MFA) is backend-complete in PR #187 (TOTP enroll/confirm/disable, login-time challenge, tested) but reclassified from "closing" to **"backend complete, enforcement deferred behind flag"**: shipped gated behind a new `ADMIN_MFA_ENABLED` config flag, defaulting to `false`, until admin-portal has its own MFA UI — reasoning, recorded verbatim from the implementing session: enabling MFA without UI support risks locking out administrators who enroll via a direct API call with no way to complete the challenge through the web app. Admin-portal MFA UI (enrollment, verification, recovery-code flow) added as an open, not-yet-started follow-up. A separate independent review of PR #186 (Sprint 1) found two real bugs in the new transaction idempotency-key logic — a soft-delete/`@SQLRestriction` interaction that makes a retry against a soft-deleted transaction 409 instead of resolving, and reusing an idempotency key with a different request body silently returning the stale original instead of being rejected — both being fixed as a follow-up commit on PR #186 itself before it merges, recorded as known-and-being-fixed rather than a hidden gap. SEC-02's page-count ceiling is now disclosed as a partial mitigation only: it checks after `Loader.loadPDF` returns, not before, so a pathological/compression-bomb-style PDF can still exhaust memory inside `Loader.loadPDF()` itself. SEC-18 (certificate pinning) recorded as deliberately deferred pending real production certificate material and a rotation runbook, per the new doc added in PR #189. Also recorded: this docs PR (#185) is intended to merge before or alongside #186–#189, since each sprint PR's code comments cite `2026-08-19-security-review-findings.md` by path | Same "verify before acting, record findings honestly" discipline as the review itself — an independent gap-review pass on already-written sprint PRs found real issues worth recording the moment they were found, not silently fixed inside those PRs with no trace here, and a rollout decision that trades a fully-closed finding for a safer flagged rollout is exactly the kind of tradeoff this plan records rather than assumes |
 | 2026-08-19 | **Independent security review run to replace a discredited vendor report; 18-item hardening backlog added at §4b, owner-prioritized into 4 sprints.** A CodeFlow static-analysis report claiming 61 issues was spot-checked and found substantially fabricated (quoted code that doesn't exist in the cited files; framework boilerplate flagged via keyword matching). In its place, an 11-agent, three-pass, read-only review ran directly against `main` @ `9de2f7b4` (17 commits behind `origin/main` at review time): a tight exploitable-only pass (0 findings — core IDOR/RBAC/JWT/OAuth controls held), then two broadened passes covering defense-in-depth gaps and previously-uncovered areas (business logic/financial integrity, CSRF/enumeration, admin-role-escalation, mobile hardening, rate-limiting consistency), yielding 18 MEDIUM/LOW findings and 0 HIGH. Full detail in [`2026-08-19-security-review-findings.md`](../../quality/bug-reports/2026-08-19-security-review-findings.md). Owner reviewed the findings and sequenced them: Sprint 1 (financial correctness — transaction idempotency, amount bounds, PDF resource limits) ranked above Sprint 2 (account security — token storage, timing oracle, admin MFA) ranked above Sprint 3 (security maturity) and Sprint 4 (mobile hardening, itself ranked biometric lock > root detection > screenshot protection > cert pinning). §2 row 4's completion % held at 90%, not recomputed — weighting 18 new absence-of-control items against an existing bug-hunt-based figure needs the same owner sequencing call already captured in §4b, not a number asserted here | Same "verify before acting, record findings honestly, no product decisions made for the owner" discipline this plan already applies everywhere else — the vendor report would have wasted a remediation pass on fabricated issues had it not been checked first, and the sprint order is the owner's own call, recorded rather than assumed |
 | 2026-08-17 | **D-23 Phase 2 (mobile Google Sign-In) and D-26 (Apple Sign-In for iOS) built together, single PR, not yet merged.** Owner chose "build everything together" over sequencing options (Android-Google-only first, or the backend Apple verifier first) when asked how to pace Phase 2. Backend: `AppleIdTokenVerifierService` (new, mirrors the Google verifier, uses `com.auth0:jwks-rsa` since Apple has no first-party Java verification library), `POST /api/v1/auth/apple`, its own rate limiter and config; `AuthService.loginWithGoogle`/`loginWithApple` unified into one shared `loginWithOAuthIdentity` method rather than duplicating the security-sensitive account-hijack-protection body a second time. Mobile: `@react-native-google-signin/google-signin` + `expo-apple-authentication` installed, wired into `app.config.ts` (Google's config plugin reads the SAME Firebase credential files already used for phone-OTP, no new download convention), official brand-compliant buttons wired into `LoginScreen`/`RegisterScreen`. Backend suite 3000/3000, mobile suite 324/324. Self-review before commit caught and fixed one real bug (a DTO-level `@Pattern` on Apple's optional `fullName` that would have hard-failed the entire sign-in on an edge-case name-formatter value, instead of the safe email fallback one layer down already provides) and surfaced one pre-existing, explicitly out-of-scope gap (mobile has no reactivation-flow UI for ANY sign-in method yet, not something this PR introduces). Full detail in §11's D-23/D-26 rows. Real device testing still needs the owner to register OAuth clients in Google Cloud Console and Apple Developer Portal — not something this session can do | Direct execution of the owner's already-made D-23/D-26 decisions, logged per §12's "every merge gets a changelog row" practice; the self-review finding gets its own line per this plan's standing rule that a real bug found and fixed pre-merge is worth recording, not just silently fixed |
 | 2026-08-17 | **PR3-C merged (Your Financial Journey dashboard section) — PR #167, squash `84be206`.** `Dashboard.tsx` now renders D-25's 5 milestones as a vertical connector timeline (new `FinancialJourney.tsx` component, own dedicated test file), backed by PR3-B's `/dashboard/journey`. Event-based date labels ("Completed 2 days ago", falling back to a calendar date past ~30 days) — no fixed Day-N schedule, per D-25's own resolution. A small staggered fade/slide-in reveal on mount (new `journeyReveal` keyframe in `index.css`, respects `prefers-reduced-motion`). Deliberately **not** gated on `isEmpty` the way Financial Health Score is — `ACCOUNT_CREATED` is true from signup, so a brand-new account is exactly the case this is most useful for. Full suite (539/539), `tsc`/`eslint` clean, browser-verified live against an isolated backend+DB: watched a fresh signup go from 1/5 to 4/5 complete after creating a budget and a fully-funded goal via the real API, in both dark and light theme. This closes out D-22's original PR3 scope — PR3-D (funnel/analytics tracking) remains separate and un-started | Direct execution of D-25's already-decided scope, not a new decision; logged per §12's "every merge gets a changelog row" practice, same as PR3-A/PR3-B above |
