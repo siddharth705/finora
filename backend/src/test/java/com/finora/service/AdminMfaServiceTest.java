@@ -136,7 +136,7 @@ class AdminMfaServiceTest {
         when(credentialRepository.findByUserId(userId)).thenReturn(Optional.of(pending));
 
         String code = TotpGenerator.currentCode(SECRET);
-        ConfirmResponse response = service.confirm(userId, code);
+        ConfirmResponse response = service.confirm(userId, code, userId);
 
         assertThat(pending.isEnabled()).isTrue();
         assertThat(response.recoveryCodes()).hasSize(10);
@@ -152,7 +152,7 @@ class AdminMfaServiceTest {
         pending.storeSecret(ENCRYPTED);
         when(credentialRepository.findByUserId(userId)).thenReturn(Optional.of(pending));
 
-        assertThatThrownBy(() -> service.confirm(userId, "000000"))
+        assertThatThrownBy(() -> service.confirm(userId, "000000", userId))
                 .isInstanceOf(ApiException.class);
         assertThat(pending.isEnabled()).isFalse();
         verify(recoveryCodeRepository, never()).save(any());
@@ -162,7 +162,7 @@ class AdminMfaServiceTest {
     void confirm_withNoPendingEnrollment_throws() {
         when(credentialRepository.findByUserId(userId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.confirm(userId, "123456"))
+        assertThatThrownBy(() -> service.confirm(userId, "123456", userId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Start enrollment");
     }
@@ -174,7 +174,7 @@ class AdminMfaServiceTest {
         already.markEnabled();
         when(credentialRepository.findByUserId(userId)).thenReturn(Optional.of(already));
 
-        assertThatThrownBy(() -> service.confirm(userId, "123456"))
+        assertThatThrownBy(() -> service.confirm(userId, "123456", userId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Start enrollment");
     }
@@ -185,7 +185,7 @@ class AdminMfaServiceTest {
     void disable_withAVerifiedCredential_deletesEverything() {
         when(googleReauthVerifier.verify(any(), any(), any())).thenReturn(true);
 
-        service.disable(userId, "correct-password", null);
+        service.disable(userId, "correct-password", null, userId);
 
         verify(credentialRepository).deleteByUserId(userId);
         verify(recoveryCodeRepository).deleteByUserId(userId);
@@ -197,7 +197,7 @@ class AdminMfaServiceTest {
     void disable_withAnUnverifiedCredential_throwsAndDeletesNothing() {
         when(googleReauthVerifier.verify(any(), any(), any())).thenReturn(false);
 
-        assertThatThrownBy(() -> service.disable(userId, "wrong-password", null))
+        assertThatThrownBy(() -> service.disable(userId, "wrong-password", null, userId))
                 .isInstanceOf(ApiException.class);
         verify(credentialRepository, never()).deleteByUserId(any());
         verify(recoveryCodeRepository, never()).deleteByUserId(any());
@@ -351,7 +351,7 @@ class AdminMfaServiceTest {
     void confirm_whenFeatureDisabled_throwsNotAvailable_andEnablesNothing() {
         ReflectionTestUtils.setField(service, "featureEnabled", false);
 
-        assertThatThrownBy(() -> service.confirm(userId, "123456"))
+        assertThatThrownBy(() -> service.confirm(userId, "123456", userId))
                 .isInstanceOfSatisfying(ApiException.class,
                         e -> assertThat(e.getCode()).isEqualTo(ErrorCode.AUTH_MFA_NOT_AVAILABLE));
         verifyNoInteractions(credentialRepository);
@@ -361,7 +361,7 @@ class AdminMfaServiceTest {
     void disable_whenFeatureDisabled_throwsNotAvailable_andDeletesNothing() {
         ReflectionTestUtils.setField(service, "featureEnabled", false);
 
-        assertThatThrownBy(() -> service.disable(userId, "correct-password", null))
+        assertThatThrownBy(() -> service.disable(userId, "correct-password", null, userId))
                 .isInstanceOfSatisfying(ApiException.class,
                         e -> assertThat(e.getCode()).isEqualTo(ErrorCode.AUTH_MFA_NOT_AVAILABLE));
         verify(credentialRepository, never()).deleteByUserId(any());

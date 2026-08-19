@@ -158,9 +158,18 @@ public class AdminMfaService {
      * and returns {@link #RECOVERY_CODE_COUNT} single-use backup codes -- this is the only moment
      * they are ever available in the clear (only hashes are persisted, see
      * {@link AdminMfaRecoveryCode}), so losing them means generating a fresh set replaces the old.
+     *
+     * @param actingAdminId who actually performed the action, written into the audit metadata as
+     *        {@code "actorId"} -- same convention {@code AccountService.create()} uses. Always
+     *        equal to {@code userId} here: {@code AdminMfaController} is this method's only
+     *        caller and is self-service-only (see its own doc comment), with no admin-proxy path
+     *        onto another account's MFA. Threaded as a real parameter rather than read from
+     *        {@code userId} a second time inside this method, so the caller's identity is visible
+     *        at the call site and this stays correct by construction if an admin-proxy path is
+     *        ever added later.
      */
     @Transactional
-    public ConfirmResponse confirm(UUID userId, String code) {
+    public ConfirmResponse confirm(UUID userId, String code, UUID actingAdminId) {
         requireFeatureEnabled();
         AdminTotpCredential credential = credentialRepository.findByUserId(userId)
                 .filter(c -> !c.isEnabled())
@@ -184,16 +193,20 @@ public class AdminMfaService {
             recoveryCodeRepository.save(entity);
         }
 
-        auditService.record(userId, "ADMIN_MFA_ENABLED", "User", userId, Map.of());
+        auditService.record(userId, "ADMIN_MFA_ENABLED", "User", userId,
+                Map.of("actorId", actingAdminId.toString()));
         return new ConfirmResponse(rawCodes);
     }
 
     /** Requires fresh proof of the account's own sign-in credential -- the same bar
      *  {@code UserAccountLifecycleService.deactivate} and password change already hold a
      *  security-downgrading action to, via the same {@link GoogleReauthVerifier}. Removing MFA is
-     *  exactly that: whoever can do this can turn a two-factor account back into a one-factor one. */
+     *  exactly that: whoever can do this can turn a two-factor account back into a one-factor one.
+     *
+     *  @param actingAdminId see {@link #confirm}'s own doc comment -- same convention, same
+     *         always-equal-to-userId guarantee, same reason. */
     @Transactional
-    public void disable(UUID userId, String currentPassword, String googleIdToken) {
+    public void disable(UUID userId, String currentPassword, String googleIdToken, UUID actingAdminId) {
         requireFeatureEnabled();
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
@@ -204,7 +217,8 @@ public class AdminMfaService {
         credentialRepository.deleteByUserId(userId);
         recoveryCodeRepository.deleteByUserId(userId);
         challengeRepository.deleteByUserId(userId);
-        auditService.record(userId, "ADMIN_MFA_DISABLED", "User", userId, Map.of());
+        auditService.record(userId, "ADMIN_MFA_DISABLED", "User", userId,
+                Map.of("actorId", actingAdminId.toString()));
     }
 
     /**
