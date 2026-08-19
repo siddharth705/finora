@@ -31,8 +31,13 @@ Don't redo these:
 - `@react-native-firebase/app` + `/auth` installed and registered as config plugins in
   `mobile/app.config.ts`, with `expo-build-properties` set to `useFrameworks: static` and
   `forceStaticLinking: ['RNFBApp', 'RNFBAuth']` (required for RNFirebase on iOS).
-- Bundle identifiers set to `com.finora.app` on **both** platforms (`ios.bundleIdentifier`,
-  `android.package`). **Confirm this before the first store submission — it is effectively
+- Bundle identifiers set to `com.finoratech.app` on **both** platforms (`ios.bundleIdentifier`,
+  `android.package`) in `mobile/app.config.ts`. Renamed from the original `com.finora.app` (still
+  visible in git history) after it turned out to be unavailable to register as an App ID under
+  this project's Apple Developer team (either a genuine third-party collision, or residue from the
+  Organization/DUNS enrollment attempt abandoned in favor of an Individual account — see the plan
+  doc's D-14/R-16). Both platforms were renamed together rather than leaving iOS and Android on
+  different identifiers. **Confirm this before the first store submission — it is effectively
   permanent afterwards.**
 - `mobile/eas.json` with `development`, `preview`, and `production` profiles.
 - `app.config.ts` references `GoogleService-Info.plist` / `google-services.json` only when those
@@ -349,7 +354,7 @@ Needed before phone verification will work. In the Firebase Console, on **the sa
 backend's `GOOGLE_APPLICATION_CREDENTIALS` service account belongs to**:
 
 1. Project Settings → Your apps → Add app → Android.
-2. Package name: `com.finora.app` (must match `android.package` exactly).
+2. Package name: `com.finoratech.app` (must match `android.package` exactly).
 3. Download `google-services.json` → place it at `mobile/google-services.json`.
    It is gitignored on purpose — same rule as the backend's service-account key. Every developer
    downloads their own.
@@ -381,7 +386,7 @@ installing it).
 ### Firebase iOS app
 
 1. Firebase Console → Project Settings → Your apps → Add app → iOS.
-2. Bundle ID: `com.finora.app` (must match `ios.bundleIdentifier`).
+2. Bundle ID: `com.finoratech.app` (must match `ios.bundleIdentifier`).
 3. Download `GoogleService-Info.plist` → place at `mobile/GoogleService-Info.plist` (also
    gitignored).
 4. **APNs key** — this is the step most easily missed, and phone auth silently fails without it.
@@ -458,7 +463,7 @@ cd mobile && npx eas env:create --environment production --name GOOGLE_SERVICES_
 
 Firebase phone auth attests the app by its signing certificate, so **every** keystore that produces
 a build needs its SHA-1 and SHA-256 registered in Firebase Console → Project Settings → the
-`com.finora.app` Android app. There are two, and forgetting the second is the usual way phone auth
+`com.finoratech.app` Android app. There are two, and forgetting the second is the usual way phone auth
 "works locally and fails on the installed build":
 
 - **The local debug keystore** at `~/.android/debug.keystore`, created on first build with the
