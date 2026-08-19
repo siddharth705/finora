@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { Card, EmptyState, SectionHeading } from '../components/Card';
 import { DonutChart, type Slice } from '../components/charts/DonutChart';
 import { CashFlowChart } from '../components/charts/CashFlowChart';
@@ -27,6 +28,13 @@ const DONUT_COLORS = ['#3b82f6', '#16a34a', '#f59e0b', '#8b5cf6', '#ef4444', '#9
 const OTHER_LABEL = 'Other';
 
 export function DashboardScreen() {
+  // SEC-17 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Balances and
+  // account totals render on this screen the moment it mounts -- prevents screenshots/screen
+  // recording for as long as it stays mounted, and automatically stops preventing them the
+  // instant it unmounts (navigating away, or the app backgrounding through AppLockGate). iOS 13+/
+  // all Android versions per expo-screen-capture's own platform notes; older iOS silently does
+  // nothing rather than erroring, which is an acceptable degrade, not a broken state.
+  usePreventScreenCapture();
   const c = useTheme();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();

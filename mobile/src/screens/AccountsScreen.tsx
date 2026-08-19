@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { accountsApi } from '../api/endpoints';
 import { Card, EmptyState } from '../components/Card';
 import { fmtCurrency, fmtDate } from '../lib/format';
@@ -27,6 +28,12 @@ const ACCOUNT_TYPE_LABEL: Record<string, string> = {
 };
 
 export function AccountsScreen() {
+  // SEC-17 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Balances render
+  // unconditionally here, and the reveal toggle above (AUTO_REMASK_MS) exists specifically to make
+  // the masked account number visible on demand -- the single most screenshot-attractive moment in
+  // the app, and one Dashboard/StatementHistory's own usePreventScreenCapture() calls don't cover
+  // since this is a separate screen.
+  usePreventScreenCapture();
   const c = useTheme();
   const insets = useSafeAreaInsets();
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
