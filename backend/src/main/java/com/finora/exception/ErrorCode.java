@@ -24,6 +24,15 @@ public enum ErrorCode {
     TXN_DUPLICATE("TXN_001", HttpStatus.CONFLICT, "Duplicate transaction detected"),
     TXN_NOT_FOUND("TXN_002", HttpStatus.NOT_FOUND, "Transaction not found"),
     TXN_FORBIDDEN("TXN_003", HttpStatus.FORBIDDEN, "This transaction does not belong to you"),
+    // Bug fix (gap review of SEC-06): TransactionService.create()'s idempotency replay check used
+    // to return whatever transaction the key mapped to unconditionally, with no check that the
+    // REST of the request -- amount, account, type, date, description, category -- matched what
+    // was recorded under that key the first time. A client bug that resent a key with a different
+    // amount or account silently got back the stale original instead of a rejection, exactly the
+    // "resolves quietly to whatever's there" failure V97's own migration comment says an
+    // idempotency key must not permit.
+    TXN_IDEMPOTENCY_KEY_REUSED("TXN_004", HttpStatus.CONFLICT,
+            "This idempotency key was already used for a different request."),
 
     // Statement import (com.finora.imports)
     IMPORT_NO_HEADER_DETECTED("IMPORT_001", HttpStatus.UNPROCESSABLE_ENTITY, "Could not find a transaction table in this file", true),

@@ -6,6 +6,7 @@ import com.finora.entity.Category;
 import com.finora.entity.Transaction;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
+import com.finora.exception.ErrorCode;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.TransactionRepository;
@@ -174,6 +175,11 @@ public class TransactionService {
      * read loses the race at the unique index (V97) instead, and gets GlobalExceptionHandler's
      * existing 409 for DataIntegrityViolationException -- the same outcome the import-side callers
      * already accept, and a retry of that same request lands on this early-return branch instead.
+     *
+     * <p>The lookup itself sees soft-deleted rows on purpose (see the repository method's own doc
+     * comment), and a match found there is only ever returned once {@link #requireSameRequest} has
+     * confirmed the replay's fields agree with what was recorded the first time -- a key match
+     * alone is not sufficient, see that method's doc comment.
      */
     @Transactional
     public TransactionDto create(UUID userId, TransactionDto.CreateRequest req) {
@@ -191,6 +197,7 @@ public class TransactionService {
             if (existing != null) {
                 String categoryName = categoryRepository.findById(existing.getCategoryId())
                         .map(Category::getName).orElse("Uncategorized");
+                requireSameRequest(existing, req, categoryName);
                 return TransactionDto.from(existing, categoryName);
             }
         }
@@ -272,6 +279,30 @@ public class TransactionService {
                 Map.of("amount", saved.getAmount(), "type", saved.getTxnType().name(), "source", saved.getSource().name()));
         sendTransactionAlert(userId, saved);
         return TransactionDto.from(saved, category.getName());
+    }
+
+    /**
+     * Bug fix (gap review of SEC-06): the replay check above used to return {@code existing}
+     * unconditionally the moment the key matched, with no check that the rest of the request
+     * actually matches what was recorded under that key the first time. An idempotency key
+     * identifies one logical request -- replaying it is only correct when the request really is a
+     * replay of that same request. A client bug that resent the same key with a different amount
+     * or account would otherwise silently get back the stale original instead of a rejection.
+     *
+     * <p>Compared against the fields a genuine retry actually resends -- account, amount, type,
+     * date, description, and (only when the caller supplies one) category. Not tags/notes: those
+     * are free-form annotations whose presence doesn't change which financial event this is.
+     */
+    private void requireSameRequest(Transaction existing, TransactionDto.CreateRequest req, String existingCategoryName) {
+        boolean matches = existing.getAccountId().equals(req.accountId())
+                && req.amount() != null && existing.getAmount().compareTo(req.amount()) == 0
+                && existing.getTxnType().name().equalsIgnoreCase(req.type())
+                && java.util.Objects.equals(existing.getTxnDate(), req.date())
+                && java.util.Objects.equals(existing.getDescription(), req.description())
+                && (req.categoryName() == null || req.categoryName().equals(existingCategoryName));
+        if (!matches) {
+            throw new ApiException(ErrorCode.TXN_IDEMPOTENCY_KEY_REUSED);
+        }
     }
 
     /** Real-time transaction alert SMS -- scoped deliberately to this one manual-entry path, not

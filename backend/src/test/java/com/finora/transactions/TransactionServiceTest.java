@@ -939,13 +939,14 @@ class TransactionServiceTest {
         existing.setDescription("Swiggy order");
         existing.setAmount(BigDecimal.valueOf(486));
         existing.setTxnType(Transaction.Type.EXPENSE);
+        existing.setTxnDate(LocalDate.now());
         existing.setCategoryId(dummyCategory.getId());
         existing.setIdempotencyKey("client-key-1");
         when(transactionRepository.findByUserIdAndIdempotencyKey(userId, "client-key-1"))
                 .thenReturn(Optional.of(existing));
         when(categoryRepository.findById(dummyCategory.getId())).thenReturn(Optional.of(dummyCategory));
 
-        var req = new TransactionDto.CreateRequest(accountId, null, LocalDate.now(),
+        var req = new TransactionDto.CreateRequest(accountId, null, existing.getTxnDate(),
                 "Swiggy order", BigDecimal.valueOf(486), "EXPENSE", List.of(), "client-key-1");
 
         TransactionDto result = transactionService.create(userId, req);
@@ -954,6 +955,82 @@ class TransactionServiceTest {
         verify(transactionRepository, never()).save(any());
         verify(accountRepository, never()).save(any());
         verify(reconciliationService, never()).reconcileForUser(any());
+    }
+
+    // --- Idempotency key reused with a different request (gap review of SEC-06: the replay check
+    // used to return the original transaction unconditionally once the key matched, with no check
+    // that the rest of the request -- amount, account, category -- actually matched what was
+    // recorded under that key the first time) ---
+
+    private Transaction seededIdempotentTransaction(UUID accountId) {
+        Transaction existing = new Transaction();
+        ReflectionTestUtils.setField(existing, "id", UUID.randomUUID());
+        existing.setUserId(userId);
+        existing.setAccountId(accountId);
+        existing.setDescription("Swiggy order");
+        existing.setAmount(BigDecimal.valueOf(486));
+        existing.setTxnType(Transaction.Type.EXPENSE);
+        existing.setTxnDate(LocalDate.now());
+        existing.setCategoryId(dummyCategory.getId());
+        existing.setIdempotencyKey("client-key-1");
+        return existing;
+    }
+
+    @Test
+    void create_withAReusedIdempotencyKey_butADifferentAmount_rejectsRatherThanReturningTheStaleOriginal() {
+        UUID accountId = UUID.randomUUID();
+        Transaction existing = seededIdempotentTransaction(accountId);
+        when(transactionRepository.findByUserIdAndIdempotencyKey(userId, "client-key-1"))
+                .thenReturn(Optional.of(existing));
+        when(categoryRepository.findById(dummyCategory.getId())).thenReturn(Optional.of(dummyCategory));
+
+        // Same key, same everything except the amount -- a client bug, not a legitimate retry.
+        var req = new TransactionDto.CreateRequest(accountId, null, existing.getTxnDate(),
+                "Swiggy order", BigDecimal.valueOf(999), "EXPENSE", List.of(), "client-key-1");
+
+        assertThatThrownBy(() -> transactionService.create(userId, req))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("already used for a different request");
+
+        verify(transactionRepository, never()).save(any());
+        verify(accountRepository, never()).save(any());
+    }
+
+    @Test
+    void create_withAReusedIdempotencyKey_butADifferentAccount_rejectsRatherThanReturningTheStaleOriginal() {
+        UUID accountId = UUID.randomUUID();
+        UUID otherAccountId = UUID.randomUUID();
+        Transaction existing = seededIdempotentTransaction(accountId);
+        when(transactionRepository.findByUserIdAndIdempotencyKey(userId, "client-key-1"))
+                .thenReturn(Optional.of(existing));
+        when(categoryRepository.findById(dummyCategory.getId())).thenReturn(Optional.of(dummyCategory));
+
+        var req = new TransactionDto.CreateRequest(otherAccountId, null, existing.getTxnDate(),
+                "Swiggy order", BigDecimal.valueOf(486), "EXPENSE", List.of(), "client-key-1");
+
+        assertThatThrownBy(() -> transactionService.create(userId, req))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("already used for a different request");
+
+        verify(transactionRepository, never()).save(any());
+    }
+
+    @Test
+    void create_withAReusedIdempotencyKey_butADifferentExplicitCategory_rejectsRatherThanReturningTheStaleOriginal() {
+        UUID accountId = UUID.randomUUID();
+        Transaction existing = seededIdempotentTransaction(accountId);
+        when(transactionRepository.findByUserIdAndIdempotencyKey(userId, "client-key-1"))
+                .thenReturn(Optional.of(existing));
+        when(categoryRepository.findById(dummyCategory.getId())).thenReturn(Optional.of(dummyCategory));
+
+        var req = new TransactionDto.CreateRequest(accountId, "Travel", existing.getTxnDate(),
+                "Swiggy order", BigDecimal.valueOf(486), "EXPENSE", List.of(), "client-key-1");
+
+        assertThatThrownBy(() -> transactionService.create(userId, req))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("already used for a different request");
+
+        verify(transactionRepository, never()).save(any());
     }
 
     @Test
