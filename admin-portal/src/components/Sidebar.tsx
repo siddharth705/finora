@@ -4,7 +4,7 @@ import {
   ListFilter, Store, Sparkles, GitMerge, BarChart3, Stethoscope, FileSearch, ListRestart , BadgeCheck, Fingerprint, Route,
   CreditCard } from 'lucide-react';
 import { useAdminAuth } from '../context/AdminAuthContext';
-import logoMark from '../assets/logo-mark.png';
+import { BrandMark } from './BrandMark';
 
 // Every entry carries the same shape (including `end`, even when false) -- a mixed shape where
 // only some entries had an `end` key would make the destructuring in visibleLinks.map() below
@@ -53,9 +53,7 @@ export function Sidebar() {
   return (
     <aside className="w-64 flex-shrink-0 bg-sidebar min-h-screen flex flex-col py-6 px-4">
       <div className="flex items-center gap-2.5 px-2 mb-1">
-        <div className="w-8 h-8 rounded-lg overflow-hidden flex-shrink-0">
-          <img src={logoMark} alt="" className="w-full h-full object-cover" />
-        </div>
+        <BrandMark size={32} invert className="rounded-lg flex-shrink-0" />
         <span className="text-white font-extrabold tracking-wide text-lg">FINORA</span>
       </div>
       <div className="px-2 mb-8">
@@ -72,7 +70,7 @@ export function Sidebar() {
             end={end}
             className={({ isActive }) =>
               `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                isActive ? 'bg-primary text-white' : 'text-gray-400 hover:bg-sidebar-hover hover:text-gray-200'
+                isActive ? 'bg-primary text-on-primary' : 'text-gray-400 hover:bg-sidebar-hover hover:text-gray-200'
               }`
             }
           >
@@ -84,7 +82,7 @@ export function Sidebar() {
 
       <div className="pt-3 border-t border-white/10">
         <div className="flex items-center gap-2.5 px-2 pb-3">
-          <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white text-xs font-semibold flex-shrink-0">
+          <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary text-xs font-semibold flex-shrink-0">
             {initials(fullName)}
           </div>
           <div className="min-w-0 flex-1">

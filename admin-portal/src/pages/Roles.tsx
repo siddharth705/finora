@@ -223,7 +223,7 @@ function RoleCard({
             type="button"
             disabled={!selectedPermission || grantMutation.isPending}
             onClick={() => grantMutation.mutate(selectedPermission)}
-            className="text-xs font-semibold text-white bg-primary hover:bg-primary-dark rounded-lg px-2.5 py-1.5 disabled:opacity-50"
+            className="text-xs font-semibold text-on-primary bg-primary hover:bg-primary-dark rounded-lg px-2.5 py-1.5 disabled:opacity-50"
           >
             Grant
           </button>
@@ -296,7 +296,7 @@ function RolesContent() {
               setShowCreateRole(true);
               setCreateRoleError(null);
             }}
-            className="inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark text-white text-sm font-semibold rounded-lg px-4 py-2.5 flex-shrink-0"
+            className="inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark text-on-primary text-sm font-semibold rounded-lg px-4 py-2.5 flex-shrink-0"
           >
             <Plus size={15} /> New role
           </button>

@@ -226,7 +226,7 @@ function SettingsContent() {
               setBoundsMessage(null);
               updateMutation.mutate();
             }}
-            className="inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark text-white text-sm font-semibold rounded-lg px-4 py-2.5 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark text-on-primary text-sm font-semibold rounded-lg px-4 py-2.5 disabled:opacity-50"
           >
             <Save size={14} /> {updateMutation.isPending ? 'Saving…' : 'Save changes'}
           </button>

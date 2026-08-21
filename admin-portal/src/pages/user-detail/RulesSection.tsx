@@ -92,7 +92,7 @@ export function InlineRuleForm({
         <button
           type="submit"
           disabled={submitting}
-          className="text-xs font-semibold text-white bg-primary hover:bg-primary-dark rounded-lg px-3 py-1.5 disabled:opacity-50"
+          className="text-xs font-semibold text-on-primary bg-primary hover:bg-primary-dark rounded-lg px-3 py-1.5 disabled:opacity-50"
         >
           {submitting ? 'Saving…' : 'Save'}
         </button>

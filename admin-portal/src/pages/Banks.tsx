@@ -297,7 +297,7 @@ function BankSummaryTab({ bank, onSave, saving, error }: {
         <button
           type="submit"
           disabled={saving}
-          className="bg-primary hover:bg-primary-dark text-white text-sm font-semibold rounded-lg px-4 py-2 disabled:opacity-50"
+          className="bg-primary hover:bg-primary-dark text-on-primary text-sm font-semibold rounded-lg px-4 py-2 disabled:opacity-50"
         >
           Save changes
         </button>
@@ -499,7 +499,7 @@ function BanksContent() {
               setShowCreate(true);
               setFormError(null);
             }}
-            className="inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark text-white text-sm font-semibold rounded-lg px-4 py-2.5 flex-shrink-0"
+            className="inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark text-on-primary text-sm font-semibold rounded-lg px-4 py-2.5 flex-shrink-0"
           >
             <Plus size={15} /> Add bank
           </button>
