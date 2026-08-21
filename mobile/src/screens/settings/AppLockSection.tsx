@@ -97,6 +97,11 @@ export function AppLockSection() {
           onValueChange={(next) => void handleToggle(next)}
           disabled={busy}
           trackColor={{ true: c.primary, false: c.border }}
+          // The native thumb defaults to a plain white circle regardless of track color. That
+          // was fine against a mid-to-dark blue "on" track in both themes, but dark mode's track
+          // is now light paper (c.primary), where a white thumb nearly disappears into it --
+          // explicit onPrimary keeps the thumb visible against whichever track color is active.
+          thumbColor={enabled ? c.onPrimary : undefined}
           accessibilityLabel="App Lock"
           accessibilityHint="Requires biometric or device passcode authentication to open the app"
         />
