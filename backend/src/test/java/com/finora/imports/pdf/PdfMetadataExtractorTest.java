@@ -293,6 +293,56 @@ class PdfMetadataExtractorTest {
         assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 7, 20));
     }
 
+    /** Defensive coverage: an ordinal-suffixed date ("04th Aug 2026") returns null from
+     *  {@code CsvParser.parseDate} unless stripped first -- fixed at the parser layer (see
+     *  {@code CsvParserTest.parseDate_retriesWithAnOrdinalDaySuffixStripped}), asserted here too
+     *  so the label-matching layer is proven to carry the fix end to end. */
+    @Test
+    void extract_recognizesPaymentDueDate_writtenWithAnOrdinalDaySuffix() {
+        var metadata = extractor.extract(List.of("Payment Due Date: 04th Aug 2026"));
+
+        assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 8, 4));
+    }
+
+    /**
+     * Real credit-card statement evidence: a due-date UI element's own "Pay Now" button text was
+     * merged onto the same extracted line AHEAD of the "Payment due date" label -- the same-line
+     * anchored {@code PAYMENT_DUE_DATE} pattern requires the label at the very start of the line,
+     * so it never matched at all. Not a date-format problem (see the ordinal-suffix test above,
+     * a different real cause on a different document) -- the label simply isn't first. Invented
+     * trailing UI text ("Pay Now"/an amount/a section header) reproduces the shape without using
+     * the real statement's own wording.
+     */
+    @Test
+    void extract_recognizesPaymentDueDate_whenUnrelatedButtonTextPrecedesTheLabelOnTheSameLine() {
+        var metadata = extractor.extract(List.of("Pay Now Payment due date 15 Sep 2026 ₹0.00 EMIs"));
+
+        assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 15));
+    }
+
+    /** The same-line fallback must still yield to the genuine multi-line grid shape
+     *  ({@link #extract_findsPaymentDueDate_inAMultiColumnGrid_skippingTheStatementPeriodRangeOnTheSameRow})
+     *  when the label's own line has no date-shaped value at all -- proving the two fallbacks are
+     *  additive, not one replacing the other. */
+    @Test
+    void extract_stillFindsPaymentDueDate_onATrailingLineWhenTheLabelLineItselfHasNoDate() {
+        var metadata = extractor.extract(List.of(
+                "Due Date",
+                "15 Sep 2026"));
+
+        assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 15));
+    }
+
+    /** Negative case: a due-date mention with no date-shaped value anywhere nearby (an
+     *  explanatory sentence, not a real field) must stay null rather than guessing. */
+    @Test
+    void extract_doesNotInventAPaymentDueDate_fromAnExplanatorySentenceMentioningTheWords() {
+        var metadata = extractor.extract(List.of(
+                "Interest is charged if the total amount due is not paid by the payment due date."));
+
+        assertThat(metadata.paymentDueDate()).isNull();
+    }
+
     @Test
     void extract_findsCreditLimit_inAMultiColumnGrid_notAvailableCreditLimitOnTheSameRow() {
         var metadata = extractor.extract(List.of(

@@ -360,11 +360,34 @@ public class PdfMetadataExtractor {
                 }
             }
 
-            if (paymentDueDate == null && GRID_DUE_DATE_LABEL.matcher(line).find()) {
-                String value = findGridValue(preTableLines, i, DATE_LIKE, DATE_RANGE_MEMBER);
-                if (value != null) paymentDueDate = parseDate(value);
-                if (ctx != null && paymentDueDate != null) ctx.record("GRID_METADATA_FALLBACK");
-                continue;
+            if (paymentDueDate == null) {
+                Matcher dueDateLabel = GRID_DUE_DATE_LABEL.matcher(line);
+                if (dueDateLabel.find()) {
+                    // Same line first: a real credit-card statement's due-date UI element (a
+                    // colored badge/pill) had its own "Pay Now" button text merged onto the same
+                    // extracted line AHEAD of the label -- "Pay Now Payment due date 08 May 2026
+                    // ...". The same-line anchored PAYMENT_DUE_DATE pattern requires the label at
+                    // the very start of the line, so it never matched here at all; it isn't a date-
+                    // format problem, the label simply isn't first. Searching from right after
+                    // wherever "due date" was found -- not the start of the line -- finds the real
+                    // value regardless of what precedes the label, the same "label, then the first
+                    // date-shaped thing after it" contract findGridValue already uses across lines.
+                    String sameLineValue = firstMatchAfter(line, dueDateLabel.end(), DATE_LIKE, DATE_RANGE_MEMBER);
+                    if (sameLineValue != null) {
+                        paymentDueDate = parseDate(sameLineValue);
+                        if (ctx != null && paymentDueDate != null) ctx.record("GRID_METADATA_FALLBACK");
+                        if (paymentDueDate != null) continue;
+                    }
+
+                    // Genuine multi-line grid: label and value are on separate lines entirely (see
+                    // GRID_DUE_DATE_LABEL's own doc comment for the real Axis/HDFC layouts this
+                    // covers) -- tried after the same-line search, not instead of it, so neither
+                    // shape regresses the other.
+                    String value = findGridValue(preTableLines, i, DATE_LIKE, DATE_RANGE_MEMBER);
+                    if (value != null) paymentDueDate = parseDate(value);
+                    if (ctx != null && paymentDueDate != null) ctx.record("GRID_METADATA_FALLBACK");
+                    continue;
+                }
             }
 
             if (creditLimit == null && GRID_CREDIT_LIMIT_LABEL.matcher(line).find()) {
@@ -472,6 +495,23 @@ public class PdfMetadataExtractor {
         return null;
     }
 
+    /** Same value-shape/exclusion contract as {@link #findGridValue}, but searches within ONE
+     *  already-known line starting at a given character offset, rather than across several
+     *  following lines -- for a label whose value shares its own line but not the label's own
+     *  start (see the payment-due-date same-line fallback above for why "the label is somewhere
+     *  in this line" and "the label starts this line" are genuinely different real shapes). */
+    private String firstMatchAfter(String line, int fromIndex, Pattern valuePattern, Pattern exclude) {
+        Matcher m = valuePattern.matcher(line);
+        while (m.find(fromIndex)) {
+            fromIndex = m.end();
+            if (exclude == null || !exclude.matcher(line.substring(
+                    Math.max(0, m.start() - 3), Math.min(line.length(), m.end() + 3))).find()) {
+                return m.group();
+            }
+        }
+        return null;
+    }
+
     private String firstGroup(Pattern pattern, String line) {
         Matcher m = pattern.matcher(line);
         if (m.matches()) {
@@ -502,6 +542,19 @@ public class PdfMetadataExtractor {
     }
 
     private LocalDate parseDate(String raw) {
+        LocalDate parsed = tryEveryFormat(raw);
+        if (parsed != null) return parsed;
+
+        // Retry only, never a first attempt -- same discipline, and the same shared helper, as
+        // com.finora.imports.CsvParser.parseDate's own ordinal-suffix retry. Defensive coverage
+        // for a general date-parsing gap (no formatter above expresses an ordinal suffix --
+        // DateTimeFormatter has no token for one), not tied to a specific reproduced document --
+        // see CsvParser.ORDINAL_DAY_SUFFIX's own comment for why.
+        String deOrdinalized = com.finora.imports.CsvParser.stripOrdinalDaySuffix(raw);
+        return deOrdinalized.equals(raw) ? null : tryEveryFormat(deOrdinalized);
+    }
+
+    private LocalDate tryEveryFormat(String raw) {
         for (DateTimeFormatter fmt : DATE_FORMATS) {
             try { return LocalDate.parse(raw, fmt); } catch (Exception ignored) {}
         }
