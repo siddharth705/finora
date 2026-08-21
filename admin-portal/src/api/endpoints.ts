@@ -9,7 +9,7 @@ import type {
   MerchantUpdateRequest, OperationalDashboardDto, PagedResponse, PermissionDto, PlatformAnalyticsDto,
   PlatformDiagnosticsDto, PlatformSettingsDto, PlatformStatsDto, ReconciliationStatsDto, RecentImportDto,
   RelationshipDto, RelationshipMergeRequest, RoleDto, RuleDto,
-  SearchResultDto, SystemHealthDto,
+  SearchResultDto, SubscriptionSummaryDto, SystemHealthDto,
   TestRuleRequest, TestRuleResult, TopCategoryPoint, TopMerchantPoint, TransactionDto, TrendPoint,
   UpdateBankRequest, UpdateFeatureFlagRequest,
   UpdatePlatformSettingsRequest, UpdateRelationshipRequest,
@@ -238,6 +238,14 @@ export const adminStatsApi = {
 export const adminDashboardApi = {
   overview: () => api.get<OperationalDashboardDto>('/admin/dashboard/overview').then((r) => r.data),
   activationFunnel: () => api.get<ActivationFunnelDto>('/admin/dashboard/activation-funnel').then((r) => r.data),
+};
+
+// D-28 PR4-A. SUBSCRIPTION_MANAGEMENT_VIEW/_MANAGE-gated (V99) -- its own permission, not folded
+// into PLATFORM_STATS_VIEW, same reasoning as PLATFORM_ANALYTICS_VIEW's own separation.
+export const adminSubscriptionsApi = {
+  list: () => api.get<SubscriptionSummaryDto[]>('/admin/subscriptions').then((r) => r.data),
+  changePlan: (userId: string, planCode: string, reason: string) =>
+    api.put(`/admin/subscriptions/${userId}/plan`, { planCode, reason }),
 };
 
 export const adminSystemApi = {

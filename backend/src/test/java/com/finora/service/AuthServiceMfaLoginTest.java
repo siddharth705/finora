@@ -71,6 +71,7 @@ class AuthServiceMfaLoginTest {
                 new EmailProperties(), mock(PhoneVerificationProvider.class), platformSettingsService,
                 mock(PasswordHistoryService.class), new IdentityLookup(userRepository),
                 mock(com.finora.config.RequestMetadata.class),
+                mock(com.finora.service.SubscriptionService.class),
                 Runnable::run,
                 adminMfaService
         );

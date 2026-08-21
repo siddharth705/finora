@@ -119,6 +119,7 @@ public class AuthService {
     private final PasswordHistoryService passwordHistoryService;
     private final IdentityLookup identityLookup;
     private final RequestMetadata requestMetadata;
+    private final SubscriptionService subscriptionService;
     // SEC-07: dispatches the forgotPassword() email send off the request thread -- see
     // BackgroundWorkConfig.authEmailExecutor's own doc comment for why.
     private final Executor authEmailExecutor;
@@ -137,6 +138,7 @@ public class AuthService {
                         PlatformSettingsService platformSettingsService,
                         PasswordHistoryService passwordHistoryService,
                         IdentityLookup identityLookup, RequestMetadata requestMetadata,
+                        SubscriptionService subscriptionService,
                         @Qualifier("authEmailExecutor") Executor authEmailExecutor,
                         AdminMfaService adminMfaService) {
         this.userRepository = userRepository;
@@ -157,6 +159,7 @@ public class AuthService {
         this.passwordHistoryService = passwordHistoryService;
         this.identityLookup = identityLookup;
         this.requestMetadata = requestMetadata;
+        this.subscriptionService = subscriptionService;
         this.authEmailExecutor = authEmailExecutor;
         this.adminMfaService = adminMfaService;
     }
@@ -284,6 +287,10 @@ public class AuthService {
         passwordHistoryService.record(user.getId(), user.getPasswordHash());
 
         seedDefaultCategories(user.getId());
+        // D-28 PR4-A: every new account starts on the Free plan -- entitlement lookups are
+        // fail-closed (EntitlementService), so skipping this would leave a brand-new user with no
+        // subscription row at all, silently losing even BASIC_DASHBOARD the moment anything checks.
+        subscriptionService.provisionFreeSubscription(user.getId());
         return user;
     }
 
@@ -821,6 +828,8 @@ public class AuthService {
         user = userRepository.save(user);
         passwordHistoryService.record(user.getId(), user.getPasswordHash());
         seedDefaultCategories(user.getId());
+        // D-28 PR4-A: same "every new user gets this" discipline as seedDefaultCategories above.
+        subscriptionService.provisionFreeSubscription(user.getId());
         return user;
     }
 
