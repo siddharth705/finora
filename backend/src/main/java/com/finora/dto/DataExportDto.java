@@ -3,6 +3,7 @@ package com.finora.dto;
 import com.finora.entity.NetWorthSnapshot;
 import com.finora.entity.Merchant;
 import com.finora.entity.Plan;
+import com.finora.entity.PlanChange;
 import com.finora.entity.Subscription;
 import com.finora.goals.GoalContribution;
 import com.finora.integrations.google.GmailConnection;
@@ -98,6 +99,25 @@ public final class DataExportDto {
             return new SubscriptionExportDto(s.getId(), plan != null ? plan.getCode() : null,
                     plan != null ? plan.getName() : null, s.getStatus(), s.getStartDate(), s.getEndDate(),
                     s.getRenewalDate(), s.getTrialStart(), s.getTrialEnd(), s.getPaymentProvider(), s.getCreatedAt());
+        }
+    }
+
+    /** D-28 PR4-A. One {@code plan_changes} row -- your upgrade/downgrade history.
+     *  {@code subscriptionId} is left as a raw FK (the subscription it belongs to is one file
+     *  over, in subscriptions.json), but {@code fromPlanId}/{@code toPlanId} are resolved to
+     *  each plan's own {@code code}/{@code name}, same treatment as {@code
+     *  SubscriptionExportDto}'s own {@code planId}. {@code fromPlan} is null both for a
+     *  referenced plan row that no longer exists AND for a subscription's very first plan change
+     *  (where {@code fromPlanId} itself is null) -- both fail soft rather than dropping the row. */
+    public record PlanChangeExportDto(
+            UUID id, UUID subscriptionId, String fromPlanCode, String fromPlanName,
+            String toPlanCode, String toPlanName, String reason, Instant effectiveAt, Instant createdAt
+    ) {
+        public static PlanChangeExportDto from(PlanChange pc, Plan fromPlan, Plan toPlan) {
+            return new PlanChangeExportDto(pc.getId(), pc.getSubscriptionId(),
+                    fromPlan != null ? fromPlan.getCode() : null, fromPlan != null ? fromPlan.getName() : null,
+                    toPlan != null ? toPlan.getCode() : null, toPlan != null ? toPlan.getName() : null,
+                    pc.getReason(), pc.getEffectiveAt(), pc.getCreatedAt());
         }
     }
 

@@ -15,6 +15,7 @@ import com.finora.entity.ImportSession;
 import com.finora.entity.Merchant;
 import com.finora.entity.NetWorthSnapshot;
 import com.finora.entity.Plan;
+import com.finora.entity.PlanChange;
 import com.finora.entity.Subscription;
 import com.finora.entity.Transaction;
 import com.finora.entity.User;
@@ -34,6 +35,7 @@ import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.repository.MerchantRepository;
 import com.finora.repository.NetWorthSnapshotRepository;
+import com.finora.repository.PlanChangeRepository;
 import com.finora.repository.PlanRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.SubscriptionRepository;
@@ -103,6 +105,7 @@ class DataExportServiceTest {
     private AuditService auditService;
     private SubscriptionRepository subscriptionRepository;
     private PlanRepository planRepository;
+    private PlanChangeRepository planChangeRepository;
     private DataExportService service;
     private final UUID userId = UUID.randomUUID();
 
@@ -133,6 +136,7 @@ class DataExportServiceTest {
         auditService = mock(AuditService.class);
         subscriptionRepository = mock(SubscriptionRepository.class);
         planRepository = mock(PlanRepository.class);
+        planChangeRepository = mock(PlanChangeRepository.class);
         ObjectMapper objectMapper = new ObjectMapper();
         objectMapper.registerModule(new JavaTimeModule());
 
@@ -160,6 +164,7 @@ class DataExportServiceTest {
         when(workspaceSettingsService.get(any())).thenReturn(new WorkspaceSettingsDto(90, Instant.now()));
         when(subscriptionRepository.findByUserIdOrderByCreatedAtDesc(any())).thenReturn(List.of());
         when(planRepository.findAllById(any())).thenReturn(List.of());
+        when(planChangeRepository.findBySubscriptionIdInOrderByCreatedAtDesc(any())).thenReturn(List.of());
 
         when(passwordEncoder.matches(any(), any())).thenReturn(true);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user()));
@@ -170,7 +175,7 @@ class DataExportServiceTest {
                 netWorthSnapshotRepository, merchantRepository, importJobRepository, importSessionRepository,
                 importSessionService, statementImportRepository, statementImportService, gmailConnectionRepository,
                 userSettingsService, workspaceSettingsService, bankManagementService, auditService,
-                subscriptionRepository, planRepository, objectMapper);
+                subscriptionRepository, planRepository, planChangeRepository, objectMapper);
     }
 
     private User user() {
@@ -200,7 +205,7 @@ class DataExportServiceTest {
                 categoryRuleRepository, relationshipService, netWorthSnapshotRepository, merchantRepository,
                 importJobRepository, importSessionRepository, importSessionService, statementImportRepository,
                 statementImportService, gmailConnectionRepository, userSettingsService, workspaceSettingsService,
-                bankManagementService, subscriptionRepository, planRepository);
+                bankManagementService, subscriptionRepository, planRepository, planChangeRepository);
     }
 
     @Test
@@ -613,6 +618,97 @@ class DataExportServiceTest {
         assertThat(dto.status()).isEqualTo(Subscription.STATUS_CANCELLED);
     }
 
+    /** plan_changes.json -- one batched findBySubscriptionIdInOrderByCreatedAtDesc call across
+     *  every one of this user's subscriptions, and fromPlanId/toPlanId resolved to each plan's
+     *  own code/name via the same batched Plan lookup subscriptions.json's planId uses --
+     *  including a fromPlanId the current subscription isn't even on anymore. */
+    @Test
+    void buildBundle_planChanges_batchFetchesAndResolvesFromAndToPlanCodeAndName() {
+        UUID subscriptionId = UUID.randomUUID();
+        Subscription subscription = new Subscription();
+        ReflectionTestUtils.setField(subscription, "id", subscriptionId);
+        subscription.setUserId(userId);
+        subscription.setPlanId(UUID.randomUUID());
+        subscription.setStatus(Subscription.STATUS_ACTIVE);
+        subscription.setStartDate(LocalDate.of(2026, 1, 1));
+        when(subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(subscription));
+
+        UUID fromPlanId = UUID.randomUUID();
+        UUID toPlanId = UUID.randomUUID();
+        Plan fromPlan = new Plan();
+        ReflectionTestUtils.setField(fromPlan, "id", fromPlanId);
+        fromPlan.setCode("FREE");
+        fromPlan.setName("Free");
+        Plan toPlan = new Plan();
+        ReflectionTestUtils.setField(toPlan, "id", toPlanId);
+        toPlan.setCode("PLUS");
+        toPlan.setName("Plus");
+        when(planRepository.findAllById(any())).thenReturn(List.of(fromPlan, toPlan));
+
+        PlanChange change = new PlanChange();
+        UUID changeId = UUID.randomUUID();
+        ReflectionTestUtils.setField(change, "id", changeId);
+        change.setSubscriptionId(subscriptionId);
+        change.setFromPlanId(fromPlanId);
+        change.setToPlanId(toPlanId);
+        change.setReason(PlanChange.REASON_USER_INITIATED);
+        change.setEffectiveAt(Instant.parse("2026-02-01T00:00:00Z"));
+        when(planChangeRepository.findBySubscriptionIdInOrderByCreatedAtDesc(List.of(subscriptionId)))
+                .thenReturn(List.of(change));
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+
+        assertThat(bundle.planChanges()).hasSize(1);
+        var dto = bundle.planChanges().get(0);
+        assertThat(dto.id()).isEqualTo(changeId);
+        assertThat(dto.subscriptionId()).isEqualTo(subscriptionId);
+        assertThat(dto.fromPlanCode()).isEqualTo("FREE");
+        assertThat(dto.fromPlanName()).isEqualTo("Free");
+        assertThat(dto.toPlanCode()).isEqualTo("PLUS");
+        assertThat(dto.toPlanName()).isEqualTo("Plus");
+        assertThat(dto.reason()).isEqualTo(PlanChange.REASON_USER_INITIATED);
+        assertThat(dto.effectiveAt()).isEqualTo(Instant.parse("2026-02-01T00:00:00Z"));
+    }
+
+    /** A subscription's very first plan change has no fromPlanId at all (there was no prior
+     *  plan) -- must map to a null fromPlanCode/fromPlanName rather than throwing on a null map
+     *  lookup key. */
+    @Test
+    void buildBundle_planChanges_firstChangeHasNullFromPlan() {
+        UUID subscriptionId = UUID.randomUUID();
+        Subscription subscription = new Subscription();
+        ReflectionTestUtils.setField(subscription, "id", subscriptionId);
+        subscription.setUserId(userId);
+        subscription.setPlanId(UUID.randomUUID());
+        subscription.setStatus(Subscription.STATUS_ACTIVE);
+        subscription.setStartDate(LocalDate.of(2026, 1, 1));
+        when(subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(subscription));
+
+        UUID toPlanId = UUID.randomUUID();
+        Plan toPlan = new Plan();
+        ReflectionTestUtils.setField(toPlan, "id", toPlanId);
+        toPlan.setCode("FREE");
+        toPlan.setName("Free");
+        when(planRepository.findAllById(any())).thenReturn(List.of(toPlan));
+
+        PlanChange change = new PlanChange();
+        ReflectionTestUtils.setField(change, "id", UUID.randomUUID());
+        change.setSubscriptionId(subscriptionId);
+        change.setFromPlanId(null);
+        change.setToPlanId(toPlanId);
+        change.setReason(PlanChange.REASON_USER_INITIATED);
+        change.setEffectiveAt(Instant.now());
+        when(planChangeRepository.findBySubscriptionIdInOrderByCreatedAtDesc(List.of(subscriptionId)))
+                .thenReturn(List.of(change));
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+
+        assertThat(bundle.planChanges()).hasSize(1);
+        assertThat(bundle.planChanges().get(0).fromPlanCode()).isNull();
+        assertThat(bundle.planChanges().get(0).fromPlanName()).isNull();
+        assertThat(bundle.planChanges().get(0).toPlanCode()).isEqualTo("FREE");
+    }
+
     /** net_worth_history.json's field mapping -- catches an argument-order mistake between
      *  totalAssets/totalLiabilities/netWorth, which an empty-list-only test never could. */
     @Test
@@ -719,12 +815,12 @@ class DataExportServiceTest {
         assertThat(excludedNames).anySatisfy(n -> assertThat(n).contains("password_history"));
         assertThat(excludedNames).anySatisfy(n -> assertThat(n).contains("statement_analysis_sessions"));
         assertThat(excludedNames).anySatisfy(n -> assertThat(n).contains("subscription_events"));
-        assertThat(excludedNames).anySatisfy(n -> assertThat(n).contains("plan_changes"));
+        assertThat(excludedNames).noneSatisfy(n -> assertThat(n).contains("plan_changes"));
 
         List<String> includedNames = new ArrayList<>();
         manifest.get("included").forEach(n -> includedNames.add(n.get("name").asText()));
         assertThat(includedNames).contains("accounts.json", "transactions.json", "statements/",
-                "goal_contributions.json", "subscriptions.json");
+                "goal_contributions.json", "subscriptions.json", "plan_changes.json");
         // manifest.json/README.txt describe the archive itself, not one more table in it.
         assertThat(includedNames).doesNotContain("manifest.json", "README.txt");
 
