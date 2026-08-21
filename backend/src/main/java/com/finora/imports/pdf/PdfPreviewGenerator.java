@@ -308,8 +308,11 @@ public class PdfPreviewGenerator {
         for (ProductAttributes attrs : attributes) {
             // No opening/closing balance, no statement period -- neither concept applies to a
             // deposit schedule the way it does to a ledger's own transaction date range.
+            // No payment-summary panel applies to a deposit schedule -- totalAmountDue is a
+            // credit-card-ledger-only concept.
             DetectedAccountInfo detected = facts.toDetectedAccountInfo(product, suggestedAccountType,
-                    null, null, facts.metadata().statementPeriodStart(), facts.metadata().statementPeriodEnd(), attrs);
+                    null, null, facts.metadata().statementPeriodStart(), facts.metadata().statementPeriodEnd(), attrs,
+                    null);
             result.add(new StagedAccountSection(detected, List.of(), 0, 0, List.of()));
         }
         return result;
@@ -423,7 +426,8 @@ public class PdfPreviewGenerator {
         staged.sort(Comparator.comparing(StagedRow::date));
 
         int dupCount = (int) staged.stream().filter(StagedRow::likelyDuplicate).count();
-        DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, staged, balancePoints, product, ctx);
+        DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, staged, balancePoints, product, ctx,
+                printedCreditCardSummary);
         // Per section rather than per file: a composite statement's sections have separate balance
         // chains, and one can verify while another does not.
         var verification = importVerifier.verify(documentOrder,
@@ -516,7 +520,8 @@ public class PdfPreviewGenerator {
     private DetectedAccountInfo buildDetectedAccountInfo(String filename, PdfTableLocator.LocatedSection section,
                                                            List<StagedRow> staged, List<BalancePoint> balancePoints,
                                                            ProductDiscovery.DiscoveredProduct product,
-                                                           DocumentContext ctx) {
+                                                           DocumentContext ctx,
+                                                           CreditCardSummaryEvidence printedCreditCardSummary) {
         LocalDate statementStart = null;
         LocalDate statementEnd = null;
         BigDecimal openingBalance = null;
@@ -560,7 +565,8 @@ public class PdfPreviewGenerator {
         }
 
         return facts.toDetectedAccountInfo(product, suggestedAccountTypeFor(product, facts.creditCardSignals()),
-                openingBalance, closingBalance, statementStart, statementEnd, ProductAttributes.empty());
+                openingBalance, closingBalance, statementStart, statementEnd, ProductAttributes.empty(),
+                printedCreditCardSummary == null ? null : printedCreditCardSummary.totalAmountDue());
     }
 
     /**
@@ -621,11 +627,13 @@ public class PdfPreviewGenerator {
         DetectedAccountInfo toDetectedAccountInfo(ProductDiscovery.DiscoveredProduct product,
                                                   String suggestedAccountType, BigDecimal openingBalance,
                                                   BigDecimal closingBalance, LocalDate statementStart,
-                                                  LocalDate statementEnd, ProductAttributes attrs) {
+                                                  LocalDate statementEnd, ProductAttributes attrs,
+                                                  BigDecimal totalAmountDue) {
             return new DetectedAccountInfo(
                     suggestedName, suggestedAccountType,
                     openingBalance, closingBalance, statementStart, statementEnd,
-                    metadata.accountNumberMasked(), metadata.creditLimit(), metadata.paymentDueDate(),
+                    metadata.accountNumberMasked(), metadata.creditLimit(), totalAmountDue,
+                    metadata.paymentDueDate(),
                     metadata.accountHolderName(), metadata.branchName(), metadata.ifscCode(),
                     AccountDto.BankDto.from(bank),
                     product.type().name(), product.confidence(), product.needsReview(), product.report(),

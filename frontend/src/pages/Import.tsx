@@ -1424,6 +1424,14 @@ function AccountChoiceFields({
                 <label htmlFor="import-due-date" className="block text-xs uppercase text-muted mb-1">Payment due date</label>
                 <input id="import-due-date" type="date" value={newDueDate} onChange={(e) => setNewDueDate(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
               </div>
+              {detectedAccount?.totalAmountDue != null && (
+                <div>
+                  <span className="block text-xs uppercase text-muted mb-1">Total amount due (detected)</span>
+                  <div className="border border-border rounded-lg px-3 py-2 text-sm w-full bg-bg text-muted">
+                    {fmt(detectedAccount.totalAmountDue)}
+                  </div>
+                </div>
+              )}
             </>
           )}
           {(detectedAccount?.statementPeriodStart || detectedAccount?.closingBalance != null) && (

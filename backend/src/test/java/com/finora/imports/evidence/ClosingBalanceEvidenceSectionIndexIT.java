@@ -326,7 +326,7 @@ class ClosingBalanceEvidenceSectionIndexIT extends AbstractIntegrationTest {
                     null));
         }
         return new StagedAccountSection(new com.finora.dto.ImportDto.DetectedAccountInfo(name, null,
-                null, null, null, null, null, null, null, null, null, null, null, null, 0.0, true,
+                null, null, null, null, null, null, null, null, null, null, null, null, null, 0.0, true,
                 List.of(), null, null, null, null, null, null, null, null),
                 List.copyOf(rows), rowCount, 0, List.of());
     }
