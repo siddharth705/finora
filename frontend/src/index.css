@@ -23,9 +23,14 @@
   --color-ink: 15 23 42;
   --color-muted: #64748B;
 
-  --color-primary: 37 99 235;
-  --color-primary-dark: #1D4ED8;
-  --color-primary-light: #EFF5FF;
+  --color-primary: 38 42 51;
+  --color-primary-dark: #15171C;
+  --color-primary-light: #F4F1EC;
+  /* Text/icon colour for anything sitting ON a primary-coloured surface (a button label, an
+     icon on a filled primary chip). Was safe to hardcode `text-white` while primary was always
+     a mid-to-dark blue in both themes; now that dark mode's primary is light paper, white text
+     on it is nearly invisible, so this needs to flip opposite to primary itself. */
+  --color-on-primary: #FFFFFF;
 
   --color-success: #16a34a;
   --color-success-bg: #dcfce7;
@@ -48,9 +53,10 @@
   --color-ink: 226 232 240;
   --color-muted: #94A3B8;
 
-  --color-primary: 96 165 250;
-  --color-primary-dark: #3B82F6;
-  --color-primary-light: #172554;
+  --color-primary: 244 241 236;
+  --color-primary-dark: #DAD5C9;
+  --color-primary-light: #26241F;
+  --color-on-primary: #15171C;
 
   --color-success: #22c55e;
   --color-success-bg: #12301f;
@@ -181,9 +187,9 @@ input, textarea, select {
   --m-ink-2: #475569;
   --m-ink-3: #64748B;
 
-  --m-brand:      #2563EB;
-  --m-brand-deep: #1D4ED8;
-  --m-brand-wash: #EFF5FF;
+  --m-brand:      #262A33;
+  --m-brand-deep: #15171C;
+  --m-brand-wash: #F4F1EC;
 
   --m-success: #16A34A;
   --m-warning: #F59E0B;
@@ -215,9 +221,11 @@ input, textarea, select {
   .m-section-deep {
     padding-block: 7rem;
     color: #E2E8F0;
-    /* The radial wash is what stops a dark band reading as a flat black rectangle. */
+    /* The radial wash is what stops a dark band reading as a flat black rectangle. A dark
+       graphite glow would vanish against this surface, so the wash borrows the brand's paper
+       tone instead — same family, the one value from it with any presence here. */
     background:
-      radial-gradient(58% 76% at 76% 40%, rgb(37 99 235 / .20), transparent 62%),
+      radial-gradient(58% 76% at 76% 40%, rgb(244 241 236 / .08), transparent 62%),
       var(--m-surface-deep);
   }
 
@@ -298,7 +306,7 @@ input, textarea, select {
     font-size: .9375rem;
     transition: background-color .2s ease, box-shadow .2s ease, transform .2s ease;
   }
-  .m-btn-primary { background: var(--m-brand); color: #fff; box-shadow: 0 8px 20px -10px rgb(37 99 235 / .8); }
+  .m-btn-primary { background: var(--m-brand); color: #fff; box-shadow: 0 8px 20px -10px rgb(38 42 51 / .8); }
   .m-btn-primary:hover { background: var(--m-brand-deep); transform: translateY(-1px); }
   .m-btn-ghost { background: var(--m-surface); color: var(--m-ink); border: 1px solid var(--m-line); }
   .m-btn-ghost:hover { border-color: #CBD5E1; transform: translateY(-1px); }

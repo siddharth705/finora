@@ -23,7 +23,7 @@ export function Hero() {
       <div
         aria-hidden="true"
         className="absolute -top-40 -right-40 w-[640px] h-[640px] rounded-full blur-3xl pointer-events-none"
-        style={{ background: 'radial-gradient(circle, rgba(37,99,235,.14), transparent 68%)' }}
+        style={{ background: 'radial-gradient(circle, rgba(38,42,51,.10), transparent 68%)' }}
       />
       <div className="relative max-w-6xl mx-auto px-5 sm:px-6 pt-16 pb-14 lg:pt-24 lg:pb-20">
         <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] gap-14 items-center">

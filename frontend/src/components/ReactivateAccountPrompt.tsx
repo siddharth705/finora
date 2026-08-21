@@ -47,7 +47,7 @@ export function ReactivateAccountPrompt({ token, onCancel, onReactivated }: {
         type="button"
         onClick={handleReactivate}
         disabled={loading}
-        className="w-full bg-primary hover:bg-primary-dark text-white rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
+        className="w-full bg-primary hover:bg-primary-dark text-on-primary rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
       >
         {loading ? 'Reactivating…' : 'Reactivate my account'}
       </button>

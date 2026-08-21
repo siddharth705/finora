@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Menu, X } from 'lucide-react';
+import { BrandMark } from '../../components/BrandMark';
 
 const LINKS: [string, string][] = [
   ['How it works', '#how'],
@@ -13,7 +14,7 @@ const LINKS: [string, string][] = [
 export function Logo({ invert = false }: { invert?: boolean }) {
   return (
     <Link to="/" className="m-tap flex items-center gap-2">
-      <span className="w-8 h-8 rounded-lg bg-[#2563EB] text-white grid place-items-center font-extrabold text-sm">F</span>
+      <BrandMark size={32} invert={invert} className="rounded-lg" />
       <span
         className="font-extrabold tracking-tight text-[17px]"
         style={{ fontFamily: "'Manrope', Inter, sans-serif", color: invert ? '#F8FAFC' : '#0F172A' }}

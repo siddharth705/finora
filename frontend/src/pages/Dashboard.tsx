@@ -350,7 +350,7 @@ export default function Dashboard() {
                 cta={
                   <Link
                     to="/app/import"
-                    className="inline-flex items-center gap-1.5 bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold"
+                    className="inline-flex items-center gap-1.5 bg-primary text-on-primary hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold"
                   >
                     <UploadCloud size={14} /> Import Statement
                   </Link>
@@ -427,7 +427,7 @@ export default function Dashboard() {
                 title="No accounts yet"
                 desc="Add your bank accounts to get a complete view."
                 cta={
-                  <Link to="/app/setup" className="inline-block bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold">
+                  <Link to="/app/setup" className="inline-block bg-primary text-on-primary hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold">
                     + Add Account
                   </Link>
                 }
@@ -461,7 +461,7 @@ export default function Dashboard() {
                   <button
                     type="button"
                     onClick={() => setShowAddModal(true)}
-                    className="bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold"
+                    className="bg-primary text-on-primary hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold"
                   >
                     + Add Transaction
                   </button>
@@ -469,7 +469,7 @@ export default function Dashboard() {
               />
             ) : recentTxns.map((t) => {
               const Icon = CATEGORY_ICON[t.categoryName] ?? ShoppingBag;
-              const color = t.type === 'INCOME' ? '#16a34a' : (CATEGORY_COLOR[t.categoryName] ?? '#2563EB');
+              const color = t.type === 'INCOME' ? '#16a34a' : (CATEGORY_COLOR[t.categoryName] ?? '#262A33');
               return (
                 <div key={t.id} className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: color + '20' }}>
@@ -504,7 +504,7 @@ export default function Dashboard() {
                 title="No budgets set"
                 desc="Create budgets to track your spending and stay on track."
                 cta={
-                  <Link to="/app/budgets" className="inline-block bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold">
+                  <Link to="/app/budgets" className="inline-block bg-primary text-on-primary hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold">
                     Create Budget
                   </Link>
                 }
@@ -546,7 +546,7 @@ export default function Dashboard() {
                 title="No goals yet"
                 desc="Set your financial goals and achieve them step by step."
                 cta={
-                  <Link to="/app/goals" className="inline-block bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold">
+                  <Link to="/app/goals" className="inline-block bg-primary text-on-primary hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold">
                     + Create Goal
                   </Link>
                 }
@@ -592,7 +592,7 @@ export default function Dashboard() {
               <h2 className="font-semibold text-ink">AI Insights</h2>
               <Badge label="Beta" />
             </div>
-            <Link to="/app/insights" className="bg-primary text-white text-xs font-semibold rounded-lg px-4 py-2">
+            <Link to="/app/insights" className="bg-primary text-on-primary text-xs font-semibold rounded-lg px-4 py-2">
               View Insights
             </Link>
           </div>
@@ -707,7 +707,7 @@ export default function Dashboard() {
           now opens rather than, say, a generic "add transaction" menu. */}
       <Link
         to="/app/import"
-        className="fixed bottom-8 right-8 w-14 h-14 rounded-full bg-primary text-white shadow-soft flex items-center justify-center hover:bg-primary-dark"
+        className="fixed bottom-8 right-8 w-14 h-14 rounded-full bg-primary text-on-primary shadow-soft flex items-center justify-center hover:bg-primary-dark"
         title="Import a bank or credit card statement"
       >
         <Plus size={24} />

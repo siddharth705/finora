@@ -55,19 +55,27 @@ if echo "$staged" | grep -qE '^(ops/monitoring/|backend/src/main/java/com/finora
 fi
 
 if echo "$staged" | grep -qE '^(frontend|admin-portal|mobile)/'; then
-  if echo "$staged" | grep -q '^frontend/'; then
-    (cd frontend && npx eslint --fix $(echo "$staged" | grep '^frontend/' | sed 's#^frontend/##') 2>/dev/null || true)
+  # ACMR only -- a deleted file has nothing for eslint --fix to fix, and re-adding a path that no
+  # longer exists on disk fails with "pathspec did not match any files" and aborts the commit,
+  # which previously happened to block every commit that deleted a frontend/admin-portal/mobile
+  # file, not just ones that touched lint-relevant code.
+  staged_existing=$(git diff --cached --name-only --diff-filter=ACMR)
+  if echo "$staged_existing" | grep -q '^frontend/'; then
+    (cd frontend && npx eslint --fix $(echo "$staged_existing" | grep '^frontend/' | sed 's#^frontend/##') 2>/dev/null || true)
   fi
-  if echo "$staged" | grep -q '^admin-portal/'; then
-    (cd admin-portal && npx eslint --fix $(echo "$staged" | grep '^admin-portal/' | sed 's#^admin-portal/##') 2>/dev/null || true)
+  if echo "$staged_existing" | grep -q '^admin-portal/'; then
+    (cd admin-portal && npx eslint --fix $(echo "$staged_existing" | grep '^admin-portal/' | sed 's#^admin-portal/##') 2>/dev/null || true)
   fi
   # mobile/eslint.config.js was added alongside the CI lint step (see ci.yml's mobile Lint step) --
   # this block was never updated to match, so a staged mobile/ file got none of the auto-fix
   # frontend and admin-portal already get, and reached CI as the first lint pass it ever saw.
-  if echo "$staged" | grep -q '^mobile/'; then
-    (cd mobile && npx eslint --fix $(echo "$staged" | grep '^mobile/' | sed 's#^mobile/##') 2>/dev/null || true)
+  if echo "$staged_existing" | grep -q '^mobile/'; then
+    (cd mobile && npx eslint --fix $(echo "$staged_existing" | grep '^mobile/' | sed 's#^mobile/##') 2>/dev/null || true)
   fi
-  git add $(echo "$staged" | grep -E '^(frontend|admin-portal|mobile)/')
+  existing_to_add=$(echo "$staged_existing" | grep -E '^(frontend|admin-portal|mobile)/')
+  if [ -n "$existing_to_add" ]; then
+    git add $existing_to_add
+  fi
 fi
 
 if echo "$staged" | grep -q '^backend/'; then

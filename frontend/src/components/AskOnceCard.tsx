@@ -118,7 +118,7 @@ export function AskOnceCard() {
             <button
               onClick={() => resolve(t.id)}
               disabled={!picks[t.id] || resolving === t.id}
-              className="bg-primary text-white text-xs font-medium rounded-lg px-3 py-1.5 flex items-center gap-1 flex-shrink-0 disabled:opacity-40"
+              className="bg-primary text-on-primary text-xs font-medium rounded-lg px-3 py-1.5 flex items-center gap-1 flex-shrink-0 disabled:opacity-40"
             >
               <Check size={13} /> {resolving === t.id ? 'Saving…' : 'Confirm'}
             </button>

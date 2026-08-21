@@ -85,7 +85,7 @@ export class ErrorBoundary extends Component<Props, State> {
         </p>
         <button
           onClick={this.reset}
-          className="mt-5 bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2 text-xs uppercase font-medium"
+          className="mt-5 bg-primary text-on-primary hover:bg-primary-dark rounded-lg px-4 py-2 text-xs uppercase font-medium"
         >
           Try again
         </button>

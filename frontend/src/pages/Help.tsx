@@ -82,7 +82,7 @@ export default function Help() {
         <button
           type="button"
           onClick={() => setActiveCategory(null)}
-          className={`text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${!activeCategory ? 'bg-primary text-white border-primary' : 'border-white/10 text-gray-400 hover:text-white'}`}
+          className={`text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${!activeCategory ? 'bg-primary text-on-primary border-primary' : 'border-white/10 text-gray-400 hover:text-white'}`}
         >
           All Topics
         </button>
@@ -91,7 +91,7 @@ export default function Help() {
             key={c}
             type="button"
             onClick={() => setActiveCategory(c)}
-            className={`text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${activeCategory === c ? 'bg-primary text-white border-primary' : 'border-white/10 text-gray-400 hover:text-white'}`}
+            className={`text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${activeCategory === c ? 'bg-primary text-on-primary border-primary' : 'border-white/10 text-gray-400 hover:text-white'}`}
           >
             {c}
           </button>
@@ -120,7 +120,7 @@ export default function Help() {
           <p className="text-sm font-semibold text-white mb-1">Still need help?</p>
           <p className="text-xs text-gray-400">Our support team is happy to help with anything not covered above.</p>
         </div>
-        <a href={SUPPORT_MAILTO} className="bg-primary hover:bg-primary-dark text-white text-xs font-semibold rounded-lg px-4 py-2.5 flex items-center gap-1.5 flex-shrink-0">
+        <a href={SUPPORT_MAILTO} className="bg-primary hover:bg-primary-dark text-on-primary text-xs font-semibold rounded-lg px-4 py-2.5 flex items-center gap-1.5 flex-shrink-0">
           <Mail size={14} /> Contact Support
         </a>
       </div>

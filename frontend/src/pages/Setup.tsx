@@ -155,7 +155,7 @@ export default function Setup() {
             <p className="text-xs text-muted">Finora detects the bank, account, and transactions automatically — no manual setup needed.</p>
           </div>
         </div>
-        <Link to="/app/import" className="bg-primary text-white text-xs font-semibold rounded-lg px-4 py-2.5 flex-shrink-0">
+        <Link to="/app/import" className="bg-primary text-on-primary text-xs font-semibold rounded-lg px-4 py-2.5 flex-shrink-0">
           Import Statement
         </Link>
       </div>
@@ -216,7 +216,7 @@ export default function Setup() {
                     <Link to="/app/statements" className="text-primary border border-primary/30 rounded-lg px-3 py-1.5 text-xs font-medium">
                       Statements
                     </Link>
-                    <Link to="/app/import" className="bg-primary text-white rounded-lg px-3 py-1.5 text-xs font-medium">
+                    <Link to="/app/import" className="bg-primary text-on-primary rounded-lg px-3 py-1.5 text-xs font-medium">
                       Import New
                     </Link>
                     <div className="relative">
@@ -371,7 +371,7 @@ export default function Setup() {
               </div>
             </>
           )}
-          <button onClick={addAccount} disabled={saving} className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded text-xs uppercase disabled:opacity-50">
+          <button onClick={addAccount} disabled={saving} className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded text-xs uppercase disabled:opacity-50">
             {saving ? 'Adding…' : 'Add'}
           </button>
         </div>

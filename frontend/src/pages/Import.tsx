@@ -769,7 +769,7 @@ export default function Import() {
             </div>
           ) : (
             <div className="flex items-center gap-3">
-              <button type="submit" className="bg-primary text-white rounded px-4 py-2 text-sm font-medium">
+              <button type="submit" className="bg-primary text-on-primary rounded px-4 py-2 text-sm font-medium">
                 Upload statement
               </button>
               <button
@@ -814,7 +814,7 @@ export default function Import() {
                     type="button"
                     onClick={() => void resumeSession(s.id)}
                     disabled={discardingSessionId === s.id}
-                    className="bg-primary text-white text-xs font-semibold rounded-lg px-3 py-1.5 disabled:opacity-40 flex items-center gap-1.5"
+                    className="bg-primary text-on-primary text-xs font-semibold rounded-lg px-3 py-1.5 disabled:opacity-40 flex items-center gap-1.5"
                   >
                     <RefreshCw size={12} />
                     Continue Import
@@ -1043,7 +1043,7 @@ export default function Import() {
                 // blocks all of it, exactly as one unanswered row blocks a single-account import.
                 outstandingMultiDuplicates > 0
               }
-              className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
+              className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
             >
               {confirming ? 'Importing…' : `Confirm All ${multiSections.length} Accounts`}
             </button>
@@ -1154,7 +1154,7 @@ export default function Import() {
                 // inattention rather than by a decision.
                 unresolvedCount(rows, review.decisions) > 0
               }
-              className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50 mt-4"
+              className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50 mt-4"
             >
               {confirming ? 'Importing…' : 'Confirm Import'}
             </button>
@@ -1644,7 +1644,7 @@ function ImportSummaryScreen({
       )}
 
       <div className="flex gap-3">
-        <button onClick={onDone} className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold">
+        <button onClick={onDone} className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold">
           Go to Dashboard
         </button>
         <button onClick={onImportAnother} className="border border-border text-ink px-4 py-2 rounded-lg text-xs font-semibold">
@@ -1726,7 +1726,7 @@ function MultiImportSummaryScreen({
       )}
 
       <div className="flex gap-3">
-        <button onClick={onDone} className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold">
+        <button onClick={onDone} className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold">
           Go to Dashboard
         </button>
         <button onClick={onImportAnother} className="border border-border text-ink px-4 py-2 rounded-lg text-xs font-semibold">

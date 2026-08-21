@@ -63,7 +63,7 @@ export function FinancialJourney() {
               <div className="flex flex-col items-center">
                 <span
                   className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${
-                    m.completed ? 'bg-primary text-white' : 'bg-bg border-2 border-border'
+                    m.completed ? 'bg-primary text-on-primary' : 'bg-bg border-2 border-border'
                   }`}
                 >
                   {m.completed && <Check size={13} strokeWidth={3} />}

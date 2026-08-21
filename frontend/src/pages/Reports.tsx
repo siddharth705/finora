@@ -67,7 +67,7 @@ export default function Reports() {
           title="No reports yet"
           desc="Add transactions in the Ledger or import a statement to see your monthly reports."
           cta={
-            <Link to="/app/import" className="inline-flex items-center gap-1.5 bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold">
+            <Link to="/app/import" className="inline-flex items-center gap-1.5 bg-primary text-on-primary hover:bg-primary-dark rounded-lg px-4 py-2 text-xs font-semibold">
               <UploadCloud size={14} /> Import Statement
             </Link>
           }
@@ -89,7 +89,7 @@ export default function Reports() {
           <button onClick={() => report && downloadCsv(report)} className="border border-border rounded px-4 py-2 text-xs uppercase">
             Export CSV
           </button>
-          <button onClick={() => window.print()} className="bg-primary text-white hover:bg-primary-dark rounded px-4 py-2 text-xs uppercase">
+          <button onClick={() => window.print()} className="bg-primary text-on-primary hover:bg-primary-dark rounded px-4 py-2 text-xs uppercase">
             Print / PDF
           </button>
         </div>
