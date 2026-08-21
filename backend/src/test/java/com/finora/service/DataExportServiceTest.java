@@ -162,7 +162,7 @@ class DataExportServiceTest {
                 .thenReturn(new UserSettingsDto("jane@example.com", "Jane Doe", null, "light", "Asia/Kolkata",
                         null, false, Instant.now(), null, User.SIGN_IN_METHOD_PASSWORD));
         when(workspaceSettingsService.get(any())).thenReturn(new WorkspaceSettingsDto(90, Instant.now()));
-        when(subscriptionRepository.findByUserIdOrderByCreatedAtDesc(any())).thenReturn(List.of());
+        when(subscriptionRepository.findByUserIdIncludingDeletedOrderByCreatedAtDesc(any())).thenReturn(List.of());
         when(planRepository.findAllById(any())).thenReturn(List.of());
         when(planChangeRepository.findBySubscriptionIdInOrderByCreatedAtDesc(any())).thenReturn(List.of());
 
@@ -579,7 +579,7 @@ class DataExportServiceTest {
         subscription.setStartDate(LocalDate.of(2026, 1, 1));
         subscription.setRenewalDate(LocalDate.of(2026, 2, 1));
         subscription.setPaymentProvider("STRIPE");
-        when(subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(subscription));
+        when(subscriptionRepository.findByUserIdIncludingDeletedOrderByCreatedAtDesc(userId)).thenReturn(List.of(subscription));
         when(planRepository.findAllById(List.of(planId))).thenReturn(List.of(plan));
 
         DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
@@ -606,7 +606,7 @@ class DataExportServiceTest {
         subscription.setPlanId(planId);
         subscription.setStatus(Subscription.STATUS_CANCELLED);
         subscription.setStartDate(LocalDate.of(2025, 1, 1));
-        when(subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(subscription));
+        when(subscriptionRepository.findByUserIdIncludingDeletedOrderByCreatedAtDesc(userId)).thenReturn(List.of(subscription));
         when(planRepository.findAllById(List.of(planId))).thenReturn(List.of());
 
         DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
@@ -616,6 +616,38 @@ class DataExportServiceTest {
         assertThat(dto.planCode()).isNull();
         assertThat(dto.planName()).isNull();
         assertThat(dto.status()).isEqualTo(Subscription.STATUS_CANCELLED);
+    }
+
+    /** Mirrors buildBundle_accounts_includesSoftDeletedAccountMarkedDeleted -- a soft-deleted
+     *  subscription must still appear in the export, explicitly marked, not silently vanish.
+     *  Nothing soft-deletes a Subscription today, but the entity supports it, and this class's
+     *  own "mirrors the purge scope exactly" rule means the export can't quietly assume otherwise. */
+    @Test
+    void buildBundle_subscriptions_includesSoftDeletedSubscriptionMarkedDeleted() {
+        UUID planId = UUID.randomUUID();
+        Plan plan = new Plan();
+        ReflectionTestUtils.setField(plan, "id", planId);
+        plan.setCode("FREE");
+        plan.setName("Free");
+
+        Subscription deleted = new Subscription();
+        ReflectionTestUtils.setField(deleted, "id", UUID.randomUUID());
+        deleted.setUserId(userId);
+        deleted.setPlanId(planId);
+        deleted.setStatus(Subscription.STATUS_CANCELLED);
+        deleted.setStartDate(LocalDate.of(2025, 1, 1));
+        Instant deletedAt = Instant.parse("2026-03-01T00:00:00Z");
+        deleted.setDeletedAt(deletedAt);
+        when(subscriptionRepository.findByUserIdIncludingDeletedOrderByCreatedAtDesc(userId)).thenReturn(List.of(deleted));
+        when(planRepository.findAllById(List.of(planId))).thenReturn(List.of(plan));
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+
+        assertThat(bundle.subscriptions()).hasSize(1);
+        var dto = bundle.subscriptions().get(0);
+        assertThat(dto.deleted()).isTrue();
+        assertThat(dto.deletedAt()).isEqualTo(deletedAt);
+        assertThat(dto.planCode()).isEqualTo("FREE");
     }
 
     /** plan_changes.json -- one batched findBySubscriptionIdInOrderByCreatedAtDesc call across
@@ -631,7 +663,7 @@ class DataExportServiceTest {
         subscription.setPlanId(UUID.randomUUID());
         subscription.setStatus(Subscription.STATUS_ACTIVE);
         subscription.setStartDate(LocalDate.of(2026, 1, 1));
-        when(subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(subscription));
+        when(subscriptionRepository.findByUserIdIncludingDeletedOrderByCreatedAtDesc(userId)).thenReturn(List.of(subscription));
 
         UUID fromPlanId = UUID.randomUUID();
         UUID toPlanId = UUID.randomUUID();
@@ -682,7 +714,7 @@ class DataExportServiceTest {
         subscription.setPlanId(UUID.randomUUID());
         subscription.setStatus(Subscription.STATUS_ACTIVE);
         subscription.setStartDate(LocalDate.of(2026, 1, 1));
-        when(subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(subscription));
+        when(subscriptionRepository.findByUserIdIncludingDeletedOrderByCreatedAtDesc(userId)).thenReturn(List.of(subscription));
 
         UUID toPlanId = UUID.randomUUID();
         Plan toPlan = new Plan();

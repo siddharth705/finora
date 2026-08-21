@@ -310,7 +310,7 @@ public class DataExportService {
         // scope (see SubscriptionRepository.hardDeleteByUserId's own doc comment -- plan_changes
         // cascades from subscriptions via subscription_id), so this class's own "mirrors the
         // purge scope exactly" rule means they belong here too.
-        List<Subscription> subscriptions = subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId);
+        List<Subscription> subscriptions = subscriptionRepository.findByUserIdIncludingDeletedOrderByCreatedAtDesc(userId);
         List<PlanChange> planChanges = planChangeRepository.findBySubscriptionIdInOrderByCreatedAtDesc(
                 subscriptions.stream().map(Subscription::getId).toList());
 
