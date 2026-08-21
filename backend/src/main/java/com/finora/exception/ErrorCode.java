@@ -24,6 +24,15 @@ public enum ErrorCode {
     TXN_DUPLICATE("TXN_001", HttpStatus.CONFLICT, "Duplicate transaction detected"),
     TXN_NOT_FOUND("TXN_002", HttpStatus.NOT_FOUND, "Transaction not found"),
     TXN_FORBIDDEN("TXN_003", HttpStatus.FORBIDDEN, "This transaction does not belong to you"),
+    // Bug fix (gap review of SEC-06): TransactionService.create()'s idempotency replay check used
+    // to return whatever transaction the key mapped to unconditionally, with no check that the
+    // REST of the request -- amount, account, type, date, description, category -- matched what
+    // was recorded under that key the first time. A client bug that resent a key with a different
+    // amount or account silently got back the stale original instead of a rejection, exactly the
+    // "resolves quietly to whatever's there" failure V97's own migration comment says an
+    // idempotency key must not permit.
+    TXN_IDEMPOTENCY_KEY_REUSED("TXN_004", HttpStatus.CONFLICT,
+            "This idempotency key was already used for a different request."),
 
     // Statement import (com.finora.imports)
     IMPORT_NO_HEADER_DETECTED("IMPORT_001", HttpStatus.UNPROCESSABLE_ENTITY, "Could not find a transaction table in this file", true),
@@ -87,6 +96,16 @@ public enum ErrorCode {
     // actively wrong -- the import already succeeded, nothing needs re-uploading.
     IMPORT_SESSION_ALREADY_CONFIRMED("IMPORT_012", HttpStatus.BAD_REQUEST,
             "This import has already been reviewed and confirmed."),
+    // SEC-02 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). The multipart
+    // max-file-size cap (application.yml, app.import.pdf.max-pages's sibling property) bounds the
+    // UPLOADED bytes, not what PDFBox materializes once it decompresses the document's object/page
+    // graph -- a small, spec-valid PDF with an extreme page count is not caught by that cap.
+    // PdfTextExtractor checks this immediately after Loader.loadPDF, before the expensive
+    // full-document stripper.getText() pass. Same treatment as IMPORT_CORRUPT_PDF: userActionRequired
+    // because "split it up" is a real, followable instruction, unlike a genuinely corrupt file.
+    IMPORT_PDF_TOO_LARGE("IMPORT_013", HttpStatus.UNPROCESSABLE_ENTITY,
+            "This PDF has too many pages to process. Split it into smaller files (e.g. by date range) "
+                    + "and import each one separately.", true),
 
     // Accounts
     ACCOUNT_NOT_FOUND("ACC_001", HttpStatus.NOT_FOUND, "Account not found"),
@@ -125,6 +144,32 @@ public enum ErrorCode {
     // reactivation token itself travels in ApiException's details map, not this message.
     AUTH_ACCOUNT_DEACTIVATED("AUTH_007", HttpStatus.FORBIDDEN,
             "This account is deactivated."),
+
+    // SEC-03 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Same shape as
+    // AUTH_ACCOUNT_DEACTIVATED just above: the frontend has to TELL THIS APART from an ordinary
+    // login failure, because the response carries a short-lived challenge token (ApiException's
+    // details map, "mfaChallengeToken") the login form needs to complete the second step against
+    // POST /auth/mfa/verify -- a plain "invalid credentials" would strand the user with a correct
+    // password and no way forward. Thrown only after the password has already been verified (see
+    // AuthService.login()), so it never becomes an account-existence or MFA-enrollment oracle for
+    // an unauthenticated caller.
+    AUTH_MFA_REQUIRED("AUTH_008", HttpStatus.FORBIDDEN,
+            "Enter the code from your authenticator app to finish signing in."),
+    // Deliberately the SAME code+message for "wrong TOTP code" and "wrong/expired/already-used
+    // recovery code" and "expired/unknown challenge token" -- MfaController's one entry point for
+    // all three, same reasoning AUTH_INVALID_CREDENTIALS already applies to login(): distinguishing
+    // them would tell an attacker which guess got closer.
+    AUTH_MFA_INVALID_CODE("AUTH_009", HttpStatus.UNAUTHORIZED,
+            "That code didn't work. Check your authenticator app and try again."),
+
+    // Follow-up to SEC-03: the backend above is complete and tested, but the admin portal has no
+    // enrollment/verification/recovery UI yet -- flipping app.admin-mfa.enabled on without one
+    // would risk locking an admin out with no self-service way back in (see
+    // AdminMfaService.requireFeatureEnabled's own doc comment). Every AdminMfaService entry point,
+    // and AuthService's login()/completeMfaLogin() gate, refuse with this code while the flag is
+    // off (default), so the feature is unreachable end to end rather than merely undocumented.
+    AUTH_MFA_NOT_AVAILABLE("AUTH_010", HttpStatus.NOT_FOUND,
+            "Admin MFA is not available yet."),
 
     // Generic fallbacks — used by GlobalExceptionHandler when no more specific code applies
     VALIDATION_ERROR("VAL_001", HttpStatus.BAD_REQUEST, "Validation failed"),

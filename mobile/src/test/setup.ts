@@ -161,6 +161,29 @@ jest.mock('@sentry/react-native', () => ({
   captureException: jest.fn(),
 }));
 
+// SEC-08. Has no native module under the runner; without a mock, `isRootedExperimentalAsync`
+// falls through to a real (non-native) code path that still resolves asynchronously, producing
+// act()-wrapping warnings in any test that mounts RootWarningBoundary without awaiting it.
+// Defaults to "not rooted" -- each test overrides with mockResolvedValueOnce for the flagged case.
+jest.mock('expo-device', () => ({
+  isRootedExperimentalAsync: jest.fn(async () => false),
+}));
+
+// SEC-09. Defaults model an unenrolled device (supported hardware, nothing enrolled) so
+// isSupported() is false unless a test opts in -- the safer default for a control this codebase
+// treats as opt-in. authenticateAsync defaults to a cancelled/failed result for the same reason.
+jest.mock('expo-local-authentication', () => ({
+  hasHardwareAsync: jest.fn(async () => true),
+  isEnrolledAsync: jest.fn(async () => false),
+  authenticateAsync: jest.fn(async () => ({ success: false })),
+}));
+
+// SEC-17. No native module under the runner; this app only ever calls the hook form, so nothing
+// under test needs it to actually do anything.
+jest.mock('expo-screen-capture', () => ({
+  usePreventScreenCapture: jest.fn(),
+}));
+
 // Every test starts from a clean SecureStore so persistence assertions can't leak between them.
 beforeEach(() => {
   // require(), not import: the mock has to be read AFTER jest.mock above has replaced the module,

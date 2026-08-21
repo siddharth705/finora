@@ -28,7 +28,7 @@ import java.util.UUID;
  * Google's servers, so anyone holding it can complete a link for the bound user — it is a bearer
  * credential. Finora only ever needs to COMPARE a presented state against a stored one, never to
  * reproduce it, which is precisely the case hashing is for (contrast the refresh token, which must
- * be replayed to Google and is therefore encrypted instead — ADR-007). A leaked database yields no
+ * be replayed to Google and is therefore encrypted instead — ADR-009). A leaked database yields no
  * usable states.
  */
 @Entity

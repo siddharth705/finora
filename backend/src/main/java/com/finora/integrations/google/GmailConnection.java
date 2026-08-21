@@ -19,7 +19,7 @@ import java.util.UUID;
  * theirs. The email is stored so the user can see which mailbox is connected, and for nothing else.
  *
  * <p><b>The refresh token is never held in plaintext.</b> {@link #encryptedRefreshToken} +
- * {@link #encryptionKeyId} are exactly the two halves of {@link EncryptedValue} (ADR-007), and
+ * {@link #encryptionKeyId} are exactly the two halves of {@link EncryptedValue} (ADR-009), and
  * {@link #credential()} reassembles them for {@code EncryptionService.decrypt}. There is
  * deliberately no getter returning a decrypted value — decryption requires the service, which keeps
  * "who can read this" a question about wiring rather than about field visibility.

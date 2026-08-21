@@ -213,6 +213,12 @@ public class ImportDto {
             LocalDate statementPeriodEnd,
             String accountNumberMasked,    // only set if an account/card-number-like column was present
             BigDecimal creditLimit,        // only set if a credit-limit column was present
+            // A credit-card statement's total bill for this cycle -- deliberately not "amount due"
+            // on its own, to stay unambiguous against a transaction's amount, the minimum payment
+            // due, or the account's outstanding balance. Only set for a PDF credit-card statement
+            // whose payment-summary panel was found by CreditCardSummaryExtractor; null for CSV
+            // imports (no such panel exists to parse) and for any non-credit-card statement.
+            BigDecimal totalAmountDue,
             LocalDate paymentDueDate,      // only set if a due-date column was present
             String accountHolderName,      // only set if an account-holder-like column was present
             String branchName,             // only set if a branch-name-like column was present

@@ -200,6 +200,11 @@ export interface DetectedAccountInfo {
   statementPeriodEnd: string | null;
   accountNumberMasked: string | null;
   creditLimit: number | null;
+  // A credit-card statement's total bill for this cycle -- only set for a PDF credit-card
+  // statement whose payment-summary panel was found; null for CSV imports and for any
+  // non-credit-card statement. Deliberately not called "amountDue" to stay unambiguous against
+  // a transaction's amount, the minimum payment due, or the account's outstanding balance.
+  totalAmountDue: number | null;
   paymentDueDate: string | null;
   accountHolderName: string | null;
   branchName: string | null;

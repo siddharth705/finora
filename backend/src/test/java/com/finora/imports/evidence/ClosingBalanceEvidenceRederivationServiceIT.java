@@ -131,7 +131,7 @@ class ClosingBalanceEvidenceRederivationServiceIT extends AbstractIntegrationTes
     }
 
     private static DetectedAccountInfo emptyDetectedAccount() {
-        return new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null,
+        return new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null, null,
                 null, null, null, null, 0.0, true, List.of(), null, null, null, null, null, null, null, null);
     }
 

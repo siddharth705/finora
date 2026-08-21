@@ -254,6 +254,7 @@ class RateLimitFilterTest {
                 "/api/v1/users/me/phone-change/complete",
                 "/api/v1/users/me/data-export",
                 "/api/v1/users/me/account/deactivate",
+                "/api/v1/auth/mfa/verify",
         };
 
         for (String path : mustBeLimited) {
@@ -382,6 +383,8 @@ class RateLimitFilterTest {
                 Map.entry("app.rate-limit.google.window-seconds", DEFAULT_GOOGLE_WINDOW),
                 Map.entry("app.rate-limit.apple.max", DEFAULT_APPLE_MAX),
                 Map.entry("app.rate-limit.apple.window-seconds", DEFAULT_APPLE_WINDOW),
+                Map.entry("app.rate-limit.mfa-verify.max", DEFAULT_MFA_VERIFY_MAX),
+                Map.entry("app.rate-limit.mfa-verify.window-seconds", DEFAULT_MFA_VERIFY_WINDOW),
                 Map.entry("app.rate-limit.refresh.max", DEFAULT_REFRESH_MAX),
                 Map.entry("app.rate-limit.refresh.window-seconds", DEFAULT_REFRESH_WINDOW));
 

@@ -77,7 +77,13 @@ class AuthServiceRegisterTest {
                 auditService, refreshTokenService, emailProvider,
                 new EmailProperties(), mock(PhoneVerificationProvider.class), platformSettingsService,
                 mock(PasswordHistoryService.class), new IdentityLookup(userRepository),
-                mock(com.finora.config.RequestMetadata.class)
+                mock(com.finora.config.RequestMetadata.class),
+                // SEC-07: same-thread executor -- runs the dispatched email/audit work
+                // synchronously so assertions against it don't race a real background thread.
+                Runnable::run,
+                // SEC-03: no MFA gate interference for tests unrelated to it -- an
+                // unstubbed mock's isEnabled() returns false by default.
+                mock(AdminMfaService.class)
         );
     }
 

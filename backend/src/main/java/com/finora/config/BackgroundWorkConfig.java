@@ -102,6 +102,57 @@ public class BackgroundWorkConfig {
     }
 
     /**
+     * SEC-07 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Dedicated to
+     * dispatching the actual outbound password-reset-email API call off the request thread.
+     *
+     * <p>Before this, {@code AuthService.forgotPassword()}'s existing-account branch registered
+     * the send via {@link com.finora.util.AfterCommit#run}, whose callback runs SYNCHRONOUSLY on
+     * the request thread once the transaction commits -- so an existing account paid for a real
+     * network round trip to the email provider before the HTTP response went out, while the
+     * non-existing-account branch returned after a single {@code SELECT}. Identical response
+     * bodies either way, but the latency gap was a clean, remotely measurable account-enumeration
+     * oracle. Submitting the send to this executor from inside that same after-commit callback
+     * turns the callback itself back into cheap, near-instant work (an in-memory queue hand-off),
+     * closing the gap the same way the non-existing branch was already fast: neither branch blocks
+     * the response on a third-party network call.
+     *
+     * <p>{@code CallerRunsPolicy}, matching the learning/import pools above: under sustained
+     * saturation (this codebase has no realistic path to that -- {@code forgotPassword} is already
+     * rate-limited, {@code resetPasswordLimiter}) the send would run on the calling thread instead
+     * of being dropped, which degrades the timing property gracefully rather than losing the email
+     * -- the same trade this class already makes twice above.
+     */
+    @Bean("authEmailExecutor")
+    public Executor authEmailExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(2);
+        executor.setQueueCapacity(50);
+        executor.setThreadNamePrefix("auth-email-");
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(20);
+        // The work submitted here calls AuditService.record(), which stamps every row with
+        // MDC.get("requestId") for support/traceability -- correct on the request thread this
+        // callback used to run on, but MDC is thread-local and doesn't cross an executor boundary
+        // on its own. Without this decorator the audit row this executor exists to send would
+        // silently lose its correlation to the request that triggered it, on every single call.
+        executor.setTaskDecorator(runnable -> {
+            var context = org.slf4j.MDC.getCopyOfContextMap();
+            return () -> {
+                if (context != null) org.slf4j.MDC.setContextMap(context);
+                try {
+                    runnable.run();
+                } finally {
+                    org.slf4j.MDC.clear();
+                }
+            };
+        });
+        executor.initialize();
+        return executor;
+    }
+
+    /**
      * Explicit transaction boundaries, for code that needs more than one of them in a single
      * method.
      *

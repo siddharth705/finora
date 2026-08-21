@@ -51,11 +51,19 @@ const config: ExpoConfig = {
   scheme: 'finora',
   ios: {
     supportsTablet: true,
-    bundleIdentifier: 'com.finora.app',
+    // 'com.finora.app' was the original identifier on both platforms, but it's unavailable under
+    // this project's Apple Developer team for iOS registration (fails with "not available" --
+    // either a genuine third-party collision, or residue from the Organization/DUNS enrollment
+    // attempt abandoned in favor of an Individual account before final submission, per D-14/R-16
+    // in the plan doc). Renamed to the domain this project's own backend/frontend already use
+    // (finoratech.info) rather than guessing at another '.app' variant that might collide again --
+    // and Android's package name renamed to match, so the two platforms carry one identifier
+    // rather than a permanent, easy-to-forget divergence between them.
+    bundleIdentifier: 'com.finoratech.app',
     ...(existsSync(here(iosGoogleServices)) ? { googleServicesFile: iosGoogleServices } : {}),
   },
   android: {
-    package: 'com.finora.app',
+    package: 'com.finoratech.app',
     ...(existsSync(here(androidGoogleServices)) ? { googleServicesFile: androidGoogleServices } : {}),
     // Adaptive icon: a solid brand-navy plate with the Finora mark as the foreground layer.
     //
@@ -117,6 +125,13 @@ const config: ExpoConfig = {
     // credentials needed at build time (Apple's own private key/Services ID only matter to the
     // BACKEND verifier, at sign-in time, not to this entitlement). Safe to list unconditionally.
     'expo-apple-authentication',
+    // SEC-09 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Optional app-lock
+    // (Settings > Security) -- faceIDPermission supplies iOS's required NSFaceIDUsageDescription;
+    // Android's biometric prompt needs no equivalent build-time config. See src/lib/appLock.ts.
+    [
+      'expo-local-authentication',
+      { faceIDPermission: 'Allow Finora to use Face ID to unlock the app.' },
+    ],
     [
       'expo-build-properties',
       {

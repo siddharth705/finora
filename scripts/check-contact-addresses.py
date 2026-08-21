@@ -24,8 +24,10 @@ scanned app's `src/` is an error, with two deliberate exemptions:
    rather than link it (a legal notice quoting a contact, say).
 
 The OLD domain is flagged wherever it appears -- including inside `contact.ts` -- since after the
-migration any `finora.app` mailbox is simply dead. Note this is about *mailboxes*: `com.finora.app`
-is the mobile bundle identifier, matches no `@`, and is intentionally untouched.
+migration any `finora.app` mailbox is simply dead. Note this is about *mailboxes*: the mobile
+bundle identifier (`com.finoratech.app`, renamed from `com.finora.app` on both platforms after an
+Apple Developer registration collision, unrelated to this migration) matches no `@` and is
+intentionally untouched.
 """
 
 import re
@@ -48,8 +50,8 @@ SOURCE_OF_TRUTH = REPO_ROOT / "frontend" / "src" / "lib" / "contact.ts"
 OLD_DOMAIN = "finora.app"
 CURRENT_DOMAIN = "finoratech.info"
 
-# A mailbox, not a bare domain: requires the local-part and @ so that `com.finora.app` (the mobile
-# bundle identifier) and prose mentions of the domain do not trip the check.
+# A mailbox, not a bare domain: requires the local-part and @ so that `com.finoratech.app` (the
+# mobile bundle identifier) and prose mentions of the domain do not trip the check.
 MAILBOX = re.compile(r"[A-Za-z0-9._%+-]+@(?:finora\.app|finoratech\.info)")
 
 ALLOW_MARKER = "check-contact-addresses: allow"

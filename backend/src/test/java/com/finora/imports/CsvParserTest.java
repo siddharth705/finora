@@ -110,6 +110,27 @@ class CsvParserTest {
     }
 
     @Test
+    void parseDate_retriesWithAnOrdinalDaySuffixStripped() {
+        // Defensive coverage for a general date-parsing gap: DateTimeFormatter has no token for an
+        // ordinal day suffix, so any date printed this way fails every format in DATE_FORMATS
+        // outright. Only a retry, same discipline as the missing-separator retry above.
+        assertThat(CsvParser.parseDate("04th Aug 2026")).isEqualTo(java.time.LocalDate.of(2026, 8, 4));
+        assertThat(CsvParser.parseDate("21st Aug 2026")).isEqualTo(java.time.LocalDate.of(2026, 8, 21));
+        assertThat(CsvParser.parseDate("2nd Aug 2026")).isEqualTo(java.time.LocalDate.of(2026, 8, 2));
+        assertThat(CsvParser.parseDate("3rd Aug 2026")).isEqualTo(java.time.LocalDate.of(2026, 8, 3));
+
+        // Case-insensitive, same as the rest of this parser's month-name handling.
+        assertThat(CsvParser.parseDate("04TH Aug 2026")).isEqualTo(java.time.LocalDate.of(2026, 8, 4));
+
+        // Existing behavior for dates with no ordinal suffix at all must be completely unchanged --
+        // the retry only ever runs after the as-printed attempt has already failed.
+        assertThat(CsvParser.parseDate("04 Aug 2026")).isEqualTo(java.time.LocalDate.of(2026, 8, 4));
+        assertThat(CsvParser.parseDate("21 Aug 2026")).isEqualTo(java.time.LocalDate.of(2026, 8, 21));
+        assertThat(CsvParser.parseDate("2026-08-21")).isEqualTo(java.time.LocalDate.of(2026, 8, 21));
+        assertThat(CsvParser.parseDate("04/08/2026")).isEqualTo(java.time.LocalDate.of(2026, 8, 4));
+    }
+
+    @Test
     void parseDate_recognizesTwoDigitYears() {
         // Every pattern required four digits, so the single most common rendering in Indian bank
         // statements did not parse at all. Measured on a real 39-page statement: it produced 2

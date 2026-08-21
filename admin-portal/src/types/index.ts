@@ -85,6 +85,16 @@ export interface OperationalDashboardDto {
   recentActivity: AuditLogDto[];
 }
 
+/** D-27 PR3-D. Mirrors backend ActivationFunnelDto exactly -- see that record's own doc comment
+ *  for what "reached" means (ever, not currently-active) and why stages aren't guaranteed to be
+ *  strict subsets of each other. */
+export interface ActivationFunnelDto {
+  signedUp: number;
+  firstImport: number;
+  firstBudget: number;
+  firstGoal: number;
+}
+
 export interface SystemHealthDto {
   status: string;
   components: Record<string, string>;

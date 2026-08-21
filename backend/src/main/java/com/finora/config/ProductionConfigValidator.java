@@ -235,7 +235,7 @@ public class ProductionConfigValidator implements SmartInitializingSingleton {
                     .append("password change can never complete their phone-verification step.\n");
         }
 
-        // ADR-007. Same class of failure as JWT_SECRET above -- a placeholder that is public, in
+        // ADR-009. Same class of failure as JWT_SECRET above -- a placeholder that is public, in
         // git, and identical for every developer. The consequence differs though: this key protects
         // third-party OAuth refresh tokens, which are live credentials to a user's external account
         // (their mailbox, later their bank). A production deployment running on the dev key means

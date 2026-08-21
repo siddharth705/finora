@@ -63,6 +63,28 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
 
     List<Transaction> findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc(UUID userId);
 
+    /**
+     * SEC-06 (docs/quality/bug-reports/2026-08-19-security-review-findings.md) -- the idempotency
+     * check TransactionService.create() runs before inserting a new row. See V97's migration
+     * comment for why this is scoped by userId as well as the key: the column has no cross-user
+     * uniqueness of its own, only per-user, same as every other per-user identifier in this app.
+     *
+     * <p>Bug fix (gap review of SEC-06): this used to be a plain derived query, which Hibernate
+     * runs through {@code Transaction}'s own {@code @SQLRestriction("deleted_at IS NULL")} --
+     * silently, on every query Hibernate generates against the entity, derived or JPQL alike (see
+     * that annotation's own doc comment on the entity). A retry of the exact same request against a
+     * since-soft-deleted transaction therefore found nothing here, fell through to a second INSERT,
+     * and collided with the still-present {@code idempotency_key} value on the deleted row at V97's
+     * own unique index -- the opposite of what V97's migration comment requires: a key must keep
+     * resolving to the same identity "even if soft-deleted." A native query is not run through
+     * Hibernate's HQL translator, which is the layer that injects the restriction, so this sees a
+     * soft-deleted row exactly like a live one -- an identity lookup, not a liveness check.
+     */
+    @Query(value = "SELECT * FROM transactions WHERE user_id = :userId AND idempotency_key = :idempotencyKey",
+            nativeQuery = true)
+    java.util.Optional<Transaction> findByUserIdAndIdempotencyKey(
+            @Param("userId") UUID userId, @Param("idempotencyKey") String idempotencyKey);
+
     List<Transaction> findByUserIdAndTxnDateBetween(UUID userId, LocalDate from, LocalDate to);
 
     /**

@@ -168,7 +168,8 @@ public class StatementValidator {
                 suggestedAccountName(bank),
                 acc.creditCardSignals ? "CREDIT_CARD" : "SAVINGS",
                 openingBalance, closingBalance, statementStart, statementEnd,
-                acc.accountNumberMasked, acc.creditLimit, acc.dueDate, acc.accountHolderName,
+                // No payment-summary panel exists in a CSV export for totalAmountDue to come from.
+                acc.accountNumberMasked, acc.creditLimit, null, acc.dueDate, acc.accountHolderName,
                 acc.branchName, acc.ifscCode,
                 AccountDto.BankDto.from(bank),
                 product.type().name(), product.confidence(), product.needsReview(), product.report(),

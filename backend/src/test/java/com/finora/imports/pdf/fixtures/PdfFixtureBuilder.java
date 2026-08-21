@@ -1075,6 +1075,41 @@ public final class PdfFixtureBuilder {
     }
 
     /**
+     * A credit-card payment-summary panel with its "Total Amount Due" label and value on the same
+     * row but at two distinct X positions -- the shape {@code CreditCardSummaryExtractor}'s GRID
+     * strategy reads (see that class's own {@code sameRowSummaryBlock} test fixture, which this
+     * mirrors through actual PDF rendering rather than hand-built {@code PositionedText} runs).
+     * {@code buildDrCrSuffixAmountColumnSample} and {@code buildMultiColumnPaymentSummaryGridSample}
+     * both render their payment-summary line as a single merged text run via {@code .line(...)},
+     * which is enough for the free-text classification signal scan but not for
+     * {@code CreditCardSummaryExtractor}'s coordinate-based label/value matching -- it needs the
+     * label and its value as two separate positioned runs, which only {@code .row(...)} produces.
+     */
+    public static byte[] buildCreditCardTotalDueGridSample() throws IOException {
+        float[] summaryCol = {LEFT_MARGIN, 250f};
+        float[] col = {LEFT_MARGIN, 110f, 350f};
+
+        PageBuilder page = new PageBuilder();
+        // hasReconcilableFields() requires all four of these present, not just totalAmountDue on
+        // its own -- CreditCardSummaryExtractor discards a partial reading entirely rather than
+        // carrying just the one field it happened to find (see its own doc comment). Numbers add
+        // up (20,000.00 + 8,665.16 - 1,000.00 = 27,665.16) but this test never checks reconciliation
+        // itself, only that the total survives into DetectedAccountInfo.
+        page.line("SAMPLE BANK")
+                .line("Credit Card Statement")
+                .row(summaryCol, "Previous Balance", "20,000.00")
+                .row(summaryCol, "Purchases", "8,665.16")
+                .row(summaryCol, "Payments / Credits", "1,000.00")
+                .row(summaryCol, "Total Amount Due", "27,665.16")
+                .line("Minimum Amount Due 577.00")
+                .blankLine()
+                .row(col, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                .row(col, "24/06/2026", "Sample Merchant Purchase", "150.00 Dr");
+
+        return render(List.of(page));
+    }
+
+    /**
      * The lower half of the distinct-signal boundary: a ledger whose free text carries EXACTLY
      * ONE phrase from the credit-card signal list ("Total Payment Due", here a bill-payment
      * reminder printed on an ordinary account statement) and no others.

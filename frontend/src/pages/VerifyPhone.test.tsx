@@ -32,7 +32,7 @@ const FAKE_CONFIRMATION = { confirm: vi.fn() } as any;
 
 function renderVerifyPhone(routerState?: { fromLogin?: boolean }) {
   vi.mocked(useAuth).mockReturnValue({
-    token: 'tok', email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
+    token: 'tok', bootstrapping: false, email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
     login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), loginWithGoogle: vi.fn(), setPhoneVerified: vi.fn(), logout: vi.fn(),
   });
   return render(
@@ -87,7 +87,7 @@ describe('VerifyPhone', () => {
     const user = userEvent.setup();
     const setPhoneVerified = vi.fn();
     vi.mocked(useAuth).mockReturnValue({
-      token: 'tok', email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
+      token: 'tok', bootstrapping: false, email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
       login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), loginWithGoogle: vi.fn(), setPhoneVerified, logout: vi.fn(),
     });
     render(
@@ -151,7 +151,7 @@ describe('VerifyPhone', () => {
     vi.mocked(sendPhoneVerificationCode).mockRejectedValue({ code: 'auth/invalid-app-credential' });
     const logout = vi.fn();
     vi.mocked(useAuth).mockReturnValue({
-      token: 'tok', email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
+      token: 'tok', bootstrapping: false, email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
       login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), loginWithGoogle: vi.fn(), setPhoneVerified: vi.fn(), logout,
     });
     const user = userEvent.setup();
@@ -224,7 +224,7 @@ describe('VerifyPhone', () => {
     it('logs out on click, same as the ordinary send-failure escape hatch', async () => {
       const logout = vi.fn();
       vi.mocked(useAuth).mockReturnValue({
-        token: 'tok', email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
+        token: 'tok', bootstrapping: false, email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
         login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), loginWithGoogle: vi.fn(), setPhoneVerified: vi.fn(), logout,
       });
       const user = userEvent.setup();
@@ -368,7 +368,7 @@ describe('VerifyPhone', () => {
       vi.mocked(sendPhoneVerificationCode).mockRejectedValueOnce({ code: 'auth/invalid-app-credential' });
       const setPhoneVerified = vi.fn();
       vi.mocked(useAuth).mockReturnValue({
-        token: 'tok', email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
+        token: 'tok', bootstrapping: false, email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
         login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), loginWithGoogle: vi.fn(), setPhoneVerified, logout: vi.fn(),
       });
       render(

@@ -7,6 +7,7 @@ import { MetricTile, SaveStatus, SectionCard, VerifiedBadge } from '../component
 import { Button } from '../components/Button';
 import { OptionPickerModal } from '../components/OptionPickerModal';
 import { TextField } from '../components/TextField';
+import { AppLockSection } from './settings/AppLockSection';
 import { ChangePasswordSheet } from './settings/ChangePasswordSheet';
 import { DeviceSessionsSection } from './settings/DeviceSessionsSection';
 import { analyticsApi, userApi, workspaceApi } from '../api/endpoints';
@@ -267,6 +268,8 @@ export function SettingsScreen() {
             <Text style={[styles.rowMeta, { color: c.muted }]}>Not verified</Text>
           )}
         </View>
+
+        <AppLockSection />
 
         <View style={styles.sessions}>
           <DeviceSessionsSection />

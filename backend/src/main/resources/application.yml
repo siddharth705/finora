@@ -213,7 +213,7 @@ app:
       client-ids: ${GOOGLE_LOGIN_CLIENT_IDS:}
     apple-login:
       # D-23 Phase 2: "Sign in with Apple" -- see AppleLoginProperties' own doc comment for why
-      # this holds bundle identifiers (e.g. com.finora.app) rather than a Google-style OAuth
+      # this holds bundle identifiers (e.g. com.finoratech.app) rather than a Google-style OAuth
       # client id, and why it's a list even though D-26 only put Apple on iOS.
       #
       # Unconfigured (empty) is a supported state: POST /api/v1/auth/apple answers 503 and
@@ -270,6 +270,15 @@ app:
     # "contact support" rejection instead of a token-bearing reactivation prompt.
     reactivation-window-enabled: ${ACCOUNT_REACTIVATION_WINDOW_ENABLED:false}
     reactivation-window-days: ${ACCOUNT_REACTIVATION_WINDOW_DAYS:3}
+  admin-mfa:
+    # Off by default. AdminMfaService/AdminMfaController/AuthService's login() gate are complete
+    # and RFC 6238-tested, but the admin portal has no enrollment/verification/recovery UI yet --
+    # an admin (or anyone testing) who called the enroll/confirm endpoints directly today would
+    # have MFA required on their very next login with no way to complete it through the web app,
+    # a real lockout with no self-service way back in. See AdminMfaService.requireFeatureEnabled
+    # for how every entry point defers to this flag. Set ADMIN_MFA_ENABLED=true only once that
+    # UI ships.
+    enabled: ${ADMIN_MFA_ENABLED:false}
   account-purge:
     sweep:
       # AccountPurgeSweepService. Deletion is instant now (UserAccountLifecycleService.
@@ -378,6 +387,14 @@ app:
     data-export:
       max: ${RATE_LIMIT_DATA_EXPORT_MAX:5}
       window-seconds: ${RATE_LIMIT_DATA_EXPORT_WINDOW_SECONDS:86400}
+    # SEC-03 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Same ceiling class
+    # as reset-password/reactivate above: an unguessable, short-TTL, single-use challenge token
+    # already gates reaching this endpoint, so this bounds a token holder retrying in a loop, not
+    # a raw brute-force stopper on the 6-digit code space -- the challenge's own 5-minute expiry
+    # already makes exhausting that space over the network infeasible regardless of any limiter.
+    mfa-verify:
+      max: ${RATE_LIMIT_MFA_VERIFY_MAX:10}
+      window-seconds: ${RATE_LIMIT_MFA_VERIFY_WINDOW_SECONDS:600}
   import:
     # See ImportConcurrencyLimiter's own doc comment for the full reasoning. 6 is deliberately
     # conservative relative to DB_POOL_MAX_SIZE (10, see the datasource config above) -- leaves
@@ -389,6 +406,13 @@ app:
     # block waiting for a processing slot. ImportConcurrencyLimiter now rejects immediately
     # instead of waiting (see its own doc comment), so that wait no longer exists and the
     # property was removed rather than left configuring nothing.
+    pdf:
+      # SEC-02 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Read by
+      # PdfTextExtractor, checked right after PDFBox loads the document and before the full-text
+      # extraction pass. 500 is far above any real bank statement (even a multi-year one) and far
+      # below anything that costs meaningful time/memory to strip -- the same clamp-generously
+      # discipline PageBounds already applies to read endpoints, here applied to an upload.
+      max-pages: ${IMPORT_PDF_MAX_PAGES:500}
   statement-storage:
     # Phase 2 of docs/engineering/statement-storage-migration.md. The V54 content_hash/object_key
     # columns exist and the import pipeline IS wired to this layer -- ImportService,

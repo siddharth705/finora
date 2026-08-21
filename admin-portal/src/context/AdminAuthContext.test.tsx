@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { AdminAuthProvider, useAdminAuth } from './AdminAuthContext';
 import { authApi, meApi } from '../api/endpoints';
+import { getAdminToken, setAdminToken } from '../api/client';
 
 vi.mock('../api/endpoints', () => ({
-  authApi: { login: vi.fn() },
+  authApi: { login: vi.fn(), refresh: vi.fn() },
   meApi: { access: vi.fn() },
 }));
 
@@ -16,8 +17,15 @@ function wrapper({ children }: { children: ReactNode }) {
 describe('AdminAuthContext.login', () => {
   beforeEach(() => {
     localStorage.clear();
+    // SEC-01: the access token is a module-level variable now (client.ts), not storage.
+    setAdminToken(null);
     vi.mocked(authApi.login).mockReset();
     vi.mocked(meApi.access).mockReset();
+    // AdminAuthProvider now attempts a silent refresh on every mount (SEC-01 bootstrap, recovering
+    // a session from the HttpOnly cookie after a reload) -- rejecting by default here models "no
+    // cookie, not logged in," the state every test below already assumes before it calls login()
+    // itself. The one test that cares about a successful bootstrap overrides this explicitly.
+    vi.mocked(authApi.refresh).mockReset().mockRejectedValue(new Error('no session'));
   });
 
   it('signs in successfully and populates permissions when the account has admin access', async () => {
@@ -56,7 +64,7 @@ describe('AdminAuthContext.login', () => {
 
     expect(resolvedTo).toBe(false);
     expect(result.current.token).toBe('tok');
-    expect(localStorage.getItem('finora_admin_token')).toBe('tok');
+    expect(getAdminToken()).toBe('tok');
     expect(result.current.phoneVerified).toBe(false);
     expect(meApi.access).not.toHaveBeenCalled();
   });
@@ -84,5 +92,45 @@ describe('AdminAuthContext.login', () => {
       .rejects.toThrow(/doesn.t have any admin permissions/);
 
     expect(result.current.token).toBeNull();
+  });
+});
+
+describe('AdminAuthContext SEC-01 bootstrap', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setAdminToken(null);
+    vi.mocked(authApi.login).mockReset();
+    vi.mocked(meApi.access).mockReset();
+    vi.mocked(authApi.refresh).mockReset();
+  });
+
+  /**
+   * SEC-01 (docs/quality/bug-reports/2026-08-19-security-review-findings.md): the access token no
+   * longer survives a reload (in-memory only, see client.ts), but the HttpOnly refresh cookie
+   * does. A returning, already-logged-in admin must be recovered on mount via a silent refresh,
+   * not bounced to the login screen just because `token` starts null now.
+   */
+  it('recovers an existing session on mount via a silent refresh against the HttpOnly cookie', async () => {
+    vi.mocked(authApi.refresh).mockResolvedValue({ token: 'recovered-tok', refreshToken: 'refresh' });
+    vi.mocked(meApi.access).mockResolvedValue({ roles: ['SUPER_ADMIN'], permissions: ['USER_VIEW'] });
+
+    const { result } = renderHook(() => useAdminAuth(), { wrapper });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.token).toBe('recovered-tok');
+    expect(result.current.permissions).toEqual(['USER_VIEW']);
+    expect(getAdminToken()).toBe('recovered-tok');
+  });
+
+  it('ends up logged out, not stuck loading, when there is no cookie to recover from', async () => {
+    vi.mocked(authApi.refresh).mockRejectedValue(new Error('no session'));
+
+    const { result } = renderHook(() => useAdminAuth(), { wrapper });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.token).toBeNull();
+    expect(meApi.access).not.toHaveBeenCalled();
   });
 });

@@ -117,17 +117,44 @@ export const test = base.extend<Fixtures>({
   },
 });
 
+/** Chrome's own text for a failed resource load never carries the URL -- just "...status of 401
+ *  ()" -- so it can't be told apart from any other endpoint's 401 by regex on the message alone.
+ *  See the counter in watch() below for how this gets matched to the right request anyway. */
+const FAILED_RESOURCE_401 = /^Failed to load resource: the server responded with a status of 401/;
+
 function watch(page: Page, sink: string[]) {
+  // SEC-01's AuthProvider bootstrap effect (frontend/src/context/AuthContext.tsx) calls
+  // authApi.refresh() unconditionally on mount to recover a session from the HttpOnly cookie --
+  // and every test's first page load has no cookie yet, so this always 401s. The app's own catch
+  // handles it silently (see that effect's own comment: "the ordinary 'not logged in' case ...
+  // not logged or surfaced as an error"), but Chrome still logs the failed network request to the
+  // console regardless of the JS catch -- expected on every run, not a defect.
+  //
+  // Counted rather than text-matched in IGNORED: the console line alone can't say which endpoint
+  // 401'd (see FAILED_RESOURCE_401's own comment), so a plain regex there would swallow every
+  // unrelated 401 a test might legitimately want to see. Counting real /auth/refresh 401 responses
+  // and only excusing that many matching console lines keeps the exemption scoped to this one
+  // endpoint -- a test that deliberately provokes a LATER refresh failure still gets it excused
+  // (same expected shape, same reasoning), but a 401 from anything else is unaffected.
+  let expectedAuthRefresh401s = 0;
+
   page.on('console', (msg: ConsoleMessage) => {
     if (msg.type() !== 'error' && msg.type() !== 'warning') return;
     const text = msg.text();
     if (IGNORED.some((p) => p.test(text))) return;
     if (msg.type() === 'warning' && !/Warning: /.test(text)) return;
+    if (expectedAuthRefresh401s > 0 && FAILED_RESOURCE_401.test(text)) {
+      expectedAuthRefresh401s--;
+      return;
+    }
     sink.push(`${classify(text)}: ${text}`);
   });
   page.on('pageerror', (err) => sink.push(`pageerror: ${err.message}`));
   page.on('response', (res) => {
     if (res.status() >= 500) sink.push(`HTTP ${res.status()} from ${res.url()}`);
+    if (res.status() === 401 && new URL(res.url()).pathname.endsWith('/api/v1/auth/refresh')) {
+      expectedAuthRefresh401s++;
+    }
   });
 }
 

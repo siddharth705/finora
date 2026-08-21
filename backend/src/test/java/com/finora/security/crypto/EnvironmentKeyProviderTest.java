@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * ADR-007. The point of these tests is that misconfiguration fails AT STARTUP with a message naming
+ * ADR-009. The point of these tests is that misconfiguration fails AT STARTUP with a message naming
  * the problem — not hours later, on the first user's first integration connect, as a 500.
  */
 class EnvironmentKeyProviderTest {

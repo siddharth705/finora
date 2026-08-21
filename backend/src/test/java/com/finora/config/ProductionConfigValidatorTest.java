@@ -34,7 +34,7 @@ class ProductionConfigValidatorTest {
     }
 
     /** A 32-byte AES key that is NOT the local-dev placeholder -- what a correctly configured
-     *  production deployment supplies. ADR-007. */
+     *  production deployment supplies. ADR-009. */
     private CryptoProperties realCrypto() {
         byte[] raw = new byte[32];
         java.util.Arrays.fill(raw, (byte) 42);
@@ -386,7 +386,7 @@ class ProductionConfigValidatorTest {
     }
 
     /**
-     * ADR-007. The encryption key protects third-party OAuth refresh tokens — live credentials to a
+     * ADR-009. The encryption key protects third-party OAuth refresh tokens — live credentials to a
      * user's external account. The local-dev placeholder is public, in git, and identical for every
      * developer, so a production deployment still running on it means anyone with the repository can
      * decrypt every stored integration token.

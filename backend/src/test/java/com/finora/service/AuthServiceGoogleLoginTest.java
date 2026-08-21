@@ -86,7 +86,13 @@ class AuthServiceGoogleLoginTest {
                 auditService, refreshTokenService, emailProvider,
                 new EmailProperties(), mock(PhoneVerificationProvider.class), platformSettingsService,
                 passwordHistoryService, new IdentityLookup(userRepository),
-                mock(com.finora.config.RequestMetadata.class)
+                mock(com.finora.config.RequestMetadata.class),
+                // SEC-07: same-thread executor -- runs the dispatched email/audit work
+                // synchronously so assertions against it don't race a real background thread.
+                Runnable::run,
+                // SEC-03: no MFA gate interference for tests unrelated to it -- an
+                // unstubbed mock's isEnabled() returns false by default.
+                mock(AdminMfaService.class)
         );
         // AuthService's own constructor calls passwordEncoder.encode() once, to build the BH-014
         // timing-parity hash (see that field's own doc comment) -- clearing invocations here so

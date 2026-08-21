@@ -174,4 +174,11 @@ public class AuthDtos {
      *  see AuthService.mintEmailVerificationToken / verifyEmail. */
     public record VerifyEmailRequest(@NotBlank String token) {}
     public record VerifyEmailResponse(String message) {}
+
+    /** SEC-03 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). challengeToken is
+     *  the raw token AuthService.login() minted and returned in an AUTH_MFA_REQUIRED error's
+     *  details map -- see AuthService.completeMfaLogin. code is either a live TOTP code from the
+     *  user's authenticator app or one of their unused recovery codes; AdminMfaService.verifyChallenge
+     *  tries both. */
+    public record MfaVerifyRequest(@NotBlank String challengeToken, @NotBlank String code) {}
 }

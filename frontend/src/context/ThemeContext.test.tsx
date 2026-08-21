@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ThemeProvider, useTheme, AUTH_CHANGED_EVENT } from './ThemeContext';
 import { userApi } from '../api/endpoints';
+import { setAccessToken } from '../api/client';
 
 // ThemeProvider's third useEffect calls userApi.get() whenever a token is present, to pull the
 // account's saved theme from the server -- mocked here so tests that don't set a token never hit
@@ -28,6 +29,8 @@ function Probe() {
 describe('ThemeContext', () => {
   beforeEach(() => {
     localStorage.clear();
+    // SEC-01: the access token is now a module-level variable (client.ts), not storage.
+    setAccessToken(null);
     document.documentElement.classList.remove('dark');
   });
 
@@ -72,12 +75,14 @@ describe('ThemeContext', () => {
 
   /**
    * Bug fix regression test: ThemeProvider wraps AuthProvider (App.tsx), so its "pull the
-   * account's saved theme" effect used to run exactly once on mount, using whatever
-   * localStorage.getItem('finora_token') was at that instant. A user landing on a public page
-   * (no token yet) and then logging in within the same SPA session never got a second chance to
-   * sync -- the theme stayed on whatever it was pre-login until a full page reload. AuthContext
-   * now dispatches AUTH_CHANGED_EVENT after login/register specifically so this effect gets a
-   * second chance without needing a circular useAuth() dependency.
+   * account's saved theme" effect used to run exactly once on mount, using whatever the token
+   * presence check read at that instant (originally localStorage; SEC-01 moved it to client.ts's
+   * in-memory accessToken -- see that effect's own comment). A user landing on a public page (no
+   * token yet) and then logging in within the same SPA session never got a second chance to sync
+   * -- the theme stayed on whatever it was pre-login until a full page reload. AuthContext now
+   * dispatches AUTH_CHANGED_EVENT after login/register (and after its own SEC-01 mount-time
+   * bootstrap) specifically so this effect gets a second chance without needing a circular
+   * useAuth() dependency.
    */
   it('re-pulls the saved theme when AUTH_CHANGED_EVENT fires after a token appears mid-session', async () => {
     render(
@@ -91,7 +96,7 @@ describe('ThemeContext', () => {
     expect(screen.getByTestId('theme')).toHaveTextContent('system');
     expect(userApi.get).not.toHaveBeenCalled();
 
-    localStorage.setItem('finora_token', 'a-real-token');
+    setAccessToken('a-real-token');
     window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
 
     await waitFor(() => expect(screen.getByTestId('theme')).toHaveTextContent('dark'));

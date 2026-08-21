@@ -1,10 +1,13 @@
 package com.finora.service;
 
+import com.finora.dto.AdminDtos.ActivationFunnelDto;
 import com.finora.dto.AdminDtos.OperationalDashboardDto;
 import com.finora.dto.HealthDtos.PlatformHealthDto;
 import com.finora.dto.HealthDtos.ProviderStatusDto;
 import com.finora.entity.AuditLog;
+import com.finora.goals.GoalRepository;
 import com.finora.repository.AuditLogRepository;
+import com.finora.repository.BudgetRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
@@ -31,6 +34,8 @@ class AdminOperationalDashboardServiceTest {
     private UserRepository userRepository;
     private TransactionRepository transactionRepository;
     private StatementImportRepository statementImportRepository;
+    private BudgetRepository budgetRepository;
+    private GoalRepository goalRepository;
     private AuditLogRepository auditLogRepository;
     private AdminHealthRegistryService healthRegistryService;
     private AdminOperationalDashboardService service;
@@ -40,16 +45,21 @@ class AdminOperationalDashboardServiceTest {
         userRepository = mock(UserRepository.class);
         transactionRepository = mock(TransactionRepository.class);
         statementImportRepository = mock(StatementImportRepository.class);
+        budgetRepository = mock(BudgetRepository.class);
+        goalRepository = mock(GoalRepository.class);
         auditLogRepository = mock(AuditLogRepository.class);
         healthRegistryService = mock(AdminHealthRegistryService.class);
         service = new AdminOperationalDashboardService(userRepository, transactionRepository,
-                statementImportRepository, auditLogRepository, healthRegistryService);
+                statementImportRepository, budgetRepository, goalRepository, auditLogRepository, healthRegistryService);
 
         when(userRepository.countByRoleNot("BOOTSTRAP_ADMIN")).thenReturn(0L);
         when(auditLogRepository.countDistinctUsersByActionSince(any(), any())).thenReturn(0L);
         when(transactionRepository.countByCreatedAtAfter(any())).thenReturn(0L);
         when(statementImportRepository.countByImportedAtAfter(any())).thenReturn(0L);
         when(statementImportRepository.countWithSkippedRowsAfter(any())).thenReturn(0L);
+        when(statementImportRepository.countDistinctUsersEverActivated()).thenReturn(0L);
+        when(budgetRepository.countDistinctUsersEverActivated()).thenReturn(0L);
+        when(goalRepository.countDistinctUsersEverActivated()).thenReturn(0L);
         when(userRepository.countByLockedUntilAfter(any())).thenReturn(0L);
         when(transactionRepository.countByNeedsCategoryReviewTrue()).thenReturn(0L);
         when(transactionRepository.countByIsDuplicateOfIsNotNull()).thenReturn(0L);
@@ -119,5 +129,33 @@ class AdminOperationalDashboardServiceTest {
 
         assertThat(dto.recentActivity()).hasSize(1);
         assertThat(dto.recentActivity().get(0).action()).isEqualTo("USER_LOGIN");
+    }
+
+    // D-27 PR3-D.
+    @Test
+    void activationFunnel_reportsEachStageFromItsOwnDistinctUserCount() {
+        when(userRepository.countByRoleNot("BOOTSTRAP_ADMIN")).thenReturn(100L);
+        when(statementImportRepository.countDistinctUsersEverActivated()).thenReturn(72L);
+        when(budgetRepository.countDistinctUsersEverActivated()).thenReturn(33L);
+        when(goalRepository.countDistinctUsersEverActivated()).thenReturn(21L);
+
+        ActivationFunnelDto dto = service.activationFunnel();
+
+        assertThat(dto.signedUp()).isEqualTo(100L);
+        assertThat(dto.firstImport()).isEqualTo(72L);
+        assertThat(dto.firstBudget()).isEqualTo(33L);
+        assertThat(dto.firstGoal()).isEqualTo(21L);
+    }
+
+    @Test
+    void activationFunnel_signedUpCount_agreesWithOverviewsOwnTotalUsers() {
+        // Both must read the same underlying figure -- see the service method's own doc comment
+        // on why this reuses countByRoleNot("BOOTSTRAP_ADMIN") rather than a second definition of
+        // "total users."
+        when(userRepository.countByRoleNot("BOOTSTRAP_ADMIN")).thenReturn(42L);
+        when(healthRegistryService.platformHealth()).thenReturn(new PlatformHealthDto("UP", List.of()));
+
+        assertThat(service.activationFunnel().signedUp()).isEqualTo(42L);
+        assertThat(service.overview().totalUsers()).isEqualTo(42L);
     }
 }

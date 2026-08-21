@@ -18,7 +18,7 @@ import java.util.List;
  * separate "client id" to register for native sign-in the way Google issues one. The property is
  * still named {@code clientIds} for parity with the Google config and because a Services ID
  * would belong in the same list if a web flow is ever added later, but in practice this holds
- * bundle identifiers (e.g. {@code com.finora.app}).
+ * bundle identifiers (e.g. {@code com.finoratech.app}).
  *
  * <p>Unconfigured (empty list) is a supported state, same posture as
  * {@link com.finora.integrations.google.login.GoogleLoginProperties}: {@link #isConfigured()} is
@@ -30,7 +30,7 @@ import java.util.List;
 public class AppleLoginProperties {
 
     /** Comma-separated in the environment (Spring's standard List<String> binding) — e.g.
-     *  {@code APPLE_LOGIN_CLIENT_IDS=com.finora.app}. */
+     *  {@code APPLE_LOGIN_CLIENT_IDS=com.finoratech.app}. */
     private List<String> clientIds = List.of();
 
     public boolean isConfigured() {

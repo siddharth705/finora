@@ -278,7 +278,7 @@ class GmailConnectionServiceTest {
         assertThat(saved.getUserId()).isEqualTo(stateOwner);
     }
 
-    /** The point of ADR-007 reaching this feature at all. */
+    /** The point of ADR-009 reaching this feature at all. */
     @Test
     @DisplayName("the refresh token is stored encrypted, never in plaintext")
     void completeConnect_encryptsTheRefreshToken() {

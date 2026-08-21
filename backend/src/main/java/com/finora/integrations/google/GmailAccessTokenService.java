@@ -22,7 +22,7 @@ import java.util.UUID;
  * against a refresh token Finora already holds; persisting them would add a second secret to
  * protect, a second expiry to track, and a second thing to invalidate on disconnect, in exchange
  * for saving one HTTP call per sync. The refresh token is the credential worth protecting, and it
- * already is (ADR-007).
+ * already is (ADR-009).
  *
  * <p><b>This class owns the {@code REAUTH_REQUIRED} transition</b>, which nothing produced before
  * it existed. That status is what tells a user their mailbox needs reconnecting, and the only place
@@ -112,7 +112,7 @@ public class GmailAccessTokenService {
      *
      * <p>Audited because this is a state change a user will ask about — "why did my Gmail
      * disconnect?" — and the answer is only reconstructable if the reason was written down at the
-     * time. Uses the existing {@code AuditService} rather than a Gmail-specific log (ADR-007's
+     * time. Uses the existing {@code AuditService} rather than a Gmail-specific log (ADR-009's
      * companion decision in the Phase B review).
      */
     private void markReauthRequired(GmailConnection connection, String reason) {

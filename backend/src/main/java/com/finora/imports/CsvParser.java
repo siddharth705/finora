@@ -291,6 +291,24 @@ public class CsvParser {
     private static final java.util.regex.Pattern MISSING_SEPARATOR =
             java.util.regex.Pattern.compile("(?<=\\p{L})(?=\\d)|(?<=\\d)(?=\\p{L})");
 
+    // Ordinal day suffixes -- "04th", "21st", "2nd", "3rd". None of DATE_FORMATS' patterns can
+    // express "digits, then one of st/nd/rd/th, case-insensitive" -- DateTimeFormatter has no
+    // token for an ordinal suffix -- so a date printed this way fails every format outright. This
+    // strips it textually before a retry, the same shape of fix as MISSING_SEPARATOR below.
+    // Defensive coverage for a real, general date-parsing gap, not a fix reproduced against a
+    // specific real document -- the real document this parser was originally investigated against
+    // (a credit-card statement's Payment Due Date field) turned out on closer inspection to have
+    // no ordinal suffix at all; see PdfMetadataExtractor's same-line label-anchor fallback for that
+    // document's actual root cause. Captures the digit run so a
+    // single-digit ordinal ("2nd", "3rd", "1st") can be zero-padded back to the two digits every
+    // "dd"-based formatter in DATE_FORMATS requires -- LocalDate.parse is strict about width, so
+    // "2nd Aug 2026" stripped to "2 Aug 2026" would still fail every format in the list. Anchored
+    // to a digit run immediately followed by the suffix and a word boundary, so it only strips a
+    // genuine ordinal marker (day "21st") and not a coincidental "st"/"nd"/"rd"/"th" that happens
+    // to follow a number for an unrelated reason elsewhere in the string.
+    private static final java.util.regex.Pattern ORDINAL_DAY_SUFFIX =
+            java.util.regex.Pattern.compile("(?i)(\\d{1,2})(?:st|nd|rd|th)\\b");
+
     public static LocalDate parseDate(String raw) {
         String withoutTime = TRAILING_TIME.matcher(raw).replaceFirst("");
         LocalDate parsed = tryEveryFormat(withoutTime);
@@ -303,7 +321,36 @@ public class CsvParser {
         // that rewrites its input before looking at it is one that can silently start reading a
         // value as something other than what it says.
         String separated = MISSING_SEPARATOR.matcher(withoutTime).replaceAll(" ");
-        return separated.equals(withoutTime) ? null : tryEveryFormat(separated);
+        if (!separated.equals(withoutTime)) {
+            parsed = tryEveryFormat(separated);
+            if (parsed != null) return parsed;
+        }
+
+        // Second retry, same discipline, tried only after the as-printed attempt has already
+        // failed -- strips an ordinal day suffix (zero-padding a single-digit day left behind) and
+        // nothing else. Defensive coverage, not tied to a specific reproduced document -- see
+        // ORDINAL_DAY_SUFFIX's own comment above.
+        String deOrdinalized = stripOrdinalDaySuffix(withoutTime);
+        return deOrdinalized.equals(withoutTime) ? null : tryEveryFormat(deOrdinalized);
+    }
+
+    /**
+     * Strips a trailing ordinal day suffix ("04th" -> "04", "2nd" -> "02"), zero-padding a
+     * single-digit day left behind since {@link LocalDate#parse} is strict about width. Exposed
+     * (not private) so {@link com.finora.imports.pdf.PdfMetadataExtractor}'s own, separately
+     * maintained date parser can apply the identical retry to its own format list, rather than
+     * this fix existing only for whichever caller happened to go through this class -- see that
+     * class's own {@code parseDate} for why its formats aren't simply delegated here instead.
+     */
+    public static String stripOrdinalDaySuffix(String value) {
+        java.util.regex.Matcher matcher = ORDINAL_DAY_SUFFIX.matcher(value);
+        StringBuilder result = new StringBuilder();
+        while (matcher.find()) {
+            String twoDigitDay = matcher.group(1).length() == 1 ? "0" + matcher.group(1) : matcher.group(1);
+            matcher.appendReplacement(result, twoDigitDay);
+        }
+        matcher.appendTail(result);
+        return result.toString();
     }
 
     private static LocalDate tryEveryFormat(String value) {
