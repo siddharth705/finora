@@ -184,6 +184,61 @@ class CategorizationServiceTest {
         verify(categoryRepository).save(any(Category.class));
     }
 
+    /**
+     * Bug 04 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). categories.name is VARCHAR(80) NOT
+     * NULL with no upstream length check on the import-confirm path -- an oversized category cell
+     * used to make the INSERT fail against the column constraint, which marks the whole confirm
+     * transaction rollback-only and discards the entire import. Same fix shape as
+     * MerchantNormalizationEngine.fitToColumn for merchant names on the identical parser-output
+     * code path: truncate before the write is ever attempted, not after it fails.
+     */
+    @Test
+    void resolveOrCreateCategory_truncatesAnOversizedName_ratherThanFailingTheInsert() {
+        String oversized = "x".repeat(100);
+        String truncated = "x".repeat(80);
+        when(categoryRepository.findByUserIdAndName(userId, truncated)).thenReturn(Optional.empty());
+        when(categoryRepository.save(any(Category.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Category result = categorizationService.resolveOrCreateCategory(userId, oversized);
+
+        assertThat(result.getName()).isEqualTo(truncated);
+        assertThat(result.getName()).hasSize(80);
+    }
+
+    @Test
+    void resolveOrCreateCategory_trimsSurroundingWhitespace_beforeCheckingLength() {
+        String padded = " ".repeat(5) + "Dining" + " ".repeat(5);
+        when(categoryRepository.findByUserIdAndName(userId, "Dining")).thenReturn(Optional.empty());
+        when(categoryRepository.save(any(Category.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Category result = categorizationService.resolveOrCreateCategory(userId, padded);
+
+        assertThat(result.getName()).isEqualTo("Dining");
+    }
+
+    /** The other failure mode Bug 04 names: a null/blank category cell hits the NOT NULL
+     *  constraint the same way an oversized one hits the length constraint -- both must degrade
+     *  to a usable value rather than poisoning the confirm transaction. */
+    @Test
+    void resolveOrCreateCategory_fallsBackToOther_whenNameIsNull() {
+        when(categoryRepository.findByUserIdAndName(userId, "Other")).thenReturn(Optional.empty());
+        when(categoryRepository.save(any(Category.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Category result = categorizationService.resolveOrCreateCategory(userId, null);
+
+        assertThat(result.getName()).isEqualTo("Other");
+    }
+
+    @Test
+    void resolveOrCreateCategory_fallsBackToOther_whenNameIsBlank() {
+        when(categoryRepository.findByUserIdAndName(userId, "Other")).thenReturn(Optional.empty());
+        when(categoryRepository.save(any(Category.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Category result = categorizationService.resolveOrCreateCategory(userId, "   ");
+
+        assertThat(result.getName()).isEqualTo("Other");
+    }
+
     // --- Rule engine integration (docs/rule-engine-relationship-engine-eds.md §4: rule engine
     // runs BEFORE the learned distribution / keyword fallback) ---
 

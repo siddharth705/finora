@@ -9,11 +9,15 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Parameter;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static com.finora.config.RateLimitFilter.*;
@@ -44,7 +48,21 @@ class RateLimitFilterTest {
         objectMapper.registerModule(new JavaTimeModule());
         ClientIpResolver clientIpResolver = new ClientIpResolver();
         ReflectionTestUtils.setField(clientIpResolver, "trustProxyHeaders", trustProxyHeaders);
-        return new RateLimitFilter(objectMapper, clientIpResolver);
+        return new RateLimitFilter(objectMapper, clientIpResolver, testCorsConfigurationSource());
+    }
+
+    /** A real CorsConfigurationSource, same shape CorsConfig's own bean builds -- one known
+     *  allowed origin, so Bug-07-style tests can assert against it precisely rather than mocking
+     *  Spring's own origin-matching logic. */
+    static final String ALLOWED_TEST_ORIGIN = "https://tests.invalid";
+
+    private CorsConfigurationSource testCorsConfigurationSource() {
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowedOrigins(List.of(ALLOWED_TEST_ORIGIN));
+        config.setAllowCredentials(true);
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", config);
+        return source;
     }
 
     private HttpServletRequest requestFor(String path, String remoteAddr, String forwardedFor) {
@@ -385,8 +403,12 @@ class RateLimitFilterTest {
                 Map.entry("app.rate-limit.mfa-verify.max", DEFAULT_MFA_VERIFY_MAX),
                 Map.entry("app.rate-limit.mfa-verify.window-seconds", DEFAULT_MFA_VERIFY_WINDOW));
 
+        // Selects on an actual @Value annotation being present, not a parameter-count threshold --
+        // a count threshold silently breaks the moment another plain (non-@Value) dependency is
+        // added to the constructor list, as the CorsConfigurationSource fix for Bug 07 just did to
+        // the 2-arg test constructor (now 3 args, no longer safely below any assumed threshold).
         Constructor<?> springConstructor = Arrays.stream(RateLimitFilter.class.getDeclaredConstructors())
-                .filter(c -> c.getParameterCount() > 2)
+                .filter(c -> Arrays.stream(c.getParameters()).anyMatch(p -> p.getAnnotation(Value.class) != null))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("Expected the @Value-annotated constructor to still exist"));
 
@@ -401,5 +423,60 @@ class RateLimitFilterTest {
         }
 
         assertThat(actualByProperty).containsExactlyInAnyOrderEntriesOf(expectedByProperty);
+    }
+
+    /**
+     * Bug 07 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). This filter runs entirely before
+     * Spring Security's own CORS handling (see RateLimitFilter's own field comment on
+     * corsConfigurationSource), so its 429 short-circuit used to leave a cross-origin response
+     * with no Access-Control-Allow-Origin header at all -- invisible to the calling page's own
+     * JavaScript, reported as a generic network error rather than the actual RATE_LIMITED body.
+     *
+     * A real {@link org.springframework.mock.web.MockHttpServletRequest}, not the Mockito mock
+     * {@link #requestFor} builds elsewhere in this file -- CorsConfigurationSource's own path
+     * matching needs a request that actually behaves like one, not a hand-stubbed subset of it.
+     */
+    @Test
+    void addsCorsHeaders_onARateLimitedResponse_forAnAllowedOrigin() throws Exception {
+        RateLimitFilter filter = newFilter(false);
+        FilterChain chain = mock(FilterChain.class);
+
+        org.springframework.mock.web.MockHttpServletRequest request =
+                new org.springframework.mock.web.MockHttpServletRequest("POST", "/api/v1/auth/login");
+        request.setRemoteAddr("10.0.0.50");
+        request.addHeader(org.springframework.http.HttpHeaders.ORIGIN, ALLOWED_TEST_ORIGIN);
+
+        assertThat(tripsRateLimitAfterManyRequests(filter, request)).isTrue();
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        filter.doFilterInternal(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(429);
+        assertThat(response.getHeader(org.springframework.http.HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN))
+                .isEqualTo(ALLOWED_TEST_ORIGIN);
+        assertThat(response.getHeader(org.springframework.http.HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS))
+                .isEqualTo("true");
+    }
+
+    /** The other half of the same fix: echoing every Origin unconditionally (rather than only an
+     *  actually-allowed one) would itself be a CORS hole, so a disallowed origin must still get
+     *  nothing back -- proving this isn't a blind echo of whatever the caller sent. */
+    @Test
+    void omitsCorsHeaders_onARateLimitedResponse_forADisallowedOrigin() throws Exception {
+        RateLimitFilter filter = newFilter(false);
+        FilterChain chain = mock(FilterChain.class);
+
+        org.springframework.mock.web.MockHttpServletRequest request =
+                new org.springframework.mock.web.MockHttpServletRequest("POST", "/api/v1/auth/login");
+        request.setRemoteAddr("10.0.0.51");
+        request.addHeader(org.springframework.http.HttpHeaders.ORIGIN, "https://not-allowed.invalid");
+
+        assertThat(tripsRateLimitAfterManyRequests(filter, request)).isTrue();
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        filter.doFilterInternal(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(429);
+        assertThat(response.getHeader(org.springframework.http.HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN)).isNull();
     }
 }

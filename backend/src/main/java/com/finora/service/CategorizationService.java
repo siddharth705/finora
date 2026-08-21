@@ -8,6 +8,8 @@ import com.finora.entity.Transaction;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.MerchantCategoryLearningRepository;
 import com.finora.util.CategoryRules;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -29,6 +31,8 @@ import java.util.UUID;
  */
 @Service
 public class CategorizationService {
+
+    private static final Logger log = LoggerFactory.getLogger(CategorizationService.class);
 
     private final MerchantNormalizationEngine merchantNormalizationEngine;
     private final MerchantLearningService merchantLearningService;
@@ -344,13 +348,38 @@ public class CategorizationService {
         return newCategory;
     }
 
+    // categories.name is VARCHAR(80) NOT NULL (V1__init_schema.sql). ImportService's confirm path
+    // feeds this an unbounded raw CSV/PDF cell with no upstream length check -- unlike the manual
+    // creation path in TransactionService, which only ever reaches here with an explicit non-null
+    // category or an engine suggestion. A too-long or blank name previously hit the column
+    // constraint on INSERT, which marks the whole confirm transaction rollback-only: same failure
+    // mode MerchantNormalizationEngine.fitToColumn already guards against for merchant names, on
+    // the same parser-output code path. By the time the constraint fires the transaction is
+    // already poisoned, and no handling un-poisons it -- the write simply must not be attempted.
+    private static final int MAX_CATEGORY_NAME_LENGTH = 80;
+
     public Category resolveOrCreateCategory(UUID userId, String name) {
-        return categoryRepository.findByUserIdAndName(userId, name).orElseGet(() -> {
+        String safeName = fitToColumn(name);
+        return categoryRepository.findByUserIdAndName(userId, safeName).orElseGet(() -> {
             Category c = new Category();
             c.setUserId(userId);
-            c.setName(name);
+            c.setName(safeName);
             c.setSystem(false);
             return categoryRepository.save(c);
         });
+    }
+
+    // "Other" for null/blank, not a thrown validation error -- this mirrors CategoryRules' own
+    // fallback for "nothing matched" (see its own doc comment), so an unparseable category cell
+    // degrades to the same bucket a low-confidence guess would, rather than failing the import.
+    private static String fitToColumn(String name) {
+        if (name == null || name.isBlank()) return "Other";
+        String trimmed = name.trim();
+        if (trimmed.length() <= MAX_CATEGORY_NAME_LENGTH) return trimmed;
+        log.warn("Truncating a {}-character category name to {} for import confirm. This is a "
+                + "PARSER fault, not a data fault: a category cell that long means column "
+                + "segmentation absorbed surrounding page text.",
+                trimmed.length(), MAX_CATEGORY_NAME_LENGTH);
+        return trimmed.substring(0, MAX_CATEGORY_NAME_LENGTH);
     }
 }

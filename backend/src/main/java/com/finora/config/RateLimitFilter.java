@@ -10,9 +10,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Component;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import org.springframework.http.server.PathContainer;
@@ -178,6 +181,16 @@ public class RateLimitFilter extends OncePerRequestFilter {
      */
     private final ClientIpResolver clientIpResolver;
 
+    // Bug 07 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). This filter runs at
+    // Ordered.HIGHEST_PRECEDENCE + 1, entirely before Spring Security's own FilterChainProxy --
+    // and CORS is wired INSIDE that chain (CorsConfig's own comment explains why, deliberately, as
+    // HttpSecurity.cors(...) rather than a standalone CorsFilter bean). A 429 short-circuit here
+    // therefore never reaches Spring's CORS handling, so a browser sees a bare cross-origin
+    // response with no Access-Control-Allow-Origin header and reports a generic network error
+    // instead of rendering the actual RATE_LIMITED body. Reuses the SAME
+    // CorsConfigurationSource bean SecurityConfig wires in (see the constructor) rather than a
+    // second, duplicated allowed-origins list, so the two can never drift apart.
+    private final CorsConfigurationSource corsConfigurationSource;
 
     /** One rate-limited endpoint. Kept as a pattern rather than a String so matching goes through
      *  the same engine that decides which controller actually handles the request. */
@@ -219,8 +232,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
      * a window silently weakens a security control and nothing would fail -- so the only caller
      * that types them out is Spring, from named properties. Everything else goes through here.
      */
-    RateLimitFilter(ObjectMapper objectMapper, ClientIpResolver clientIpResolver) {
-        this(objectMapper, clientIpResolver,
+    RateLimitFilter(ObjectMapper objectMapper, ClientIpResolver clientIpResolver,
+                     CorsConfigurationSource corsConfigurationSource) {
+        this(objectMapper, clientIpResolver, corsConfigurationSource,
                 DEFAULT_LOGIN_MAX, DEFAULT_LOGIN_WINDOW,
                 DEFAULT_REGISTER_MAX, DEFAULT_REGISTER_WINDOW,
                 DEFAULT_FORGOT_MAX, DEFAULT_FORGOT_WINDOW,
@@ -249,6 +263,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     public RateLimitFilter(
             ObjectMapper objectMapper,
             ClientIpResolver clientIpResolver,
+            CorsConfigurationSource corsConfigurationSource,
             @Value("${app.rate-limit.login.max:10}") int loginMax,
             @Value("${app.rate-limit.login.window-seconds:60}") int loginWindow,
             @Value("${app.rate-limit.register.max:5}") int registerMax,
@@ -273,6 +288,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
             @Value("${app.rate-limit.mfa-verify.window-seconds:600}") int mfaVerifyWindow) {
         this.objectMapper = objectMapper;
         this.clientIpResolver = clientIpResolver;
+        this.corsConfigurationSource = corsConfigurationSource;
         this.loginLimiter = new RateLimiter(loginMax, loginWindow);
         this.registerLimiter = new RateLimiter(registerMax, registerWindow);
         this.forgotPasswordLimiter = new RateLimiter(forgotMax, forgotWindow);
@@ -355,6 +371,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         RateLimiter limiter = limiterFor(request);
 
         if (limiter != null && !limiter.allow(ip)) {
+            applyCorsHeadersForShortCircuitedResponse(request, response);
             response.setStatus(429); // Too Many Requests
             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
             ApiResponse<Void> body = ApiResponse.error(
@@ -364,6 +381,27 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    // See corsConfigurationSource's own field comment for why this is needed at all. Deliberately
+    // NOT the full CorsProcessor/DefaultCorsProcessor machinery Spring uses inside the security
+    // chain -- that class also owns preflight (OPTIONS) handling, which this filter has no reason
+    // to take on. Setting just the two headers a real (non-preflight) cross-origin response needs
+    // to actually be readable by the calling page's JavaScript is enough: the browser only checks
+    // Access-Control-Allow-Origin/-Credentials on the actual response, not a repeat of the
+    // preflight dance, for a simple already-permitted request method like this filter ever
+    // short-circuits (GET/POST against JSON endpoints, never a preflighted request type).
+    private void applyCorsHeadersForShortCircuitedResponse(HttpServletRequest request, HttpServletResponse response) {
+        String origin = request.getHeader(HttpHeaders.ORIGIN);
+        if (origin == null) return;
+        CorsConfiguration corsConfig = corsConfigurationSource.getCorsConfiguration(request);
+        if (corsConfig == null) return;
+        String allowedOrigin = corsConfig.checkOrigin(origin);
+        if (allowedOrigin == null) return;
+        response.setHeader(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, allowedOrigin);
+        if (Boolean.TRUE.equals(corsConfig.getAllowCredentials())) {
+            response.setHeader(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true");
+        }
     }
 
     /**
