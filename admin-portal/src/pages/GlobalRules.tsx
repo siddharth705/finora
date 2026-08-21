@@ -346,7 +346,7 @@ function GlobalRulesContent() {
               setShowCreate(true);
               setFormError(null);
             }}
-            className="inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark text-white text-sm font-semibold rounded-lg px-4 py-2.5 flex-shrink-0"
+            className="inline-flex items-center gap-1.5 bg-primary hover:bg-primary-dark text-on-primary text-sm font-semibold rounded-lg px-4 py-2.5 flex-shrink-0"
           >
             <Plus size={15} /> New rule
           </button>

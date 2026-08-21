@@ -27,7 +27,7 @@ function StepIndicator({ current }: { current: Step }) {
           <div key={s.key} className="flex items-center gap-2">
             <div
               className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 transition-colors ${
-                isDone ? 'bg-success text-white' : isActive ? 'bg-primary text-white' : 'bg-card border border-border text-muted'
+                isDone ? 'bg-success text-white' : isActive ? 'bg-primary text-on-primary' : 'bg-card border border-border text-muted'
               }`}
               title={s.label}
             >
@@ -131,7 +131,10 @@ export default function Setup() {
     <div className="min-h-screen bg-bg flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="flex items-center gap-2.5 justify-center mb-2">
-          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-rose-400 to-primary-dark flex items-center justify-center">
+          {/* to-[#15171C] rather than to-primary-dark: primary-dark flips to light paper in dark
+              mode, which would fade this badge's rose-to-dark gradient into a rose-to-pale one --
+              pinning the dark end keeps the white icon readable in both themes. */}
+          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-rose-400 to-[#15171C] flex items-center justify-center">
             <Sparkles size={18} className="text-white" strokeWidth={2.5} />
           </div>
           <span className="font-extrabold tracking-wide text-xl text-ink">FINORA</span>
@@ -175,7 +178,7 @@ export default function Setup() {
               <button
                 type="submit"
                 disabled={submitting}
-                className="w-full bg-primary hover:bg-primary-dark text-white font-semibold rounded-lg py-2.5 text-sm disabled:opacity-50"
+                className="w-full bg-primary hover:bg-primary-dark text-on-primary font-semibold rounded-lg py-2.5 text-sm disabled:opacity-50"
               >
                 {submitting ? 'Verifying…' : 'Continue'}
               </button>
@@ -250,7 +253,7 @@ export default function Setup() {
               <button
                 type="submit"
                 disabled={submitting}
-                className="w-full bg-primary hover:bg-primary-dark text-white font-semibold rounded-lg py-2.5 text-sm disabled:opacity-50"
+                className="w-full bg-primary hover:bg-primary-dark text-on-primary font-semibold rounded-lg py-2.5 text-sm disabled:opacity-50"
               >
                 {submitting ? 'Creating your account…' : 'Finish setup'}
               </button>
@@ -274,7 +277,7 @@ export default function Setup() {
             <button
               type="button"
               onClick={() => navigate('/login')}
-              className="w-full bg-primary hover:bg-primary-dark text-white font-semibold rounded-lg py-2.5 text-sm"
+              className="w-full bg-primary hover:bg-primary-dark text-on-primary font-semibold rounded-lg py-2.5 text-sm"
             >
               Continue to sign in
             </button>

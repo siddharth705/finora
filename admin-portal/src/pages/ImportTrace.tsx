@@ -371,7 +371,7 @@ export default function ImportTracePage() {
             <button
               type="submit"
               disabled={!emailInput.trim() || isFetchingFailures}
-              className="flex items-center gap-1.5 bg-primary text-white rounded-lg px-4 py-2 text-sm disabled:opacity-50"
+              className="flex items-center gap-1.5 bg-primary text-on-primary rounded-lg px-4 py-2 text-sm disabled:opacity-50"
             >
               <Mail size={15} />
               {isFetchingFailures ? 'Looking…' : 'Find failed imports'}
@@ -454,7 +454,7 @@ export default function ImportTracePage() {
             <button
               type="submit"
               disabled={!input.trim() || isFetching}
-              className="flex items-center gap-1.5 bg-primary text-white rounded-lg px-4 py-2 text-sm disabled:opacity-50"
+              className="flex items-center gap-1.5 bg-primary text-on-primary rounded-lg px-4 py-2 text-sm disabled:opacity-50"
             >
               <Search size={15} />
               {isFetching ? 'Looking…' : 'Trace'}

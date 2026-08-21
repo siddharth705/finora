@@ -235,7 +235,7 @@ function UserDetailContent({ id }: { id: string }) {
                 type="button"
                 disabled={!selectedRole || assignRoleMutation.isPending}
                 onClick={() => assignRoleMutation.mutate(selectedRole)}
-                className="bg-primary hover:bg-primary-dark text-white text-sm font-semibold rounded-lg px-3.5 py-2 disabled:opacity-50"
+                className="bg-primary hover:bg-primary-dark text-on-primary text-sm font-semibold rounded-lg px-3.5 py-2 disabled:opacity-50"
               >
                 Grant
               </button>
