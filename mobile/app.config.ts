@@ -51,11 +51,19 @@ const config: ExpoConfig = {
   scheme: 'finora',
   ios: {
     supportsTablet: true,
-    bundleIdentifier: 'com.finora.app',
+    // 'com.finora.app' was the original identifier on both platforms, but it's unavailable under
+    // this project's Apple Developer team for iOS registration (fails with "not available" --
+    // either a genuine third-party collision, or residue from the Organization/DUNS enrollment
+    // attempt abandoned in favor of an Individual account before final submission, per D-14/R-16
+    // in the plan doc). Renamed to the domain this project's own backend/frontend already use
+    // (finoratech.info) rather than guessing at another '.app' variant that might collide again --
+    // and Android's package name renamed to match, so the two platforms carry one identifier
+    // rather than a permanent, easy-to-forget divergence between them.
+    bundleIdentifier: 'com.finoratech.app',
     ...(existsSync(here(iosGoogleServices)) ? { googleServicesFile: iosGoogleServices } : {}),
   },
   android: {
-    package: 'com.finora.app',
+    package: 'com.finoratech.app',
     ...(existsSync(here(androidGoogleServices)) ? { googleServicesFile: androidGoogleServices } : {}),
     // Adaptive icon: a solid brand-navy plate with the Finora mark as the foreground layer.
     //
