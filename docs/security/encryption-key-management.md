@@ -2,7 +2,7 @@
 
 **Scope:** operating `FINORA_ENCRYPTION_KEY` — the key protecting third-party credentials at rest.
 For *why* the design is what it is, see
-[ADR-007](../architecture/adr/adr-007-sensitive-token-encryption.md); this document is what to do.
+[ADR-009](../architecture/adr/adr-009-sensitive-token-encryption.md); this document is what to do.
 
 **Read this before the first integration stores a credential.** This key becomes a hard production
 dependency the moment anything is encrypted under it, and its principal failure mode is
@@ -18,7 +18,7 @@ external account**, not merely records.
 
 **What it does not protect:** user passwords and Finora's own session tokens. Those are hashed via
 `TokenHasher` and are unaffected by anything in this document. If you find yourself reaching for
-this key to protect a password, stop — see ADR-007's Context.
+this key to protect a password, stop — see ADR-009's Context.
 
 **The property this buys:** a stolen database dump is inert. Ciphertext without the key is
 unusable, which is why the key must live somewhere the database backups do not (§6).
@@ -154,7 +154,7 @@ Stated rather than implied, because both affect how much this document is worth:
 - **The key lives in an environment variable.** A process-memory dump or a leaked Railway
   environment exposes it. Strictly better than plaintext-in-database; strictly worse than a KMS that
   never hands the key to the application. `KeyProvider` is the seam for that migration — see
-  ADR-007.
+  ADR-009.
 - **Rotation is untested against real data** (§5). The first credential-storing integration should
   fix that.
 
@@ -162,6 +162,6 @@ Stated rather than implied, because both affect how much this document is worth:
 
 ## Related
 
-- [ADR-007: Encryption at Rest for Third-Party Credentials](../architecture/adr/adr-007-sensitive-token-encryption.md)
+- [ADR-009: Encryption at Rest for Third-Party Credentials](../architecture/adr/adr-009-sensitive-token-encryption.md)
 - [Secrets and IAM audit](secrets-and-iam-audit.md) — where every other credential lives
 - `com.finora.security.crypto` — the implementation
