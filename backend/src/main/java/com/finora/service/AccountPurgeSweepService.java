@@ -31,6 +31,7 @@ import com.finora.repository.RelationshipIdentifierRepository;
 import com.finora.repository.RelationshipRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.StatementImportRepository.StatementMetadata;
+import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.repository.UserSettingsRepository;
@@ -137,6 +138,7 @@ public class AccountPurgeSweepService {
     private final MerchantRepository merchantRepository;
     private final BudgetRepository budgetRepository;
     private final GoalRepository goalRepository;
+    private final SubscriptionRepository subscriptionRepository;
     private final CategoryRuleRepository categoryRuleRepository;
     private final CategoryRepository categoryRepository;
     private final RelationshipRepository relationshipRepository;
@@ -171,6 +173,7 @@ public class AccountPurgeSweepService {
                                      MerchantRepository merchantRepository,
                                      BudgetRepository budgetRepository,
                                      GoalRepository goalRepository,
+                                     SubscriptionRepository subscriptionRepository,
                                      CategoryRuleRepository categoryRuleRepository,
                                      CategoryRepository categoryRepository,
                                      RelationshipRepository relationshipRepository,
@@ -204,6 +207,7 @@ public class AccountPurgeSweepService {
         this.merchantRepository = merchantRepository;
         this.budgetRepository = budgetRepository;
         this.goalRepository = goalRepository;
+        this.subscriptionRepository = subscriptionRepository;
         this.categoryRuleRepository = categoryRuleRepository;
         this.categoryRepository = categoryRepository;
         this.relationshipRepository = relationshipRepository;
@@ -323,6 +327,11 @@ public class AccountPurgeSweepService {
 
             budgetRepository.hardDeleteByUserId(userId);
             goalRepository.hardDeleteByUserId(userId);
+            // D-28 PR4-A: subscriptions/plan history are new user-linked tables this sweep didn't
+            // know about yet -- same hard-delete pattern as Budget/Goal, see
+            // SubscriptionRepository.hardDeleteByUserId's own comment for why the two child tables
+            // need no separate call here.
+            subscriptionRepository.hardDeleteByUserId(userId);
 
             // Only ever matches this user's own scope=USER rows -- scope=GLOBAL rows always have
             // user_id IS NULL and are never touched.

@@ -66,6 +66,7 @@ class AuthServiceReactivateTest {
                 auditService, refreshTokenService, emailProvider,
                 new EmailProperties(), mock(PhoneVerificationProvider.class), mock(PlatformSettingsService.class),
                 mock(PasswordHistoryService.class), new IdentityLookup(userRepository), requestMetadata,
+                mock(com.finora.service.SubscriptionService.class),
                 // SEC-07: same-thread executor -- runs the dispatched email/audit work
                 // synchronously so assertions against it don't race a real background thread.
                 Runnable::run,

@@ -29,6 +29,7 @@ const LearningQueue = lazy(() => import('./pages/LearningQueue'));
 const MerchantReview = lazy(() => import('./pages/MerchantReview'));
 const ReconciliationMonitor = lazy(() => import('./pages/ReconciliationMonitor'));
 const PlatformAnalytics = lazy(() => import('./pages/PlatformAnalytics'));
+const Subscriptions = lazy(() => import('./pages/Subscriptions'));
 const AuditLog = lazy(() => import('./pages/AuditLog'));
 const SystemHealth = lazy(() => import('./pages/SystemHealth'));
 const Diagnostics = lazy(() => import('./pages/Diagnostics'));
@@ -83,6 +84,7 @@ export default function App() {
               <Route path="/learning-queue" element={<ProtectedRoute><LearningQueue /></ProtectedRoute>} />
               <Route path="/reconciliation" element={<ProtectedRoute><ReconciliationMonitor /></ProtectedRoute>} />
               <Route path="/analytics" element={<ProtectedRoute><PlatformAnalytics /></ProtectedRoute>} />
+              <Route path="/subscriptions" element={<ProtectedRoute><Subscriptions /></ProtectedRoute>} />
               <Route path="/audit" element={<ProtectedRoute><AuditLog /></ProtectedRoute>} />
               <Route path="/health" element={<ProtectedRoute><SystemHealth /></ProtectedRoute>} />
               <Route path="/diagnostics" element={<ProtectedRoute><Diagnostics /></ProtectedRoute>} />

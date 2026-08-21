@@ -1,7 +1,8 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, ShieldCheck, ScrollText, HeartPulse, LogOut, Landmark, Settings,
-  ListFilter, Store, Sparkles, GitMerge, BarChart3, Stethoscope, FileSearch, ListRestart , BadgeCheck, Fingerprint, Route } from 'lucide-react';
+  ListFilter, Store, Sparkles, GitMerge, BarChart3, Stethoscope, FileSearch, ListRestart , BadgeCheck, Fingerprint, Route,
+  CreditCard } from 'lucide-react';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import logoMark from '../assets/logo-mark.png';
 
@@ -20,6 +21,7 @@ const links = [
   { to: '/learning-queue', label: 'Learning Queue', icon: ListRestart, end: false, permission: 'LEARNING_QUEUE_MANAGE' },
   { to: '/reconciliation', label: 'Reconciliation Monitor', icon: GitMerge, end: false, permission: 'RECONCILIATION_VIEW' },
   { to: '/analytics', label: 'Platform Analytics', icon: BarChart3, end: false, permission: 'PLATFORM_ANALYTICS_VIEW' },
+  { to: '/subscriptions', label: 'Subscriptions', icon: CreditCard, end: false, permission: 'SUBSCRIPTION_MANAGEMENT_VIEW' },
   { to: '/audit', label: 'Audit Log', icon: ScrollText, end: false, permission: 'AUDIT_VIEW' },
   { to: '/health', label: 'System Health', icon: HeartPulse, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
   { to: '/diagnostics', label: 'Platform Diagnostics', icon: Stethoscope, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },

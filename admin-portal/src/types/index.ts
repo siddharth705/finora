@@ -95,6 +95,21 @@ export interface ActivationFunnelDto {
   firstGoal: number;
 }
 
+/** D-28 PR4-A. Mirrors backend BillingDtos.SubscriptionSummaryDto exactly -- one row per user's
+ *  current subscription, joined with their plan and account details for the admin list. */
+export interface SubscriptionSummaryDto {
+  subscriptionId: string;
+  userId: string;
+  userEmail: string | null;
+  userFullName: string | null;
+  planCode: string | null;
+  planName: string | null;
+  status: string;
+  startDate: string;
+  endDate: string | null;
+  renewalDate: string | null;
+}
+
 export interface SystemHealthDto {
   status: string;
   components: Record<string, string>;

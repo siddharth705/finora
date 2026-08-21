@@ -29,6 +29,7 @@ import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.RelationshipIdentifierRepository;
 import com.finora.repository.RelationshipRepository;
 import com.finora.repository.StatementImportRepository;
+import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.repository.UserSettingsRepository;
@@ -114,7 +115,7 @@ class AccountPurgeSweepServiceTest {
                 mock(MerchantLearningEventRepository.class), mock(MerchantLearningAuditRepository.class),
                 mock(MerchantCategoryLearningRepository.class), mock(MerchantAliasRepository.class),
                 mock(MerchantCategoryMapRepository.class), mock(MerchantRepository.class),
-                mock(BudgetRepository.class), mock(GoalRepository.class),
+                mock(BudgetRepository.class), mock(GoalRepository.class), mock(SubscriptionRepository.class),
                 mock(CategoryRuleRepository.class), mock(CategoryRepository.class),
                 relationshipRepository, mock(RelationshipIdentifierRepository.class),
                 mock(NetWorthSnapshotRepository.class), mock(ImportJobRepository.class),

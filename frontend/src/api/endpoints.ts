@@ -862,3 +862,15 @@ export const gmailApi = {
     api.post(`/integrations/google/gmail/review/${sessionId}/approve`, category ? { category } : {}),
   reject: (sessionId: string) => api.post(`/integrations/google/gmail/review/${sessionId}/reject`),
 };
+
+// D-28 PR4-A. What PremiumFeatureGate reads -- the current user's own plan and entitlement map.
+// Mirrors backend BillingDtos.EntitlementsDto exactly.
+export interface EntitlementsDto {
+  planCode: string | null;
+  planName: string | null;
+  features: Record<string, boolean>;
+}
+
+export const entitlementsApi = {
+  mine: () => api.get<EntitlementsDto>('/entitlements').then((r) => r.data),
+};
