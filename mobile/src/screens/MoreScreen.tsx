@@ -60,7 +60,7 @@ export function MoreScreen({ navigation }: Props) {
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
           >
-            <Text style={styles.avatarText}>{initials(fullName ?? email)}</Text>
+            <Text style={[styles.avatarText, { color: c.onPrimary }]}>{initials(fullName ?? email)}</Text>
           </View>
           <View style={styles.profileText}>
             <Text style={[styles.name, { color: c.ink }]} numberOfLines={1}>
@@ -112,7 +112,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: spacing.sm,
   },
-  avatarText: { color: '#fff', fontWeight: '700', fontSize: 18 },
+  avatarText: { fontWeight: '700', fontSize: 18 },
   profileText: { flex: 1 },
   name: { fontSize: 15, fontWeight: '600' },
   email: { fontSize: 12, marginTop: 2 },

@@ -107,7 +107,13 @@ export function AccountsScreen() {
             <Card key={a.id} style={styles.accountCard}>
               <View style={styles.accountHeader}>
                 <View style={[styles.bankBadge, { backgroundColor: a.bank?.colorHex || c.primary }]}>
-                  <Text style={styles.bankInitials}>{a.bank?.initials || '?'}</Text>
+                  {/* White assumes the badge is showing a real bank's own brand color, which is
+                      reliably saturated enough for it -- but the fallback case (no bank color,
+                      c.primary) needs the theme-correct text, same as everywhere else c.primary
+                      is a background: in dark mode it's light paper, where white text vanishes. */}
+                  <Text style={[styles.bankInitials, { color: a.bank?.colorHex ? '#fff' : c.onPrimary }]}>
+                    {a.bank?.initials || '?'}
+                  </Text>
                 </View>
                 <View style={styles.accountTitleBlock}>
                   <Text style={[styles.accountName, { color: c.ink }]} numberOfLines={1}>
@@ -194,7 +200,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: spacing.sm,
   },
-  bankInitials: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  bankInitials: { fontWeight: '700', fontSize: 13 },
   accountTitleBlock: { flex: 1 },
   accountName: { fontSize: 15, fontWeight: '600' },
   accountType: { fontSize: 11, marginTop: 1 },

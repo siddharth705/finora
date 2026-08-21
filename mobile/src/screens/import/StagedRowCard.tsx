@@ -68,7 +68,7 @@ function StagedRowCardInner({
             { borderColor: included ? c.primary : c.border, backgroundColor: included ? c.primary : 'transparent' },
           ]}
         >
-          {included ? <Text style={styles.tick}>✓</Text> : null}
+          {included ? <Text style={[styles.tick, { color: c.onPrimary }]}>✓</Text> : null}
         </Pressable>
 
         <View style={styles.main}>
@@ -203,7 +203,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 2,
   },
-  tick: { color: '#fff', fontSize: 14, fontWeight: '700', lineHeight: 16 },
+  tick: { fontSize: 14, fontWeight: '700', lineHeight: 16 },
   main: { flex: 1 },
   description: { fontSize: 14, fontWeight: '500' },
   date: { fontSize: 11, marginTop: 2 },

@@ -1,4 +1,4 @@
-import { ActivityIndicator, StyleSheet, useColorScheme, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { LoginScreen } from '../screens/LoginScreen';
@@ -7,7 +7,7 @@ import { ForgotPasswordScreen } from '../screens/ForgotPasswordScreen';
 import { VerifyPhoneScreen } from '../screens/VerifyPhoneScreen';
 import { AppTabs } from './AppTabs';
 import { useAuth } from '../context/AuthContext';
-import { useTheme } from '../theme';
+import { useTheme, useThemeSetting } from '../theme';
 import type { AuthStackParamList } from './types';
 
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
@@ -27,7 +27,7 @@ const AppStack = createNativeStackNavigator();
 export function RootNavigator() {
   const { bootstrapping, token, phoneVerified } = useAuth();
   const c = useTheme();
-  const scheme = useColorScheme();
+  const { resolved } = useThemeSetting();
 
   // Session restore reads SecureStore asynchronously (see AuthContext). Rendering anything
   // route-dependent before it resolves would show Login to an already-signed-in user for a frame.
@@ -39,7 +39,27 @@ export function RootNavigator() {
     );
   }
 
-  const navTheme = scheme === 'dark' ? DarkTheme : DefaultTheme;
+  // Stock DefaultTheme/DarkTheme's own `colors.primary` is React Navigation's iOS-blue default,
+  // independent of (and previously left to clash with) the app's own palette -- spread the stock
+  // theme (it already carries the `fonts` object v7 requires) and override just the colors that
+  // matter, so anything React Navigation draws unprompted (native header default, back-gesture
+  // tint) matches the rest of the app instead of standing out as a different product. Based on
+  // `resolved` from useThemeSetting() rather than the raw OS scheme, so this can't disagree with
+  // the theme every other screen is already painted in when the user has picked a manual
+  // light/dark override that differs from the system setting.
+  const base = resolved === 'dark' ? DarkTheme : DefaultTheme;
+  const navTheme = {
+    ...base,
+    dark: resolved === 'dark',
+    colors: {
+      ...base.colors,
+      primary: c.primary,
+      background: c.bg,
+      card: c.card,
+      text: c.ink,
+      border: c.border,
+    },
+  };
 
   return (
     <NavigationContainer theme={navTheme}>
