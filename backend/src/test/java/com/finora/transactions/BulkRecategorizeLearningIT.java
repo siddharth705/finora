@@ -339,9 +339,18 @@ class BulkRecategorizeLearningIT extends AbstractIntegrationTest {
      * classes' events fill the batch first and this fixture's newest rows are left behind. The
      * batch bound is correct — it is what stops a backlog holding a connection — so the test has to
      * drain until its own work is done rather than assume one pass suffices.
+     *
+     * <p>The pass budget below is deliberately generous, not a nice round number: a 20-pass budget
+     * (1,000 events) was observed to run out against a full-suite backlog left behind by classes
+     * that queue learning events without draining them (e.g. {@code AdminLearningQueueControllerIT},
+     * which leaves rows PENDING on purpose to exercise the admin queue view) -- see the CI failure
+     * on PR #161, reproduced and confirmed to pass on retry once the shared table had drained.
+     * {@code MerchantLearningEvent}'s dead-letter design (see {@code MAX_ATTEMPTS}) bounds the total
+     * backlog at any moment, so a larger budget still terminates -- it just tolerates more of
+     * someone else's undrained mess before giving up.
      */
     private void drainUntilSettled(Fixture f) {
-        for (int pass = 0; pass < 20; pass++) {
+        for (int pass = 0; pass < 200; pass++) {
             boolean anyPending = eventsFor(f).stream()
                     .anyMatch(e -> e.getStatus() == MerchantLearningEvent.Status.PENDING
                             && !e.getNextAttemptAt().isAfter(Instant.now()));
