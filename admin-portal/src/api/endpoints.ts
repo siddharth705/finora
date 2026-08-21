@@ -1,7 +1,7 @@
 import { api, rawApi, type ApiEnvelope } from './client';
 import type {
 
-  AccountDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
+  AccountDto, ActivationFunnelDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
   CreateAccountRequest, CreateBankRequest, CreateRelationshipRequest,
   CreateRuleRequest, CreateUserRequest, FeatureFlagDto, GmailMerchantParserStatDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
   LearningTimelineEntry,
@@ -237,6 +237,7 @@ export const adminStatsApi = {
 // Reuses adminStatsApi's PLATFORM_STATS_VIEW gate rather than a new permission.
 export const adminDashboardApi = {
   overview: () => api.get<OperationalDashboardDto>('/admin/dashboard/overview').then((r) => r.data),
+  activationFunnel: () => api.get<ActivationFunnelDto>('/admin/dashboard/activation-funnel').then((r) => r.data),
 };
 
 export const adminSystemApi = {

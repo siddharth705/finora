@@ -14,6 +14,16 @@ public interface BudgetRepository extends JpaRepository<Budget, UUID> {
     List<Budget> findByUserId(UUID userId);
     Optional<Budget> findByUserIdAndCategoryId(UUID userId, UUID categoryId);
 
+    /** D-27 PR3-D: the "first budget" activation-funnel stage -- how many distinct users have
+     *  EVER created a budget. Native, deliberately bypassing {@code @SQLRestriction
+     *  ("deleted_at IS NULL")} (same bypass {@code hardDeleteByUserId} above already uses, for a
+     *  different reason) -- a growth milestone is a permanent behavioral fact once reached, same
+     *  "persists indefinitely" precedent as {@code Goal.completedAt} (D-25 PR3-B): a user who
+     *  tried budgeting and later deleted their only budget still activated, and undercounting that
+     *  would penalize exactly the engaged users who clean up after experimenting. */
+    @Query(value = "SELECT COUNT(DISTINCT user_id) FROM budgets", nativeQuery = true)
+    long countDistinctUsersEverActivated();
+
     /** AccountPurgeSweepService. Native, bypassing Hibernate's {@code @SQLDelete} entirely -- a
      *  derived/JPQL {@code deleteByUserId} on this entity would only soft-delete (set
      *  {@code deleted_at}), not purge, since {@code Budget extends BaseEntity}. Named

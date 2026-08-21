@@ -1,5 +1,6 @@
 package com.finora.controller;
 
+import com.finora.dto.AdminDtos.ActivationFunnelDto;
 import com.finora.dto.AdminDtos.OperationalDashboardDto;
 import com.finora.dto.ApiResponse;
 import com.finora.service.AdminOperationalDashboardService;
@@ -26,5 +27,11 @@ public class AdminOperationalDashboardController {
     @GetMapping("/overview")
     public ApiResponse<OperationalDashboardDto> overview() {
         return ApiResponse.ok(adminOperationalDashboardService.overview());
+    }
+
+    /** D-27 PR3-D. */
+    @GetMapping("/activation-funnel")
+    public ApiResponse<ActivationFunnelDto> activationFunnel() {
+        return ApiResponse.ok(adminOperationalDashboardService.activationFunnel());
     }
 }

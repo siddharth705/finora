@@ -2,11 +2,14 @@ package com.finora.service;
 
 import com.finora.dto.AdminDtos.OperationalDashboardDto;
 import com.finora.dto.AdminDtos.NeedsAttentionDto;
+import com.finora.dto.AdminDtos.ActivationFunnelDto;
 import com.finora.dto.AuditLogDto;
 import com.finora.dto.HealthDtos.AlertDto;
 import com.finora.dto.HealthDtos.PlatformHealthDto;
+import com.finora.goals.GoalRepository;
 import com.finora.health.HealthStatus;
 import com.finora.repository.AuditLogRepository;
+import com.finora.repository.BudgetRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
@@ -42,16 +45,21 @@ public class AdminOperationalDashboardService {
     private final UserRepository userRepository;
     private final TransactionRepository transactionRepository;
     private final StatementImportRepository statementImportRepository;
+    private final BudgetRepository budgetRepository;
+    private final GoalRepository goalRepository;
     private final AuditLogRepository auditLogRepository;
     private final AdminHealthRegistryService healthRegistryService;
 
     public AdminOperationalDashboardService(UserRepository userRepository, TransactionRepository transactionRepository,
                                              StatementImportRepository statementImportRepository,
+                                             BudgetRepository budgetRepository, GoalRepository goalRepository,
                                              AuditLogRepository auditLogRepository,
                                              AdminHealthRegistryService healthRegistryService) {
         this.userRepository = userRepository;
         this.transactionRepository = transactionRepository;
         this.statementImportRepository = statementImportRepository;
+        this.budgetRepository = budgetRepository;
+        this.goalRepository = goalRepository;
         this.auditLogRepository = auditLogRepository;
         this.healthRegistryService = healthRegistryService;
     }
@@ -118,6 +126,20 @@ public class AdminOperationalDashboardService {
 
         return new OperationalDashboardDto(totalUsers, activeUsersToday, transactionsToday, importsToday,
                 importsWithSkippedRowsToday, needsAttention, health, alerts, recentActivity);
+    }
+
+    /** D-27 PR3-D. See {@link ActivationFunnelDto}'s own class doc for exactly what "reached" and
+     *  "simple snapshot" mean here. countByRoleNot("BOOTSTRAP_ADMIN") reused as-is rather than a
+     *  new query -- the same totalUsers definition {@link #overview()} already uses, so this
+     *  funnel's own "signed up" figure agrees with the Operational Dashboard's totalUsers tile
+     *  rather than quietly defining "total users" a second, different way. */
+    @Transactional(readOnly = true)
+    public ActivationFunnelDto activationFunnel() {
+        return new ActivationFunnelDto(
+                userRepository.countByRoleNot("BOOTSTRAP_ADMIN"),
+                statementImportRepository.countDistinctUsersEverActivated(),
+                budgetRepository.countDistinctUsersEverActivated(),
+                goalRepository.countDistinctUsersEverActivated());
     }
 
     /** Every non-UP provider becomes exactly one alert -- deliberately not a separate alerting

@@ -100,6 +100,31 @@ public class AdminDtos {
     ) {}
 
     /**
+     * D-27 PR3-D. Activation funnel: how many distinct users have EVER reached each of the four
+     * stages the owner named -- signup, first import, first budget, first goal (deliberately NOT
+     * "goal achieved", a fifth FinancialJourneyService milestone the owner's own funnel wording
+     * didn't ask for). A simple snapshot, not a cohort/time-series -- see the D-27 decision: no
+     * scheduled pre-aggregation exists anywhere in this codebase yet, and one live query per
+     * admin page-load is the owner's own chosen scope for a first cut.
+     *
+     * Each count is "ever reached," not "currently has one live" -- a user who created a budget
+     * and later deleted it still activated. Raw counts only; percentage-of-signedUp is a client-
+     * side computation (same split as DashboardSummaryDto's healthScoreTransactionCount/
+     * healthScoreMinTransactions), not duplicated here.
+     *
+     * Stages are not guaranteed to be subsets of each other -- a user can create a budget without
+     * ever importing a statement, since Finora doesn't require an import first. That's a real
+     * property of this product, not a query bug, and is left visible rather than corrected into a
+     * strictly monotonic funnel that would misrepresent actual usage.
+     */
+    public record ActivationFunnelDto(
+            long signedUp,
+            long firstImport,
+            long firstBudget,
+            long firstGoal
+    ) {}
+
+    /**
      * Wraps Spring Boot Actuator's own HealthEndpoint bean rather than re-implementing DB/disk
      * checks from scratch (see AdminSystemService) -- status is Actuator's own top-level verdict
      * ("UP"/"DOWN"/...), components is the per-indicator breakdown (db, diskSpace, ...) Actuator

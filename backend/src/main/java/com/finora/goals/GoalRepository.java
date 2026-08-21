@@ -22,4 +22,11 @@ public interface GoalRepository extends JpaRepository<Goal, UUID> {
     @Modifying
     @Query(value = "DELETE FROM goals WHERE user_id = :userId", nativeQuery = true)
     void hardDeleteByUserId(@Param("userId") UUID userId);
+
+    /** D-27 PR3-D: the "first goal" activation-funnel stage -- how many distinct users have EVER
+     *  created a goal. Native, bypassing {@code @SQLRestriction} the same way as
+     *  {@code BudgetRepository.countDistinctUsersEverActivated} -- see that method's own doc
+     *  comment for why a growth milestone must survive the goal later being deleted. */
+    @Query(value = "SELECT COUNT(DISTINCT user_id) FROM goals", nativeQuery = true)
+    long countDistinctUsersEverActivated();
 }
