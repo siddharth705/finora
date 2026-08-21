@@ -25,6 +25,7 @@ import com.finora.repository.NetWorthSnapshotRepository;
 import com.finora.repository.PasswordChangeSessionRepository;
 import com.finora.repository.PasswordHistoryRepository;
 import com.finora.repository.PasswordResetTokenRepository;
+import com.finora.repository.PaymentRepository;
 import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.RelationshipIdentifierRepository;
 import com.finora.repository.RelationshipRepository;
@@ -68,6 +69,7 @@ class AccountPurgeSweepServiceTest {
     private GmailConnectionService gmailConnectionService;
     private GmailConnectionRepository gmailConnectionRepository;
     private TransactionRepository transactionRepository;
+    private PaymentRepository paymentRepository;
     private StatementImportRepository statementImportRepository;
     private StatementImportService statementImportService;
     private StatementAnalysisSessionRepository statementAnalysisSessionRepository;
@@ -85,6 +87,7 @@ class AccountPurgeSweepServiceTest {
         gmailConnectionService = mock(GmailConnectionService.class);
         gmailConnectionRepository = mock(GmailConnectionRepository.class);
         transactionRepository = mock(TransactionRepository.class);
+        paymentRepository = mock(PaymentRepository.class);
         statementImportRepository = mock(StatementImportRepository.class);
         statementImportService = mock(StatementImportService.class);
         statementAnalysisSessionRepository = mock(StatementAnalysisSessionRepository.class);
@@ -116,6 +119,7 @@ class AccountPurgeSweepServiceTest {
                 mock(MerchantCategoryLearningRepository.class), mock(MerchantAliasRepository.class),
                 mock(MerchantCategoryMapRepository.class), mock(MerchantRepository.class),
                 mock(BudgetRepository.class), mock(GoalRepository.class), mock(SubscriptionRepository.class),
+                paymentRepository,
                 mock(CategoryRuleRepository.class), mock(CategoryRepository.class),
                 relationshipRepository, mock(RelationshipIdentifierRepository.class),
                 mock(NetWorthSnapshotRepository.class), mock(ImportJobRepository.class),
@@ -178,9 +182,12 @@ class AccountPurgeSweepServiceTest {
         assertThat(result.purged()).isEqualTo(1);
         assertThat(result.failed()).isZero();
 
-        InOrder inOrder = inOrder(gmailConnectionService, transactionRepository, statementImportService, userRepository);
+        InOrder inOrder = inOrder(gmailConnectionService, transactionRepository, paymentRepository, statementImportService, userRepository);
         inOrder.verify(gmailConnectionService).disconnect(userId);
         inOrder.verify(transactionRepository).hardDeleteByUserId(userId);
+        // D-28 PR4-B: payments purged before subscriptions -- see this call site's own comment in
+        // AccountPurgeSweepService for why the ordering matters.
+        inOrder.verify(paymentRepository).hardDeleteByUserId(userId);
         inOrder.verify(statementImportService).delete(userId, statementId);
         inOrder.verify(userRepository).save(argThat(u -> User.STATUS_DELETED.equals(u.getStatus())));
 

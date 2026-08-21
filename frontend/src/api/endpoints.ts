@@ -874,3 +874,18 @@ export interface EntitlementsDto {
 export const entitlementsApi = {
   mine: () => api.get<EntitlementsDto>('/entitlements').then((r) => r.data),
 };
+
+// D-28 PR4-B. The user's own billing history (proposal §3.4) -- empty for everyone today, since
+// no payment gateway exists yet (§10). Mirrors backend BillingDtos.BillingHistoryEntryDto exactly.
+export interface BillingHistoryEntry {
+  id: string;
+  amount: number;
+  currency: string;
+  provider: string | null;
+  status: string;
+  createdAt: string;
+}
+
+export const billingApi = {
+  history: () => api.get<BillingHistoryEntry[]>('/billing/history').then((r) => r.data),
+};
