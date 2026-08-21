@@ -42,6 +42,74 @@ class PdfMetadataExtractorTest {
         assertThat(metadata.accountNumberMasked()).endsWith("0599");
     }
 
+    /**
+     * Phase 1C: real credit-card statements speak of a CARD number, not an "Account Number" --
+     * verified against real HDFC and Kotak statements, neither of which ever uses the phrase
+     * ACCOUNT_NUMBER above looks for at all. The masked value is stored EXACTLY as printed (no
+     * re-masking, no reconstructing which digits are hidden), which {@code isEqualTo} here checks
+     * literally rather than the looser {@code endsWith} the plain-digit ACCOUNT_NUMBER tests above
+     * use -- there is no unmasked full number to test the last-4 tail of.
+     */
+    @Test
+    void extract_recognizesACreditCardNumber_labelledCreditCardNo() {
+        var metadata = extractor.extract(List.of("Credit Card No. XXXX XXXX XXXX 1234"));
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("XXXX XXXX XXXX 1234");
+    }
+
+    @Test
+    void extract_recognizesACreditCardNumber_labelledPrimaryCardNumber() {
+        var metadata = extractor.extract(List.of("Primary Card Number XXXX XXXX XXXX 5678"));
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("XXXX XXXX XXXX 5678");
+    }
+
+    /**
+     * The real Kotak shape: unrelated text ("(Principal Outstanding)") precedes the label on the
+     * same line, which the start-anchored ACCOUNT_NUMBER-style pattern could never tolerate --
+     * this is the same-line-anywhere fallback ({@code CARD_NUMBER_LABEL} found via {@code find()},
+     * not anchored to the start), the same contract the payment-due-date same-line fallback uses.
+     */
+    @Test
+    void extract_recognizesACardNumber_whenUnrelatedTextPrecedesTheLabelOnTheSameLine() {
+        var metadata = extractor.extract(List.of("(Principal Outstanding) Primary Card Number XXXX XXXX XXXX 9012"));
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("XXXX XXXX XXXX 9012");
+    }
+
+    /**
+     * The real HDFC shape: the value comes BEFORE its label (the same "value, then label" order
+     * ACCOUNT_NUMBER_TRAILING_LABEL already handles), but the cardholder's name trails the label
+     * on the same line too -- ACCOUNT_NUMBER_TRAILING_LABEL's own end-of-line anchor could never
+     * tolerate that. CARD_NUMBER_TRAILING_LABEL is the same shape widened to allow trailing text.
+     */
+    @Test
+    void extract_recognizesACardNumber_whenTrailingTextFollowsTheLabelOnTheSameLine() {
+        var metadata = extractor.extract(List.of("XXXX XXXX XXXX 3456 Credit Card No. JOHN DOE"));
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("XXXX XXXX XXXX 3456");
+    }
+
+    /**
+     * The label identifies the field -- not the value's shape. A masked-looking number with no
+     * recognized card/account-number label anywhere near it must never be picked up, however
+     * identifier-shaped it looks; otherwise this would regress into exactly the "find any
+     * masked-looking number in the document" design this class deliberately avoids.
+     */
+    @Test
+    void extract_doesNotMatchAMaskedLookingReferenceNumber_withNoRecognizedLabelNearby() {
+        var metadata = extractor.extract(List.of("Reference Number: XXXX XXXX XXXX 7890"));
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
+    @Test
+    void extract_leavesAccountNumberMaskedNull_whenNoCardOrAccountNumberIsPresentAtAll() {
+        var metadata = extractor.extract(List.of("Statement Period: 01/06/2026 to 30/06/2026"));
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
     @Test
     void extract_recognizesAnIfscCode_byItsDistinctiveShape_evenMergedWithAnUnrelatedField() {
         // The real statement's IFSC line is merged with an unrelated Email field by the time it
