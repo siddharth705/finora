@@ -14,9 +14,14 @@ import com.finora.entity.CategoryRule;
 import com.finora.entity.ImportSession;
 import com.finora.entity.Merchant;
 import com.finora.entity.NetWorthSnapshot;
+import com.finora.entity.Plan;
+import com.finora.entity.Subscription;
 import com.finora.entity.Transaction;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
+import com.finora.goals.GoalContribution;
+import com.finora.goals.GoalContributionRepository;
+import com.finora.goals.GoalDto;
 import com.finora.goals.GoalService;
 import com.finora.budgets.BudgetService;
 import com.finora.imports.ImportSessionService;
@@ -29,7 +34,9 @@ import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.repository.MerchantRepository;
 import com.finora.repository.NetWorthSnapshotRepository;
+import com.finora.repository.PlanRepository;
 import com.finora.repository.StatementImportRepository;
+import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -78,6 +85,7 @@ class DataExportServiceTest {
     private TransactionRepository transactionRepository;
     private BudgetService budgetService;
     private GoalService goalService;
+    private GoalContributionRepository goalContributionRepository;
     private CategoryRepository categoryRepository;
     private CategoryRuleRepository categoryRuleRepository;
     private RelationshipService relationshipService;
@@ -93,6 +101,8 @@ class DataExportServiceTest {
     private WorkspaceSettingsService workspaceSettingsService;
     private BankManagementService bankManagementService;
     private AuditService auditService;
+    private SubscriptionRepository subscriptionRepository;
+    private PlanRepository planRepository;
     private DataExportService service;
     private final UUID userId = UUID.randomUUID();
 
@@ -105,6 +115,7 @@ class DataExportServiceTest {
         transactionRepository = mock(TransactionRepository.class);
         budgetService = mock(BudgetService.class);
         goalService = mock(GoalService.class);
+        goalContributionRepository = mock(GoalContributionRepository.class);
         categoryRepository = mock(CategoryRepository.class);
         categoryRuleRepository = mock(CategoryRuleRepository.class);
         relationshipService = mock(RelationshipService.class);
@@ -120,6 +131,8 @@ class DataExportServiceTest {
         workspaceSettingsService = mock(WorkspaceSettingsService.class);
         bankManagementService = mock(BankManagementService.class);
         auditService = mock(AuditService.class);
+        subscriptionRepository = mock(SubscriptionRepository.class);
+        planRepository = mock(PlanRepository.class);
         ObjectMapper objectMapper = new ObjectMapper();
         objectMapper.registerModule(new JavaTimeModule());
 
@@ -130,6 +143,7 @@ class DataExportServiceTest {
         when(transactionRepository.countByAccountForUser(any())).thenReturn(List.of());
         when(budgetService.listForUser(any())).thenReturn(List.of());
         when(goalService.listForUser(any())).thenReturn(List.of());
+        when(goalContributionRepository.findByGoalIdInOrderByContributedAtDesc(any())).thenReturn(List.of());
         when(categoryRepository.findByUserId(any())).thenReturn(List.of());
         when(categoryRuleRepository.findByUserId(any())).thenReturn(List.of());
         when(relationshipService.listForUser(any())).thenReturn(List.of());
@@ -144,16 +158,19 @@ class DataExportServiceTest {
                 .thenReturn(new UserSettingsDto("jane@example.com", "Jane Doe", null, "light", "Asia/Kolkata",
                         null, false, Instant.now(), null, User.SIGN_IN_METHOD_PASSWORD));
         when(workspaceSettingsService.get(any())).thenReturn(new WorkspaceSettingsDto(90, Instant.now()));
+        when(subscriptionRepository.findByUserIdOrderByCreatedAtDesc(any())).thenReturn(List.of());
+        when(planRepository.findAllById(any())).thenReturn(List.of());
 
         when(passwordEncoder.matches(any(), any())).thenReturn(true);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user()));
 
         service = new DataExportService(userRepository,
                 new GoogleReauthVerifier(passwordEncoder, googleIdTokenVerifierService), accountRepository, transactionRepository,
-                budgetService, goalService, categoryRepository, categoryRuleRepository, relationshipService,
+                budgetService, goalService, goalContributionRepository, categoryRepository, categoryRuleRepository, relationshipService,
                 netWorthSnapshotRepository, merchantRepository, importJobRepository, importSessionRepository,
                 importSessionService, statementImportRepository, statementImportService, gmailConnectionRepository,
-                userSettingsService, workspaceSettingsService, bankManagementService, auditService, objectMapper);
+                userSettingsService, workspaceSettingsService, bankManagementService, auditService,
+                subscriptionRepository, planRepository, objectMapper);
     }
 
     private User user() {
@@ -178,11 +195,12 @@ class DataExportServiceTest {
                 .hasFieldOrPropertyWithValue("status", HttpStatus.BAD_REQUEST);
 
         verify(auditService).recordEvenOnRollback(eq(userId), eq("INVALID_CURRENT_PASSWORD"), eq("User"), eq(userId));
-        verifyNoInteractions(accountRepository, transactionRepository, budgetService, goalService, categoryRepository,
+        verifyNoInteractions(accountRepository, transactionRepository, budgetService, goalService,
+                goalContributionRepository, categoryRepository,
                 categoryRuleRepository, relationshipService, netWorthSnapshotRepository, merchantRepository,
                 importJobRepository, importSessionRepository, importSessionService, statementImportRepository,
                 statementImportService, gmailConnectionRepository, userSettingsService, workspaceSettingsService,
-                bankManagementService);
+                bankManagementService, subscriptionRepository, planRepository);
     }
 
     @Test
@@ -508,6 +526,93 @@ class DataExportServiceTest {
         });
     }
 
+    /** goal_contributions.json -- one batched findByGoalIdInOrderByContributedAtDesc call across
+     *  every one of this user's goals, not one findByGoalIdOrderByContributedAtDesc per goal. */
+    @Test
+    void buildBundle_goalContributions_batchFetchesAcrossAllUserGoals() {
+        UUID goalOneId = UUID.randomUUID();
+        UUID goalTwoId = UUID.randomUUID();
+        when(goalService.listForUser(userId)).thenReturn(List.of(
+                new GoalDto(goalOneId, "Emergency Fund", BigDecimal.valueOf(100000), BigDecimal.valueOf(20000), null),
+                new GoalDto(goalTwoId, "Vacation", BigDecimal.valueOf(50000), BigDecimal.ZERO, null)));
+
+        GoalContribution contribution = new GoalContribution();
+        UUID contributionId = UUID.randomUUID();
+        ReflectionTestUtils.setField(contribution, "id", contributionId);
+        contribution.setGoalId(goalOneId);
+        contribution.setAmount(BigDecimal.valueOf(5000));
+        contribution.setContributedAt(LocalDate.of(2026, 7, 15));
+        when(goalContributionRepository.findByGoalIdInOrderByContributedAtDesc(List.of(goalOneId, goalTwoId)))
+                .thenReturn(List.of(contribution));
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+
+        assertThat(bundle.goalContributions()).hasSize(1);
+        var dto = bundle.goalContributions().get(0);
+        assertThat(dto.id()).isEqualTo(contributionId);
+        assertThat(dto.goalId()).isEqualTo(goalOneId);
+        assertThat(dto.amount()).isEqualByComparingTo(BigDecimal.valueOf(5000));
+        assertThat(dto.contributedAt()).isEqualTo(LocalDate.of(2026, 7, 15));
+    }
+
+    /** subscriptions.json -- planId resolved to the plan's own code/name via a batched lookup,
+     *  the same way transactions.json resolves categoryId to categoryName. */
+    @Test
+    void buildBundle_subscriptions_resolvesPlanCodeAndName() {
+        UUID planId = UUID.randomUUID();
+        Plan plan = new Plan();
+        ReflectionTestUtils.setField(plan, "id", planId);
+        plan.setCode("PREMIUM");
+        plan.setName("Premium");
+
+        Subscription subscription = new Subscription();
+        UUID subscriptionId = UUID.randomUUID();
+        ReflectionTestUtils.setField(subscription, "id", subscriptionId);
+        subscription.setUserId(userId);
+        subscription.setPlanId(planId);
+        subscription.setStatus(Subscription.STATUS_ACTIVE);
+        subscription.setStartDate(LocalDate.of(2026, 1, 1));
+        subscription.setRenewalDate(LocalDate.of(2026, 2, 1));
+        subscription.setPaymentProvider("STRIPE");
+        when(subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(subscription));
+        when(planRepository.findAllById(List.of(planId))).thenReturn(List.of(plan));
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+
+        assertThat(bundle.subscriptions()).hasSize(1);
+        var dto = bundle.subscriptions().get(0);
+        assertThat(dto.id()).isEqualTo(subscriptionId);
+        assertThat(dto.planCode()).isEqualTo("PREMIUM");
+        assertThat(dto.planName()).isEqualTo("Premium");
+        assertThat(dto.status()).isEqualTo(Subscription.STATUS_ACTIVE);
+        assertThat(dto.startDate()).isEqualTo(LocalDate.of(2026, 1, 1));
+        assertThat(dto.renewalDate()).isEqualTo(LocalDate.of(2026, 2, 1));
+        assertThat(dto.paymentProvider()).isEqualTo("STRIPE");
+    }
+
+    /** A subscription whose plan row no longer exists must still appear in the export -- with a
+     *  null planCode/planName -- rather than being silently dropped or throwing an NPE. */
+    @Test
+    void buildBundle_subscriptions_missingPlanRowFailsSoftWithNullCodeAndName() {
+        UUID planId = UUID.randomUUID();
+        Subscription subscription = new Subscription();
+        ReflectionTestUtils.setField(subscription, "id", UUID.randomUUID());
+        subscription.setUserId(userId);
+        subscription.setPlanId(planId);
+        subscription.setStatus(Subscription.STATUS_CANCELLED);
+        subscription.setStartDate(LocalDate.of(2025, 1, 1));
+        when(subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(subscription));
+        when(planRepository.findAllById(List.of(planId))).thenReturn(List.of());
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+
+        assertThat(bundle.subscriptions()).hasSize(1);
+        var dto = bundle.subscriptions().get(0);
+        assertThat(dto.planCode()).isNull();
+        assertThat(dto.planName()).isNull();
+        assertThat(dto.status()).isEqualTo(Subscription.STATUS_CANCELLED);
+    }
+
     /** net_worth_history.json's field mapping -- catches an argument-order mistake between
      *  totalAssets/totalLiabilities/netWorth, which an empty-list-only test never could. */
     @Test
@@ -613,10 +718,13 @@ class DataExportServiceTest {
         assertThat(excludedNames).anySatisfy(n -> assertThat(n).contains("refresh_tokens"));
         assertThat(excludedNames).anySatisfy(n -> assertThat(n).contains("password_history"));
         assertThat(excludedNames).anySatisfy(n -> assertThat(n).contains("statement_analysis_sessions"));
+        assertThat(excludedNames).anySatisfy(n -> assertThat(n).contains("subscription_events"));
+        assertThat(excludedNames).anySatisfy(n -> assertThat(n).contains("plan_changes"));
 
         List<String> includedNames = new ArrayList<>();
         manifest.get("included").forEach(n -> includedNames.add(n.get("name").asText()));
-        assertThat(includedNames).contains("accounts.json", "transactions.json", "statements/");
+        assertThat(includedNames).contains("accounts.json", "transactions.json", "statements/",
+                "goal_contributions.json", "subscriptions.json");
         // manifest.json/README.txt describe the archive itself, not one more table in it.
         assertThat(includedNames).doesNotContain("manifest.json", "README.txt");
 

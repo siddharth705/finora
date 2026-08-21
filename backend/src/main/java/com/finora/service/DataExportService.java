@@ -7,10 +7,12 @@ import com.finora.budgets.BudgetService;
 import com.finora.dto.CategoryDto;
 import com.finora.dto.DataExportDto.AccountExportEntry;
 import com.finora.dto.DataExportDto.GmailConnectionExportDto;
+import com.finora.dto.DataExportDto.GoalContributionExportDto;
 import com.finora.dto.DataExportDto.Manifest;
 import com.finora.dto.DataExportDto.ManifestEntry;
 import com.finora.dto.DataExportDto.MerchantExportDto;
 import com.finora.dto.DataExportDto.NetWorthSnapshotExportDto;
+import com.finora.dto.DataExportDto.SubscriptionExportDto;
 import com.finora.dto.ImportDto.ImportSessionSummaryDto;
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.dto.RelationshipDto;
@@ -20,8 +22,11 @@ import com.finora.dto.WorkspaceSettingsDto;
 import com.finora.entity.Account;
 import com.finora.entity.Category;
 import com.finora.entity.ImportSession;
+import com.finora.entity.Plan;
+import com.finora.entity.Subscription;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
+import com.finora.goals.GoalContributionRepository;
 import com.finora.goals.GoalDto;
 import com.finora.goals.GoalService;
 import com.finora.imports.ImportSessionService;
@@ -34,8 +39,10 @@ import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.repository.MerchantRepository;
 import com.finora.repository.NetWorthSnapshotRepository;
+import com.finora.repository.PlanRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.StatementImportRepository.StatementMetadata;
+import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.rules.RuleDto;
@@ -69,7 +76,10 @@ import java.util.zip.ZipOutputStream;
  * bookkeeping), {@code password_history} (never had anything to show), and the merchant-learning
  * tables ({@code merchant_aliases}/{@code merchant_category_map}/{@code
  * merchant_category_learning}/{@code merchant_learning_audit}/{@code merchant_learning_event} --
- * derived categorization intelligence, not data the user provided).
+ * derived categorization intelligence, not data the user provided). {@code subscription_events}/
+ * {@code plan_changes} (D-28 PR4-A) join that same excluded set for the same reason as {@code
+ * audit_logs}: internal lifecycle/upgrade-downgrade bookkeeping about a subscription, not data the
+ * user provided -- the subscription itself is still read, into {@code subscriptions.json}.
  *
  * <h2>Two phases, for one specific reason</h2>
  * {@link #buildBundle} runs entirely inside one {@code @Transactional(readOnly = true)} call,
@@ -100,6 +110,7 @@ public class DataExportService {
     private final TransactionRepository transactionRepository;
     private final BudgetService budgetService;
     private final GoalService goalService;
+    private final GoalContributionRepository goalContributionRepository;
     private final CategoryRepository categoryRepository;
     private final CategoryRuleRepository categoryRuleRepository;
     private final RelationshipService relationshipService;
@@ -115,24 +126,29 @@ public class DataExportService {
     private final WorkspaceSettingsService workspaceSettingsService;
     private final BankManagementService bankManagementService;
     private final AuditService auditService;
+    private final SubscriptionRepository subscriptionRepository;
+    private final PlanRepository planRepository;
     private final ObjectMapper objectMapper;
 
     public DataExportService(UserRepository userRepository, GoogleReauthVerifier googleReauthVerifier,
                               AccountRepository accountRepository, TransactionRepository transactionRepository,
-                              BudgetService budgetService, GoalService goalService, CategoryRepository categoryRepository,
+                              BudgetService budgetService, GoalService goalService, GoalContributionRepository goalContributionRepository,
+                              CategoryRepository categoryRepository,
                               CategoryRuleRepository categoryRuleRepository, RelationshipService relationshipService,
                               NetWorthSnapshotRepository netWorthSnapshotRepository, MerchantRepository merchantRepository,
                               ImportJobRepository importJobRepository, ImportSessionRepository importSessionRepository,
                               ImportSessionService importSessionService, StatementImportRepository statementImportRepository,
                               StatementImportService statementImportService, GmailConnectionRepository gmailConnectionRepository,
                               UserSettingsService userSettingsService, WorkspaceSettingsService workspaceSettingsService,
-                              BankManagementService bankManagementService, AuditService auditService, ObjectMapper objectMapper) {
+                              BankManagementService bankManagementService, AuditService auditService,
+                              SubscriptionRepository subscriptionRepository, PlanRepository planRepository, ObjectMapper objectMapper) {
         this.userRepository = userRepository;
         this.googleReauthVerifier = googleReauthVerifier;
         this.accountRepository = accountRepository;
         this.transactionRepository = transactionRepository;
         this.budgetService = budgetService;
         this.goalService = goalService;
+        this.goalContributionRepository = goalContributionRepository;
         this.categoryRepository = categoryRepository;
         this.categoryRuleRepository = categoryRuleRepository;
         this.relationshipService = relationshipService;
@@ -148,6 +164,8 @@ public class DataExportService {
         this.workspaceSettingsService = workspaceSettingsService;
         this.bankManagementService = bankManagementService;
         this.auditService = auditService;
+        this.subscriptionRepository = subscriptionRepository;
+        this.planRepository = planRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -216,6 +234,13 @@ public class DataExportService {
         List<BudgetDto> budgets = budgetService.listForUser(userId);
         List<GoalDto> goals = goalService.listForUser(userId);
 
+        // One batched query for every contribution across all of this user's goals, not one
+        // findByGoalIdOrderByContributedAtDesc call per goal.
+        List<GoalContributionExportDto> goalContributions = goalContributionRepository
+                .findByGoalIdInOrderByContributedAtDesc(goals.stream().map(GoalDto::id).toList()).stream()
+                .map(GoalContributionExportDto::from)
+                .toList();
+
         List<CategoryDto> categories = userCategories.stream()
                 .map(c -> new CategoryDto(c.getId(), c.getName(), c.isSystem()))
                 .toList();
@@ -272,9 +297,22 @@ public class DataExportService {
         UserSettingsDto userSettings = userSettingsService.get(userId);
         WorkspaceSettingsDto workspaceSettings = workspaceSettingsService.get(userId);
 
-        return new ExportBundle(userId, user.getEmail(), accounts, transactions, budgets, goals, categories,
-                categoryRules, relationships, netWorthSnapshots, merchants, importJobs, importSessions,
-                statementSummaries, gmailConnections, userSettings, workspaceSettings);
+        // D-28 PR4-A: subscriptions are now in AccountPurgeSweepService's purge scope (see
+        // SubscriptionRepository.hardDeleteByUserId), so this class's own "mirrors the purge
+        // scope exactly" rule means they belong here too. planId resolved to the plan's own
+        // code/name, not left as a raw FK -- same treatment transactions.json already gives
+        // categoryId.
+        List<Subscription> subscriptions = subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId);
+        Map<UUID, Plan> plansById = planRepository.findAllById(
+                subscriptions.stream().map(Subscription::getPlanId).distinct().toList()).stream()
+                .collect(Collectors.toMap(Plan::getId, p -> p));
+        List<SubscriptionExportDto> subscriptionExports = subscriptions.stream()
+                .map(s -> SubscriptionExportDto.from(s, plansById.get(s.getPlanId())))
+                .toList();
+
+        return new ExportBundle(userId, user.getEmail(), accounts, transactions, budgets, goals, goalContributions,
+                categories, categoryRules, relationships, netWorthSnapshots, merchants, importJobs, importSessions,
+                statementSummaries, gmailConnections, userSettings, workspaceSettings, subscriptionExports);
     }
 
     /**
@@ -297,6 +335,7 @@ public class DataExportService {
             writeJsonEntry(zos, "transactions.json", bundle.transactions());
             writeJsonEntry(zos, "budgets.json", bundle.budgets());
             writeJsonEntry(zos, "goals.json", bundle.goals());
+            writeJsonEntry(zos, "goal_contributions.json", bundle.goalContributions());
             writeJsonEntry(zos, "categories.json", bundle.categories());
             writeJsonEntry(zos, "category_rules.json", bundle.categoryRules());
             writeJsonEntry(zos, "relationships.json", bundle.relationships());
@@ -308,6 +347,7 @@ public class DataExportService {
             writeJsonEntry(zos, "gmail_connection.json", bundle.gmailConnections());
             writeJsonEntry(zos, "account_settings.json", bundle.userSettings());
             writeJsonEntry(zos, "workspace_settings.json", bundle.workspaceSettings());
+            writeJsonEntry(zos, "subscriptions.json", bundle.subscriptions());
 
             for (Summary statement : bundle.statementSummaries()) {
                 String entryName = "statements/" + statement.id() + "-" + sanitize(statement.fileName());
@@ -377,6 +417,7 @@ public class DataExportService {
                 new ManifestEntry("transactions.json", "Every transaction on your ledger.", bundle.transactions().size()),
                 new ManifestEntry("budgets.json", "Your monthly category budgets.", bundle.budgets().size()),
                 new ManifestEntry("goals.json", "Your savings goals.", bundle.goals().size()),
+                new ManifestEntry("goal_contributions.json", "Every contribution you've made toward a savings goal.", bundle.goalContributions().size()),
                 new ManifestEntry("categories.json", "Your custom transaction categories.", bundle.categories().size()),
                 new ManifestEntry("category_rules.json", "Your own auto-categorization rules.", bundle.categoryRules().size()),
                 new ManifestEntry("relationships.json", "People/accounts you've linked transactions to.", bundle.relationships().size()),
@@ -388,7 +429,8 @@ public class DataExportService {
                 new ManifestEntry("statements/", "The original statement files you uploaded, where still retrievable.", bundle.statementSummaries().size()),
                 new ManifestEntry("gmail_connection.json", "Your Gmail connection status, if any (no credentials).", bundle.gmailConnections().size()),
                 new ManifestEntry("account_settings.json", "Your profile and account preferences.", null),
-                new ManifestEntry("workspace_settings.json", "Your categorization workspace preferences.", null)
+                new ManifestEntry("workspace_settings.json", "Your categorization workspace preferences.", null),
+                new ManifestEntry("subscriptions.json", "Your plan and subscription history.", bundle.subscriptions().size())
         );
         List<ManifestEntry> excluded = List.of(
                 new ManifestEntry("audit_logs", "Your own actions are logged for security, not collected as your data.", null),
@@ -396,7 +438,9 @@ public class DataExportService {
                         "Derived categorization intelligence Finora builds from your transactions, not data you provided directly.", null),
                 new ManifestEntry("refresh_tokens", "Login session bookkeeping (device/IP history), not your financial data.", null),
                 new ManifestEntry("password_history", "Used only to block password reuse; never held anything to show.", null),
-                new ManifestEntry("statement_analysis_sessions", "Internal parsing evidence Finora keeps to improve statement recognition, not part of your ledger.", null)
+                new ManifestEntry("statement_analysis_sessions", "Internal parsing evidence Finora keeps to improve statement recognition, not part of your ledger.", null),
+                new ManifestEntry("subscription_events", "An internal lifecycle/analytics log of your subscription, not data you provided -- your plan history itself is in subscriptions.json.", null),
+                new ManifestEntry("plan_changes", "Internal upgrade/downgrade bookkeeping tied to subscription_events above; your subscription history itself is in subscriptions.json.", null)
         );
         return new Manifest(Instant.now(), bundle.userId(), bundle.email(), included, excluded);
     }
@@ -446,11 +490,13 @@ public class DataExportService {
     public record ExportBundle(
             UUID userId, String email,
             List<AccountExportEntry> accounts, List<TransactionDto> transactions, List<BudgetDto> budgets,
-            List<GoalDto> goals, List<CategoryDto> categories, List<RuleDto> categoryRules,
+            List<GoalDto> goals, List<GoalContributionExportDto> goalContributions,
+            List<CategoryDto> categories, List<RuleDto> categoryRules,
             List<RelationshipDto> relationships, List<NetWorthSnapshotExportDto> netWorthSnapshots,
             List<MerchantExportDto> merchants, List<ImportJobDto.Progress> importJobs,
             List<ImportSessionSummaryDto> importSessions,
             List<Summary> statementSummaries, List<GmailConnectionExportDto> gmailConnections,
-            UserSettingsDto userSettings, WorkspaceSettingsDto workspaceSettings
+            UserSettingsDto userSettings, WorkspaceSettingsDto workspaceSettings,
+            List<SubscriptionExportDto> subscriptions
     ) {}
 }

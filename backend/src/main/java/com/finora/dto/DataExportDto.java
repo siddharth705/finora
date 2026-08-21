@@ -2,6 +2,9 @@ package com.finora.dto;
 
 import com.finora.entity.NetWorthSnapshot;
 import com.finora.entity.Merchant;
+import com.finora.entity.Plan;
+import com.finora.entity.Subscription;
+import com.finora.goals.GoalContribution;
 import com.finora.integrations.google.GmailConnection;
 
 import java.math.BigDecimal;
@@ -71,6 +74,32 @@ public final class DataExportDto {
      * comment), which would misrepresent a soft-deleted account here.
      */
     public record AccountExportEntry(com.finora.accounts.AccountDto account, boolean deleted, Instant deletedAt) {}
+
+    /** One {@code goal_contributions} row -- {@code goalId} is left as a raw FK, not resolved to
+     *  the goal's name, the same way transactions.json leaves {@code accountId} raw: the goal it
+     *  belongs to (name included) is already in goals.json, one file over. */
+    public record GoalContributionExportDto(UUID id, UUID goalId, BigDecimal amount, LocalDate contributedAt) {
+        public static GoalContributionExportDto from(GoalContribution c) {
+            return new GoalContributionExportDto(c.getId(), c.getGoalId(), c.getAmount(), c.getContributedAt());
+        }
+    }
+
+    /** D-28 PR4-A. One {@code subscriptions} row -- {@code planId} is resolved to the plan's own
+     *  {@code code}/{@code name} rather than left as a raw FK, the same way transactions.json
+     *  resolves {@code categoryId} to {@code categoryName}. {@code plan} is null only if the
+     *  referenced plan row itself has been removed out from under a historical subscription --
+     *  fails soft (null code/name) rather than dropping the subscription row from the export. */
+    public record SubscriptionExportDto(
+            UUID id, String planCode, String planName, String status,
+            LocalDate startDate, LocalDate endDate, LocalDate renewalDate,
+            LocalDate trialStart, LocalDate trialEnd, String paymentProvider, Instant createdAt
+    ) {
+        public static SubscriptionExportDto from(Subscription s, Plan plan) {
+            return new SubscriptionExportDto(s.getId(), plan != null ? plan.getCode() : null,
+                    plan != null ? plan.getName() : null, s.getStatus(), s.getStartDate(), s.getEndDate(),
+                    s.getRenewalDate(), s.getTrialStart(), s.getTrialEnd(), s.getPaymentProvider(), s.getCreatedAt());
+        }
+    }
 
     public record Manifest(
             Instant generatedAt, UUID userId, String email,
