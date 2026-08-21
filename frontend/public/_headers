@@ -20,6 +20,12 @@
   # Mirrors the policy SecurityConfig.java sets for the API (default-src 'self'; frame-ancestors
   # 'none'; base-uri 'self'), widened only where this app genuinely needs it as a browser-rendered
   # SPA rather than a copy-paste of the API's minimal policy:
+  #   - script-src adds https://static.cloudflareinsights.com -- Cloudflare Pages' automatic Web
+  #     Analytics injects this beacon into every response at the edge; nothing in this repo
+  #     references it. connect-src does NOT need a matching entry: automatic injection reports to
+  #     this site's own /cdn-cgi/rum, which 'self' already covers (confirmed against Cloudflare's
+  #     Web Analytics FAQ). No inline-script hash/nonce needed either -- the injected snippet
+  #     carries its own `integrity` attribute rather than relying on 'unsafe-inline'.
   #   - script-src adds https://www.gstatic.com and https://www.google.com -- Firebase Phone Auth
   #     (src/lib/phoneAuth.ts) renders an invisible reCAPTCHA Enterprise widget. Both domains are
   #     needed: gstatic.com serves supporting assets, but the loader script itself --
@@ -72,7 +78,7 @@
   #     loads).
   #   - frame-ancestors 'none' takes over X-Frame-Options' job (both do the same thing; setting
   #     both would just be two places to keep in sync).
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com https://accounts.google.com/gsi/client; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://cdn.brandfetch.io; connect-src 'self' https://api.finoratech.info https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com/gsi/ https://www.google.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io; frame-src https://www.google.com https://accounts.google.com/gsi/; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com https://accounts.google.com/gsi/client https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://cdn.brandfetch.io; connect-src 'self' https://api.finoratech.info https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com/gsi/ https://www.google.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io; frame-src https://www.google.com https://accounts.google.com/gsi/; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Referrer-Policy: strict-origin-when-cross-origin
 
