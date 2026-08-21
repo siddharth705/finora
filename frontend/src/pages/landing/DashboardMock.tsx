@@ -252,7 +252,9 @@ export function DashboardMock({ level = 'complete', withSidebar = false, progres
                   </div>
                 ))}
               </div>
-              <div className="rounded-xl border border-[var(--m-brand)]/20 bg-[var(--m-brand-wash)] p-3">
+              {/* Tailwind can't apply an opacity modifier to an arbitrary var() value (it silently
+                  fell back to a default gray border) -- the alpha has to be in the value itself. */}
+              <div className="rounded-xl border bg-[var(--m-brand-wash)] p-3" style={{ borderColor: 'rgb(38 42 51 / .2)' }}>
                 <p className="text-[9px] uppercase tracking-wide text-[var(--m-brand)] font-semibold mb-1">Insight</p>
                 <p className="text-[10px] text-slate-600 leading-relaxed">
                   You spent 18% less on Food &amp; Dining than last month.
