@@ -7,6 +7,8 @@ import com.finora.budgets.BudgetService;
 import com.finora.dto.CategoryDto;
 import com.finora.dto.DataExportDto.AccountExportEntry;
 import com.finora.dto.DataExportDto.GmailConnectionExportDto;
+import com.finora.dto.DataExportDto.GoalContributionExportDto;
+import com.finora.dto.DataExportDto.GoalExportEntry;
 import com.finora.dto.DataExportDto.Manifest;
 import com.finora.dto.DataExportDto.ManifestEntry;
 import com.finora.dto.DataExportDto.MerchantExportDto;
@@ -22,8 +24,10 @@ import com.finora.entity.Category;
 import com.finora.entity.ImportSession;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
+import com.finora.goals.Goal;
+import com.finora.goals.GoalContributionRepository;
 import com.finora.goals.GoalDto;
-import com.finora.goals.GoalService;
+import com.finora.goals.GoalRepository;
 import com.finora.imports.ImportSessionService;
 import com.finora.imports.jobs.ImportJobDto;
 import com.finora.integrations.google.GmailConnectionRepository;
@@ -99,7 +103,8 @@ public class DataExportService {
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
     private final BudgetService budgetService;
-    private final GoalService goalService;
+    private final GoalRepository goalRepository;
+    private final GoalContributionRepository goalContributionRepository;
     private final CategoryRepository categoryRepository;
     private final CategoryRuleRepository categoryRuleRepository;
     private final RelationshipService relationshipService;
@@ -119,7 +124,8 @@ public class DataExportService {
 
     public DataExportService(UserRepository userRepository, GoogleReauthVerifier googleReauthVerifier,
                               AccountRepository accountRepository, TransactionRepository transactionRepository,
-                              BudgetService budgetService, GoalService goalService, CategoryRepository categoryRepository,
+                              BudgetService budgetService, GoalRepository goalRepository,
+                              GoalContributionRepository goalContributionRepository, CategoryRepository categoryRepository,
                               CategoryRuleRepository categoryRuleRepository, RelationshipService relationshipService,
                               NetWorthSnapshotRepository netWorthSnapshotRepository, MerchantRepository merchantRepository,
                               ImportJobRepository importJobRepository, ImportSessionRepository importSessionRepository,
@@ -132,7 +138,8 @@ public class DataExportService {
         this.accountRepository = accountRepository;
         this.transactionRepository = transactionRepository;
         this.budgetService = budgetService;
-        this.goalService = goalService;
+        this.goalRepository = goalRepository;
+        this.goalContributionRepository = goalContributionRepository;
         this.categoryRepository = categoryRepository;
         this.categoryRuleRepository = categoryRuleRepository;
         this.relationshipService = relationshipService;
@@ -214,7 +221,24 @@ public class DataExportService {
                 .toList();
 
         List<BudgetDto> budgets = budgetService.listForUser(userId);
-        List<GoalDto> goals = goalService.listForUser(userId);
+
+        // Mirrors accounts.json's own findByUserIdIncludingDeleted treatment above -- reads
+        // directly via GoalRepository rather than GoalService.listForUser, which is also the live
+        // Goals page's own data source and stays filtered to non-deleted goals on purpose (see
+        // GoalRepository.findByUserIdIncludingDeleted's own doc comment).
+        List<Goal> goalEntities = goalRepository.findByUserIdIncludingDeleted(userId);
+        List<GoalExportEntry> goals = goalEntities.stream()
+                .map(g -> new GoalExportEntry(
+                        new GoalDto(g.getId(), g.getName(), g.getTargetAmount(), g.getCurrentAmount(), g.getTargetDate()),
+                        g.getDeletedAt() != null, g.getDeletedAt()))
+                .toList();
+
+        // Batched across every one of this user's goals (including soft-deleted ones, so a
+        // deleted goal's contribution history still exports) rather than one query per goal.
+        List<GoalContributionExportDto> goalContributions = goalContributionRepository
+                .findByGoalIdInOrderByContributedAtDesc(goalEntities.stream().map(Goal::getId).toList()).stream()
+                .map(GoalContributionExportDto::from)
+                .toList();
 
         List<CategoryDto> categories = userCategories.stream()
                 .map(c -> new CategoryDto(c.getId(), c.getName(), c.isSystem()))
@@ -272,8 +296,8 @@ public class DataExportService {
         UserSettingsDto userSettings = userSettingsService.get(userId);
         WorkspaceSettingsDto workspaceSettings = workspaceSettingsService.get(userId);
 
-        return new ExportBundle(userId, user.getEmail(), accounts, transactions, budgets, goals, categories,
-                categoryRules, relationships, netWorthSnapshots, merchants, importJobs, importSessions,
+        return new ExportBundle(userId, user.getEmail(), accounts, transactions, budgets, goals, goalContributions,
+                categories, categoryRules, relationships, netWorthSnapshots, merchants, importJobs, importSessions,
                 statementSummaries, gmailConnections, userSettings, workspaceSettings);
     }
 
@@ -297,6 +321,7 @@ public class DataExportService {
             writeJsonEntry(zos, "transactions.json", bundle.transactions());
             writeJsonEntry(zos, "budgets.json", bundle.budgets());
             writeJsonEntry(zos, "goals.json", bundle.goals());
+            writeJsonEntry(zos, "goal_contributions.json", bundle.goalContributions());
             writeJsonEntry(zos, "categories.json", bundle.categories());
             writeJsonEntry(zos, "category_rules.json", bundle.categoryRules());
             writeJsonEntry(zos, "relationships.json", bundle.relationships());
@@ -377,6 +402,7 @@ public class DataExportService {
                 new ManifestEntry("transactions.json", "Every transaction on your ledger.", bundle.transactions().size()),
                 new ManifestEntry("budgets.json", "Your monthly category budgets.", bundle.budgets().size()),
                 new ManifestEntry("goals.json", "Your savings goals.", bundle.goals().size()),
+                new ManifestEntry("goal_contributions.json", "Every contribution you've made toward a savings goal.", bundle.goalContributions().size()),
                 new ManifestEntry("categories.json", "Your custom transaction categories.", bundle.categories().size()),
                 new ManifestEntry("category_rules.json", "Your own auto-categorization rules.", bundle.categoryRules().size()),
                 new ManifestEntry("relationships.json", "People/accounts you've linked transactions to.", bundle.relationships().size()),
@@ -446,7 +472,8 @@ public class DataExportService {
     public record ExportBundle(
             UUID userId, String email,
             List<AccountExportEntry> accounts, List<TransactionDto> transactions, List<BudgetDto> budgets,
-            List<GoalDto> goals, List<CategoryDto> categories, List<RuleDto> categoryRules,
+            List<GoalExportEntry> goals, List<GoalContributionExportDto> goalContributions,
+            List<CategoryDto> categories, List<RuleDto> categoryRules,
             List<RelationshipDto> relationships, List<NetWorthSnapshotExportDto> netWorthSnapshots,
             List<MerchantExportDto> merchants, List<ImportJobDto.Progress> importJobs,
             List<ImportSessionSummaryDto> importSessions,
