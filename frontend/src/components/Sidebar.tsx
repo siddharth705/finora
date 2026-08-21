@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Wallet, ArrowLeftRight, PiggyBank, Target, UploadCloud, History,
   TrendingUp, BarChart3, Sparkles, User, Settings as SettingsIcon, MoreVertical, LogOut,
-  ChevronsLeft, ChevronsRight,
+  ChevronsLeft, ChevronsRight, Receipt,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { safeStorage } from '../lib/safeStorage';
@@ -150,6 +150,13 @@ export function Sidebar() {
                 className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-gray-300 hover:text-white hover:bg-white/5"
               >
                 <SettingsIcon size={15} /> Settings
+              </NavLink>
+              <NavLink
+                to="/app/billing"
+                onClick={() => setMenuOpen(false)}
+                className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-gray-300 hover:text-white hover:bg-white/5"
+              >
+                <Receipt size={15} /> Billing History
               </NavLink>
               <button
                 type="button"

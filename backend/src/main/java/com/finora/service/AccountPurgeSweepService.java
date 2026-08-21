@@ -26,6 +26,7 @@ import com.finora.repository.NetWorthSnapshotRepository;
 import com.finora.repository.PasswordChangeSessionRepository;
 import com.finora.repository.PasswordHistoryRepository;
 import com.finora.repository.PasswordResetTokenRepository;
+import com.finora.repository.PaymentRepository;
 import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.RelationshipIdentifierRepository;
 import com.finora.repository.RelationshipRepository;
@@ -139,6 +140,7 @@ public class AccountPurgeSweepService {
     private final BudgetRepository budgetRepository;
     private final GoalRepository goalRepository;
     private final SubscriptionRepository subscriptionRepository;
+    private final PaymentRepository paymentRepository;
     private final CategoryRuleRepository categoryRuleRepository;
     private final CategoryRepository categoryRepository;
     private final RelationshipRepository relationshipRepository;
@@ -174,6 +176,7 @@ public class AccountPurgeSweepService {
                                      BudgetRepository budgetRepository,
                                      GoalRepository goalRepository,
                                      SubscriptionRepository subscriptionRepository,
+                                     PaymentRepository paymentRepository,
                                      CategoryRuleRepository categoryRuleRepository,
                                      CategoryRepository categoryRepository,
                                      RelationshipRepository relationshipRepository,
@@ -208,6 +211,7 @@ public class AccountPurgeSweepService {
         this.budgetRepository = budgetRepository;
         this.goalRepository = goalRepository;
         this.subscriptionRepository = subscriptionRepository;
+        this.paymentRepository = paymentRepository;
         this.categoryRuleRepository = categoryRuleRepository;
         this.categoryRepository = categoryRepository;
         this.relationshipRepository = relationshipRepository;
@@ -327,6 +331,11 @@ public class AccountPurgeSweepService {
 
             budgetRepository.hardDeleteByUserId(userId);
             goalRepository.hardDeleteByUserId(userId);
+            // D-28 PR4-B: payments before subscriptions -- a payment's subscription_id (V100) has
+            // no ON DELETE behavior of its own (see that migration's comment), so purging it first
+            // means the subscriptions delete right below never has to consider a payment row still
+            // pointing at the subscription it's about to remove.
+            paymentRepository.hardDeleteByUserId(userId);
             // D-28 PR4-A: subscriptions/plan history are new user-linked tables this sweep didn't
             // know about yet -- same hard-delete pattern as Budget/Goal, see
             // SubscriptionRepository.hardDeleteByUserId's own comment for why the two child tables

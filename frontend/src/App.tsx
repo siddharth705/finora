@@ -43,6 +43,7 @@ const Reports = lazy(() => import('./pages/Reports'));
 const Insights = lazy(() => import('./pages/Insights'));
 const Profile = lazy(() => import('./pages/Profile'));
 const Settings = lazy(() => import('./pages/Settings'));
+const BillingHistory = lazy(() => import('./pages/BillingHistory'));
 const GmailReview = lazy(() => import('./pages/GmailReview'));
 const Setup = lazy(() => import('./pages/Setup'));
 
@@ -146,6 +147,7 @@ export default function App() {
           <Route path="/app/insights" element={<Protected><Insights /></Protected>} />
           <Route path="/app/profile" element={<Protected><Profile /></Protected>} />
           <Route path="/app/settings" element={<Protected><Settings /></Protected>} />
+          <Route path="/app/billing" element={<Protected><BillingHistory /></Protected>} />
           <Route path="/app/settings/gmail/review" element={<Protected><GmailReview /></Protected>} />
 
           {/* Bug fix: there was no catch-all, and wrangler.json sets

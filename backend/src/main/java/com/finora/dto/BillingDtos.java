@@ -2,6 +2,8 @@ package com.finora.dto;
 
 import jakarta.validation.constraints.NotBlank;
 
+import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Map;
 import java.util.UUID;
@@ -30,5 +32,12 @@ public class BillingDtos {
     public record ChangePlanRequest(
             @NotBlank(message = "Plan code is required") String planCode,
             @NotBlank(message = "A reason is required") String reason
+    ) {}
+
+    /** GET /api/v1/billing/history -- the user's own payment records (proposal §3.4). Empty for
+     *  every user today: no payment gateway is wired up yet (§10), so nothing has ever inserted a
+     *  row. Real once a gateway exists, not a placeholder shape. */
+    public record BillingHistoryEntryDto(
+            UUID id, BigDecimal amount, String currency, String provider, String status, Instant createdAt
     ) {}
 }

@@ -5,6 +5,7 @@ import com.finora.entity.Account;
 import com.finora.entity.Budget;
 import com.finora.entity.Category;
 import com.finora.entity.Role;
+import com.finora.entity.Payment;
 import com.finora.entity.StatementImport;
 import com.finora.entity.Transaction;
 import com.finora.entity.User;
@@ -32,6 +33,7 @@ import com.finora.repository.NetWorthSnapshotRepository;
 import com.finora.repository.PasswordChangeSessionRepository;
 import com.finora.repository.PasswordHistoryRepository;
 import com.finora.repository.PasswordResetTokenRepository;
+import com.finora.repository.PaymentRepository;
 import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.RelationshipIdentifierRepository;
 import com.finora.repository.RelationshipRepository;
@@ -88,6 +90,7 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
     @Autowired private BudgetRepository budgetRepository;
     @Autowired private GoalRepository goalRepository;
     @Autowired private SubscriptionRepository subscriptionRepository;
+    @Autowired private PaymentRepository paymentRepository;
     @Autowired private SubscriptionService subscriptionService;
     @Autowired private CategoryRuleRepository categoryRuleRepository;
     @Autowired private CategoryRepository categoryRepository;
@@ -122,7 +125,7 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         service = new AccountPurgeSweepService(userRepository, gmailConnectionService, gmailConnectionRepository,
                 transactionRepository, merchantLearningEventRepository, merchantLearningAuditRepository,
                 merchantCategoryLearningRepository, merchantAliasRepository, merchantCategoryMapRepository,
-                merchantRepository, budgetRepository, goalRepository, subscriptionRepository, categoryRuleRepository, categoryRepository,
+                merchantRepository, budgetRepository, goalRepository, subscriptionRepository, paymentRepository, categoryRuleRepository, categoryRepository,
                 relationshipRepository, relationshipIdentifierRepository, netWorthSnapshotRepository,
                 importJobRepository, importSessionRepository, passwordHistoryRepository,
                 passwordChangeSessionRepository, passwordResetTokenRepository, accountReactivationTokenRepository,
@@ -194,7 +197,9 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
      * {@code deleted_at}, leaving the row (and its data) fully intact and still discoverable via
      * the entity's own soft-delete-aware queries. Subscription also proves its own
      * {@code ON DELETE CASCADE} (V99): a real {@code subscription_events} row disappears with its
-     * parent, with no separate repository call for it.
+     * parent, with no separate repository call for it. {@link Payment} (D-28 PR4-B) proves its own
+     * explicit {@code hardDeleteByUserId} call instead -- it has a {@code user_id} column of its
+     * own, so unlike {@code subscription_events} it does NOT rely on any cascade off subscriptions.
      */
     @Test
     @Transactional
@@ -221,6 +226,17 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
 
         subscriptionService.provisionFreeSubscription(userId);
         UUID subscriptionId = subscriptionRepository.findActiveOrTrial(userId).orElseThrow().getId();
+
+        // D-28 PR4-B: no gateway exists yet to create one of these for real, so this is a
+        // synthetic row purely to prove PaymentRepository.hardDeleteByUserId actually fires --
+        // same reasoning the other entities in this test get one.
+        Payment payment = new Payment();
+        payment.setUserId(userId);
+        payment.setSubscriptionId(subscriptionId);
+        payment.setAmount(BigDecimal.valueOf(499));
+        payment.setCurrency("INR");
+        payment.setStatus(Payment.STATUS_SUCCESS);
+        paymentRepository.save(payment);
         entityManager.flush();
 
         service.sweep();
@@ -244,6 +260,9 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         Long subscriptionCount = (Long) entityManager
                 .createNativeQuery("SELECT COUNT(*) FROM subscriptions WHERE user_id = :userId")
                 .setParameter("userId", userId).getSingleResult();
+        Long paymentCount = (Long) entityManager
+                .createNativeQuery("SELECT COUNT(*) FROM payments WHERE user_id = :userId")
+                .setParameter("userId", userId).getSingleResult();
         // subscription_events has no user_id column of its own -- checked by the subscription_id
         // captured before the purge, proving V99's ON DELETE CASCADE actually fired, not just that
         // the parent row (which this same query would trivially miss anyway) is gone.
@@ -255,6 +274,7 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         assertThat(goalCount).isZero();
         assertThat(subscriptionCount).isZero();
         assertThat(subscriptionEventCount).isZero();
+        assertThat(paymentCount).isZero();
     }
 
     /**
