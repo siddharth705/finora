@@ -284,6 +284,86 @@ public class PdfTableLocator {
             "(?i)\\bfollowing\\s+illustration\\s+will\\s+indicate\\b"
                     + "|(?i)\\billustration\\s+for\\s+calculating\\b");
 
+    // TRANSACTION_TABLE_TOTAL_CLOSED. A real Kotak Mahindra Bank credit-card statement prints a
+    // column-total row -- "Total Purchase & Other Charges  5,178.69" -- directly beneath the last
+    // real transaction, before the MITC/fees-and-charges legal schedule begins. Same failure shape
+    // Phase 2A's investigation found on Axis (see
+    // docs/architecture/system-design/transaction-boundary-phase2a-investigation.md): without this,
+    // the trailing MITC content still gets bucketed as candidate rows, surviving only because
+    // row-continuation merging happens to fuse it into a blob whose date cell fails
+    // TransactionNormalizer's Stage-4 parse. Confirmed single-occurrence on this document (`grep`),
+    // not present anywhere else in the real corpus -- narrow to this exact phrasing rather than
+    // broadened to a generic "Total ... Charges" shape, which real column labels elsewhere in the
+    // corpus (e.g. "Other Debit&Charges") would false-positive against.
+    private static final Pattern TRANSACTION_TABLE_TOTAL_MARKER = Pattern.compile(
+            "(?i)total\\s+purchase\\s*&\\s*other\\s+charges");
+
+    // MITC_SECTION_CLOSED. A real ICICI Bank credit-card statement prints "MOST IMPORTANT TERMS AND
+    // CONDITIONS (MITC)" as an all-caps section heading immediately after the last real transaction
+    // and its rewards summary, opening a multi-page legal/T&C appendix. Same failure shape as
+    // TRANSACTION_TABLE_TOTAL_MARKER and STATEMENT_CLOSING_MARKER above -- see the Phase 2A
+    // investigation doc.
+    //
+    // Deliberately CASE-SENSITIVE, matching only the exact all-caps heading form. Two real
+    // documents in the corpus (AU, SBI) mention the same concept in ordinary mixed-case prose
+    // *before* their own real transactions end -- AU's "Most Important Terms and conditions" (a
+    // footer link, page 1) and SBI's "Most Important Terms & Conditions" / "Most Important Terms
+    // and Conditions (MITC)" (an insurance disclosure aside and a payment-terms mention, both mid-
+    // document, both using "&" or lowercase "and" rather than this pattern's spelled-out "AND").
+    // A case-insensitive match would have closed both of those documents' sections dozens of pages
+    // early. The case requirement is not a stylistic choice -- it is the one thing that lets this
+    // pattern fire on ICICI's own genuine section-opening heading without also firing on either
+    // false positive, verified against the full real corpus before this was written this way.
+    private static final Pattern MITC_SECTION_MARKER = Pattern.compile(
+            "MOST IMPORTANT TERMS AND CONDITIONS");
+
+    /** One row-shaped trigger the trailing-content suppression gate checks for, paired with the
+     *  capability name to record when it fires -- see {@link #trailingContentTriggerCapability}. */
+    private record TrailingContentTrigger(Pattern pattern, String capability) {}
+
+    // Checked in this order, first match wins -- order has no behavioral significance among these
+    // four (each is evidenced from a different real document and none has been found to overlap
+    // with another's territory), but a stable order keeps a diff of this list reviewable.
+    private static final List<TrailingContentTrigger> TRAILING_CONTENT_TRIGGERS = List.of(
+            new TrailingContentTrigger(ILLUSTRATIVE_EXAMPLE_MARKER, "ILLUSTRATIVE_BLOCK_SUPPRESSED"),
+            new TrailingContentTrigger(STATEMENT_CLOSING_MARKER, "TRANSACTION_TABLE_CLOSED"),
+            new TrailingContentTrigger(TRANSACTION_TABLE_TOTAL_MARKER, "TRANSACTION_TABLE_TOTAL_CLOSED"),
+            new TrailingContentTrigger(MITC_SECTION_MARKER, "MITC_SECTION_CLOSED"));
+
+    /** The capability name of the first {@link #TRAILING_CONTENT_TRIGGERS} entry matching {@code
+     *  rowLine}, or null if none match. A dedicated method (rather than the boolean-chain shape
+     *  this replaced) so a fifth real-document-evidenced trigger is a one-line addition to the list
+     *  above, not another `!a && !b && ...` clause to get right. */
+    private static String trailingContentTriggerCapability(String rowLine) {
+        for (TrailingContentTrigger trigger : TRAILING_CONTENT_TRIGGERS) {
+            if (trigger.pattern().matcher(rowLine).find()) return trigger.capability();
+        }
+        return null;
+    }
+
+    /** Records one of {@link #TRAILING_CONTENT_TRIGGERS}' capabilities against {@code ctx}.
+     *
+     *  <p>Deliberately an explicit switch with the capability name spelled out as a quoted string
+     *  constant in each branch, not a passthrough that hands {@code capability} straight to {@code
+     *  DocumentContext.record}. {@code CapabilityCorpusCoverageTest} proves every capability the
+     *  engine can record by scanning this source tree for a quoted-string argument at each real
+     *  recording call site; a passthrough is invisible to that scan, since the argument there is a
+     *  variable, not a quoted constant -- all four Phase 2C capabilities silently reporting as
+     *  uncovered is what surfaced this. The {@code default} branch throws rather than silently doing
+     *  nothing, so a fifth trigger added to {@link #TRAILING_CONTENT_TRIGGERS} without a matching
+     *  branch here fails loudly the first time it fires, not silently forever. */
+    private static void recordTrailingContentTrigger(DocumentContext ctx, String capability) {
+        if (ctx == null) return;
+        switch (capability) {
+            case "ILLUSTRATIVE_BLOCK_SUPPRESSED" -> ctx.record("ILLUSTRATIVE_BLOCK_SUPPRESSED");
+            case "TRANSACTION_TABLE_CLOSED" -> ctx.record("TRANSACTION_TABLE_CLOSED");
+            case "TRANSACTION_TABLE_TOTAL_CLOSED" -> ctx.record("TRANSACTION_TABLE_TOTAL_CLOSED");
+            case "MITC_SECTION_CLOSED" -> ctx.record("MITC_SECTION_CLOSED");
+            default -> throw new IllegalStateException(
+                    "Unknown trailing-content trigger capability: " + capability);
+        }
+    }
+
     // LEADING_NARRATION_CONTINUATION: how many dateless rows immediately after a transaction's
     // date row are still trusted to be genuinely TRAILING continuations of that same transaction,
     // before a further dateless row is instead treated as the LEADING narration of the NEXT
@@ -656,24 +736,12 @@ public class PdfTableLocator {
         // If a future real document needs resumption, that is new evidence to design against, not
         // something to guess at now.
         //
-        // Two independent triggers share this one flag rather than each getting its own, because
+        // Four independent triggers share this one flag rather than each getting its own, because
         // they mean the same thing structurally ("nothing genuine follows this line") even though
-        // they're evidenced from different real documents and get their own capability names so
-        // it stays visible which one fired:
-        //   - ILLUSTRATIVE_EXAMPLE_MARKER (a worked fee/interest example table, AU) -- unchanged,
-        //     moved into this shared gate rather than duplicated.
-        //   - STATEMENT_CLOSING_MARKER (a literal "End of Statement" line, Axis) -- new. Before
-        //     this, STATEMENT_CLOSING_MARKER was checked in three OTHER, narrower code paths
-        //     (page-footer-style pre-header scanning, the headerless-continuation fallback, the
-        //     two-line-date-block fallback) but never in this main header-based loop, which is
-        //     what most real documents -- including the one this trigger is evidenced from --
-        //     actually go through. Confirmed via CorpusProbe against the real Axis Bank Neo Rupay
-        //     statement this is evidenced from: 111 raw bucketed rows before this change (108 real
-        //     transactions plus 3 rows of trailing boilerplate that happened to survive bucketing
-        //     and only failed to become phantom transactions because row-continuation merging
-        //     fused them into a blob whose date cell failed TransactionNormalizer's Stage-4 parse
-        //     -- see docs/architecture/system-design/transaction-boundary-phase2a-investigation.md)
-        //     drops to 108 raw bucketed rows after it, with the real total unchanged either way.
+        // they're evidenced from different real documents and get their own capability names (see
+        // TRAILING_CONTENT_TRIGGERS below) so it stays visible which one fired. See
+        // docs/architecture/system-design/transaction-boundary-phase2a-investigation.md for the
+        // shared Phase 2A/2C investigation this whole family of triggers comes from.
         boolean trailingContentSuppressed = false;
 
         for (int rowIndex = 0; rowIndex < rows.size(); rowIndex++) {
@@ -700,9 +768,8 @@ public class PdfTableLocator {
                 pendingAuxiliary.add(rowLine);
                 continue;
             }
-            boolean illustrativeMarker = ILLUSTRATIVE_EXAMPLE_MARKER.matcher(rowLine).find();
-            boolean closingMarker = !illustrativeMarker && STATEMENT_CLOSING_MARKER.matcher(rowLine).find();
-            if (illustrativeMarker || closingMarker) {
+            String trailingContentTrigger = trailingContentTriggerCapability(rowLine);
+            if (trailingContentTrigger != null) {
                 trailingContentSuppressed = true;
                 // Closes whatever REAL section is open exactly the same way the header-signature
                 // fallback below does (flush pendingLeading, stage the section) -- a document with
@@ -722,9 +789,7 @@ public class PdfTableLocator {
                 // a split that has nothing to do with the identity line that set it.
                 pendingIdentityMismatch = false;
                 pendingAccountIdCandidate = null;
-                if (ctx != null) {
-                    ctx.record(illustrativeMarker ? "ILLUSTRATIVE_BLOCK_SUPPRESSED" : "TRANSACTION_TABLE_CLOSED");
-                }
+                recordTrailingContentTrigger(ctx, trailingContentTrigger);
                 pendingAuxiliary.add(rowLine);
                 continue;
             }
