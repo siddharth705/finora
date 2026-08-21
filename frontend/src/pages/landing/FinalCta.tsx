@@ -15,7 +15,7 @@ import { finalCta } from './landing-config';
  */
 export function FinalCta() {
   return (
-    <section style={{ background: 'linear-gradient(135deg,#2563EB 0%,#1D4ED8 100%)' }}>
+    <section style={{ background: 'linear-gradient(135deg,var(--m-brand) 0%,var(--m-brand-deep) 100%)' }}>
       <div className="max-w-3xl mx-auto px-5 sm:px-6 py-24 text-center">
         <Reveal>
           <h2 className="m-h2 mb-4" style={{ color: '#fff' }}>
@@ -25,7 +25,7 @@ export function FinalCta() {
           </h2>
           <p className="text-lg mb-9" style={{ color: 'rgb(255 255 255 / .82)' }}>{finalCta.blurb}</p>
           <div className="flex justify-center">
-            <Link to="/register" className="m-btn w-full sm:w-auto bg-white text-[#1D4ED8] hover:bg-slate-50">
+            <Link to="/register" className="m-btn w-full sm:w-auto bg-white text-[var(--m-brand-deep)] hover:bg-slate-50">
               {finalCta.primary} <ArrowRight size={16} />
             </Link>
           </div>

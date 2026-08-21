@@ -79,7 +79,7 @@ export default function Profile() {
       {/* Reflects the SAVED name, not an in-progress edit below, so it never flickers ahead of
           what the "Unsaved changes" indicator in Personal Information is reporting. */}
       <div className="bg-card rounded-xl2 p-6 shadow-card border border-border flex items-center gap-4">
-        <div className="w-14 h-14 rounded-full bg-primary flex items-center justify-center text-white text-lg font-semibold flex-shrink-0">
+        <div className="w-14 h-14 rounded-full bg-primary flex items-center justify-center text-on-primary text-lg font-semibold flex-shrink-0">
           {initials(savedFullName)}
         </div>
         <div className="min-w-0">
@@ -126,7 +126,7 @@ export default function Profile() {
           <button
             onClick={save}
             disabled={saving || !dirty || !fullName.trim()}
-            className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
+            className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
           >
             {saving ? 'Saving…' : 'Save changes'}
           </button>

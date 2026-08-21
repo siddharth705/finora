@@ -72,7 +72,7 @@ export default function Landing() {
           hidden until focused, per the standard sr-only/focus:not-sr-only pattern. */}
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-lg focus:bg-[#2563EB] focus:px-4 focus:py-2.5 focus:text-sm focus:font-semibold focus:text-white"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-lg focus:bg-[var(--m-brand)] focus:px-4 focus:py-2.5 focus:text-sm focus:font-semibold focus:text-white"
       >
         Skip to content
       </a>
@@ -122,7 +122,7 @@ export default function Landing() {
         <Transition from={ALT} to={WHITE} />
 
         <Faq />
-        <Transition from={WHITE} to="#2563EB" height={72} />
+        <Transition from={WHITE} to="var(--m-brand)" height={72} />
 
         <FinalCta />
       </main>

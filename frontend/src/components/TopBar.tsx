@@ -143,7 +143,7 @@ export function TopBar() {
         <button
           type="button"
           onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-1.5 bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2.5 text-sm font-semibold"
+          className="flex items-center gap-1.5 bg-primary text-on-primary hover:bg-primary-dark rounded-lg px-4 py-2.5 text-sm font-semibold"
         >
           <Plus size={16} /> Add Transaction
         </button>
@@ -244,7 +244,7 @@ export function TopBar() {
           {openMenu === 'help' && (
             <Dropdown onClose={() => setOpenMenu(null)} width="w-64">
               <div className="flex items-center gap-2.5 px-3.5 py-3 border-b border-border">
-                <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white text-xs font-semibold flex-shrink-0">
+                <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary text-xs font-semibold flex-shrink-0">
                   {initials(fullName)}
                 </div>
                 <div className="min-w-0">

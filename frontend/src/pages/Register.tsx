@@ -5,7 +5,7 @@ import {
   User, Mail, CheckCircle2, ArrowRight, Wallet, PieChart as PieChartIcon, BarChart3,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import logoMark from '../assets/logo-mark.png';
+import { BrandMark } from '../components/BrandMark';
 import { PasswordInput } from '../components/PasswordInput';
 import { GoogleSignInButton } from '../components/GoogleSignInButton';
 
@@ -160,9 +160,7 @@ export default function Register() {
             small screens rather than pushing it below a long feature list. */}
         <div className="hidden lg:block">
           <Link to="/" className="flex items-center gap-2.5 mb-8 w-fit">
-            <span className="w-9 h-9 rounded-lg overflow-hidden flex-shrink-0">
-              <img src={logoMark} alt="" className="w-full h-full object-cover" />
-            </span>
+            <BrandMark size={36} variant="auto" className="rounded-lg" />
             <span className="font-extrabold tracking-wide text-ink text-xl">FINORA</span>
           </Link>
 
@@ -210,9 +208,7 @@ export default function Register() {
         <form onSubmit={handleSubmit} noValidate className="bg-card rounded-xl2 p-8 w-full shadow-soft border border-border">
           <div className="flex items-center gap-2 mb-6 lg:hidden">
             <Link to="/" className="flex items-center gap-2 w-fit">
-              <span className="w-7 h-7 rounded-lg overflow-hidden flex-shrink-0">
-                <img src={logoMark} alt="" className="w-full h-full object-cover" />
-              </span>
+              <BrandMark size={28} variant="auto" className="rounded-lg" />
               <span className="font-extrabold tracking-wide text-ink">FINORA</span>
             </Link>
           </div>
@@ -380,7 +376,7 @@ export default function Register() {
           <button
             type="submit"
             disabled={loading || !formValid}
-            className="w-full bg-primary hover:bg-primary-dark text-white rounded-lg py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
+            className="w-full bg-primary hover:bg-primary-dark text-on-primary rounded-lg py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
           >
             {loading ? 'Creating account…' : 'Create account'}
             {!loading && <ArrowRight size={15} />}

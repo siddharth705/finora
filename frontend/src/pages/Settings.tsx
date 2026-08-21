@@ -466,7 +466,7 @@ export default function Settings() {
             <button
               onClick={savePreferences}
               disabled={prefsSaving || !prefsDirty}
-              className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
+              className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
             >
               {prefsSaving ? 'Saving…' : 'Save preferences'}
             </button>
@@ -576,7 +576,7 @@ export default function Settings() {
               <button
                 onClick={saveIntelligencePreferences}
                 disabled={intelSaving || !intelDirty}
-                className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
+                className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
               >
                 {intelSaving ? 'Saving…' : 'Save setting'}
               </button>
@@ -646,7 +646,7 @@ export default function Settings() {
                 type="button"
                 disabled={gmailConnecting}
                 onClick={handleGmailConnect}
-                className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-3 py-1.5 text-xs uppercase font-medium flex-shrink-0"
+                className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-3 py-1.5 text-xs uppercase font-medium flex-shrink-0"
               >
                 {gmailConnecting ? 'Connecting…' : 'Reconnect Gmail'}
               </button>
@@ -666,7 +666,7 @@ export default function Settings() {
                 type="button"
                 disabled={gmailConnecting}
                 onClick={handleGmailConnect}
-                className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-3 py-1.5 text-xs uppercase font-medium flex-shrink-0"
+                className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-3 py-1.5 text-xs uppercase font-medium flex-shrink-0"
               >
                 {gmailConnecting ? 'Connecting…' : 'Connect Gmail'}
               </button>
@@ -716,7 +716,7 @@ export default function Settings() {
                 <button
                   type="button"
                   onClick={() => navigate('/app/settings/gmail/review')}
-                  className="bg-primary text-white hover:bg-primary-dark rounded-lg px-3 py-1.5 text-xs uppercase font-medium"
+                  className="bg-primary text-on-primary hover:bg-primary-dark rounded-lg px-3 py-1.5 text-xs uppercase font-medium"
                 >
                   Review {gmailStatus.needsReview}
                 </button>

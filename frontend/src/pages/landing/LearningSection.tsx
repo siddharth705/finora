@@ -21,7 +21,9 @@ const STAGES = [
 
 const TAG_STYLE: Record<string, { background: string; color: string }> = {
   unknown: { background: 'rgb(148 163 184 / .18)', color: '#CBD5E1' },
-  edit: { background: 'rgb(37 99 235 / .22)', color: '#93C5FD' },
+  // Brand-tinted, but this sits on the dark deep-band surface -- a dark-graphite tint would
+  // vanish here, so it borrows the paper tone instead, same as the section's own radial wash.
+  edit: { background: 'rgb(244 241 236 / .16)', color: '#F4F1EC' },
   done: { background: 'rgb(22 163 74 / .18)', color: '#4ADE80' },
 };
 
@@ -48,7 +50,7 @@ export function LearningSection() {
                 background: 'rgb(255 255 255 / .05)',
                 borderColor: active && isDone
                   ? 'rgb(22 163 74 / .55)'
-                  : active ? 'rgb(37 99 235 / .5)' : 'rgb(255 255 255 / .10)',
+                  : active ? 'rgb(244 241 236 / .45)' : 'rgb(255 255 255 / .10)',
                 opacity: active ? 1 : 0.4,
                 transform: active ? 'none' : 'translateY(8px)',
               }}

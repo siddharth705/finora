@@ -210,7 +210,7 @@ export default function StatementHistory() {
             cta={
               <button
                 onClick={() => navigate('/app/import')}
-                className="bg-primary text-white text-xs font-semibold rounded-lg px-4 py-2"
+                className="bg-primary text-on-primary text-xs font-semibold rounded-lg px-4 py-2"
               >
                 Import a Statement
               </button>
@@ -384,7 +384,7 @@ function ReimportPasswordModal({
           <button
             type="submit"
             disabled={!password || busy}
-            className="w-full bg-primary text-white rounded px-4 py-2 text-sm font-medium disabled:opacity-40"
+            className="w-full bg-primary text-on-primary rounded px-4 py-2 text-sm font-medium disabled:opacity-40"
           >
             {busy ? 'Unlocking…' : 'Re-import statement'}
           </button>

@@ -213,7 +213,7 @@ export default function Investments() {
               <option>Mutual Fund</option><option>Stocks</option><option>FD</option><option>PPF/NPS</option><option>Other</option>
             </select>
           </div>
-          <button onClick={addHolding} disabled={adding} className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 px-4 py-2 rounded text-xs uppercase">{adding ? 'Adding…' : 'Add'}</button>
+          <button onClick={addHolding} disabled={adding} className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 px-4 py-2 rounded text-xs uppercase">{adding ? 'Adding…' : 'Add'}</button>
         </div>
 
         {holdings.length === 0 ? (

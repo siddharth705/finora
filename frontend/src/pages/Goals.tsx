@@ -88,7 +88,7 @@ export default function Goals() {
         <div><label htmlFor="goal-target" className="block text-xs uppercase text-gray-500 mb-1">Target</label><input id="goal-target" type="number" value={target} onChange={(e) => setTarget(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" /></div>
         <div><label htmlFor="goal-starting-amount" className="block text-xs uppercase text-gray-500 mb-1">Starting amount</label><input id="goal-starting-amount" type="number" value={current} onChange={(e) => setCurrent(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" /></div>
         <div><label htmlFor="goal-target-date" className="block text-xs uppercase text-gray-500 mb-1">Target date</label><input id="goal-target-date" type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" /></div>
-        <button onClick={addGoal} disabled={saving} className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded text-xs uppercase col-span-2 md:col-span-1 disabled:opacity-50">
+        <button onClick={addGoal} disabled={saving} className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded text-xs uppercase col-span-2 md:col-span-1 disabled:opacity-50">
           {saving ? 'Adding…' : 'Add Goal'}
         </button>
       </FinoraCard>

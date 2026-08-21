@@ -112,7 +112,7 @@ function DuplicatePair({
           aria-pressed={decision === 'import'}
           className={`px-3 py-1.5 rounded-md text-xs font-semibold border ${
             decision === 'import'
-              ? 'bg-primary text-white border-primary'
+              ? 'bg-primary text-on-primary border-primary'
               : 'border-border hover:bg-surface'
           }`}
         >

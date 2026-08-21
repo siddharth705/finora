@@ -99,7 +99,7 @@ export function ExportDataModal({ onClose, signInMethod }: {
               <button
                 type="submit"
                 disabled={submitting}
-                className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
+                className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-4 py-2 text-xs uppercase font-medium"
               >
                 {submitting ? 'Preparing your export…' : 'Export My Data'}
               </button>

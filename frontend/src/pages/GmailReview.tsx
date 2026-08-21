@@ -140,7 +140,7 @@ export default function GmailReview() {
                   type="button"
                   disabled={busyId === item.sessionId}
                   onClick={() => approve(item)}
-                  className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-3 py-1.5 text-xs uppercase font-medium inline-flex items-center gap-1.5"
+                  className="bg-primary text-on-primary hover:bg-primary-dark disabled:opacity-50 rounded-lg px-3 py-1.5 text-xs uppercase font-medium inline-flex items-center gap-1.5"
                 >
                   <Check size={13} /> Approve
                 </button>

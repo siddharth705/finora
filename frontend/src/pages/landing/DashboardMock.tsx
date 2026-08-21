@@ -153,7 +153,7 @@ export function DashboardMock({ level = 'complete', withSidebar = false, progres
             {NAV.map((item, i) => (
               <p
                 key={item}
-                className={`px-4 py-1.5 text-[11px] ${i === 0 ? 'text-[#2563EB] bg-[#EFF5FF] font-semibold' : 'text-slate-500'}`}
+                className={`px-4 py-1.5 text-[11px] ${i === 0 ? 'text-[var(--m-brand)] bg-[var(--m-brand-wash)] font-semibold' : 'text-slate-500'}`}
               >
                 {item}
               </p>
@@ -252,8 +252,10 @@ export function DashboardMock({ level = 'complete', withSidebar = false, progres
                   </div>
                 ))}
               </div>
-              <div className="rounded-xl border border-[#DBEAFE] bg-[#EFF5FF] p-3">
-                <p className="text-[9px] uppercase tracking-wide text-[#2563EB] font-semibold mb-1">Insight</p>
+              {/* Tailwind can't apply an opacity modifier to an arbitrary var() value (it silently
+                  fell back to a default gray border) -- the alpha has to be in the value itself. */}
+              <div className="rounded-xl border bg-[var(--m-brand-wash)] p-3" style={{ borderColor: 'rgb(38 42 51 / .2)' }}>
+                <p className="text-[9px] uppercase tracking-wide text-[var(--m-brand)] font-semibold mb-1">Insight</p>
                 <p className="text-[10px] text-slate-600 leading-relaxed">
                   You spent 18% less on Food &amp; Dining than last month.
                 </p>

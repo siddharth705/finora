@@ -284,7 +284,7 @@ export default function VerifyPhone() {
       <div className="bg-card rounded-xl2 p-8 w-full max-w-sm shadow-soft border border-border">
         <div className="flex items-center gap-2 mb-6">
           <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center">
-            <Sparkles size={14} className="text-white" strokeWidth={2.5} />
+            <Sparkles size={14} className="text-on-primary" strokeWidth={2.5} />
           </span>
           <span className="font-extrabold tracking-wide text-ink">FINORA</span>
         </div>
@@ -349,7 +349,7 @@ export default function VerifyPhone() {
               <button
                 type="submit"
                 disabled={loading || !confirmation || otp.length !== 6}
-                className="w-full bg-primary hover:bg-primary-dark text-white rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
+                className="w-full bg-primary hover:bg-primary-dark text-on-primary rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
               >
                 {loading ? 'Verifying…' : 'Verify'}
               </button>
@@ -432,7 +432,7 @@ export default function VerifyPhone() {
               <button
                 type="submit"
                 disabled={changeSubmitting || changeResendCooldown > 0}
-                className="w-full bg-primary hover:bg-primary-dark text-white rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
+                className="w-full bg-primary hover:bg-primary-dark text-on-primary rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
               >
                 {changeSubmitting
                   ? 'Sending…'
@@ -493,7 +493,7 @@ export default function VerifyPhone() {
               <button
                 type="submit"
                 disabled={changeSubmitting || changeOtp.length !== 6}
-                className="w-full bg-primary hover:bg-primary-dark text-white rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
+                className="w-full bg-primary hover:bg-primary-dark text-on-primary rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
               >
                 {changeSubmitting ? 'Confirming…' : 'Confirm number'}
               </button>

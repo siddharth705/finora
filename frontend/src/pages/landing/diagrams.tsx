@@ -32,7 +32,7 @@ export function ImportFlow() {
         <FlowArrow />
 
         <div className="flex flex-col items-center gap-1.5">
-          <div className="w-14 h-14 rounded-2xl bg-[#2563EB] text-white grid place-items-center font-extrabold text-xl shadow-[0_12px_28px_-12px_rgba(37,99,235,.9)]">
+          <div className="w-14 h-14 rounded-2xl bg-[var(--m-brand)] text-white grid place-items-center font-extrabold text-xl shadow-[0_12px_28px_-12px_rgba(38,42,51,.9)]">
             F
           </div>
           <span className="text-[11px] text-slate-400">reads &amp; organizes</span>
@@ -106,7 +106,10 @@ export function LearningFlow() {
             className="rounded-xl p-4 border transition-all duration-500"
             style={{
               background: 'rgb(255 255 255 / .05)',
-              borderColor: active ? 'rgb(37 99 235 / .55)' : 'rgb(255 255 255 / .10)',
+              // Brand-tinted highlight, but this card sits on the dark deep-band surface, where a
+              // dark-graphite brand tint would nearly disappear -- borrows the paper tone instead,
+              // same reasoning as the section's own radial wash in index.css.
+              borderColor: active ? 'rgb(244 241 236 / .45)' : 'rgb(255 255 255 / .10)',
               opacity: active ? 1 : 0.45,
               transform: active ? 'none' : 'translateY(6px)',
             }}
@@ -125,7 +128,7 @@ export function LearningFlow() {
                 {s.tag}
               </span>
             ) : (
-              <span className="inline-block text-[10px] px-2 py-1 rounded-md" style={{ background: 'rgb(37 99 235 / .22)', color: '#93C5FD' }}>
+              <span className="inline-block text-[10px] px-2 py-1 rounded-md" style={{ background: 'rgb(244 241 236 / .16)', color: '#F4F1EC' }}>
                 learning…
               </span>
             )}
@@ -164,7 +167,7 @@ export function StoryTimeline() {
 
       <div className="flex flex-wrap justify-center gap-2.5">
         {outcomes.map((o) => (
-          <span key={o} className="m-node" style={{ borderColor: '#DBEAFE', background: '#EFF5FF', color: '#1D4ED8' }}>
+          <span key={o} className="m-node" style={{ borderColor: 'rgb(38 42 51 / .18)', background: 'var(--m-brand-wash)', color: 'var(--m-brand-deep)' }}>
             {o}
           </span>
         ))}
@@ -179,9 +182,9 @@ export function ShieldMark() {
     <div className="relative grid place-items-center" aria-hidden="true">
       <div
         className="absolute w-56 h-56 rounded-full blur-3xl"
-        style={{ background: 'radial-gradient(circle, rgba(37,99,235,.38), transparent 70%)' }}
+        style={{ background: 'radial-gradient(circle, rgba(244,241,236,.18), transparent 70%)' }}
       />
-      <ShieldCheck size={132} strokeWidth={1.1} className="relative text-[#60A5FA]" />
+      <ShieldCheck size={132} strokeWidth={1.1} className="relative text-[#F4F1EC]" />
     </div>
   );
 }

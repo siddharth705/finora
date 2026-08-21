@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { safeStorage } from '../lib/safeStorage';
-import logoMark from '../assets/logo-mark.png';
+import { BrandMark } from './BrandMark';
 
 // Persisted so the choice survives a reload/new tab rather than resetting to expanded every
 // time -- same reasoning TopBar's own read-notification tracking and ThemeContext already apply
@@ -66,7 +66,7 @@ export function Sidebar() {
       <div className={`flex items-center mb-8 px-1 ${collapsed ? 'flex-col gap-3' : 'justify-between'}`}>
         <NavLink to="/app" end className="flex items-center gap-2.5 min-w-0">
           <div className="w-8 h-8 rounded-lg overflow-hidden flex-shrink-0">
-            <img src={logoMark} alt="" className="w-full h-full object-cover" />
+            <BrandMark size={32} invert />
           </div>
           {!collapsed && <span className="text-white font-extrabold tracking-wide text-lg truncate">FINORA</span>}
         </NavLink>
@@ -92,8 +92,11 @@ export function Sidebar() {
             end={end}
             title={collapsed ? label : undefined}
             className={({ isActive }) =>
+              // The sidebar is a fixed-dark surface regardless of the app's own light/dark
+              // toggle, so the active state can't use the toggling `primary` token (it's dark
+              // graphite in light mode — invisible against this always-dark background).
               `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${collapsed ? 'justify-center' : ''} ${
-                isActive ? 'bg-primary text-white' : 'text-gray-400 hover:bg-sidebar-hover hover:text-gray-200'
+                isActive ? 'bg-[#F4F1EC] text-[#15171C]' : 'text-gray-400 hover:bg-sidebar-hover hover:text-gray-200'
               }`
             }
           >
@@ -111,7 +114,7 @@ export function Sidebar() {
           title={collapsed ? (fullName ?? 'Account') : undefined}
           className={`w-full flex items-center gap-2.5 px-2 pt-3 border-t border-white/10 ${collapsed ? 'justify-center' : ''}`}
         >
-          <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white text-xs font-semibold flex-shrink-0">
+          <div className="w-8 h-8 rounded-full bg-[#F4F1EC] flex items-center justify-center text-[#15171C] text-xs font-semibold flex-shrink-0">
             {initials(fullName)}
           </div>
           {!collapsed && (

@@ -65,7 +65,7 @@ export function Journey() {
       <Reveal delayMs={160}>
         <div className="flex flex-wrap justify-center gap-2.5 mt-2 mb-12">
           {journey.outcomes.map((o) => (
-            <span key={o} className="m-node" style={{ borderColor: '#DBEAFE', background: '#EFF5FF', color: '#1D4ED8' }}>
+            <span key={o} className="m-node" style={{ borderColor: 'rgb(38 42 51 / .14)', background: 'var(--m-brand-wash)', color: 'var(--m-brand-deep)' }}>
               {o}
             </span>
           ))}

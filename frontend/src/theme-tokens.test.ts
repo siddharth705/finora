@@ -36,12 +36,16 @@ const ALLOWED = [
 /**
  * Brand-family colours that must come from a token instead.
  *
- * Indigo and violet only -- those were the old brand hues, so a literal one is almost certainly a
- * missed rebrand. `purple` is deliberately NOT here: it appears in categorical sets alongside
- * orange, blue and green (feature icons on Login/Register, the Savings Rate tile on Dashboard),
- * where the point is that each item is a DIFFERENT colour. Banning it would push those onto the
- * brand token and collapse a palette whose whole job is to distinguish. Categorical colour and
- * brand colour are different things and this list only governs the second.
+ * Indigo and violet were the brand hue before blue; blue (specifically these five literals --
+ * #2563EB/#1D4ED8/#EFF5FF/#60A5FA/#172554, the exact `primary`/`primary-dark`/`primary-light`
+ * pair for each mode before the graphite/paper rebrand) is the brand hue blue was replaced by
+ * graphite/paper. Both are banned as LITERAL HEX ONLY, not as Tailwind classes: unlike
+ * indigo/violet, which never had a legitimate non-brand job in this codebase, `blue-*` classes
+ * are genuinely categorical elsewhere (feature icons on Login/Register, the Total Balance KPI
+ * tile on Dashboard, chart series in the landing page's product illustrations) and banning the
+ * class would force those into the brand token and collapse a palette whose whole job is to
+ * distinguish. `purple` is the same case, which is why it was never here either. Categorical
+ * colour and brand colour are different things and this list only governs the second.
  */
 const BANNED = [
   /\b(?:from|to|via|bg|text|border|ring|fill|stroke|shadow)-(?:indigo|violet)-\d{2,3}\b/,
@@ -49,6 +53,11 @@ const BANNED = [
   /#4f46e5\b/i,
   /#818cf8\b/i,
   /#eef0fd\b/i,
+  /#2563eb\b/i,
+  /#1d4ed8\b/i,
+  /#eff5ff\b/i,
+  /#60a5fa\b/i,
+  /#172554\b/i,
 ];
 
 function sourceFiles(dir: string): string[] {

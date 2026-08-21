@@ -55,8 +55,8 @@ export function ImportSection() {
 
               <div className="flex flex-col items-center gap-1.5">
                 <div
-                  className="w-14 h-14 rounded-2xl bg-[#2563EB] text-white grid place-items-center font-extrabold text-xl transition-all duration-300 group-hover:scale-105"
-                  style={{ boxShadow: '0 12px 28px -12px rgba(37,99,235,.9)' }}
+                  className="w-14 h-14 rounded-2xl bg-[var(--m-brand)] text-white grid place-items-center font-extrabold text-xl transition-all duration-300 group-hover:scale-105"
+                  style={{ boxShadow: '0 12px 28px -12px rgba(38,42,51,.9)' }}
                 >
                   F
                 </div>

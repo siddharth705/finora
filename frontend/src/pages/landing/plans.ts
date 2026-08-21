@@ -48,7 +48,7 @@ export const AVAILABILITY_LABEL: Record<Availability, string> = {
 
 export const AVAILABILITY_STYLE: Record<Availability, { background: string; color: string }> = {
   available: { background: '#DCFCE7', color: '#166534' },
-  'coming-soon': { background: '#DBEAFE', color: '#1D4ED8' },
+  'coming-soon': { background: 'var(--m-brand-wash)', color: 'var(--m-brand-deep)' },
   planned: { background: '#F1F5F9', color: '#64748B' },
   exploring: { background: '#F1F5F9', color: '#94A3B8' },
 };

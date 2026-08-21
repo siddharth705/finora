@@ -441,7 +441,7 @@ function EditTransactionModal({
             <button
               onClick={save}
               disabled={saving || !description.trim() || !amount || !(parseFloat(amount) > 0)}
-              className="bg-primary text-white hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
+              className="bg-primary text-on-primary hover:bg-primary-dark px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
             >
               {saving ? 'Saving…' : 'Save changes'}
             </button>
