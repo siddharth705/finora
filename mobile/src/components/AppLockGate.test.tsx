@@ -40,6 +40,11 @@ beforeEach(() => {
     if (event === 'change') appStateListener = listener as (status: AppStateStatus) => void;
     return { remove: jest.fn() };
   });
+  // appLock's isAuthenticating/justFinishedAuthenticating are module-level, not component state --
+  // see appLock.ts's own comment on why -- which makes them a cross-test hazard without this: a
+  // prior test's real authenticate() call stamps the real wall-clock time, easily within a later
+  // test's own reground-grace window.
+  appLock.__resetAuthenticatingStateForTests();
 });
 
 afterEach(() => {
@@ -299,6 +304,80 @@ describe('a self-induced AppState blip during authentication', () => {
       await waitFor(() => expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(2));
       expect(screen.getByText(LOCK_TEXT)).toBeTruthy();
     });
+  });
+});
+
+// Regression coverage for the actual reported root cause, found only after the two fixes above
+// (both scoped entirely to AppLockGate's own local state) still did not stop the loop on-device:
+// AppLockSection's "confirm to enable App Lock" prompt in Settings calls appLock.authenticate()
+// completely independently of AppLockGate -- a second, uncoordinated caller neither prior fix had
+// any visibility into. Its own AppState blip still reached AppLockGate's foreground listener as
+// if it were a genuine return, and it locked the app on top of the confirmation the user had just
+// given -- this is what actually starts the loop the moment someone turns the setting on, not
+// something scoped to AppLockGate's own re-lock prompt.
+describe('a prompt from elsewhere in the app (e.g. AppLockSection enabling the setting)', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('does not lock while that prompt is in flight, or shortly after it resolves', async () => {
+    await signIn();
+    // The setting starts OFF -- same as a user who has never turned this on before, about to for
+    // the first time. AppLockGate's own mount check finds it off and does nothing.
+    renderGate();
+    expect(await screen.findByText('protected content')).toBeTruthy();
+
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(4_000_000);
+    // AppLockSection.handleToggle's own call, not routed through AppLockGate at all.
+    let resolveExternalAuth: ((result: LocalAuthentication.LocalAuthenticationResult) => void) | undefined;
+    mockedAuthenticateAsync.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveExternalAuth = resolve; })
+    );
+    const externalAuth = appLock.authenticate('Confirm to enable App Lock');
+
+    // The blip while that call is still in flight.
+    await act(async () => {
+      goToBackground();
+      returnToForeground();
+    });
+    expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(1); // only the external call so far
+    expect(screen.queryByText(LOCK_TEXT)).toBeNull();
+
+    // The external call succeeds; AppLockSection would now persist the setting.
+    resolveExternalAuth?.({ success: true });
+    await externalAuth;
+    await appLock.setEnabled(true);
+
+    // The trailing blip, shortly after -- the exact ordering that defeated the two prior fixes,
+    // which had no way to know an authenticate() call had ever happened outside AppLockGate.
+    nowSpy.mockReturnValue(4_000_000 + 200);
+    await act(async () => {
+      goToBackground();
+      returnToForeground();
+    });
+    expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(1); // still just the external call
+    expect(screen.queryByText(LOCK_TEXT)).toBeNull();
+
+    nowSpy.mockRestore();
+  });
+
+  it('still locks on a genuine foreground return once the grace period has elapsed', async () => {
+    await signIn();
+    renderGate();
+    expect(await screen.findByText('protected content')).toBeTruthy();
+
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(5_000_000);
+    mockedAuthenticateAsync.mockResolvedValueOnce({ success: true });
+    await appLock.authenticate('Confirm to enable App Lock');
+    await appLock.setEnabled(true);
+
+    // Well past the grace window -- a real return, not the toggle's own trailing blip.
+    nowSpy.mockReturnValue(5_000_000 + 5000);
+    mockedAuthenticateAsync.mockResolvedValueOnce({ success: false, error: 'authentication_failed' });
+    goToBackground();
+    await act(async () => returnToForeground());
+
+    await waitFor(() => expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(2));
+    expect(screen.getByText(LOCK_TEXT)).toBeTruthy();
+    nowSpy.mockRestore();
   });
 });
 
