@@ -18,6 +18,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -106,7 +107,7 @@ class SubscriptionServiceTest {
         when(subscriptionRepository.findActiveOrTrial(userId)).thenReturn(Optional.of(existing));
         when(planRepository.findByCode("PREMIUM")).thenReturn(Optional.of(planWith("PREMIUM", premiumPlanId)));
 
-        service.changePlan(adminId, userId, "PREMIUM", "beta tester");
+        service.changePlan(userId, "PREMIUM", "beta tester", adminId);
 
         assertThat(existing.getPlanId()).isEqualTo(premiumPlanId);
         verify(subscriptionRepository).save(existing);
@@ -118,8 +119,13 @@ class SubscriptionServiceTest {
         assertThat(changeCaptor.getValue().getReason()).isEqualTo(PlanChange.REASON_ADMIN_OVERRIDE);
 
         verify(subscriptionEventRepository).save(any(SubscriptionEvent.class));
-        verify(auditService).record(eq(adminId), eq("SUBSCRIPTION_PLAN_CHANGED"), eq("Subscription"),
-                eq(existing.getId()), any());
+        // The audit write's subject stays userId (whose subscription changed), with the acting
+        // admin recorded separately as "actorId" in metadata -- same convention as
+        // AccountService.create(), enforced by AuditActorAttributionTest (FG-025).
+        ArgumentCaptor<Map<String, Object>> metadataCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).record(eq(userId), eq("SUBSCRIPTION_PLAN_CHANGED"), eq("Subscription"),
+                eq(existing.getId()), metadataCaptor.capture());
+        assertThat(metadataCaptor.getValue()).containsEntry("actorId", adminId.toString());
     }
 
     @Test
@@ -133,7 +139,7 @@ class SubscriptionServiceTest {
         when(subscriptionRepository.findActiveOrTrial(userId)).thenReturn(Optional.of(existing));
         when(planRepository.findByCode("PLUS")).thenReturn(Optional.of(planWith("PLUS", planId)));
 
-        service.changePlan(adminId, userId, "PLUS", "no-op");
+        service.changePlan(userId, "PLUS", "no-op", adminId);
 
         verify(subscriptionRepository, never()).save(any());
         verify(planChangeRepository, never()).save(any());
@@ -143,7 +149,7 @@ class SubscriptionServiceTest {
     void changePlan_throwsNotFound_whenTheUserHasNoActiveSubscription() {
         when(subscriptionRepository.findActiveOrTrial(userId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.changePlan(adminId, userId, "PLUS", "x"))
+        assertThatThrownBy(() -> service.changePlan(userId, "PLUS", "x", adminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("no active subscription");
     }
@@ -158,7 +164,7 @@ class SubscriptionServiceTest {
         when(subscriptionRepository.findActiveOrTrial(userId)).thenReturn(Optional.of(existing));
         when(planRepository.findByCode("GOLD")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.changePlan(adminId, userId, "GOLD", "x"))
+        assertThatThrownBy(() -> service.changePlan(userId, "GOLD", "x", adminId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Unknown plan code");
     }

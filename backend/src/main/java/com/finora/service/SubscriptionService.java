@@ -94,9 +94,14 @@ public class SubscriptionService {
 
     /** Admin-only, manual (proposal §10: upgrade/downgrade timing and refund policy are still
      *  open product decisions -- this always takes effect immediately, the simplest behavior the
-     *  schema supports, not a presumption about what the eventual self-service flow should do). */
+     *  schema supports, not a presumption about what the eventual self-service flow should do).
+     *
+     *  <p>actingAdminId: same "actorId" convention as AccountService.create() -- the audit write's
+     *  subject stays userId (whose subscription changed), and actingAdminId is recorded separately
+     *  in the metadata as "actorId", so the trail can tell an admin's action apart from the user's
+     *  own (FG-025, AuditActorAttributionTest). */
     @Transactional
-    public void changePlan(UUID adminId, UUID userId, String newPlanCode, String reason) {
+    public void changePlan(UUID userId, String newPlanCode, String reason, UUID actingAdminId) {
         Subscription subscription = subscriptionRepository.findActiveOrTrial(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "This user has no active subscription."));
         Plan newPlan = planRepository.findByCode(newPlanCode)
@@ -123,7 +128,7 @@ public class SubscriptionService {
         event.setMetadata(Map.of("fromPlanId", fromPlanId.toString(), "toPlanId", newPlan.getId().toString(), "reason", reason));
         subscriptionEventRepository.save(event);
 
-        auditService.record(adminId, "SUBSCRIPTION_PLAN_CHANGED", "Subscription", subscription.getId(),
-                Map.of("userId", userId.toString(), "toPlanCode", newPlanCode, "reason", reason));
+        auditService.record(userId, "SUBSCRIPTION_PLAN_CHANGED", "Subscription", subscription.getId(),
+                Map.of("toPlanCode", newPlanCode, "reason", reason, "actorId", actingAdminId.toString()));
     }
 }

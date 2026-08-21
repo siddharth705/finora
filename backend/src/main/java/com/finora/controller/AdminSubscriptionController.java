@@ -36,7 +36,7 @@ public class AdminSubscriptionController {
     @PutMapping("/{userId}/plan")
     @PreAuthorize("hasAuthority('SUBSCRIPTION_MANAGEMENT_MANAGE')")
     public ApiResponse<Void> changePlan(@PathVariable UUID userId, @Valid @RequestBody ChangePlanRequest request) {
-        subscriptionService.changePlan(currentUser.id(), userId, request.planCode(), request.reason());
+        subscriptionService.changePlan(userId, request.planCode(), request.reason(), currentUser.id());
         return ApiResponse.ok(null, "Plan updated");
     }
 }
