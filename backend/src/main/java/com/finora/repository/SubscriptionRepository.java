@@ -2,6 +2,7 @@ package com.finora.repository;
 
 import com.finora.entity.Subscription;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -23,4 +24,13 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, UUID
 
     @Query("SELECT COUNT(s) FROM Subscription s WHERE s.planId = :planId AND s.status IN ('ACTIVE', 'TRIAL')")
     long countActiveByPlanId(@Param("planId") UUID planId);
+
+    /** AccountPurgeSweepService. Native, bypassing Hibernate's {@code @SQLDelete} entirely -- same
+     *  naming discipline as {@code GoalRepository.hardDeleteByUserId}'s own doc comment.
+     *  {@code subscription_events}/{@code plan_changes} need no separate cleanup: neither has a
+     *  {@code user_id} column, and both cascade automatically via their own
+     *  {@code subscription_id ON DELETE CASCADE} (V99). */
+    @Modifying
+    @Query(value = "DELETE FROM subscriptions WHERE user_id = :userId", nativeQuery = true)
+    void hardDeleteByUserId(@Param("userId") UUID userId);
 }

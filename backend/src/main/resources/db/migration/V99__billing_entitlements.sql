@@ -48,9 +48,14 @@ CREATE UNIQUE INDEX idx_subscriptions_one_active_per_user ON subscriptions(user_
 -- Append-only lifecycle log (proposal §3.1a) -- answers "why did premium subscribers drop
 -- yesterday", which the live subscriptions row alone can't. Same shape as audit_logs: no
 -- soft-delete, no version, write-once.
+--
+-- ON DELETE CASCADE, same reasoning as goal_contributions' own cascade off goals (GoalRepository's
+-- comment): this table has no user_id column of its own, so SubscriptionRepository
+-- .hardDeleteByUserId (AccountPurgeSweepService) needs no separate cleanup here -- hard-deleting
+-- the parent subscription is enough.
 CREATE TABLE subscription_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    subscription_id UUID NOT NULL REFERENCES subscriptions(id),
+    subscription_id UUID NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
     event_type VARCHAR(30) NOT NULL,
     metadata JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -60,9 +65,11 @@ CREATE INDEX idx_subscription_events_subscription_id ON subscription_events(subs
 -- Append-only upgrade/downgrade history (proposal §3.1b). effective_at deliberately separate from
 -- created_at: a change can be recorded now but take effect at the next renewal_date -- timing
 -- itself is a product decision this schema supports without presupposing (D-28/§10).
+--
+-- ON DELETE CASCADE for the same reason subscription_events has one above.
 CREATE TABLE plan_changes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    subscription_id UUID NOT NULL REFERENCES subscriptions(id),
+    subscription_id UUID NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
     from_plan_id UUID REFERENCES plans(id),
     to_plan_id UUID NOT NULL REFERENCES plans(id),
     effective_at TIMESTAMPTZ NOT NULL,

@@ -38,6 +38,11 @@ export const ADMIN_PORTAL_PERMISSIONS = [
   // The Merchant Review Center. Separate from MERCHANT_MANAGE (curating one user's merchants while
   // helping them) because this is working a cross-user queue of the engine's own guesses -- V64.
   'MERCHANT_REVIEW',
+  // Subscriptions page (D-28 PR4-A) -- gates the page/sidebar entry, same as every other _VIEW
+  // permission here. SUBSCRIPTION_MANAGEMENT_MANAGE (the plan-change mutation) is deliberately NOT
+  // listed: nothing in the frontend gates on it directly (the page always renders the dropdown;
+  // the backend alone rejects an unauthorized change), so it isn't a portal-entry permission.
+  'SUBSCRIPTION_MANAGEMENT_VIEW',
 ];
 
 export interface AdminAuthState {
