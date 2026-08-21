@@ -1,4 +1,4 @@
-# ADR-007: Encryption at Rest for Third-Party Credentials
+# ADR-009: Encryption at Rest for Third-Party Credentials
 
 ## Status
 

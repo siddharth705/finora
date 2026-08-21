@@ -3,7 +3,7 @@
  * tokens and, later, any credential-bearing integration (bank APIs, brokers, account aggregators).
  *
  * <p>Deliberately a platform capability rather than a feature-local helper. Gmail sync is simply
- * the first caller (ADR-007); building it inside that integration would guarantee the next one
+ * the first caller (ADR-009); building it inside that integration would guarantee the next one
  * builds its own, differently, which is how a codebase ends up with several incompatible
  * encryption schemes and no clear answer to "where are our secrets".
  *

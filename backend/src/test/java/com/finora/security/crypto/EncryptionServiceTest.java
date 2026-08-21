@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * ADR-007. Covers the properties this class exists to provide rather than the fact that AES works:
+ * ADR-009. Covers the properties this class exists to provide rather than the fact that AES works:
  * a value survives a round trip, a MODIFIED value is detected rather than silently mis-decrypted,
  * the same plaintext never produces the same ciphertext twice, and rotation can move a value
  * between keys without either key becoming unreadable in the meantime.
