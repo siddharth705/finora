@@ -26,6 +26,17 @@ import { spacing, useTheme } from '../theme';
 // `null` (the signed-out value), so the very first render never accidentally matches `token`.
 const NEVER_CHECKED = Symbol('app-lock-never-checked');
 
+// How long after an authenticate() call resolves to keep ignoring foreground transitions --
+// see authResolvedAtRef's own comment. On-device testing showed the native "app became active"
+// notification for a dismissed Face ID sheet can arrive AFTER authenticateAsync()'s own promise
+// already resolved (two independent native notification paths, not synchronized with each
+// other) -- so a guard that only covers the call while it's still in flight is not enough on its
+// own; this is what actually closes the loop. 1500ms is generous on purpose: the failure mode of
+// too-short (the loop this exists to fix) is far worse than the failure mode of too-long (a
+// genuine background-and-immediately-return within 1.5s skips one re-lock check) -- picking up
+// the phone that fast after actually putting it down is the rare case, not the common one.
+const REGROUND_GRACE_MS = 1500;
+
 export function AppLockGate({ children }: { children: ReactNode }) {
   const { bootstrapping, token, logout } = useAuth();
   const c = useTheme();
@@ -41,6 +52,10 @@ export function AppLockGate({ children }: { children: ReactNode }) {
   // came back" -- without it, every prompt re-triggers the foreground handler, which re-locks and
   // re-prompts, forever.
   const authenticatingRef = useRef(false);
+  // When the last authenticate() call resolved (either outcome), 0 until the first one ever
+  // finishes -- see REGROUND_GRACE_MS's own comment on why authenticatingRef alone (covering
+  // only the call itself, not what follows it) was not enough.
+  const authResolvedAtRef = useRef(0);
   // Which token the last completed appLock.isEnabled() check applies to -- compared against the
   // current `token` below (`checked`) rather than a separate true/false flag, so there's no
   // "reset to not-checked" to perform synchronously when a session ends: a stale value here simply
@@ -62,6 +77,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     } finally {
       setAuthenticating(false);
       authenticatingRef.current = false;
+      authResolvedAtRef.current = Date.now();
     }
   }, []);
 
@@ -115,11 +131,13 @@ export function AppLockGate({ children }: { children: ReactNode }) {
       // flag a bare `.match()` here even though `next` below is never null.
       const cameToForeground = !!appState.current?.match(/inactive|background/) && next === 'active';
       appState.current = next;
-      // Skips a foreground transition caused by this component's own prompt (see
-      // authenticatingRef's own comment above) -- otherwise this is indistinguishable from the
-      // user actually backgrounding and returning, and re-locking here just re-prompts, which
-      // blips AppState again, forever.
-      if (cameToForeground && token !== null && !authenticatingRef.current) {
+      // Skips a foreground transition caused by this component's own prompt -- both while one is
+      // still running (authenticatingRef) and for a short window after it resolves
+      // (REGROUND_GRACE_MS) -- otherwise this is indistinguishable from the user actually
+      // backgrounding and returning, and re-locking here just re-prompts, which blips AppState
+      // again, forever.
+      const withinReground = Date.now() - authResolvedAtRef.current < REGROUND_GRACE_MS;
+      if (cameToForeground && token !== null && !authenticatingRef.current && !withinReground) {
         void appLock.isEnabled().then((enabled) => {
           if (enabled) lockAndPrompt();
         });

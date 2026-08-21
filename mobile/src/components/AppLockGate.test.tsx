@@ -170,6 +170,13 @@ describe('AppLockGate', () => {
     it('does not lock on the next foreground after being turned OFF mid-session', async () => {
       await signIn();
       const isEnabledSpy = jest.spyOn(appLock, 'isEnabled').mockResolvedValueOnce(true);
+      // Past the mount-time auto-prompt's own reground grace window by the time the foreground
+      // check below fires -- without this, that foreground check is itself indistinguishable
+      // from the prompt's own trailing blip and gets correctly suppressed, same as the dedicated
+      // "blip arrives after authenticate() has already resolved" tests below expect. This test's
+      // job is to prove the SETTING is re-read fresh on a genuine foreground return, which needs
+      // that return to actually reach the check, not to also prove the grace period itself.
+      const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(3_000_000);
       mockedAuthenticateAsync.mockResolvedValueOnce({ success: true });
       renderGate();
       // Let the mount-time auto-prompt actually happen and resolve before moving on -- waiting on
@@ -179,7 +186,9 @@ describe('AppLockGate', () => {
       await waitFor(() => expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(1));
       await waitFor(() => expect(screen.queryByText(LOCK_TEXT)).toBeNull());
 
-      // Simulates the toggle having been turned off in Settings since the mount check above.
+      // Simulates the toggle having been turned off in Settings since the mount check above, on
+      // a genuine return well after the earlier prompt's own grace window has elapsed.
+      nowSpy.mockReturnValue(3_000_000 + 5000);
       isEnabledSpy.mockResolvedValueOnce(false);
       goToBackground();
       await act(async () => returnToForeground());
@@ -189,6 +198,7 @@ describe('AppLockGate', () => {
       expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(1);
       expect(screen.queryByText(LOCK_TEXT)).toBeNull();
       expect(screen.getByText('protected content')).toBeTruthy();
+      nowSpy.mockRestore();
     });
   });
 });
@@ -233,23 +243,62 @@ describe('a self-induced AppState blip during authentication', () => {
     expect(screen.getByText('protected content')).toBeTruthy();
   });
 
-  it('still re-locks on a genuine foreground return once authentication has finished', async () => {
-    await signIn();
-    const isEnabledSpy = jest.spyOn(appLock, 'isEnabled').mockResolvedValueOnce(true);
-    mockedAuthenticateAsync.mockResolvedValueOnce({ success: true });
-    renderGate();
-    await waitFor(() => expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.queryByText(LOCK_TEXT)).toBeNull());
+  // The bug as actually reported on-device: the first version of this fix (authenticatingRef
+  // alone, covering only the call while it was still in flight) did NOT stop the loop -- Face ID
+  // kept re-prompting. Root cause: the native "app became active" notification for a dismissed
+  // Face ID sheet can arrive AFTER authenticateAsync()'s own promise has already resolved, i.e.
+  // once authenticatingRef is already back to false. Reproduces that exact ordering by mocking
+  // Date.now() directly (not jest.useFakeTimers(), which also fakes the timers waitFor's own
+  // polling relies on, and would make these tests hang) rather than by racing real elapsed time,
+  // which a slow CI run could make flaky in either direction.
+  describe('the blip arrives after authenticate() has already resolved', () => {
+    afterEach(() => jest.restoreAllMocks());
 
-    // A real return, well after the earlier prompt already settled -- authenticatingRef is back
-    // to false by now, so this must not be swallowed the way the self-induced blip above was.
-    isEnabledSpy.mockResolvedValueOnce(true);
-    mockedAuthenticateAsync.mockResolvedValueOnce({ success: false, error: 'authentication_failed' });
-    goToBackground();
-    await act(async () => returnToForeground());
+    it('does not re-prompt when the blip lands within the reground grace period', async () => {
+      await signIn();
+      await enableAppLock();
+      const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
+      mockedAuthenticateAsync.mockResolvedValueOnce({ success: true });
+      renderGate();
 
-    await waitFor(() => expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(2));
-    expect(screen.getByText(LOCK_TEXT)).toBeTruthy();
+      await waitFor(() => expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(screen.queryByText(LOCK_TEXT)).toBeNull());
+      // authResolvedAtRef is now stamped at 1_000_000 (authenticate() resolved just now).
+
+      // 200ms later -- comfortably inside REGROUND_GRACE_MS -- the sheet's own dismissal notice
+      // arrives as a background/foreground blip, same as it does on-device.
+      nowSpy.mockReturnValue(1_000_000 + 200);
+      await act(async () => {
+        goToBackground();
+        returnToForeground();
+      });
+
+      // The bug: this used to climb to 2, then 3, forever -- one more prompt per blip, none of
+      // them ever landing outside the (nonexistent) grace window.
+      expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText(LOCK_TEXT)).toBeNull();
+    });
+
+    it('still re-locks on a genuine foreground return once the grace period has elapsed', async () => {
+      await signIn();
+      const isEnabledSpy = jest.spyOn(appLock, 'isEnabled').mockResolvedValueOnce(true);
+      const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(2_000_000);
+      mockedAuthenticateAsync.mockResolvedValueOnce({ success: true });
+      renderGate();
+      await waitFor(() => expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(screen.queryByText(LOCK_TEXT)).toBeNull());
+
+      // Well past REGROUND_GRACE_MS -- a real return, not the sheet's own trailing blip -- must
+      // not be swallowed the way the two tests above are.
+      nowSpy.mockReturnValue(2_000_000 + 5000);
+      isEnabledSpy.mockResolvedValueOnce(true);
+      mockedAuthenticateAsync.mockResolvedValueOnce({ success: false, error: 'authentication_failed' });
+      goToBackground();
+      await act(async () => returnToForeground());
+
+      await waitFor(() => expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(2));
+      expect(screen.getByText(LOCK_TEXT)).toBeTruthy();
+    });
   });
 });
 
