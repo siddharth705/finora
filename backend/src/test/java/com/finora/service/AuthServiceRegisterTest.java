@@ -79,6 +79,7 @@ class AuthServiceRegisterTest {
                 mock(PasswordHistoryService.class), new IdentityLookup(userRepository),
                 mock(com.finora.config.RequestMetadata.class),
                 mock(com.finora.service.SubscriptionService.class),
+                mock(com.finora.service.ReferralService.class),
                 // SEC-07: same-thread executor -- runs the dispatched email/audit work
                 // synchronously so assertions against it don't race a real background thread.
                 Runnable::run,
@@ -89,7 +90,7 @@ class AuthServiceRegisterTest {
     }
 
     private RegisterRequest request(String email, String phoneNumber) {
-        return new RegisterRequest(email, "Password123", "Jane Doe", phoneNumber);
+        return new RegisterRequest(email, "Password123", "Jane Doe", phoneNumber, null);
     }
 
     @Test
@@ -180,7 +181,7 @@ class AuthServiceRegisterTest {
             return u;
         });
 
-        authService.register(new RegisterRequest("  jane@example.com  ", "Password123", "  Jane Doe  ", "+919876500003"));
+        authService.register(new RegisterRequest("  jane@example.com  ", "Password123", "  Jane Doe  ", "+919876500003", null));
 
         verify(userRepository).existsByEmailIgnoreCaseAndAccountScope("jane@example.com", "USER");
         ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);

@@ -18,11 +18,14 @@ interface AuthState {
   // Completes the "Welcome back — reactivate your account?" prompt Login.tsx shows after a
   // deactivated account's password checks out -- see ReactivateAccountPrompt.tsx.
   reactivate: (token: string) => Promise<boolean>;
+  // referralCode: D-28 PR4-C. Optional -- Register.tsx passes it only when the page was reached
+  // via a referral link's `?ref=` param.
   register: (
     email: string,
     password: string,
     fullName: string,
-    phoneNumber: string
+    phoneNumber: string,
+    referralCode?: string
   ) => Promise<{ phoneVerified: boolean }>;
   // Same shape as login()/reactivate(): persists the session and reports whether the phone is
   // already verified -- true for an auto-linked existing account, always false for a newly
@@ -110,9 +113,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     regEmail: string,
     password: string,
     name: string,
-    phoneNumber: string
+    phoneNumber: string,
+    referralCode?: string
   ): Promise<{ phoneVerified: boolean }> {
-    const res = await authApi.register(regEmail, password, name, phoneNumber);
+    const res = await authApi.register(regEmail, password, name, phoneNumber, referralCode);
     persist(res.data);
     // VerifyPhone.tsx fetches the account's real phone number itself (userApi.get(), now that
     // it's authenticated) rather than being handed it via router state -- one less thing this

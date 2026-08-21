@@ -27,12 +27,19 @@ public class AuthDtos {
     static final String PHONE_REGEXP = "^\\+?[0-9]{10,15}$";
     static final String PHONE_MESSAGE = "Enter a valid phone number (10-15 digits, optional + country code)";
 
+    /** @param referralCode D-28 PR4-C. Optional -- absent for the overwhelming majority of
+     *        registrations, which arrive with no referral at all. Deliberately unvalidated here:
+     *        {@code ReferralService.redeemCode} treats an unrecognized or mistyped code as a silent
+     *        no-op rather than a rejected request, so a bad code never turns into a blocked signup
+     *        (see that method's own doc comment). Shared by {@code adminCreateUser} too, which
+     *        simply never reads it -- support-assisted signup has no organic acquisition to track. */
     public record RegisterRequest(
             @Email @NotBlank String email,
             @NotBlank @Size(min = 8, max = 72, message = PASSWORD_SIZE_MESSAGE) String password,
             @NotBlank @Pattern(regexp = FULL_NAME_REGEXP, message = FULL_NAME_MESSAGE) String fullName,
             @NotBlank @Pattern(regexp = PHONE_REGEXP, message = PHONE_MESSAGE)
-            String phoneNumber
+            String phoneNumber,
+            String referralCode
     ) {}
 
     /**

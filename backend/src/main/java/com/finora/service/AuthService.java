@@ -120,6 +120,9 @@ public class AuthService {
     private final IdentityLookup identityLookup;
     private final RequestMetadata requestMetadata;
     private final SubscriptionService subscriptionService;
+    // D-28 PR4-C: redeems RegisterRequest.referralCode, if present -- see register()'s own call
+    // site and ReferralService.redeemCode's doc comment for why this never blocks signup.
+    private final ReferralService referralService;
     // SEC-07: dispatches the forgotPassword() email send off the request thread -- see
     // BackgroundWorkConfig.authEmailExecutor's own doc comment for why.
     private final Executor authEmailExecutor;
@@ -139,6 +142,7 @@ public class AuthService {
                         PasswordHistoryService passwordHistoryService,
                         IdentityLookup identityLookup, RequestMetadata requestMetadata,
                         SubscriptionService subscriptionService,
+                        ReferralService referralService,
                         @Qualifier("authEmailExecutor") Executor authEmailExecutor,
                         AdminMfaService adminMfaService) {
         this.userRepository = userRepository;
@@ -160,6 +164,7 @@ public class AuthService {
         this.identityLookup = identityLookup;
         this.requestMetadata = requestMetadata;
         this.subscriptionService = subscriptionService;
+        this.referralService = referralService;
         this.authEmailExecutor = authEmailExecutor;
         this.adminMfaService = adminMfaService;
     }
@@ -174,6 +179,11 @@ public class AuthService {
             throw new ApiException(HttpStatus.FORBIDDEN, "New registrations are currently disabled.");
         }
         User user = createUserRecord(request, User.SCOPE_USER);
+        // D-28 PR4-C: self-service registration only -- adminCreateUser() shares createUserRecord()
+        // but never reaches this call, since support-assisted signup has no organic acquisition to
+        // track. See ReferralService.redeemCode's own doc comment for why an invalid code is a
+        // silent no-op here, not a rejected request.
+        referralService.redeemCode(user.getId(), request.referralCode());
         auditService.record(user.getId(), "USER_REGISTERED", "User", user.getId());
         // BH-016: sent AFTER this transaction commits, not inside it. The provider is an HTTP call
         // to Resend with no read timeout, and this method holds one of ten pooled connections --

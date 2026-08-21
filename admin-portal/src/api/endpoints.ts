@@ -1,7 +1,7 @@
 import { api, rawApi, type ApiEnvelope } from './client';
 import type {
 
-  AccountDto, ActivationFunnelDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
+  AccountDto, ActivationFunnelDto, AdminReferralSummaryDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
   CreateAccountRequest, CreateBankRequest, CreateRelationshipRequest,
   CreateRuleRequest, CreateUserRequest, FeatureFlagDto, GmailMerchantParserStatDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
   LearningTimelineEntry,
@@ -246,6 +246,13 @@ export const adminSubscriptionsApi = {
   list: () => api.get<SubscriptionSummaryDto[]>('/admin/subscriptions').then((r) => r.data),
   changePlan: (userId: string, planCode: string, reason: string) =>
     api.put(`/admin/subscriptions/${userId}/plan`, { planCode, reason }),
+};
+
+// D-28 PR4-C. REFERRAL_MANAGEMENT_VIEW/_MANAGE-gated (V101), same split as adminSubscriptionsApi.
+export const adminReferralsApi = {
+  list: () => api.get<AdminReferralSummaryDto[]>('/admin/referrals').then((r) => r.data),
+  creditReward: (referralId: string, amount: number, reason: string) =>
+    api.post(`/admin/referrals/${referralId}/credit`, { amount, reason }),
 };
 
 export const adminSystemApi = {

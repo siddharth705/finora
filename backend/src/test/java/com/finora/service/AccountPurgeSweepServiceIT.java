@@ -6,9 +6,12 @@ import com.finora.entity.Budget;
 import com.finora.entity.Category;
 import com.finora.entity.Role;
 import com.finora.entity.Payment;
+import com.finora.entity.Referral;
+import com.finora.entity.ReferralCode;
 import com.finora.entity.StatementImport;
 import com.finora.entity.Transaction;
 import com.finora.entity.User;
+import com.finora.entity.WalletLedgerEntry;
 import com.finora.goals.Goal;
 import com.finora.goals.GoalRepository;
 import com.finora.imports.analysis.StatementAnalysisSession;
@@ -34,6 +37,8 @@ import com.finora.repository.PasswordChangeSessionRepository;
 import com.finora.repository.PasswordHistoryRepository;
 import com.finora.repository.PasswordResetTokenRepository;
 import com.finora.repository.PaymentRepository;
+import com.finora.repository.ReferralCodeRepository;
+import com.finora.repository.ReferralRepository;
 import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.RelationshipIdentifierRepository;
 import com.finora.repository.RelationshipRepository;
@@ -43,6 +48,7 @@ import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.repository.UserSettingsRepository;
+import com.finora.repository.WalletLedgerRepository;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -91,6 +97,9 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
     @Autowired private GoalRepository goalRepository;
     @Autowired private SubscriptionRepository subscriptionRepository;
     @Autowired private PaymentRepository paymentRepository;
+    @Autowired private ReferralCodeRepository referralCodeRepository;
+    @Autowired private ReferralRepository referralRepository;
+    @Autowired private WalletLedgerRepository walletLedgerRepository;
     @Autowired private SubscriptionService subscriptionService;
     @Autowired private CategoryRuleRepository categoryRuleRepository;
     @Autowired private CategoryRepository categoryRepository;
@@ -125,7 +134,8 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         service = new AccountPurgeSweepService(userRepository, gmailConnectionService, gmailConnectionRepository,
                 transactionRepository, merchantLearningEventRepository, merchantLearningAuditRepository,
                 merchantCategoryLearningRepository, merchantAliasRepository, merchantCategoryMapRepository,
-                merchantRepository, budgetRepository, goalRepository, subscriptionRepository, paymentRepository, categoryRuleRepository, categoryRepository,
+                merchantRepository, budgetRepository, goalRepository, subscriptionRepository, paymentRepository,
+                referralCodeRepository, referralRepository, walletLedgerRepository, categoryRuleRepository, categoryRepository,
                 relationshipRepository, relationshipIdentifierRepository, netWorthSnapshotRepository,
                 importJobRepository, importSessionRepository, passwordHistoryRepository,
                 passwordChangeSessionRepository, passwordResetTokenRepository, accountReactivationTokenRepository,
@@ -200,6 +210,9 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
      * parent, with no separate repository call for it. {@link Payment} (D-28 PR4-B) proves its own
      * explicit {@code hardDeleteByUserId} call instead -- it has a {@code user_id} column of its
      * own, so unlike {@code subscription_events} it does NOT rely on any cascade off subscriptions.
+     * {@link Referral} (D-28 PR4-C) proves BOTH directions of its own explicit calls -- the purged
+     * user can appear as either {@code referrer_user_id} or {@code referred_user_id}, on two
+     * entirely different rows, and both must actually disappear.
      */
     @Test
     @Transactional
@@ -237,6 +250,40 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         payment.setCurrency("INR");
         payment.setStatus(Payment.STATUS_SUCCESS);
         paymentRepository.save(payment);
+
+        // D-28 PR4-C: two referral rows, one in each direction -- the purged user as referrer of
+        // someone else, and as the one who was referred by someone else -- to prove BOTH
+        // ReferralRepository.deleteByReferrerUserId and .deleteByReferredUserId actually fire, not
+        // just whichever direction a single row would happen to exercise.
+        User otherUser = new User();
+        otherUser.setEmail("purge-other-" + UUID.randomUUID() + "@example.com");
+        otherUser.setPasswordHash("irrelevant-for-this-test");
+        otherUser.setFullName("Other Test User");
+        UUID otherUserId = userRepository.save(otherUser).getId();
+
+        ReferralCode code = new ReferralCode();
+        code.setUserId(userId);
+        code.setCode("PURGETEST1");
+        referralCodeRepository.save(code);
+
+        Referral referredByOther = new Referral();
+        referredByOther.setReferrerUserId(otherUserId);
+        referredByOther.setReferredUserId(userId);
+        referredByOther.setStatus(Referral.STATUS_REGISTERED);
+        referralRepository.save(referredByOther);
+
+        Referral referredOther = new Referral();
+        referredOther.setReferrerUserId(userId);
+        referredOther.setReferredUserId(otherUserId);
+        referredOther.setStatus(Referral.STATUS_REGISTERED);
+        referralRepository.save(referredOther);
+
+        WalletLedgerEntry walletEntry = new WalletLedgerEntry();
+        walletEntry.setUserId(userId);
+        walletEntry.setAmount(BigDecimal.valueOf(100));
+        walletEntry.setReason(WalletLedgerEntry.REASON_REFERRAL_REWARD);
+        walletLedgerRepository.save(walletEntry);
+
         entityManager.flush();
 
         service.sweep();
@@ -269,12 +316,28 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         Long subscriptionEventCount = (Long) entityManager
                 .createNativeQuery("SELECT COUNT(*) FROM subscription_events WHERE subscription_id = :subscriptionId")
                 .setParameter("subscriptionId", subscriptionId).getSingleResult();
+        Long referralCodeCount = (Long) entityManager
+                .createNativeQuery("SELECT COUNT(*) FROM referral_codes WHERE user_id = :userId")
+                .setParameter("userId", userId).getSingleResult();
+        Long referralsAsReferrerCount = (Long) entityManager
+                .createNativeQuery("SELECT COUNT(*) FROM referrals WHERE referrer_user_id = :userId")
+                .setParameter("userId", userId).getSingleResult();
+        Long referralsAsReferredCount = (Long) entityManager
+                .createNativeQuery("SELECT COUNT(*) FROM referrals WHERE referred_user_id = :userId")
+                .setParameter("userId", userId).getSingleResult();
+        Long walletLedgerCount = (Long) entityManager
+                .createNativeQuery("SELECT COUNT(*) FROM wallet_ledger WHERE user_id = :userId")
+                .setParameter("userId", userId).getSingleResult();
         assertThat(transactionCount).isZero();
         assertThat(budgetCount).isZero();
         assertThat(goalCount).isZero();
         assertThat(subscriptionCount).isZero();
         assertThat(subscriptionEventCount).isZero();
         assertThat(paymentCount).isZero();
+        assertThat(referralCodeCount).isZero();
+        assertThat(referralsAsReferrerCount).isZero();
+        assertThat(referralsAsReferredCount).isZero();
+        assertThat(walletLedgerCount).isZero();
     }
 
     /**
