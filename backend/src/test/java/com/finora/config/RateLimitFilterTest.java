@@ -44,6 +44,16 @@ class RateLimitFilterTest {
         objectMapper.registerModule(new JavaTimeModule());
         ClientIpResolver clientIpResolver = new ClientIpResolver();
         ReflectionTestUtils.setField(clientIpResolver, "trustProxyHeaders", trustProxyHeaders);
+        // Bug 24 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md) added this field with a
+        // @Value("...:1") default -- which only applies when Spring actually constructs the bean.
+        // This helper calls `new ClientIpResolver()` directly, bypassing Spring entirely, so
+        // without setting it explicitly the field silently sits at Java's own int default (0),
+        // not the intended 1 -- exactly the kind of default-that-only-applies-via-injection trap
+        // this codebase has hit before with Environment mocks. 0 trusted hops makes every
+        // X-Forwarded-For lookup resolve out of bounds and fall back to getRemoteAddr(), which
+        // broke resolvesToForwardedForsLastEntry_whenProxyHeadersAreTrusted below by collapsing
+        // both of that test's distinct clients onto the same shared IP.
+        ReflectionTestUtils.setField(clientIpResolver, "trustedProxyHops", 1);
         return new RateLimitFilter(objectMapper, clientIpResolver);
     }
 
