@@ -34,9 +34,9 @@ export function Button({ label, onPress, loading = false, disabled = false, vari
       ]}
     >
       {loading ? (
-        <ActivityIndicator color="#fff" size="small" />
+        <ActivityIndicator color={c.onPrimary} size="small" />
       ) : (
-        <Text style={styles.label}>{label}</Text>
+        <Text style={[styles.label, { color: c.onPrimary }]}>{label}</Text>
       )}
     </Pressable>
   );
@@ -51,7 +51,6 @@ const styles = StyleSheet.create({
     minHeight: 48,
   },
   label: {
-    color: '#fff',
     fontSize: 15,
     fontWeight: '600',
   },

@@ -18,9 +18,15 @@ export const light = {
   border: '#E6EAF2',
   ink: '#0F172A',
   muted: '#64748B',
-  primary: '#2563EB',
-  primaryDark: '#1D4ED8',
-  primaryLight: '#EFF5FF',
+  primary: '#262A33',
+  primaryDark: '#15171C',
+  primaryLight: '#F4F1EC',
+  // Text/icon color for anything drawn ON a primary-filled surface. Was safe to hardcode '#fff'
+  // at every call site while primary was always a mid-to-dark blue in both themes; now that dark
+  // mode's primary is light paper, white text on it is nearly invisible, so this has to flip
+  // opposite to primary itself -- see frontend/src/index.css's --color-on-primary for the web
+  // equivalent of the same problem.
+  onPrimary: '#FFFFFF',
   success: '#16a34a',
   successBg: '#dcfce7',
   danger: '#dc2626',
@@ -41,9 +47,10 @@ export const dark: typeof light = {
   border: '#253044',
   ink: '#E2E8F0',
   muted: '#94A3B8',
-  primary: '#60A5FA',
-  primaryDark: '#3B82F6',
-  primaryLight: '#172554',
+  primary: '#F4F1EC',
+  primaryDark: '#DAD5C9',
+  primaryLight: '#26241F',
+  onPrimary: '#15171C',
   success: '#22c55e',
   successBg: '#12301f',
   danger: '#f87171',

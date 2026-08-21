@@ -115,7 +115,7 @@ export function ProfileScreen({ navigation }: Props) {
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
         >
-          <Text style={styles.avatarText}>{initials(savedFullName)}</Text>
+          <Text style={[styles.avatarText, { color: c.onPrimary }]}>{initials(savedFullName)}</Text>
         </View>
         <View style={styles.identityText}>
           <Text style={[styles.identityName, { color: c.ink }]} numberOfLines={1}>
@@ -218,7 +218,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: spacing.sm,
   },
-  avatarText: { color: '#fff', fontWeight: '700', fontSize: 18 },
+  avatarText: { fontWeight: '700', fontSize: 18 },
   identityText: { flex: 1 },
   identityName: { fontSize: 17, fontWeight: '700' },
   identityEmail: { fontSize: 13, marginTop: 2 },

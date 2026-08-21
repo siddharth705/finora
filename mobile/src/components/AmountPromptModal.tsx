@@ -98,7 +98,7 @@ export function AmountPromptModal({
               accessibilityRole="button"
               accessibilityState={{ disabled: !canSubmit, busy: submitting }}
             >
-              <Text style={styles.confirmText}>{submitting ? 'Saving…' : confirmLabel}</Text>
+              <Text style={[styles.confirmText, { color: c.onPrimary }]}>{submitting ? 'Saving…' : confirmLabel}</Text>
             </Pressable>
           </View>
         </View>
@@ -140,6 +140,6 @@ const styles = StyleSheet.create({
   },
   cancel: { borderWidth: 1 },
   cancelText: { fontSize: 15, fontWeight: '600' },
-  confirmText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  confirmText: { fontSize: 15, fontWeight: '600' },
   disabled: { opacity: 0.5 },
 });
