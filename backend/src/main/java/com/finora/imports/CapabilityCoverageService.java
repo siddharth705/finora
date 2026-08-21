@@ -88,6 +88,15 @@ public class CapabilityCoverageService {
             // by vocabulary alone -- three of them opened three garbage sections and blocked real
             // transaction recovery entirely. See PdfTableLocator.ILLUSTRATIVE_EXAMPLE_MARKER.
             "ILLUSTRATIVE_BLOCK_SUPPRESSED",
+            // A literal "**** End of Statement ****" line, found on a real Axis Bank Neo Rupay
+            // credit-card statement -- everything from that line to the end of the document is
+            // trailing boilerplate (a Minimum-Amount-Due illustration table structurally identical
+            // to a real transaction table, an interest-calculation worked example, grievance/nodal-
+            // officer contact tables), none of it caught by any other structural gate. Shares
+            // ILLUSTRATIVE_EXAMPLE_MARKER's one-way suppression mechanism -- see
+            // docs/architecture/system-design/transaction-boundary-phase2a-investigation.md for the
+            // real-corpus evidence this closes. See PdfTableLocator.STATEMENT_CLOSING_MARKER.
+            "TRANSACTION_TABLE_CLOSED",
             // A transaction printed as a two-physical-line visual block (day-of-month + narration
             // + amount, then month/year + a bare Cr/Dr marker) rather than a table row at all --
             // found on the same AU statement, once the illustrative sections above stopped

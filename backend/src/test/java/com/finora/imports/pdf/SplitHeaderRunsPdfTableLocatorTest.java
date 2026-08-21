@@ -278,7 +278,10 @@ class SplitHeaderRunsPdfTableLocatorTest {
         // a separate fix, now also landing on this trace. What this test actually guards -- no
         // BOGUS third section from the fine-print run-joining bug -- still holds.
         assertThat(doc.sections()).as("one section, as before this fix -- no second, bogus one").hasSize(1);
-        assertThat(doc.sections().get(0).rows()).hasSize(111);
+        // 110, not 111: TRANSACTION_TABLE_CLOSED (PdfTableLocator.STATEMENT_CLOSING_MARKER) now
+        // stops bucketing at this trace's own "*** End of Statement ***" line, one row earlier than
+        // before -- see docs/architecture/system-design/transaction-boundary-phase2a-investigation.md.
+        assertThat(doc.sections().get(0).rows()).hasSize(110);
         assertThat(doc.sections().stream().flatMap(s -> s.rows().stream())
                 .flatMap(r -> r.keySet().stream()).distinct())
                 .as("no column named out of a fine-print sentence")
@@ -383,8 +386,10 @@ class SplitHeaderRunsPdfTableLocatorTest {
         Map<String, List<Integer>> expected = Map.ofEntries(
                 Map.entry("au-credit-card-statement", List.of(3, 2, 2, 2)),
                 // 2 sections before PdfTableLocator.looksLikePaymentSummaryPanel, 1 after -- the
-                // dropped section was a misdetected payment-summary panel, not fine print.
-                Map.entry("axis-credit-card-statement", List.of(1, 111)),
+                // dropped section was a misdetected payment-summary panel, not fine print. 110, not
+                // 111, since TRANSACTION_TABLE_CLOSED (STATEMENT_CLOSING_MARKER) started stopping at
+                // this trace's own "*** End of Statement ***" line.
+                Map.entry("axis-credit-card-statement", List.of(1, 110)),
                 Map.entry("bob-repeated-account-banner", List.of(1, 58)),
                 Map.entry("bob-savings-ledger-validation", List.of(1, 58)),
                 Map.entry("canara-savings-ledger-validation", List.of(1, 60)),

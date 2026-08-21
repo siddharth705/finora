@@ -55,4 +55,26 @@ class StatementClosingMarkerPdfPreviewGeneratorTest {
                         "UPI/SAMPLEB ENTERPRISES/PAYCO.S111111@PTY/90000")
                 .noneMatch(d -> d.contains("End of Statement"));
     }
+
+    /**
+     * Phase 2A/D-29 fix. A row shaped exactly like a real transaction -- its own date, description,
+     * and amount -- sitting AFTER the closing marker must not become a staged row just because it
+     * happens to parse cleanly. Before this fix, PdfTableLocator never closed the section at the
+     * marker; a lookalike row like this one would still be bucketed, surviving only if some
+     * unrelated downstream stage happened to reject it. See
+     * docs/architecture/system-design/transaction-boundary-phase2a-investigation.md for the
+     * real-corpus evidence (a real Axis Bank Minimum-Amount-Due illustration table) this closes.
+     */
+    @Test
+    void generate_doesNotStageARowShapedLikeATransaction_whenItFollowsTheClosingMarker() throws Exception {
+        StagingResponse response = realGenerator().generate(UUID.randomUUID(), "axis_statement.pdf",
+                PdfFixtureBuilder.buildStatementClosingMarkerWithTrailingLookalikeSample());
+
+        assertThat(response.rows()).hasSize(2);
+        assertThat(response.rows()).extracting(r -> r.description())
+                .containsExactly(
+                        "UPI/SAMPLE VENDOR PRIVATE LT/SAMPLEA.PAYU@AXISB",
+                        "UPI/SAMPLEB ENTERPRISES/PAYCO.S111111@PTY/90000")
+                .noneMatch(d -> d.contains("Illustrative Purchase Example"));
+    }
 }

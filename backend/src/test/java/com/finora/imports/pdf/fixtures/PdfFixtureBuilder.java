@@ -57,6 +57,8 @@ import java.util.List;
  *   -&gt; buildDrCrSuffixAmountColumnSample, buildParenthesizedDrCrRunningBalanceSample
  * PAGE_BOUNDARY_ISOLATION / PAGE_FOOTER_EXCLUSION
  *   -&gt; buildParenthesizedDrCrRunningBalanceSample, buildStatementClosingMarkerSample
+ * TRANSACTION_TABLE_CLOSED
+ *   -&gt; buildStatementClosingMarkerWithTrailingLookalikeSample
  * COMPOSITE_STATEMENT / MULTI_ACCOUNT
  *   -&gt; buildMultiSectionCompositeStatementSample
  * CREDIT_CARD_SUMMARY_SIGNAL
@@ -366,6 +368,32 @@ public final class PdfFixtureBuilder {
                 .row(col, "24/06/2026", "UPI/SAMPLE VENDOR PRIVATE LT/SAMPLEA.PAYU@AXISB", "37.94 Dr")
                 .row(col, "15/07/2026", "UPI/SAMPLEB ENTERPRISES/PAYCO.S111111@PTY/90000", "1,240.00 Dr")
                 .line("**** End of Statement ****");
+
+        return render(List.of(page));
+    }
+
+    /**
+     * TRANSACTION_TABLE_CLOSED. Same fixture as {@link #buildStatementClosingMarkerSample}, plus a
+     * row-shaped line AFTER the closing marker -- a date, a description, and an amount, exactly the
+     * shape a real transaction row has. Real-corpus-evidenced: a genuine Minimum-Amount-Due
+     * illustration table on a real Axis Bank Neo Rupay statement has this exact shape (date,
+     * description, Dr/Cr, amount) after its own "**** End of Statement ****" line -- see
+     * docs/architecture/system-design/transaction-boundary-phase2a-investigation.md. Before
+     * PdfTableLocator.STATEMENT_CLOSING_MARKER closed the section at the marker itself (rather than
+     * only excluding the marker LINE from continuation-merging), a row shaped like this one would
+     * still have been bucketed as a candidate row, surviving only if some unrelated stage happened
+     * to reject it -- exactly the "accidental, not structural" protection the investigation above
+     * documents. This fixture proves the closure itself, not a downstream accident.
+     */
+    public static byte[] buildStatementClosingMarkerWithTrailingLookalikeSample() throws IOException {
+        float[] col = {LEFT_MARGIN, 110f, 480f};
+
+        PageBuilder page = new PageBuilder();
+        page.row(col, "DATE", "TRANSACTION DETAILS", "AMOUNT (Rs.)")
+                .row(col, "24/06/2026", "UPI/SAMPLE VENDOR PRIVATE LT/SAMPLEA.PAYU@AXISB", "37.94 Dr")
+                .row(col, "15/07/2026", "UPI/SAMPLEB ENTERPRISES/PAYCO.S111111@PTY/90000", "1,240.00 Dr")
+                .line("**** End of Statement ****")
+                .row(col, "25/09/2026", "Illustrative Purchase Example", "5,000.00 Dr");
 
         return render(List.of(page));
     }

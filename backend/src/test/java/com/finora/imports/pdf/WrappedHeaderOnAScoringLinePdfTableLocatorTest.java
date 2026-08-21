@@ -194,8 +194,10 @@ class WrappedHeaderOnAScoringLinePdfTableLocatorTest {
         Map<String, int[]> expected = new LinkedHashMap<>();
         expected.put("au-credit-card-statement", new int[]{3, 6});
         // {2, 113} before PdfTableLocator.looksLikePaymentSummaryPanel: the dropped section was a
-        // misdetected payment-summary panel (2 rows), not fine print -- 111 real rows survive.
-        expected.put("axis-credit-card-statement", new int[]{1, 111});
+        // misdetected payment-summary panel (2 rows), not fine print -- real rows survive. 110, not
+        // 111, since TRANSACTION_TABLE_CLOSED (STATEMENT_CLOSING_MARKER) started stopping at this
+        // trace's own "*** End of Statement ***" line.
+        expected.put("axis-credit-card-statement", new int[]{1, 110});
         expected.put("bob-repeated-account-banner", new int[]{1, 58});
         expected.put("bob-savings-ledger-validation", new int[]{1, 58});
         expected.put("canara-savings-ledger-validation", new int[]{1, 60});
