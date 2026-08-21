@@ -26,6 +26,8 @@ import com.finora.repository.PasswordChangeSessionRepository;
 import com.finora.repository.PasswordHistoryRepository;
 import com.finora.repository.PasswordResetTokenRepository;
 import com.finora.repository.PaymentRepository;
+import com.finora.repository.ReferralCodeRepository;
+import com.finora.repository.ReferralRepository;
 import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.RelationshipIdentifierRepository;
 import com.finora.repository.RelationshipRepository;
@@ -34,6 +36,7 @@ import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.repository.UserSettingsRepository;
+import com.finora.repository.WalletLedgerRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
@@ -70,6 +73,9 @@ class AccountPurgeSweepServiceTest {
     private GmailConnectionRepository gmailConnectionRepository;
     private TransactionRepository transactionRepository;
     private PaymentRepository paymentRepository;
+    private ReferralCodeRepository referralCodeRepository;
+    private ReferralRepository referralRepository;
+    private WalletLedgerRepository walletLedgerRepository;
     private StatementImportRepository statementImportRepository;
     private StatementImportService statementImportService;
     private StatementAnalysisSessionRepository statementAnalysisSessionRepository;
@@ -88,6 +94,9 @@ class AccountPurgeSweepServiceTest {
         gmailConnectionRepository = mock(GmailConnectionRepository.class);
         transactionRepository = mock(TransactionRepository.class);
         paymentRepository = mock(PaymentRepository.class);
+        referralCodeRepository = mock(ReferralCodeRepository.class);
+        referralRepository = mock(ReferralRepository.class);
+        walletLedgerRepository = mock(WalletLedgerRepository.class);
         statementImportRepository = mock(StatementImportRepository.class);
         statementImportService = mock(StatementImportService.class);
         statementAnalysisSessionRepository = mock(StatementAnalysisSessionRepository.class);
@@ -119,7 +128,7 @@ class AccountPurgeSweepServiceTest {
                 mock(MerchantCategoryLearningRepository.class), mock(MerchantAliasRepository.class),
                 mock(MerchantCategoryMapRepository.class), mock(MerchantRepository.class),
                 mock(BudgetRepository.class), mock(GoalRepository.class), mock(SubscriptionRepository.class),
-                paymentRepository,
+                paymentRepository, referralCodeRepository, referralRepository, walletLedgerRepository,
                 mock(CategoryRuleRepository.class), mock(CategoryRepository.class),
                 relationshipRepository, mock(RelationshipIdentifierRepository.class),
                 mock(NetWorthSnapshotRepository.class), mock(ImportJobRepository.class),
@@ -190,6 +199,12 @@ class AccountPurgeSweepServiceTest {
         inOrder.verify(paymentRepository).hardDeleteByUserId(userId);
         inOrder.verify(statementImportService).delete(userId, statementId);
         inOrder.verify(userRepository).save(argThat(u -> User.STATUS_DELETED.equals(u.getStatus())));
+        // D-28 PR4-C: every referral-program table gets a call, both directions for referrals
+        // (the purged user could be either party).
+        verify(referralCodeRepository).deleteByUserId(userId);
+        verify(referralRepository).deleteByReferrerUserId(userId);
+        verify(referralRepository).deleteByReferredUserId(userId);
+        verify(walletLedgerRepository).deleteByUserId(userId);
 
         assertThat(user.getStatus()).isEqualTo(User.STATUS_DELETED);
         assertThat(user.getDeletedAt()).isNotNull();

@@ -63,7 +63,7 @@ class SetupServiceTest {
     void completeSetup_createsTheRealAdmin_locksBootstrap_andMarksSetupComplete() throws Exception {
         when(platformSettingsService.tryMarkSetupCompleted()).thenReturn(true);
         RegisterRequest request = new RegisterRequest(
-                "admin@example.com", "correct-horse-battery-staple", "Real Admin", "+919876543210");
+                "admin@example.com", "correct-horse-battery-staple", "Real Admin", "+919876543210" /* synthetic-ok */, null);
         UUID newAdminId = UUID.randomUUID();
         User newAdmin = userWith(newAdminId, "admin@example.com");
         when(authService.adminCreateUser(request, bootstrapUserId, "ADMIN")).thenReturn(newAdmin);
@@ -102,7 +102,7 @@ class SetupServiceTest {
         // failing) a setup that already succeeded and committed to the database.
         when(platformSettingsService.tryMarkSetupCompleted()).thenReturn(true);
         RegisterRequest request = new RegisterRequest(
-                "admin@example.com", "correct-horse-battery-staple", "Real Admin", "+919876543210");
+                "admin@example.com", "correct-horse-battery-staple", "Real Admin", "+919876543210" /* synthetic-ok */, null);
         UUID newAdminId = UUID.randomUUID();
         User newAdmin = userWith(newAdminId, "admin@example.com");
         when(authService.adminCreateUser(request, bootstrapUserId, "ADMIN")).thenReturn(newAdmin);
@@ -126,7 +126,7 @@ class SetupServiceTest {
         // this one. Either way, completeSetup() must reject immediately and do nothing else.
         when(platformSettingsService.tryMarkSetupCompleted()).thenReturn(false);
         RegisterRequest request = new RegisterRequest(
-                "admin@example.com", "correct-horse-battery-staple", "Real Admin", "+919876543210");
+                "admin@example.com", "correct-horse-battery-staple", "Real Admin", "+919876543210" /* synthetic-ok */, null);
 
         assertThatThrownBy(() -> setupService.completeSetup(bootstrapUserId, request))
                 .isInstanceOf(ApiException.class)
