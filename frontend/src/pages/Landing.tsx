@@ -67,54 +67,65 @@ const DEEP = '#0B1220';
 export default function Landing() {
   return (
     <div className="marketing">
+      {/* Keyboard/screen-reader users otherwise have to tab through the entire nav (5 anchors +
+          2 CTAs) before reaching any page content, on a page with 15 sections below it. Visually
+          hidden until focused, per the standard sr-only/focus:not-sr-only pattern. */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-lg focus:bg-[#2563EB] focus:px-4 focus:py-2.5 focus:text-sm focus:font-semibold focus:text-white"
+      >
+        Skip to content
+      </a>
       <Nav />
 
-      <Hero />
-      {/* Hero already fades toward #FBFCFE, so this picks up close to where it ends. */}
-      <Transition from="#FBFCFE" to={WHITE} height={48} />
+      <main id="main-content">
+        <Hero />
+        {/* Hero already fades toward #FBFCFE, so this picks up close to where it ends. */}
+        <Transition from="#FBFCFE" to={WHITE} height={48} />
 
-      <Problem />
-      <Transition from={WHITE} to={WHITE} height={0} />
+        <Problem />
+        <Transition from={WHITE} to={WHITE} height={0} />
 
-      <ImportSection />
-      <Transition from={WHITE} to={DEEP} height={112} />
+        <ImportSection />
+        <Transition from={WHITE} to={DEEP} height={112} />
 
-      <LearningSection />
-      <Transition from={DEEP} to={ALT} height={112} />
+        <LearningSection />
+        <Transition from={DEEP} to={ALT} height={112} />
 
-      <BeforeAfter />
-      <Transition from={ALT} to={WHITE} />
+        <BeforeAfter />
+        <Transition from={ALT} to={WHITE} />
 
-      <Journey />
-      <Transition from={WHITE} to={DEEP} height={112} />
+        <Journey />
+        <Transition from={WHITE} to={DEEP} height={112} />
 
-      <Trust />
-      <Transition from={DEEP} to={ALT} height={112} />
+        <Trust />
+        <Transition from={DEEP} to={ALT} height={112} />
 
-      <Security />
-      <Transition from={ALT} to={WHITE} />
+        <Security />
+        <Transition from={ALT} to={WHITE} />
 
-      <DashboardShowcase />
-      <Transition from={WHITE} to={WHITE} height={0} />
+        <DashboardShowcase />
+        <Transition from={WHITE} to={WHITE} height={0} />
 
-      <Everywhere />
-      <Transition from={WHITE} to={ALT} />
+        <Everywhere />
+        <Transition from={WHITE} to={ALT} />
 
-      <UseCases />
-      <Transition from={ALT} to={WHITE} />
+        <UseCases />
+        <Transition from={ALT} to={WHITE} />
 
-      {/* Sits between "who it's for" and the price list on purpose: a price list provokes the
-          question "why would I pay?" but cannot answer it. This does, before it is asked. */}
-      <WhyUpgrade />
-      <Transition from={WHITE} to={ALT} />
+        {/* Sits between "who it's for" and the price list on purpose: a price list provokes the
+            question "why would I pay?" but cannot answer it. This does, before it is asked. */}
+        <WhyUpgrade />
+        <Transition from={WHITE} to={ALT} />
 
-      <Pricing />
-      <Transition from={ALT} to={WHITE} />
+        <Pricing />
+        <Transition from={ALT} to={WHITE} />
 
-      <Faq />
-      <Transition from={WHITE} to="#2563EB" height={72} />
+        <Faq />
+        <Transition from={WHITE} to="#2563EB" height={72} />
 
-      <FinalCta />
+        <FinalCta />
+      </main>
       <SiteFooter />
 
       {/* Sticky mobile action bar. Phone-only: at md+ the hero CTAs and the nav button are both
