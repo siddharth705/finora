@@ -145,6 +145,13 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
     // StatementImportHealthProvider's class comment for how this feeds the health panel.
     long countByImportedAtAfter(Instant threshold);
 
+    /** D-27 PR3-D: the "first import" activation-funnel stage -- how many distinct users have
+     *  EVER completed a statement import. Native, bypassing {@code @SQLRestriction} the same way
+     *  as {@code BudgetRepository.countDistinctUsersEverActivated} -- see that method's own doc
+     *  comment for why a growth milestone must survive the import later being deleted. */
+    @Query(value = "SELECT COUNT(DISTINCT user_id) FROM statement_imports", nativeQuery = true)
+    long countDistinctUsersEverActivated();
+
     @Query("SELECT COUNT(s) FROM StatementImport s WHERE s.importedAt >= :threshold AND s.transactionsSkipped > 0")
     long countWithSkippedRowsAfter(@Param("threshold") Instant threshold);
 

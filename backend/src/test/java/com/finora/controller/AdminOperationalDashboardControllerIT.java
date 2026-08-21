@@ -80,4 +80,31 @@ class AdminOperationalDashboardControllerIT extends AbstractIntegrationTest {
         assertThat(data.get("health").get("overallStatus").asText()).isIn("UP", "DEGRADED", "DOWN");
         assertThat(data.get("totalUsers").asLong()).isGreaterThanOrEqualTo(1L);
     }
+
+    // D-27 PR3-D.
+    @Test
+    void plainUser_isForbiddenFromViewingTheActivationFunnel() {
+        User user = createUser("USER");
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/dashboard/activation-funnel", HttpMethod.GET, new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void admin_seesTheActivationFunnel_asRealCountsAgainstTheDatabase() throws Exception {
+        User admin = createUser("ADMIN");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/dashboard/activation-funnel", HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode data = mapper.readTree(response.getBody()).get("data");
+        // signedUp must agree with the Operational Dashboard's own totalUsers -- both read the
+        // same countByRoleNot("BOOTSTRAP_ADMIN") figure.
+        assertThat(data.get("signedUp").asLong()).isGreaterThanOrEqualTo(1L);
+        assertThat(data.has("firstImport")).isTrue();
+        assertThat(data.has("firstBudget")).isTrue();
+        assertThat(data.has("firstGoal")).isTrue();
+    }
 }
