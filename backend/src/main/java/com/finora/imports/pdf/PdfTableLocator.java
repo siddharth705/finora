@@ -646,16 +646,35 @@ public class PdfTableLocator {
         // Parallel to pendingLeading: how many rows have merged into it since the last date
         // anchor. Reset wherever pendingLeading is, or the cap would leak across sections.
         int leadingCount = 0;
-        // ILLUSTRATIVE_BLOCK_SUPPRESSED. One-way: once an illustrative-example marker is seen,
-        // every row for the REST OF THE DOCUMENT is treated the same as today's dateless
-        // no-header-found rows -- folded into pendingAuxiliary, never a header, never a new
-        // section. Not a resume-on-next-marker state machine: on the one real document this
-        // exists for, real content never resumes after the fee/interest-illustration appendix
-        // begins (it runs to the end of the statement), and a one-way gate is meaningfully
-        // simpler to reason about than tracking where illustrative content ends. If a future real
-        // document needs resumption, that is new evidence to design against, not something to
-        // guess at now.
-        boolean illustrativeBlockActive = false;
+        // TRAILING_CONTENT_SUPPRESSED (ILLUSTRATIVE_BLOCK_SUPPRESSED / TRANSACTION_TABLE_CLOSED).
+        // One-way: once either trigger below is seen, every row for the REST OF THE DOCUMENT is
+        // treated the same as today's dateless no-header-found rows -- folded into
+        // pendingAuxiliary, never a header, never a new section. Not a resume-on-next-marker
+        // state machine: on every real document either trigger exists for, real content never
+        // resumes once it fires (it runs to the end of the statement), and a one-way gate is
+        // meaningfully simpler to reason about than tracking where the suppressed content ends.
+        // If a future real document needs resumption, that is new evidence to design against, not
+        // something to guess at now.
+        //
+        // Two independent triggers share this one flag rather than each getting its own, because
+        // they mean the same thing structurally ("nothing genuine follows this line") even though
+        // they're evidenced from different real documents and get their own capability names so
+        // it stays visible which one fired:
+        //   - ILLUSTRATIVE_EXAMPLE_MARKER (a worked fee/interest example table, AU) -- unchanged,
+        //     moved into this shared gate rather than duplicated.
+        //   - STATEMENT_CLOSING_MARKER (a literal "End of Statement" line, Axis) -- new. Before
+        //     this, STATEMENT_CLOSING_MARKER was checked in three OTHER, narrower code paths
+        //     (page-footer-style pre-header scanning, the headerless-continuation fallback, the
+        //     two-line-date-block fallback) but never in this main header-based loop, which is
+        //     what most real documents -- including the one this trigger is evidenced from --
+        //     actually go through. Confirmed via CorpusProbe against the real Axis Bank Neo Rupay
+        //     statement this is evidenced from: 111 raw bucketed rows before this change (108 real
+        //     transactions plus 3 rows of trailing boilerplate that happened to survive bucketing
+        //     and only failed to become phantom transactions because row-continuation merging
+        //     fused them into a blob whose date cell failed TransactionNormalizer's Stage-4 parse
+        //     -- see docs/architecture/system-design/transaction-boundary-phase2a-investigation.md)
+        //     drops to 108 raw bucketed rows after it, with the real total unchanged either way.
+        boolean trailingContentSuppressed = false;
 
         for (int rowIndex = 0; rowIndex < rows.size(); rowIndex++) {
             List<PositionedText> row = rows.get(rowIndex);
@@ -677,16 +696,18 @@ public class PdfTableLocator {
             // The one row of lookahead the trailing/leading split needs -- see belongsToTheRowAbove.
             Float gapToNextRow = gapBetween(row, rowIndex + 1 < rows.size() ? rows.get(rowIndex + 1) : null);
 
-            if (illustrativeBlockActive) {
+            if (trailingContentSuppressed) {
                 pendingAuxiliary.add(rowLine);
                 continue;
             }
-            if (ILLUSTRATIVE_EXAMPLE_MARKER.matcher(rowLine).find()) {
-                illustrativeBlockActive = true;
+            boolean illustrativeMarker = ILLUSTRATIVE_EXAMPLE_MARKER.matcher(rowLine).find();
+            boolean closingMarker = !illustrativeMarker && STATEMENT_CLOSING_MARKER.matcher(rowLine).find();
+            if (illustrativeMarker || closingMarker) {
+                trailingContentSuppressed = true;
                 // Closes whatever REAL section is open exactly the same way the header-signature
                 // fallback below does (flush pendingLeading, stage the section) -- a document with
-                // a genuine header-based table followed by this appendix must keep that real
-                // section, not lose it along with the boilerplate that follows.
+                // a genuine header-based table followed by this appendix/closing marker must keep
+                // that real section, not lose it along with the boilerplate that follows.
                 if (currentRows != null) {
                     PendingState closed = closeCurrentSection(currentRows, pendingLeading, headerNames,
                             pendingAuxiliary, pendingDroppedCandidates, pendingHeaderReconstructionVocab, sections, ctx);
@@ -701,7 +722,9 @@ public class PdfTableLocator {
                 // a split that has nothing to do with the identity line that set it.
                 pendingIdentityMismatch = false;
                 pendingAccountIdCandidate = null;
-                if (ctx != null) ctx.record("ILLUSTRATIVE_BLOCK_SUPPRESSED");
+                if (ctx != null) {
+                    ctx.record(illustrativeMarker ? "ILLUSTRATIVE_BLOCK_SUPPRESSED" : "TRANSACTION_TABLE_CLOSED");
+                }
                 pendingAuxiliary.add(rowLine);
                 continue;
             }
@@ -1151,6 +1174,26 @@ public class PdfTableLocator {
             if (!closed.auxiliary().isEmpty() && !sections.isEmpty()) {
                 sections.add(new LocatedSection(closed.auxiliary(), List.of(), ExtractionEvidence.NONE));
             }
+        } else if (trailingContentSuppressed && !pendingAuxiliary.isEmpty() && !sections.isEmpty()) {
+            // Related to the payment-summary-panel fold just above (same e65af76 motivation: don't
+            // silently drop trailing auxiliary text) but NOT the same fix -- appending as its own
+            // new section, the way that case does, was tried first and rejected: verified via
+            // CorpusProbe against the real Axis document TRANSACTION_TABLE_CLOSED is evidenced from,
+            // it produces a second, zero-row section with no account identity of its own, which
+            // FinancialProductClassifier cannot confidently classify (UNKNOWN, productNeedsReview)
+            // -- a phantom "second account" the review screen would ask the user to name, for
+            // content that was never a second account, just this same one's own trailing
+            // boilerplate. Merged into the LAST real section's own auxiliary text instead, so
+            // whatever identity/product evidence that section already carries stays attached to the
+            // same section rather than orphaned on a new one with none. currentRows is already null
+            // here because the illustrative/closing-marker trigger above already closed the real
+            // section and started accumulating everything from that point into pendingAuxiliary
+            // directly, never through currentRows at all.
+            LocatedSection last = sections.get(sections.size() - 1);
+            List<String> mergedAuxiliary = new ArrayList<>(last.auxiliaryText());
+            mergedAuxiliary.addAll(pendingAuxiliary);
+            sections.set(sections.size() - 1,
+                    new LocatedSection(mergedAuxiliary, last.rows(), last.evidence()));
         }
         // INFERRED_HEADERLESS_LAYOUT. Only ever attempted once the loop above has already found
         // nothing -- see this capability's own doc comment on inferHeaderlessSection for why a
