@@ -42,10 +42,19 @@ class AuthServiceVerifyPhoneTest {
 
         authService = new AuthService(
                 userRepository, mock(CategoryRepository.class), mock(PasswordResetTokenRepository.class),
+                mock(com.finora.repository.AccountReactivationTokenRepository.class),
+                mock(com.finora.repository.EmailVerificationTokenRepository.class),
                 mock(PasswordEncoder.class), mock(JwtService.class), mock(AuthenticationManager.class),
                 mock(AuditService.class), mock(RefreshTokenService.class), mock(EmailProvider.class),
                 new EmailProperties(), phoneVerificationProvider, mock(PlatformSettingsService.class),
-                mock(PasswordHistoryService.class), new IdentityLookup(userRepository)
+                mock(PasswordHistoryService.class), new IdentityLookup(userRepository),
+                mock(com.finora.config.RequestMetadata.class),
+                // SEC-07: same-thread executor -- runs the dispatched email/audit work
+                // synchronously so assertions against it don't race a real background thread.
+                Runnable::run,
+                // SEC-03: no MFA gate interference for tests unrelated to it -- an
+                // unstubbed mock's isEnabled() returns false by default.
+                mock(AdminMfaService.class)
         );
     }
 

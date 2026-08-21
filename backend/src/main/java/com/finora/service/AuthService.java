@@ -1,12 +1,18 @@
 package com.finora.service;
 
 import com.finora.config.EmailProperties;
+import com.finora.config.RequestMetadata;
+import com.finora.dto.AuthDtos;
 import com.finora.dto.AuthDtos.*;
+import com.finora.entity.AccountReactivationToken;
+import com.finora.entity.EmailVerificationToken;
 import com.finora.entity.Category;
 import com.finora.entity.PasswordResetToken;
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
+import com.finora.repository.AccountReactivationTokenRepository;
+import com.finora.repository.EmailVerificationTokenRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.PasswordResetTokenRepository;
 import com.finora.repository.UserRepository;
@@ -15,6 +21,8 @@ import com.finora.util.PhoneMasking;
 import com.finora.util.PhoneNumbers;
 import com.finora.util.AfterCommit;
 import com.finora.util.TokenHasher;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.IncorrectResultSizeDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -31,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.Executor;
 
 @Service
 public class AuthService {
@@ -70,6 +79,15 @@ public class AuthService {
             "Business Expenses", "Other"
     );
     private static final long RESET_TOKEN_TTL_MINUTES = 30;
+    // Short relative to the reset-token TTL above -- this token exists only to carry a login
+    // attempt that already proved the password straight through to a single confirm click, not
+    // to survive being read from an email later, so there's no reason to give it 30 minutes.
+    private static final long REACTIVATION_TOKEN_TTL_MINUTES = 15;
+    // D-23. Long relative to the two TTLs above -- unlike a password reset or a reactivation
+    // confirm (both time-sensitive, both something the person is actively doing right now), a
+    // verification link sits in an inbox and might reasonably be clicked hours later, not
+    // necessarily inside the same sitting as registration.
+    private static final long EMAIL_VERIFICATION_TOKEN_TTL_MINUTES = 1440;
     // MAX_FAILED_LOGIN_ATTEMPTS / LOCKOUT_DURATION_MINUTES used to be hardcoded here -- now read
     // live from PlatformSettingsService on every call (see registerFailedLogin() and login()'s
     // lockout check) so an admin's change on the System page takes effect immediately, not just
@@ -77,9 +95,18 @@ public class AuthService {
     // (5 / 15) these constants used to have, so existing behavior is unchanged until an admin
     // actually edits the setting.
 
+    // Disabled by default: an unlimited self-service reactivation window is today's existing
+    // behavior, and this is an opt-in production hardening knob, not a launch requirement.
+    @Value("${app.account-lifecycle.reactivation-window-enabled:false}")
+    private boolean reactivationWindowEnabled;
+    @Value("${app.account-lifecycle.reactivation-window-days:3}")
+    private int reactivationWindowDays;
+
     private final UserRepository userRepository;
     private final CategoryRepository categoryRepository;
     private final PasswordResetTokenRepository resetTokenRepository;
+    private final AccountReactivationTokenRepository reactivationTokenRepository;
+    private final EmailVerificationTokenRepository emailVerificationTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final AuthenticationManager authenticationManager;
@@ -91,20 +118,32 @@ public class AuthService {
     private final PlatformSettingsService platformSettingsService;
     private final PasswordHistoryService passwordHistoryService;
     private final IdentityLookup identityLookup;
+    private final RequestMetadata requestMetadata;
+    // SEC-07: dispatches the forgotPassword() email send off the request thread -- see
+    // BackgroundWorkConfig.authEmailExecutor's own doc comment for why.
+    private final Executor authEmailExecutor;
+    // SEC-03: the MFA gate login() checks and completeMfaLogin() resolves against.
+    private final AdminMfaService adminMfaService;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public AuthService(UserRepository userRepository, CategoryRepository categoryRepository,
-                        PasswordResetTokenRepository resetTokenRepository, PasswordEncoder passwordEncoder,
+                        PasswordResetTokenRepository resetTokenRepository,
+                        AccountReactivationTokenRepository reactivationTokenRepository,
+                        EmailVerificationTokenRepository emailVerificationTokenRepository, PasswordEncoder passwordEncoder,
                         JwtService jwtService, AuthenticationManager authenticationManager,
                         AuditService auditService, RefreshTokenService refreshTokenService,
                         EmailProvider emailProvider, EmailProperties emailProperties,
                         PhoneVerificationProvider phoneVerificationProvider,
                         PlatformSettingsService platformSettingsService,
                         PasswordHistoryService passwordHistoryService,
-                        IdentityLookup identityLookup) {
+                        IdentityLookup identityLookup, RequestMetadata requestMetadata,
+                        @Qualifier("authEmailExecutor") Executor authEmailExecutor,
+                        AdminMfaService adminMfaService) {
         this.userRepository = userRepository;
         this.categoryRepository = categoryRepository;
         this.resetTokenRepository = resetTokenRepository;
+        this.reactivationTokenRepository = reactivationTokenRepository;
+        this.emailVerificationTokenRepository = emailVerificationTokenRepository;
         this.passwordEncoder = passwordEncoder;
         this.timingParityHash = passwordEncoder.encode("finora-bh-014-timing-parity-not-a-password");
         this.jwtService = jwtService;
@@ -117,6 +156,9 @@ public class AuthService {
         this.platformSettingsService = platformSettingsService;
         this.passwordHistoryService = passwordHistoryService;
         this.identityLookup = identityLookup;
+        this.requestMetadata = requestMetadata;
+        this.authEmailExecutor = authEmailExecutor;
+        this.adminMfaService = adminMfaService;
     }
 
     @Transactional
@@ -146,6 +188,21 @@ public class AuthService {
             auditService.record(registeredUserId, "EMAIL_SENT", "User", registeredUserId, Map.of(
                     "type", "welcome", "provider", welcomeEmailResult.provider().name(),
                     "success", welcomeEmailResult.success()));
+        });
+        // D-23. Not required to use the app (unlike phone verification, this never gates access --
+        // see enforceAccountIsSignable's own doc comment) -- it only ever gates whether a LATER
+        // Google sign-in with this same email is allowed to auto-link into this account (see
+        // loginWithGoogle). Minted and sent the same as every other token/email pair in this class,
+        // regardless of whether a real provider is configured -- see mintEmailVerificationToken and
+        // NoOpEmailProvider's own graceful "no provider" degradation, same as the welcome email
+        // block right above.
+        String verifyLink = emailProperties.resolveBaseUrl(null) + "/verify-email?token="
+                + mintEmailVerificationToken(registeredUserId);
+        AfterCommit.run("email verification email", () -> {
+            EmailResult verifyEmailResult = emailProvider.sendEmailVerificationEmail(registeredEmail, verifyLink);
+            auditService.record(registeredUserId, "EMAIL_SENT", "User", registeredUserId, Map.of(
+                    "type", "email_verification", "provider", verifyEmailResult.provider().name(),
+                    "success", verifyEmailResult.success()));
         });
 
         // Refresh token first: it is what mints the session, and the access token has to carry
@@ -447,10 +504,7 @@ public class AuthService {
         // is what it SAYS: the same 401 as a wrong password, so its position no longer leaks. It
         // no longer returns faster than a real password check either -- it verifies against a
         // throwaway hash for timing parity. Both halves are measured in LoginExistenceOracleIT.
-        if (user.isSuspended()) {
-            throw new ApiException(HttpStatus.FORBIDDEN,
-                    "This account has been suspended. Contact support for assistance.");
-        }
+        enforceAccountIsSignable(user);
 
         if (user.getFailedLoginAttempts() > 0 || user.getLockedUntil() != null) {
             user.setFailedLoginAttempts(0);
@@ -458,16 +512,348 @@ public class AuthService {
             userRepository.save(user);
         }
 
-        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId());
+        // SEC-03 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Checked only
+        // AFTER the password has already verified, for the same oracle reason enforceAccountIsSignable
+        // is positioned where it is: checking earlier would let an unauthenticated caller learn
+        // "this admin account has MFA enabled" (or exists at all) for the cost of a guess. USER_LOGIN
+        // is deliberately NOT recorded here -- a session has not actually been established yet, only
+        // the first factor; see completeMfaLogin for where it lands once the second one succeeds.
+        //
+        // adminMfaService.isFeatureEnabled() is checked FIRST, short-circuiting isEnabled()
+        // entirely -- see that method's own doc comment. Sid: keep this flag off until the admin
+        // portal has an MFA UI (enrollment, verification, recovery); until then even a credential
+        // row that somehow exists (enrolled before this flag existed, or written directly to the
+        // database) must not gate login, since there would be no way for that admin to complete
+        // the second step and no self-service way back in.
+        if (adminMfaService.isFeatureEnabled()
+                && User.SCOPE_ADMIN.equalsIgnoreCase(user.getAccountScope())
+                && adminMfaService.isEnabled(user.getId())) {
+            String challengeToken = adminMfaService.issueChallenge(user.getId());
+            throw new ApiException(HttpStatus.FORBIDDEN, ErrorCode.AUTH_MFA_REQUIRED,
+                    ErrorCode.AUTH_MFA_REQUIRED.defaultMessage(), Map.of("mfaChallengeToken", challengeToken));
+        }
 
-        // Refresh token first: it is what mints the session, and the access token has to carry
-        // that session's id in its sid claim.
+        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId());
+        return issueSessionTokens(user);
+    }
+
+    /**
+     * SEC-03. Second step of the two-factor flow {@link #login} starts by throwing
+     * {@code AUTH_MFA_REQUIRED} -- the frontend calls this once it has both the challenge token
+     * from that error's details and a code from the user's authenticator app (or a recovery code).
+     * {@link AdminMfaService#verifyChallenge} does all the actual proving and consumes the
+     * challenge; this method's only job is finishing what {@code login()} started once that
+     * succeeds, which is why USER_LOGIN is recorded HERE and not in login() itself -- this is the
+     * moment a session actually begins.
+     */
+    @Transactional
+    public AuthResponse completeMfaLogin(String challengeToken, String code) {
+        // Same flag login() checks -- with it off, login() never issues a challenge token in the
+        // first place, so this only matters for a token issued before the flag was turned off, or
+        // a direct call with a guessed/stale one. Either way, refuse rather than resolve it: there
+        // is no admin-portal UI to have gotten a challenge token from.
+        if (!adminMfaService.isFeatureEnabled()) {
+            throw new ApiException(ErrorCode.AUTH_MFA_NOT_AVAILABLE);
+        }
+        UUID userId = adminMfaService.verifyChallenge(challengeToken, code);
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
+        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId(), Map.of("mfa", true));
+        return issueSessionTokens(user);
+    }
+
+    /** Refresh token first: it is what mints the session, and the access token has to carry that
+     *  session's id in its sid claim. Shared by {@link #login} (no MFA in the way) and
+     *  {@link #completeMfaLogin} (MFA just satisfied) -- both are "a session begins now," which is
+     *  exactly the one thing this method does. */
+    private AuthResponse issueSessionTokens(User user) {
         var issued = refreshTokenService.issue(user.getId());
         String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId(),
                 user.getAccountScope());
         String refreshToken = issued.rawToken();
         return new AuthResponse(accessToken, refreshToken, user.getEmail(), user.getFullName(), user.isPhoneVerified(),
                 PhoneMasking.mask(user.getPhoneNumber()));
+    }
+
+    /**
+     * Suspended/deactivated/pending-deletion/deleted checks {@link #login} and
+     * {@link #loginWithGoogle} both need — extracted so a second entry point into the SAME
+     * account can never reach an authenticated session without going through the identical gate
+     * the password path already enforces. Deliberately does NOT include the lockout/failed-
+     * attempts check that sits above this block in {@code login()} — that check exists to slow
+     * down brute-forcing a PASSWORD, which has no meaning for a caller who has already proved
+     * identity a different way (a verified Google ID token).
+     *
+     * <p>Same positioning discipline the original login() comments described: called only AFTER
+     * the caller has already proved this is genuinely the account owner (password match, or here,
+     * a Google-verified email), never before — checking account status first would turn either
+     * entry point into an account-existence oracle for an unauthenticated caller.
+     */
+    private void enforceAccountIsSignable(User user) {
+        if (user.isSuspended()) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "This account has been suspended. Contact support for assistance.");
+        }
+        if (user.isDeactivated()) {
+            if (selfServiceReactivationWindowHasClosed(user)) {
+                throw new ApiException(HttpStatus.FORBIDDEN,
+                        "This account is deactivated and the self-service reactivation window has closed. Contact support to reactivate it.");
+            }
+            String rawToken = mintReactivationToken(user.getId());
+            throw new ApiException(HttpStatus.FORBIDDEN, ErrorCode.AUTH_ACCOUNT_DEACTIVATED,
+                    ErrorCode.AUTH_ACCOUNT_DEACTIVATED.defaultMessage(),
+                    Map.of("reactivationToken", rawToken));
+        }
+        if (user.isPendingDeletion()) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "This account is scheduled for deletion and can no longer be signed in to.");
+        }
+        if (user.isDeleted()) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "This account no longer exists.");
+        }
+    }
+
+    /**
+     * D-23, Phase 1 (web). {@code identity} has already had its signature, audience and issuer
+     * checked by {@link com.finora.integrations.google.login.GoogleIdTokenVerifierService} before
+     * this is ever called — Finora never sees a Google credential, only the verified claims that
+     * come out the other side of that check.
+     *
+     * <p><b>Auto-link, not reject — but only into a VERIFIED account.</b> A verified Google email
+     * matching an existing Finora account signs into THAT account, rather than being refused or
+     * silently creating a duplicate — chosen because Google's own {@code email_verified} claim is
+     * the same trust basis "Sign in with Google" relies on everywhere. See D-23's own record for
+     * the alternative considered and why it lost. {@link
+     * com.finora.integrations.google.login.GoogleIdTokenVerifierService} refuses an unverified
+     * Google email before this method is ever reached, so there is no unverified-GOOGLE-email case
+     * to handle here.
+     *
+     * <p><b>Self-review finding, fixed here:</b> the auto-link above assumed the EXISTING account's
+     * own email had equally strong proof behind it — it didn't. Password registration
+     * ({@code createUserRecord}) never verified email ownership, so an attacker could pre-register
+     * a victim's email with a password of their own choosing; when the real victim later signed in
+     * with Google, auto-link would have signed them straight into the attacker's account, which the
+     * attacker still holds the password to (the classic OAuth "pre-hijacking" attack). This method
+     * now refuses to auto-link into an existing account whose {@code emailVerified} is still false
+     * — see {@link User#isEmailVerified()} and V93's own migration comment — and instead mints and
+     * sends a fresh verification link to that address (reusing {@link
+     * #mintEmailVerificationToken}), so the real owner (the only person who can read that inbox)
+     * has a genuine path forward: verify, then try Google sign-in again.
+     *
+     * <p><b>Phone verification stays mandatory</b>, same as every other signup path — a newly
+     * created Google account gets {@code phoneNumber = null}, {@code phoneVerified = false}, and
+     * this response's own {@code phoneVerified} field routes the frontend to {@code /verify-phone}
+     * exactly as it already does for a password signup. Collecting that first phone number reuses
+     * the existing {@code PhoneChangeService} flow — already reachable by a phone-unverified user
+     * per {@code PhoneVerificationFilter}'s own allowlist — rather than a new screen.
+     *
+     * <p><b>{@code noRollbackFor} is load-bearing here, exactly as it is on {@link #login} and
+     * {@link #refresh}.</b> The existing-but-unverified-email branch WRITES (mints and saves a
+     * fresh {@link EmailVerificationToken} via {@link #mintEmailVerificationToken}) and then
+     * THROWS {@code ApiException} to refuse the auto-link. Under the default rollback rule that
+     * write is discarded the instant it's thrown, and the {@code AfterCommit}-registered email
+     * send never fires either (it only runs on an actual commit) — so the response would tell the
+     * caller "we've sent a new verification link" while nothing was persisted and no email went
+     * out, leaving the real account owner with no way forward at all. Invisible to
+     * {@code AuthServiceGoogleLoginTest} for the same reason {@link #login}'s own doc comment
+     * gives: it mocks the repositories, so {@code save} was called and there is no real
+     * transaction to undo it.
+     */
+    @Transactional(noRollbackFor = ApiException.class)
+    public AuthResponse loginWithGoogle(com.finora.integrations.google.login.GoogleIdentity identity) {
+        return loginWithOAuthIdentity(identity.email(), identity.name(), OAuthProvider.GOOGLE);
+    }
+
+    /**
+     * D-23 Phase 2. Everything {@link #loginWithGoogle}'s own doc comment says applies here
+     * unchanged — same auto-link-into-a-verified-account behavior, same pre-hijacking protection
+     * on an unverified existing account, same registrations-enabled gate scoped to new accounts
+     * only — {@link #loginWithOAuthIdentity} is the one body both methods share.
+     *
+     * <p>The one real difference is {@code clientProvidedFullName}. Unlike Google's ID token,
+     * Apple's never carries a name claim at all (see {@link
+     * com.finora.integrations.apple.login.AppleIdentity}'s own doc comment) — Apple hands the
+     * display name to the client, not the backend, and only on the user's very first
+     * authorization for this app. The client (native {@code AuthenticationServices} UI) has to
+     * capture and forward it itself; every subsequent sign-in, this parameter will be {@code null}
+     * and the same email fallback {@link #sanitizeOAuthDisplayName} already applies for Google
+     * covers it.
+     */
+    @Transactional(noRollbackFor = ApiException.class)
+    public AuthResponse loginWithApple(com.finora.integrations.apple.login.AppleIdentity identity,
+                                        String clientProvidedFullName) {
+        return loginWithOAuthIdentity(identity.email(), clientProvidedFullName, OAuthProvider.APPLE);
+    }
+
+    /**
+     * Shared body for {@link #loginWithGoogle} and {@link #loginWithApple} — originally
+     * Google-only, generalized here since D-26 requires Apple sign-in to behave identically in
+     * every way that matters (account matching, pre-hijacking protection, the registrations gate),
+     * differing only in provider-facing labels and audit action names.
+     *
+     * <p><b>Auto-link, not reject — but only into a VERIFIED account.</b> A verified OAuth email
+     * matching an existing Finora account signs into THAT account, rather than being refused or
+     * silently creating a duplicate — chosen because the provider's own {@code email_verified}
+     * claim is the same trust basis "Sign in with Google"/"Sign in with Apple" relies on
+     * everywhere. See D-23's own record for the alternative considered and why it lost. {@link
+     * com.finora.integrations.google.login.GoogleIdTokenVerifierService} and {@link
+     * com.finora.integrations.apple.login.AppleIdTokenVerifierService} both refuse an unverified
+     * email before this method is ever reached, so there is no unverified-OAuth-email case to
+     * handle here.
+     *
+     * <p><b>Self-review finding, fixed here:</b> the auto-link above assumed the EXISTING account's
+     * own email had equally strong proof behind it — it didn't. Password registration
+     * ({@code createUserRecord}) never verified email ownership, so an attacker could pre-register
+     * a victim's email with a password of their own choosing; when the real victim later signed in
+     * with Google or Apple, auto-link would have signed them straight into the attacker's account,
+     * which the attacker still holds the password to (the classic OAuth "pre-hijacking" attack).
+     * This method now refuses to auto-link into an existing account whose {@code emailVerified} is
+     * still false — see {@link User#isEmailVerified()} and V93's own migration comment — and
+     * instead mints and sends a fresh verification link to that address (reusing {@link
+     * #mintEmailVerificationToken}), so the real owner (the only person who can read that inbox)
+     * has a genuine path forward: verify, then try signing in again.
+     *
+     * <p><b>Phone verification stays mandatory</b>, same as every other signup path — a newly
+     * created OAuth account gets {@code phoneNumber = null}, {@code phoneVerified = false}, and
+     * this response's own {@code phoneVerified} field routes the frontend to {@code /verify-phone}
+     * exactly as it already does for a password signup. Collecting that first phone number reuses
+     * the existing {@code PhoneChangeService} flow — already reachable by a phone-unverified user
+     * per {@code PhoneVerificationFilter}'s own allowlist — rather than a new screen.
+     *
+     * <p><b>{@code noRollbackFor} is load-bearing</b> on both {@link #loginWithGoogle} and
+     * {@link #loginWithApple}, exactly as it is on {@link #login} and {@link #refresh} — see those
+     * methods' own doc comments for why. This method itself carries no transactional annotation:
+     * it joins whichever of the two callers' transactions is already open, and the rollback rule
+     * has to live on that boundary, not here.
+     */
+    private AuthResponse loginWithOAuthIdentity(String rawEmail, String displayName, OAuthProvider provider) {
+        String email = rawEmail.trim().toLowerCase();
+        Optional<User> existing = findUserByEmailIgnoreCaseSafely(email, User.SCOPE_USER);
+        boolean isNewAccount = existing.isEmpty();
+        // Self-review finding: this is public self-service signup exactly like register()'s own
+        // check just above -- omitting it here meant an admin disabling public registrations
+        // (a live, no-redeploy operational control -- see PlatformSettingsService) closed the
+        // password door while leaving this one wide open. Scoped to NEW accounts only, same as
+        // register(): auto-linking into an EXISTING account isn't a new registration.
+        if (isNewAccount && !platformSettingsService.getEntity().isRegistrationsEnabled()) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "New registrations are currently disabled.");
+        }
+        User user = existing.orElseGet(() -> createOAuthUserRecord(email, displayName, provider));
+        if (!isNewAccount) {
+            if (!user.isEmailVerified()) {
+                String verifyLink = emailProperties.resolveBaseUrl(null) + "/verify-email?token="
+                        + mintEmailVerificationToken(user.getId());
+                UUID unverifiedUserId = user.getId();
+                String unverifiedEmail = user.getEmail();
+                AfterCommit.run("email verification email (" + provider.label + " sign-in conflict)", () -> {
+                    EmailResult result = emailProvider.sendEmailVerificationEmail(unverifiedEmail, verifyLink);
+                    auditService.record(unverifiedUserId, "EMAIL_SENT", "User", unverifiedUserId, Map.of(
+                            "type", "email_verification", "provider", result.provider().name(),
+                            "success", result.success()));
+                });
+                throw new ApiException(HttpStatus.FORBIDDEN,
+                        "An account with this email already exists but hasn't been verified yet. "
+                                + "We've sent a new verification link to your email -- check your inbox, "
+                                + "then try Sign in with " + provider.label + " again.");
+            }
+            enforceAccountIsSignable(user);
+        }
+
+        auditService.record(user.getId(), isNewAccount ? provider.registeredAuditAction : provider.loginAuditAction,
+                "User", user.getId());
+
+        var issued = refreshTokenService.issue(user.getId());
+        String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId(),
+                user.getAccountScope());
+        String refreshToken = issued.rawToken();
+        return new AuthResponse(accessToken, refreshToken, user.getEmail(), user.getFullName(),
+                user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()));
+    }
+
+    /** Provider-specific labels/audit-action names/signInMethod {@link #loginWithOAuthIdentity}
+     *  needs — the only things that actually differ between {@link #loginWithGoogle} and
+     *  {@link #loginWithApple}. */
+    private enum OAuthProvider {
+        GOOGLE("Google", "USER_REGISTERED_GOOGLE", "USER_LOGIN_GOOGLE", User.SIGN_IN_METHOD_GOOGLE),
+        APPLE("Apple", "USER_REGISTERED_APPLE", "USER_LOGIN_APPLE", User.SIGN_IN_METHOD_APPLE);
+
+        private final String label;
+        private final String registeredAuditAction;
+        private final String loginAuditAction;
+        private final String signInMethod;
+
+        OAuthProvider(String label, String registeredAuditAction, String loginAuditAction, String signInMethod) {
+            this.label = label;
+            this.registeredAuditAction = registeredAuditAction;
+            this.loginAuditAction = loginAuditAction;
+            this.signInMethod = signInMethod;
+        }
+    }
+
+    /**
+     * New-account creation for {@link #loginWithOAuthIdentity} — deliberately not a call into
+     * {@link #createUserRecord}, since that method's contract requires a {@link RegisterRequest}
+     * (a real password, a phone number), neither of which exist on this path. Shares the same
+     * default-category seeding as every other creation path; uniqueness is already established by
+     * the caller's own lookup miss immediately before this runs.
+     */
+    private User createOAuthUserRecord(String email, String displayName, OAuthProvider provider) {
+        User user = new User();
+        user.setEmail(email);
+        user.setAccountScope(User.SCOPE_USER);
+        user.setPasswordHash(passwordEncoder.encode(randomUnguessablePassword()));
+        // The durable marker every "re-enter your current password" gate elsewhere in this
+        // codebase reads via GoogleReauthVerifier -- see User.signInMethod's own doc comment,
+        // including the D-26 gap it names: GoogleReauthVerifier itself doesn't yet know how to
+        // re-verify an APPLE account, so that gate degrades gracefully (an ordinary "incorrect
+        // password" outcome) rather than crashing, but doesn't actually let an Apple user back in
+        // -- unscoped follow-up work, not part of this change.
+        user.setSignInMethod(provider.signInMethod);
+        user.setFullName(sanitizeOAuthDisplayName(displayName, email));
+        // phoneNumber left null -- see loginWithOAuthIdentity's own doc comment on why, and how it
+        // gets collected. The column is nullable (unique, but NULL is never equal to NULL under a
+        // Postgres unique constraint), so this needs no schema change.
+        // A brand-new account created FROM an OAuth sign-in has no separate password anyone else
+        // could hold, so there is nothing to "pre-hijack" here -- the provider's own
+        // verified-email claim is itself sufficient proof for this account, unlike the
+        // existing-account auto-link case loginWithOAuthIdentity's own doc comment covers.
+        user.setEmailVerified(true);
+        user = userRepository.save(user);
+        passwordHistoryService.record(user.getId(), user.getPasswordHash());
+        seedDefaultCategories(user.getId());
+        return user;
+    }
+
+    /**
+     * An OAuth provider's {@code name}/display-name value is self-reported by the account holder,
+     * not something the provider itself constrains the way {@link RegisterRequest#fullName} is by
+     * its own {@code @Pattern} — every other account-creation path in this class enforces
+     * {@link AuthDtos#FULL_NAME_REGEXP} (letters, spaces, hyphens, apostrophes, periods, capped
+     * length) before anything reaches the database, and this one shouldn't be the exception just
+     * because the value arrived from a JWT claim (Google) or a native sign-in UI (Apple) instead
+     * of a form field. Falls back to the email address — the same fallback
+     * {@link #createOAuthUserRecord} already used for a genuinely missing name (Apple, every time
+     * after the first authorization) — rather than storing whatever the provider handed back
+     * unchecked.
+     */
+    private String sanitizeOAuthDisplayName(String displayName, String email) {
+        if (displayName != null && displayName.matches(AuthDtos.FULL_NAME_REGEXP)) {
+            return displayName.trim();
+        }
+        return email;
+    }
+
+    /**
+     * A value long and random enough that brute-forcing it is not a realistic path into an
+     * account whose owner never set a real password — see {@link #createOAuthUserRecord}'s own
+     * doc comment. 256 bits from the same {@link SecureRandom} generator this class already uses
+     * for reset/reactivation tokens, base64-encoded (44 characters, safely under BCrypt's 72-byte
+     * input limit).
+     */
+    private String randomUnguessablePassword() {
+        byte[] bytes = new byte[32];
+        secureRandom.nextBytes(bytes);
+        return Base64.getEncoder().encodeToString(bytes);
     }
 
     /**
@@ -507,6 +893,23 @@ public class AuthService {
             throw new ApiException(HttpStatus.FORBIDDEN,
                     "This account has been suspended. Contact support for assistance.");
         }
+        // UserAccountLifecycleService.deactivate() calls refreshTokenService.revokeAllForUser in
+        // the same transaction as the status write, so this should be unreachable in practice --
+        // kept as a defense-in-depth backstop against a refresh that was already in flight when
+        // the status changed. Deliberately a flat reject here, not login()'s reactivation-token
+        // flow: this is a silent background call, not a screen the user is looking at, so there's
+        // nowhere to show a "welcome back" prompt. A fresh login attempt is what surfaces that.
+        if (user.isDeactivated()) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "This account is no longer active. Please sign in again.");
+        }
+        // Same defense-in-depth reasoning as the isDeactivated() check above --
+        // requestDeletion() already revokes every refresh token in the same transaction as the
+        // status write, so this should be unreachable in practice too.
+        if (user.isPendingDeletion() || user.isDeleted()) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "This account is no longer active. Please sign in again.");
+        }
 
         String newAccessToken = jwtService.generateToken(user.getId(), user.getEmail(),
                 rotation.newToken().sessionId(), user.getAccountScope());
@@ -517,6 +920,149 @@ public class AuthService {
     public LogoutResponse logout(LogoutRequest request) {
         refreshTokenService.revoke(request.refreshToken());
         return new LogoutResponse("Signed out.");
+    }
+
+    /** app.account-lifecycle.reactivation-window-enabled gates this entirely -- disabled (the
+     *  default) means no window ever closes, matching today's existing unlimited-window behavior.
+     *  A null deactivatedAt (an account deactivated before V88 shipped the column) is treated the
+     *  same way: open a window can't have closed if it's never had a start. */
+    private boolean selfServiceReactivationWindowHasClosed(User user) {
+        if (!reactivationWindowEnabled) {
+            return false;
+        }
+        Instant deactivatedAt = user.getDeactivatedAt();
+        if (deactivatedAt == null) {
+            return false;
+        }
+        return deactivatedAt.plus(java.time.Duration.ofDays(reactivationWindowDays)).isBefore(Instant.now());
+    }
+
+    /** Mints a raw reactivation token for a just-authenticated deactivated user -- see login()'s
+     *  deactivated branch. Any earlier unconsumed link for this user is burned first, same
+     *  "one live link at a time" rule forgotPassword() applies to reset tokens, so an abandoned
+     *  earlier login attempt can't be replayed after a later one already succeeded. */
+    private String mintReactivationToken(UUID userId) {
+        Instant now = Instant.now();
+        reactivationTokenRepository.markAllUnusedAsUsed(userId, now);
+
+        byte[] randomBytes = new byte[32];
+        secureRandom.nextBytes(randomBytes);
+        String rawToken = Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
+
+        AccountReactivationToken art = new AccountReactivationToken();
+        art.setUserId(userId);
+        art.setTokenHash(TokenHasher.sha256(rawToken));
+        art.setExpiresAt(now.plusSeconds(REACTIVATION_TOKEN_TTL_MINUTES * 60));
+        reactivationTokenRepository.save(art);
+        return rawToken;
+    }
+
+    /**
+     * Completes the "Welcome back — reactivate your account?" confirmation Login.tsx shows after
+     * a deactivated account's password checks out (see login()'s deactivated branch). Re-confirms
+     * the account is still DEACTIVATED (a race guard -- e.g. two tabs, or the token being reused
+     * after an admin already reactivated it through the admin portal) rather than trusting the
+     * token alone to imply that. Issues real tokens on success, same AuthResponse shape login()
+     * itself returns, so the frontend lands the user signed in with one extra click rather than a
+     * second full login.
+     */
+    @Transactional
+    public AuthResponse reactivate(ReactivateRequest request) {
+        AccountReactivationToken art = reactivationTokenRepository.findByTokenHash(TokenHasher.sha256(request.token()))
+                .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, "This reactivation link is invalid or has already been used."));
+        if (art.getUsedAt() != null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "This reactivation link has already been used.");
+        }
+        if (art.getExpiresAt().isBefore(Instant.now())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "This reactivation link has expired — please sign in again.");
+        }
+
+        User user = userRepository.findById(art.getUserId())
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
+        if (!user.isDeactivated()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "This account is no longer deactivated.");
+        }
+
+        user.setStatus(User.STATUS_ACTIVE);
+        user.setUpdatedAt(Instant.now());
+        userRepository.save(user);
+
+        art.setUsedAt(Instant.now());
+        reactivationTokenRepository.save(art);
+
+        Map<String, Object> reactivationAuditMetadata = requestMetadata.addTo(
+                new java.util.HashMap<>(Map.of("method", "self_service_login")));
+        auditService.record(user.getId(), "ACCOUNT_REACTIVATED", "User", user.getId(), reactivationAuditMetadata);
+
+        UUID reactivatedUserId = user.getId();
+        String reactivatedEmail = user.getEmail();
+        AfterCommit.run("account reactivated email", () -> {
+            EmailResult result = emailProvider.sendAccountReactivatedEmail(reactivatedEmail);
+            auditService.record(reactivatedUserId, "EMAIL_SENT", "User", reactivatedUserId, Map.of(
+                    "type", "account_reactivated", "provider", result.provider().name(),
+                    "success", result.success()));
+        });
+
+        auditService.record(user.getId(), "USER_LOGIN", "User", user.getId());
+        var issued = refreshTokenService.issue(user.getId());
+        String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId(),
+                user.getAccountScope());
+        return new AuthResponse(accessToken, issued.rawToken(), user.getEmail(), user.getFullName(),
+                user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()));
+    }
+
+    /**
+     * D-23. Mints a raw email-verification token for {@code userId} -- same shape as
+     * {@link #mintReactivationToken}, same "one live link at a time" rule (any earlier unconsumed
+     * link for this user is burned first, so an abandoned earlier link can't be replayed after a
+     * later one already verified the account).
+     */
+    private String mintEmailVerificationToken(UUID userId) {
+        Instant now = Instant.now();
+        emailVerificationTokenRepository.markAllUnusedAsUsed(userId, now);
+
+        byte[] randomBytes = new byte[32];
+        secureRandom.nextBytes(randomBytes);
+        String rawToken = Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
+
+        EmailVerificationToken evt = new EmailVerificationToken();
+        evt.setUserId(userId);
+        evt.setTokenHash(TokenHasher.sha256(rawToken));
+        evt.setExpiresAt(now.plusSeconds(EMAIL_VERIFICATION_TOKEN_TTL_MINUTES * 60));
+        emailVerificationTokenRepository.save(evt);
+        return rawToken;
+    }
+
+    /**
+     * D-23. Confirms an email-verification link clicked from an email — see
+     * {@link #mintEmailVerificationToken}'s callers (register(), and loginWithGoogle() when it
+     * finds a matching but not-yet-verified existing account) for where the link comes from.
+     * Deliberately does not re-authenticate the caller the way {@link #reactivate} does: proving
+     * email ownership is a weaker action than proving a password, and every other login path
+     * (password or Google) still runs its own independent check afterward.
+     */
+    @Transactional
+    public VerifyEmailResponse verifyEmail(String rawToken) {
+        EmailVerificationToken evt = emailVerificationTokenRepository.findByTokenHash(TokenHasher.sha256(rawToken))
+                .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, "This verification link is invalid or has already been used."));
+        if (evt.getUsedAt() != null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "This verification link has already been used.");
+        }
+        if (evt.getExpiresAt().isBefore(Instant.now())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "This verification link has expired.");
+        }
+
+        User user = userRepository.findById(evt.getUserId())
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
+        user.setEmailVerified(true);
+        user.setUpdatedAt(Instant.now());
+        userRepository.save(user);
+
+        evt.setUsedAt(Instant.now());
+        emailVerificationTokenRepository.save(evt);
+
+        auditService.record(user.getId(), "EMAIL_VERIFIED", "User", user.getId());
+        return new VerifyEmailResponse("Your email has been verified.");
     }
 
     /**
@@ -617,14 +1163,25 @@ public class AuthService {
         if (emailProvider.isConfigured()) {
             // BH-016: after commit -- see register(). The reset token row must be durable before
             // the link reaches the user's inbox anyway, or a fast click could arrive ahead of it.
+            //
+            // SEC-07 (docs/quality/bug-reports/2026-08-19-security-review-findings.md): the actual
+            // send is dispatched onto authEmailExecutor from INSIDE the after-commit callback,
+            // rather than called directly here. AfterCommit's own callback still runs synchronously
+            // on the request thread at commit time (that part is unavoidable -- Spring invokes
+            // registered synchronizations inline), but submitting to the executor is a cheap,
+            // near-instant in-memory hand-off, not a network round trip -- the callback returns
+            // before the email provider's HTTP call has even started. Without this, the
+            // existing-account branch blocked the response on a real outbound API call while the
+            // non-existing-account branch below returned after one SELECT: an easily measurable,
+            // remote account-enumeration timing oracle on an unauthenticated endpoint.
             UUID resetUserId = userOpt.get().getId();
             String resetEmail = userOpt.get().getEmail();
-            AfterCommit.run("password reset email", () -> {
+            AfterCommit.run("password reset email", () -> authEmailExecutor.execute(() -> {
                 EmailResult resetEmailResult = emailProvider.sendPasswordResetEmail(resetEmail, resetLink);
                 auditService.record(resetUserId, "EMAIL_SENT", "User", resetUserId, Map.of(
                         "type", "password_reset", "provider", resetEmailResult.provider().name(),
                         "success", resetEmailResult.success()));
-            });
+            }));
             // Real email exists — no reason to also hand the link back in the API response.
             return new ForgotPasswordResponse(genericMessage, null);
         }
@@ -648,11 +1205,36 @@ public class AuthService {
         User user = userRepository.findById(prt.getUserId())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
         if (user.getPhoneNumber() == null || user.getPhoneNumber().isBlank()) {
-            // Shouldn't be reachable in practice -- phone number is required at both
-            // registration and admin-create time -- but User.phoneNumber has no NOT NULL
-            // constraint at the DB level (V8), so this is a real, if unlikely, state to guard.
-            throw new ApiException(HttpStatus.BAD_REQUEST,
-                    "This account has no phone number on file. Contact an administrator for help resetting your password.");
+            // Bug fix (review): this used to say "contact an administrator" unconditionally --
+            // accurate for the state it was written to guard (phone number is required at both
+            // registration and admin-create time, so a missing one used to be a genuine anomaly),
+            // but stale since AuthService.createOAuthUserRecord shipped: a Google or Apple
+            // Sign-In account has no phone number and, just as relevantly here, no password of
+            // its own to reset either (its passwordHash is a random value nobody knows -- see
+            // createOAuthUserRecord's own comment). "Forgot password" doesn't apply to an
+            // account that was never given one; the actionable answer is to use the same OAuth
+            // provider again, not to wait on an administrator who has nothing to fix.
+            //
+            // Second review catch: the first version of this fix asserted "signs in with Google"
+            // unconditionally, without checking user.isGoogleAccount() -- wrong for the "real, if
+            // unlikely" PASSWORD-method account with a missing phone number this guard's own
+            // original comment already anticipated (phoneNumber has no DB-level NOT NULL). Such
+            // an account has a real password and no Google identity to fall back to, so telling
+            // it to "choose Sign in with Google instead" would be actively wrong, not just
+            // unhelpful -- the old administrator message is still the honest answer for that case.
+            // ResetPassword.tsx's own "Back to sign in" link is always visible on this screen
+            // either way, so this message only needs to explain why, not add a new escape hatch.
+            //
+            // D-26 addition: extended to isAppleAccount() the same way -- an Apple-created
+            // account hits this exact path (forgot-password is reachable by email from any
+            // device, including web, even though Apple Sign-In itself is mobile-only), and would
+            // otherwise get the same wrong "contact an administrator" message a Google account
+            // used to.
+            String reauthProviderLabel = user.isGoogleAccount() ? "Google" : user.isAppleAccount() ? "Apple" : null;
+            throw new ApiException(HttpStatus.BAD_REQUEST, reauthProviderLabel != null
+                    ? "This account signs in with " + reauthProviderLabel + " and doesn't have a password to reset. "
+                            + "Go back and choose \"Sign in with " + reauthProviderLabel + "\" instead."
+                    : "This account has no phone number on file. Contact an administrator for help resetting your password.");
         }
         // BH-015, KNOWN AND DELIBERATELY STILL OPEN. This returns the account's phone number in
         // full to anyone holding a valid reset link, where register() and login() -- both of which

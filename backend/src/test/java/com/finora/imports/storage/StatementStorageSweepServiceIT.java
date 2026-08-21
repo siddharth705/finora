@@ -2,10 +2,13 @@ package com.finora.imports.storage;
 
 import com.finora.AbstractIntegrationTest;
 import com.finora.entity.Account;
+import com.finora.entity.ImportJob;
 import com.finora.entity.ImportSession;
 import com.finora.entity.StatementImport;
 import com.finora.entity.User;
+import com.finora.exception.ErrorCode;
 import com.finora.repository.AccountRepository;
+import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.UserRepository;
@@ -43,6 +46,7 @@ class StatementStorageSweepServiceIT extends AbstractIntegrationTest {
 
     @Autowired private StatementImportRepository statementImportRepository;
     @Autowired private ImportSessionRepository importSessionRepository;
+    @Autowired private ImportJobRepository importJobRepository;
     @Autowired private AccountRepository accountRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private EntityManager entityManager;
@@ -58,7 +62,8 @@ class StatementStorageSweepServiceIT extends AbstractIntegrationTest {
     @BeforeEach
     void setUp() {
         storage = new FilesystemStatementStorage(storageRoot.toString());
-        service = new StatementStorageSweepService(Optional.of(storage), statementImportRepository, importSessionRepository);
+        service = new StatementStorageSweepService(Optional.of(storage), statementImportRepository,
+                importSessionRepository, importJobRepository);
         ReflectionTestUtils.setField(service, "retentionDays", 90);
         ReflectionTestUtils.setField(service, "batchSize", 200);
         ReflectionTestUtils.setField(service, "sweepEnabled", true);
@@ -171,7 +176,7 @@ class StatementStorageSweepServiceIT extends AbstractIntegrationTest {
      * deleted/expires -- exactly what BH-017 reports as broken and exactly what Sid decided against
      * building -- would have destroyed row B's object out from under it. This test fails under that
      * implementation and passes only because the sweep re-checks the live reference count, across
-     * both tables, immediately before acting.
+     * all three tables, immediately before acting.
      */
     @Test
     @Transactional
@@ -188,6 +193,80 @@ class StatementStorageSweepServiceIT extends AbstractIntegrationTest {
         assertThat(result.swept()).isZero();
         assertThat(result.skipped()).isEqualTo(1);
         assertThat(storage.exists(address)).isTrue();
+    }
+
+    private ImportJob saveFailedImportJob(ContentAddress address) {
+        return saveFailedImportJob(address, userId);
+    }
+
+    private ImportJob saveFailedImportJob(ContentAddress address, UUID forUserId) {
+        ImportJob job = new ImportJob(forUserId, "statement.pdf", address.hash(), address.key(), "PDF");
+        job.recordFailure("boom", null, ErrorCode.RetryPolicy.FAIL_FAST, Instant.now());
+        return importJobRepository.save(job);
+    }
+
+    private ImportJob saveCancelledImportJob(ContentAddress address) {
+        ImportJob job = new ImportJob(userId, "statement.pdf", address.hash(), address.key(), "PDF");
+        job.cancel(Instant.now());
+        return importJobRepository.save(job);
+    }
+
+    private ImportJob saveCompletedImportJob(ContentAddress address) {
+        ImportJob job = new ImportJob(userId, "statement.pdf", address.hash(), address.key(), "PDF");
+        job.complete(UUID.randomUUID(), Instant.now());
+        return importJobRepository.save(job);
+    }
+
+    /**
+     * The gap this change closes, against a real Postgres. A FAILED import_jobs row has no
+     * counterpart in either statement_imports or import_sessions -- work that fails before
+     * producing a confirmable row leaves no trace in either table -- so before
+     * ImportJobRepository.existsByObjectKeyAndStatusNotIn joined this check, this object would have
+     * been reclaimed the moment it looked old enough, destroying the one thing a future "retry
+     * without re-upload" would need.
+     */
+    @Test
+    @Transactional
+    void sweep_doesNotReclaimAnObjectStillReferencedByALiveFailedImportJob() {
+        ContentAddress address = storeBytes("failed-async-import");
+        StatementImport si = saveStatementImport(address);
+        softDeleteAndBackdate(si, Instant.now().minus(91, ChronoUnit.DAYS));
+        saveFailedImportJob(address);
+
+        StatementStorageSweepService.Result result = service.sweep();
+
+        assertThat(result.swept()).isZero();
+        assertThat(result.skipped()).isEqualTo(1);
+        assertThat(storage.exists(address)).isTrue();
+    }
+
+    /**
+     * A COMPLETED or CANCELLED import_jobs row must not protect its object on its own. Unlike
+     * statement_imports and import_sessions, import_jobs rows never expire (only
+     * cascading away with the owning user) -- if either counted here, this object would become
+     * permanently unsweepable the moment the job reached that status: for COMPLETED, even long
+     * after the statement it produced was deleted and its originating session expired; for
+     * CANCELLED, with no other reference ever having existed at all.
+     */
+    @Test
+    @Transactional
+    void sweep_reclaimsAnObjectWhoseOnlyImportJobReferenceIsCompletedOrCancelled() {
+        ContentAddress completedAddress = storeBytes("completed-async-import");
+        StatementImport completedSi = saveStatementImport(completedAddress);
+        softDeleteAndBackdate(completedSi, Instant.now().minus(91, ChronoUnit.DAYS));
+        saveCompletedImportJob(completedAddress);
+
+        ContentAddress cancelledAddress = storeBytes("cancelled-with-no-other-reference");
+        StatementImport cancelledSi = saveStatementImport(cancelledAddress);
+        softDeleteAndBackdate(cancelledSi, Instant.now().minus(91, ChronoUnit.DAYS));
+        saveCancelledImportJob(cancelledAddress);
+
+        StatementStorageSweepService.Result result = service.sweep();
+
+        assertThat(result.swept()).isEqualTo(2);
+        assertThat(result.skipped()).isZero();
+        assertThat(storage.exists(completedAddress)).isFalse();
+        assertThat(storage.exists(cancelledAddress)).isFalse();
     }
 
     @Test
@@ -287,15 +366,17 @@ class StatementStorageSweepServiceIT extends AbstractIntegrationTest {
      * BH-039, the {@code ImportSessionRepository} half. {@link
      * #sweep_doesNotReclaimAnObjectStillReferencedByAnotherTenantsLiveRow} proves the cross-tenant
      * property, but its surviving reference is a {@code StatementImport} row -- the sweep's guard is
-     * {@code statementImportRepository.existsByObjectKey(...) ||
-     * importSessionRepository.existsByObjectKey(...)}, so that test's first clause alone keeps the
-     * object alive and the {@code ImportSessionRepository} half of the OR is never actually
-     * exercised. A future mistake scoped to only {@code ImportSessionRepository.existsByObjectKey}
-     * (the same well-meaning "add userId, it looks under-scoped" refactor BH-039 warns against)
-     * would pass every existing test and still silently destroy another tenant's only copy of a
-     * still-staged document. This is the test that would catch that: the surviving live reference
-     * here is an {@code ImportSession}, not a {@code StatementImport}, and it belongs to a different
-     * tenant.
+     * a three-way OR across {@code StatementImportRepository}, {@code ImportSessionRepository}, and
+     * {@code ImportJobRepository}'s {@code existsByObjectKey*} methods -- so that test's first
+     * clause alone keeps the object alive and the {@code ImportSessionRepository} half is never
+     * actually exercised. A future mistake scoped to only {@code
+     * ImportSessionRepository.existsByObjectKey} (the same well-meaning "add userId, it looks
+     * under-scoped" refactor BH-039 warns against) would pass every existing test and still silently
+     * destroy another tenant's only copy of a still-staged document. This is the test that would
+     * catch that: the surviving live reference here is an {@code ImportSession}, not a {@code
+     * StatementImport}, and it belongs to a different tenant. {@link
+     * #sweep_doesNotReclaimAnObjectStillReferencedByAnotherTenantsLiveImportJob} is the same
+     * argument applied to the third clause, {@code ImportJobRepository.existsByObjectKeyAndStatusNotIn}.
      */
     @Test
     @Transactional
@@ -312,6 +393,40 @@ class StatementStorageSweepServiceIT extends AbstractIntegrationTest {
 
         assertThat(result.swept())
                 .as("another tenant's still-staged session on the same bytes must not be destroyed "
+                        + "because MY reference to the same bytes was deleted")
+                .isZero();
+        assertThat(result.skipped()).isEqualTo(1);
+        assertThat(storage.exists(address)).isTrue();
+    }
+
+    /**
+     * BH-039, the {@code ImportJobRepository} half -- the same argument as the two tests above,
+     * applied to the third OR clause added for this change.
+     * {@code ImportJobRepository.existsByObjectKeyAndStatusNotIn} takes no {@code userId} either
+     * (confirmed by its signature), correctly matching the other two -- content addressing is
+     * global, so an object shared by two tenants must stay protected regardless of which tenant's
+     * row is the live one. Without this test, a future "helpfully" tenant-scoped rewrite of that
+     * query would pass every other test in this file, including
+     * {@link #sweep_doesNotReclaimAnObjectStillReferencedByALiveFailedImportJob} (same-tenant only),
+     * and still silently destroy another tenant's only copy of a document because THIS tenant's
+     * reference to the same bytes was deleted.
+     */
+    @Test
+    @Transactional
+    void sweep_doesNotReclaimAnObjectStillReferencedByAnotherTenantsLiveImportJob() {
+        ContentAddress address = storeBytes("failed-by-one-tenant-shared-with-another");
+        StatementImport mine = saveStatementImport(address);
+        OtherTenant other = otherTenant();
+        ImportJob theirs = saveFailedImportJob(address, other.userId());
+        softDeleteAndBackdate(mine, Instant.now().minus(91, ChronoUnit.DAYS));
+        // theirs is deliberately left alone -- still FAILED, not cleaned up, and belongs to a
+        // different tenant.
+        assertThat(importJobRepository.findById(theirs.getId())).isPresent();
+
+        StatementStorageSweepService.Result result = service.sweep();
+
+        assertThat(result.swept())
+                .as("another tenant's failed job referencing the same bytes must not be destroyed "
                         + "because MY reference to the same bytes was deleted")
                 .isZero();
         assertThat(result.skipped()).isEqualTo(1);

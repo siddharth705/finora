@@ -6,9 +6,17 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Parameter;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+
+import static com.finora.config.RateLimitFilter.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
@@ -229,15 +237,23 @@ class RateLimitFilterTest {
         String[] mustBeLimited = {
                 "/api/v1/auth/login",
                 "/api/v1/auth/register",
+                "/api/v1/auth/google",
                 "/api/v1/auth/forgot-password",
                 "/api/v1/auth/reset-password",
                 "/api/v1/auth/reset-password/phone",
+                "/api/v1/auth/verify-email",
                 "/api/v1/import/csv/stage",
                 "/api/v1/import/pdf/stage",
                 "/api/v1/import/jobs",
                 "/api/v1/users/me/password-change/start",
                 "/api/v1/users/me/password-change/verify-otp",
                 "/api/v1/users/me/password-change/complete",
+                "/api/v1/users/me/phone-change/start",
+                "/api/v1/users/me/phone-change/verify-otp",
+                "/api/v1/users/me/phone-change/complete",
+                "/api/v1/users/me/data-export",
+                "/api/v1/users/me/account/deactivate",
+                "/api/v1/auth/mfa/verify",
         };
 
         for (String path : mustBeLimited) {
@@ -302,5 +318,88 @@ class RateLimitFilterTest {
         MockHttpServletResponse completeResponse = new MockHttpServletResponse();
         filter.doFilterInternal(completeRequest, completeResponse, chain);
         assertThat(completeResponse.getStatus()).isEqualTo(429);
+    }
+
+    /** Same bucketing property as passwordChangeSteps_shareOneRateLimitBucket, for the Change Phone
+     *  Number flow's own three steps. */
+    @Test
+    void phoneChangeSteps_shareOneRateLimitBucket() throws Exception {
+        RateLimitFilter filter = newFilter(false);
+        FilterChain chain = mock(FilterChain.class);
+
+        boolean tripped = false;
+        for (int i = 0; i < 20; i++) {
+            String path = i % 2 == 0
+                    ? "/api/v1/users/me/phone-change/start"
+                    : "/api/v1/users/me/phone-change/verify-otp";
+            HttpServletRequest request = requestFor(path, "10.0.0.10", null);
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            filter.doFilterInternal(request, response, chain);
+            if (response.getStatus() == 429) tripped = true;
+        }
+        assertThat(tripped).isTrue();
+
+        HttpServletRequest completeRequest = requestFor("/api/v1/users/me/phone-change/complete", "10.0.0.10", null);
+        MockHttpServletResponse completeResponse = new MockHttpServletResponse();
+        filter.doFilterInternal(completeRequest, completeResponse, chain);
+        assertThat(completeResponse.getStatus()).isEqualTo(429);
+    }
+
+    /**
+     * Bug fix (self-review after PR #142): the data-export ceiling was raised from 3/day to 5/day
+     * in two places (DEFAULT_DATA_EXPORT_MAX and application.yml's own default) but the
+     * @Value fallback on the real, Spring-managed constructor below was missed -- a third copy of
+     * the same literal, exactly the "written in two places, they drift" failure this class's own
+     * javadoc already warns about. Harmless today only because application.yml always supplies
+     * the property in the real app; a future context that constructs this bean without it (a
+     * narrower test slice, a refactor, an ops change relying on env vars alone) would have
+     * silently reverted to the 3/day ceiling this PR explicitly fixed. Reflects over every
+     * {@code @Value}-annotated parameter on the full constructor and checks its SpEL fallback
+     * against the corresponding DEFAULT_* constant, so any future drift on ANY of them -- not
+     * just this one -- fails loudly here instead of silently in a deploy that happens to omit
+     * application.yml.
+     */
+    @Test
+    void everyValueAnnotationsFallbackDefault_matchesItsCorrespondingConstant() throws Exception {
+        Map<String, Integer> expectedByProperty = Map.ofEntries(
+                Map.entry("app.rate-limit.login.max", DEFAULT_LOGIN_MAX),
+                Map.entry("app.rate-limit.login.window-seconds", DEFAULT_LOGIN_WINDOW),
+                Map.entry("app.rate-limit.register.max", DEFAULT_REGISTER_MAX),
+                Map.entry("app.rate-limit.register.window-seconds", DEFAULT_REGISTER_WINDOW),
+                Map.entry("app.rate-limit.forgot-password.max", DEFAULT_FORGOT_MAX),
+                Map.entry("app.rate-limit.forgot-password.window-seconds", DEFAULT_FORGOT_WINDOW),
+                Map.entry("app.rate-limit.import-stage.max", DEFAULT_IMPORT_STAGE_MAX),
+                Map.entry("app.rate-limit.import-stage.window-seconds", DEFAULT_IMPORT_STAGE_WINDOW),
+                Map.entry("app.rate-limit.password-change.max", DEFAULT_PASSWORD_CHANGE_MAX),
+                Map.entry("app.rate-limit.password-change.window-seconds", DEFAULT_PASSWORD_CHANGE_WINDOW),
+                Map.entry("app.rate-limit.phone-change.max", DEFAULT_PHONE_CHANGE_MAX),
+                Map.entry("app.rate-limit.phone-change.window-seconds", DEFAULT_PHONE_CHANGE_WINDOW),
+                Map.entry("app.rate-limit.reset-password.max", DEFAULT_RESET_PASSWORD_MAX),
+                Map.entry("app.rate-limit.reset-password.window-seconds", DEFAULT_RESET_PASSWORD_WINDOW),
+                Map.entry("app.rate-limit.data-export.max", DEFAULT_DATA_EXPORT_MAX),
+                Map.entry("app.rate-limit.data-export.window-seconds", DEFAULT_DATA_EXPORT_WINDOW),
+                Map.entry("app.rate-limit.google.max", DEFAULT_GOOGLE_MAX),
+                Map.entry("app.rate-limit.google.window-seconds", DEFAULT_GOOGLE_WINDOW),
+                Map.entry("app.rate-limit.apple.max", DEFAULT_APPLE_MAX),
+                Map.entry("app.rate-limit.apple.window-seconds", DEFAULT_APPLE_WINDOW),
+                Map.entry("app.rate-limit.mfa-verify.max", DEFAULT_MFA_VERIFY_MAX),
+                Map.entry("app.rate-limit.mfa-verify.window-seconds", DEFAULT_MFA_VERIFY_WINDOW));
+
+        Constructor<?> springConstructor = Arrays.stream(RateLimitFilter.class.getDeclaredConstructors())
+                .filter(c -> c.getParameterCount() > 2)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Expected the @Value-annotated constructor to still exist"));
+
+        Map<String, Integer> actualByProperty = new HashMap<>();
+        for (Parameter p : springConstructor.getParameters()) {
+            Value value = p.getAnnotation(Value.class);
+            if (value == null) continue;
+            // e.g. "${app.rate-limit.data-export.max:5}" -> key "app.rate-limit.data-export.max", default 5
+            String spel = value.value().replace("${", "").replace("}", "");
+            int colon = spel.lastIndexOf(':');
+            actualByProperty.put(spel.substring(0, colon), Integer.parseInt(spel.substring(colon + 1)));
+        }
+
+        assertThat(actualByProperty).containsExactlyInAnyOrderEntriesOf(expectedByProperty);
     }
 }

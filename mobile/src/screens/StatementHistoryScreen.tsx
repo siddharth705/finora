@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { statementImportsApi } from '../api/endpoints';
 import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../api/errorCodes';
@@ -39,6 +40,10 @@ type Detail = { mode: 'summary' | 'transactions'; statement: StatementSummary };
  * — see handleReimport.
  */
 export function StatementHistoryScreen() {
+  // SEC-17 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Account numbers,
+  // balances and per-statement transaction detail render here -- see DashboardScreen's identical
+  // comment for the platform coverage/degrade behavior.
+  usePreventScreenCapture();
   const c = useTheme();
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
@@ -394,7 +399,6 @@ function StatementDetailModal({ detail, onClose }: { detail: Detail; onClose: ()
               <Field label="Transactions imported" value={String(statement.transactionsImported)} />
               <Field label="Transactions skipped" value={String(statement.transactionsSkipped)} />
               <Field label="Duplicates flagged" value={String(statement.duplicateCount)} />
-              <Field label="Status" value={statement.status} />
             </View>
           ) : isLoading ? (
             <ActivityIndicator color={c.primary} style={styles.detailLoading} />

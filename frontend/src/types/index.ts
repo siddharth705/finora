@@ -92,9 +92,15 @@ export interface DashboardSummary {
   incomeDeltaPct: number | null;
   expenseDeltaPct: number | null;
   netDeltaPct: number | null;
-  healthScore: number;
-  healthLabel: string;
+  // D-25 PR3-A: null/empty below healthScoreMinTransactions -- a score computed from too few
+  // transactions is a harsh first impression, not a true reading. Check healthScoreAvailable
+  // before rendering these, don't infer availability from healthScore being non-null alone.
+  healthScore: number | null;
+  healthLabel: string | null;
   healthBreakdown: Record<string, number>;
+  healthScoreAvailable: boolean;
+  healthScoreTransactionCount: number;
+  healthScoreMinTransactions: number;
   spendByCategory: Record<string, number>;
   notifications: string[];
   /**
@@ -105,6 +111,18 @@ export interface DashboardSummary {
    */
   reportingMonth: string | null;
   reportingMonthIsCurrent: boolean;
+}
+
+// D-25 PR3-B/C. `type` is one of ACCOUNT_CREATED/FIRST_IMPORT/FIRST_BUDGET/FIRST_GOAL/
+// FIRST_GOAL_ACHIEVED (FinancialJourneyDto's own constants) -- left as `string`, not a union,
+// so an unrecognized future value degrades to a generic label instead of a type error.
+export interface JourneyMilestone {
+  type: string;
+  completed: boolean;
+  completedAt: string | null;
+}
+export interface FinancialJourney {
+  milestones: JourneyMilestone[];
 }
 
 export interface Budget {
@@ -163,6 +181,10 @@ export interface StagedRow {
   // between staging and the ledger.
   referenceNumber: string | null;
   balanceAfter: number | null;
+  // 0.0–1.0, null for every CSV/PDF row (a bank statement line has no extraction-reliability
+  // estimate to carry). Populated only for a Gmail-derived row -- display only, per
+  // ParsedReceipt's own doc comment: nothing may skip review because this number is high.
+  confidence: number | null;
 }
 
 // Best-effort fields pulled from the statement itself. Every field is nullable and genuinely
@@ -178,6 +200,11 @@ export interface DetectedAccountInfo {
   statementPeriodEnd: string | null;
   accountNumberMasked: string | null;
   creditLimit: number | null;
+  // A credit-card statement's total bill for this cycle -- only set for a PDF credit-card
+  // statement whose payment-summary panel was found; null for CSV imports and for any
+  // non-credit-card statement. Deliberately not called "amountDue" to stay unambiguous against
+  // a transaction's amount, the minimum payment due, or the account's outstanding balance.
+  totalAmountDue: number | null;
   paymentDueDate: string | null;
   accountHolderName: string | null;
   branchName: string | null;
@@ -224,16 +251,26 @@ export type FinancialProductType =
   | 'LOAN' | 'INSURANCE' | 'FOREX_CARD'
   | 'UNKNOWN';
 
+// A rule-based (never weighted) reliability status -- see ImportReliabilityStatus on the
+// backend for the exact derivation. Mirrors that enum's three values.
+export type ImportReliabilityStatus = 'CLEAN' | 'REVIEW_RECOMMENDED' | 'NEEDS_ATTENTION';
+
 // Whether an import can be proven faithful to the statement it came from, and on what basis --
 // see ImportDto.VerificationReport on the backend, and
 // docs/engineering/import-verification-framework.md for the reasoning.
 //
-// Deliberately has NO document-level status. The backend removed it because deriving one verdict
-// from several rules is an aggregator's job and no aggregator exists yet; the UI must not
-// reinvent it, or it becomes a second source of truth that can disagree with the findings it
-// claims to summarise.
+// Deliberately has NO document-level status derived from GUESSING at weights. The backend
+// removed the original aggregator idea for exactly that reason -- see its own correction note.
+// CORRECTED: `reliabilityStatus` below is that aggregator, now built. It does not reintroduce
+// the risk the paragraph above described, because it is a deterministic OR over facts already
+// on this report (a finding's own outcome, `headerReconstructionUncertain`, `textSource`), never
+// a synthesized score -- the UI still must not compute its OWN second opinion of what these
+// findings mean, and now doesn't have to: it can render the one server-computed value instead.
 export interface VerificationReport {
   findings: VerificationFinding[];
+  headerReconstructionUncertain: boolean;
+  textSource: 'NATIVE_PDF' | 'OCR' | 'NATIVE_PLUS_OCR' | null;
+  reliabilityStatus: ImportReliabilityStatus | null;
 }
 
 // One check's result. `rule` is a stable machine identifier ("BALANCE_CHAIN"), never a label --
@@ -313,7 +350,6 @@ export interface StatementSummary {
   closingBalance: number | null;
   transactionsImported: number;
   transactionsSkipped: number;
-  status: string;
   importedAt: string;
   // Financial Intelligence Workspace, Statement Imports module: how many of this import's own
   // transactions are currently flagged ReconciliationStatus.DUPLICATE. Computed on read

@@ -54,14 +54,20 @@ class HeaderProseRejectionTest {
         // folds the whole document into one all-unparseable section, which is a SEPARATE,
         // downstream fact asserted by MultiSectionZeroExtractionTest rather than here.
         put("kotak-credit-card-ledger-validation", new Expectation(0, 0));
-        put("sbi-credit-card-statement", new Expectation(4, 0));
+        // 4 before PdfTableLocator.looksLikePaymentSummaryPanel, 3 after: this trace's own
+        // "Available Credit Limit / Payment Due Date / Available Cash Limit" section was the same
+        // misdetected payment-summary panel found on the real Axis and HDFC credit statements,
+        // not prose -- a separate fix from Fix 2's word cap, landing in the same section count.
+        put("sbi-credit-card-statement", new Expectation(3, 0));
         put("icici-credit-card-statement", new Expectation(1, 3));
         // Unchanged: AU's extra sections are a genuine (if unparseable) transaction block and a
         // genuine interest-computation schedule -- not prose, so the word cap must not touch them.
         put("au-credit-card-statement", new Expectation(3, 0));
-        // Unchanged: Axis's fine print was already handled by MAX_HEADER_ROW_CELLS/the density
-        // guard before this fix; its 108 genuine transactions must not move by even one row.
-        put("axis-credit-card-statement", new Expectation(2, 108));
+        // 2 before looksLikePaymentSummaryPanel, 1 after: Axis's fine print was already handled by
+        // MAX_HEADER_ROW_CELLS/the density guard before this fix (still is), but its OTHER section
+        // was the real document's own "PAYMENT SUMMARY" panel, misread as a header -- now
+        // suppressed the same way. Its 108 genuine transactions must not move by even one row.
+        put("axis-credit-card-statement", new Expectation(1, 108));
     }};
 
     /** The control document. MUST be byte-identical -- asserted at full response detail, not just
@@ -154,14 +160,18 @@ class HeaderProseRejectionTest {
     void sbi_rejectedFifthSectionProse_doesNotPolluteThePrecedingSectionsRows() {
         PdfTableLocator.LocatedDocument after = new PdfTableLocator()
                 .locateAll(PdfTrace.load("sbi-credit-card-statement"));
-        assertThat(after.sections()).hasSize(4);
+        // 4 before PdfTableLocator.looksLikePaymentSummaryPanel, 3 after: the second of the
+        // original four sections was itself a misdetected payment-summary panel (see EXPECTED's
+        // own comment above), so the section this test cares about -- the one the rejected fifth
+        // section's prose sits after -- is now index 2, not 3.
+        assertThat(after.sections()).hasSize(3);
 
-        // The surviving fourth section's own rows are untouched -- same two rows the un-patched
+        // The surviving section's own rows are untouched -- same two rows the un-patched
         // locator produced for it, reproduced verbatim rather than re-measured, since this is
         // exactly the check the investigation's own risk section demands ("content-equality of the
         // largest section's first row before/after", generalised here to every row of the section
         // the rejected prose would land in if it leaked backward).
-        PdfTableLocator.LocatedSection lastSection = after.sections().get(3);
+        PdfTableLocator.LocatedSection lastSection = after.sections().get(2);
         assertThat(lastSection.rows()).hasSize(2);
         assertThat(lastSection.rows().get(0))
                 .as("first row of the section the rejected prose sits after -- must be the genuine "
@@ -246,7 +256,11 @@ class HeaderProseRejectionTest {
         put("bob-savings-ledger-validation", 1);
         put("canara-savings-ledger-validation", 1);
         put("central-bank-savings-ledger-validation", 1);
-        put("hdfc-credit-card-ledger-validation", 2);
+        // 2 before PdfTableLocator.looksLikePaymentSummaryPanel, 1 after: this trace's first
+        // section was the same misdetected payment-summary panel as the real Axis/HDFC/SBI
+        // documents, not something Fix 2's word cap ever touched -- moved out of "unchanged"
+        // rather than dropped, since it is still exactly-one-value-per-key stable going forward.
+        put("hdfc-credit-card-ledger-validation", 1);
         put("hdfc-savings-ledger-validation", 1);
         put("hdfc-savings-multi-page-ledger", 1);
         put("hdfc-savings-single-page-ledger", 1);
@@ -307,7 +321,7 @@ class HeaderProseRejectionTest {
                 new com.finora.imports.product.ProductAttributeExtractor(),
                 new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(),
                         new com.finora.imports.StatementTotalsValidator(), new com.finora.imports.SummaryTotalsValidator(),
-                        new com.finora.imports.ColumnAmbiguityValidator()),
+                        new com.finora.imports.ColumnAmbiguityValidator(), new com.finora.imports.RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator(), new com.finora.imports.CreditCardFlowReconciliationValidator()),
                 TestRuleEngines.empty());
     }
 }

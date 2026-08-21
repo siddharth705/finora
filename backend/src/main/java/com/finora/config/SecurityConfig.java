@@ -19,6 +19,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.context.RequestAttributeSecurityContextRepository;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.web.cors.CorsConfigurationSource;
 
@@ -105,9 +106,45 @@ public class SecurityConfig {
             .cors(cors -> cors.configurationSource(corsConfigurationSource))
             .csrf(csrf -> csrf.disable()) // stateless JWT API — CSRF protection is a browser-session concern
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            // Bug fix (review, via UserControllerIT): STATELESS session policy makes Spring
+            // Security default the SecurityContext repository to a no-op (NullSecurityContextRepository)
+            // -- there is no session to persist it in, by design. That is fine for an ordinary
+            // synchronous request, but data-export's controller method returns a
+            // StreamingResponseBody, and Spring Boot's AuthorizationFilter re-runs on the async
+            // dispatch that completes it (SecurityProperties.Filter.dispatcherTypes includes ASYNC
+            // by default, deliberately -- so async processing can't silently bypass authorization).
+            // WebAsyncManagerIntegrationFilter only keeps the SecurityContext alive for the
+            // Callable's OWN worker thread; the container thread that later resumes the async
+            // dispatch to actually finish the response has nothing to reload it from, so
+            // AuthorizationFilter denied every request -- including already-authenticated,
+            // correctly-authorized ones -- and Tomcat's own attempt to render an error page for
+            // that denial hit the exact same wall (/error isn't permitAll'd either), so the
+            // connection just closed with no response ever sent. Every real /data-export request
+            // was broken this way; only DataExportServiceTest/IT existed, and both call
+            // buildBundle/writeZip directly, bypassing the HTTP/security layer entirely, so nothing
+            // had ever exercised this path until this endpoint got its first real HTTP-level test.
+            // RequestAttributeSecurityContextRepository -- Spring Security's own documented fix for
+            // this exact scenario -- persists the context as a request attribute instead, which
+            // (unlike a ThreadLocal) survives the async redispatch because it travels with the
+            // HttpServletRequest object itself, not with whichever thread happens to be running it.
+            .securityContext(securityContext -> securityContext
+                    .securityContextRepository(new RequestAttributeSecurityContextRepository()))
             .authorizeHttpRequests(auth -> {
                 auth.requestMatchers("/api/v1/auth/**").permitAll()
                     .requestMatchers(HttpMethod.GET, "/api/v1/setup/status").permitAll()
+                    // Google redirects the user's BROWSER here after consent. That navigation
+                    // carries no Authorization header, and this API keeps no session, so requiring
+                    // authentication would make the callback unreachable by construction rather
+                    // than more secure.
+                    //
+                    // What replaces authentication is the `state` parameter, and it is held to a
+                    // higher bar precisely because it is doing this job alone: 256 bits of entropy,
+                    // stored only as a SHA-256 hash, bound to the user who started the flow,
+                    // expiring in ten minutes, and redeemable exactly once. See GmailOAuthState.
+                    //
+                    // Narrowed to GET on this one path -- not the whole /integrations tree, whose
+                    // other endpoints (connect, status, disconnect) must stay authenticated.
+                    .requestMatchers(HttpMethod.GET, "/api/v1/integrations/google/gmail/callback").permitAll()
                     .requestMatchers("/actuator/health").permitAll();
                 // Anonymous Swagger outside prod only -- see apiDocsPubliclyReachable's doc comment.
                 // Must be registered BEFORE anyRequest(): Spring Security evaluates rules in
@@ -139,7 +176,7 @@ public class SecurityConfig {
                 .frameOptions(frame -> frame.deny())
                 .referrerPolicy(referrer -> referrer
                         .policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
-                .permissionsPolicy(permissions -> permissions
+                .permissionsPolicyHeader(permissions -> permissions
                         .policy("geolocation=(), microphone=(), camera=()"))
             );
 

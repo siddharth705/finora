@@ -4,7 +4,6 @@ import com.finora.entity.Category;
 import com.finora.entity.Merchant;
 import com.finora.entity.MerchantCategoryLearning;
 import com.finora.entity.MerchantLearningAudit;
-import com.finora.entity.StatementImport;
 import com.finora.entity.Transaction;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.MerchantCategoryLearningRepository;
@@ -14,6 +13,7 @@ import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -27,7 +27,9 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AnalyticsServiceTest {
@@ -126,10 +128,14 @@ class AnalyticsServiceTest {
 
     @Test
     void topMerchants_filtersToTheGivenMonth() {
+        // BH-042 follow-up: a specific month is now itself the bounded query
+        // (findByUserIdAndTxnDateBetween), not a filter over the all-time findByUserId load -- see
+        // topMerchants_givenASpecificMonth_queriesOnlyThatMonth below for the test that proves the
+        // bound is what's actually requested. The June row here would never even be fetched now,
+        // but keeping it in the stub still proves the July-only assertion holds either way.
         UUID amazon = UUID.randomUUID();
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(
-                expense(amazon, LocalDate.of(2026, 6, 15), new BigDecimal("1000")), // June -- excluded
-                expense(amazon, LocalDate.of(2026, 7, 15), new BigDecimal("500"))   // July -- included
+        when(transactionRepository.findByUserIdAndTxnDateBetween(eq(userId), any(), any())).thenReturn(List.of(
+                expense(amazon, LocalDate.of(2026, 7, 15), new BigDecimal("500"))
         ));
         when(merchantRepository.findByUserId(userId)).thenReturn(List.of(merchant(amazon, "Amazon")));
 
@@ -137,6 +143,33 @@ class AnalyticsServiceTest {
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).totalSpend()).isEqualByComparingTo("500");
+    }
+
+    @Test
+    @DisplayName("BH-042 follow-up: topMerchants given a specific month queries only that month, not the entire history")
+    void topMerchants_givenASpecificMonth_queriesOnlyThatMonth() {
+        // No stub for findByUserId at all -- if this ever regresses back to the all-time
+        // activeExpenseTransactions(userId, month) filtering in memory, this test's own verify()
+        // below would fail to see any invocation of findByUserIdAndTxnDateBetween, since Mockito
+        // never routes one method's stub to another.
+        analyticsService.topMerchants(userId, YearMonth.of(2026, 7));
+
+        org.mockito.ArgumentCaptor<LocalDate> fromCaptor = org.mockito.ArgumentCaptor.forClass(LocalDate.class);
+        org.mockito.ArgumentCaptor<LocalDate> toCaptor = org.mockito.ArgumentCaptor.forClass(LocalDate.class);
+        verify(transactionRepository).findByUserIdAndTxnDateBetween(eq(userId), fromCaptor.capture(), toCaptor.capture());
+
+        assertThat(fromCaptor.getValue()).isEqualTo(LocalDate.of(2026, 7, 1));
+        assertThat(toCaptor.getValue()).isEqualTo(LocalDate.of(2026, 7, 31));
+    }
+
+    @Test
+    @DisplayName("BH-042 follow-up: the all-time case (month == null) is unaffected, still queries the whole history")
+    void topMerchants_givenNoMonth_stillQueriesTheEntireHistory() {
+        analyticsService.topMerchants(userId, null);
+
+        verify(transactionRepository).findByUserId(userId);
+        verify(transactionRepository, org.mockito.Mockito.never())
+                .findByUserIdAndTxnDateBetween(any(), any(), any());
     }
 
     @Test
@@ -153,7 +186,11 @@ class AnalyticsServiceTest {
     @Test
     void merchantTrend_returnsSixTrailingMonths_oldestFirst_includingZeroSpendMonths() {
         UUID amazon = UUID.randomUUID();
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(
+        // BH-042: merchantTrend now fetches only its own [start, end] window via
+        // findByUserIdAndTxnDateBetween instead of loading the user's whole history, so the stub
+        // moves to that method -- see merchantTrend_queriesOnlyItsOwnWindow_notTheEntireHistory
+        // below for the test that actually proves the window is what's requested.
+        when(transactionRepository.findByUserIdAndTxnDateBetween(eq(userId), any(), any())).thenReturn(List.of(
                 expense(amazon, LocalDate.of(2026, 7, 10), new BigDecimal("500"))
         ));
         when(merchantRepository.findByUserId(userId)).thenReturn(List.of(merchant(amazon, "Amazon")));
@@ -171,7 +208,7 @@ class AnalyticsServiceTest {
     void merchantTrend_sumsMultipleMerchantsWithinTheSameMonth() {
         UUID amazon = UUID.randomUUID();
         UUID swiggy = UUID.randomUUID();
-        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(
+        when(transactionRepository.findByUserIdAndTxnDateBetween(eq(userId), any(), any())).thenReturn(List.of(
                 expense(amazon, LocalDate.of(2026, 7, 5), new BigDecimal("500")),
                 expense(swiggy, LocalDate.of(2026, 7, 20), new BigDecimal("300"))
         ));
@@ -180,6 +217,23 @@ class AnalyticsServiceTest {
         var result = analyticsService.merchantTrend(userId, YearMonth.of(2026, 7));
 
         assertThat(result.get(5).totalSpend()).isEqualByComparingTo("800");
+    }
+
+    @Test
+    @DisplayName("BH-042: merchantTrend queries only its own 6-month window, not the entire history")
+    void merchantTrend_queriesOnlyItsOwnWindow_notTheEntireHistory() {
+        // No stub for findByUserId at all -- if merchantTrend ever regresses back to calling the
+        // all-time activeExpenseTransactions(userId, null) overload (which is backed by
+        // findByUserId), this test's own verify() below would fail to see any invocation of
+        // findByUserIdAndTxnDateBetween, since Mockito never routes one method's stub to another.
+        analyticsService.merchantTrend(userId, YearMonth.of(2026, 7));
+
+        org.mockito.ArgumentCaptor<LocalDate> fromCaptor = org.mockito.ArgumentCaptor.forClass(LocalDate.class);
+        org.mockito.ArgumentCaptor<LocalDate> toCaptor = org.mockito.ArgumentCaptor.forClass(LocalDate.class);
+        verify(transactionRepository).findByUserIdAndTxnDateBetween(eq(userId), fromCaptor.capture(), toCaptor.capture());
+
+        assertThat(fromCaptor.getValue()).isEqualTo(LocalDate.of(2026, 2, 1)); // 6 months back from July, inclusive
+        assertThat(toCaptor.getValue()).isEqualTo(LocalDate.of(2026, 7, 31));
     }
 
     // --- categoryConfidence ---
@@ -280,10 +334,10 @@ class AnalyticsServiceTest {
 
     @Test
     void importStatistics_sumsAcrossAllImports_lastImportedAtFromTheMostRecent() {
-        StatementImport older = statementImport(20, 2, Instant.parse("2026-01-01T00:00:00Z"));
-        StatementImport newer = statementImport(35, 1, Instant.parse("2026-06-01T00:00:00Z"));
-        // findByUserIdOrderByImportedAtDesc -- newest first, same as the real query's contract
-        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of(newer, older));
+        StatementImportRepository.StatementMetadata older = statementImport(20, 2, Instant.parse("2026-01-01T00:00:00Z"));
+        StatementImportRepository.StatementMetadata newer = statementImport(35, 1, Instant.parse("2026-06-01T00:00:00Z"));
+        // findMetadataByUserIdOrderByImportedAtDesc -- newest first, same as the real query's contract
+        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of(newer, older));
 
         var result = analyticsService.importStatistics(userId);
 
@@ -295,7 +349,7 @@ class AnalyticsServiceTest {
 
     @Test
     void importStatistics_noImportsYet_lastImportedAtIsNull_notEpochZero() {
-        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of());
+        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of());
 
         var result = analyticsService.importStatistics(userId);
 
@@ -338,14 +392,12 @@ class AnalyticsServiceTest {
         assertThat(analyticsService.learningGrowth(userId)).isEmpty();
     }
 
-    private StatementImport statementImport(int imported, int skipped, Instant importedAt) {
-        StatementImport si = new StatementImport();
-        ReflectionTestUtils.setField(si, "id", UUID.randomUUID());
-        si.setUserId(userId);
-        si.setTransactionsImported(imported);
-        si.setTransactionsSkipped(skipped);
-        si.setImportedAt(importedAt);
-        return si;
+    private StatementImportRepository.StatementMetadata statementImport(int imported, int skipped, Instant importedAt) {
+        StatementImportRepository.StatementMetadata m = mock(StatementImportRepository.StatementMetadata.class);
+        when(m.getTransactionsImported()).thenReturn(imported);
+        when(m.getTransactionsSkipped()).thenReturn(skipped);
+        when(m.getImportedAt()).thenReturn(importedAt);
+        return m;
     }
 
     private MerchantLearningAudit auditEntry(MerchantLearningAudit.Action action, Instant createdAt) {

@@ -1,5 +1,6 @@
 package com.finora;
 
+import org.junit.jupiter.api.parallel.Isolated;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -37,7 +38,21 @@ import org.testcontainers.containers.PostgreSQLContainer;
  * <p>Starting the container in a static initializer and never closing it makes the behaviour match
  * what the comment always claimed. The container outlives every test class in the JVM, and
  * Testcontainers' Ryuk sidecar removes it when the JVM exits, so nothing leaks.
+ *
+ * <p><b>{@code @Isolated}.</b> {@code junit-platform.properties} turns on class-level parallel
+ * execution for the suite, safe for the ~217 pure-unit {@code *Test.java} classes (fresh mocks
+ * per class, no shared state). Every subclass of this one shares the single cached
+ * {@link org.springframework.context.ApplicationContext} above, singleton beans included — and at
+ * least one of those beans is provably not safe to exercise from concurrent, unrelated test
+ * classes: a shared {@code RateLimiter} budget being drawn down by unrelated *IT classes in the
+ * same run was diagnosed and fixed the same day this annotation was added. {@code @Isolated} is
+ * inherited by every subclass and tells JUnit "run nothing else in parallel while a test in this
+ * class hierarchy runs" — so the whole *IT population stays exactly as serial relative to each
+ * other as it always has been, interleaved with (not blocked from) the unit tests running
+ * concurrently around it, without requiring every other stateful singleton bean in the app to be
+ * individually audited for concurrent-test-time safety first.
  */
+@Isolated
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 public abstract class AbstractIntegrationTest {
 

@@ -48,6 +48,31 @@ public class User {
     @Column(name = "password_hash", nullable = false)
     private String passwordHash;
 
+    /** Which credential this account actually proves control with -- {@code PASSWORD} for every
+     *  account created through registration or admin-create (a real, user-chosen password),
+     *  {@code GOOGLE} for one created through {@code AuthService#loginWithGoogle}, or
+     *  {@code APPLE} for one created through {@code AuthService#loginWithApple} -- both OAuth
+     *  cases share the same shape (a random passwordHash nobody, including the user, ever
+     *  knows). Every "re-enter your current password" gate elsewhere in this codebase
+     *  (PasswordChangeService.start, UserAccountLifecycleService.deactivate,
+     *  DataExportService.buildBundle) reads this to decide whether to ask for that password or
+     *  verify a fresh sign-in instead -- see GoogleReauthVerifier, which is what actually does
+     *  that check.
+     *
+     *  <p><b>D-26 gap, not yet closed:</b> GoogleReauthVerifier only knows how to re-verify a
+     *  GOOGLE account; an APPLE account falls through to its password branch and always fails
+     *  gracefully (a normal "incorrect password" outcome, not a crash) -- the same degraded
+     *  experience a GOOGLE account already has on {@code mobile/ChangePasswordSheet.tsx}, which
+     *  PR #175 never extended to mobile either. Building real Apple re-auth (a fresh Apple ID
+     *  token verified server-side, the Apple counterpart to what GoogleReauthVerifier already
+     *  does) is unscoped, follow-up work, not part of D-23 Phase 2 / D-26. */
+    @Column(name = "sign_in_method", nullable = false, length = 20)
+    private String signInMethod = SIGN_IN_METHOD_PASSWORD;
+
+    public static final String SIGN_IN_METHOD_PASSWORD = "PASSWORD";
+    public static final String SIGN_IN_METHOD_GOOGLE = "GOOGLE";
+    public static final String SIGN_IN_METHOD_APPLE = "APPLE";
+
     @Column(name = "full_name", nullable = false)
     private String fullName;
 
@@ -62,8 +87,34 @@ public class User {
      *  BootstrapService only mints a bootstrap account while setup_completed is false. */
     public static final String SUPER_ADMIN_ROLE = "SUPER_ADMIN";
 
-    /** The status a usable account carries. {@code SUSPENDED} is the other. */
+    /** The status a usable account carries. */
     public static final String STATUS_ACTIVE = "ACTIVE";
+    /** Admin-locked (AdminUserService.suspend) -- no self-service way back, distinct from
+     *  STATUS_DEACTIVATED below on purpose. See isSuspended(). */
+    public static final String STATUS_SUSPENDED = "SUSPENDED";
+    /** Self-service, reversible: the user chose to step away. Blocks login like SUSPENDED, but
+     *  AuthService.login() recognizes it separately and offers a reactivation path instead of a
+     *  dead-end rejection -- see isDeactivated() and AuthService.reactivate(). */
+    public static final String STATUS_DEACTIVATED = "DEACTIVATED";
+    /** Self-service, irreversible: current-password+OTP gated (same bar as changing a password --
+     *  see PasswordChangeService.consumeForAccountDeletion), no self-service undo. Blocks login
+     *  entirely, unlike DEACTIVATED -- see isPendingDeletion() and
+     *  AccountPurgeSweepService, which purges (anonymizes) the account
+     *  AccountPurgeSweepService.MINIMUM_SAFETY_BUFFER-floored after deletionRequestedAt. */
+    public static final String STATUS_PENDING_DELETION = "PENDING_DELETION";
+    /** Terminal. The row is never actually deleted -- see AccountPurgeSweepService's own doc
+     *  comment on why (keeping it alive, anonymized, is what lets StatementStorageSweepService's
+     *  90-day R2 sweep keep working unmodified) -- only anonymized: email/passwordHash/fullName/
+     *  phoneNumber scrubbed, deactivationReason kept for churn analytics, deactivationNote
+     *  cleared (free text). See isDeleted(). */
+    public static final String STATUS_DELETED = "DELETED";
+
+    /** Every value users_deactivation_reason_check (V88) allows -- kept as one Java-side list so
+     *  UserAccountLifecycleService.deactivate()'s validation and the DB constraint can never name
+     *  a different set. Product feedback / churn-analysis categories, not technical states -- see
+     *  deactivationReason's own doc comment. */
+    public static final java.util.List<String> DEACTIVATION_REASONS = java.util.List.of(
+            "TAKING_A_BREAK", "NOT_USING_ANYMORE", "PRIVACY_CONCERNS", "USING_ANOTHER_APP", "OTHER");
 
     // Legacy single-role string, kept for backward compatibility -- see
     // V16__rbac_roles_permissions.sql and AuthorizationService. New code assigning a user
@@ -127,13 +178,58 @@ public class User {
     @Column(name = "phone_verified", nullable = false)
     private boolean phoneVerified = false;
 
-    // "ACTIVE" or "SUSPENDED" -- see V23__user_account_status.sql. Checked in AuthService.login
-    // and AuthService.refresh; a suspended user can't obtain a new access token, but any access
-    // token issued before the suspension keeps working until it naturally expires (15 min
-    // default) since JwtAuthFilter doesn't re-check the database on every request. That's a
-    // deliberate tradeoff, not an oversight -- see AdminUserService.suspend's doc comment.
+    // D-23. Same shape as phoneVerified above, but proven by a clicked email link
+    // (AuthService.verifyEmail) rather than an OTP -- see V93's own migration comment for why this
+    // exists: Google sign-in's auto-link only trusts a match on `email` once this is true, closing
+    // an account pre-hijacking hole that a password-only email match left open. Unlike
+    // phoneVerified, this is NOT enforced anywhere as a login gate -- a password account works
+    // exactly as it always has whether or not its email is verified; this flag only ever gates
+    // cross-method identity linking.
+    @Column(name = "email_verified", nullable = false)
+    private boolean emailVerified = false;
+
+    // ACTIVE / SUSPENDED / DEACTIVATED -- see V23__user_account_status.sql (original two values)
+    // and V87__account_lifecycle_status.sql (DEACTIVATED, including the widened CHECK constraint
+    // -- this column is NOT free text, the DB enforces the full set too). Checked in
+    // AuthService.login and AuthService.refresh; none of these values obtain a new access token,
+    // but any access token issued before the status change keeps working until it naturally
+    // expires (15 min default) since JwtAuthFilter doesn't re-check the database on every request.
+    // That's a deliberate tradeoff, not an oversight -- see AdminUserService.suspend's doc
+    // comment. Every status change that must take effect immediately also calls
+    // RefreshTokenService.revokeAllForUser in the same transaction.
     @Column(nullable = false)
-    private String status = "ACTIVE";
+    private String status = STATUS_ACTIVE;
+
+    // Product-feedback capture for self-service deactivation (V88) -- see
+    // UserAccountLifecycleService.deactivate()'s own doc comment. One of DEACTIVATION_REASONS
+    // above, or null for an account deactivated before this column existed. Deliberately NOT
+    // cleared on reactivation: churn analysis needs the last reason a user gave even after they
+    // come back, the same "persists indefinitely" precedent as passwordChangedAt (V40).
+    @Column(name = "deactivation_reason", length = 50)
+    private String deactivationReason;
+
+    // Optional free text alongside the reason above -- bounded to spare a churn-analysis query
+    // from an unbounded text column, not because 500 characters is a meaningful product limit.
+    @Column(name = "deactivation_note", length = 500)
+    private String deactivationNote;
+
+    // When the CURRENT (or most recent) self-service deactivation was accepted -- distinct from
+    // updatedAt, which moves on every unrelated edit. Powers the configurable self-service
+    // reactivation window (AuthService.login()'s deactivated branch, app.account-lifecycle.
+    // reactivation-window-*).
+    @Column(name = "deactivated_at")
+    private Instant deactivatedAt;
+
+    // When the self-service deletion request was accepted -- AccountPurgeSweepService's
+    // eligibility query floors off this. Null unless status is (or was) PENDING_DELETION.
+    @Column(name = "deletion_requested_at")
+    private Instant deletionRequestedAt;
+
+    // Set as the LAST write of AccountPurgeSweepService.purgeOne -- see that class's own doc
+    // comment on why status only flips to DELETED once every other purge step has already
+    // succeeded (the idempotent-retry guarantee).
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
 
     // IANA timezone name (e.g. "Asia/Kolkata", "America/New_York"), used to resolve the
     // Dashboard's time-of-day greeting server-side-of-truth instead of trusting whatever the
@@ -157,6 +253,10 @@ public class User {
     public void setEmail(String email) { this.email = email; }
     public String getPasswordHash() { return passwordHash; }
     public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
+    public String getSignInMethod() { return signInMethod; }
+    public void setSignInMethod(String signInMethod) { this.signInMethod = signInMethod; }
+    public boolean isGoogleAccount() { return SIGN_IN_METHOD_GOOGLE.equals(signInMethod); }
+    public boolean isAppleAccount() { return SIGN_IN_METHOD_APPLE.equals(signInMethod); }
     public String getFullName() { return fullName; }
     public void setFullName(String fullName) { this.fullName = fullName; }
     public String getRole() { return role; }
@@ -180,9 +280,24 @@ public class User {
     public void setPhoneNumber(String phoneNumber) { this.phoneNumber = phoneNumber; }
     public boolean isPhoneVerified() { return phoneVerified; }
     public void setPhoneVerified(boolean phoneVerified) { this.phoneVerified = phoneVerified; }
+    public boolean isEmailVerified() { return emailVerified; }
+    public void setEmailVerified(boolean emailVerified) { this.emailVerified = emailVerified; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
-    public boolean isSuspended() { return "SUSPENDED".equals(status); }
+    public boolean isSuspended() { return STATUS_SUSPENDED.equals(status); }
+    public boolean isDeactivated() { return STATUS_DEACTIVATED.equals(status); }
+    public boolean isPendingDeletion() { return STATUS_PENDING_DELETION.equals(status); }
+    public boolean isDeleted() { return STATUS_DELETED.equals(status); }
+    public String getDeactivationReason() { return deactivationReason; }
+    public void setDeactivationReason(String deactivationReason) { this.deactivationReason = deactivationReason; }
+    public String getDeactivationNote() { return deactivationNote; }
+    public void setDeactivationNote(String deactivationNote) { this.deactivationNote = deactivationNote; }
+    public Instant getDeletionRequestedAt() { return deletionRequestedAt; }
+    public void setDeletionRequestedAt(Instant deletionRequestedAt) { this.deletionRequestedAt = deletionRequestedAt; }
+    public Instant getDeletedAt() { return deletedAt; }
+    public void setDeletedAt(Instant deletedAt) { this.deletedAt = deletedAt; }
+    public Instant getDeactivatedAt() { return deactivatedAt; }
+    public void setDeactivatedAt(Instant deactivatedAt) { this.deactivatedAt = deactivatedAt; }
     public String getTimezone() { return timezone; }
     public void setTimezone(String timezone) { this.timezone = timezone; }
     public Instant getPasswordChangedAt() { return passwordChangedAt; }

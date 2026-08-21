@@ -1,11 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
-import { SlidersHorizontal, Sparkles, ShieldCheck, Info, Smartphone, X } from 'lucide-react';
-import { userApi, workspaceApi, analyticsApi, deviceApi, type ImportStatistics, type DeviceSession } from '../api/endpoints';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { SlidersHorizontal, Sparkles, ShieldCheck, Info, Smartphone, UserX, X, Mail, RefreshCw } from 'lucide-react';
+import {
+  authApi, userApi, workspaceApi, analyticsApi, deviceApi, gmailApi,
+  type ImportStatistics, type DeviceSession, type GmailConnectionStatus,
+} from '../api/endpoints';
 import { useTheme } from '../context/ThemeContext';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
+import { DeactivateAccountModal } from '../components/DeactivateAccountModal';
+import { DeleteAccountModal } from '../components/DeleteAccountModal';
+import { ExportDataModal } from '../components/ExportDataModal';
 import { maskPhone } from '../lib/maskPhone';
 import { parsePositiveAmount } from '../lib/validation';
 import { formatDayMonthYear, formatRelativeTime, SectionCard, VerifiedBadge, SaveStatus, MetricTile } from '../components/AccountUI';
+import { clearSessionAndRedirect } from '../api/client';
 
 // v1 scope is deliberately capabilities-first, not roadmap-first: every section below reflects a
 // real, backed setting or fact. No "Coming soon" placeholders for 2FA, API keys, integrations,
@@ -74,12 +82,59 @@ function expiresInLabel(sessionExpiresAt: string | null): string | null {
   return `Expires in ${days} day${days === 1 ? '' : 's'}`;
 }
 
+/** One-shot message for the `?gmail=` query param GoogleOAuthController's callback redirect
+ *  lands with -- see that controller's own doc comment: the outcome travels as a query parameter
+ *  specifically so no token or error detail can end up in it. Null for anything else (including
+ *  no param at all), which is the signal to render nothing. */
+function gmailCallbackMessage(gmail: string | null): { text: string; isError: boolean } | null {
+  switch (gmail) {
+    case 'connected': return { text: 'Gmail connected.', isError: false };
+    case 'declined': return { text: 'Gmail connection was cancelled.', isError: false };
+    case 'invalid':
+    case 'failed':
+      return { text: "Couldn't connect Gmail -- please try again.", isError: true };
+    default: return null;
+  }
+}
+
+function gmailLastSyncedLabel(status: GmailConnectionStatus): string {
+  const label = formatRelativeTime(status.lastDiscoveryAt);
+  return label ? `Last synced ${label}` : 'Never synced yet';
+}
+
+// D-19 Step 1 (Trust Center): grantedScopes has been on GmailConnectionStatusDto since C5.4,
+// never rendered. `openid` has no user-meaningful description of its own (it's what makes `sub`
+// available, not a capability over the user's data) -- skipped rather than shown as a raw URI.
+// "Read Gmail messages", not "read receipts only": gmail.readonly is what Google's consent
+// screen actually grants access to (the whole mailbox, at the OAuth layer) -- the trusted-sender
+// gate (C3) is Finora's own policy restriction on top of that, not something this scope itself
+// enforces, and this list should say what was actually granted, not what Finora chooses to do
+// with it.
+const SCOPE_LABELS: Record<string, string> = {
+  'https://www.googleapis.com/auth/gmail.readonly': 'Read Gmail messages',
+  'https://www.googleapis.com/auth/userinfo.email': 'See your email address',
+};
+function gmailPermissionLabels(scopes: string[]): string[] {
+  return scopes.map((s) => SCOPE_LABELS[s]).filter((label): label is string => !!label);
+}
+
 export default function Settings() {
   const { theme, setTheme } = useTheme();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [phoneNumber, setPhoneNumber] = useState('');
   const [phoneVerified, setPhoneVerified] = useState(false);
   const [passwordChangedAt, setPasswordChangedAt] = useState<string | null>(null);
+  // 'PASSWORD' until userApi.get() resolves -- every "re-enter your current password" modal below
+  // gates its Google-vs-password branch on this, so defaulting to the ordinary (more common) case
+  // means a slow load never flashes the Google button for a password account or vice versa in the
+  // split second before the real value arrives; the modals aren't openable until then anyway
+  // (their Manage Your Account buttons live below this same load).
+  const [signInMethod, setSignInMethod] = useState<'PASSWORD' | 'GOOGLE'>('PASSWORD');
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [deactivateOpen, setDeactivateOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [lowBalanceThreshold, setLowBalanceThreshold] = useState('2000');
   const [savedLowBalanceThreshold, setSavedLowBalanceThreshold] = useState('2000');
   const [timezone, setTimezone] = useState('Asia/Kolkata');
@@ -108,6 +163,25 @@ export default function Settings() {
   const [sessionsError, setSessionsError] = useState(false);
   const [revokingId, setRevokingId] = useState<string | null>(null);
 
+  const [gmailStatus, setGmailStatus] = useState<GmailConnectionStatus | null>(null);
+  const [gmailLoading, setGmailLoading] = useState(true);
+  const [gmailError, setGmailError] = useState(false);
+  const [gmailConnecting, setGmailConnecting] = useState(false);
+  const [gmailSyncing, setGmailSyncing] = useState(false);
+  const [gmailSyncError, setGmailSyncError] = useState<string | null>(null);
+  // Distinct from gmailError above: that one gates the "couldn't load the connection at all" page
+  // state, rendered only while gmailStatus is still null. Connect/disconnect fail AFTER a status
+  // has already loaded successfully, so reusing gmailError for them would set a flag nothing on
+  // screen ever reads -- a silent failure the user sees as a button that just stops saying
+  // "Connecting…" with no explanation. Caught in self-review, not by a test failing.
+  const [gmailActionError, setGmailActionError] = useState<string | null>(null);
+  const [gmailDisconnecting, setGmailDisconnecting] = useState(false);
+  // The one-shot callback message reads from the URL once and is then dismissed by user action
+  // (or a fresh status load below removing the param) -- not re-derived from searchParams on
+  // every render, the same reason SESSION_ENDED_REASON_KEY is read once and cleared, not left
+  // live in the URL for a refresh to replay.
+  const [gmailCallbackNotice] = useState(() => gmailCallbackMessage(searchParams.get('gmail')));
+
   const prefsDirty = lowBalanceThreshold !== savedLowBalanceThreshold || timezone !== savedTimezone;
   const intelDirty = confidenceThreshold !== savedConfidenceThreshold;
 
@@ -134,11 +208,72 @@ export default function Settings() {
       .finally(() => setSessionsLoading(false));
   }
 
+  function loadGmailStatus() {
+    setGmailLoading(true);
+    setGmailError(false);
+    gmailApi.status()
+      .then(setGmailStatus)
+      .catch(() => setGmailError(true))
+      .finally(() => setGmailLoading(false));
+  }
+
+  async function handleGmailConnect() {
+    setGmailConnecting(true);
+    setGmailActionError(null);
+    try {
+      const { authorizationUrl } = await gmailApi.connect();
+      // A real browser navigation, not client-side routing -- Google's consent screen is a
+      // different origin entirely, the same reason GoogleOAuthController.connect()'s own doc
+      // comment gives for returning the URL rather than issuing a redirect itself.
+      window.location.href = authorizationUrl;
+    } catch {
+      setGmailConnecting(false);
+      setGmailActionError("Couldn't start the Gmail connection -- please try again.");
+    }
+  }
+
+  async function handleGmailSyncNow() {
+    setGmailSyncing(true);
+    setGmailSyncError(null);
+    try {
+      await gmailApi.syncNow();
+      loadGmailStatus();
+    } catch (err) {
+      // The cooldown (429) and a dead grant (409) are the two outcomes worth telling the user
+      // apart from a generic failure -- everything else collapses to one message, same as the
+      // Active Sessions list's own best-effort error handling above.
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      setGmailSyncError(
+        status === 429 ? 'Gmail was synced recently -- try again in a moment.'
+          : status === 409 ? 'This connection needs to be reconnected -- disconnect and connect again.'
+          : "Gmail sync didn't complete -- try again in a moment.");
+    } finally {
+      setGmailSyncing(false);
+    }
+  }
+
+  async function handleGmailDisconnect() {
+    setGmailDisconnecting(true);
+    setGmailActionError(null);
+    try {
+      await gmailApi.disconnect();
+      loadGmailStatus();
+    } catch {
+      setGmailActionError("Couldn't disconnect Gmail -- please try again.");
+    } finally {
+      setGmailDisconnecting(false);
+    }
+  }
+
   useEffect(() => {
     userApi.get().then((u) => {
-      setPhoneNumber(u.phoneNumber);
+      // '' not null: a Google Sign-In account has no phone number on file at all (see
+      // AuthService.createGoogleUserRecord's own doc comment) -- the empty string already
+      // renders correctly below ("No phone number on file"), no separate null case needed.
+      setPhoneNumber(u.phoneNumber ?? '');
       setPhoneVerified(u.phoneVerified);
       setPasswordChangedAt(u.passwordChangedAt);
+      setSignInMethod(u.signInMethod);
       setLowBalanceThreshold(String(u.lowBalanceThreshold));
       setSavedLowBalanceThreshold(String(u.lowBalanceThreshold));
       setTimezone(u.timezone);
@@ -162,6 +297,15 @@ export default function Settings() {
     // was the actual intent.
     analyticsApi.importStatistics().then(setImportStats).catch(() => setImportStatsFailed(true));
     loadSessions();
+    loadGmailStatus();
+    // Strip ?gmail=... from the URL once read (gmailCallbackNotice's initializer already captured
+    // it) so a page refresh doesn't replay a stale "Gmail connected" message.
+    if (searchParams.has('gmail')) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('gmail');
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function savePreferences() {
@@ -225,6 +369,43 @@ export default function Settings() {
     } finally {
       setRevokingId(null);
     }
+  }
+
+  // The account was just deactivated -- UserAccountLifecycleService.deactivate already revoked
+  // every refresh token server-side, so there is nothing left to be signed in to.
+  //
+  // Bug fix, confirmed against a real browser (not just this app's mocked-useAuth test suite):
+  // this used to call AuthContext's logout() and then navigate('/login', { state: { message } }),
+  // the way ResetPassword.tsx hands Login.tsx a one-shot confirmation. That works for
+  // ResetPassword because it isn't behind ProtectedRoute. Here, logout() calls setToken(null) --
+  // a REACT STATE update -- which App.tsx's ProtectedRoute (wrapping /app/settings) reacts to
+  // immediately by client-side-routing to /login itself, via its own stateless
+  // <Navigate to="/login" replace />. That reactive redirect runs (and, critically, mounts Login
+  // long enough for its one-shot useEffect to read AND clear SESSION_ENDED_REASON_KEY) before the
+  // browser's actual window.location.href navigation below ever fires -- so by the time the real,
+  // hard-reloaded page loads, the reason this function set has already been consumed and thrown
+  // away by a Login instance that never really existed to the user.
+  //
+  // The fix is to never touch AuthContext's React state at all, the same way client.ts's
+  // (now-exported) clearSessionAndRedirect already avoids this. Second bug fix, caught in review:
+  // the first version of this fix hand-rolled clearSessionAndRedirect's own storage-clearing logic
+  // a second time instead of calling it, AND dropped the best-effort authApi.logout() call that
+  // AuthContext.logout() makes -- which is what actually clears the httpOnly refresh-token cookie
+  // in the browser (the token itself is already revoked server-side either way, so this is a
+  // browser-hygiene fix, not a security one: without it, "you'll be signed out everywhere" left a
+  // stale cookie sitting in the browser). The access token here is still fully valid at the moment
+  // of this call (unlike clearSessionAndRedirect's own callers, which only ever run after a refresh
+  // has already failed), so this call can actually succeed.
+  function handleDeactivated() {
+    authApi.logout().catch(() => {});
+    clearSessionAndRedirect('Your account has been deactivated. Sign in again any time to reactivate it.');
+  }
+
+  // Same reasoning as handleDeactivated above -- requestDeletion already revoked every refresh
+  // token server-side, this just clears the browser's own httpOnly cookie best-effort and redirects.
+  function handleDeleted() {
+    authApi.logout().catch(() => {});
+    clearSessionAndRedirect("Your account has been permanently deleted. You've been signed out everywhere.");
   }
 
   if (loading) return <p className="text-muted">Loading…</p>;
@@ -417,14 +598,197 @@ export default function Settings() {
             Couldn't load these statistics just now — they're unavailable, not zero.
           </p>
         )}
+        <div className="pt-4 mt-4 border-t border-border">
+          <p className="text-ink font-medium text-sm">Export My Data</p>
+          <p className="text-muted text-[11px] mt-1 mb-3">
+            Download a ZIP of everything in your account, including your original bank statement
+            files.
+          </p>
+          <button
+            onClick={() => setExportOpen(true)}
+            className="border border-border rounded-lg px-3 py-1.5 text-xs uppercase font-medium text-ink hover:bg-black/5"
+          >
+            Export My Data
+          </button>
+        </div>
+      </SectionCard>
+
+      <SectionCard icon={<Mail size={18} />} title="Connected Apps" subtitle="Link external accounts Finora can read transactions from">
+        {gmailCallbackNotice && (
+          <p className={`text-xs mb-3 ${gmailCallbackNotice.isError ? 'text-danger' : 'text-success'}`}>
+            {gmailCallbackNotice.text}
+          </p>
+        )}
+        {gmailLoading ? (
+          <p className="text-muted text-sm">Loading…</p>
+        ) : gmailError && !gmailStatus ? (
+          <p className="text-xs text-danger">Couldn't load your Gmail connection — please try again later.</p>
+        ) : !gmailStatus?.available ? (
+          <p className="text-xs text-muted italic">Gmail sync isn't available on this deployment yet.</p>
+        ) : !gmailStatus.connected && gmailStatus.needsReconnect ? (
+          <div className="border border-warning/40 rounded-lg px-3 py-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm text-ink font-medium flex items-center gap-2">
+                  Gmail
+                  <span className="text-[10px] font-medium uppercase tracking-wide text-warning bg-warning-bg rounded px-1.5 py-0.5">
+                    Needs reconnect
+                  </span>
+                </p>
+                {gmailStatus.googleEmail && (
+                  <p className="text-[11px] text-muted truncate mt-0.5">{gmailStatus.googleEmail}</p>
+                )}
+                <p className="text-[11px] text-muted mt-1">
+                  Google stopped accepting this connection -- reconnect to keep finding receipts.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={gmailConnecting}
+                onClick={handleGmailConnect}
+                className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-3 py-1.5 text-xs uppercase font-medium flex-shrink-0"
+              >
+                {gmailConnecting ? 'Connecting…' : 'Reconnect Gmail'}
+              </button>
+            </div>
+            {gmailActionError && <p className="text-xs text-danger mt-2">{gmailActionError}</p>}
+          </div>
+        ) : !gmailStatus.connected ? (
+          <div>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm text-ink font-medium">Gmail</p>
+                <p className="text-[11px] text-muted mt-0.5">
+                  Automatically detect receipts from your inbox — nothing is imported without your review.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={gmailConnecting}
+                onClick={handleGmailConnect}
+                className="bg-primary text-white hover:bg-primary-dark disabled:opacity-50 rounded-lg px-3 py-1.5 text-xs uppercase font-medium flex-shrink-0"
+              >
+                {gmailConnecting ? 'Connecting…' : 'Connect Gmail'}
+              </button>
+            </div>
+            {gmailActionError && <p className="text-xs text-danger mt-2">{gmailActionError}</p>}
+          </div>
+        ) : (
+          <div className="border border-border rounded-lg px-3 py-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm text-ink font-medium flex items-center gap-2">
+                  Gmail
+                  <span className="text-[10px] font-medium uppercase tracking-wide text-success bg-success-bg rounded px-1.5 py-0.5">
+                    Connected
+                  </span>
+                </p>
+                <p className="text-[11px] text-muted truncate mt-0.5">{gmailStatus.googleEmail}</p>
+                <p className="text-[11px] text-muted mt-1">{gmailLastSyncedLabel(gmailStatus)}</p>
+                {gmailPermissionLabels(gmailStatus.grantedScopes).length > 0 && (
+                  <p className="text-[11px] text-muted mt-1">
+                    <span className="text-ink">Permissions:</span> {gmailPermissionLabels(gmailStatus.grantedScopes).join(', ')}
+                    {' — never sent, modified, or deleted'}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                title="Sync now"
+                disabled={gmailSyncing}
+                onClick={handleGmailSyncNow}
+                className="w-7 h-7 rounded-lg hover:bg-black/5 text-muted hover:text-ink inline-flex items-center justify-center flex-shrink-0 disabled:opacity-50"
+              >
+                <RefreshCw size={14} className={gmailSyncing ? 'animate-spin' : ''} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 mt-3">
+              <MetricTile label="Transactions Found" value={gmailStatus.transactionsFound.toLocaleString('en-IN')} />
+              <MetricTile label="Needs Review" value={gmailStatus.needsReview.toLocaleString('en-IN')} />
+            </div>
+
+            {gmailSyncError && <p className="text-xs text-danger mt-2">{gmailSyncError}</p>}
+            {gmailActionError && <p className="text-xs text-danger mt-2">{gmailActionError}</p>}
+
+            <div className="flex items-center gap-3 mt-3 pt-3 border-t border-border">
+              {gmailStatus.needsReview > 0 && (
+                <button
+                  type="button"
+                  onClick={() => navigate('/app/settings/gmail/review')}
+                  className="bg-primary text-white hover:bg-primary-dark rounded-lg px-3 py-1.5 text-xs uppercase font-medium"
+                >
+                  Review {gmailStatus.needsReview}
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={gmailDisconnecting}
+                onClick={handleGmailDisconnect}
+                className="border border-border rounded-lg px-3 py-1.5 text-xs uppercase font-medium text-ink hover:bg-black/5 disabled:opacity-50"
+              >
+                {gmailDisconnecting ? 'Disconnecting…' : 'Disconnect'}
+              </button>
+            </div>
+          </div>
+        )}
+      </SectionCard>
+
+      <SectionCard icon={<UserX size={18} />} title="Manage Your Account" subtitle="Deactivate or permanently delete your Finora account">
+        <div className="pt-1 pb-4 border-b border-border">
+          <p className="text-ink font-medium text-sm">Deactivate Account</p>
+          <p className="text-muted text-[11px] mt-1 mb-3">
+            Temporarily disable your account. You'll be signed out everywhere and won't be able to
+            sign in until you reactivate -- your data is retained securely, and reactivating is as
+            simple as signing in again.
+          </p>
+          <button
+            onClick={() => setDeactivateOpen(true)}
+            className="border border-border rounded-lg px-3 py-1.5 text-xs uppercase font-medium text-ink hover:bg-black/5"
+          >
+            Deactivate Account
+          </button>
+        </div>
+        <div className="pt-4">
+          <p className="text-ink font-medium text-sm">Delete Account</p>
+          <p className="text-muted text-[11px] mt-1 mb-3">
+            Permanently delete your account and all your data. This cannot be undone, and there is
+            no way to cancel this request once submitted.
+          </p>
+          <button
+            onClick={() => setDeleteOpen(true)}
+            className="border border-danger text-danger hover:bg-danger-bg rounded-lg px-3 py-1.5 text-xs uppercase font-medium"
+          >
+            Delete Account
+          </button>
+        </div>
       </SectionCard>
 
       {changePasswordOpen && (
         <ChangePasswordModal
           onClose={() => setChangePasswordOpen(false)}
           onSuccess={() => setPasswordChangedAt(new Date().toISOString())}
+          signInMethod={signInMethod}
         />
       )}
+
+      {deactivateOpen && (
+        <DeactivateAccountModal
+          onClose={() => setDeactivateOpen(false)}
+          onDeactivated={handleDeactivated}
+          signInMethod={signInMethod}
+        />
+      )}
+
+      {deleteOpen && (
+        <DeleteAccountModal
+          onClose={() => setDeleteOpen(false)}
+          onDeleted={handleDeleted}
+          signInMethod={signInMethod}
+        />
+      )}
+
+      {exportOpen && <ExportDataModal onClose={() => setExportOpen(false)} signInMethod={signInMethod} />}
     </div>
   );
 }

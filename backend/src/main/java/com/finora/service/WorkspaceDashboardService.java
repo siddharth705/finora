@@ -95,7 +95,11 @@ public class WorkspaceDashboardService {
                 learnedMerchants,
                 activeRules,
                 relationshipRepository.findByUserId(userId).size(),
-                statementImportRepository.findByUserIdOrderByImportedAtDesc(userId).size(),
+                // Only .size() was ever needed here -- a COUNT, not the entity-returning finder
+                // (or even a fileContent-free projection): see
+                // StatementImportRepository.StatementMetadata's own doc comment for the rest of
+                // that finder's removal.
+                statementImportRepository.countByUserId(userId),
                 categorizationAccuracy,
                 confidenceDistribution(merchants, pairsByMerchant),
                 countByStatus(transactions, Transaction.ReconciliationStatus.DUPLICATE),

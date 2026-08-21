@@ -9,11 +9,33 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface ImportSessionRepository extends JpaRepository<ImportSession, UUID> {
 
     List<ImportSession> findByUserIdAndStatusOrderByCreatedAtDesc(UUID userId, String status);
+
+    /**
+     * The Gmail review queue (C5.4) -- every source's own sessions filtered independently, rather
+     * than reusing {@link #findByUserIdAndStatusOrderByCreatedAtDesc} and filtering by
+     * {@code source} in Java, so the "how many need review" count {@code GmailReviewService} and
+     * the connection-status endpoint both need can be a database count, not a full row fetch.
+     */
+    List<ImportSession> findByUserIdAndSourceAndStatusOrderByCreatedAtDesc(
+            UUID userId, String source, String status);
+
+    long countByUserIdAndSourceAndStatus(UUID userId, String source, String status);
+
+    /**
+     * This user's own live (STAGED) session for this exact document, if one exists -- backs
+     * {@code ImportSessionService.findLiveSessionByContentHash}, the app-level half of
+     * V79__import_session_stage_idempotency.sql's duplicate-upload protection. Served by the same
+     * partial unique index that migration creates ({@code idx_import_sessions_live_content}), which
+     * is why this query filters on exactly the columns and status that index covers.
+     */
+    Optional<ImportSession> findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+            UUID userId, String contentHash, String status);
 
     /**
      * Expired sessions from ANY user, oldest first, bounded by the caller's page size.
@@ -77,4 +99,14 @@ public interface ImportSessionRepository extends JpaRepository<ImportSession, UU
             "WHERE s.id = :id AND s.status = 'STAGED'")
     int claimForConfirmation(@Param("id") UUID id);
 
+    /** AccountPurgeSweepService -- hard delete, no soft-delete concern on this entity (no
+     *  lifecycle state to preserve, unlike StatementImport). Also frees any object this session
+     *  was the sole reference for, for StatementStorageSweepService to eventually reclaim. */
+    void deleteByUserId(UUID userId);
+
+    /** DataExportService -- every session this user has ever staged, any status/kind, expired or
+     *  not. Deliberately unfiltered, unlike every other finder on this repository: the resume-flow
+     *  finders above exist to answer "what can I still act on", but an export owes the user
+     *  everything on record, including sessions that already confirmed or expired. */
+    List<ImportSession> findByUserIdOrderByCreatedAtDesc(UUID userId);
 }

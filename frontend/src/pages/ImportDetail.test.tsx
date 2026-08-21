@@ -26,6 +26,7 @@ function job(overrides: Partial<ImportJobProgress> = {}): ImportJobProgress {
     jobId: 'job-1',
     fileName: 'hdfc-july.pdf',
     status: 'COMPLETED',
+    userStatus: 'COMPLETED',
     rowsTotal: 42,
     rowsProcessed: 42,
     createdAt: '2026-08-12T10:00:00Z',
@@ -42,6 +43,7 @@ function emptyTimeline(overrides: Partial<ImportJobTimeline> = {}): ImportJobTim
   return {
     jobId: 'job-1',
     status: 'COMPLETED',
+    userStatus: 'COMPLETED',
     failureCode: null,
     stages: [],
     ...overrides,

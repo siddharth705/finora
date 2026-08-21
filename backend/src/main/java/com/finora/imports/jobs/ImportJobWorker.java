@@ -4,8 +4,7 @@ import com.finora.entity.ImportJob;
 import com.finora.exception.ErrorCode;
 import com.finora.imports.ImportService;
 import com.finora.imports.StatementUpload;
-import com.finora.imports.storage.ContentAddress;
-import com.finora.imports.storage.StatementStorage;
+import com.finora.imports.storage.StatementContentService;
 import com.finora.observability.AlertSeverity;
 import com.finora.observability.WorkerExecution;
 import com.finora.observability.WorkerObservability;
@@ -18,7 +17,6 @@ import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -105,7 +103,7 @@ public class ImportJobWorker {
 
     private final ImportJobStore jobStore;
     private final ImportService importService;
-    private final Optional<StatementStorage> storage;
+    private final StatementContentService statementContentService;
     private final WorkerObservability observability;
     private final ImportStageRecorder stageRecorder;
     private final ExceptionClassifier exceptionClassifier;
@@ -115,13 +113,13 @@ public class ImportJobWorker {
 
     public ImportJobWorker(ImportJobStore jobStore,
                             ImportService importService,
-                            Optional<StatementStorage> storage,
+                            StatementContentService statementContentService,
                             WorkerObservability observability,
                             ImportStageRecorder stageRecorder,
                             ExceptionClassifier exceptionClassifier) {
         this.jobStore = jobStore;
         this.importService = importService;
-        this.storage = storage;
+        this.statementContentService = statementContentService;
         this.observability = observability;
         this.stageRecorder = stageRecorder;
         this.exceptionClassifier = exceptionClassifier;
@@ -293,19 +291,32 @@ public class ImportJobWorker {
         if (cancelled) throw new ImportJobCancelledException(jobId);
     }
 
-    /** Reads the uploaded bytes back from storage. A job carries an address, never the bytes -- the
-     *  queue row stays small and a retry re-reads exactly the document the user uploaded. */
+    /**
+     * Reads the uploaded bytes back from storage. A job carries an address, never the bytes -- the
+     * queue row stays small and a retry re-reads exactly the document the user uploaded.
+     *
+     * <p>BH-045: routes through {@link StatementContentService#read}, the same verified path
+     * {@code ImportService}/{@code StatementImportService} already use for every other statement
+     * read, rather than calling {@code StatementStorage.retrieve} directly. This used to skip
+     * {@link com.finora.imports.storage.ContentAddress#requireMatches} entirely -- the SHA-256
+     * check every other read goes through -- so a corrupted or tampered object in R2 would have
+     * been silently parsed and imported with no detection on this specific path. {@code ImportJob}
+     * now implements {@code StoredStatement} for exactly this reason (see that class's own doc).
+     * The no-address check below stays first and separate: it's a job-specific, more actionable
+     * error ("cannot be retried") than {@code StatementContentService}'s own generic message for
+     * the same underlying condition.
+     *
+     * <p>A hash mismatch surfaces as {@link com.finora.imports.storage.StatementIntegrityException}
+     * -- see {@link ExceptionClassifier#classify} for why that is deliberately not treated the same
+     * as an ordinary {@code StatementStorageException}.
+     */
     private byte[] readContent(ImportJob job) {
         if (job.getContentHash() == null || job.getObjectKey() == null) {
             throw new IllegalStateException(
                     "Import job " + job.getId() + " has no content address; it cannot be retried "
                             + "without the original bytes.");
         }
-        return storage
-                .orElseThrow(() -> new IllegalStateException(
-                        "Import job " + job.getId() + " references object storage, but no provider "
-                                + "is configured."))
-                .retrieve(new ContentAddress(job.getContentHash(), job.getObjectKey()));
+        return statementContentService.read(job);
     }
 
     private void recordFailure(WorkerExecution execution, UUID jobId, Exception cause) {

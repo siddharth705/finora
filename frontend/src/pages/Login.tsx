@@ -7,7 +7,10 @@ import {
 import { useAuth } from '../context/AuthContext';
 import logoMark from '../assets/logo-mark.png';
 import { PasswordInput } from '../components/PasswordInput';
+import { ReactivateAccountPrompt } from '../components/ReactivateAccountPrompt';
+import { GoogleSignInButton } from '../components/GoogleSignInButton';
 import { SESSION_ENDED_REASON_KEY } from '../api/client';
+import { AUTH_ACCOUNT_DEACTIVATED } from '../api/errorCodes';
 import { safeStorage } from '../lib/safeStorage';
 
 // Mirrors Register.tsx's marketing panel exactly -- same feature list, same layout, same
@@ -23,13 +26,17 @@ const FEATURES = [
 ];
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // Set once login() reports AUTH_ACCOUNT_DEACTIVATED -- the password already checked out (see
+  // AuthService.login()'s deactivated branch), so the rest of the form is replaced by a single
+  // confirm step rather than making the user re-enter anything.
+  const [reactivationToken, setReactivationToken] = useState<string | null>(null);
   // A one-time confirmation from ChangePasswordModal/ResetPassword's own post-success redirect
   // (e.g. "Password updated successfully. Please sign in using your new password.") -- captured
   // once on mount, not read reactively, so it can't reappear after being dismissed or on an
@@ -65,6 +72,31 @@ export default function Login() {
   // client-side; the backend resolves whichever form was typed (see resolveEmailForLogin).
   const identifierValid = identifier.trim().length > 0;
 
+  // Shared by handleSubmit, handleGoogleCredential and handleReactivated -- all three end the
+  // same way once a session exists. fromLogin distinguishes a RETURNING user who still hasn't
+  // verified from a brand-new registration landing there for the first time (see Register.tsx's
+  // own identical navigate call, which never sets it) -- VerifyPhone.tsx uses it to greet the two
+  // differently rather than showing "Welcome back" to someone who just signed up.
+  function afterAuthSuccess(phoneVerified: boolean) {
+    void navigate(phoneVerified ? '/app' : '/verify-phone', { state: phoneVerified ? undefined : { fromLogin: true } });
+  }
+
+  // Shared by handleSubmit and handleGoogleCredential -- both reach the same account-status gate
+  // server-side (AuthService.enforceAccountIsSignable) and need the same reaction to a deactivated
+  // account's reactivation-token response.
+  function handleAuthError(err: any, fallbackMessage: string) {
+    // See errorCodes.ts's own doc comment on AUTH_ACCOUNT_DEACTIVATED for why this compares
+    // against a shared constant rather than a hand-typed literal here.
+    const token = err.response?.data?.errorCode === AUTH_ACCOUNT_DEACTIVATED
+      ? err.response?.data?.details?.reactivationToken
+      : null;
+    if (token) {
+      setReactivationToken(token);
+    } else {
+      setError(err.response?.data?.message ?? fallbackMessage);
+    }
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -72,13 +104,28 @@ export default function Login() {
     if (password.length === 0) { setError('Enter your password.'); return; }
     setLoading(true);
     try {
-      const phoneVerified = await login(identifier.trim(), password);
-      void navigate(phoneVerified ? '/app' : '/verify-phone');
+      afterAuthSuccess(await login(identifier.trim(), password));
     } catch (err: any) {
-      setError(err.response?.data?.message ?? 'Login failed. Check your credentials.');
+      handleAuthError(err, 'Login failed. Check your credentials.');
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleGoogleCredential(idToken: string) {
+    setError(null);
+    setLoading(true);
+    try {
+      afterAuthSuccess(await loginWithGoogle(idToken));
+    } catch (err: any) {
+      handleAuthError(err, 'Google sign-in failed.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleReactivated(phoneVerified: boolean) {
+    afterAuthSuccess(phoneVerified);
   }
 
   return (
@@ -132,7 +179,15 @@ export default function Login() {
           </div>
         </div>
 
-        {/* Sign-in card */}
+        {/* Sign-in card -- replaced by the reactivation prompt once login() proves the password
+            was correct for a deactivated account (see handleSubmit's catch block). */}
+        {reactivationToken ? (
+          <ReactivateAccountPrompt
+            token={reactivationToken}
+            onCancel={() => setReactivationToken(null)}
+            onReactivated={handleReactivated}
+          />
+        ) : (
         <form onSubmit={handleSubmit} noValidate className="bg-card rounded-xl2 p-8 w-full shadow-soft border border-border">
           <div className="flex items-center gap-2 mb-6 lg:hidden">
             <Link to="/" className="flex items-center gap-2 w-fit">
@@ -195,6 +250,14 @@ export default function Login() {
             {!loading && <ArrowRight size={15} />}
           </button>
 
+          <div className="flex items-center gap-3 my-5">
+            <div className="flex-1 h-px bg-border" />
+            <span className="text-xs text-muted">OR</span>
+            <div className="flex-1 h-px bg-border" />
+          </div>
+
+          <GoogleSignInButton text="signin_with" onCredential={handleGoogleCredential} onError={setError} />
+
           <div className="flex items-start gap-2.5 bg-primary-light rounded-lg p-3 mt-6">
             <ShieldCheck size={16} className="text-primary flex-shrink-0 mt-0.5" />
             <p className="text-xs text-ink">Your financial data is encrypted and securely protected.</p>
@@ -204,6 +267,7 @@ export default function Login() {
             No account? <Link to="/register" className="text-primary font-medium">Register</Link>
           </p>
         </form>
+        )}
       </div>
 
       <p className="text-xs text-muted flex items-center gap-2">

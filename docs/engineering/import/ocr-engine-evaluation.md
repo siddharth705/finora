@@ -382,3 +382,51 @@ argument said no document with a text layer can change, and every document in th
 
 `check-corpus-leakage.py` also passes against the corpus — 7271 identifiers, none present in tracked
 content — so nothing in this change carries a real statement's data.
+
+---
+
+# OCR-5 — production deployment
+
+OCR-4 shipped routing but not an engine: `RoutingTextAcquirer`'s `recognisers` list was empty by
+design, and `OcrEngine`, `TesseractEngine`, `RunAssembler`, `RecognisedTextAdapter` and
+`TesseractRecogniser` all lived under `src/test` — "an operational dependency of a deployment,
+not a library," left for the deployment to decide. This closes that gap, on the evidence OCR-3A
+and OCR-3B already measured, not a new evaluation.
+
+## What shipped
+
+- `OcrEngine`, `TesseractEngine`, `RunAssembler` and `RecognisedTextAdapter` moved from
+  `src/test/java/com/finora/imports/pdf/ocr` to `src/main` under the same package name, unchanged
+  in behaviour. The evaluation harness (`OcrEvaluation`, `OcrScorecardEmitter`, `StubEngines`,
+  `OcrEvaluationHarnessTest`, `TesseractRunAssemblyTest`) kept every existing import: Maven's
+  test-compile classpath already includes main classes of the same package, so nothing needed to
+  change to keep testing the class that now actually runs in production.
+- `TesseractRecogniser` is now a `@Component` in `com.finora.imports.pdf.ocr`, registered
+  unconditionally rather than behind a config flag. That is deliberate: `supports()` already
+  reports `TesseractEngine.available()` honestly, so a deployment without the binary degrades to
+  exactly OCR-4's shipped behaviour — `IMPORT_SCANNED_OCR_REQUIRED` — rather than failing to start
+  or needing a second switch to keep in sync with whether the binary is actually installed.
+- `backend/Dockerfile`'s runtime stage installs `tesseract-ocr` and `tesseract-ocr-data-eng` via
+  `apk`.
+- `AcquisitionWiringIT` was flipped: `noRecogniserShipsByDefault` (asserting an empty recogniser
+  list) became `theDeployedRecogniserIsTesseract` (asserting `TesseractRecogniser` is the one
+  Spring injects into `RoutingTextAcquirer`). The prior test's own comment said it should be "the
+  thing that says so out loud" when this day came.
+
+## What did not change
+
+Routing's own rules are untouched — native-first, zero confidence thresholds, no per-page or
+`NATIVE_PLUS_OCR` handling. Nothing about *when* a document reaches Tesseract moved; only *whether
+one is there to reach* did.
+
+## What is still open
+
+- **No UI/API surfacing of OCR provenance.** `TextSource.OCR` and
+  `AcquiredDocument.recognisedRuns()` already carry which runs were recognised rather than read all
+  the way to `PositionedText`; nothing downstream currently reads that to tell a user "this import
+  used OCR." Needs no new plumbing, only a consumer, whenever that becomes a real product need.
+- **The Dr/Cr-suffix assembly limitation from OCR-3B stands.** Unrelated to deployment; still
+  pinned by `TesseractRunAssemblyTest.doesNotYetHandleAmountsWithDrCrSuffixes`.
+- **Only one real document in the corpus currently exercises this path** —
+  `HSBC DB.pdf` (confirmed image-only in OCR-2D). The recogniser is not document-specific, though:
+  it activates for any future upload with no native text.

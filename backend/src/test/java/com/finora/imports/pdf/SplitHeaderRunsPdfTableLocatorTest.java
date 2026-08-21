@@ -193,7 +193,44 @@ class SplitHeaderRunsPdfTableLocatorTest {
         // The headline quantity, measured with TransactionNormalizer's own TRANSACTION_AMOUNT_HINTS
         // and counting only values that parse as a non-zero number:
         //   before -> after:  7 -> 253,  3 -> 374,  1 -> 9.
-        List<Integer> expected = List.of(253, 374, 9);
+        //
+        // hdfc-savings-ledger-validation's count moved again, 253 -> 244, when the
+        // OFFSET_COLUMN_ANCHORS redirect in bucketRow was taught not to move a number out of a
+        // reference/cheque-number column (see that guard's own doc comment -- verified on a real,
+        // unredacted HDFC statement, not reproduced here, where this exact redirect took a
+        // transaction's genuine (16-digit, zero-padded) Chq./Ref.No. value and moved it into
+        // Withdrawal Amt., turning a real
+        // ₹454 deposit into a phantom >₹500,000,000 withdrawal).
+        //
+        // All 9 rows that dropped out of this count on THIS trace are confirmed, individually, to
+        // be non-transaction boilerplate -- every one carries `Date=HDFC BANK LIMITED ... State
+        // account branch ...` (letterhead/GSTIN disclaimer text merged into a row), never a
+        // parseable date, so TransactionNormalizer drops them regardless of what lands in their
+        // amount cell either way. Their loss from this count is not a loss of accuracy on any real
+        // transaction. Row 255 in this same trace is the positive case the guard exists for: its
+        // amount cell held the redacted-reference-number placeholder "9999999999999999" before this
+        // fix and the real amount, "454.00", after it -- a genuine transaction, not boilerplate.
+        //
+        // hdfc-savings-multi-page-ledger's count moved the same way, 374 -> 360: individually
+        // confirmed, all 14 rows that dropped out carry the identical boilerplate `Date=HDFC BANK
+        // LIMITED ... State account branch ...` shape, never a parseable date. Two more genuine
+        // transactions on THIS trace (real dates 28/07/25 and 30/10/25) had the same
+        // "9999999999999999" placeholder-as-amount bug this fix corrects -- to 1,360.12 and
+        // 3,965.01 respectively -- but neither changes the count, since a placeholder and a real
+        // amount both already counted as "a real number" either way; only the VALUE was wrong.
+        //
+        // hdfc-savings-ledger-validation's count moved again, 244 -> 241, when the same
+        // OFFSET_COLUMN_ANCHORS redirect was additionally taught to require a decimal point in
+        // the redirected value -- see that guard's own doc comment (verified on a real Kotak
+        // credit-card statement, where a bare 3-digit card-ending suffix printed next to a
+        // merchant name was wrongly read as an overshot amount and merged into the real one).
+        // Individually confirmed: all 3 rows that dropped out of this count carry `Date=XXXXX`
+        // (redacted/masked entirely, not a real date under any format) with a redacted 4-digit
+        // placeholder amount "9999" that no longer gets rescued by the now-decimal-only redirect
+        // -- a row whose date can never parse stages nothing regardless of what its amount cell
+        // resolves to, so this is the same "boilerplate/unparseable either way" shape as the two
+        // moves above, not a new loss of accuracy on any real transaction.
+        List<Integer> expected = List.of(241, 360, 9);
         String[] transactionAmountColumns = {"withdrawal amt", "deposit amt", "amount", "debit",
                 "credit", "deposit", "withdrawal", "deposits", "withdrawals"};
 
@@ -236,8 +273,12 @@ class SplitHeaderRunsPdfTableLocatorTest {
         PdfTableLocator.LocatedDocument doc = new PdfTableLocator()
                 .locateAll(PdfTrace.load("axis-credit-card-statement"), ctx);
 
-        assertThat(doc.sections()).as("two sections, as before the fix -- no third, bogus one").hasSize(2);
-        assertThat(doc.sections().get(1).rows()).hasSize(111);
+        // One section, not two: the OTHER section this trace used to have was itself a misdetected
+        // payment-summary panel (PdfTableLocator.looksLikePaymentSummaryPanel), not fine print --
+        // a separate fix, now also landing on this trace. What this test actually guards -- no
+        // BOGUS third section from the fine-print run-joining bug -- still holds.
+        assertThat(doc.sections()).as("one section, as before this fix -- no second, bogus one").hasSize(1);
+        assertThat(doc.sections().get(0).rows()).hasSize(111);
         assertThat(doc.sections().stream().flatMap(s -> s.rows().stream())
                 .flatMap(r -> r.keySet().stream()).distinct())
                 .as("no column named out of a fine-print sentence")
@@ -250,14 +291,16 @@ class SplitHeaderRunsPdfTableLocatorTest {
         // mergeHeaderLines seeds its columns from the first line's RUNS: joining them first changes
         // which columns exist and therefore which joins are made, which moved section boundaries on
         // SBI in simulation. Both committed WRAPPED_HEADER documents are asserted structurally.
-        // P-002 Fix 2 (commit pending): SBI's fifth section was a 221-char/31-word EMI-legal-text
-        // paragraph misread as a header. It no longer opens a section, so SBI drops from 5 sections
-        // to 4 -- the remaining four are exactly the four this test already covered.
+        // P-002 Fix 2: SBI's fifth section was a 221-char/31-word EMI-legal-text paragraph
+        // misread as a header. It no longer opens a section, so SBI drops from 5 sections to 4.
+        // A second, separate fix (PdfTableLocator.looksLikePaymentSummaryPanel) then drops one
+        // more: what was section 2 of those four was itself a misdetected payment-summary panel,
+        // the same shape found on the real Axis and HDFC credit statements -- 4 sections to 3.
         PdfTableLocator.LocatedDocument sbi = new PdfTableLocator()
                 .locateAll(PdfTrace.load("sbi-credit-card-statement"), null);
-        assertThat(sbi.sections()).hasSize(4);
+        assertThat(sbi.sections()).hasSize(3);
         assertThat(sbi.sections().stream().map(s -> s.rows().size()).toList())
-                .isEqualTo(List.of(1, 2, 2, 2));
+                .isEqualTo(List.of(1, 2, 2));
 
         DocumentContext ctx = new DocumentContext("PDF", "SplitHeaderRunsPdfTableLocatorTest");
         PdfTableLocator.LocatedDocument composite = new PdfTableLocator()
@@ -339,7 +382,9 @@ class SplitHeaderRunsPdfTableLocatorTest {
         // documents -- all of them unchanged, measured, not assumed.
         Map<String, List<Integer>> expected = Map.ofEntries(
                 Map.entry("au-credit-card-statement", List.of(3, 2, 2, 2)),
-                Map.entry("axis-credit-card-statement", List.of(2, 2, 111)),
+                // 2 sections before PdfTableLocator.looksLikePaymentSummaryPanel, 1 after -- the
+                // dropped section was a misdetected payment-summary panel, not fine print.
+                Map.entry("axis-credit-card-statement", List.of(1, 111)),
                 Map.entry("bob-repeated-account-banner", List.of(1, 58)),
                 Map.entry("bob-savings-ledger-validation", List.of(1, 58)),
                 Map.entry("canara-savings-ledger-validation", List.of(1, 60)),
@@ -350,7 +395,8 @@ class SplitHeaderRunsPdfTableLocatorTest {
                 // untouched by both fixes.
                 Map.entry("central-bank-savings-ledger-validation", List.of(1, 223)),
                 Map.entry("hdfc-composite-deposit-schedules", List.of(4, 84, 9, 2, 7)),
-                Map.entry("hdfc-credit-card-ledger-validation", List.of(2, 2, 4)),
+                // 2 sections before looksLikePaymentSummaryPanel, 1 after -- same panel shape.
+                Map.entry("hdfc-credit-card-ledger-validation", List.of(1, 4)),
                 Map.entry("hdfc-txn-date-narration-header", List.of(1, 5)),
                 Map.entry("hsbc-savings-ledger-validation", List.of(1, 2)),
                 // icici, kotak, sbi: post P-002 Fix 2 (commit pending). Each document's spurious
@@ -363,7 +409,9 @@ class SplitHeaderRunsPdfTableLocatorTest {
                 Map.entry("kotak-credit-card-ledger-validation", List.of(0)),
                 Map.entry("kotak-savings-ledger-validation", List.of(1, 2)),
                 Map.entry("pnb-savings-ledger-validation", List.of(1, 62)),
-                Map.entry("sbi-credit-card-statement", List.of(4, 1, 2, 2, 2)),
+                // 4 sections before looksLikePaymentSummaryPanel, 3 after -- one of the four was
+                // itself a payment-summary panel (see this file's other tests for the detail).
+                Map.entry("sbi-credit-card-statement", List.of(3, 1, 2, 2)),
                 Map.entry("union-bank-savings-ledger-validation", List.of(1, 20)));
 
         for (Map.Entry<String, List<Integer>> e : expected.entrySet()) {

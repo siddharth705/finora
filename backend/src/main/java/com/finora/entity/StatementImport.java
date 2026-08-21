@@ -101,9 +101,6 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     @Column(name = "transactions_skipped", nullable = false)
     private int transactionsSkipped;
 
-    @Column(nullable = false)
-    private String status = "COMPLETED";
-
     @Column(name = "imported_at", nullable = false)
     private Instant importedAt = Instant.now();
 
@@ -122,6 +119,35 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
      *  separate from identity -- see ContentAddress. */
     @Column(name = "object_key", length = 512)
     private String objectKey;
+
+    /** Byte count of the original, uncompressed upload -- null for a legacy row (no compression
+     *  metadata was ever recorded for it; see V92's migration comment). Independent of
+     *  {@link #contentHash}'s meaning: this is a size measurement, not part of the document's
+     *  identity. */
+    @Column(name = "original_size")
+    private Long originalSize;
+
+    /** Byte count actually written to the object store -- the compressed size when
+     *  {@link #compressionType} is {@code GZIP}, otherwise equal to {@link #originalSize}. Null for
+     *  a legacy row, same as {@link #originalSize}. Kept purely for storage-savings measurement --
+     *  see V92's migration comment for why this schema exists (Cloudflare R2 storage review). */
+    @Column(name = "stored_size")
+    private Long storedSize;
+
+    /** How the bytes at {@link #objectKey} are encoded -- see {@link
+     *  com.finora.imports.storage.CompressionType}'s own doc for why this is explicit metadata
+     *  rather than sniffed from the bytes on read. Defaults to {@code NONE}: correct for every row
+     *  predating this column (V92) and for the no-storage-provider fallback, where {@link
+     *  #fileContent} holds the bytes exactly as uploaded. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "compression_type", nullable = false, length = 10)
+    private com.finora.imports.storage.CompressionType compressionType = com.finora.imports.storage.CompressionType.NONE;
+
+    /** The upload's MIME type ({@code application/pdf}, {@code text/csv}) -- recorded once, at
+     *  confirm time, from {@link #sourceFormat}. Metadata only; nothing on the read path branches
+     *  on it -- {@link #compressionType} alone decides how to decode the bytes. */
+    @Column(name = "original_mime_type", length = 100)
+    private String originalMimeType;
 
     /**
      * The async job that produced this import, or null for the synchronous path.
@@ -160,6 +186,14 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     public void setContentHash(String contentHash) { this.contentHash = contentHash; }
     @Override public String getObjectKey() { return objectKey; }
     public void setObjectKey(String objectKey) { this.objectKey = objectKey; }
+    public Long getOriginalSize() { return originalSize; }
+    public void setOriginalSize(Long originalSize) { this.originalSize = originalSize; }
+    public Long getStoredSize() { return storedSize; }
+    public void setStoredSize(Long storedSize) { this.storedSize = storedSize; }
+    @Override public com.finora.imports.storage.CompressionType getCompressionType() { return compressionType; }
+    public void setCompressionType(com.finora.imports.storage.CompressionType compressionType) { this.compressionType = compressionType; }
+    public String getOriginalMimeType() { return originalMimeType; }
+    public void setOriginalMimeType(String originalMimeType) { this.originalMimeType = originalMimeType; }
 
     public UUID getImportJobId() { return importJobId; }
     public void setImportJobId(UUID importJobId) { this.importJobId = importJobId; }
@@ -177,8 +211,6 @@ public class StatementImport extends BaseEntity implements com.finora.imports.st
     public void setTransactionsImported(int transactionsImported) { this.transactionsImported = transactionsImported; }
     public int getTransactionsSkipped() { return transactionsSkipped; }
     public void setTransactionsSkipped(int transactionsSkipped) { this.transactionsSkipped = transactionsSkipped; }
-    public String getStatus() { return status; }
-    public void setStatus(String status) { this.status = status; }
     public Instant getImportedAt() { return importedAt; }
     public void setImportedAt(Instant importedAt) { this.importedAt = importedAt; }
 }

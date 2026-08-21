@@ -59,13 +59,58 @@ public class GlobalExceptionHandler {
         // origin identified, and with the request line so the endpoint is known without correlating
         // by timestamp. Deliberately not logging query string or body -- this is a financial API
         // and those carry customer data.
-        if (ex.getStatus().is5xxServerError()) {
+        //
+        // BH-043: a 5xx whose code is ErrorCode.intentionalRejection() is the one exception to
+        // "always ERROR" above -- see that field's own doc. IMPORT_SYSTEM_BUSY now fires on every
+        // ordinary burst past the concurrency limit, not rarely after a 20s timeout, so treating
+        // every occurrence as an alarming server failure (full stack trace, ERROR-level) would
+        // flood exactly the alerting this class exists to keep meaningful with what the limiter
+        // is designed to do correctly. WARN, no trace: the code and message already say
+        // everything there is to know, there is no origin to go find.
+        //
+        // Post-merge review: is5xxServerError() is checked in BOTH branches now, not just the
+        // ERROR one -- intentionalRejection()'s own doc is explicit that it's about "a 5xx
+        // carrying this code," and every 4xx above this block is documented and tested to stay
+        // completely silent. Without this guard, a future ErrorCode that set
+        // intentionalRejection=true on a 4xx (a plausible mistake -- someone copying
+        // IMPORT_SYSTEM_BUSY's pattern to opt out of ERROR-logging without noticing 4xx never
+        // reached that branch anyway) would start WARN-logging a class of error this class's own
+        // contract says must never be logged at all.
+        if (ex.getStatus().is5xxServerError() && ex.getCode() != null && ex.getCode().intentionalRejection()) {
+            log.warn("Deliberate rejection ApiException [{}] on {} {}: {}",
+                    errorCode, request.getMethod(), request.getRequestURI(), ex.getMessage());
+        } else if (ex.getStatus().is5xxServerError()) {
             log.error("Server-error ApiException [{}] on {} {}: {}",
                     errorCode, request.getMethod(), request.getRequestURI(), ex.getMessage(), ex);
         }
 
         return ResponseEntity.status(ex.getStatus())
-                .body(ApiResponse.error(ex.getMessage(), errorCode, ex.getDetails()));
+                .body(ApiResponse.error(ex.getMessage(), errorCode, detailsWithActionRequired(ex)));
+    }
+
+    /**
+     * Merges {@code ErrorCode.userActionRequired()} into the exception's own details, centralized
+     * here rather than left for each of the ~24 {@code ApiException} throw sites to remember --
+     * this handler already does the identical thing for {@code errorCode} two lines above.
+     *
+     * <p>Closes a drift risk Sprint 4 item 22 shipped with and flagged rather than fixed: the
+     * frontend previously kept its own hardcoded copy of which codes are user-actionable
+     * ({@code importFailureMessages.ts}), a boolean CLASSIFICATION that has to exactly agree with
+     * this enum, unlike curated message text, which is deliberately independent. The async path
+     * (queued imports) already avoided this by computing {@code userStatus} once, backend-side,
+     * and putting it on the wire ({@code UserFacingImportStatus}); this is the same fix for the
+     * synchronous path, which has no {@code ImportJob} to compute one on.
+     *
+     * <p>{@code ex.getDetails()} is {@link java.util.Collections#emptyMap()} for the overwhelming
+     * majority of throw sites -- copied into a new mutable map rather than merged in place, since
+     * that immutable empty map (and any caller-supplied {@code Map.of(...)}) would throw on
+     * {@code put}.
+     */
+    private static java.util.Map<String, Object> detailsWithActionRequired(ApiException ex) {
+        if (ex.getCode() == null) return ex.getDetails();
+        java.util.Map<String, Object> merged = new java.util.HashMap<>(ex.getDetails());
+        merged.put("userActionRequired", ex.getCode().userActionRequired());
+        return merged;
     }
 
     @ExceptionHandler(BadCredentialsException.class)

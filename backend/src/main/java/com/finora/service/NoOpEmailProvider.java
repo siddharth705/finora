@@ -34,6 +34,14 @@ public class NoOpEmailProvider implements EmailProvider, SilentProductionFallbac
     }
 
     @Override
+    public EmailResult sendEmailVerificationEmail(String toEmail, String verifyLink) {
+        // Same reasoning as sendPasswordResetEmail above -- the link itself isn't logged, only
+        // that one would have been sent.
+        log.info("No email provider configured — would have sent an email verification link to {}", toEmail);
+        return EmailResult.failure(ProviderType.RESEND, "No email provider configured");
+    }
+
+    @Override
     public EmailResult sendWelcomeEmail(String toEmail, String fullName) {
         log.info("No email provider configured — would have sent a welcome email to {}", toEmail);
         return EmailResult.failure(ProviderType.RESEND, "No email provider configured");
@@ -42,6 +50,24 @@ public class NoOpEmailProvider implements EmailProvider, SilentProductionFallbac
     @Override
     public EmailResult sendPasswordChangedEmail(String toEmail) {
         log.info("No email provider configured — would have sent a password-changed notification to {}", toEmail);
+        return EmailResult.failure(ProviderType.RESEND, "No email provider configured");
+    }
+
+    @Override
+    public EmailResult sendAccountDeactivatedEmail(String toEmail, java.time.Instant deactivatedAt, String device, String ip) {
+        log.info("No email provider configured — would have sent an account-deactivated notification to {}", toEmail);
+        return EmailResult.failure(ProviderType.RESEND, "No email provider configured");
+    }
+
+    @Override
+    public EmailResult sendAccountReactivatedEmail(String toEmail) {
+        log.info("No email provider configured — would have sent an account-reactivated notification to {}", toEmail);
+        return EmailResult.failure(ProviderType.RESEND, "No email provider configured");
+    }
+
+    @Override
+    public EmailResult sendAccountDeletedEmail(String toEmail, java.time.Instant deletedAt) {
+        log.info("No email provider configured — would have sent an account-deleted notification to {}", toEmail);
         return EmailResult.failure(ProviderType.RESEND, "No email provider configured");
     }
 

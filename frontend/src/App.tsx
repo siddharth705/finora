@@ -29,6 +29,7 @@ const Login = lazy(() => import('./pages/Login'));
 const Register = lazy(() => import('./pages/Register'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
+const VerifyEmail = lazy(() => import('./pages/VerifyEmail'));
 const VerifyPhone = lazy(() => import('./pages/VerifyPhone'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Ledger = lazy(() => import('./pages/Ledger'));
@@ -42,6 +43,7 @@ const Reports = lazy(() => import('./pages/Reports'));
 const Insights = lazy(() => import('./pages/Insights'));
 const Profile = lazy(() => import('./pages/Profile'));
 const Settings = lazy(() => import('./pages/Settings'));
+const GmailReview = lazy(() => import('./pages/GmailReview'));
 const Setup = lazy(() => import('./pages/Setup'));
 
 function AppShell({ children }: { children: ReactNode }) {
@@ -123,6 +125,7 @@ export default function App() {
           <Route path="/register" element={<Register />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/verify-phone" element={<ProtectedRoute allowUnverified><VerifyPhone /></ProtectedRoute>} />
 
           {/* App (authenticated) */}
@@ -143,6 +146,7 @@ export default function App() {
           <Route path="/app/insights" element={<Protected><Insights /></Protected>} />
           <Route path="/app/profile" element={<Protected><Profile /></Protected>} />
           <Route path="/app/settings" element={<Protected><Settings /></Protected>} />
+          <Route path="/app/settings/gmail/review" element={<Protected><GmailReview /></Protected>} />
 
           {/* Bug fix: there was no catch-all, and wrangler.json sets
               assets.not_found_handling = "single-page-application" -- so Cloudflare answers EVERY

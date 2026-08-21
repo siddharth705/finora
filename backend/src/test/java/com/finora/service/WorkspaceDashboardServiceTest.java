@@ -6,7 +6,6 @@ import com.finora.entity.CategoryRule;
 import com.finora.entity.Merchant;
 import com.finora.entity.MerchantCategoryLearning;
 import com.finora.entity.Relationship;
-import com.finora.entity.StatementImport;
 import com.finora.entity.Transaction;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.AuditLogRepository;
@@ -63,7 +62,7 @@ class WorkspaceDashboardServiceTest {
         when(learningRepository.findByUserId(userId)).thenReturn(List.of());
         when(categoryRuleRepository.findByUserIdAndEnabledTrueOrderByPriorityAsc(userId)).thenReturn(List.of());
         when(relationshipRepository.findByUserId(userId)).thenReturn(List.of());
-        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of());
+        when(statementImportRepository.countByUserId(userId)).thenReturn(0L);
         when(auditLogRepository.findTop5ByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of());
         when(transactionRepository.findByUserId(userId)).thenReturn(List.of());
     }
@@ -190,8 +189,7 @@ class WorkspaceDashboardServiceTest {
     void summarize_countsAccountsRelationshipsAndStatementImports() {
         when(accountRepository.findByUserId(userId)).thenReturn(List.of(new Account(), new Account()));
         when(relationshipRepository.findByUserId(userId)).thenReturn(List.of(new Relationship()));
-        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId))
-                .thenReturn(List.of(new StatementImport(), new StatementImport(), new StatementImport()));
+        when(statementImportRepository.countByUserId(userId)).thenReturn(3L);
 
         var summary = service.summarize(userId);
 

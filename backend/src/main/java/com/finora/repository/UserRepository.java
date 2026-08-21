@@ -108,4 +108,13 @@ public interface UserRepository extends JpaRepository<User, UUID> {
      */
     @Query("SELECT u.phoneVerified FROM User u WHERE u.id = :id")
     Optional<Boolean> findPhoneVerifiedById(@Param("id") UUID id);
+
+    // --- AccountPurgeSweepService ---
+
+    /** Accounts eligible for purge -- ids only, not full entities, matching
+     *  StatementStorageSweepService's own discovery-query shape (a projection, not a full-entity
+     *  load, for a batch that's just going to be iterated and re-fetched one at a time anyway). */
+    @Query("SELECT u.id FROM User u WHERE u.status = :status AND u.deletionRequestedAt < :cutoff")
+    java.util.List<UUID> findIdsByStatusAndDeletionRequestedAtBefore(
+            @Param("status") String status, @Param("cutoff") Instant cutoff, Pageable pageable);
 }

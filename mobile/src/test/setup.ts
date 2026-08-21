@@ -89,6 +89,69 @@ jest.mock('@react-native-community/datetimepicker', () => ({
   DateTimePickerAndroid: { open: jest.fn(), dismiss: jest.fn() },
 }));
 
+// D-23 Phase 2. Native module -- rendered as a plain Pressable/Text so GoogleSignInButton's own
+// onPress wiring is exercised for real; signIn()/hasPlayServices() are left as bare jest.fn()s for
+// each test to configure, same posture as authApi's own mock in AuthContext.test.tsx.
+jest.mock('@react-native-google-signin/google-signin', () => {
+  const React = require('react');
+  const { Pressable, Text } = require('react-native');
+  const GoogleSigninButton = ({
+    onPress,
+    disabled,
+  }: {
+    onPress: () => void;
+    disabled?: boolean;
+  }) =>
+    React.createElement(
+      Pressable,
+      { onPress, disabled, accessibilityRole: 'button', accessibilityLabel: 'Sign in with Google' },
+      React.createElement(Text, null, 'Sign in with Google')
+    );
+  GoogleSigninButton.Size = { Icon: 0, Standard: 1, Wide: 2 };
+  GoogleSigninButton.Color = { Dark: 'dark', Light: 'light' };
+  return {
+    __esModule: true,
+    GoogleSignin: {
+      configure: jest.fn(),
+      hasPlayServices: jest.fn(async () => true),
+      signIn: jest.fn(),
+    },
+    GoogleSigninButton,
+    isSuccessResponse: (response: { type: string }) => response?.type === 'success',
+    isErrorWithCode: (err: unknown): err is { code: string } =>
+      typeof (err as { code?: unknown })?.code === 'string',
+    statusCodes: {
+      SIGN_IN_CANCELLED: 'SIGN_IN_CANCELLED',
+      IN_PROGRESS: 'IN_PROGRESS',
+      PLAY_SERVICES_NOT_AVAILABLE: 'PLAY_SERVICES_NOT_AVAILABLE',
+    },
+  };
+});
+
+// D-26. Native module, same posture as the Google mock above -- a plain Pressable/Text standing
+// in for the real branded button, signInAsync() left for each test to configure.
+jest.mock('expo-apple-authentication', () => {
+  const React = require('react');
+  const { Pressable, Text } = require('react-native');
+  return {
+    __esModule: true,
+    isAvailableAsync: jest.fn(async () => true),
+    signInAsync: jest.fn(),
+    formatFullName: jest.fn((name: { givenName?: string; familyName?: string }) =>
+      [name.givenName, name.familyName].filter(Boolean).join(' ')
+    ),
+    AppleAuthenticationButton: ({ onPress }: { onPress: () => void }) =>
+      React.createElement(
+        Pressable,
+        { onPress, accessibilityRole: 'button', accessibilityLabel: 'Sign in with Apple' },
+        React.createElement(Text, null, 'Sign in with Apple')
+      ),
+    AppleAuthenticationButtonType: { SIGN_IN: 0, CONTINUE: 1, SIGN_UP: 2 },
+    AppleAuthenticationButtonStyle: { WHITE: 0, WHITE_OUTLINE: 1, BLACK: 2 },
+    AppleAuthenticationScope: { FULL_NAME: 0, EMAIL: 1 },
+  };
+});
+
 // Sentry's native module isn't present under the runner. The scrubbers in lib/monitoring.ts are
 // pure functions tested directly, so nothing here needs the real SDK -- and EXPO_PUBLIC_SENTRY_DSN
 // is deliberately left unset so initMonitoring() no-ops and no test can emit a real event.
@@ -96,6 +159,29 @@ jest.mock('@sentry/react-native', () => ({
   init: jest.fn(),
   wrap: jest.fn((component: unknown) => component),
   captureException: jest.fn(),
+}));
+
+// SEC-08. Has no native module under the runner; without a mock, `isRootedExperimentalAsync`
+// falls through to a real (non-native) code path that still resolves asynchronously, producing
+// act()-wrapping warnings in any test that mounts RootWarningBoundary without awaiting it.
+// Defaults to "not rooted" -- each test overrides with mockResolvedValueOnce for the flagged case.
+jest.mock('expo-device', () => ({
+  isRootedExperimentalAsync: jest.fn(async () => false),
+}));
+
+// SEC-09. Defaults model an unenrolled device (supported hardware, nothing enrolled) so
+// isSupported() is false unless a test opts in -- the safer default for a control this codebase
+// treats as opt-in. authenticateAsync defaults to a cancelled/failed result for the same reason.
+jest.mock('expo-local-authentication', () => ({
+  hasHardwareAsync: jest.fn(async () => true),
+  isEnrolledAsync: jest.fn(async () => false),
+  authenticateAsync: jest.fn(async () => ({ success: false })),
+}));
+
+// SEC-17. No native module under the runner; this app only ever calls the hook form, so nothing
+// under test needs it to actually do anything.
+jest.mock('expo-screen-capture', () => ({
+  usePreventScreenCapture: jest.fn(),
 }));
 
 // Every test starts from a clean SecureStore so persistence assertions can't leak between them.

@@ -41,11 +41,14 @@ public class AdminStatsService {
         Instant now = Instant.now();
         long totalUsers = userRepository.countByRoleNot("BOOTSTRAP_ADMIN");
         long suspendedUsers = userRepository.countByStatusAndRoleNot("SUSPENDED", "BOOTSTRAP_ADMIN");
-        // Not userRepository.countByStatus("ACTIVE") separately -- status is a two-value column
-        // (see the CHECK constraint in V23), so "active" is always exactly "everyone else."
-        // Deriving it this way also means a future third status can't silently make these two
-        // counts stop summing to totalUsers.
-        long activeUsers = totalUsers - suspendedUsers;
+        // Bug fix: this used to derive activeUsers as totalUsers - suspendedUsers, on the reasoning
+        // that status was a two-value column (V23's original CHECK constraint) so "active" was
+        // always exactly "everyone else." V87 widened status to include DEACTIVATED (and reserves
+        // room for more self-service states in a later phase) -- the subtraction silently started
+        // counting deactivated accounts as active, with no test catching it (AdminStatsServiceTest
+        // only ever exercised the ACTIVE/SUSPENDED world). Counting ACTIVE explicitly is immune to
+        // however many more statuses this column grows to hold.
+        long activeUsers = userRepository.countByStatusAndRoleNot("ACTIVE", "BOOTSTRAP_ADMIN");
 
         return new PlatformStatsDto(
                 totalUsers,

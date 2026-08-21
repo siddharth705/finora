@@ -3,8 +3,8 @@ package com.finora.imports;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.finora.dto.ImportDto.CapabilityActivation;
-import com.finora.entity.StatementImport;
 import com.finora.repository.StatementImportRepository;
+import com.finora.repository.StatementImportRepository.CapabilityData;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -73,7 +73,69 @@ public class CapabilityCoverageService {
             // statement whose fixed-deposit schedule was invisible to table location entirely
             // because neither half of its header scored as one. See
             // PdfTableLocator.HEADER_WRAP_MAX_GAP.
-            "WRAPPED_HEADER");
+            "WRAPPED_HEADER",
+            // Two header cells normalizing to the same column name -- found on a real ICICI
+            // savings statement whose stacked heading names both amount columns "Amount (INR)".
+            // See PdfTableLocator.resolveDuplicateColumnNames.
+            "DUPLICATE_COLUMN_NAMES",
+            // A transaction table with no header row anywhere in the document -- found on a real
+            // SBI savings statement whose column vocabulary never appears as text at all. Columns
+            // are inferred from data-row geometry and content shape instead of a label. See
+            // PdfTableLocator.inferHeaderlessSection.
+            "INFERRED_HEADERLESS_LAYOUT",
+            // A fictional worked-example table inside a real AU Small Finance Bank credit-card
+            // statement's fee/interest-calculation appendix, indistinguishable from a real header
+            // by vocabulary alone -- three of them opened three garbage sections and blocked real
+            // transaction recovery entirely. See PdfTableLocator.ILLUSTRATIVE_EXAMPLE_MARKER.
+            "ILLUSTRATIVE_BLOCK_SUPPRESSED",
+            // A transaction printed as a two-physical-line visual block (day-of-month + narration
+            // + amount, then month/year + a bare Cr/Dr marker) rather than a table row at all --
+            // found on the same AU statement, once the illustrative sections above stopped
+            // blocking recovery. See PdfTableLocator.inferTwoLineDateBlockSection.
+            "INFERRED_TWO_LINE_DATE_BLOCK",
+            // A credit card's identity stated inside an ordinary sentence ("...credit card ending
+            // with <4 digits>") rather than any "Label: Value" or grid shape -- found on the same
+            // AU statement once INFERRED_TWO_LINE_DATE_BLOCK stopped discarding the auxiliary text
+            // this reads. See PdfMetadataExtractor.CARD_ENDING_DIGITS.
+            "CARD_ENDING_DIGITS_IDENTITY",
+            // A header cell whose printed text is real but normalizes to blank (a bare currency
+            // unit like "(INR)") -- found on a real ICICI savings e-statement whose Balance column
+            // heading is invisible to every downstream recognizer as a result. See
+            // PdfTableLocator.resolveBlankColumnNames.
+            "BLANK_COLUMN_NAME_QUALIFIED",
+            // A narration/remarks column with no representation at all on the accepted header
+            // line -- found on the same real ICICI statement, whose three-tier heading puts
+            // "Transaction Remarks" on a tier mergeHeaderLines correctly refuses to fold in
+            // wholesale. See PdfTableLocator.recoverMissingDescriptionColumn.
+            "RECOVERED_MISSING_DESCRIPTION_COLUMN",
+            // An "S No." column recovered the same way, not for its own sake but because leaving
+            // it unnamed let its digit values collide with and corrupt the Date column (nearestColumn
+            // has no maximum-distance cap). See PdfTableLocator.recoverMissingSerialNumberColumn.
+            "RECOVERED_MISSING_SERIAL_NUMBER_COLUMN",
+            // A credit card's own payment-summary panel (Total/Minimum Payment Due, Available
+            // Credit/Cash Limit, ...) satisfying looksLikeHeaderRow exactly like a real transaction
+            // table -- found on two real credit-card statements (Axis, HDFC) with otherwise
+            // unrelated layouts, each producing a one-row phantom section immediately superseded by
+            // the real ledger's header. See PdfTableLocator.looksLikePaymentSummaryPanel.
+            "PAYMENT_SUMMARY_PANEL_SUPPRESSED",
+            // A credit-card statement's own billing-summary panel read via one of two independent
+            // strategies -- see CreditCardSummaryExtractor's own class doc comment for why they are
+            // kept separate rather than merged into one extractor. CREDIT_CARD_SUMMARY_TOTALS is the
+            // stacked label-row/value-row GRID strategy (real evidence: a real Axis statement's
+            // Total Payment Due figure, once a row-merge edge case in shared grid-reading logic was
+            // fixed). CREDIT_CARD_SUMMARY_INLINE_LABEL_VALUE is the label-left/value-right SAME_ROW strategy
+            // (real evidence: a real AU statement's "Bill summary" widget). See the architecture
+            // doc's Credit Card Direction Evidence Study addendum for the measured fire rate against
+            // the real 6-document corpus.
+            "CREDIT_CARD_SUMMARY_TOTALS", "CREDIT_CARD_SUMMARY_INLINE_LABEL_VALUE",
+            // Fires only when the headerless-inference path actually removes a repeated physical
+            // row (see PdfTableLocator.bucketHeaderlessRowsWithContinuation's own doc comment for
+            // the real page-boundary-reprint artifact this protects against), never merely when
+            // that path runs -- so this answers "how many documents relied on this safety net",
+            // not "how many documents took this code path". Distinct from INFERRED_HEADERLESS_LAYOUT
+            // itself, which fires on every document that path accepts regardless of whether a
+            // duplicate was present to remove.
+            "PHYSICAL_ROW_DEDUP_EVIDENCE");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure
@@ -109,16 +171,16 @@ public class CapabilityCoverageService {
 
     /** Coverage across one user's own imports. */
     public CoverageMap forUser(UUID userId) {
-        return aggregate(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId));
+        return aggregate(statementImportRepository.findCapabilityDataByUserId(userId));
     }
 
-    CoverageMap aggregate(List<StatementImport> imports) {
+    CoverageMap aggregate(List<CapabilityData> imports) {
         Map<String, Integer> activations = new TreeMap<>();
         Map<String, Integer> reasons = new LinkedHashMap<>();
         Map<String, Integer> shapes = new LinkedHashMap<>();
         int rowsLost = 0;
 
-        for (StatementImport si : imports) {
+        for (CapabilityData si : imports) {
             for (String capability : capabilitiesOf(si)) {
                 activations.merge(capability, 1, Integer::sum);
             }
@@ -150,7 +212,7 @@ public class CapabilityCoverageService {
         return sorted;
     }
 
-    private List<String> capabilitiesOf(StatementImport si) {
+    private List<String> capabilitiesOf(CapabilityData si) {
         String json = si.getActivatedCapabilitiesJson();
         if (json == null || json.isBlank()) return List.of();
         try {
@@ -168,7 +230,7 @@ public class CapabilityCoverageService {
         }
     }
 
-    private UnparseableRowSummary unparseableOf(StatementImport si) {
+    private UnparseableRowSummary unparseableOf(CapabilityData si) {
         String json = si.getUnparseableSummaryJson();
         if (json == null || json.isBlank()) return null;
         try {

@@ -105,11 +105,16 @@ class ImportIdempotencyIT extends AbstractIntegrationTest {
         //
         // Demonstrated rather than argued: with the second import removed, the original assertion
         // still passed and this one reports "Expected size: 2 but was: 1".
-        assertThat(statementImportRepository.findByUserIdOrderByImportedAtDesc(user.getId()))
+        //
+        // Metadata projection, not the entity-returning finder (removed -- see
+        // StatementImportRepository.StatementMetadata's own doc comment): importJobId isn't one of
+        // its columns, so the per-job identity half of this assertion goes through
+        // findByImportJobId directly instead of extracting it off the list.
+        assertThat(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(user.getId()))
                 .as("both jobs must produce their own import -- the constraint is per job, not global")
-                .hasSize(2)
-                .extracting(StatementImport::getImportJobId)
-                .containsExactlyInAnyOrder(firstJob, secondJob);
+                .hasSize(2);
+        assertThat(statementImportRepository.findByImportJobId(firstJob)).isPresent();
+        assertThat(statementImportRepository.findByImportJobId(secondJob)).isPresent();
     }
 
     @Test
@@ -125,7 +130,7 @@ class ImportIdempotencyIT extends AbstractIntegrationTest {
         // Same reasoning: a table-wide isPositive() could not tell three successful inserts from
         // zero. Postgres allows many NULLs in a UNIQUE index and THAT is the property under test,
         // so the number has to be three.
-        assertThat(statementImportRepository.findByUserIdOrderByImportedAtDesc(user.getId()))
+        assertThat(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(user.getId()))
                 .as("the synchronous path has no job id, and a partial unique index must not "
                         + "collapse its NULLs into one")
                 .hasSize(3);

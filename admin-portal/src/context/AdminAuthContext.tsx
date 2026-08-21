@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { authApi, meApi } from '../api/endpoints';
-import { clearAdminSession, getAdminToken, persistAdminSession } from '../api/client';
+import { clearAdminSession, getAdminToken, persistAdminSession, refreshAccessToken } from '../api/client';
 import { safeStorage } from '../lib/safeStorage';
 
 // Any one of these being present is enough to open the admin shell -- deliberately not "must be
@@ -65,7 +65,12 @@ const AdminAuthContext = createContext<AdminAuthState | null>(null);
 class AdminAccessError extends Error {}
 
 export function AdminAuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(getAdminToken());
+  // SEC-01 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). getAdminToken()
+  // used to read a synchronously-available localStorage copy -- that copy is gone now (client.ts's
+  // in-memory accessToken variable is the only place the token lives), so this always starts null
+  // and the mount effect below is what turns "nothing yet" into "logged out" or "logged in" via a
+  // silent refresh against the HttpOnly refresh cookie.
+  const [token, setToken] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(safeStorage.getItem('finora_admin_email'));
   const [fullName, setFullName] = useState<string | null>(safeStorage.getItem('finora_admin_name'));
   // Mirrors frontend/'s AuthContext phoneVerified tracking exactly -- see ADR-0001. Defaults to
@@ -78,10 +83,11 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
   );
   const [permissions, setPermissions] = useState<string[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
-  // Starts true whenever a token already exists (page reload) -- ProtectedRoute waits for this
-  // before deciding whether to redirect, so a reload doesn't flash a "not authorized" bounce
-  // while the /users/me/access call is still in flight.
-  const [loading, setLoading] = useState<boolean>(!!getAdminToken());
+  // SEC-01: always starts true now -- the mount effect below always attempts a silent refresh
+  // first (there is no synchronously-known token to check anymore), and ProtectedRoute waits for
+  // this before deciding whether to redirect, so a reload doesn't flash a "not authorized" bounce
+  // while that attempt (and, if it succeeds, the /users/me/access call after it) is in flight.
+  const [loading, setLoading] = useState<boolean>(true);
 
   function setPhoneVerified(verified: boolean) {
     safeStorage.setItem('finora_admin_phone_verified', String(verified));
@@ -121,31 +127,57 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
     setRoles(access.roles);
   }
 
+  // SEC-01 bootstrap. The access token no longer survives a reload on its own (it's in-memory
+  // only, see client.ts), but the HttpOnly refresh cookie does -- so a returning, still-logged-in
+  // admin is recovered by attempting one silent refresh on mount before any of the existing
+  // phoneVerified/loadAccess logic runs. A failure here (no cookie, or an expired/already-consumed
+  // one) is the ordinary "not logged in" case for a first visit or a genuinely ended session.
+  //
+  // Bug fix: calls client.ts's refreshAccessToken() rather than authApi.refresh() directly -- see
+  // that function's own comment for why a raw call here is a real bug. React.StrictMode
+  // double-invokes this effect on every real mount, and the cleanup below only gates the state
+  // updates that follow, not the network request the first invocation already sent -- so a raw
+  // authApi.refresh() call here sent two real requests racing to rotate the same refresh token.
   useEffect(() => {
-    if (!token) {
-      setLoading(false);
-      return;
-    }
-    if (!phoneVerified) {
-      // Reloaded mid-verification (e.g. sitting on /verify-phone) -- nothing to fetch yet, and
-      // definitely not a reason to clear a perfectly valid token. completePhoneVerification()
-      // below is what eventually calls loadAccess() once verification actually finishes.
-      setLoading(false);
-      return;
-    }
-    loadAccess()
-      .catch(() => {
+    let cancelled = false;
+    void (async () => {
+      let refreshedToken: string;
+      try {
+        const refreshed = await refreshAccessToken();
+        if (cancelled) return;
+        persistAdminSession(refreshed.token);
+        refreshedToken = refreshed.token;
+        setToken(refreshedToken);
+      } catch {
+        if (!cancelled) setLoading(false);
+        return; // no valid session to recover
+      }
+
+      if (!phoneVerified) {
+        // Reloaded mid-verification (e.g. sitting on /verify-phone) -- nothing to fetch yet, and
+        // definitely not a reason to clear a token this bootstrap just confirmed is valid.
+        // completePhoneVerification() is what eventually calls loadAccess() once verification
+        // actually finishes.
+        if (!cancelled) setLoading(false);
+        return;
+      }
+
+      try {
+        await loadAccess();
+      } catch {
         // Covers both "no admin permission" (AdminAccessError, already cleared above) and a
         // dead/expired token client.ts's own interceptor couldn't refresh -- either way, there's
-        // no valid admin session to keep waiting on. (PHONE_VERIFICATION_REQUIRED can't reach
-        // here since phoneVerified is checked above, but loadAccess() still guards it directly.)
+        // no valid admin session to keep waiting on.
         clearAdminSession();
-        setToken(null);
-      })
-      .finally(() => setLoading(false));
-    // Intentionally only on mount / when a token first appears -- permissions are re-fetched
-    // fresh on every login() call already, and reload is the only case that lands here.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        if (!cancelled) setToken(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs exactly once, on mount, by design.
   }, []);
 
   async function login(identifier: string, password: string): Promise<boolean> {

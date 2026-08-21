@@ -2,6 +2,7 @@ package com.finora.dto;
 
 import com.finora.accounts.AccountDto;
 import com.finora.entity.StatementImport;
+import com.finora.repository.StatementImportRepository;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -29,14 +30,23 @@ public class StatementImportDto {
             BigDecimal closingBalance,
             int transactionsImported,
             int transactionsSkipped,
-            String status,
             Instant importedAt,
             int duplicateCount
     ) {
         public static Summary from(StatementImport s, int duplicateCount) {
             return new Summary(s.getId(), s.getFileName(), s.getStatementPeriodStart(), s.getStatementPeriodEnd(),
                     s.getOpeningBalance(), s.getClosingBalance(), s.getTransactionsImported(),
-                    s.getTransactionsSkipped(), s.getStatus(), s.getImportedAt(), duplicateCount);
+                    s.getTransactionsSkipped(), s.getImportedAt(), duplicateCount);
+        }
+
+        /** Same mapping as {@link #from(StatementImport, int)}, from the {@code fileContent}-free
+         *  projection instead of the full entity -- see
+         *  {@code StatementImportRepository.StatementMetadata}'s own doc comment for why
+         *  {@code DataExportService} needs this overload rather than the entity one. */
+        public static Summary from(StatementImportRepository.StatementMetadata s, int duplicateCount) {
+            return new Summary(s.getId(), s.getFileName(), s.getStatementPeriodStart(), s.getStatementPeriodEnd(),
+                    s.getOpeningBalance(), s.getClosingBalance(), s.getTransactionsImported(),
+                    s.getTransactionsSkipped(), s.getImportedAt(), duplicateCount);
         }
     }
 

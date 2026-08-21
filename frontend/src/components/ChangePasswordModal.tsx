@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react';
 import { X, Eye, EyeOff, CheckCircle2, Circle, ChevronDown, ChevronUp } from 'lucide-react';
 import { passwordChangeApi } from '../api/endpoints';
-import { sendPhoneVerificationCode, confirmPhoneVerificationCode, resetPhoneVerification } from '../lib/phoneAuth';
+import {
+  sendPhoneVerificationCode,
+  confirmPhoneVerificationCode,
+  resetPhoneVerification,
+  friendlySendError,
+} from '../lib/phoneAuth';
+import { reportHandledError } from '../lib/monitoring';
+import { GoogleReauthPrompt } from './GoogleReauthPrompt';
 import type { ConfirmationResult } from 'firebase/auth';
 
 const RECAPTCHA_CONTAINER_ID = 'change-password-recaptcha';
@@ -88,7 +95,9 @@ function PasswordField({ id, label, value, onChange, show, onToggleShow }: {
   );
 }
 
-export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => void; onSuccess?: () => void }) {
+export function ChangePasswordModal({ onClose, onSuccess, signInMethod }: {
+  onClose: () => void; onSuccess?: () => void; signInMethod: 'PASSWORD' | 'GOOGLE';
+}) {
   const [step, setStep] = useState<Step>('password');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -116,12 +125,18 @@ export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => voi
   const otpValid = /^\d{6}$/.test(otp);
   const canSubmitNewPassword = newPassword.length >= 8 && newPassword === confirmPassword && !submitting;
 
-  async function submitCurrentPassword() {
-    if (currentPassword.length === 0 || submitting) return;
+  /** Shared by both re-auth paths below -- once EITHER a current password or a fresh Google
+   *  credential has been supplied, everything from here (open the session, send the phone OTP)
+   *  is identical regardless of which one it was. */
+  async function startWithCredential(currentPasswordArg: string | null, googleIdToken: string | null) {
+    // Google's own rendered button has no prop to disable it while a request is in flight
+    // (unlike the password path's <button disabled={submitting}>), so this guards against a
+    // double-click firing a second concurrent request itself.
+    if (submitting) return;
     setSubmitting(true);
     setError(null);
     try {
-      const res = await passwordChangeApi.start(currentPassword);
+      const res = await passwordChangeApi.start(currentPasswordArg, googleIdToken);
       setSessionId(res.sessionId);
       setMaskedPhone(res.maskedPhone);
       // Firebase sends the code itself, directly to the phone number this response reveals --
@@ -133,22 +148,32 @@ export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => voi
       // Logged, not just displayed -- a Firebase Auth error (e.g. sendPhoneVerificationCode
       // throwing auth/too-many-requests, auth/invalid-app-credential) has no response.data.message
       // and previously vanished into the generic fallback text with zero trace anywhere, making
-      // this exact failure mode undiagnosable from the browser alone.
-      console.error('ChangePasswordModal: submitCurrentPassword failed', e);
+      // this exact failure mode undiagnosable from the browser alone. A backend rejection (e.g.
+      // wrong current password) already carries its own message via e.response and needs no
+      // Firebase-specific logging.
+      console.error('ChangePasswordModal: startWithCredential failed', e);
+      if (!e.response) {
+        reportHandledError(e, 'change-password-send-otp');
+      }
       // Bug fix: getRecaptchaVerifier() caches one RecaptchaVerifier instance at module scope and
       // previously only cleared it when the modal unmounted -- so retrying "Send code" in place
       // after ANY failure (wrong password, a network blip, anything) reused an
       // already-consumed/expired invisible-reCAPTCHA widget on the next attempt, which
       // signInWithPhoneNumber rejects with auth/argument-error regardless of whether the retry's
-      // password and phone number were perfectly valid. Resetting here is harmless when the
+      // credential and phone number were perfectly valid. Resetting here is harmless when the
       // failure happened before sendPhoneVerificationCode ever ran (e.g. a wrong-password 400
       // from passwordChangeApi.start()) -- resetPhoneVerification() is a no-op on an
       // already-null/unused verifier -- so it's safe to call unconditionally on any failure here.
       resetPhoneVerification();
-      setError(e.response?.data?.message ?? 'Could not start the password change. Please try again.');
+      setError(e.response?.data?.message ?? friendlySendError(e));
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function submitCurrentPassword() {
+    if (currentPassword.length === 0 || submitting) return;
+    void startWithCredential(currentPassword, null);
   }
 
   async function submitOtp() {
@@ -235,7 +260,22 @@ export function ChangePasswordModal({ onClose, onSuccess }: { onClose: () => voi
                 it's always present for the whole time the modal is mounted. */}
             <div id={RECAPTCHA_CONTAINER_ID} />
 
-            {step === 'password' && (
+            {step === 'password' && signInMethod === 'GOOGLE' && (
+              <div className="space-y-3">
+                <GoogleReauthPrompt
+                  onCredential={(idToken) => startWithCredential(null, idToken)}
+                  onError={setError}
+                />
+                {error && <p className="text-danger text-xs">{error}</p>}
+                <div className="flex items-center justify-end pt-3 border-t border-border">
+                  <button onClick={onClose} className="text-muted hover:text-ink text-xs uppercase font-medium px-3 py-2">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {step === 'password' && signInMethod === 'PASSWORD' && (
               <div className="space-y-3">
                 <p className="text-xs text-muted">Enter your current password to get started. We'll send a verification code to the phone on file.</p>
                 <PasswordField

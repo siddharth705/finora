@@ -3,7 +3,9 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { queryClient, startNetworkMonitoring } from './src/api/queryClient';
+import { AppLockGate } from './src/components/AppLockGate';
 import { OfflineBoundary } from './src/components/OfflineBanner';
+import { RootWarningBoundary } from './src/components/RootWarningBanner';
 import { AuthProvider } from './src/context/AuthContext';
 import { initMonitoring, withMonitoring } from './src/lib/monitoring';
 import { RootNavigator } from './src/navigation/RootNavigator';
@@ -31,12 +33,22 @@ function App() {
             itself from storage, and sitting outside means the choice is already applied to the auth
             screens a signed-out user sees. */}
         <ThemeProvider>
-          <AuthProvider>
-            <OfflineBoundary>
-              <RootNavigator />
-            </OfflineBoundary>
-            <StatusBar style="auto" />
-          </AuthProvider>
+          {/* SEC-08: outside AuthProvider, deliberately -- a rooted/jailbroken device is a
+              concern regardless of sign-in state, so this spans the auth stack too, the same
+              reason OfflineBoundary does. */}
+          <RootWarningBoundary>
+            <AuthProvider>
+              {/* SEC-09: inside AuthProvider (needs useAuth()'s token/logout), outside/around
+                  RootNavigator so a locked session replaces the entire app UI, not just one screen
+                  inside it -- see AppLockGate's own doc comment for when it actually engages. */}
+              <AppLockGate>
+                <OfflineBoundary>
+                  <RootNavigator />
+                </OfflineBoundary>
+              </AppLockGate>
+              <StatusBar style="auto" />
+            </AuthProvider>
+          </RootWarningBoundary>
         </ThemeProvider>
       </SafeAreaProvider>
     </QueryClientProvider>

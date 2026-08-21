@@ -1,21 +1,33 @@
-import { createContext, useContext, useState, type ReactNode } from 'react';
-import { authApi } from '../api/endpoints';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { authApi, userApi } from '../api/endpoints';
 import { AUTH_CHANGED_EVENT } from './ThemeContext';
 import { safeStorage } from '../lib/safeStorage';
+import { getAccessToken, setAccessToken, refreshAccessToken } from '../api/client';
 
 interface AuthState {
   token: string | null;
+  // SEC-01: true only for the brief window between mount and the bootstrap effect below
+  // resolving. ProtectedRoute waits on this rather than treating a not-yet-populated token the
+  // same as a logged-out one -- see that component's own comment.
+  bootstrapping: boolean;
   email: string | null;
   fullName: string | null;
   phoneVerified: boolean;
   // Accepts either an email address or a registered mobile number -- see Login.tsx.
   login: (identifier: string, password: string) => Promise<boolean>;
+  // Completes the "Welcome back — reactivate your account?" prompt Login.tsx shows after a
+  // deactivated account's password checks out -- see ReactivateAccountPrompt.tsx.
+  reactivate: (token: string) => Promise<boolean>;
   register: (
     email: string,
     password: string,
     fullName: string,
     phoneNumber: string
   ) => Promise<{ phoneVerified: boolean }>;
+  // Same shape as login()/reactivate(): persists the session and reports whether the phone is
+  // already verified -- true for an auto-linked existing account, always false for a newly
+  // created one (Google sign-in never carries a phone number; see D-23).
+  loginWithGoogle: (idToken: string) => Promise<boolean>;
   setPhoneVerified: (verified: boolean) => void;
   logout: () => void;
 }
@@ -23,7 +35,13 @@ interface AuthState {
 const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(safeStorage.getItem('finora_token'));
+  // SEC-01 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Used to seed this
+  // from safeStorage.getItem('finora_token') -- that copy is gone now (client.ts's in-memory
+  // accessToken variable is the only place the token lives), so a fresh page load genuinely starts
+  // with nothing here. The bootstrap effect below is what turns "nothing yet" into "logged out" or
+  // "logged in" before anything downstream has to guess.
+  const [token, setToken] = useState<string | null>(null);
+  const [bootstrapping, setBootstrapping] = useState(true);
   const [email, setEmail] = useState<string | null>(safeStorage.getItem('finora_email'));
   const [fullName, setFullName] = useState<string | null>(safeStorage.getItem('finora_name'));
   // Defaults to true when there's no stored value, matching AdminAuthContext -- which already
@@ -33,9 +51,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // /verify-phone with no client-side way out. `=== 'true'` made absence mean false.
   //
   // Reachable in ordinary use, not just on an upgrade from a pre-field session: safeStorage
-  // silently no-ops on write failure by design, and persist() writes five keys in sequence, so a
-  // quota failure partway through leaves finora_token stored and finora_phone_verified absent.
-  // ProtectedRoute then redirects on this flag alone, before any backend round-trip.
+  // silently no-ops on write failure by design, and persist() writes its storage keys in sequence,
+  // so a quota failure partway through can leave finora_email/finora_name stored and
+  // finora_phone_verified absent (SEC-01 moved the token itself out of this sequence entirely --
+  // see the module-level accessToken variable in client.ts -- but the same partial-write risk
+  // still applies to whichever storage keys persist() writes after it). ProtectedRoute then
+  // redirects on this flag alone, before any backend round-trip.
   //
   // The backend remains the source of truth either way -- PhoneVerificationFilter 403s a genuinely
   // unverified user on every other endpoint, and client.ts's interceptor turns that into the
@@ -46,7 +67,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   function persist(data: { token: string; refreshToken: string; email: string; fullName: string; phoneVerified: boolean }) {
-    safeStorage.setItem('finora_token', data.token);
+    // SEC-01: in-memory only now -- see client.ts's accessToken variable and this file's own
+    // bootstrap effect for the other half (recovering it after a reload).
+    setAccessToken(data.token);
     // BH-012: data.refreshToken is deliberately NOT stored. The same token arrives as an HttpOnly
     // cookie the browser keeps out of script's reach, and writing a second copy here into storage
     // any XSS can read is what made that cookie decorative. The field stays on the response
@@ -75,6 +98,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return res.data.phoneVerified;
   }
 
+  // Same shape as login(): persists the session and reports whether the phone is already
+  // verified, so the caller can route the same way login()'s caller does.
+  async function reactivate(token: string): Promise<boolean> {
+    const res = await authApi.reactivate(token);
+    persist(res.data);
+    return res.data.phoneVerified;
+  }
+
   async function register(
     regEmail: string,
     password: string,
@@ -87,6 +118,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // it's authenticated) rather than being handed it via router state -- one less thing this
     // return value needs to carry.
     return { phoneVerified: res.data.phoneVerified };
+  }
+
+  async function loginWithGoogle(idToken: string): Promise<boolean> {
+    const res = await authApi.google(idToken);
+    persist(res.data);
+    return res.data.phoneVerified;
   }
 
   function setPhoneVerified(verified: boolean) {
@@ -103,10 +140,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // a session: the access token is the proxy for that now (client.ts's interceptor uses the same
     // one), where this used to gate on holding a readable refresh token. Logging out when nobody
     // is logged in should stay a local no-op rather than a pointless request.
-    if (safeStorage.getItem('finora_token')) {
+    if (getAccessToken()) {
       authApi.logout().catch(() => {});
     }
-    safeStorage.removeItem('finora_token');
+    setAccessToken(null);
     safeStorage.removeItem('finora_email');
     safeStorage.removeItem('finora_name');
     safeStorage.removeItem('finora_phone_verified');
@@ -116,8 +153,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setPhoneVerifiedState(false);
   }
 
+  // SEC-01 bootstrap. The access token no longer survives a reload (it's in-memory only, see
+  // client.ts), but the HttpOnly refresh cookie does -- so a returning, still-logged-in user is
+  // recovered by attempting one silent refresh on mount, then filling in the profile fields
+  // persist() would normally have gotten from a login/register response. /auth/refresh itself only
+  // returns {token, refreshToken} (see AuthDtos.RefreshResponse -- deliberately minimal, since
+  // mobile's own equivalent call needs nothing more), so userApi.get() is the follow-up call for
+  // everything else this context exposes.
+  //
+  // A failure here (no cookie, or an expired/already-consumed one) is the ordinary "not logged in"
+  // case for a first visit or a genuinely ended session -- not logged or surfaced as an error.
+  //
+  // Bug fix: calls client.ts's refreshAccessToken() rather than authApi.refresh() directly -- see
+  // that function's own comment for why a raw call here is a real bug, not just a style
+  // inconsistency. React.StrictMode double-invokes this effect on every real mount, and the
+  // cleanup below only gates the state updates that follow, not the network request already sent
+  // by the first invocation -- so a raw authApi.refresh() call here sends two real requests
+  // racing to rotate the SAME refresh token. refreshAccessToken() already sets the access token
+  // itself on success, so this effect no longer needs its own setAccessToken call.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const token = await refreshAccessToken();
+        if (cancelled) return;
+        const profile = await userApi.get();
+        if (cancelled) return;
+        setToken(token);
+        setEmail(profile.email);
+        setFullName(profile.fullName);
+        setPhoneVerifiedState(profile.phoneVerified);
+        safeStorage.setItem('finora_email', profile.email);
+        safeStorage.setItem('finora_name', profile.fullName);
+        safeStorage.setItem('finora_phone_verified', String(profile.phoneVerified));
+        window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
+      } catch {
+        // No valid session to recover -- leave every field at its logged-out default.
+      } finally {
+        if (!cancelled) setBootstrapping(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ token, email, fullName, phoneVerified, login, register, setPhoneVerified, logout }}>
+    <AuthContext.Provider value={{ token, bootstrapping, email, fullName, phoneVerified, login, reactivate, register, loginWithGoogle, setPhoneVerified, logout }}>
       {children}
     </AuthContext.Provider>
   );

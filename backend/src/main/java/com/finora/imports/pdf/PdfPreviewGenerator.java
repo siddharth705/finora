@@ -10,6 +10,7 @@ import com.finora.dto.ImportDto.UnparseableRow;
 import com.finora.entity.CategoryRule;
 import com.finora.imports.CsvParser;
 import com.finora.imports.pdf.StatementSummaryExtractor.PrintedSummary;
+import com.finora.imports.pdf.CreditCardSummaryExtractor.CreditCardSummaryEvidence;
 import com.finora.imports.DocumentContext;
 import com.finora.imports.RowKind;
 import com.finora.imports.TransactionNormalizer;
@@ -178,10 +179,17 @@ public class PdfPreviewGenerator {
         // Acquisition, not extraction: this may be the PDF's own text layer or characters
         // recognised from its pixels, and nothing below this line is allowed to care which. See
         // RoutingTextAcquirer for which one runs and why.
-        List<PositionedText> positioned = textAcquirer.acquire(fileBytes, password).runs();
+        com.finora.imports.pdf.acquisition.AcquiredDocument acquired = textAcquirer.acquire(fileBytes, password);
+        List<PositionedText> positioned = acquired.runs();
         // A count, never the text. Lets ExtractionCheck tell "the pages carry no text" from
         // "we read plenty and could not make a table of it" -- see DocumentContext.
-        if (ctx != null) ctx.recordExtractedRuns(positioned.size());
+        if (ctx != null) {
+            ctx.recordExtractedRuns(positioned.size());
+            // Provenance, not a judgement -- see DocumentContext.recordTextSource's own doc
+            // comment. Recorded here because this is the one place the AcquiredDocument itself
+            // (not just its runs) is ever in scope.
+            ctx.recordTextSource(acquired.source());
+        }
         PdfTableLocator.LocatedDocument doc = tableLocator.locateAll(positioned, ctx);
         // Read from the positioned runs rather than from the located table: the summary grid has
         // its own column layout, so bucketing it against the TRANSACTION table's anchors shreds it
@@ -189,6 +197,13 @@ public class PdfPreviewGenerator {
         // 538.00 25,000.00 Credit Count 3 1". The geometry is intact right here; the table is
         // where it stops being intact.
         PrintedSummary printedSummary = StatementSummaryExtractor.extract(positioned, ctx);
+        // Read the same way and for the same reason as printedSummary above: a credit-card billing
+        // panel has its own column layout distinct from the transaction table's. Unlike
+        // printedSummary, this is never re-attributed per section below -- a real credit-card
+        // statement is effectively always one account, and CreditCardStatementTotalsValidator never
+        // reads a section's transaction rows anyway, so handing every section the same document-
+        // level reading is correct, not a simplification that loses anything.
+        CreditCardSummaryEvidence printedCreditCardSummary = CreditCardSummaryExtractor.extract(positioned, ctx);
 
         if (doc.sections().isEmpty()) {
             // "Never lose information" (see the engineering principles doc) applies at the
@@ -198,7 +213,8 @@ public class PdfPreviewGenerator {
             // header to key a structured row by.
             PdfTableLocator.LocatedTable empty = tableLocator.locate(positioned, ctx);
             PdfTableLocator.LocatedSection emptySection =
-                    new PdfTableLocator.LocatedSection(empty.preTableLines(), List.of());
+                    new PdfTableLocator.LocatedSection(empty.preTableLines(), List.of(),
+                            PdfTableLocator.ExtractionEvidence.NONE);
             // Goes straight to buildLedgerSection rather than through buildSections' product-vs-
             // ledger routing: with no rows and no header at all, classification can only ever
             // return UNKNOWN, and UNKNOWN's own hasTransactions()==false would otherwise divert
@@ -209,7 +225,8 @@ public class PdfPreviewGenerator {
             // The summary IS this section's: no table was recognised, so the document is one
             // section and there is no other candidate it could describe. Withholding it here left
             // the contradiction -- printed activity, nothing staged -- with nothing to state it.
-            StagedAccountSection section = buildLedgerSection(userId, filename, emptySection, unknown, ctx, printedSummary);
+            StagedAccountSection section = buildLedgerSection(userId, filename, emptySection, unknown, ctx,
+                    printedSummary, printedCreditCardSummary);
             return new PdfGenerationResult(List.of(surfaceUnrecognizedText(section, empty.preTableLines())), ctx);
         }
 
@@ -220,7 +237,7 @@ public class PdfPreviewGenerator {
             // is not answerable here -- see attributePrintedSummary below, which decides it once
             // every section exists.
             List<StagedAccountSection> staged = buildSections(userId, filename, doc.sections().get(i),
-                    i, doc.sections().size(), ctx, PrintedSummary.NONE);
+                    i, doc.sections().size(), ctx, PrintedSummary.NONE, printedCreditCardSummary);
             for (StagedAccountSection s : staged) unparseableAcrossDocument.addAll(s.unparseableRows());
             result.addAll(staged);
         }
@@ -251,7 +268,8 @@ public class PdfPreviewGenerator {
     private List<StagedAccountSection> buildSections(UUID userId, String filename,
                                                       PdfTableLocator.LocatedSection section,
                                                       int sectionIndex, int sectionCount, DocumentContext ctx,
-                                                      PrintedSummary printedSummary) {
+                                                      PrintedSummary printedSummary,
+                                                      CreditCardSummaryEvidence printedCreditCardSummary) {
         List<String> columns = section.rows().isEmpty() ? List.of() : List.copyOf(section.rows().get(0).keySet());
         ProductDiscovery.DiscoveredProduct product = productDiscovery.discover(
                 new ProductEvidenceCollector.Section(columns, section.auxiliaryText(), null,
@@ -269,7 +287,8 @@ public class PdfPreviewGenerator {
         if (product.validation().isValidated() && !product.type().hasTransactions()) {
             return buildProductSections(filename, section, product, ctx);
         }
-        return List.of(buildLedgerSection(userId, filename, section, product, ctx, printedSummary));
+        return List.of(buildLedgerSection(userId, filename, section, product, ctx, printedSummary,
+                printedCreditCardSummary));
     }
 
     /**
@@ -289,8 +308,11 @@ public class PdfPreviewGenerator {
         for (ProductAttributes attrs : attributes) {
             // No opening/closing balance, no statement period -- neither concept applies to a
             // deposit schedule the way it does to a ledger's own transaction date range.
+            // No payment-summary panel applies to a deposit schedule -- totalAmountDue is a
+            // credit-card-ledger-only concept.
             DetectedAccountInfo detected = facts.toDetectedAccountInfo(product, suggestedAccountType,
-                    null, null, facts.metadata().statementPeriodStart(), facts.metadata().statementPeriodEnd(), attrs);
+                    null, null, facts.metadata().statementPeriodStart(), facts.metadata().statementPeriodEnd(), attrs,
+                    null);
             result.add(new StagedAccountSection(detected, List.of(), 0, 0, List.of()));
         }
         return result;
@@ -299,7 +321,8 @@ public class PdfPreviewGenerator {
     private StagedAccountSection buildLedgerSection(UUID userId, String filename,
                                                     PdfTableLocator.LocatedSection section,
                                                     ProductDiscovery.DiscoveredProduct product,
-                                                    DocumentContext ctx, PrintedSummary printedSummary) {
+                                                    DocumentContext ctx, PrintedSummary printedSummary,
+                                                    CreditCardSummaryEvidence printedCreditCardSummary) {
         List<StagedRow> staged = new ArrayList<>();
         // "Never lose information" (see the engineering principles doc) -- a row that fails to
         // normalize is reported with WHY, not just silently absent from the row count. Real cost
@@ -403,13 +426,16 @@ public class PdfPreviewGenerator {
         staged.sort(Comparator.comparing(StagedRow::date));
 
         int dupCount = (int) staged.stream().filter(StagedRow::likelyDuplicate).count();
-        DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, staged, balancePoints, product, ctx);
+        DetectedAccountInfo detected = buildDetectedAccountInfo(filename, section, staged, balancePoints, product, ctx,
+                printedCreditCardSummary);
         // Per section rather than per file: a composite statement's sections have separate balance
         // chains, and one can verify while another does not.
         var verification = importVerifier.verify(documentOrder,
                 detected == null ? null : detected.openingBalance(),
                 detected == null ? null : detected.closingBalance(),
-                printedSummary, section.rows());
+                printedSummary, section.rows(), unparseable, section.evidence().droppedTransactionCandidates(),
+                printedCreditCardSummary,
+                section.evidence().headerReconstructionFindings(), ctx.textSource());
         return new StagedAccountSection(detected, staged, staged.size(), dupCount, unparseable, verification);
     }
 
@@ -494,7 +520,8 @@ public class PdfPreviewGenerator {
     private DetectedAccountInfo buildDetectedAccountInfo(String filename, PdfTableLocator.LocatedSection section,
                                                            List<StagedRow> staged, List<BalancePoint> balancePoints,
                                                            ProductDiscovery.DiscoveredProduct product,
-                                                           DocumentContext ctx) {
+                                                           DocumentContext ctx,
+                                                           CreditCardSummaryEvidence printedCreditCardSummary) {
         LocalDate statementStart = null;
         LocalDate statementEnd = null;
         BigDecimal openingBalance = null;
@@ -538,7 +565,8 @@ public class PdfPreviewGenerator {
         }
 
         return facts.toDetectedAccountInfo(product, suggestedAccountTypeFor(product, facts.creditCardSignals()),
-                openingBalance, closingBalance, statementStart, statementEnd, ProductAttributes.empty());
+                openingBalance, closingBalance, statementStart, statementEnd, ProductAttributes.empty(),
+                printedCreditCardSummary == null ? null : printedCreditCardSummary.totalAmountDue());
     }
 
     /**
@@ -599,11 +627,13 @@ public class PdfPreviewGenerator {
         DetectedAccountInfo toDetectedAccountInfo(ProductDiscovery.DiscoveredProduct product,
                                                   String suggestedAccountType, BigDecimal openingBalance,
                                                   BigDecimal closingBalance, LocalDate statementStart,
-                                                  LocalDate statementEnd, ProductAttributes attrs) {
+                                                  LocalDate statementEnd, ProductAttributes attrs,
+                                                  BigDecimal totalAmountDue) {
             return new DetectedAccountInfo(
                     suggestedName, suggestedAccountType,
                     openingBalance, closingBalance, statementStart, statementEnd,
-                    metadata.accountNumberMasked(), metadata.creditLimit(), metadata.paymentDueDate(),
+                    metadata.accountNumberMasked(), metadata.creditLimit(), totalAmountDue,
+                    metadata.paymentDueDate(),
                     metadata.accountHolderName(), metadata.branchName(), metadata.ifscCode(),
                     AccountDto.BankDto.from(bank),
                     product.type().name(), product.confidence(), product.needsReview(), product.report(),

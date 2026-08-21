@@ -29,7 +29,11 @@ public class Transaction extends BaseEntity {
 
     public enum Type { INCOME, EXPENSE }
     public enum ReconciliationStatus { OK, DUPLICATE, TRANSFER, REFUND }
-    public enum Source { MANUAL, CSV_IMPORT }
+    // GMAIL_IMPORT added C5-B. PDF-sourced transactions are still tagged CSV_IMPORT (a pre-existing
+    // gap -- ImportService.persistSection hardcodes CSV_IMPORT regardless of upload format), which
+    // this does not fix; it is not repeated for Gmail. No DB CHECK constrains this column (plain
+    // VARCHAR(20) since V1), so adding a value here needed no migration.
+    public enum Source { MANUAL, CSV_IMPORT, GMAIL_IMPORT }
 
     // Which mechanism produced this transaction's category -- explainability, not a decision
     // input (see docs/rule-engine-relationship-engine-eds.md §3.2). KEYWORD_MATCH is the static
@@ -172,6 +176,13 @@ public class Transaction extends BaseEntity {
     @Column(name = "balance_after")
     private BigDecimal balanceAfter;
 
+    // SEC-06 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Client-generated,
+    // set only by TransactionService.create()'s manual-entry path -- see V97's own doc comment for
+    // why this is a request identifier, not a content hash like StatementImport/ImportJob use.
+    // Null for every CSV/PDF/Gmail-imported row and for any manual transaction created before V97.
+    @Column(name = "idempotency_key")
+    private String idempotencyKey;
+
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
     public UUID getAccountId() { return accountId; }
@@ -235,4 +246,6 @@ public class Transaction extends BaseEntity {
     public void setReferenceNumber(String referenceNumber) { this.referenceNumber = referenceNumber; }
     public BigDecimal getBalanceAfter() { return balanceAfter; }
     public void setBalanceAfter(BigDecimal balanceAfter) { this.balanceAfter = balanceAfter; }
+    public String getIdempotencyKey() { return idempotencyKey; }
+    public void setIdempotencyKey(String idempotencyKey) { this.idempotencyKey = idempotencyKey; }
 }

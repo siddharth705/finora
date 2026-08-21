@@ -39,16 +39,23 @@ import org.springframework.test.context.DynamicPropertySource;
  * ownership/expiry/storage-mode plumbing, which only a real database and real services can prove.
  *
  * <p>Both storage modes are exercised in ONE Spring context (filesystem storage enabled via
- * {@link #registerStorageProperties}): sessions created through {@link ImportSessionService}
- * normally exercise the real object-storage path; sessions built directly against
- * {@link ImportSessionRepository} with a raw {@code fileContent} exercise the real legacy path --
- * {@link StatementContentService#read} chooses between them purely on whether the row carries a
- * content address, regardless of whether a provider happens to be configured.
+ * {@link #registerStorageProperties}). {@link StatementContentService#read} chooses between them
+ * purely on whether the row carries a content address, regardless of whether a provider happens
+ * to be configured -- and that is still worth proving here even though, since the storage-review
+ * lifecycle change, a SESSION never naturally reaches the addressed state through
+ * {@link ImportSessionService} anymore (staging keeps bytes in {@code file_content} until confirm
+ * -- see that class's own {@code storeContent} doc comment). {@link #createObjectStorageSession}
+ * therefore hand-constructs an addressed session directly against
+ * {@link ImportSessionRepository}, the same way {@link #poisonedSession} and
+ * {@code contentHashMismatch_rejected} already did before this change -- proving the shared
+ * addressed-read mechanism itself (which a confirmed {@code StatementImport} row DOES reach
+ * naturally) rather than a call path that no longer exists for a session specifically.
  */
 class ClosingBalanceEvidenceRederivationServiceIT extends AbstractIntegrationTest {
 
     @Autowired private ImportSessionService importSessionService;
     @Autowired private StatementContentService statementContentService;
+    @Autowired private java.util.Optional<com.finora.imports.storage.StatementStorage> statementStorage;
     @Autowired private ImportSessionRepository importSessionRepository;
     @Autowired private ClosingBalanceEvidenceRederivationService rederivationService;
     @Autowired private UserRepository userRepository;
@@ -85,12 +92,27 @@ class ClosingBalanceEvidenceRederivationServiceIT extends AbstractIntegrationTes
         return Files.readAllBytes(Path.of("src/test/resources/pdf/separate_debit_credit_balance_sample.pdf"));
     }
 
-    /** Real object-storage-backed session -- goes through {@link ImportSessionService}'s normal
-     *  {@code storeContent}, which routes to the configured filesystem provider since one is
-     *  active in this test class. */
+    /** An addressed session -- built by storing RAW, uncompressed bytes directly through
+     *  {@link com.finora.imports.storage.StatementStorage#store}, deliberately NOT through
+     *  {@link StatementContentService#store} (which compresses whenever a provider is configured,
+     *  as of the storage-review change). {@link ImportSession#getCompressionType()} is fixed at
+     *  {@code NONE} -- a session can never legitimately claim a compressed object, since
+     *  {@link ImportSessionService} itself never produces one anymore (see this class's own doc
+     *  comment) -- so what is attached here must actually BE uncompressed, or
+     *  {@link StatementContentService#read} would hand back raw GZIP bytes unhashed against the
+     *  original content and fail integrity verification for a reason that has nothing to do with
+     *  what this test is proving. This still exercises the shared addressed-read mechanism for a
+     *  genuinely valid, retrievable object -- the same mechanism a confirmed
+     *  {@code StatementImport} row reaches naturally, just without that row's compression. */
     private ImportSession createObjectStorageSession(UUID userId, byte[] fileContent) {
-        return importSessionService.createSession(userId, "statement.pdf", fileContent,
-                List.of(), emptyDetectedAccount());
+        ContentAddress address = statementStorage.orElseThrow().store(fileContent);
+        ImportSession session = new ImportSession();
+        session.setUserId(userId);
+        session.setFileName("statement.pdf");
+        session.setContentHash(address.hash());
+        session.setObjectKey(address.key());
+        session.setExpiresAt(Instant.now().plus(java.time.Duration.ofHours(48)));
+        return importSessionRepository.save(session);
     }
 
     /** Real legacy-BYTEA-backed session -- bypasses {@code ImportSessionService.createSession}'s
@@ -109,7 +131,7 @@ class ClosingBalanceEvidenceRederivationServiceIT extends AbstractIntegrationTes
     }
 
     private static DetectedAccountInfo emptyDetectedAccount() {
-        return new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null,
+        return new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null, null,
                 null, null, null, null, 0.0, true, List.of(), null, null, null, null, null, null, null, null);
     }
 
@@ -211,7 +233,11 @@ class ClosingBalanceEvidenceRederivationServiceIT extends AbstractIntegrationTes
     void contentHashMismatch_rejected() throws Exception {
         UUID userId = newUser();
         byte[] realBytes = goldenFixtureBytes();
-        ContentAddress realAddress = statementContentService.store(realBytes).orElseThrow();
+        // Raw, uncompressed store -- see createObjectStorageSession's own doc comment for why a
+        // session (getCompressionType() fixed at NONE) must never be given a genuinely compressed
+        // object; this scenario needs the object to be otherwise perfectly valid so the ONLY thing
+        // making it fail is the deliberately-wrong hash below, not a decompression mismatch too.
+        ContentAddress realAddress = statementStorage.orElseThrow().store(realBytes);
 
         // A row claiming a DIFFERENT hash than what's actually stored at that key -- the exact
         // "object present, but not the document this row addresses" scenario

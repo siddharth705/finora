@@ -47,6 +47,20 @@ export const api = axios.create({ baseURL: BASE_URL, withCredentials: true });
 // another refresh attempt.
 export const rawApi = axios.create({ baseURL: BASE_URL, withCredentials: true });
 
+// SEC-01 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Same fix as the user
+// frontend's client.ts (see that file's own comment) -- the access token moves out of storage and
+// into a module-level variable, for the same reason BH-012 already moved the refresh token out:
+// an XSS on this origin can still read anything in localStorage, and an admin session is at least
+// as sensitive as an ordinary user's. AdminAuthContext.tsx's own mount-time bootstrap effect is
+// the other half (recovering a token after a reload via the HttpOnly refresh cookie).
+let accessToken: string | null = null;
+export function getAdminToken(): string | null {
+  return accessToken;
+}
+export function setAdminToken(token: string | null): void {
+  accessToken = token;
+}
+
 export interface ApiEnvelope<T> {
   success: boolean;
   message: string;
@@ -56,19 +70,18 @@ export interface ApiEnvelope<T> {
   requestId: string | null;
 }
 
-// Deliberately distinct localStorage keys from the user frontend (finora_token vs.
-// finora_admin_token) -- the two apps run on different ports/origins so browser storage is
-// already isolated per-origin, but distinct names make it unambiguous in devtools which app's
-// session you're looking at, and avoid any confusion if the two apps are ever served from the
-// same origin in a future deployment.
-const TOKEN_KEY = 'finora_admin_token';
 
-const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password'];
+// D-23/D-26: /auth/google and /auth/apple listed here even though this app never calls either --
+// scripts/check-client-auth-policy.py requires all three API clients (frontend, admin-portal,
+// mobile) to agree on this list entry-for-entry, treating it as a declared policy rather than a
+// per-app usage log. See frontend/src/api/client.ts's own copy of this comment for the real bug
+// this check exists to prevent.
+const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password', '/auth/reactivate', '/auth/google', '/auth/apple'];
 
 api.interceptors.request.use((config) => {
   const isAuthEndpoint = AUTH_ENDPOINTS_NO_TOKEN.some((path) => config.url?.includes(path));
   if (!isAuthEndpoint) {
-    const token = safeStorage.getItem(TOKEN_KEY);
+    const token = getAdminToken();
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -77,7 +90,7 @@ api.interceptors.request.use((config) => {
 });
 
 export function clearAdminSession() {
-  safeStorage.removeItem(TOKEN_KEY);
+  setAdminToken(null);
   // BH-012: no refresh-token key to remove here anymore -- it is never written (see
   // persistAdminSession() below), and any leftover 'finora_admin_refresh_token' from a
   // pre-migration session is inert going forward since nothing reads it. Left alone rather than
@@ -109,15 +122,13 @@ function endSessionAndRedirect(reason?: string) {
 }
 
 export function persistAdminSession(token: string) {
-  safeStorage.setItem(TOKEN_KEY, token);
+  // SEC-01: in-memory only now -- see the accessToken variable and getAdminToken/setAdminToken
+  // near the top of this file.
+  setAdminToken(token);
   // BH-012: the refresh token is deliberately NOT stored here. It arrives as an HttpOnly cookie
   // the browser keeps out of script's reach (see the withCredentials comment above); writing a
   // second copy into storage any XSS can read is what made that cookie decorative. The field
   // stays on the response because mobile clients, which have no cookie jar, genuinely need it.
-}
-
-export function getAdminToken(): string | null {
-  return safeStorage.getItem(TOKEN_KEY);
 }
 
 function unwrapEnvelope(response: any) {
@@ -141,7 +152,17 @@ let refreshInFlight: Promise<{ token: string; refreshToken: string }> | null = n
 // no body at all now (see endpoints.ts). Matches frontend/src/api/client.ts's
 // refreshAccessToken() exactly, minus that app's cross-tab Web Locks coordination, which is a
 // separate concern (BH-013) out of scope for this migration.
-function refreshAccessToken(): Promise<{ token: string; refreshToken: string }> {
+//
+// Bug fix: exported so AdminAuthContext.tsx's own bootstrap effect can call this instead of
+// authApi.refresh() directly -- see frontend/src/api/client.ts's matching refreshAccessToken()
+// comment for why a raw call there is a real bug. Same shape here: React.StrictMode
+// double-invokes that effect on every real mount, and its cleanup only gates the state updates
+// that follow, not the network request the first invocation already sent -- so a raw
+// authApi.refresh() call raced two real requests against the same not-yet-rotated refresh token.
+// This function's refreshInFlight de-dupe (this file's own comment above) closes that within one
+// tab; it does not add BH-013's cross-tab lock, which stays the deliberately separate, deferred
+// concern this comment already names.
+export function refreshAccessToken(): Promise<{ token: string; refreshToken: string }> {
   if (!refreshInFlight) {
     refreshInFlight = (async () => {
       const { authApi } = await import('./endpoints');

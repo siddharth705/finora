@@ -6,6 +6,7 @@ import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.SQLRestriction;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.UUID;
 
@@ -32,6 +33,11 @@ public class Goal extends BaseEntity {
     @Column(name = "target_date")
     private LocalDate targetDate;
 
+    // D-25 PR3-B. Set once by GoalService.markCompletedIfReached, the first time currentAmount
+    // reaches targetAmount -- never overwritten afterward. See V94's migration comment.
+    @Column(name = "completed_at")
+    private Instant completedAt;
+
     // Contributions are fetched via GoalContributionRepository.findByGoalId() in the
     // service layer rather than mapped here, to keep the entity graph simple.
 
@@ -45,4 +51,6 @@ public class Goal extends BaseEntity {
     public void setCurrentAmount(BigDecimal currentAmount) { this.currentAmount = currentAmount; }
     public LocalDate getTargetDate() { return targetDate; }
     public void setTargetDate(LocalDate targetDate) { this.targetDate = targetDate; }
+    public Instant getCompletedAt() { return completedAt; }
+    public void setCompletedAt(Instant completedAt) { this.completedAt = completedAt; }
 }

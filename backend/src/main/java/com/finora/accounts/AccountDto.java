@@ -1,7 +1,6 @@
 package com.finora.accounts;
 
 import com.finora.entity.Account;
-import com.finora.entity.StatementImport;
 import com.finora.util.BankRegistry;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -111,37 +110,39 @@ public record AccountDto(
     }
 
     public static AccountDto from(Account a) {
-        return from(a, BankDto.from(BankRegistry.get(a.getBankId())), null, 0, 0L);
+        return from(a, BankDto.from(BankRegistry.get(a.getBankId())), null, null, null, 0, 0L);
     }
 
     /** Same as the 1-arg overload above, but with an already-resolved bank -- used wherever the
      *  caller needs to recognize an admin-added custom bank (BankManagementService.resolve),
      *  which the plain BankRegistry.get() call the 1-arg overload uses cannot see. */
     public static AccountDto from(Account a, BankDto bank) {
-        return from(a, bank, null, 0, 0L);
-    }
-
-    /** latestImport is this account's most recent StatementImport (by importedAt), or null if
-     *  the account has never had a statement imported into it (manually created, or imported
-     *  accounts before this field was wired up) -- lastImportedAt/statement period are simply
-     *  null in that case rather than a fabricated value. */
-    public static AccountDto from(Account a, StatementImport latestImport, int statementsCount, long transactionsCount) {
-        return from(a, BankDto.from(BankRegistry.get(a.getBankId())), latestImport, statementsCount, transactionsCount);
+        return from(a, bank, null, null, null, 0, 0L);
     }
 
     /** The one real constructor path every overload above delegates to -- takes an
      *  already-resolved BankDto instead of resolving BankRegistry.get(a.getBankId()) internally,
      *  so a caller that's bank-registry-aware AND custom-bank-aware (BankManagementService) can
-     *  supply the correct one regardless of which source the account's bank actually came from. */
-    public static AccountDto from(Account a, BankDto bank, StatementImport latestImport, int statementsCount, long transactionsCount) {
+     *  supply the correct one regardless of which source the account's bank actually came from.
+     *
+     *  <p>lastImportedAt/lastStatementPeriodStart/lastStatementPeriodEnd describe this account's
+     *  most recent StatementImport (by importedAt), or are all null if the account has never had
+     *  a statement imported into it (manually created, or imported before this field was wired
+     *  up) -- rather than a fabricated value. Taken as three primitives, not a StatementImport
+     *  entity: every real caller (AccountService.listForUser, DataExportService) already resolves
+     *  these from a {@code StatementImportRepository.StatementMetadata} projection row precisely
+     *  to avoid loading a full entity (and its {@code fileContent}) just for this -- see that
+     *  projection's own doc comment. Taking the entity here would have forced both of them to
+     *  construct a throwaway, unsaved one just to satisfy this signature. */
+    public static AccountDto from(Account a, BankDto bank, Instant lastImportedAt,
+                                   LocalDate lastStatementPeriodStart, LocalDate lastStatementPeriodEnd,
+                                   int statementsCount, long transactionsCount) {
         return new AccountDto(a.getId(), a.getName(), a.getAccountType().name(),
                 a.getBalance(), a.getCreditLimit(), a.getDueDate(), a.getInvestmentKind(),
                 a.getAccountHolderName(), a.getAccountNumberMasked(),
                 a.getBranchName(), a.getIfscCode(),
                 bank,
-                latestImport != null ? latestImport.getImportedAt() : null,
-                latestImport != null ? latestImport.getStatementPeriodStart() : null,
-                latestImport != null ? latestImport.getStatementPeriodEnd() : null,
+                lastImportedAt, lastStatementPeriodStart, lastStatementPeriodEnd,
                 statementsCount, transactionsCount,
                 "ACTIVE",
                 a.getPrincipalAmount(), a.getInterestRate(), a.getMaturityDate(), a.getMaturityAmount(),

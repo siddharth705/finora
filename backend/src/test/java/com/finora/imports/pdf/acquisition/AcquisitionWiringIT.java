@@ -1,6 +1,7 @@
 package com.finora.imports.pdf.acquisition;
 
 import com.finora.AbstractIntegrationTest;
+import com.finora.imports.pdf.ocr.TesseractRecogniser;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -37,6 +38,9 @@ class AcquisitionWiringIT extends AbstractIntegrationTest {
     @Autowired
     private List<DocumentTextAcquirer> everyAcquirer;
 
+    @Autowired
+    private List<RecognisingTextAcquirer> recognisers;
+
     /** Injecting the interface must reach routing, not native extraction directly. */
     @Test
     void theInjectedAcquirerIsTheRoutingOne() {
@@ -44,17 +48,27 @@ class AcquisitionWiringIT extends AbstractIntegrationTest {
     }
 
     /**
-     * And no recogniser is deployed, which is the shipped configuration.
+     * Tesseract is the deployed recogniser -- the state this test asserted AGAINST until the OCR
+     * deployment decision was made (see {@code docs/engineering/import/ocr-engine-evaluation.md},
+     * "OCR-5"). This is the test that comment said should say so out loud when that day came.
      *
-     * <p>Asserted rather than assumed: an OCR engine is an operational dependency, and a recogniser
-     * appearing in the context by accident would start routing documents to something the
-     * deployment may not have installed. If one is ever added deliberately, this test should be the
-     * thing that says so out loud.
+     * <p>Asserted rather than assumed: a recogniser appearing in the context by accident would
+     * start routing documents to something the deployment may not actually have installed, and one
+     * silently missing would leave scanned statements failing without anyone having decided that.
+     * {@link TesseractRecogniser} itself still degrades safely when the binary is absent --
+     * {@code supports()} reports that rather than assuming it -- so this asserts intent (the bean
+     * exists), not capability (the binary works), which is what {@code ScannedDocumentRoutingTest}
+     * and a build-time {@code tesseract --version} check are for.
      */
     @Test
-    void noRecogniserShipsByDefault() {
+    void theDeployedRecogniserIsTesseract() {
         assertThat(everyAcquirer)
-                .as("native and routing, and nothing that infers characters from pixels")
-                .hasOnlyElementsOfTypes(NativePdfAcquirer.class, RoutingTextAcquirer.class);
+                .as("native, routing, and the one deployed recogniser")
+                .hasOnlyElementsOfTypes(NativePdfAcquirer.class, RoutingTextAcquirer.class,
+                        TesseractRecogniser.class);
+        assertThat(recognisers)
+                .as("the exact list RoutingTextAcquirer receives")
+                .hasOnlyElementsOfTypes(TesseractRecogniser.class)
+                .hasSize(1);
     }
 }

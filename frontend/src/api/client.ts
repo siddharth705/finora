@@ -55,6 +55,25 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL
 // signed out every 15 minutes. That was survivable before because localStorage papered over it.
 export const api = axios.create({ baseURL: BASE_URL, withCredentials: true });
 
+// SEC-01 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). The access token used
+// to live in localStorage right alongside this comment's neighbour above explaining why the
+// REFRESH token doesn't (BH-012) -- same reasoning applies to this one, just with a smaller blast
+// radius (15 minutes of exposure instead of 30 days), which is why it took a second pass to close.
+// Held only in a module-level variable now: readable by this tab's own JS (nothing else needs it
+// to be), gone the instant the tab closes or reloads, and never written anywhere a stored XSS
+// payload could read it back after the fact.
+//
+// The cost of this is that a hard reload no longer has a token to start from -- AuthContext's
+// mount effect re-derives one from the HttpOnly refresh cookie (silent /auth/refresh call) before
+// rendering anything that needs it. See AuthContext.tsx's own comment on that bootstrap.
+let accessToken: string | null = null;
+export function getAccessToken(): string | null {
+  return accessToken;
+}
+export function setAccessToken(token: string | null): void {
+  accessToken = token;
+}
+
 // A separate, interceptor-free instance specifically for the /auth/refresh call itself —
 // if the refresh call went through `api`'s own response interceptor and also got a 401
 // (expired/invalid refresh token), it would recursively trigger another refresh attempt.
@@ -82,12 +101,22 @@ export interface ApiEnvelope<T> {
 // Auth endpoints never need (and shouldn't receive) a Bearer token — sending a stale one
 // serves no purpose here since these are all permitAll server-side, and not sending it at all
 // is simply cleaner than relying on the backend to ignore a token that isn't relevant.
-const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password'];
+//
+// D-23/D-26 self-review finding: /auth/google was missing here despite being live since Phase 1
+// (PR #160) -- a verification failure on it (a stale/expired/wrong-audience Google credential)
+// would have gone through the SAME refresh-retry path this list exists to keep auth endpoints
+// out of, risking the exact "stale refresh token treated as theft, every session revoked"
+// incident this file's own 401-handling comment describes. Caught by scripts/check-client-auth-
+// policy.py, which requires this list to agree, entry-for-entry, across all three API clients.
+// /auth/apple is listed here too even though this app never calls it (Apple Sign-In is iOS-only,
+// see D-26) -- the checker treats this list as a declared policy, not a per-app usage log, so
+// admin-portal's copy carries it for the same reason.
+const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password', '/auth/reactivate', '/auth/google', '/auth/apple'];
 
 api.interceptors.request.use((config) => {
   const isAuthEndpoint = AUTH_ENDPOINTS_NO_TOKEN.some((path) => config.url?.includes(path));
   if (!isAuthEndpoint) {
-    const token = safeStorage.getItem('finora_token');
+    const token = getAccessToken();
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -110,14 +139,24 @@ api.interceptors.request.use((config) => {
  */
 export const SESSION_ENDED_REASON_KEY = 'finora_session_ended_reason';
 
-function clearSessionAndRedirect(reason?: string) {
+/**
+ * Exported (not just used internally by the interceptor below) specifically so any flow that needs
+ * to end the session and explain why -- outside of a 401 -- can call the one real implementation
+ * instead of re-deriving it. Settings.tsx's account-deactivation flow is the first such caller: it
+ * needs the exact same "clear storage without touching AuthContext's React state, so
+ * ProtectedRoute's own reactive redirect can't race a component that never mounts, then hard-
+ * navigate" behavior this function already provides for session-expiry. A second hand-written copy
+ * of the four `finora_*` keys below already caused a bug once (see the comment inside) -- this
+ * export exists so a third one doesn't.
+ */
+export function clearSessionAndRedirect(reason?: string) {
   // Mirrors every key AuthContext.logout() clears -- this used to miss finora_phone_verified,
   // leaving that one flag behind in localStorage after a forced session expiry. Currently
   // inert in practice (ProtectedRoute redirects on a missing token before it would ever read
   // this flag), but it's a real hygiene gap: a stale, unrelated-to-the-next-session value left
   // sitting in storage is exactly the kind of thing that turns into a real bug the moment some
   // future feature reads phoneVerified independently of token presence.
-  safeStorage.removeItem('finora_token');
+  setAccessToken(null);
   safeStorage.removeItem('finora_email');
   safeStorage.removeItem('finora_name');
   safeStorage.removeItem('finora_phone_verified');
@@ -148,38 +187,51 @@ function unwrapEnvelope(response: any) {
 // This promise de-duplicates concurrent 401s WITHIN one tab: the access token expires while the
 // tab is idle, several components refetch on focus, and each would otherwise start its own
 // refresh.
+//
+// Bug fix: AuthContext.tsx's own bootstrap effect used to call authApi.refresh() directly instead
+// of through this function -- the one call site in the app that bypassed both this de-dupe AND
+// the cross-tab lock below. Harmless-looking (it runs once, on mount) until React.StrictMode
+// (main.tsx) double-invokes that effect on every real mount: the cleanup between the two
+// invocations only sets a `cancelled` flag, which gates the CALLBACK, not the network request --
+// by the time it runs, the first invocation's authApi.refresh() call has already gone out over
+// the wire. Two real requests race to rotate the SAME not-yet-rotated refresh token, exactly the
+// shape this file's own rotate()-doc-comment and BH-013 describe, just from one tab mounting
+// twice instead of two tabs mounting once. Routing the bootstrap effect through this function
+// closes it the same way BH-013 closed the two-tab case: serialized, not raced.
 let refreshInFlight: Promise<string> | null = null;
 
 // BH-013. The in-tab promise above is not enough, and the gap is not exotic -- it is two open
 // tabs, which is ordinary use of a financial dashboard.
 //
 // Each tab is its own JavaScript context with its own module instance, so `refreshInFlight` is
-// invisible across them. Two idle tabs both wake, both 401, both refresh: one wins, the other
-// presents a token the server has just rotated, and reuse detection concludes the credential was
+// invisible across them. Two idle tabs both wake, both 401, both refresh CONCURRENTLY: both
+// requests can reach the server presenting the same not-yet-rotated refresh cookie, the first is
+// accepted as the real rotation, and reuse detection concludes the second is the credential being
 // stolen and revokes every session on every device. The user is bounced out everywhere and shown
-// "All sessions have been signed out as a precaution" -- for having two tabs open. Repeated
-// often enough, that message stops meaning anything on the day it is real.
+// "All sessions have been signed out as a precaution" -- for having two tabs open. Repeated often
+// enough, that message stops meaning anything on the day it is real.
 //
 // navigator.locks is the right primitive rather than a localStorage mutex: it is same-origin and
 // cross-tab by definition, and the lock is released automatically if the holding tab is closed or
 // crashes mid-refresh -- a hand-rolled mutex has to invent a timeout for that case and then gets
 // to choose between deadlocking and reintroducing the race.
 //
-// The re-check inside the lock is the half that actually prevents the second refresh. Waiting for
-// the lock and then refreshing anyway would just serialise the two calls and still present the
-// rotated token. So the loser compares the access token it set out with against what is stored
-// now: if another tab has already rotated, that work is done and the stored token is the answer.
-async function refreshAccessToken(staleToken: string | null): Promise<string> {
+// SEC-01 removed the localStorage-backed "peek at what another tab already wrote" optimisation
+// this used to have (there is no longer a shared, cross-tab-readable copy of the access token to
+// peek at -- see the module-level `accessToken` variable's own comment). What's left is simpler
+// and still race-free: the lock only needs to make the actual /auth/refresh call SEQUENTIAL across
+// tabs, not skip it. A tab that acquires the lock second is no longer concurrent with the first --
+// by the time it runs, the first tab's rotation has already completed and the browser's (shared,
+// per-origin) cookie jar already holds the newly-rotated refresh cookie, so this tab's own refresh
+// call presents a still-valid, not-yet-consumed token and succeeds as an ordinary rotation of its
+// own, rather than being flagged as reuse. One extra network round trip in the rare concurrent
+// case, in exchange for not needing shared storage at all.
+export async function refreshAccessToken(): Promise<string> {
   if (!refreshInFlight) {
     refreshInFlight = withCrossTabLock(async () => {
-      const current = safeStorage.getItem('finora_token');
-      if (current && current !== staleToken) {
-        // Another tab refreshed while this one waited. Nothing to do.
-        return current;
-      }
       const { authApi } = await import('./endpoints');
       const refreshed = await authApi.refresh();
-      safeStorage.setItem('finora_token', refreshed.token);
+      setAccessToken(refreshed.token);
       return refreshed.token;
     }).finally(() => {
       refreshInFlight = null;
@@ -220,15 +272,16 @@ api.interceptors.response.use(
       originalRequest._retried = true;
       // BH-012: the refresh token is no longer read from storage, because it is no longer PUT
       // there -- it travels only as the HttpOnly cookie. What is checked here is whether this
-      // browser believes it has a session at all: with no access token there is nothing to
+      // TAB believes it has a session at all: with no in-memory access token there is nothing to
       // refresh, and attempting one would turn every anonymous request into a pointless round
-      // trip. The access token also doubles as the staleness marker the cross-tab lock compares
-      // against.
-      const staleToken = safeStorage.getItem('finora_token');
+      // trip. AuthContext's mount-time bootstrap (see its own comment) is what makes this true for
+      // a returning, still-logged-in user before any protected component gets the chance to make
+      // a request and hit this branch with nothing to work from.
+      const staleToken = getAccessToken();
 
       if (staleToken) {
         try {
-          const freshToken = await refreshAccessToken(staleToken);
+          const freshToken = await refreshAccessToken();
           originalRequest.headers.Authorization = `Bearer ${freshToken}`;
           return api(originalRequest);
         } catch (refreshError: any) {
@@ -255,10 +308,23 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    // Error responses use the same envelope ({success:false, message, errorCode}) —
-    // surface the message where callers already expect err.response.data.message.
+    // Error responses use the same envelope ({success:false, message, errorCode, details}) —
+    // surface the message where callers already expect err.response.data.message. `details` is
+    // carried through too (not just message/errorCode): AUTH_ACCOUNT_DEACTIVATED's reactivation
+    // token travels there (see ApiException/ApiResponse on the backend) and this used to drop it
+    // silently, which would have made the reactivation flow unreachable from the browser.
     if (error.response?.data?.message) {
-      error.response.data = { message: error.response.data.message, errorCode: error.response.data.errorCode };
+      error.response.data = {
+        message: error.response.data.message,
+        errorCode: error.response.data.errorCode,
+        details: error.response.data.details,
+        // Sprint 4 item 22: whether the user themselves can fix what caused this (a password
+        // panel needing a password is the clearest case) -- computed once, backend-side, from
+        // ErrorCode.userActionRequired() (GlobalExceptionHandler), not re-derived here. Absent
+        // (undefined) for a codeless ApiException, which has no classification to offer; callers
+        // treat that the same as false, never guessing a failure into looking actionable.
+        userActionRequired: error.response.data.details?.userActionRequired,
+      };
     }
     return Promise.reject(error);
   }

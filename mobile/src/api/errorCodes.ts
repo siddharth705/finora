@@ -15,3 +15,8 @@
 // so the field stays open with what they typed still in it.
 export const PDF_PASSWORD_REQUIRED = 'IMPORT_008';
 export const PDF_PASSWORD_INVALID = 'IMPORT_009';
+
+// LoginScreen branches on this to show a reactivation prompt instead of a dead-end error --
+// same reasoning as every other code in this module. Wire CODE (see the web copy's own doc
+// comment on why this must not be the Java enum NAME).
+export const AUTH_ACCOUNT_DEACTIVATED = 'AUTH_007';

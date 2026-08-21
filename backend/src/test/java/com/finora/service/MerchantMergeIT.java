@@ -22,7 +22,7 @@ import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.SpyBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.dao.DataAccessException;
 
 import java.math.BigDecimal;
@@ -42,7 +42,7 @@ import static org.mockito.Mockito.doThrow;
  * undo against a real Postgres instance, not mocks -- these two operations are exactly the kind
  * of multi-table consistency logic that's easy to get subtly wrong."
  *
- * The rollback test uses @SpyBean on TransactionRepository to force a failure at one specific
+ * The rollback test uses @MockitoSpyBean on TransactionRepository to force a failure at one specific
  * step (step 2, transaction repointing) while every other repository involved is the real bean
  * talking to the real containerized Postgres -- this is what makes it possible to assert "the
  * @Transactional boundary genuinely rolled back everything already written by step 1," which a
@@ -59,7 +59,7 @@ class MerchantMergeIT extends AbstractIntegrationTest {
     @Autowired private MerchantCategoryLearningRepository learningRepository;
     @Autowired private MerchantLearningAuditRepository auditRepository;
     @Autowired private CategoryRepository categoryRepository;
-    @SpyBean private TransactionRepository transactionRepository;
+    @MockitoSpyBean private TransactionRepository transactionRepository;
     @Autowired private AccountRepository accountRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private EntityManager entityManager;

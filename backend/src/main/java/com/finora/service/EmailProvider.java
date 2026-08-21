@@ -1,5 +1,7 @@
 package com.finora.service;
 
+import java.time.Instant;
+
 /**
  * Abstraction over "actually send an email" so business services never talk to Resend (or any
  * future replacement) directly -- same PhoneVerificationProvider-style boundary. isConfigured()
@@ -20,5 +22,20 @@ public interface EmailProvider {
 
     EmailResult sendPasswordResetEmail(String toEmail, String resetLink);
     EmailResult sendWelcomeEmail(String toEmail, String fullName);
+    /** D-23. Sent at registration, and again if a Google sign-in later finds a matching but
+     *  not-yet-verified account (see AuthService.loginWithGoogle) -- the same link either way,
+     *  since verifying is the same action regardless of which flow asked for it. */
+    EmailResult sendEmailVerificationEmail(String toEmail, String verifyLink);
     EmailResult sendPasswordChangedEmail(String toEmail);
+    /** device/ip are the best-effort RequestMetadata labels for the request that made the
+     *  deactivation call -- null-safe, since this is a security notification whose value degrades
+     *  gracefully rather than failing outright when either is unavailable (e.g. a test harness, or
+     *  a future non-HTTP caller). Lets a user who did not deactivate their own account tell, from
+     *  the email alone, that this was not them. */
+    EmailResult sendAccountDeactivatedEmail(String toEmail, Instant deactivatedAt, String device, String ip);
+    EmailResult sendAccountReactivatedEmail(String toEmail);
+    /** Sent after the account and all its data have already been purged, not before -- deletion is
+     *  synchronous (product decision), so there is nothing left to warn about in advance and no
+     *  cancel window to describe. Purely informational: what happened and when. */
+    EmailResult sendAccountDeletedEmail(String toEmail, Instant deletedAt);
 }

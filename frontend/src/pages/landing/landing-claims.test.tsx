@@ -59,6 +59,15 @@ describe('landing page — marketing claims', () => {
   });
 
   /**
+   * Product's Billing Plan Taxonomy Decision (2026-08-12): exactly Free/Plus/Premium, no more,
+   * no less. `plans.ts` described Free/Premium/Family/Future for four days after that decision
+   * before being caught and fixed -- this is what would have caught it immediately.
+   */
+  it('offers exactly the Free/Plus/Premium taxonomy Product approved', () => {
+    expect(PLANS.map((p) => p.id)).toEqual(['free', 'plus', 'premium']);
+  });
+
+  /**
    * The rule from plans.ts, asserted rather than trusted: a price may only appear on a plan that
    * can actually be bought. There is no billing in the backend, so today that is Free alone.
    */

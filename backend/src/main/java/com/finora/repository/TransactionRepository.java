@@ -63,6 +63,28 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
 
     List<Transaction> findByUserIdAndNeedsCategoryReviewTrueOrderByTxnDateDesc(UUID userId);
 
+    /**
+     * SEC-06 (docs/quality/bug-reports/2026-08-19-security-review-findings.md) -- the idempotency
+     * check TransactionService.create() runs before inserting a new row. See V97's migration
+     * comment for why this is scoped by userId as well as the key: the column has no cross-user
+     * uniqueness of its own, only per-user, same as every other per-user identifier in this app.
+     *
+     * <p>Bug fix (gap review of SEC-06): this used to be a plain derived query, which Hibernate
+     * runs through {@code Transaction}'s own {@code @SQLRestriction("deleted_at IS NULL")} --
+     * silently, on every query Hibernate generates against the entity, derived or JPQL alike (see
+     * that annotation's own doc comment on the entity). A retry of the exact same request against a
+     * since-soft-deleted transaction therefore found nothing here, fell through to a second INSERT,
+     * and collided with the still-present {@code idempotency_key} value on the deleted row at V97's
+     * own unique index -- the opposite of what V97's migration comment requires: a key must keep
+     * resolving to the same identity "even if soft-deleted." A native query is not run through
+     * Hibernate's HQL translator, which is the layer that injects the restriction, so this sees a
+     * soft-deleted row exactly like a live one -- an identity lookup, not a liveness check.
+     */
+    @Query(value = "SELECT * FROM transactions WHERE user_id = :userId AND idempotency_key = :idempotencyKey",
+            nativeQuery = true)
+    java.util.Optional<Transaction> findByUserIdAndIdempotencyKey(
+            @Param("userId") UUID userId, @Param("idempotencyKey") String idempotencyKey);
+
     List<Transaction> findByUserIdAndTxnDateBetween(UUID userId, LocalDate from, LocalDate to);
 
     /**
@@ -151,6 +173,31 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
     List<Transaction> findPotentialDuplicatesByUser(
             @Param("userId") UUID userId, @Param("date") LocalDate date,
             @Param("amount") BigDecimal amount, @Param("description") String description);
+
+    /**
+     * Candidate bank-side transactions for C6.4's cross-source reconciliation: same user, same
+     * amount, txn date within a window around a Gmail receipt's date. Description is deliberately
+     * NOT compared here -- a receipt's description is a merchant domain ({@code "amazon.in"}) and
+     * a bank line reads something like {@code "AMZN MKTPLACE 4521"}, so exact-equality (what
+     * {@link #findPotentialDuplicatesByUser} does) would never fire between the two. Narrowing to
+     * amount + date window here, then scoring merchant-name similarity in Java
+     * ({@code GmailReconciliationMatcher}), keeps the fuzzy part out of SQL.
+     *
+     * <p>Excludes {@code GMAIL_IMPORT}-sourced rows: a receipt is matched against the bank side of
+     * the ledger, not against another already-confirmed receipt -- see the design proposal's own
+     * distinction between this direction and the "both already landed" case it deliberately holds.
+     */
+    @Query("""
+        SELECT t FROM Transaction t
+        WHERE t.userId = :userId AND t.amount = :amount
+          AND t.txnDate BETWEEN :startDate AND :endDate
+          AND t.txnType = com.finora.entity.Transaction.Type.EXPENSE
+          AND t.source <> com.finora.entity.Transaction.Source.GMAIL_IMPORT
+        ORDER BY t.txnDate
+        """)
+    List<Transaction> findCandidatesForGmailReconciliation(
+            @Param("userId") UUID userId, @Param("amount") BigDecimal amount,
+            @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
 
     /** Backs "View Imported Transactions" and "Delete Statement Import" — every transaction a
      *  given confirmed CSV import produced. See StatementImportService. */
@@ -255,4 +302,22 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
            "AND t.txnType = :expenseType AND t.merchantId IS NOT NULL GROUP BY t.merchantId")
     List<Object[]> platformMerchantSpendTotals(@Param("refundStatus") Transaction.ReconciliationStatus refundStatus,
                                                 @Param("expenseType") Transaction.Type expenseType);
+
+    /**
+     * AccountPurgeSweepService. Native, bypassing Hibernate's {@code @SQLDelete} entirely -- a
+     * derived/JPQL {@code deleteByUserId} on this entity would only soft-delete (set
+     * {@code deleted_at}), not purge, since {@code Transaction extends BaseEntity}. Named
+     * {@code hardDeleteByUserId}, not {@code deleteByUserId}, so the bypass is visible at every
+     * call site -- same naming discipline {@link #findByUserId} above.
+     *
+     * <p>One native statement for the whole user, not a loop of {@code repository.delete(entity)}:
+     * this table has two self-referential FKs ({@code is_duplicate_of}, {@code transfer_pair_id}),
+     * and Postgres only checks non-deferred FK constraints at end-of-statement, not per row. A
+     * single bulk {@code DELETE} removes every row for the user atomically, so two of their own
+     * transactions pointing at each other never trip a constraint violation -- a row-by-row loop
+     * could, depending on iteration order.
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query(value = "DELETE FROM transactions WHERE user_id = :userId", nativeQuery = true)
+    void hardDeleteByUserId(@Param("userId") UUID userId);
 }

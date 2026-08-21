@@ -67,14 +67,18 @@ CI does not use GitHub-hosted runners. It runs on a single self-hosted machine, 
 unavailable when that machine is offline, and jobs serialise rather than running in parallel. If a
 job sits queued and never starts, that is the first thing to check.
 
+Because that runner is a single point of failure, don't assume CI availability during local
+development. Run the checks above yourself before opening a PR rather than relying on CI to catch
+them.
+
 Maintainers: see [`docs/infrastructure/self-hosted-runner.md`](docs/architecture/infrastructure/self-hosted-runner.md)
 for the runner's identity, host requirements, a health-check sequence, and how to rebuild it on a
 new machine.
 
 ## Branching strategy
 
-Direct commits to `main` are not allowed. Everything happens on a branch, and reaches `main` through
-a pull request.
+Direct commits and pushes to `main` are not allowed. Everything happens on a branch, and reaches
+`main` through a pull request and review.
 
 ```
 main (the trunk; releases are tags on it)
@@ -92,10 +96,13 @@ main (the trunk; releases are tags on it)
   convention, not something tooling enforces.
 
 **This section used to describe a full gitflow** — a long-lived `develop` integration branch and
-`release/*` branches cut from it. That was never adopted: no `develop` branch has ever existed on
-the remote, and every pull request in the repository's history targets `main`. It is recorded here
-rather than quietly deleted because the instruction to "branch off `develop`" was followed by nobody
-and could not have been, and anyone who tried would have been debugging their own setup.
+`release/*` branches cut from it, matching the original proposal in
+[`docs/project-management/plans/engineering-directive-phase1.md`](docs/project-management/plans/engineering-directive-phase1.md).
+That was never adopted: no `develop` branch has ever existed on the remote, and every pull request
+in the repository's history targets `main`. It is recorded here rather than quietly deleted
+because the instruction to "branch off `develop`" was followed by nobody and could not have been,
+and anyone who tried would have been debugging their own setup. The branching strategy in this
+file supersedes that original proposal; the directive doc keeps a pointer back here.
 
 If a long-lived integration branch is wanted later, that is a decision to make deliberately — the
 trunk-based flow above is what the project actually does today.
@@ -103,6 +110,15 @@ trunk-based flow above is what the project actually does today.
 - Open a PR into `main` rather than merging locally, so there is a review point — and because CI
   does not run on a branch push without an open pull request (see the trigger comment in
   `.github/workflows/ci.yml`). A branch pushed with no PR has been checked by nothing.
+
+## Worktrees
+
+Claude Code sessions must follow the worktree isolation rules in [`CLAUDE.md`](CLAUDE.md): the
+primary checkout is read-only for implementation work, and all changes happen in a dedicated
+worktree. Human contributors aren't required to work this way, but the same courtesy applies
+either way — don't remove or modify a worktree you didn't create, whether it belongs to another
+developer or another Claude session. Only remove worktrees you own, and only after the associated
+branch has merged or been abandoned.
 
 ## Commit messages
 
@@ -164,3 +180,8 @@ Never edit the schema by hand. Add a new versioned Flyway migration under
 `backend/src/main/resources/db/migration/` (`V{next}__description.sql`) — check that directory
 for the current highest `V` number before picking the next one; this list grows with every
 schema change, so no fixed range is quoted here.
+
+Never modify, delete, or renumber a migration that has already reached `main` — even to fix a
+mistake in it. Add a new migration instead. Editing a merged migration changes the checksum
+Flyway already recorded for anyone who ran it, and breaks their local/deployed database on the
+next migrate.

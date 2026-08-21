@@ -1,9 +1,9 @@
 import { api, rawApi, type ApiEnvelope } from './client';
 import type {
 
-  AccountDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
+  AccountDto, ActivationFunnelDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
   CreateAccountRequest, CreateBankRequest, CreateRelationshipRequest,
-  CreateRuleRequest, CreateUserRequest, FeatureFlagDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
+  CreateRuleRequest, CreateUserRequest, FeatureFlagDto, GmailMerchantParserStatDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
   LearningTimelineEntry,
   MeAccessDto, MerchantDto, MerchantMergeRequest, MerchantStatDto,
   MerchantUpdateRequest, OperationalDashboardDto, PagedResponse, PermissionDto, PlatformAnalyticsDto,
@@ -101,8 +101,8 @@ export const adminUsersApi = {
     api.get<UserDetailDto>(`/admin/users/${id}`).then((r) => r.data),
   suspend: (id: string) =>
     api.post<UserSummaryDto>(`/admin/users/${id}/suspend`).then((r) => r.data),
-  reactivate: (id: string) =>
-    api.post<UserSummaryDto>(`/admin/users/${id}/reactivate`).then((r) => r.data),
+  reactivate: (id: string, reason?: string) =>
+    api.post<UserSummaryDto>(`/admin/users/${id}/reactivate`, reason ? { reason } : undefined).then((r) => r.data),
   create: (request: CreateUserRequest) =>
     api.post<UserSummaryDto>('/admin/users', request).then((r) => r.data),
   update: (id: string, request: AdminUpdateUserRequest) =>
@@ -237,6 +237,7 @@ export const adminStatsApi = {
 // Reuses adminStatsApi's PLATFORM_STATS_VIEW gate rather than a new permission.
 export const adminDashboardApi = {
   overview: () => api.get<OperationalDashboardDto>('/admin/dashboard/overview').then((r) => r.data),
+  activationFunnel: () => api.get<ActivationFunnelDto>('/admin/dashboard/activation-funnel').then((r) => r.data),
 };
 
 export const adminSystemApi = {
@@ -297,6 +298,13 @@ export const adminMerchantReviewApi = {
 
 export const adminMerchantsApi = {
   platformStats: () => api.get<MerchantStatDto[]>('/admin/merchants/stats').then((r) => r.data),
+  // No default window on the backend (an unbounded scan is a cost the endpoint never silently
+  // absorbs) -- since is required here too, an ISO string built from a plain Date so callers
+  // don't need to know the backend's exact format.
+  gmailParserStats: (since: Date) =>
+    api.get<GmailMerchantParserStatDto[]>('/admin/merchants/gmail-parser-stats', {
+      params: { since: since.toISOString() },
+    }).then((r) => r.data),
 };
 
 /** Admin, support-assisted merchant management for a specific user -- AdminUserMerchantController

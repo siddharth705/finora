@@ -42,6 +42,156 @@ class PdfMetadataExtractorTest {
         assertThat(metadata.accountNumberMasked()).endsWith("0599");
     }
 
+    /**
+     * Phase 1C: real credit-card statements speak of a CARD number, not an "Account Number" --
+     * verified against real HDFC and Kotak statements, neither of which ever uses the phrase
+     * ACCOUNT_NUMBER above looks for at all. The masked value is stored EXACTLY as printed (no
+     * re-masking, no reconstructing which digits are hidden), which {@code isEqualTo} here checks
+     * literally rather than the looser {@code endsWith} the plain-digit ACCOUNT_NUMBER tests above
+     * use -- there is no unmasked full number to test the last-4 tail of.
+     */
+    @Test
+    void extract_recognizesACreditCardNumber_labelledCreditCardNo() {
+        var metadata = extractor.extract(List.of("Credit Card No. XXXX XXXX XXXX 1234"));
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("XXXX XXXX XXXX 1234");
+    }
+
+    @Test
+    void extract_recognizesACreditCardNumber_labelledPrimaryCardNumber() {
+        var metadata = extractor.extract(List.of("Primary Card Number XXXX XXXX XXXX 5678"));
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("XXXX XXXX XXXX 5678");
+    }
+
+    /**
+     * The real Kotak shape: unrelated text ("(Principal Outstanding)") precedes the label on the
+     * same line, which the start-anchored ACCOUNT_NUMBER-style pattern could never tolerate --
+     * this is the same-line-anywhere fallback ({@code CARD_NUMBER_LABEL} found via {@code find()},
+     * not anchored to the start), the same contract the payment-due-date same-line fallback uses.
+     */
+    @Test
+    void extract_recognizesACardNumber_whenUnrelatedTextPrecedesTheLabelOnTheSameLine() {
+        var metadata = extractor.extract(List.of("(Principal Outstanding) Primary Card Number XXXX XXXX XXXX 9012"));
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("XXXX XXXX XXXX 9012");
+    }
+
+    /**
+     * The real HDFC shape: the value comes BEFORE its label (the same "value, then label" order
+     * ACCOUNT_NUMBER_TRAILING_LABEL already handles), but the cardholder's name trails the label
+     * on the same line too -- ACCOUNT_NUMBER_TRAILING_LABEL's own end-of-line anchor could never
+     * tolerate that. CARD_NUMBER_TRAILING_LABEL is the same shape widened to allow trailing text.
+     */
+    @Test
+    void extract_recognizesACardNumber_whenTrailingTextFollowsTheLabelOnTheSameLine() {
+        var metadata = extractor.extract(List.of("XXXX XXXX XXXX 3456 Credit Card No. JOHN DOE"));
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("XXXX XXXX XXXX 3456");
+    }
+
+    /**
+     * Phase 1C.1: the real SBI shape -- the label sits alone on its own line, and the masked
+     * value is on the very next line entirely (a genuine multi-line grid, the same "label row,
+     * then a value row" shape GRID_DUE_DATE_LABEL's own fallback already reads for payment due
+     * date). SBI's real card number also reveals only its last 2 digits, not the usual 4 -- the
+     * reason the digit-count floor was lowered from 4 to 2, verified safe across the full real
+     * corpus (see looksLikeCardOrAccountNumber's own doc comment).
+     */
+    @Test
+    void extract_recognizesACardNumber_onATrailingLineWhenTheLabelLineItselfHasNoValue() {
+        var metadata = extractor.extract(List.of(
+                "JOHN DOE Credit Card Number",
+                "XXXX XXXX XXXX XX56"));
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("XXXX XXXX XXXX XX56");
+    }
+
+    /** A trailing colon on the label's own line is ordinary formatting, not evidence the label
+     *  was merely mentioned in passing -- must not block the multi-line grid fallback the way
+     *  genuine trailing prose correctly does (see the mid-sentence negative test below). */
+    @Test
+    void extract_recognizesACardNumber_onATrailingLineWhenTheLabelLineEndsWithAColon() {
+        var metadata = extractor.extract(List.of(
+                "Credit Card Number:",
+                "XXXX XXXX XXXX XX78"));
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("XXXX XXXX XXXX XX78");
+    }
+
+    /**
+     * Phase 1C.1: a real HSBC statement's own account-number field is fully unmasked (a summary
+     * table column, not a masked card field) -- verified via direct visual confirmation against
+     * the rendered PDF. A mask-character requirement was considered for grid-derived candidates
+     * specifically and rejected because it would have rejected this genuine match, not just
+     * noise: label proximity and findGridValue's own narrow search window are what make the grid
+     * fallback safe, not an assumption about how a bank chooses to print the value.
+     */
+    @Test
+    void extract_recognizesAFullyUnmaskedCardNumber_onATrailingLineViaTheGridFallback() {
+        var metadata = extractor.extract(List.of(
+                "Account Number",
+                "123456789012")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("••••9012");
+    }
+
+    /**
+     * The grid fallback still applies looksLikeCardOrAccountNumber, the same as every other
+     * matching path -- a short, non-identifying token on the label's trailing line (too short to
+     * be a real card/account number, e.g. a page or note number) must not be picked up just
+     * because it happens to sit where the real value would.
+     */
+    @Test
+    void extract_doesNotMatchATooShortTokenOnTheGridsTrailingLine() {
+        var metadata = extractor.extract(List.of(
+                "Credit Card Number",
+                "12"));
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
+    /**
+     * Bug fix, caught by a real-corpus sweep before this shipped: the grid fallback used to fire
+     * whenever CARD_NUMBER_LABEL matched anywhere on a line with no same-line value, with no check
+     * on WHY the same-line search failed. That let an incidental mention of "account number" or
+     * "card number" buried mid-sentence in unrelated prose trigger a 3-line forward scan that could
+     * land on some unrelated nearby digit-shaped token -- confirmed against 3 real documents this
+     * way (a credit-card statement and two savings statements), every one of them the label
+     * mid-sentence with several more words following it on the same line. The real SBI line this
+     * fallback exists for has the label as the LAST thing on its line; requiring that -- not just
+     * "the label matched somewhere" -- is what closes this without touching the same-line-anywhere
+     * path (Kotak's shape) at all, since that path already requires a real value to follow.
+     */
+    @Test
+    void extract_doesNotMatchAnUnrelatedNumberOnTheNextLine_whenTheLabelIsMidSentenceNotItsOwnLine() {
+        var metadata = extractor.extract(List.of(
+                "Please update your account number if it has recently changed.",
+                "Reference: 1234567890")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
+    /**
+     * The label identifies the field -- not the value's shape. A masked-looking number with no
+     * recognized card/account-number label anywhere near it must never be picked up, however
+     * identifier-shaped it looks; otherwise this would regress into exactly the "find any
+     * masked-looking number in the document" design this class deliberately avoids.
+     */
+    @Test
+    void extract_doesNotMatchAMaskedLookingReferenceNumber_withNoRecognizedLabelNearby() {
+        var metadata = extractor.extract(List.of("Reference Number: XXXX XXXX XXXX 7890"));
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
+    @Test
+    void extract_leavesAccountNumberMaskedNull_whenNoCardOrAccountNumberIsPresentAtAll() {
+        var metadata = extractor.extract(List.of("Statement Period: 01/06/2026 to 30/06/2026"));
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
     @Test
     void extract_recognizesAnIfscCode_byItsDistinctiveShape_evenMergedWithAnUnrelatedField() {
         // The real statement's IFSC line is merged with an unrelated Email field by the time it
@@ -63,6 +213,25 @@ class PdfMetadataExtractorTest {
                 "58 ROAD NO 3,BEHIND  KAVITA RAMESH DESAI Account Name"));
 
         assertThat(metadata.accountHolderName()).isEqualTo("KAVITA RAMESH DESAI");
+    }
+
+    /**
+     * Bug fix, missing coverage found while completing this fix: ACCOUNT_NAME_TRAILING_LABEL's
+     * leading {@code (?i)} used to case-insensitize the WHOLE pattern, not just the "Account Name"
+     * label text -- so the captured-name group's own {@code [A-Z]} requirement was never actually
+     * enforced, and a lowercase phrase ending in "account name" could still have its preceding
+     * lowercase words captured as if they were a real name. Constructed to demonstrate the
+     * mechanism directly (not verified against a specific real statement, unlike the sibling test
+     * above): under the old pattern, "please update your" (three lowercase words) would have
+     * satisfied the case-insensitized capture group and been returned as the account holder.
+     * {@code (?i:...)} now scopes case-insensitivity to just the label; the captured portion is
+     * case-sensitive again, so no word here starting lowercase can open a match at all.
+     */
+    @Test
+    void extract_doesNotCaptureLowercaseWords_asAnAccountHolderName_viaAccountNameTrailingLabel() {
+        var metadata = extractor.extract(List.of("please update your account name"));
+
+        assertThat(metadata.accountHolderName()).isNull();
     }
 
     @Test
@@ -102,6 +271,59 @@ class PdfMetadataExtractorTest {
         assertThat(ctx.capabilities()).extracting(a -> a.capability()).doesNotContain("GRID_METADATA_TRAILING_LABEL");
     }
 
+    // CARD_ENDING_DIGITS: a credit card's identity stated inside an ordinary sentence rather than
+    // any "Label: Value" or grid shape -- modeled on a real AU Small Finance Bank credit-card
+    // statement's own "Statement for your credit card ending with <4 digits>" phrasing (digits
+    // genericized per the Synthetic Fixture Policy). Only the last 4 digits are ever known this
+    // way, so this always produces a masked identity directly, never a full unmasked number.
+
+    @Test
+    void extract_recognizesACardEndingDigitsSentence_asAMaskedAccountIdentity() {
+        var metadata = extractor.extract(List.of(
+                "Statement for your credit card ending with 4321 (19 Mar - 18 Apr 2026)"));
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("••••4321");
+    }
+
+    @Test
+    void extract_recordsCardEndingDigitsIdentity_onDocumentContext_whenTheSentenceMatches() {
+        DocumentContext ctx = new DocumentContext("PDF", "PdfMetadataExtractor");
+
+        extractor.extract(List.of("Statement for your credit card ending with 4321"), ctx);
+
+        assertThat(ctx.capabilities()).extracting(a -> a.capability()).contains("CARD_ENDING_DIGITS_IDENTITY");
+    }
+
+    @Test
+    void extract_preferAnEarlierLabelledAccountNumber_overALaterCardEndingDigitsSentence() {
+        // Same "first field found wins" discipline every other guarded assignment in this class
+        // already follows -- a later, unrelated "ending with" mention (e.g. a linked debit card
+        // referenced deep in a T&C appendix) must not override an already-found real identity.
+        var metadata = extractor.extract(List.of(
+                "Account Number: 000123456789", // synthetic-ok
+                "your linked debit card ending with 9999 is separately governed by..."));
+
+        assertThat(metadata.accountNumberMasked()).endsWith("6789");
+    }
+
+    /**
+     * Bug fix, found during self-review before this ever reached a real document: the pattern used
+     * to match bare "card ending with/in", not specifically "credit card ending with/in". Since
+     * this scans the WHOLE document's auxiliary text with the same guarded first-match discipline
+     * every field here follows, a savings/current-account statement that mentions a linked DEBIT
+     * card in passing -- with no other Account Number field ever appearing at all -- would have
+     * pinned accountNumberMasked to the debit card's digits, a real account misidentified by its
+     * unrelated linked card. Requiring the literal phrase "credit card" closes this without
+     * narrowing AU's own real phrasing at all.
+     */
+    @Test
+    void extract_doesNotMatchABareDebitCardMention_whenNoAccountNumberFieldExistsAtAll() {
+        var metadata = extractor.extract(List.of(
+                "your linked debit card ending with 9999 is separately governed by..."));
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
     // LEADING_NAME_LINE: real-document-evidenced (a Bank of Baroda savings account statement, an
     // Axis Bank Neo Rupay credit card statement, and a Kotak Mahindra Bank savings statement --
     // three different banks) -- all put the holder's plain name as one of the document's first
@@ -126,6 +348,23 @@ class PdfMetadataExtractorTest {
         // "AXIS BANK" shape-matches a plausible name just as well as "JOHN DOE" does (two
         // capitalized words, no digits) -- only the BankRegistry check tells them apart.
         var metadata = extractor.extract(List.of("AXIS BANK", "Neo Rupay Credit Card Statement"));
+
+        assertThat(metadata.accountHolderName()).isNull();
+    }
+
+    /**
+     * Bug fix: LEADING_NAME_LINE's leading {@code (?i)} used to case-insensitize the WHOLE
+     * pattern, including the {@code [A-Z]} the "2-4 capitalized words" requirement depends on -- so
+     * ordinary lowercase prose (two words, an optional trailing period) shape-matched exactly as
+     * well as a real name. Verified against a real ICICI credit-card statement: an unrelated
+     * disclosure sentence left an all-lowercase trailing fragment (two words, a trailing period) as
+     * its own extracted line, which -- despite being entirely lowercase -- satisfied the old
+     * pattern and was captured as the account holder. Input below is a generic phrase with the same
+     * shape, genericized per the Synthetic Fixture Policy rather than quoting the real document.
+     */
+    @Test
+    void extract_doesNotMisreadLowercaseProse_asAnAccountHolderName_viaTheLeadingLineFallback() {
+        var metadata = extractor.extract(List.of("please disregard this."));
 
         assertThat(metadata.accountHolderName()).isNull();
     }
@@ -204,6 +443,56 @@ class PdfMetadataExtractorTest {
         assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 7, 20));
     }
 
+    /** Defensive coverage: an ordinal-suffixed date ("04th Aug 2026") returns null from
+     *  {@code CsvParser.parseDate} unless stripped first -- fixed at the parser layer (see
+     *  {@code CsvParserTest.parseDate_retriesWithAnOrdinalDaySuffixStripped}), asserted here too
+     *  so the label-matching layer is proven to carry the fix end to end. */
+    @Test
+    void extract_recognizesPaymentDueDate_writtenWithAnOrdinalDaySuffix() {
+        var metadata = extractor.extract(List.of("Payment Due Date: 04th Aug 2026"));
+
+        assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 8, 4));
+    }
+
+    /**
+     * Real credit-card statement evidence: a due-date UI element's own "Pay Now" button text was
+     * merged onto the same extracted line AHEAD of the "Payment due date" label -- the same-line
+     * anchored {@code PAYMENT_DUE_DATE} pattern requires the label at the very start of the line,
+     * so it never matched at all. Not a date-format problem (see the ordinal-suffix test above,
+     * a different real cause on a different document) -- the label simply isn't first. Invented
+     * trailing UI text ("Pay Now"/an amount/a section header) reproduces the shape without using
+     * the real statement's own wording.
+     */
+    @Test
+    void extract_recognizesPaymentDueDate_whenUnrelatedButtonTextPrecedesTheLabelOnTheSameLine() {
+        var metadata = extractor.extract(List.of("Pay Now Payment due date 15 Sep 2026 ₹0.00 EMIs"));
+
+        assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 15));
+    }
+
+    /** The same-line fallback must still yield to the genuine multi-line grid shape
+     *  ({@link #extract_findsPaymentDueDate_inAMultiColumnGrid_skippingTheStatementPeriodRangeOnTheSameRow})
+     *  when the label's own line has no date-shaped value at all -- proving the two fallbacks are
+     *  additive, not one replacing the other. */
+    @Test
+    void extract_stillFindsPaymentDueDate_onATrailingLineWhenTheLabelLineItselfHasNoDate() {
+        var metadata = extractor.extract(List.of(
+                "Due Date",
+                "15 Sep 2026"));
+
+        assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 15));
+    }
+
+    /** Negative case: a due-date mention with no date-shaped value anywhere nearby (an
+     *  explanatory sentence, not a real field) must stay null rather than guessing. */
+    @Test
+    void extract_doesNotInventAPaymentDueDate_fromAnExplanatorySentenceMentioningTheWords() {
+        var metadata = extractor.extract(List.of(
+                "Interest is charged if the total amount due is not paid by the payment due date."));
+
+        assertThat(metadata.paymentDueDate()).isNull();
+    }
+
     @Test
     void extract_findsCreditLimit_inAMultiColumnGrid_notAvailableCreditLimitOnTheSameRow() {
         var metadata = extractor.extract(List.of(
@@ -234,6 +523,64 @@ class PdfMetadataExtractorTest {
                 "78,000 76,183 31,200"));
 
         assertThat(metadata.creditLimit()).isEqualByComparingTo("78000");
+    }
+
+    // "First match wins", not "last match wins" -- every primary Label: Value field below now
+    // commits only on the first matching line, mirroring how every GRID_*/TRAILING_LABEL fallback
+    // already guarded its own assignment. Two of the seven guarded fields are exercised here
+    // (rather than all seven near-identically): creditLimit reproduces the real motivating case
+    // directly; accountHolderName proves the fix is the shared loop discipline, not something
+    // specific to Credit Limit.
+
+    /**
+     * Bug fix: every primary "Label: Value" extraction used to commit on EVERY matching line, so
+     * whichever occurrence appeared LAST in the document silently won. Verified against a real
+     * ICICI credit-card statement whose genuine early Credit Limit field was overwritten by a
+     * later, entirely fictional "Credit Limit" figure from the MITC section's worked example of
+     * how Minimum Amount Due is calculated.
+     */
+    @Test
+    void extract_keepsTheFirstCreditLimit_notALaterUnrelatedOccurrenceOfTheSameLabel() {
+        var metadata = extractor.extract(List.of(
+                "Credit Limit: 100000.00",
+                "Some unrelated text",
+                "Credit Limit: 500.00"));
+
+        assertThat(metadata.creditLimit()).isEqualByComparingTo("100000.00");
+    }
+
+    /**
+     * Same fix, a different field -- proving "first real field wins" is the shared loop discipline
+     * now, not a Credit-Limit-specific special case. A genuine field is stated once, prominently,
+     * near the top of a statement; any later occurrence of the same label is either a harmless
+     * repeat or unrelated boilerplate, never something that should override an already-found answer.
+     */
+    @Test
+    void extract_keepsTheFirstAccountHolderName_notALaterDuplicateLabelOccurrence() {
+        var metadata = extractor.extract(List.of(
+                "Account Holder Name: JOHN DOE",
+                "Some unrelated text",
+                "Account Holder Name: JANE ROE"));
+
+        assertThat(metadata.accountHolderName()).isEqualTo("JOHN DOE");
+    }
+
+    /**
+     * Bug fix: Statement Period fills TWO fields (start and end) from one match, unlike the other
+     * six guarded fields above. A first line whose value doesn't parse as a full "X to Y" range
+     * (e.g. missing the "to" separator) must not half-commit -- if it did, the AND-guarded pair
+     * would be permanently stuck with one side null, unable to fall through to a later, fully-formed
+     * "Statement Period" line that states the whole range together.
+     */
+    @Test
+    void extract_ignoresAPartiallyParseableStatementPeriod_andKeepsALaterFullyFormedOne() {
+        var metadata = extractor.extract(List.of(
+                "Statement Period: 01-05-2026",
+                "Some unrelated text",
+                "Statement Period: 01-05-2026 to 31-05-2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 5, 1));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 5, 31));
     }
 
     // Deferred capability evidence (see the Capability Registry's "Capability Backlog" table in

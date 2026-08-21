@@ -20,16 +20,35 @@
   # Mirrors the policy SecurityConfig.java sets for the API (default-src 'self'; frame-ancestors
   # 'none'; base-uri 'self'), widened only where this app genuinely needs it as a browser-rendered
   # SPA rather than a copy-paste of the API's minimal policy:
-  #   - script-src adds https://www.gstatic.com -- Firebase Phone Auth (src/lib/phoneAuth.ts)
-  #     renders an invisible reCAPTCHA widget, whose script loads from there.
   #   - script-src adds https://static.cloudflareinsights.com -- Cloudflare Pages' automatic Web
   #     Analytics injects this beacon into every response at the edge; nothing in this repo
   #     references it. connect-src does NOT need a matching entry: automatic injection reports to
   #     this site's own /cdn-cgi/rum, which 'self' already covers (confirmed against Cloudflare's
   #     Web Analytics FAQ). No inline-script hash/nonce needed either -- the injected snippet
   #     carries its own `integrity` attribute rather than relying on 'unsafe-inline'.
+  #   - script-src adds https://www.gstatic.com and https://www.google.com -- Firebase Phone Auth
+  #     (src/lib/phoneAuth.ts) renders an invisible reCAPTCHA Enterprise widget. Both domains are
+  #     needed: gstatic.com serves supporting assets, but the loader script itself --
+  #     recaptcha/enterprise.js -- is served from google.com. Missing google.com here silently
+  #     broke every OTP-sending flow (registration, delete-account, phone-change, password-reset
+  #     phone-fallback -- everything through phoneAuth.ts) with a generic Firebase
+  #     auth/internal-error, since the verifier never finishes initializing without its own script.
+  #   - script-src also adds https://accounts.google.com/gsi/client -- D-23 Google Sign-In
+  #     (src/lib/googleIdentity.ts) loads Google Identity Services from this exact URL, a DIFFERENT
+  #     origin from the reCAPTCHA script above. Bug fix: this was missed when D-23 shipped -- the
+  #     button rendered (GoogleSignInButton.tsx has no way to know its own script load was blocked)
+  #     but silently failed with "Sign in with Google is unavailable right now" on every real
+  #     deployment, since the browser blocked the script outright rather than erroring loudly.
+  #     Scoped to the exact path Google's own CSP guide recommends
+  #     (developers.google.com/identity/gsi/web/guides/get-google-api-clientid), not the bare
+  #     origin, to avoid trusting all of accounts.google.com's script surface for what only needs
+  #     this one file.
   #   - style-src adds https://fonts.googleapis.com (index.html's Google Fonts <link>) and
-  #     'unsafe-inline' -- this app sets style={{...}} inline styles throughout (28 files).
+  #     'unsafe-inline' -- this app sets style={{...}} inline styles throughout (28 files). Also
+  #     https://accounts.google.com/gsi/style -- GIS's own rendered button loads a stylesheet from
+  #     this exact URL, undocumented in Google's own CSP guide above (which covers script-src/
+  #     frame-src/connect-src but not this) -- found only by actually serving a real build through
+  #     wrangler pages dev and watching the console, not by trusting the docs alone.
   #   - font-src adds https://fonts.gstatic.com, where fonts.googleapis.com's stylesheet actually
   #     points its @font-face src at.
   #   - img-src adds https://cdn.brandfetch.io -- BankLogo.tsx's Brandfetch Logo API.
@@ -38,11 +57,28 @@
   #     securetoken.googleapis.com (Firebase Auth's own REST endpoints, used by the Firebase Web
   #     SDK the phone-verification flow calls), and Sentry's ingest hosts (src/lib/monitoring.ts,
   #     no-ops unless VITE_SENTRY_DSN is set, but the connect-src entry costs nothing when unused).
-  #   - frame-src allows https://www.google.com -- the reCAPTCHA challenge iframe Firebase Phone
-  #     Auth renders when it can't verify invisibly.
+  #     Also https://accounts.google.com/gsi/ -- same Google CSP guide above: GIS's own background
+  #     requests (session/credential state) go through this path prefix, not a specific named
+  #     endpoint, since Google explicitly recommends the prefix over individual GIS URLs so a future
+  #     GIS-side change doesn't silently start failing here again.
+  #     Bug fix (review): also https://www.google.com -- a SEPARATE gap from the GIS entry above,
+  #     missed when #168 fixed GIS's own CSP. reCAPTCHA Enterprise's actual verification call
+  #     (recaptcha/enterprise/clr, the network request the widget makes once rendered, not just
+  #     the script load already covered by script-src) is fetch/XHR from this page's own context,
+  #     not from inside the reCAPTCHA iframe -- so it's connect-src's problem, not frame-src's.
+  #     Missing this silently broke every phone-verification send (registration, delete-account,
+  #     phone-change, Google Sign-In's own phone step) with the widget rendering fine and the
+  #     script loading fine, but the actual verification call blocked -- reproduced live via a
+  #     real browser console showing "Connecting to 'https://www.google.com/recaptcha/enterprise/
+  #     clr?...' violates... connect-src... The action has been blocked."
+  #   - frame-src allows https://www.google.com (the reCAPTCHA challenge iframe Firebase Phone
+  #     Auth renders when it can't verify invisibly) and https://accounts.google.com/gsi/ (the
+  #     actual "Sign in with Google" button Google renders is itself an iframe from this path, not
+  #     just a script -- missing this blocks the button from ever painting even once its script
+  #     loads).
   #   - frame-ancestors 'none' takes over X-Frame-Options' job (both do the same thing; setting
   #     both would just be two places to keep in sync).
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://cdn.brandfetch.io; connect-src 'self' https://api.finoratech.info https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io; frame-src https://www.google.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com https://accounts.google.com/gsi/client https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://cdn.brandfetch.io; connect-src 'self' https://api.finoratech.info https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com/gsi/ https://www.google.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io; frame-src https://www.google.com https://accounts.google.com/gsi/; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Referrer-Policy: strict-origin-when-cross-origin
 

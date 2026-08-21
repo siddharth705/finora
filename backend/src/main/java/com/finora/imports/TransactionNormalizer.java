@@ -100,9 +100,18 @@ public class TransactionNormalizer {
     // column on a different document shouldn't be surfaced as if it were the transaction's own
     // narration) -- it only fires here as a last resort, once "description"/"narration"/
     // "remarks"/etc. have all already had their chance and come up empty.
+    // "transaction remarks" added: verified against a real ICICI savings e-statement, whose column
+    // is headed exactly that -- two words, neither of which alone is "remarks", so the existing
+    // bare "remarks" hint above never matched it (this class only ever compares a FULL normalized
+    // header name, never a substring -- see firstNonZeroAmount/firstParseableAmount's own
+    // equalsIgnoreCase checks). PdfTableLocator.recoverMissingDescriptionColumn recognizes the same
+    // literal phrase when recovering the column in the first place; the two lists are independent
+    // on purpose (one decides whether a column exists at all, this one decides what it means once
+    // it does), but they need to agree on this document's exact wording or the recovered column
+    // would still stage every transaction with an empty description.
     private static final String[] DESCRIPTION_HINTS =
-            {"description", "narration", "remarks", "particulars", "transaction description",
-                    "transaction details", "transaction id"};
+            {"description", "narration", "remarks", "particulars", "transaction remarks",
+                    "transaction description", "transaction details", "transaction id"};
     private static final String[] CATEGORY_HINTS = {"category"};
     // Phase 1 "capture facts" (docs/engineering/financial-document-intelligence-principles.md):
     // evidenced by a real Canara Bank statement's "Reference / Cheque No." column, silently

@@ -51,11 +51,19 @@ const config: ExpoConfig = {
   scheme: 'finora',
   ios: {
     supportsTablet: true,
-    bundleIdentifier: 'com.finora.app',
+    // 'com.finora.app' was the original identifier on both platforms, but it's unavailable under
+    // this project's Apple Developer team for iOS registration (fails with "not available" --
+    // either a genuine third-party collision, or residue from the Organization/DUNS enrollment
+    // attempt abandoned in favor of an Individual account before final submission, per D-14/R-16
+    // in the plan doc). Renamed to the domain this project's own backend/frontend already use
+    // (finoratech.info) rather than guessing at another '.app' variant that might collide again --
+    // and Android's package name renamed to match, so the two platforms carry one identifier
+    // rather than a permanent, easy-to-forget divergence between them.
+    bundleIdentifier: 'com.finoratech.app',
     ...(existsSync(here(iosGoogleServices)) ? { googleServicesFile: iosGoogleServices } : {}),
   },
   android: {
-    package: 'com.finora.app',
+    package: 'com.finoratech.app',
     ...(existsSync(here(androidGoogleServices)) ? { googleServicesFile: androidGoogleServices } : {}),
     // Adaptive icon: a solid brand-navy plate with the Finora mark as the foreground layer.
     //
@@ -101,6 +109,29 @@ const config: ExpoConfig = {
     '@react-native-firebase/app',
     '@react-native-firebase/auth',
     './plugins/withRNFirebaseDisableSPM',
+    // D-23 Phase 2. Called with NO options, deliberately: given options, this plugin wants a raw
+    // `iosUrlScheme` (Google's "reversed client id" for a NON-Firebase-registered OAuth client) --
+    // called bare like this, it instead reads Google Sign-In's iOS URL scheme and Android OAuth
+    // client straight out of the SAME GoogleService-Info.plist / google-services.json this project
+    // already downloads per-developer for @react-native-firebase/auth's phone-OTP flow (see the
+    // conditional googleServicesFile keys on ios/android above) -- one set of credentials, one
+    // download step, not a second gitignored-file convention to document and keep in sync.
+    // Requires the Firebase project's own "Google" sign-in provider to actually be enabled (not
+    // yet, as of this writing -- see GoogleLoginProperties' own doc comment on the equivalent
+    // backend-side unconfigured state); until then this plugin still runs, it just has nothing new
+    // to read out of the config files.
+    '@react-native-google-signin/google-signin',
+    // D-23 Phase 2 / D-26. Adds the "Sign In with Apple" iOS entitlement -- no options, no
+    // credentials needed at build time (Apple's own private key/Services ID only matter to the
+    // BACKEND verifier, at sign-in time, not to this entitlement). Safe to list unconditionally.
+    'expo-apple-authentication',
+    // SEC-09 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Optional app-lock
+    // (Settings > Security) -- faceIDPermission supplies iOS's required NSFaceIDUsageDescription;
+    // Android's biometric prompt needs no equivalent build-time config. See src/lib/appLock.ts.
+    [
+      'expo-local-authentication',
+      { faceIDPermission: 'Allow Finora to use Face ID to unlock the app.' },
+    ],
     [
       'expo-build-properties',
       {

@@ -106,6 +106,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // step. 15/10min is generous for a legitimate user (including a few genuine retries after a
     // wrong current password or a mistyped code) while still bounding repeated abuse.
     private final RateLimiter passwordChangeLimiter;
+    // Change Phone Number, gated the same way password-change is and for a related but distinct
+    // reason: unlike password-change (a real bcrypt comparison on every start() call), start()
+    // here does only cheap, indexed lookups -- the concern isn't per-call cost, it's that a stolen
+    // JWT could otherwise hammer this flow to hijack the phone number an account's own password
+    // reset relies on. Same 15/10min ceiling as passwordChangeLimiter, for the same reason: generous
+    // enough for a legitimate user working through a few retries, tight enough to bound abuse of a
+    // flow whose outcome is a real account-takeover vector.
+    private final RateLimiter phoneChangeLimiter;
     // Bug fix: /auth/reset-password performs bcrypt work per call (hashing the new password, plus
     // the password-history comparison) and sat outside every limiter -- while this class's own
     // comment on passwordChangeLimiter names "a real bcrypt comparison" as "exactly the kind of
@@ -114,6 +122,40 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // token AND a Firebase-verified phone gate the expensive work, so this was never an anonymous
     // DoS -- which is why the ceiling is generous. It bounds a token holder retrying in a loop.
     private final RateLimiter resetPasswordLimiter;
+    // D-23. /auth/google does real work per call even on a rejected token -- Google's own
+    // signature/JWKS verification -- and for a first-time email, the full account-creation path
+    // (BCrypt hash, default-category seeding) that /register already sits behind a limiter for.
+    // It needs no phone number the way /register does, which makes it the CHEAPER path to spam
+    // account creation if left unguarded, not a lesser concern. Same ceiling as registerLimiter,
+    // for the same cost class.
+    private final RateLimiter googleLimiter;
+    // D-23 Phase 2. Apple's counterpart to googleLimiter, same reasoning and same ceiling: real
+    // work per call (JWKS-backed signature verification) and, for a first-time email, the full
+    // account-creation path -- the cheapest way to spam account creation if left unguarded.
+    private final RateLimiter appleLimiter;
+    // Phase C (Download My Data). Far stricter than importStageLimiter -- 5/day, not 10/10min --
+    // because a full export is strictly more expensive per call (every in-scope table plus every
+    // original statement file, read and zipped) and legitimately needed far less often. Bug fix
+    // (review): raised from an original 3. This filter runs before the controller, so it counts
+    // every request that reaches this path -- wrong password or not, since
+    // DataExportService.buildBundle requires the password fresh on every call with no session or
+    // grace window. 3/day left almost no room for a single mistyped password without losing a
+    // real day's access to the feature; 5 leaves two spare attempts alongside the "a handful of
+    // exports a day" ceiling this ceiling actually intends to enforce.
+    //
+    // A token holder retrying in a loop -- a JWT stolen via XSS or a compromised device -- is
+    // what this bounds, same reasoning as passwordChangeLimiter/resetPasswordLimiter. Like every
+    // limiter in this class, the bucket is per-IP (see clientIpResolver.resolve below), not
+    // per-token: it does not stop an attacker who rotates IPs, only one retrying from the same
+    // one. See resetPasswordLimiter's own comment for the same, more honestly-scoped claim.
+    private final RateLimiter dataExportLimiter;
+    // SEC-03 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Same reasoning as
+    // resetPasswordLimiter/reactivate/verify-email directly above: an unguessable, short-TTL,
+    // single-use challenge token (AdminMfaService.issueChallenge) already gates reaching this
+    // endpoint at all, so this bounds a token holder retrying in a loop -- not a raw brute-force
+    // stopper on the 6-digit code space, which the challenge's own 5-minute expiry already makes
+    // infeasible to exhaust over the network regardless of any limiter.
+    private final RateLimiter mfaVerifyLimiter;
     // Bug fix: this used to be `new ObjectMapper()` -- a second, freshly-constructed mapper with
     // none of the auto-configuration Spring Boot's own JacksonAutoConfiguration applies to its
     // managed ObjectMapper bean (in particular, no JavaTimeModule). ApiResponse.timestamp is a
@@ -163,7 +205,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
     static final int DEFAULT_FORGOT_MAX = 5, DEFAULT_FORGOT_WINDOW = 300;
     static final int DEFAULT_IMPORT_STAGE_MAX = 10, DEFAULT_IMPORT_STAGE_WINDOW = 600;
     static final int DEFAULT_PASSWORD_CHANGE_MAX = 15, DEFAULT_PASSWORD_CHANGE_WINDOW = 600;
+    static final int DEFAULT_PHONE_CHANGE_MAX = 15, DEFAULT_PHONE_CHANGE_WINDOW = 600;
     static final int DEFAULT_RESET_PASSWORD_MAX = 10, DEFAULT_RESET_PASSWORD_WINDOW = 600;
+    static final int DEFAULT_DATA_EXPORT_MAX = 5, DEFAULT_DATA_EXPORT_WINDOW = 86400;
+    static final int DEFAULT_GOOGLE_MAX = 5, DEFAULT_GOOGLE_WINDOW = 300;
+    static final int DEFAULT_APPLE_MAX = 5, DEFAULT_APPLE_WINDOW = 300;
+    static final int DEFAULT_MFA_VERIFY_MAX = 10, DEFAULT_MFA_VERIFY_WINDOW = 600;
 
     /**
      * The shipped configuration, for tests.
@@ -179,7 +226,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 DEFAULT_FORGOT_MAX, DEFAULT_FORGOT_WINDOW,
                 DEFAULT_IMPORT_STAGE_MAX, DEFAULT_IMPORT_STAGE_WINDOW,
                 DEFAULT_PASSWORD_CHANGE_MAX, DEFAULT_PASSWORD_CHANGE_WINDOW,
-                DEFAULT_RESET_PASSWORD_MAX, DEFAULT_RESET_PASSWORD_WINDOW);
+                DEFAULT_PHONE_CHANGE_MAX, DEFAULT_PHONE_CHANGE_WINDOW,
+                DEFAULT_RESET_PASSWORD_MAX, DEFAULT_RESET_PASSWORD_WINDOW,
+                DEFAULT_DATA_EXPORT_MAX, DEFAULT_DATA_EXPORT_WINDOW,
+                DEFAULT_GOOGLE_MAX, DEFAULT_GOOGLE_WINDOW,
+                DEFAULT_APPLE_MAX, DEFAULT_APPLE_WINDOW,
+                DEFAULT_MFA_VERIFY_MAX, DEFAULT_MFA_VERIFY_WINDOW);
     }
 
     /**
@@ -207,8 +259,18 @@ public class RateLimitFilter extends OncePerRequestFilter {
             @Value("${app.rate-limit.import-stage.window-seconds:600}") int importStageWindow,
             @Value("${app.rate-limit.password-change.max:15}") int passwordChangeMax,
             @Value("${app.rate-limit.password-change.window-seconds:600}") int passwordChangeWindow,
+            @Value("${app.rate-limit.phone-change.max:15}") int phoneChangeMax,
+            @Value("${app.rate-limit.phone-change.window-seconds:600}") int phoneChangeWindow,
             @Value("${app.rate-limit.reset-password.max:10}") int resetPasswordMax,
-            @Value("${app.rate-limit.reset-password.window-seconds:600}") int resetPasswordWindow) {
+            @Value("${app.rate-limit.reset-password.window-seconds:600}") int resetPasswordWindow,
+            @Value("${app.rate-limit.data-export.max:5}") int dataExportMax,
+            @Value("${app.rate-limit.data-export.window-seconds:86400}") int dataExportWindow,
+            @Value("${app.rate-limit.google.max:5}") int googleMax,
+            @Value("${app.rate-limit.google.window-seconds:300}") int googleWindow,
+            @Value("${app.rate-limit.apple.max:5}") int appleMax,
+            @Value("${app.rate-limit.apple.window-seconds:300}") int appleWindow,
+            @Value("${app.rate-limit.mfa-verify.max:10}") int mfaVerifyMax,
+            @Value("${app.rate-limit.mfa-verify.window-seconds:600}") int mfaVerifyWindow) {
         this.objectMapper = objectMapper;
         this.clientIpResolver = clientIpResolver;
         this.loginLimiter = new RateLimiter(loginMax, loginWindow);
@@ -216,10 +278,17 @@ public class RateLimitFilter extends OncePerRequestFilter {
         this.forgotPasswordLimiter = new RateLimiter(forgotMax, forgotWindow);
         this.importStageLimiter = new RateLimiter(importStageMax, importStageWindow);
         this.passwordChangeLimiter = new RateLimiter(passwordChangeMax, passwordChangeWindow);
+        this.phoneChangeLimiter = new RateLimiter(phoneChangeMax, phoneChangeWindow);
         this.resetPasswordLimiter = new RateLimiter(resetPasswordMax, resetPasswordWindow);
+        this.dataExportLimiter = new RateLimiter(dataExportMax, dataExportWindow);
+        this.googleLimiter = new RateLimiter(googleMax, googleWindow);
+        this.appleLimiter = new RateLimiter(appleMax, appleWindow);
+        this.mfaVerifyLimiter = new RateLimiter(mfaVerifyMax, mfaVerifyWindow);
         this.limitedEndpoints = List.of(
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/login"), loginLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/register"), registerLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/google"), googleLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/apple"), appleLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/forgot-password"), forgotPasswordLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/reset-password"), resetPasswordLimiter),
                 // BH-015. This class's comment above dismissed /auth/reset-password/phone as
@@ -231,6 +300,15 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 // is the only control there is. Shares resetPasswordLimiter because the two are
                 // steps of one flow and one bucket is the honest way to bound it.
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/reset-password/phone"), resetPasswordLimiter),
+                // Shares resetPasswordLimiter for the same reason reset-password/phone does: an
+                // unguessable, single-use, short-TTL token gates the real cost here (issuing real
+                // access/refresh tokens), so this bounds a token holder retrying in a loop rather
+                // than defending against an anonymous guesser.
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/reactivate"), resetPasswordLimiter),
+                // D-23. Same reasoning as reactivate directly above: an unguessable, single-use,
+                // short-TTL token gates the real cost here, so this bounds a token holder retrying
+                // in a loop rather than defending against an anonymous guesser.
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/verify-email"), resetPasswordLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/import/csv/stage"), importStageLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/import/pdf/stage"), importStageLimiter),
                 // The asynchronous upload path, sharing importStageLimiter because it is the same
@@ -250,7 +328,22 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 new LimitedEndpoint(PARSER.parse("/api/v1/import/jobs"), importStageLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/password-change/start"), passwordChangeLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/password-change/verify-otp"), passwordChangeLimiter),
-                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/password-change/complete"), passwordChangeLimiter));
+                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/password-change/complete"), passwordChangeLimiter),
+                // Bug fix (review): this endpoint had no limiter at all. deactivate() does the
+                // same real per-call cost passwordChangeLimiter's own comment names -- a bcrypt
+                // comparison against the account's current password on every call -- and its
+                // wrong-password branch now also runs AuditService.recordEvenOnRollback (a
+                // REQUIRES_NEW transaction, briefly holding a second pooled DB connection). With
+                // no ceiling, a caller holding a valid-but-stolen token could loop this endpoint
+                // unboundedly, paying that bcrypt + double-connection cost on every call. Shares
+                // passwordChangeLimiter, not dataExportLimiter -- same cost shape as password
+                // change, not the much larger per-call cost a full data export carries.
+                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/account/deactivate"), passwordChangeLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/phone-change/start"), phoneChangeLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/phone-change/verify-otp"), phoneChangeLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/phone-change/complete"), phoneChangeLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/data-export"), dataExportLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/mfa/verify"), mfaVerifyLimiter));
     }
 
     @Override

@@ -1,6 +1,7 @@
 package com.finora.dto;
 
 import com.finora.accounts.AccountDto;
+import com.finora.imports.ImportReliabilityStatus;
 import com.finora.imports.RowKind;
 
 import java.math.BigDecimal;
@@ -65,7 +66,21 @@ public class ImportDto {
              * from the list offered to the user as a transaction, while still reading the row's
              * own date/amount/description to derive the statement's opening/closing balance.
              */
-            RowKind kind
+            RowKind kind,
+            /**
+             * 0.0–1.0, or null. Null for every CSV/PDF row — a bank statement line is a fact read
+             * from a column, not an extraction with a reliability estimate, so there is nothing
+             * honest to put here for those sources. Populated only by {@code GmailStagingBridge}
+             * (C5-B), carried straight through from {@code ParsedReceipt.confidence} without being
+             * recomputed — this is display data, not a gate; see {@code ParsedReceipt}'s own class
+             * doc for why nothing may threshold on it to skip review.
+             *
+             * <p>Reuses the review table's existing "low confidence" affordance
+             * ({@code categorySource === 'default'} driving a badge in {@code TransactionPreviewTable})
+             * rather than adding a second one — see {@code GmailStagingBridge} for the exact
+             * threshold and why a Gmail row below it also gets {@code categorySource = "default"}.
+             */
+            Double confidence
     ) {
         /**
          * The shape every caller used before WI5 added {@code duplicateMatch}.
@@ -84,7 +99,18 @@ public class ImportDto {
                           boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
                           DuplicateMatch duplicateMatch) {
             this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
-                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, RowKind.TRANSACTION);
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, RowKind.TRANSACTION,
+                    null);
+        }
+
+        /** The shape every caller used before {@code confidence} was added (C5-B). Defaults null --
+         *  see the field's own doc comment for why only Gmail-derived rows populate it. */
+        public StagedRow(LocalDate date, String description, BigDecimal amount, String type,
+                          String suggestedCategory, String categorySource, UUID ruleId,
+                          boolean likelyDuplicate, String referenceNumber, BigDecimal balanceAfter,
+                          DuplicateMatch duplicateMatch, RowKind kind) {
+            this(date, description, amount, type, suggestedCategory, categorySource, ruleId,
+                    likelyDuplicate, referenceNumber, balanceAfter, duplicateMatch, kind, null);
         }
 
         /**
@@ -110,12 +136,11 @@ public class ImportDto {
      * where a row flagged as a duplicate could be dropped without the person ever seeing what it
      * was supposedly a duplicate OF.
      *
-     * <p>{@code confidence} has exactly one level today, and saying so is more useful than
-     * inventing a spectrum. {@code findPotentialDuplicatesByUser} matches on date AND amount AND
-     * description being identical, so every match is an exact one — there is no weaker tier to
-     * report. A fuzzier tier (same amount, date within a few days) would create a real spectrum,
-     * but that changes WHICH rows get flagged, which is a detection change rather than a
-     * presentation one, and does not belong in the work item that builds the review UI.
+     * <p>{@code confidence} has two levels. {@code "EXACT"} — {@code findPotentialDuplicatesByUser}
+     * matches on date AND amount AND description being identical, so every CSV/PDF match is exact.
+     * {@code "LIKELY"} — {@code GmailReconciliationMatcher} (C6.4), matching a Gmail receipt
+     * against the bank ledger on amount plus a date window plus merchant-name similarity, since a
+     * receipt's description (a merchant domain) can never be textually identical to a bank line.
      *
      * @param existingTransactionId the transaction already in the ledger, so the client can link
      *                              straight to it rather than making the user search
@@ -188,6 +213,12 @@ public class ImportDto {
             LocalDate statementPeriodEnd,
             String accountNumberMasked,    // only set if an account/card-number-like column was present
             BigDecimal creditLimit,        // only set if a credit-limit column was present
+            // A credit-card statement's total bill for this cycle -- deliberately not "amount due"
+            // on its own, to stay unambiguous against a transaction's amount, the minimum payment
+            // due, or the account's outstanding balance. Only set for a PDF credit-card statement
+            // whose payment-summary panel was found by CreditCardSummaryExtractor; null for CSV
+            // imports (no such panel exists to parse) and for any non-credit-card statement.
+            BigDecimal totalAmountDue,
             LocalDate paymentDueDate,      // only set if a due-date column was present
             String accountHolderName,      // only set if an account-holder-like column was present
             String branchName,             // only set if a branch-name-like column was present
@@ -243,15 +274,37 @@ public class ImportDto {
      * derived field here -- an additive change -- rather than this shipping an authoritative-looking
      * field that nothing authoritative computes.
      *
+     * <p><b>Correction (import reliability status):</b> the aggregator described above now exists,
+     * as {@code reliabilityStatus} below, computed by {@code ImportReliabilityStatusDeriver}. It
+     * does not contradict the paragraph above -- it invents no weights and needs no calibration
+     * data, because it is a deterministic OR over facts this report and the pipeline already
+     * carry (a finding's own outcome, whether header reconstruction was uncertain, whether OCR was
+     * used), not a synthesized score. {@code headerReconstructionUncertain} and {@code textSource}
+     * are carried here, not just fed into the derivation once, because
+     * {@link com.finora.imports.ImportVerifier#reviseSummaryTotals} rebuilds a report later from
+     * only the report itself and needs to recompute {@code reliabilityStatus} without re-deriving
+     * these two facts from scratch.
+     *
      * <p>Deliberately carries no human-readable prose. A sentence baked in here would be composed
      * for whichever screen existed when it was written, and web, mobile and admin all want to say
      * this differently -- structured facts are what let each decide. The server still composes a
      * sentence for its own logs; that one is not part of the contract.
      *
      * <p>See docs/engineering/import-verification-framework.md for why the aggregation that will
-     * eventually compute {@code status} from several findings is NOT being built yet.
+     * eventually compute {@code status} from several findings is NOT being built yet. CORRECTED:
+     * it has since been built, in the rule-based form described above -- see that doc's own
+     * correction note.
      */
-    public record VerificationReport(List<VerificationFinding> findings) {}
+    public record VerificationReport(List<VerificationFinding> findings,
+            boolean headerReconstructionUncertain, String textSource,
+            ImportReliabilityStatus reliabilityStatus) {
+        /** Legacy overload -- keeps every existing direct-construction call site (tests, mostly)
+         *  compiling untouched, defaulting to "nothing computed a status", same pattern as {@link
+         *  StagedAccountSection}'s own legacy constructor. */
+        public VerificationReport(List<VerificationFinding> findings) {
+            this(findings, false, null, null);
+        }
+    }
 
     /**
      * One check's result. {@code rule} is a stable machine identifier ("BALANCE_CHAIN"), never a
@@ -260,8 +313,11 @@ public class ImportDto {
      *
      * <p>{@code outcome} is this rule's verdict about its OWN domain (PASS / WARNING / FAILED /
      * NOT_APPLICABLE). A rule judging what it measured is legitimate; what does not compose is a
-     * document-level verdict derived from several rules, which is why this report has no top-level
-     * status field -- see {@link VerificationReport}.
+     * document-level verdict derived from several rules by INVENTING a weight for each -- see
+     * {@link VerificationReport}. CORRECTED: that report now carries a {@code reliabilityStatus}
+     * field, but it is not this kind of composition -- see the correction note on
+     * {@link VerificationReport} for why a rule-based OR over existing facts is a different, and
+     * allowed, thing.
      *
      * <p>{@code details} is a per-rule payload rather than a fixed shape, because the checks this
      * will hold are not all row-centric. The balance chain reports per-row discrepancies; a

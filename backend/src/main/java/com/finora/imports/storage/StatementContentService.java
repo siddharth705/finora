@@ -10,7 +10,7 @@ import java.util.Optional;
 /**
  * The one place that decides where a statement's bytes go and where they come back from.
  *
- * Phase 2 of docs/engineering/statement-storage-migration.md. Every caller that used to touch
+ * Phase 2 of docs/architecture/data/statement-storage-migration.md. Every caller that used to touch
  * {@code getFileContent()} directly goes through here instead, so the migration's two-state
  * reality — some rows addressed, some still legacy — is handled once rather than re-decided at
  * each of the five call sites.
@@ -23,27 +23,41 @@ import java.util.Optional;
  *
  * <h2>No more dual write (BH-025 / BH-046)</h2>
  * A new upload writes its bytes to object storage OR to {@code file_content}, never both. The
- * caller (see {@code ImportService.persistSection}, {@code ImportSessionService.storeContent})
- * checks whether {@link #store} returned a present {@link ContentAddress}: if so, the object is the
- * only copy and {@code file_content} is left null; if {@link #store} came back empty (no provider
- * configured), {@code file_content} is filled exactly as it always was.
- *
- * <p>This used to be an unconditional dual write, justified as temporary — "until Phase 3 has
- * backfilled and Phase 4 has dropped the column, the database copy is what makes an object-storage
- * problem recoverable instead of terminal." BH-046 found neither phase survived: Phase 3 was
- * deleted outright (§5.0 of the migration doc — no production statements existed to back-fill), and
- * Phase 4 was left with no trigger to fire it, so "temporary" had quietly become "permanent." BH-025
- * found the concrete cost of that permanence: {@code confirmMultiSection()} persists one
- * {@code StatementImport} row per detected account section, all sharing the same uploaded bytes, so
- * a 3-section 9 MB statement was writing 27 MB into Postgres {@code BYTEA} on top of the one
- * already-deduplicated content-addressed object. Skipping the database write once an address exists
- * removes that multiplier rather than waiting for a backfill phase that was never coming.
+ * caller ({@code ImportService.persistSection}) checks whether {@link #store} returned a present
+ * result: if so, the object is the only copy and {@code file_content} is left null; if
+ * {@link #store} came back empty (no provider configured), {@code file_content} is filled exactly
+ * as it always was.
  *
  * <p>{@code file_content} being null is therefore not a migration-in-progress artifact to be
- * cleaned up later — it is the expected, permanent shape of any row created while a storage
- * provider is configured. V76 relaxed both {@code file_content} columns to nullable for exactly this
- * reason, with a check constraint enforcing that a row always has one of {@code file_content} or
- * {@code object_key}.
+ * cleaned up later — it is the expected, permanent shape of any row confirmed while a storage
+ * provider is configured. V76 relaxed both {@code file_content} columns to nullable for exactly
+ * this reason, with a check constraint enforcing that a row always has one of {@code file_content}
+ * or {@code object_key}.
+ *
+ * <h2>Compression, and why the hash is computed before it (storage review, V92)</h2>
+ * {@link #store} runs bytes through {@link GzipCompression} before handing them to
+ * {@code StatementStorage} — transparent, and reversed on every {@link #read}. Two things stay
+ * true regardless of compression, both load-bearing:
+ * <ul>
+ *   <li>{@code content_hash} is the SHA-256 of the ORIGINAL, uncompressed bytes, computed BEFORE
+ *       compression runs. It is the document's identity — {@code ImportSessionService
+ *       .findLiveSessionByContentHash} dedupes on it, and it is what a user or auditor would
+ *       re-derive from the file the bank actually issued to confirm this is the same document.
+ *       Hashing the compressed representation instead would make that identity depend on this
+ *       system's own compression library and settings, which is not a property either of those
+ *       consumers can afford.</li>
+ *   <li>The {@code ContentAddress} {@code StatementStorage} itself computes — hash and key both —
+ *       is over the COMPRESSED bytes, which is fine: that hash never leaves this class, and
+ *       {@code ContentAddress}'s own class doc already treats the key as "a private layout
+ *       decision" independent of the document's identity. Only the KEY half of that address is
+ *       kept ({@link StoredContent#address()} is reassembled with the ORIGINAL hash and the
+ *       storage layer's key); the compressed-bytes hash is discarded once the object is written.</li>
+ * </ul>
+ * On read, the row's own {@link CompressionType} column drives decompression — not a magic-number
+ * sniff of the retrieved bytes — which is what lets an object written before this shipped (every
+ * object already sitting in R2, uncompressed, {@code compression_type} defaulted to {@code NONE}
+ * by V92) keep reading correctly forever, and a future third compression format be added without
+ * the read path having to guess.
  *
  * <h2>Ordering</h2>
  * {@link #store} is called before the row is persisted, so the only possible partial failure is an
@@ -113,8 +127,21 @@ public class StatementContentService {
         }
     }
 
+    /** What {@link #store} returns when a provider is configured -- everything the caller needs to
+     *  record on the confirmed row, in one value rather than several parallel return channels.
+     *
+     *  @param address ORIGINAL-content hash + the storage layer's own key -- see this class's own
+     *                 "Compression" doc section for why those two pieces come from different
+     *                 computations.
+     *  @param originalSize bytes before compression -- {@code content.length}, handed back rather
+     *                 than re-derived so the caller has one source for it.
+     *  @param storedSize bytes actually written to the object store (the compressed size).
+     *  @param mimeType passed straight through from the caller; this class does not interpret it. */
+    public record StoredContent(ContentAddress address, long originalSize, long storedSize,
+                                 CompressionType compressionType, String mimeType) {}
+
     /**
-     * Stores the bytes, returning the address to record on the row.
+     * Compresses and stores the bytes, returning what to record on the row.
      *
      * Empty when no provider is configured, which the caller records as null columns — a legacy
      * row, read from {@code file_content} exactly as before.
@@ -122,24 +149,45 @@ public class StatementContentService {
      * Deliberately propagates {@link StatementStorageException} rather than degrading to empty on
      * failure. Swallowing it would persist a row claiming database-only storage while the object
      * may or may not exist, which is precisely the ambiguity the ordering above exists to prevent.
+     *
+     * @param mimeType the upload's MIME type, recorded on the row as-is; see {@link StoredContent}.
      */
-    public Optional<ContentAddress> store(byte[] content) {
-        return storage.map(s -> s.store(content));
+    public Optional<StoredContent> store(byte[] content, String mimeType) {
+        if (storage.isEmpty()) return Optional.empty();
+        // Hashed BEFORE compression -- see this class's "Compression" doc section. Cheap next to
+        // the compression and the network PUT that follow: one SHA-256 pass over bytes already
+        // fully in memory.
+        String originalHash = ContentAddress.hashOf(content);
+        byte[] compressed = GzipCompression.compress(content);
+        // The address STORED here (key only, hash discarded) is the storage layer's own -- computed
+        // over the COMPRESSED bytes, which is fine, because key is a layout detail (ContentAddress's
+        // own class doc) and the identity half is reassembled below from originalHash instead.
+        ContentAddress stored = storage.get().store(compressed);
+        ContentAddress address = new ContentAddress(originalHash, stored.key());
+        return Optional.of(new StoredContent(address, content.length, compressed.length,
+                CompressionType.GZIP, mimeType));
     }
 
     /**
      * Reads a statement's bytes, from wherever that particular row keeps them.
      *
      * Prefers object storage when the row carries an address; falls back to the database column
-     * otherwise. Both states are normal during the migration — see {@link StoredStatement}.
+     * otherwise. Both states are normal, permanently — see {@link StoredStatement}.
      */
     public byte[] read(StoredStatement row) {
         if (row.getContentHash() != null && row.getObjectKey() != null && storage.isPresent()) {
-            byte[] content = storage.get().retrieve(new ContentAddress(row.getContentHash(), row.getObjectKey()));
+            byte[] retrieved = storage.get().retrieve(new ContentAddress(row.getContentHash(), row.getObjectKey()));
+            // Decoded by the row's OWN recorded compression_type, not by inspecting the bytes --
+            // see CompressionType's own class doc for why that is what lets a pre-compression
+            // object (compression_type = NONE) keep reading correctly forever.
+            byte[] content = row.getCompressionType() == CompressionType.GZIP
+                    ? GzipCompression.decompress(retrieved)
+                    : retrieved;
             // Verified here rather than inside each StatementStorage implementation: this is the one
             // path every read goes through, so a future R2/S3 provider inherits the guarantee instead
             // of having to remember to re-implement it. A provider CAN also check internally; it
-            // cannot be relied on to.
+            // cannot be relied on to. Checked against the DECOMPRESSED bytes -- content_hash is the
+            // original document's identity, unaffected by how it happens to be encoded in transit.
             ContentAddress.requireMatches(content, row.getContentHash(), "statement " + row.getContentHash());
             return content;
         }

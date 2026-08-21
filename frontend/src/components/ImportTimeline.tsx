@@ -161,7 +161,15 @@ export function ImportTimeline({
 
       {timeline.status === 'FAILED' && (
         <div className="mt-4">
-          <p className="text-xs text-warning" data-testid="import-timeline-failure-reason">
+          {/* warning (amber) for ACTION_REQUIRED, matching the password panel's existing color a
+              few steps earlier in this same flow -- "you can fix this"; danger (red) for a plain
+              FAILED the user cannot fix themselves, matching Import.tsx's own live sync-error
+              banner. Sprint 4 item 22: `userStatus` (Sprint 4 item 20a) is the wire's own answer to
+              which one this is -- no re-deriving it from `failureCode` here. */}
+          <p
+            className={`text-xs ${timeline.userStatus === 'ACTION_REQUIRED' ? 'text-warning' : 'text-danger'}`}
+            data-testid="import-timeline-failure-reason"
+          >
             {failureMessage ?? "Finora couldn't complete this import. Please try again."}
           </p>
           {onDismiss && (

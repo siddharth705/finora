@@ -10,7 +10,9 @@ import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
-
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -51,6 +53,11 @@ public class ResendEmailProvider implements EmailProvider {
      */
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(20);
+
+    /** "14 Aug 2026, 20:15" -- deliberately not locale-sensitive (fixed ENGLISH/pattern), since
+     *  this renders server-side into an email every recipient sees identically. */
+    private static final DateTimeFormatter DEACTIVATED_AT_FORMAT =
+            DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", java.util.Locale.ENGLISH);
 
     public ResendEmailProvider(EmailProperties emailProperties) {
         this.emailProperties = emailProperties;
@@ -134,6 +141,16 @@ public class ResendEmailProvider implements EmailProvider {
     }
 
     @Override
+    public EmailResult sendEmailVerificationEmail(String toEmail, String verifyLink) {
+        String html = """
+                <p>Please verify your email address to finish setting up your Finora account.</p>
+                <p><a href="%s">Click here to verify your email</a> — this link expires in 24 hours.</p>
+                <p>If you didn't create a Finora account, you can safely ignore this email.</p>
+                """.formatted(verifyLink);
+        return send(EmailMessage.html(toEmail, "Verify your Finora email address", html));
+    }
+
+    @Override
     public EmailResult sendWelcomeEmail(String toEmail, String fullName) {
         String html = """
                 <p>Welcome to Finora, %s!</p>
@@ -149,5 +166,46 @@ public class ResendEmailProvider implements EmailProvider {
                 <p>If this wasn't you, contact support immediately and change your password again.</p>
                 """;
         return send(EmailMessage.html(toEmail, "Your Finora password was changed", html));
+    }
+
+    @Override
+    public EmailResult sendAccountDeactivatedEmail(String toEmail, Instant deactivatedAt, String device, String ip) {
+        // UTC, not the account's own timezone -- this method has no access to it, and a plain,
+        // explicitly-labelled UTC timestamp is unambiguous where a bare local-looking one would
+        // not be. Same reasoning DEACTIVATED_AT_FORMAT below applies to itself.
+        String when = DEACTIVATED_AT_FORMAT.format(deactivatedAt.atZone(ZoneOffset.UTC));
+        // Best-effort labels degrade to omission, not a placeholder like "Unknown" that would read
+        // as a real (if unhelpful) fact about the request.
+        String deviceLine = (device != null && !device.isBlank())
+                ? "<p>Device: %s</p>".formatted(device) : "";
+        String ipLine = (ip != null && !ip.isBlank())
+                ? "<p>IP address: %s</p>".formatted(ip) : "";
+        String html = """
+                <p>Your Finora account was deactivated on %s (UTC).</p>
+                %s%s
+                <p>Your data is retained securely. Sign in again any time to reactivate your account.</p>
+                <p>If you didn't do this, contact support immediately.</p>
+                """.formatted(when, deviceLine, ipLine);
+        return send(EmailMessage.html(toEmail, "Your Finora account was deactivated", html));
+    }
+
+    @Override
+    public EmailResult sendAccountReactivatedEmail(String toEmail) {
+        String html = """
+                <p>Welcome back — your Finora account has been reactivated.</p>
+                <p>If you didn't do this, contact support immediately.</p>
+                """;
+        return send(EmailMessage.html(toEmail, "Your Finora account was reactivated", html));
+    }
+
+    @Override
+    public EmailResult sendAccountDeletedEmail(String toEmail, Instant deletedAt) {
+        String when = DEACTIVATED_AT_FORMAT.format(deletedAt.atZone(ZoneOffset.UTC));
+        String html = """
+                <p>Your Finora account and all your data were permanently deleted on %s (UTC).</p>
+                <p>This cannot be undone.</p>
+                <p>If you didn't do this, contact support immediately.</p>
+                """.formatted(when);
+        return send(EmailMessage.html(toEmail, "Your Finora account has been deleted", html));
     }
 }

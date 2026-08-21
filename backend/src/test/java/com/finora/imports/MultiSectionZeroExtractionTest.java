@@ -130,8 +130,10 @@ class MultiSectionZeroExtractionTest {
     @Test
     void sbi_fourSectionsAndNoTransactionAnywhere_isRejected() {
         assertThat(rawSectionCountOf("sbi-credit-card-statement"))
-                .as("P-002 Fix 2: five sections before, four after -- the fifth was prose")
-                .isEqualTo(4);
+                .as("P-002 Fix 2: five sections before, four after -- the fifth was prose; "
+                        + "PdfTableLocator.looksLikePaymentSummaryPanel then drops one more -- one "
+                        + "of those four was itself a misdetected payment-summary panel")
+                .isEqualTo(3);
 
         assertThatThrownBy(() -> stage("sbi-credit-card-statement"))
                 .isInstanceOf(ApiException.class)
@@ -394,7 +396,7 @@ class MultiSectionZeroExtractionTest {
 
     private ImportVerifier verifier() {
         return new ImportVerifier(new BalanceChainValidator(), new StatementTotalsValidator(),
-                new SummaryTotalsValidator(), new ColumnAmbiguityValidator());
+                new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator(), new com.finora.imports.CreditCardFlowReconciliationValidator());
     }
 
     private PdfPreviewGenerator generatorFor(Object acquirer) {

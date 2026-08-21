@@ -11,6 +11,7 @@ import com.finora.exception.ApiException;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.StatementImportRepository;
+import com.finora.repository.StatementImportRepository.StatementMetadata;
 import com.finora.repository.TransactionRepository;
 import com.finora.accounts.AccountBalanceConvention;
 import com.finora.accounts.AccountDto;
@@ -77,8 +78,11 @@ public class StatementImportService {
         Map<UUID, Account> accountsById = accountRepository.findByUserIdIncludingDeleted(userId).stream()
                 .collect(Collectors.toMap(Account::getId, a -> a));
 
-        Map<UUID, List<StatementImport>> byAccount = statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)
-                .stream().collect(Collectors.groupingBy(StatementImport::getAccountId, LinkedHashMap::new, Collectors.toList()));
+        // Metadata projection, not the entity-returning finder: see
+        // StatementImportRepository.StatementMetadata's own doc comment for why this method was
+        // one of the six callers found still loading fileContent eagerly through it.
+        Map<UUID, List<StatementMetadata>> byAccount = statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)
+                .stream().collect(Collectors.groupingBy(StatementMetadata::getAccountId, LinkedHashMap::new, Collectors.toList()));
 
         Instant cutoff = Instant.now().minus(DELETED_ACCOUNT_RETENTION);
         Map<UUID, Integer> duplicateCounts = duplicateCountsByStatementImport(userId);
@@ -111,8 +115,22 @@ public class StatementImportService {
 
     /** One grouped COUNT query for every statement import this user has, rather than one query
      *  per statement — see TransactionRepository.countDuplicatesByStatementImportForUser's own
-     *  doc comment. Backs the Statement Imports page's per-import duplicate count. */
-    private Map<UUID, Integer> duplicateCountsByStatementImport(UUID userId) {
+     *  doc comment. Backs the Statement Imports page's per-import duplicate count.
+     *
+     *  <p>Package-private, not private: DataExportService (same package) reuses this rather than
+     *  re-deriving the same grouped-COUNT query a second time.
+     *
+     *  <p><b>Trust boundary, for the next caller in this package (review note):</b> widening this
+     *  from {@code private} removed its previous single-caller guarantee -- {@code userId} here is
+     *  taken on faith, with no ownership/ScopedIdentityLookup check of its own, unlike every
+     *  per-entity accessor in this class (which all route through {@code getOwned}/{@code
+     *  OwnershipGuard}). Safe today because both callers ({@link #listGroupedByAccount} and {@code
+     *  DataExportService.buildBundle}) already pass only the authenticated caller's own id. A
+     *  future caller in {@code com.finora.service} that passes a less-trusted id (an admin tool,
+     *  a batch job iterating other users' ids) would get that OTHER user's duplicate counts with
+     *  nothing here or at compile time catching it -- scope the caller, not this method, or add a
+     *  real check here if that stops being true. */
+    Map<UUID, Integer> duplicateCountsByStatementImport(UUID userId) {
         Map<UUID, Integer> counts = new HashMap<>();
         for (var row : transactionRepository.countDuplicatesByStatementImportForUser(
                 userId, Transaction.ReconciliationStatus.DUPLICATE)) {

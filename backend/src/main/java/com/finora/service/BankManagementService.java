@@ -5,6 +5,7 @@ import com.finora.entity.Bank;
 import com.finora.exception.ApiException;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.BankRepository;
+import com.finora.util.AfterCommit;
 import com.finora.util.BankRegistry;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,10 @@ import java.util.UUID;
  * behaves identically to a built-in one everywhere except CSV auto-detection (BankRegistry.detect,
  * used by CsvImportService, deliberately stays built-in-only -- see BankController's class comment
  * for the reasoning).
+ *
+ * <p>The custom-bank half of every read below goes through {@link CustomBankLookup}'s cache
+ * rather than {@code bankRepository} directly -- see that class's own doc comment for why it has
+ * to be a separate bean, and {@link CacheConfig} for the cache's TTL/eviction policy.
  */
 @Service
 public class BankManagementService {
@@ -33,29 +38,29 @@ public class BankManagementService {
     private final BankRepository bankRepository;
     private final AccountRepository accountRepository;
     private final AuditService auditService;
+    private final CustomBankLookup customBankLookup;
 
     public BankManagementService(BankRepository bankRepository, AccountRepository accountRepository,
-                                  AuditService auditService) {
+                                  AuditService auditService, CustomBankLookup customBankLookup) {
         this.bankRepository = bankRepository;
         this.accountRepository = accountRepository;
         this.auditService = auditService;
+        this.customBankLookup = customBankLookup;
     }
 
     /** Every bank an account/statement could be assigned to -- the built-in list first (so
      *  existing UI ordering/behavior is unchanged), custom banks appended after. */
-    @Transactional(readOnly = true)
     public List<BankDto> listAll() {
         List<BankDto> result = new ArrayList<>(BankRegistry.all().stream().map(BankDto::from).toList());
-        bankRepository.findAllByOrderByOfficialNameAsc().forEach(b -> result.add(BankDto.fromCustom(b)));
+        customBankLookup.all().forEach(b -> result.add(BankDto.fromCustom(b)));
         return result;
     }
 
-    @Transactional(readOnly = true)
     public List<BankDto> search(String query) {
         if (query == null || query.isBlank()) return listAll();
         String q = query.trim().toLowerCase(Locale.ROOT);
         List<BankDto> result = new ArrayList<>(BankRegistry.search(query).stream().map(BankDto::from).toList());
-        bankRepository.findAllByOrderByOfficialNameAsc().stream()
+        customBankLookup.all().stream()
                 .filter(b -> b.getOfficialName().toLowerCase(Locale.ROOT).contains(q)
                         || b.getShortName().toLowerCase(Locale.ROOT).contains(q)
                         || b.getId().toLowerCase(Locale.ROOT).contains(q))
@@ -65,11 +70,18 @@ public class BankManagementService {
 
     /** Never null, same guarantee BankRegistry.get() makes -- checks custom banks first (an id a
      *  user/admin actually picked always resolves to real data), falls back to BankRegistry.get()
-     *  otherwise, which itself falls back to the generic OTHER entry for anything unrecognized. */
-    @Transactional(readOnly = true)
+     *  otherwise, which itself falls back to the generic OTHER entry for anything unrecognized.
+     *
+     *  <p>Reads {@link CustomBankLookup#all()}'s cached list rather than
+     *  {@code bankRepository.findById} -- this is the actual fix for the accounts-listing N+1
+     *  named in {@code project-plan-v1.0.md} §5a: {@code AccountService.listForUser} calls this
+     *  once per account, and a linear scan over a small cached list costs nothing measurable
+     *  compared to a per-account database round trip. */
     public BankDto resolve(String bankId) {
         if (bankId != null) {
-            Optional<Bank> custom = bankRepository.findById(bankId);
+            Optional<Bank> custom = customBankLookup.all().stream()
+                    .filter(b -> b.getId().equals(bankId))
+                    .findFirst();
             if (custom.isPresent()) return BankDto.fromCustom(custom.get());
         }
         return BankDto.from(BankRegistry.get(bankId));
@@ -77,9 +89,11 @@ public class BankManagementService {
 
     // --- Admin CRUD (BANK_MANAGE) -- see AdminBankController ---
 
-    @Transactional(readOnly = true)
+    /** Same query {@link CustomBankLookup#all()} caches -- reads through it too, so the admin
+     *  management view and every public read (resolve/listAll/search) agree on freshness instead
+     *  of the admin's own list bypassing the cache it manages. */
     public List<Bank> listCustom() {
-        return bankRepository.findAllByOrderByOfficialNameAsc();
+        return customBankLookup.all();
     }
 
     @Transactional
@@ -111,6 +125,10 @@ public class BankManagementService {
         Bank saved = bankRepository.save(bank);
         auditService.record(actingAdminId, "BANK_CREATED", "Bank", null,
                 Map.of("bankId", saved.getId(), "officialName", saved.getOfficialName()));
+        // After commit, not here -- evicting mid-transaction would let a concurrent read that runs
+        // before this transaction commits repopulate the cache from the pre-commit (still old) data,
+        // right before the real write lands. See AfterCommit's own doc comment.
+        AfterCommit.run("custom bank cache invalidation", customBankLookup::invalidate);
         return saved;
     }
 
@@ -132,6 +150,7 @@ public class BankManagementService {
         Bank saved = bankRepository.save(bank);
         auditService.record(actingAdminId, "BANK_UPDATED", "Bank", null,
                 Map.of("bankId", saved.getId()));
+        AfterCommit.run("custom bank cache invalidation", customBankLookup::invalidate);
         return saved;
     }
 
@@ -146,6 +165,7 @@ public class BankManagementService {
         bankRepository.delete(bank);
         auditService.record(actingAdminId, "BANK_DELETED", "Bank", null,
                 Map.of("bankId", bankId));
+        AfterCommit.run("custom bank cache invalidation", customBankLookup::invalidate);
     }
 
     private Bank requireCustom(String bankId) {

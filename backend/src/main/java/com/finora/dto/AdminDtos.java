@@ -100,6 +100,31 @@ public class AdminDtos {
     ) {}
 
     /**
+     * D-27 PR3-D. Activation funnel: how many distinct users have EVER reached each of the four
+     * stages the owner named -- signup, first import, first budget, first goal (deliberately NOT
+     * "goal achieved", a fifth FinancialJourneyService milestone the owner's own funnel wording
+     * didn't ask for). A simple snapshot, not a cohort/time-series -- see the D-27 decision: no
+     * scheduled pre-aggregation exists anywhere in this codebase yet, and one live query per
+     * admin page-load is the owner's own chosen scope for a first cut.
+     *
+     * Each count is "ever reached," not "currently has one live" -- a user who created a budget
+     * and later deleted it still activated. Raw counts only; percentage-of-signedUp is a client-
+     * side computation (same split as DashboardSummaryDto's healthScoreTransactionCount/
+     * healthScoreMinTransactions), not duplicated here.
+     *
+     * Stages are not guaranteed to be subsets of each other -- a user can create a budget without
+     * ever importing a statement, since Finora doesn't require an import first. That's a real
+     * property of this product, not a query bug, and is left visible rather than corrected into a
+     * strictly monotonic funnel that would misrepresent actual usage.
+     */
+    public record ActivationFunnelDto(
+            long signedUp,
+            long firstImport,
+            long firstBudget,
+            long firstGoal
+    ) {}
+
+    /**
      * Wraps Spring Boot Actuator's own HealthEndpoint bean rather than re-implementing DB/disk
      * checks from scratch (see AdminSystemService) -- status is Actuator's own top-level verdict
      * ("UP"/"DOWN"/...), components is the per-indicator breakdown (db, diskSpace, ...) Actuator
@@ -169,6 +194,15 @@ public class AdminDtos {
             String timezone
     ) {}
 
+    /** Body for POST /admin/users/{id}/reactivate. Optional on every field -- an admin reactivating
+     *  a suspended account with no note attached (today's existing behavior) is still a valid call;
+     *  a null/blank body maps to a null reason exactly like AdminUpdateUserRequest's null-is-absent
+     *  convention above, not a validation error. */
+    public record AdminReactivateRequest(
+            @jakarta.validation.constraints.Size(max = 500, message = "Reason is too long")
+            String reason
+    ) {}
+
     // --- Merchant Intelligence (AdminMerchantStatsService / AdminUserMerchantController) ---
 
     /** One row in the admin Merchant Intelligence page's platform-wide catalog -- see
@@ -179,6 +213,45 @@ public class AdminDtos {
             String canonicalName,
             long userCount,
             long rowCount
+    ) {}
+
+    // --- Gmail Merchant Parser Stats (GmailMerchantStatsService / AdminMerchantStatsController) ---
+
+    /**
+     * One row in the admin Merchant Intelligence page's Gmail parser-health section (C6.2) --
+     * per authenticated email domain, not the canonical merchant name {@link MerchantStatDto}
+     * groups by. See {@code GmailMerchantStatsService} for what each count actually means and why
+     * {@code successRate} is nullable.
+     *
+     * @param domain           the authenticated sending domain -- e.g. {@code amazon.in} -- which
+     *                         is the real merchant identity here, the same key
+     *                         {@code GmailReviewService} keys the review queue on.
+     * @param merchant         a display name, cosmetic only -- see
+     *                         {@code GmailReviewService#displayNameFor}.
+     * @param parsed           messages a parser successfully extracted and staged.
+     * @param parseFailed      messages a parser recognised as receipt-shaped but could not extract
+     *                         cleanly -- the "this parser needs updating" signal.
+     * @param skippedNotReceipt messages a parser correctly decided were not a receipt at all
+     *                         (a shipping update, marketing mail) -- expected traffic, not a fault.
+     * @param noParserYet      messages from a trusted domain no {@code MerchantEmailParser} claims
+     *                         at all -- coverage gap volume, answering "which parser should we
+     *                         write next", not this domain's existing parser's health.
+     * @param successRate      {@code parsed / (parsed + parseFailed + skippedNotReceipt)}, or null
+     *                         when that denominator is zero -- a domain with only {@code
+     *                         noParserYet} traffic has no parser to rate yet, and showing 0% would
+     *                         misreport "broken" as what is actually "not built".
+     * @param lastSeen         the most recent message processed for this domain, across every
+     *                         outcome counted above.
+     */
+    public record GmailMerchantParserStatDto(
+            String domain,
+            String merchant,
+            long parsed,
+            long parseFailed,
+            long skippedNotReceipt,
+            long noParserYet,
+            Double successRate,
+            Instant lastSeen
     ) {}
 
     // --- Learning Engine (AdminLearningStatsService / AdminUserLearningController) ---
@@ -239,10 +312,12 @@ public class AdminDtos {
      * a background-job monitor this codebase has. CSV import runs synchronously inside the HTTP
      * request (CsvImportService/StatementImportService), not on a queue or worker, so there is no
      * real job queue to observe -- see StatementImportRepository.findAllByOrderByImportedAtDesc's
-     * doc comment. status is always "COMPLETED" today (a failed import throws before a row is
-     * ever persisted, so there's no real FAILED row to show, and this deliberately doesn't
-     * fabricate one) -- hadSkippedRows is the one real per-row signal worth surfacing, the same
-     * honest proxy the Operational Dashboard's importsWithSkippedRowsToday tile already uses.
+     * doc comment. A statement_imports row can only ever represent a completed import (a failed
+     * import throws before a row is ever persisted, so there's no real FAILED row to show -- V81
+     * removed the status column this table briefly carried for exactly that reason), so this
+     * deliberately has no status field to fabricate one -- hadSkippedRows is the one real per-row
+     * signal worth surfacing, the same honest proxy the Operational Dashboard's
+     * importsWithSkippedRowsToday tile already uses.
      */
     public record RecentImportDto(
             UUID id,

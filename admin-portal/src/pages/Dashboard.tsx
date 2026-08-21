@@ -9,7 +9,7 @@ import { AdminLayout } from '../components/AdminLayout';
 import { StatCard } from '../components/StatCard';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { adminDashboardApi, adminStatsApi, adminSystemApi } from '../api/endpoints';
-import type { AlertDto, ProviderStatusDto, NeedsAttentionDto } from '../types';
+import type { AlertDto, ProviderStatusDto, NeedsAttentionDto, ActivationFunnelDto } from '../types';
 
 const STATUS_DOT: Record<string, string> = {
   UP: 'bg-success',
@@ -134,6 +134,49 @@ function NeedsAttentionSection({ data }: { data: NeedsAttentionDto }) {
   );
 }
 
+/**
+ * D-27 PR3-D. Signup -> first import -> first budget -> first goal, the owner's own named
+ * sequence -- a simple snapshot (each bar is "how many users have EVER reached this stage",
+ * against the platform right now), not a cohort/time-series. See backend ActivationFunnelDto's
+ * own doc comment for why stages aren't guaranteed to be strict subsets of each other -- Finora
+ * doesn't require an import before a budget, so a later bar can in principle exceed an earlier
+ * one, and that's shown as-is rather than corrected into a falsely monotonic funnel.
+ */
+function ActivationFunnelSection({ data }: { data: ActivationFunnelDto }) {
+  const stages = [
+    { label: 'Signed up', icon: Users, count: data.signedUp },
+    { label: 'First import', icon: FileStack, count: data.firstImport },
+    { label: 'First budget', icon: Wallet, count: data.firstBudget },
+    { label: 'First goal', icon: TrendingUp, count: data.firstGoal },
+  ];
+  // Guards the very first admin ever seeing this on a platform with zero signups -- 0/0 must
+  // read as an empty bar, not a NaN%.
+  const base = data.signedUp || 1;
+
+  return (
+    <div className="bg-card border border-border rounded-xl2 shadow-card p-5 space-y-4">
+      {stages.map(({ label, icon: Icon, count }) => {
+        const pct = Math.round((count / base) * 100);
+        return (
+          <div key={label}>
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="flex items-center gap-2 text-sm text-ink">
+                <Icon size={14} className="text-muted flex-shrink-0" /> {label}
+              </span>
+              <span className="text-sm font-mono font-semibold text-ink">
+                {count.toLocaleString()} <span className="text-muted font-normal">({pct}%)</span>
+              </span>
+            </div>
+            <div className="h-2 bg-bg rounded-full overflow-hidden">
+              <div className="h-full bg-primary rounded-full" style={{ width: `${Math.min(100, pct)}%` }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function AlertRow({ alert }: { alert: AlertDto }) {
   const critical = alert.severity === 'critical';
   return (
@@ -197,6 +240,12 @@ function DashboardContent() {
   const { data: lifetimeStats } = useQuery({
     queryKey: ['admin-stats-overview'],
     queryFn: () => adminStatsApi.overview(),
+  });
+  // D-27 PR3-D. Same PLATFORM_STATS_VIEW gate as the rest of this page -- see the controller's
+  // own class comment on why this reuses that permission rather than minting a new one.
+  const { data: activationFunnel } = useQuery({
+    queryKey: ['admin-activation-funnel'],
+    queryFn: () => adminDashboardApi.activationFunnel(),
   });
   // Real uptime, not a fabricated percentage -- gated on PLATFORM_DIAGNOSTICS_VIEW (V34), the
   // same permission AdminSystemController's /admin/system/health endpoint now actually requires
@@ -286,6 +335,13 @@ function DashboardContent() {
             tone={(data?.importsWithSkippedRowsToday ?? 0) > 0 ? 'warning' : 'default'}
           />
         </div>
+
+        {activationFunnel && (
+          <div className="mb-8">
+            <h2 className="text-sm font-semibold text-muted uppercase tracking-wide mb-3">Activation funnel</h2>
+            <ActivationFunnelSection data={activationFunnel} />
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">

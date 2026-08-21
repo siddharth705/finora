@@ -40,4 +40,14 @@ public interface CategoryRuleRepository extends JpaRepository<CategoryRule, UUID
     @Modifying
     @Query("UPDATE CategoryRule r SET r.matchCount = r.matchCount + 1, r.lastMatchedAt = :now WHERE r.id = :ruleId")
     void recordMatch(@Param("ruleId") UUID ruleId, @Param("now") Instant now);
+
+    /** AccountPurgeSweepService -- only ever matches this user's own scope='USER' rows;
+     *  scope='GLOBAL' rows always have user_id IS NULL (chk_category_rules_scope_user) and are
+     *  never touched. Hard delete, no soft-delete concern on this entity. */
+    void deleteByUserId(UUID userId);
+
+    /** DataExportService -- every rule this user owns, any enabled state. Safe by construction,
+     *  the same guarantee deleteByUserId above already relies on: scope='GLOBAL' rows always have
+     *  user_id IS NULL, so this can never pull in a shared rule that isn't the caller's own. */
+    List<CategoryRule> findByUserId(UUID userId);
 }

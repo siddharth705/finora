@@ -63,14 +63,27 @@ class AuthServiceRegisterTest {
         EmailProvider emailProvider = mock(EmailProvider.class);
         when(emailProvider.sendWelcomeEmail(any(), any()))
                 .thenReturn(EmailResult.success(ProviderType.RESEND, "test-message-id"));
+        // D-23. register() now also sends a verification email the same way, right after the
+        // welcome email -- same dereferencing hazard the comment above already covers.
+        when(emailProvider.sendEmailVerificationEmail(any(), any()))
+                .thenReturn(EmailResult.success(ProviderType.RESEND, "test-message-id"));
 
         auditService = mock(AuditService.class);
         authService = new AuthService(
                 userRepository, mock(CategoryRepository.class), mock(PasswordResetTokenRepository.class),
+                mock(com.finora.repository.AccountReactivationTokenRepository.class),
+                mock(com.finora.repository.EmailVerificationTokenRepository.class),
                 mock(PasswordEncoder.class), mock(JwtService.class), mock(AuthenticationManager.class),
                 auditService, refreshTokenService, emailProvider,
                 new EmailProperties(), mock(PhoneVerificationProvider.class), platformSettingsService,
-                mock(PasswordHistoryService.class), new IdentityLookup(userRepository)
+                mock(PasswordHistoryService.class), new IdentityLookup(userRepository),
+                mock(com.finora.config.RequestMetadata.class),
+                // SEC-07: same-thread executor -- runs the dispatched email/audit work
+                // synchronously so assertions against it don't race a real background thread.
+                Runnable::run,
+                // SEC-03: no MFA gate interference for tests unrelated to it -- an
+                // unstubbed mock's isEnabled() returns false by default.
+                mock(AdminMfaService.class)
         );
     }
 

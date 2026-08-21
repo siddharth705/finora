@@ -44,7 +44,7 @@ class ImportSessionServiceTest {
     void setUp() {
         importSessionRepository = mock(ImportSessionRepository.class);
         ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
-        service = new ImportSessionService(importSessionRepository, objectMapper, new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), "", ""));
+        service = new ImportSessionService(importSessionRepository, objectMapper);
         when(importSessionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
     }
 
@@ -55,7 +55,7 @@ class ImportSessionServiceTest {
 
     private DetectedAccountInfo sampleDetected() {
         return new DetectedAccountInfo("Test Bank", "SAVINGS", new BigDecimal("1000"), new BigDecimal("900"),
-                LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31), null, null, null, null, null, null, null,
+                LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31), null, null, null, null, null, null, null, null,
                 "SAVINGS", 0.85, false, java.util.List.of(), null,
                 null, null, null, null, null, null, null);
     }
@@ -86,15 +86,20 @@ class ImportSessionServiceTest {
     }
 
     /**
-     * BH-025 / BH-046. {@code storeContent} used to call {@code session.setFileContent(...)}
-     * unconditionally right after {@code store().ifPresent(...)} recorded an address, so a
-     * session created while object storage is configured still duplicated its bytes into
-     * {@code file_content}. The fix: fill {@code file_content} only when {@code store()} came back
-     * empty (no provider configured -- this test's {@code service}, wired with an empty storage
-     * Optional in {@link #setUp}, is exactly that case and must keep behaving as before).
+     * Storage review lifecycle change: staging ALWAYS writes to temporary (database) storage now,
+     * regardless of whether a storage provider is configured -- object storage is not reached
+     * until the user confirms (see {@code ImportSessionService.storeContent}'s own doc comment).
+     * This used to be conditional (BH-025/BH-046: {@code file_content} filled only when no
+     * provider was configured, left null with {@code object_key} set otherwise); that branch is
+     * gone from {@code storeContent} entirely, so there is nothing left to test per-provider-state
+     * -- one behaviour, unconditionally.
+     *
+     * <p>{@code contentHash} is still always computed (V79 / distributed-resilience-patterns-
+     * audit-2026-08-14.md §3 -- {@link ImportSessionService#findLiveSessionByContentHash}
+     * deduplicates on it), independent of object storage entirely.
      */
     @Test
-    void createSession_whenNoStorageProviderConfigured_stillFillsFileContent_unchangedFromBeforeTheFix() {
+    void createSession_alwaysFillsFileContent_andNeverSetsAnObjectKey() {
         byte[] fileBytes = {1, 2, 3};
 
         ImportSession created = service.createSession(userId, "statement.csv", fileBytes,
@@ -102,59 +107,24 @@ class ImportSessionServiceTest {
 
         assertThat(created.getFileContent()).isEqualTo(fileBytes);
         assertThat(created.getObjectKey()).isNull();
-        assertThat(created.getContentHash()).isNull();
-    }
-
-    /**
-     * The other half of BH-025 / BH-046: with a provider configured, {@code store()} returns a
-     * present address and {@code file_content} must be left null. Before the fix, this assertion
-     * on {@code getFileContent()} would have failed -- the unconditional
-     * {@code session.setFileContent(fileContent)} ran regardless of what {@code store()} returned.
-     */
-    @Test
-    void createSession_whenObjectStorageConfigured_recordsTheAddress_andLeavesFileContentNull() {
-        com.finora.imports.storage.StatementContentService storageBacked =
-                mock(com.finora.imports.storage.StatementContentService.class);
-        com.finora.imports.storage.ContentAddress address = new com.finora.imports.storage.ContentAddress(
-                "c".repeat(64), "statements/cc/cc/" + "c".repeat(64) + ".bin");
-        when(storageBacked.store(any())).thenReturn(Optional.of(address));
-        ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
-        ImportSessionService storageBackedService =
-                new ImportSessionService(importSessionRepository, objectMapper, storageBacked);
-
-        ImportSession created = storageBackedService.createSession(userId, "statement.csv",
-                new byte[]{1, 2, 3}, List.of(sampleRow()), sampleDetected());
-
-        assertThat(created.getFileContent()).isNull();
-        assertThat(created.getObjectKey()).isEqualTo(address.key());
-        assertThat(created.getContentHash()).isEqualTo(address.hash());
+        assertThat(created.getContentHash()).isEqualTo(com.finora.imports.storage.ContentAddress.hashOf(fileBytes));
     }
 
     /**
      * {@code createMultiSection} routes through the same {@code storeContent} as
-     * {@code createSession} -- confirmed separately since it is the path actually exercised by a
-     * multi-account BH-025 scenario (see {@code ImportServiceStorageDualWriteTest} for the
-     * corresponding {@code confirmMultiSection} coverage on the persisted-row side).
+     * {@code createSession} -- confirmed separately since it is the path a multi-account upload
+     * actually exercises.
      */
     @Test
-    void createMultiSection_whenObjectStorageConfigured_alsoLeavesFileContentNull() {
-        com.finora.imports.storage.StatementContentService storageBacked =
-                mock(com.finora.imports.storage.StatementContentService.class);
-        com.finora.imports.storage.ContentAddress address = new com.finora.imports.storage.ContentAddress(
-                "d".repeat(64), "statements/dd/dd/" + "d".repeat(64) + ".bin");
-        when(storageBacked.store(any())).thenReturn(Optional.of(address));
-        ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
-        ImportSessionService storageBackedService =
-                new ImportSessionService(importSessionRepository, objectMapper, storageBacked);
-
+    void createMultiSection_alsoAlwaysFillsFileContent() {
         var section = new com.finora.dto.ImportDto.StagedAccountSection(
                 sampleDetected(), List.of(sampleRow()), 1, 0, List.of());
 
-        ImportSession created = storageBackedService.createMultiSection(userId, "composite.pdf",
+        ImportSession created = service.createMultiSection(userId, "composite.pdf",
                 new byte[]{1, 2, 3}, List.of(section));
 
-        assertThat(created.getFileContent()).isNull();
-        assertThat(created.getObjectKey()).isEqualTo(address.key());
+        assertThat(created.getFileContent()).isEqualTo(new byte[]{1, 2, 3});
+        assertThat(created.getObjectKey()).isNull();
     }
 
     /**
@@ -270,6 +240,46 @@ class ImportSessionServiceTest {
         List<ImportSession> active = service.listActiveSessions(userId);
 
         assertThat(active).containsExactly(stillValid);
+    }
+
+    @Test
+    void findLiveSessionByContentHash_returnsAnUnexpiredMatch() {
+        ImportSession match = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        when(importSessionRepository.findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                userId, "hash-a", ImportSession.STATUS_STAGED)).thenReturn(Optional.of(match));
+
+        Optional<ImportSession> found = service.findLiveSessionByContentHash(userId, "hash-a");
+
+        assertThat(found).contains(match);
+        verify(importSessionRepository, never()).delete(any());
+    }
+
+    /**
+     * A partial unique index can't express "and not expired" (its predicate must be immutable, so
+     * it can't reference now()) -- this is the application-level half that handles it instead. A
+     * STAGED session that expired but hasn't been swept yet must not block a genuinely new upload
+     * of the same statement with a false duplicate, so it's deleted here rather than returned as a
+     * match.
+     */
+    @Test
+    void findLiveSessionByContentHash_deletesAnExpiredMatch_andReportsNoneFound() {
+        ImportSession expired = sessionOwnedBy(userId, Instant.now().minusSeconds(60), ImportSession.STATUS_STAGED);
+        when(importSessionRepository.findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                userId, "hash-b", ImportSession.STATUS_STAGED)).thenReturn(Optional.of(expired));
+
+        Optional<ImportSession> found = service.findLiveSessionByContentHash(userId, "hash-b");
+
+        assertThat(found).isEmpty();
+        verify(importSessionRepository).delete(expired);
+    }
+
+    @Test
+    void findLiveSessionByContentHash_returnsEmpty_whenNoStagedSessionHasThisHash() {
+        when(importSessionRepository.findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                userId, "hash-c", ImportSession.STATUS_STAGED)).thenReturn(Optional.empty());
+
+        assertThat(service.findLiveSessionByContentHash(userId, "hash-c")).isEmpty();
+        verify(importSessionRepository, never()).delete(any());
     }
 
     /**

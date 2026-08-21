@@ -38,6 +38,12 @@ public class AuditLog {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
+    // BH-044. Null until AuditService's redaction sweep processes this row; set to the moment it
+    // did afterward. See that class's redaction doc for the full retention story -- this column is
+    // both the "already redacted" marker and a record of when it happened.
+    @Column(name = "redacted_at")
+    private Instant redactedAt;
+
     public UUID getId() { return id; }
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
@@ -52,4 +58,6 @@ public class AuditLog {
     public Map<String, Object> getMetadata() { return metadata; }
     public void setMetadata(Map<String, Object> metadata) { this.metadata = metadata; }
     public Instant getCreatedAt() { return createdAt; }
+    public Instant getRedactedAt() { return redactedAt; }
+    public void setRedactedAt(Instant redactedAt) { this.redactedAt = redactedAt; }
 }

@@ -22,7 +22,7 @@ function detected(over: Partial<DetectedAccountInfo>): DetectedAccountInfo {
   return {
     suggestedName: 'Kotak Savings', suggestedAccountType: 'SAVINGS', openingBalance: null,
     closingBalance: null, statementPeriodStart: null, statementPeriodEnd: null,
-    accountNumberMasked: null, creditLimit: null, paymentDueDate: null, accountHolderName: null,
+    accountNumberMasked: null, creditLimit: null, totalAmountDue: null, paymentDueDate: null, accountHolderName: null,
     branchName: null, ifscCode: null, bank: KOTAK, detectedProduct: 'SAVINGS',
     productConfidence: 0.9, productNeedsReview: false, productEvidence: [],
     productIdentityHash: null, principalAmount: null, interestRate: null, maturityDate: null,

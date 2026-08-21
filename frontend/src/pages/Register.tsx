@@ -7,6 +7,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import logoMark from '../assets/logo-mark.png';
 import { PasswordInput } from '../components/PasswordInput';
+import { GoogleSignInButton } from '../components/GoogleSignInButton';
 
 const FEATURES = [
   { icon: ShieldCheck, iconBg: 'bg-blue-100', iconColor: 'text-blue-600', title: 'Secure & Private', desc: 'Your data is encrypted and bank-level secure.' },
@@ -64,7 +65,7 @@ const FULL_NAME_PATTERN = /^[\p{L}][\p{L}\s.'-]{0,98}[\p{L}]$/u;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function Register() {
-  const { register } = useAuth();
+  const { register, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -73,6 +74,12 @@ export default function Register() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set only on a 409 from register() -- the ONLY thing that status can mean here is that the
+  // email or phone already belongs to an account (see AuthService.createUserRecord's two CONFLICT
+  // throws), so there's no need to parse which field it was out of the message text: either way
+  // the right next step is the same, a direct path to sign in instead of leaving the user to
+  // notice that themselves and navigate there by hand.
+  const [showContinueLogin, setShowContinueLogin] = useState(false);
   const [loading, setLoading] = useState(false);
   // Only start showing field-level errors once the user has actually left a field -- otherwise
   // every field flashes red the instant the empty form mounts, which reads as broken rather
@@ -97,6 +104,7 @@ export default function Register() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    setShowContinueLogin(false);
     setTouched({ fullName: true, email: true, phoneNumber: true, password: true, confirmPassword: true });
 
     if (!fullNameValid) { setError('Enter your full name using letters, spaces, hyphens, or apostrophes only.'); return; }
@@ -119,6 +127,27 @@ export default function Register() {
       void navigate(phoneVerified ? '/app' : '/verify-phone');
     } catch (err: any) {
       setError(err.response?.data?.message ?? 'Registration failed.');
+      setShowContinueLogin(err.response?.status === 409);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Same account-status gate login()/register() go through (AuthService.enforceAccountIsSignable)
+  // answers every status failure -- suspended, deactivated, pending-deletion -- as 403, which is
+  // exactly the "this email already belongs to an account, go sign in instead" situation
+  // showContinueLogin's existing link already covers; reused here rather than building a second
+  // reactivation flow into this page (Login.tsx already has one).
+  async function handleGoogleCredential(idToken: string) {
+    setError(null);
+    setShowContinueLogin(false);
+    setLoading(true);
+    try {
+      const phoneVerified = await loginWithGoogle(idToken);
+      void navigate(phoneVerified ? '/app' : '/verify-phone');
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? 'Google sign-in failed.');
+      setShowContinueLogin(err.response?.status === 403);
     } finally {
       setLoading(false);
     }
@@ -191,7 +220,20 @@ export default function Register() {
           <h2 className="text-2xl font-bold text-ink mb-1">Create your account</h2>
           <p className="text-sm text-muted mb-6">Start your journey towards financial clarity</p>
 
-          {error && <p className="text-danger text-sm mb-4">{error}</p>}
+          {error && (
+            <div className="mb-4">
+              <p className="text-danger text-sm mb-1.5">{error}</p>
+              {showContinueLogin && (
+                <Link
+                  to="/login"
+                  state={{ message: 'Welcome back — sign in with your existing account below.' }}
+                  className="text-xs text-primary font-medium underline"
+                >
+                  Continue to login
+                </Link>
+              )}
+            </div>
+          )}
 
           <label htmlFor="register-fullname" className="block text-xs font-medium text-muted mb-1">Full name</label>
           <div className="relative mb-1">
@@ -343,6 +385,14 @@ export default function Register() {
             {loading ? 'Creating account…' : 'Create account'}
             {!loading && <ArrowRight size={15} />}
           </button>
+
+          <div className="flex items-center gap-3 my-5">
+            <div className="flex-1 h-px bg-border" />
+            <span className="text-xs text-muted">OR</span>
+            <div className="flex-1 h-px bg-border" />
+          </div>
+
+          <GoogleSignInButton text="signup_with" onCredential={handleGoogleCredential} onError={setError} />
 
           <p className="text-sm mt-4 text-center text-muted">
             Already have an account? <Link to="/login" className="text-primary font-medium">Sign in</Link>

@@ -21,12 +21,23 @@ interface AuthState {
   phoneVerified: boolean;
   // Accepts either an email address or a registered mobile number -- see LoginScreen.
   login: (identifier: string, password: string) => Promise<boolean>;
+  // Completes the "Welcome back — reactivate your account?" prompt LoginScreen shows after a
+  // deactivated account's password checks out -- see the web app's ReactivateAccountPrompt.tsx,
+  // which this mirrors.
+  reactivate: (token: string) => Promise<boolean>;
   register: (
     email: string,
     password: string,
     fullName: string,
     phoneNumber: string
   ) => Promise<{ phoneVerified: boolean }>;
+  // D-23 Phase 2. Mirrors frontend/src/context/AuthContext.tsx's own loginWithGoogle exactly --
+  // same contract, same persist() reuse.
+  loginWithGoogle: (idToken: string) => Promise<boolean>;
+  // D-26 (iOS only). fullName is optional because expo-apple-authentication only hands it to the
+  // CALLER on the user's very first authorization for this app -- see GoogleSignInButton's sibling
+  // AppleSignInButton for where it's actually captured.
+  loginWithApple: (idToken: string, fullName?: string) => Promise<boolean>;
   setPhoneVerified: (verified: boolean) => void;
   logout: () => void;
 }
@@ -123,6 +134,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return res.data.phoneVerified;
   }
 
+  // Same shape as login(): persists the session and reports whether the phone is already
+  // verified, so the caller can route the same way login()'s caller does.
+  async function reactivate(token: string): Promise<boolean> {
+    const res = await authApi.reactivate(token);
+    await persist(res.data);
+    return res.data.phoneVerified;
+  }
+
   async function register(
     regEmail: string,
     password: string,
@@ -134,6 +153,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // VerifyPhoneScreen fetches the account's real phone number itself (userApi.get(), now that
     // it's authenticated) rather than being handed it through navigation params.
     return { phoneVerified: res.data.phoneVerified };
+  }
+
+  async function loginWithGoogle(idToken: string): Promise<boolean> {
+    const res = await authApi.google(idToken);
+    await persist(res.data);
+    return res.data.phoneVerified;
+  }
+
+  async function loginWithApple(idToken: string, fullName?: string): Promise<boolean> {
+    const res = await authApi.apple(idToken, fullName);
+    await persist(res.data);
+    return res.data.phoneVerified;
   }
 
   function setPhoneVerified(verified: boolean) {
@@ -177,7 +208,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ bootstrapping, token, email, fullName, phoneVerified, login, register, setPhoneVerified, logout }}
+      value={{
+        bootstrapping, token, email, fullName, phoneVerified,
+        login, reactivate, register, loginWithGoogle, loginWithApple, setPhoneVerified, logout,
+      }}
     >
       {children}
     </AuthContext.Provider>

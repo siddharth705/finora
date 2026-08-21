@@ -17,11 +17,12 @@ public class AuthDtos {
     // apostrophes, and periods -- covers "Jean-Luc", "O'Brien", "Md. Rahman". Tolerates
     // leading/trailing whitespace here (AuthService.register() trims before saving) so a name
     // typed with stray surrounding spaces isn't rejected for something the UI already fixes up.
-    // Package-private rather than private so AdminDtos (same package) constrains the admin
-    // support-edit path with the SAME rules the user-facing path uses, instead of restating them
-    // and drifting. AdminUpdateUserRequest previously declared no constraints at all -- see its
-    // own doc comment for what that let through.
-    static final String FULL_NAME_REGEXP = "^\\s*\\p{L}[\\p{L}\\s.'-]{0,98}\\p{L}\\s*$";
+    // Public (not just package-private) so AdminDtos (same package) AND AuthService (a Google
+    // sign-in display name isn't a validated request field the way a registration form's fullName
+    // is -- see AuthService.sanitizeGoogleDisplayName) both constrain against the SAME rules
+    // instead of restating them and drifting. AdminUpdateUserRequest previously declared no
+    // constraints at all -- see its own doc comment for what that let through.
+    public static final String FULL_NAME_REGEXP = "^\\s*\\p{L}[\\p{L}\\s.'-]{0,98}\\p{L}\\s*$";
     static final String FULL_NAME_MESSAGE = "Enter a valid full name using letters, spaces, hyphens, or apostrophes only";
     static final String PHONE_REGEXP = "^\\+?[0-9]{10,15}$";
     static final String PHONE_MESSAGE = "Enter a valid phone number (10-15 digits, optional + country code)";
@@ -52,6 +53,42 @@ public class AuthDtos {
             @NotBlank String identifier,
             @NotBlank String password,
             String scope
+    ) {}
+
+    /**
+     * D-23: {@code idToken} is the raw Google ID token from Google Identity Services (web) or a
+     * native Google Sign-In SDK (mobile, Phase 2) -- never the frontend's own parsed claims.
+     * {@code AuthService.loginWithGoogle} verifies it server-side via
+     * {@code GoogleIdTokenVerifierService} before trusting anything it says, same discipline as
+     * {@code ResetPasswordRequest.firebaseIdToken}.
+     */
+    public record GoogleAuthRequest(@NotBlank String idToken) {}
+
+    /**
+     * D-23 Phase 2: {@code idToken} is the raw Apple identity token from native
+     * {@code AuthenticationServices} Sign In with Apple ({@code expo-apple-authentication} on
+     * mobile) -- never the frontend's own parsed claims, same discipline as
+     * {@link GoogleAuthRequest#idToken}. {@code AuthService.loginWithApple} verifies it
+     * server-side via {@code AppleIdTokenVerifierService} before trusting anything it says.
+     *
+     * <p>{@code fullName} is optional and NOT part of the token: Apple's identity token never
+     * carries a name claim at all, and hands the display name to the client separately, only on
+     * the user's very first authorization for this app -- see {@code AppleIdentity}'s own doc
+     * comment. Every subsequent sign-in this will legitimately be {@code null}.
+     *
+     * <p>Deliberately UNVALIDATED here, unlike {@link RegisterRequest#fullName} -- self-review
+     * finding: a {@code @Pattern} at this layer would reject the whole request (a 400, no session
+     * issued) on any value that doesn't match, including ones Apple's own name formatter could
+     * plausibly hand back (an empty or whitespace-only string, for a components object that's
+     * non-null but has every field null). {@code AuthService.sanitizeOAuthDisplayName} already
+     * validates and safely falls back to the email address for exactly this case -- the same
+     * fallback a missing/invalid Google {@code name} claim gets, which never had a DTO-level gate
+     * to trip in the first place. Hard-failing the entire sign-in over a cosmetic display name
+     * would make this the ONE thing that turns "just use the email" into "you can't sign in."
+     */
+    public record AppleAuthRequest(
+            @NotBlank String idToken,
+            String fullName
     ) {}
 
     /** token = short-lived access token (15 min default); refreshToken = long-lived (30 days),
@@ -128,4 +165,20 @@ public class AuthDtos {
     public record VerifyPhoneRequest(@NotBlank String firebaseIdToken) {}
 
     public record VerifyPhoneResponse(String message) {}
+
+    /** token is the raw reactivation token AuthService.login() minted and returned in an
+     *  AUTH_ACCOUNT_DEACTIVATED error's details map -- see AuthService.reactivate(). */
+    public record ReactivateRequest(@NotBlank String token) {}
+
+    /** D-23. token is the raw verification token from a {@code /verify-email?token=...} link --
+     *  see AuthService.mintEmailVerificationToken / verifyEmail. */
+    public record VerifyEmailRequest(@NotBlank String token) {}
+    public record VerifyEmailResponse(String message) {}
+
+    /** SEC-03 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). challengeToken is
+     *  the raw token AuthService.login() minted and returned in an AUTH_MFA_REQUIRED error's
+     *  details map -- see AuthService.completeMfaLogin. code is either a live TOTP code from the
+     *  user's authenticator app or one of their unused recovery codes; AdminMfaService.verifyChallenge
+     *  tries both. */
+    public record MfaVerifyRequest(@NotBlank String challengeToken, @NotBlank String code) {}
 }

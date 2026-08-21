@@ -36,7 +36,12 @@ export interface ApiEnvelope<T> {
   requestId: string | null;
 }
 
-const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password'];
+// D-23 Phase 2: /auth/google and /auth/apple added alongside login/register -- both mint a
+// session before any token exists, same as those two, and both being LISTED here matters for
+// more than just the outbound Authorization header (see the 401-handling comment further down):
+// a verification failure on either (a stale/expired/wrong-audience credential) must be treated as
+// "this sign-in attempt failed", never routed into the refresh-token retry path.
+const AUTH_ENDPOINTS_NO_TOKEN = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password', '/auth/reactivate', '/auth/google', '/auth/apple'];
 
 const TOKEN_KEY = 'finora_token';
 const REFRESH_TOKEN_KEY = 'finora_refresh_token';
@@ -181,10 +186,24 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    // Error responses use the same envelope ({success:false, message, errorCode}) -- surface the
-    // message where callers already expect err.response.data.message.
+    // Error responses use the same envelope ({success:false, message, errorCode, details}) --
+    // surface the message where callers already expect err.response.data.message. `details` is
+    // carried through too (not just message/errorCode): AUTH_ACCOUNT_DEACTIVATED's reactivation
+    // token travels there (see ApiException/ApiResponse on the backend), same as the web app's
+    // client.ts -- dropping it silently would make the reactivation flow unreachable here too.
     if (error.response?.data?.message) {
-      error.response.data = { message: error.response.data.message, errorCode: error.response.data.errorCode };
+      error.response.data = {
+        message: error.response.data.message,
+        errorCode: error.response.data.errorCode,
+        details: error.response.data.details,
+        // Whether the user themselves can fix what caused this -- computed once, backend-side,
+        // from ErrorCode.userActionRequired() (GlobalExceptionHandler), not re-derived here.
+        // Absent (undefined) for a codeless ApiException, which has no classification to offer;
+        // callers treat that the same as false, never guessing a failure into looking actionable.
+        // Mirrors the same flattening the web app's client.ts does, so a future port of a
+        // web screen that reads `err.response?.data?.userActionRequired` behaves the same here.
+        userActionRequired: error.response.data.details?.userActionRequired,
+      };
     }
     return Promise.reject(error);
   }

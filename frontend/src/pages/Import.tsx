@@ -136,6 +136,22 @@ export default function Import() {
 
   const [step, setStep] = useState<Step>('upload');
   const [error, setError] = useState<string | null>(null);
+  // Sprint 4 item 22. Whether the CURRENT error banner is one the user can fix themselves --
+  // distinct from `error` itself so the banner can pick warning (ACTION_REQUIRED) vs danger
+  // (FAILED) coloring, matching ImportTimeline's identical distinction for the async path. Never
+  // set directly -- showError()/clearError() below are the only two ways `error` changes, so this
+  // can never go stale from a PREVIOUS error (e.g. an ACTION_REQUIRED parse failure) while a new,
+  // unrelated one (network failure, a validation message, a discard failure) is being shown.
+  const [errorActionRequired, setErrorActionRequired] = useState(false);
+
+  function showError(message: string, actionRequired = false) {
+    setError(message);
+    setErrorActionRequired(actionRequired);
+  }
+  function clearError() {
+    setError(null);
+    setErrorActionRequired(false);
+  }
 
   // The queued import currently being watched, if this deployment queues them at all.
   //
@@ -270,13 +286,13 @@ export default function Import() {
    * into one upload rather than an upload, a rejection, and a second upload.
    */
   function handleFile(file: File) {
-    setError(null);
+    clearError();
     setMultiSections(null); // clear any previous multi-account run before staging a new file
     const lowerName = file.name.toLowerCase();
     const isPdf = lowerName.endsWith('.pdf');
     const isCsv = lowerName.endsWith('.csv');
     if (!isPdf && !isCsv) {
-      setError('Please upload a .csv or .pdf bank/credit card statement.');
+      showError('Please upload a .csv or .pdf bank/credit card statement.');
       return;
     }
     if (isPdf) {
@@ -352,7 +368,7 @@ export default function Import() {
       setStep('review');
     } catch {
       setJobId(null);
-      setError('Your statement was imported, but the review could not be loaded. Open it from your unfinished imports.');
+      showError('Your statement was imported, but the review could not be loaded. Open it from your unfinished imports.');
     }
   }
 
@@ -369,7 +385,7 @@ export default function Import() {
    * well after this page's account list has loaded.
    */
   async function resumeSession(id: string, accountsForMatch?: Account[]) {
-    setError(null);
+    clearError();
     try {
       const session = await importApi.getSession(id);
       setSessionId(session.sessionId);
@@ -384,32 +400,37 @@ export default function Import() {
       // needs re-uploading. Distinguished by ErrorCode, not by matching the message text, since
       // the message is free-text the backend owns and the UI shouldn't be branching on wording.
       if (e.response?.data?.errorCode === IMPORT_SESSION_ALREADY_CONFIRMED) {
-        setError('This import has already been reviewed and confirmed -- check your Statement History for it.');
+        showError('This import has already been reviewed and confirmed -- check your Statement History for it.');
         return;
       }
       // The session most likely expired between the list loading and this click (the 48h window
       // can lapse mid-visit) -- refetch so the now-stale entry disappears rather than staying in
       // the list as a button that will fail again the same way.
       void queryClient.invalidateQueries({ queryKey: ['import-sessions'] });
-      setError('This staged import is no longer available -- it may have expired. Please upload the statement again.');
+      showError('This staged import is no longer available -- it may have expired. Please upload the statement again.');
     }
   }
 
   async function discardStagedSession(id: string) {
     if (!confirm('Discard this unfinished import? You can upload the statement again later.')) return;
+    // Bug fix, caught by review: this function never cleared the banner on success, unlike every
+    // other action on this page -- an unrelated error left showing (e.g. an ACTION_REQUIRED parse
+    // failure, amber-colored) would sit there indefinitely, now misleadingly still reading as
+    // actionable guidance about a file no longer relevant to what the user just did.
+    clearError();
     setDiscardingSessionId(id);
     try {
       await importApi.discardSession(id);
       await queryClient.invalidateQueries({ queryKey: ['import-sessions'] });
     } catch {
-      setError('Could not discard this staged import.');
+      showError('Could not discard this staged import.');
     } finally {
       setDiscardingSessionId(null);
     }
   }
 
   async function upload(file: File, isPdf: boolean, password: string | undefined) {
-    setError(null);
+    clearError();
     setUploadProgress(0);
     try {
       // The queue, when this deployment has one and the file does not need a password.
@@ -468,7 +489,7 @@ export default function Import() {
       const code = e.response?.data?.errorCode;
       const contractMessage = importFailureMessage(code);
       if (!e.response) {
-        setError('Unable to reach the import service. The upload request could not be completed — check your connection and try again.');
+        showError('Unable to reach the import service. The upload request could not be completed — check your connection and try again.');
       } else if (code === PDF_PASSWORD_REQUIRED || code === PDF_PASSWORD_INVALID) {
         // Not a parse failure and not shown as one -- the file is fine, it just hasn't been
         // opened yet. The panel stays put with this same file so the retry is one field and one
@@ -483,10 +504,13 @@ export default function Import() {
         // that copy is what the user reads, not the server's `message` -- the whole point of the
         // contract is that Finora controls the wording, even though the server's own message is
         // already reasonable prose (see ExtractionCheck.java). Only a code with no curated entry
-        // falls through to the server message / generic fallback below.
-        setError(contractMessage);
+        // falls through to the server message / generic fallback below. Sprint 4 item 22:
+        // userActionRequired comes off the wire (ErrorCode.userActionRequired(), computed once
+        // backend-side -- see GlobalExceptionHandler), not a second frontend-maintained copy of
+        // which codes qualify, so the banner's color can never drift from the backend's own answer.
+        showError(contractMessage, !!e.response?.data?.userActionRequired);
       } else {
-        setError(e.response?.data?.message ?? (isPdf ? 'Could not parse this PDF.' : 'Could not parse this CSV.'));
+        showError(e.response?.data?.message ?? (isPdf ? 'Could not parse this PDF.' : 'Could not parse this CSV.'));
       }
     } finally {
       setUploadProgress(null);
@@ -508,7 +532,7 @@ export default function Import() {
   async function confirmImport() {
     if (!reimportState && !sessionId) return;
     setConfirming(true);
-    setError(null);
+    clearError();
     try {
       const rowPayload = toConfirmedRows(rows, review, chosenCategory);
 
@@ -544,7 +568,7 @@ export default function Import() {
       setStep('summary');
       invalidateImportRelatedQueries(queryClient);
     } catch (e: any) {
-      setError(e.response?.data?.message ?? 'Could not complete the import.');
+      showError(e.response?.data?.message ?? 'Could not complete the import.');
     } finally {
       setConfirming(false);
     }
@@ -557,7 +581,7 @@ export default function Import() {
   async function confirmMultiImport() {
     if (!sessionId || !multiSections) return;
     setConfirming(true);
-    setError(null);
+    clearError();
     try {
       const sections = multiSections.map((s) => {
         // The same builder the single-account confirm uses. This section used to hand-roll its own
@@ -587,7 +611,7 @@ export default function Import() {
       setStep('summary');
       invalidateImportRelatedQueries(queryClient);
     } catch (e: any) {
-      setError(e.response?.data?.message ?? 'Could not complete the import.');
+      showError(e.response?.data?.message ?? 'Could not complete the import.');
     } finally {
       setConfirming(false);
     }
@@ -619,7 +643,7 @@ export default function Import() {
     setMultiSummary(null);
     setMultiSections(null);
     setUploadProgress(null);
-    setError(null);
+    clearError();
     setFileFormat(null);
     setPendingPdf(null);
     setPdfPassword('');
@@ -678,7 +702,7 @@ export default function Import() {
             onDismiss={() => {
               setJobId(null);
               setUploadProgress(null);
-              setError(null);
+              clearError();
               clearArrivalState();
             }}
           />
@@ -755,7 +779,7 @@ export default function Import() {
                   setPendingPdf(null);
                   setPdfPassword('');
                   setPasswordState(null);
-                  setError(null);
+                  clearError();
                 }}
               >
                 Choose a different file
@@ -907,7 +931,10 @@ export default function Import() {
       )}
 
       {error && (
-        <p className="text-danger text-sm flex items-center gap-2">
+        // Sprint 4 item 22: warning (amber) for a code the user can fix themselves, matching the
+        // password panel a few lines below and ImportTimeline's identical ACTION_REQUIRED/FAILED
+        // split for the async path; danger (red) stays the default for everything else, unchanged.
+        <p className={`text-sm flex items-center gap-2 ${errorActionRequired ? 'text-warning' : 'text-danger'}`}>
           <AlertTriangle size={14} /> {error}
         </p>
       )}
@@ -1397,6 +1424,14 @@ function AccountChoiceFields({
                 <label htmlFor="import-due-date" className="block text-xs uppercase text-muted mb-1">Payment due date</label>
                 <input id="import-due-date" type="date" value={newDueDate} onChange={(e) => setNewDueDate(e.target.value)} className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm w-full" />
               </div>
+              {detectedAccount?.totalAmountDue != null && (
+                <div>
+                  <span className="block text-xs uppercase text-muted mb-1">Total amount due (detected)</span>
+                  <div className="border border-border rounded-lg px-3 py-2 text-sm w-full bg-bg text-muted">
+                    {fmt(detectedAccount.totalAmountDue)}
+                  </div>
+                </div>
+              )}
             </>
           )}
           {(detectedAccount?.statementPeriodStart || detectedAccount?.closingBalance != null) && (

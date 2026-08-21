@@ -7,6 +7,8 @@ import com.finora.exception.ErrorCode;
 import com.finora.exception.ApiException;
 import com.finora.dto.ApiResponse;
 import com.finora.dto.AuthDtos.*;
+import com.finora.integrations.apple.login.AppleIdTokenVerifierService;
+import com.finora.integrations.google.login.GoogleIdTokenVerifierService;
 import com.finora.service.AuthService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -18,10 +20,16 @@ public class AuthController {
 
     private final AuthService authService;
     private final RefreshTokenCookie refreshTokenCookie;
+    private final GoogleIdTokenVerifierService googleIdTokenVerifierService;
+    private final AppleIdTokenVerifierService appleIdTokenVerifierService;
 
-    public AuthController(AuthService authService, RefreshTokenCookie refreshTokenCookie) {
+    public AuthController(AuthService authService, RefreshTokenCookie refreshTokenCookie,
+                           GoogleIdTokenVerifierService googleIdTokenVerifierService,
+                           AppleIdTokenVerifierService appleIdTokenVerifierService) {
         this.refreshTokenCookie = refreshTokenCookie;
         this.authService = authService;
+        this.googleIdTokenVerifierService = googleIdTokenVerifierService;
+        this.appleIdTokenVerifierService = appleIdTokenVerifierService;
     }
 
     /**
@@ -46,6 +54,30 @@ public class AuthController {
                 .body(ApiResponse.ok(response, "Signed in"));
     }
 
+    /**
+     * SEC-03 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Second step of
+     * the flow login() starts by throwing AUTH_MFA_REQUIRED (challenge token in its details map)
+     * -- same AuthResponse shape and refresh-cookie handling as login()/reactivate() themselves,
+     * so the client's success path doesn't need to special-case where the tokens came from.
+     */
+    @PostMapping("/mfa/verify")
+    public ResponseEntity<ApiResponse<AuthResponse>> verifyMfa(@Valid @RequestBody MfaVerifyRequest request) {
+        AuthResponse response = authService.completeMfaLogin(request.challengeToken(), request.code());
+        return withRefreshCookie(response.refreshToken())
+                .body(ApiResponse.ok(response, "Signed in"));
+    }
+
+    /** Completes the "Welcome back — reactivate your account?" confirmation Login.tsx shows after
+     *  a deactivated account's password checks out (login() throws AUTH_ACCOUNT_DEACTIVATED with
+     *  a reactivation token in its details map). Same AuthResponse shape and refresh-cookie
+     *  handling as login() itself, so the client's success path doesn't need to special-case it. */
+    @PostMapping("/reactivate")
+    public ResponseEntity<ApiResponse<AuthResponse>> reactivate(@Valid @RequestBody ReactivateRequest request) {
+        AuthResponse response = authService.reactivate(request);
+        return withRefreshCookie(response.refreshToken())
+                .body(ApiResponse.ok(response, "Account reactivated"));
+    }
+
     private ResponseEntity.BodyBuilder withRefreshCookie(String rawToken) {
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, refreshTokenCookie.issue(rawToken).toString());
@@ -67,6 +99,14 @@ public class AuthController {
     @PostMapping("/reset-password")
     public ResponseEntity<ApiResponse<ResetPasswordResponse>> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
         return ResponseEntity.ok(ApiResponse.ok(authService.resetPassword(request)));
+    }
+
+    /** D-23. Confirms a {@code /verify-email?token=...} link -- see AuthService.verifyEmail. Not
+     *  authenticated: the token itself is the proof, the same posture reset-password/reactivate
+     *  already have for their own emailed/returned links. */
+    @PostMapping("/verify-email")
+    public ResponseEntity<ApiResponse<VerifyEmailResponse>> verifyEmail(@Valid @RequestBody VerifyEmailRequest request) {
+        return ResponseEntity.ok(ApiResponse.ok(authService.verifyEmail(request.token())));
     }
 
     /**
@@ -112,8 +152,42 @@ public class AuthController {
                 .body(ApiResponse.ok(response));
     }
 
-    // TODO Phase 2: /oauth/google callback endpoint, /2fa/verify endpoint.
-    // Both need real provider credentials (Google OAuth client ID/secret, an OTP/TOTP library)
-    // that only make sense once you're deploying somewhere real — stubbing them here would just
-    // be dead code that looks functional but isn't.
+    /**
+     * D-23. Not an OAuth callback -- Google Identity Services (web) hands the frontend a signed ID
+     * token directly, no redirect round trip, so this endpoint just verifies and trusts it. Same
+     * shape as register()/login(): mints tokens and writes the refresh cookie, since a successful
+     * Google sign-in is exactly as much of "a session starting" as either of those.
+     *
+     * <p>Serves both new-account creation and returning-user sign-in through the one endpoint --
+     * {@code AuthService.loginWithGoogle} decides which happened by whether the verified email
+     * already has a Finora account, not something the client declares.
+     */
+    @PostMapping("/google")
+    public ResponseEntity<ApiResponse<AuthResponse>> google(@Valid @RequestBody GoogleAuthRequest request) {
+        var identity = googleIdTokenVerifierService.verify(request.idToken());
+        AuthResponse response = authService.loginWithGoogle(identity);
+        return withRefreshCookie(response.refreshToken())
+                .body(ApiResponse.ok(response, "Signed in with Google"));
+    }
+
+    /**
+     * D-23 Phase 2. Same shape as {@link #google}, Apple's counterpart -- native
+     * {@code AuthenticationServices} (via {@code expo-apple-authentication}) hands the client a
+     * signed identity token directly, this endpoint verifies and trusts it. {@code fullName} is
+     * forwarded straight through to {@code AuthService.loginWithApple} entirely unvalidated at
+     * this layer -- see {@code AppleAuthRequest}'s own doc comment for why it's optional, where it
+     * actually comes from, and why a DTO-level format check would be actively wrong here.
+     */
+    @PostMapping("/apple")
+    public ResponseEntity<ApiResponse<AuthResponse>> apple(@Valid @RequestBody AppleAuthRequest request) {
+        var identity = appleIdTokenVerifierService.verify(request.idToken());
+        AuthResponse response = authService.loginWithApple(identity, request.fullName());
+        return withRefreshCookie(response.refreshToken())
+                .body(ApiResponse.ok(response, "Signed in with Apple"));
+    }
+
+    // TODO: /2fa/verify needs an OTP/TOTP library that only makes sense once there's a real
+    // deployment to protect; stubbing it here would just be dead code that looks functional but
+    // isn't. (The other half of the old Phase 2 TODO here -- native mobile Google Sign-In reusing
+    // /google, plus Apple's new /apple above -- is this endpoint list; see D-23/D-26.)
 }

@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * to justify one more field each time and correspondingly harder to walk back. V59 says so
  * explicitly about the table this data hangs off.
  *
- * <p>Payloads below are the real shapes the four validators emit, not {@code "foo"}. A scrubber
+ * <p>Payloads below are the real shapes the five validators emit, not {@code "foo"}. A scrubber
  * tested on synthetic keys proves nothing about the keys it will actually meet.
  */
 class ImportVerificationDetailAllowlistTest {
@@ -128,6 +128,35 @@ class ImportVerificationDetailAllowlistTest {
         assertThat(safe.toString())
                 .as("a narration must not reach the database through a diagnostics field")
                 .doesNotContain("ACME");
+    }
+
+    @Test
+    void rowAccountingSCountsAndReasonHistogramSurviveButItsExplanationDoesNot() {
+        // ROW_ACCOUNTING's own evidence: counts of our own rows in each bucket, and a reason-code
+        // histogram whose keys are PdfTableLocator's own stable machine codes and whose values are
+        // counts -- neither half can hold a balance, a narration or a cell copied out of the
+        // document. "explanation" is our own authored prose (same category StatementTotalsValidator
+        // and SummaryTotalsValidator already put there) and is not yet on any allowlist -- a
+        // pre-existing gap this test deliberately does not paper over.
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("stagedTransactionCount", 124);
+        details.put("locatedRowCount", 127);
+        details.put("unparseableRowCount", 0);
+        details.put("droppedTransactionCandidateCount", 3);
+        details.put("droppedTransactionCandidateReasons",
+                Map.of("PAGE_FOOTER_OR_CLOSING_MARKER", 2L, "BUCKET_EMPTY", 1L));
+        details.put("explanation", "3 rows outside the recognized transaction table had the shape "
+                + "of a transaction candidate and were discarded.");
+
+        Map<String, Object> safe = ImportVerificationRecorder.structuralDetailsOf(details);
+
+        assertThat(safe).containsOnlyKeys("stagedTransactionCount", "locatedRowCount",
+                "unparseableRowCount", "droppedTransactionCandidateCount",
+                "droppedTransactionCandidateReasons");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> reasons = (Map<String, Object>) safe.get("droppedTransactionCandidateReasons");
+        assertThat(reasons).containsEntry("PAGE_FOOTER_OR_CLOSING_MARKER", 2L).containsEntry("BUCKET_EMPTY", 1L);
+        assertThat(safe.toString()).doesNotContain("discarded");
     }
 
     @Test

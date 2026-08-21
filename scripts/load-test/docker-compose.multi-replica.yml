@@ -1,0 +1,42 @@
+# D-4 evidence: "does a second replica silently double the effective rate-limit/import-
+# concurrency ceiling, since both are in-memory and scoped per instance." See
+# docs/project-management/plans/project-plan-v1.0.md D-4 and
+# docs/investigations/performance/multi-replica-rate-limit-2026-08-16.md for the question and
+# the answer this override exists to produce evidence for.
+#
+# Usage (from the repo root):
+#   docker compose -f docker-compose.yml -f scripts/load-test/docker-compose.multi-replica.yml \
+#     up -d --build --scale backend=1   # baseline: one replica, through the same nginx hop
+#   docker compose -f docker-compose.yml -f scripts/load-test/docker-compose.multi-replica.yml \
+#     up -d --build --scale backend=2   # the experiment: two replicas, same nginx, same config
+#
+# --scale backend=1 (not the base compose file directly) for the baseline, deliberately: routing
+# the "before" run through the identical nginx hop isolates the replica-count variable from the
+# proxy-hop variable, so a difference between the two runs can only be the thing D-4 asks about.
+services:
+  backend:
+    # The base file publishes 8080:8080. Two replicas cannot both bind the same host port, and
+    # this override's whole point is that host traffic goes through nginx instead, at whatever
+    # replica count is actually running behind it -- so the direct publish is removed here rather
+    # than narrowed.
+    ports: !override []
+    environment:
+      # RATE_LIMIT_IMPORT_STAGE_MAX (default 10/600s) would otherwise become the binding
+      # constraint on the import-burst scenario instead of app.import.max-concurrent (the thing
+      # this experiment actually measures) -- raised the same way scripts/load-test/README.md
+      # already documents doing for the mixed-traffic tiers, and for the identical reason.
+      RATE_LIMIT_IMPORT_STAGE_MAX: "5000"
+      RATE_LIMIT_IMPORT_STAGE_WINDOW_SECONDS: "60"
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:18090:80"
+    volumes:
+      # Relative to the repo root, not this file's own directory: Compose resolves relative
+      # volume paths against the FIRST -f file's location when multiple compose files are
+      # merged (docker-compose.yml, at the repo root), regardless of where this override file
+      # itself lives.
+      - ./scripts/load-test/nginx-multi-replica.conf:/etc/nginx/nginx.conf:ro

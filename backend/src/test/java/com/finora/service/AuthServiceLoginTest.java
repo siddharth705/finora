@@ -34,6 +34,8 @@ class AuthServiceLoginTest {
     private AuthenticationManager authenticationManager;
     private RefreshTokenService refreshTokenService;
     private PlatformSettingsService platformSettingsService;
+    private com.finora.repository.AccountReactivationTokenRepository reactivationTokenRepository;
+    private AuditService auditService;
     private AuthService authService;
     private final UUID userId = UUID.randomUUID();
 
@@ -58,12 +60,23 @@ class AuthServiceLoginTest {
         platformSettingsService = mock(PlatformSettingsService.class);
         when(platformSettingsService.getEntity()).thenReturn(new com.finora.entity.PlatformSettings());
 
+        reactivationTokenRepository = mock(com.finora.repository.AccountReactivationTokenRepository.class);
+        auditService = mock(AuditService.class);
         authService = new AuthService(
                 userRepository, mock(CategoryRepository.class), mock(PasswordResetTokenRepository.class),
+                reactivationTokenRepository,
+                mock(com.finora.repository.EmailVerificationTokenRepository.class),
                 mock(PasswordEncoder.class), mock(JwtService.class), authenticationManager,
-                mock(AuditService.class), refreshTokenService, mock(EmailProvider.class),
+                auditService, refreshTokenService, mock(EmailProvider.class),
                 new EmailProperties(), mock(PhoneVerificationProvider.class), platformSettingsService,
-                mock(PasswordHistoryService.class), new IdentityLookup(userRepository)
+                mock(PasswordHistoryService.class), new IdentityLookup(userRepository),
+                mock(com.finora.config.RequestMetadata.class),
+                // SEC-07: same-thread executor -- runs the dispatched email/audit work
+                // synchronously so assertions against it don't race a real background thread.
+                Runnable::run,
+                // SEC-03: no MFA gate interference for tests unrelated to it -- an
+                // unstubbed mock's isEnabled() returns false by default.
+                mock(AdminMfaService.class)
         );
     }
 
@@ -255,6 +268,103 @@ class AuthServiceLoginTest {
         throw new AssertionError("Expected login() to throw for a wrong password");
     }
 
+    /**
+     * A deactivated account is a different branch from suspended (User.isDeactivated(), not
+     * isSuspended()) -- same positioning discipline (checked after a proven-correct password, so
+     * this never becomes a second account-existence oracle), but instead of a dead-end rejection
+     * it mints a reactivation token and carries it in the exception's details map, matching what
+     * ReactivateAccountPrompt.tsx expects to read from AUTH_ACCOUNT_DEACTIVATED's response.
+     */
+    @Test
+    void login_withDeactivatedAccount_andTheRightPassword_mintsAReactivationTokenAndThrows() {
+        User u = user("deactivated@example.com", "+919876500098"); // synthetic-ok
+        u.setStatus(User.STATUS_DEACTIVATED);
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("deactivated@example.com", "USER")).thenReturn(Optional.of(u));
+        stubSuccessfulAuthentication();
+
+        try {
+            authService.login(new LoginRequest("deactivated@example.com", "the-right-password", "USER"));
+        } catch (com.finora.exception.ApiException e) {
+            assertThat(e.getCode()).isEqualTo(com.finora.exception.ErrorCode.AUTH_ACCOUNT_DEACTIVATED);
+            assertThat(e.getDetails()).containsKey("reactivationToken");
+            assertThat((String) e.getDetails().get("reactivationToken")).isNotBlank();
+            verify(reactivationTokenRepository).save(any());
+            // No session, and no login recorded -- no login actually happened.
+            verify(refreshTokenService, never()).issue(any());
+            verify(auditService, never()).record(any(), eq("USER_LOGIN"), any(), any());
+            return;
+        }
+        throw new AssertionError("Expected login() to throw for a deactivated account");
+    }
+
+    /** app.account-lifecycle.reactivation-window-enabled/-days -- disabled by default (see the
+     *  test above, which mints a token with the window fields left at their Java defaults), but
+     *  once enabled and the configured number of days has elapsed since deactivatedAt, login()
+     *  must fall through to a plain rejection instead of a token-bearing reactivation prompt. */
+    @Test
+    void login_withDeactivatedAccount_pastAConfiguredReactivationWindow_rejectsWithoutMintingAToken() {
+        ReflectionTestUtils.setField(authService, "reactivationWindowEnabled", true);
+        ReflectionTestUtils.setField(authService, "reactivationWindowDays", 3);
+
+        User u = user("longgone@example.com", "+919876500097"); // synthetic-ok
+        u.setStatus(User.STATUS_DEACTIVATED);
+        u.setDeactivatedAt(java.time.Instant.now().minus(java.time.Duration.ofDays(4)));
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("longgone@example.com", "USER")).thenReturn(Optional.of(u));
+        stubSuccessfulAuthentication();
+
+        try {
+            authService.login(new LoginRequest("longgone@example.com", "the-right-password", "USER"));
+        } catch (com.finora.exception.ApiException e) {
+            assertThat(e.getCode()).isNull();
+            assertThat(e.getMessage()).contains("window has closed");
+            verify(reactivationTokenRepository, never()).save(any());
+            verify(refreshTokenService, never()).issue(any());
+            return;
+        }
+        throw new AssertionError("Expected login() to throw for a deactivated account past its reactivation window");
+    }
+
+    /** Same window, but still within it -- the existing token-minting path must still apply. */
+    @Test
+    void login_withDeactivatedAccount_withinAConfiguredReactivationWindow_stillMintsAToken() {
+        ReflectionTestUtils.setField(authService, "reactivationWindowEnabled", true);
+        ReflectionTestUtils.setField(authService, "reactivationWindowDays", 3);
+
+        User u = user("stillintime@example.com", "+919876500096"); // synthetic-ok
+        u.setStatus(User.STATUS_DEACTIVATED);
+        u.setDeactivatedAt(java.time.Instant.now().minus(java.time.Duration.ofDays(1)));
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("stillintime@example.com", "USER")).thenReturn(Optional.of(u));
+        stubSuccessfulAuthentication();
+
+        try {
+            authService.login(new LoginRequest("stillintime@example.com", "the-right-password", "USER"));
+        } catch (com.finora.exception.ApiException e) {
+            assertThat(e.getCode()).isEqualTo(com.finora.exception.ErrorCode.AUTH_ACCOUNT_DEACTIVATED);
+            verify(reactivationTokenRepository).save(any());
+            return;
+        }
+        throw new AssertionError("Expected login() to throw for a deactivated account");
+    }
+
+    /** The same enumeration-safety guarantee login_withSuspendedAccount_andAWrongPassword_...
+     *  pins for suspended accounts, mirrored for deactivated. */
+    @Test
+    void login_withDeactivatedAccount_andAWrongPassword_revealsNothingAboutTheAccount() {
+        User u = user("deactivated@example.com", "+919876500098"); // synthetic-ok
+        u.setStatus(User.STATUS_DEACTIVATED);
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("deactivated@example.com", "USER")).thenReturn(Optional.of(u));
+        when(authenticationManager.authenticate(any())).thenThrow(new BadCredentialsException("nope"));
+
+        try {
+            authService.login(new LoginRequest("deactivated@example.com", "wrong", "USER"));
+        } catch (Exception e) {
+            assertThat(e.getMessage()).isEqualTo("Invalid credentials");
+            verify(reactivationTokenRepository, never()).save(any());
+            return;
+        }
+        throw new AssertionError("Expected login() to throw for a wrong password");
+    }
+
     @Test
     void resolveEmailForLogin_returnsOriginalIdentifierUnchanged_whenNoPhoneNumberMatchesAnyVariant() {
         when(userRepository.findByPhoneNumberAndAccountScope(anyString(), anyString())).thenReturn(Optional.empty());
@@ -274,6 +384,65 @@ class AuthServiceLoginTest {
      * reads. Two failures is enough to lock when the configured max is 2, where the old hardcoded
      * default of 5 would have allowed three more attempts first.
      */
+    /** See UserAccountLifecycleService.requestDeletion's "no cancel link" product decision -- a
+     *  login() that let a PENDING_DELETION account back in would trivially undo it, since the real
+     *  passwordHash is still on the row until AccountPurgeSweepService's last purge step. Unlike
+     *  DEACTIVATED, there is no reactivation path: this is intentionally a dead end. */
+    @Test
+    void login_withPendingDeletionAccount_andTheRightPassword_rejectsWithNoReactivationPath() {
+        User u = user("pendingdeletion@example.com", "+919876500095"); // synthetic-ok
+        u.setStatus(User.STATUS_PENDING_DELETION);
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("pendingdeletion@example.com", "USER")).thenReturn(Optional.of(u));
+        stubSuccessfulAuthentication();
+
+        try {
+            authService.login(new LoginRequest("pendingdeletion@example.com", "the-right-password", "USER"));
+        } catch (Exception e) {
+            assertThat(e.getMessage()).contains("scheduled for deletion");
+            verify(reactivationTokenRepository, never()).save(any());
+            verify(refreshTokenService, never()).issue(any());
+            return;
+        }
+        throw new AssertionError("Expected login() to throw for a pending-deletion account");
+    }
+
+    @Test
+    void login_withPendingDeletionAccount_andAWrongPassword_revealsNothingAboutTheAccount() {
+        User u = user("pendingdeletion@example.com", "+919876500095"); // synthetic-ok
+        u.setStatus(User.STATUS_PENDING_DELETION);
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("pendingdeletion@example.com", "USER")).thenReturn(Optional.of(u));
+        when(authenticationManager.authenticate(any())).thenThrow(new BadCredentialsException("nope"));
+
+        try {
+            authService.login(new LoginRequest("pendingdeletion@example.com", "wrong", "USER"));
+        } catch (Exception e) {
+            assertThat(e.getMessage()).isEqualTo("Invalid credentials");
+            return;
+        }
+        throw new AssertionError("Expected login() to throw for a wrong password");
+    }
+
+    /** Realistically unreachable via login() in production (DELETED's passwordHash is a random
+     *  unusable value the purge itself writes), but this test drives the branch directly by
+     *  stubbing authentication to succeed anyway -- see AuthService.login()'s own doc comment on
+     *  why the check exists as an explicit branch regardless. */
+    @Test
+    void login_withDeletedAccount_isRejected() {
+        User u = user("deleted@example.com", "+919876500094"); // synthetic-ok
+        u.setStatus(User.STATUS_DELETED);
+        when(userRepository.findByEmailIgnoreCaseAndAccountScope("deleted@example.com", "USER")).thenReturn(Optional.of(u));
+        stubSuccessfulAuthentication();
+
+        try {
+            authService.login(new LoginRequest("deleted@example.com", "whatever", "USER"));
+        } catch (Exception e) {
+            assertThat(e.getMessage()).isEqualTo("This account no longer exists.");
+            verify(refreshTokenService, never()).issue(any());
+            return;
+        }
+        throw new AssertionError("Expected login() to throw for a deleted account");
+    }
+
     @Test
     void login_locksAccountAfterConfiguredMaxAttempts_notTheOldHardcodedDefault() {
         var settings = new com.finora.entity.PlatformSettings();

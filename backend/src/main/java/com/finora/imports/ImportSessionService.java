@@ -3,7 +3,6 @@ package com.finora.imports;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.finora.imports.storage.StatementContentService;
 import com.finora.dto.ImportDto.DetectedAccountInfo;
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.dto.ImportDto.StagedRow;
@@ -20,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -50,13 +50,10 @@ public class ImportSessionService {
 
     private final ImportSessionRepository importSessionRepository;
     private final ObjectMapper objectMapper;
-    private final StatementContentService statementContentService;
 
-    public ImportSessionService(ImportSessionRepository importSessionRepository, ObjectMapper objectMapper,
-                                 StatementContentService statementContentService) {
+    public ImportSessionService(ImportSessionRepository importSessionRepository, ObjectMapper objectMapper) {
         this.importSessionRepository = importSessionRepository;
         this.objectMapper = objectMapper;
-        this.statementContentService = statementContentService;
     }
 
     /**
@@ -153,17 +150,36 @@ public class ImportSessionService {
     public ImportSession createSession(UUID userId, String fileName, byte[] fileContent,
                                         List<StagedRow> rows, DetectedAccountInfo detectedAccount,
                                         DocumentContext documentContext) {
+        return createSession(userId, fileName, fileContent, rows, detectedAccount, documentContext, null);
+    }
+
+    /**
+     * Same as {@link #createSession(UUID, String, byte[], List, DetectedAccountInfo,
+     * DocumentContext)}, plus records where this session came from (C5-B) --
+     * {@link ImportSession#SOURCE_GMAIL} or null, per {@link ImportSession#getSource()}'s own doc
+     * comment. The only caller with a non-null value is {@code GmailStagingBridge}; every CSV/PDF
+     * caller keeps going through one of the two overloads above and this stays null for them,
+     * unchanged from before this parameter existed.
+     */
+    @Transactional
+    public ImportSession createSession(UUID userId, String fileName, byte[] fileContent,
+                                        List<StagedRow> rows, DetectedAccountInfo detectedAccount,
+                                        DocumentContext documentContext, String source) {
         // BH-047: the expired-session sweep used to run here, inside this transaction. It is a
         // scheduled job now -- see sweepExpiredSessions(). Housekeeping on other users' rows has
         // no business being part of this user's upload.
         ImportSession session = new ImportSession();
         session.setUserId(userId);
         session.setFileName(fileName);
+        // Temporary storage only -- this file does NOT go to R2 here. It stays in
+        // import_sessions.file_content until the user presses Import; see storeContent()'s own
+        // doc comment for why, and ImportService.persistSection for where R2 is actually reached.
         storeContent(session, fileContent);
         session.setStagedRowsJson(writeJson(rows));
         session.setDetectedAccountJson(writeJson(detectedAccount));
         session.setExpiresAt(Instant.now().plus(SESSION_TTL));
         applyDocumentContext(session, documentContext);
+        session.setSource(source);
         return importSessionRepository.save(session);
     }
 
@@ -192,6 +208,7 @@ public class ImportSessionService {
         ImportSession session = new ImportSession();
         session.setUserId(userId);
         session.setFileName(fileName);
+        // Temporary storage only -- see the single-section createSession's identical comment above.
         storeContent(session, fileContent);
         session.setSessionKind(ImportSession.KIND_MULTI_ACCOUNT);
         session.setSectionsJson(writeJson(sections));
@@ -201,28 +218,33 @@ public class ImportSessionService {
     }
 
     /**
-     * Writes the staged bytes wherever storage is configured to put them, and records the address.
+     * Writes the staged bytes to temporary (database) storage. ALWAYS -- staging never writes to
+     * object storage, regardless of whether a provider is configured.
      *
-     * Object storage is written FIRST, before the row is persisted -- the ordering the migration
-     * doc's §5.1 requires. A failure here throws, so no session row is created; the reverse (a row
-     * pointing at an object that was never written) cannot happen.
+     * <p><b>Storage review, lifecycle change.</b> This used to write through to object storage
+     * (via {@code StatementContentService.store}) at STAGING time whenever a provider was
+     * configured, on the reasoning that R2 was durable and the database copy was not (BH-025/
+     * BH-046). That put bytes in R2 for statements a user had merely uploaded and had not yet
+     * reviewed or confirmed -- most staged sessions ARE reviewed and confirmed, but the ones that
+     * aren't (an abandoned upload, a session left to expire) had already paid the R2 write for
+     * nothing. The product requirement is now explicit: a file stays in temporary storage only
+     * until the user presses Import. {@code import_sessions.file_content} already IS that temporary
+     * store -- self-cleaning via the existing 48h TTL sweep ({@link #sweepExpiredSessions}), scoped
+     * to the owning user, needing no new component. Object storage is now reached for the first
+     * time at CONFIRM, by {@code ImportService.persistSection} -- see that method's own doc comment
+     * for the compression this now also applies at that point.
      *
-     * BH-025/BH-046: fileContent is set ONLY when store() came back empty, i.e. no provider
-     * configured -- the session stays legacy, exactly as before this fix. When storage IS
-     * configured, fileContent is left null; the object is the only copy. This was previously an
-     * unconditional dual write, justified as temporary pending a Phase 3 backfill and a Phase 4
-     * column drop -- BH-046 found neither survived (Phase 3 was deleted for having nothing to
-     * migrate; Phase 4 never got a trigger), so the "temporary" duplication had become permanent.
-     * See docs/engineering/statement-storage-migration.md §5.0.
+     * <p>{@code contentHash} is still computed here, unconditionally -- it has nothing to do with
+     * object storage. {@link #findLiveSessionByContentHash} deduplicates the staging path on it
+     * (V79 / distributed-resilience-patterns-audit-2026-08-14.md §3), and it is the SAME value the
+     * confirmed {@code StatementImport} row will carry, since both hash the same original bytes.
+     * Computing it directly via {@link com.finora.imports.storage.ContentAddress#hashOf} costs one
+     * SHA-256 over bytes already fully in memory -- negligible next to the parse this method's
+     * caller just ran.
      */
     private void storeContent(ImportSession session, byte[] fileContent) {
-        java.util.Optional<com.finora.imports.storage.ContentAddress> address = statementContentService.store(fileContent);
-        if (address.isPresent()) {
-            session.setContentHash(address.get().hash());
-            session.setObjectKey(address.get().key());
-        } else {
-            session.setFileContent(fileContent);
-        }
+        session.setFileContent(fileContent);
+        session.setContentHash(com.finora.imports.storage.ContentAddress.hashOf(fileContent));
     }
 
     private void applyDocumentContext(ImportSession session, DocumentContext documentContext) {
@@ -313,6 +335,45 @@ public class ImportSessionService {
                 yield false;
             }
         };
+    }
+
+    /**
+     * This user's own live (STAGED, unexpired) session for this exact document, if one exists --
+     * the app-level half of V79's duplicate-upload protection for the synchronous stage path
+     * (POST /csv/stage, /pdf/stage). {@code ImportService} calls this BEFORE parsing, not after,
+     * because the expensive part of a double-clicked upload or a retried request is the parse
+     * itself; a check that only ran at session-creation time would still pay for the second parse
+     * even though it correctly stopped a second row from being written.
+     *
+     * <p>Not the correctness guarantee -- this is a read followed by a possible write, so two
+     * genuinely simultaneous uploads of the same file can both see no match and both proceed to
+     * parse. {@code idx_import_sessions_live_content} (V79) is what actually decides then: the
+     * loser's {@code createSession}/{@code createMultiSection} INSERT hits the constraint and
+     * {@code GlobalExceptionHandler} answers a {@code DataIntegrityViolationException} as 409, the
+     * same shape V74 already established for {@code import_jobs}.
+     *
+     * <p>An expired match is deleted here rather than returned as a block. The unique index this
+     * method serves cannot express "and not expired" -- a partial index predicate must be
+     * immutable, so it cannot reference {@code now()} -- which means a STAGED session that expired
+     * but has not yet been swept ({@link #sweepExpiredSessions} runs on a schedule, not instantly)
+     * would otherwise make a genuinely new upload of the same statement fail with a false
+     * duplicate. Deleting it here is a strict subset of what the scheduled sweep already does to
+     * the same row; this just does it eagerly, on the one request that actually needs the row
+     * gone right now.
+     */
+    @Transactional
+    public Optional<ImportSession> findLiveSessionByContentHash(UUID userId, String contentHash) {
+        Optional<ImportSession> match = importSessionRepository
+                .findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                        userId, contentHash, ImportSession.STATUS_STAGED);
+        if (match.isEmpty()) return Optional.empty();
+
+        ImportSession session = match.get();
+        if (session.getExpiresAt().isAfter(Instant.now())) {
+            return Optional.of(session);
+        }
+        importSessionRepository.delete(session);
+        return Optional.empty();
     }
 
     /**

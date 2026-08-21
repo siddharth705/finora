@@ -30,7 +30,7 @@ export function WhyUpgrade() {
         blurb="Start with the core experience, free. As your financial life gets more complicated, Finora is built to get more capable — not to start charging for what already worked."
       />
 
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 max-w-5xl mx-auto">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-5xl mx-auto">
         {PLANS.map((plan, i) => {
           const live = plan.availability === 'available';
           return (

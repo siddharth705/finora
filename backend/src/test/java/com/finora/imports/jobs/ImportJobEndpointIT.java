@@ -117,6 +117,37 @@ class ImportJobEndpointIT extends AbstractIntegrationTest {
                 .isEqualTo("/api/v1/import/jobs/" + data.get("jobId").asText());
     }
 
+    /**
+     * Guards docs/architecture/data/statement-storage-migration.md §0.2's decision: this path
+     * writes through {@code StatementStorage} directly, never {@code StatementContentService} --
+     * the only place that compresses -- so the object it creates must be byte-for-byte what was
+     * uploaded, not gzipped. Checked two ways: the retrieved bytes equal the original exactly, and
+     * they do not even start with GZIP's magic number, so a future change that silently routed this
+     * path through compression without also updating {@link ImportJob#getCompressionType()} would
+     * fail here rather than surface later as {@code StatementContentService.read} trying to gunzip
+     * bytes whose row claims {@code NONE}.
+     */
+    @Test
+    void theStoredObjectIsUncompressed() {
+        User user = user();
+        ResponseEntity<String> accepted = restTemplate.exchange(
+                "/api/v1/import/jobs", HttpMethod.POST, upload(user, "statement.csv", CSV), String.class);
+        UUID jobId = UUID.fromString(read(accepted).get("data").get("jobId").asText());
+
+        ImportJob job = jobRepository.findById(jobId).orElseThrow();
+        assertThat(job.getCompressionType())
+                .isEqualTo(com.finora.imports.storage.CompressionType.NONE);
+
+        byte[] stored = storage.retrieve(
+                new com.finora.imports.storage.ContentAddress(job.getContentHash(), job.getObjectKey()));
+        byte[] uploaded = CSV.getBytes(StandardCharsets.UTF_8);
+
+        assertThat(stored).isEqualTo(uploaded);
+        assertThat(stored[0] & 0xFF).as("not GZIP's magic number").isNotEqualTo(0x1f);
+    }
+
+    @Autowired private com.finora.imports.storage.StatementStorage storage;
+
     @Test
     void theJobIsDurableBeforeTheResponseIsSent() {
         // The point of the whole design: if the process died right now, the work would still happen.
@@ -148,6 +179,9 @@ class ImportJobEndpointIT extends AbstractIntegrationTest {
         assertThat(progress.getStatusCode()).isEqualTo(HttpStatus.OK);
         JsonNode data = read(progress).get("data");
         assertThat(data.get("status").asText()).isEqualTo("QUEUED");
+        assertThat(data.get("userStatus").asText())
+                .as("Sprint 4 item 20a's five-state mapping, additive alongside the raw status")
+                .isEqualTo("PROCESSING");
         assertThat(data.get("fileName").asText())
                 .as("Sprint 3.2's import detail page needs this to identify the import -- nothing "
                         + "else in the Progress response names what was uploaded")
@@ -248,6 +282,29 @@ class ImportJobEndpointIT extends AbstractIntegrationTest {
 
         JsonNode data = read(response).get("data");
         assertThat(data).hasSize(1);
+    }
+
+    /**
+     * BH-008. {@code limit=0} used to reach {@code PageRequest.of(0, 0)}, which Spring Data
+     * rejects with {@code IllegalArgumentException} -- unhandled, so a routine bad query
+     * parameter 500'd rather than being clamped like every other paginated endpoint. Fixed via
+     * {@code PageBounds.safeSize} in {@code ImportJobService.recent}, backstopped by
+     * {@code GlobalExceptionHandler}'s class-wide {@code IllegalArgumentException} handler for
+     * whatever parameter nobody thought to clamp next.
+     */
+    @Test
+    void recentWithLimitZeroIsClampedNotRejected() {
+        User mine = user();
+        restTemplate.exchange("/api/v1/import/jobs", HttpMethod.POST,
+                upload(mine, "mine.csv", CSV), String.class);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/import/jobs?limit=0", HttpMethod.GET, new HttpEntity<>(bearerFor(mine)), String.class);
+
+        assertThat(response.getStatusCode())
+                .as("a bad limit must be clamped, not surfaced as a server fault")
+                .isEqualTo(HttpStatus.OK);
+        assertThat(read(response).get("data")).hasSize(1);
     }
 
     /**
@@ -473,6 +530,7 @@ class ImportJobEndpointIT extends AbstractIntegrationTest {
         assertThat(timeline.getStatusCode()).isEqualTo(HttpStatus.OK);
         JsonNode data = read(timeline).get("data");
         assertThat(data.get("status").asText()).isEqualTo("COMPLETED");
+        assertThat(data.get("userStatus").asText()).isEqualTo("COMPLETED");
         assertThat(data.get("failureCode").isNull())
                 .as("a completed job has nothing to explain")
                 .isTrue();
@@ -507,7 +565,10 @@ class ImportJobEndpointIT extends AbstractIntegrationTest {
      * unit-level in {@code ImportJobTest}/{@code ImportJobWorkerTest}) is trusted here, and this
      * test instead proves the piece those don't cover -- that the controller/service/DTO wiring
      * correctly reads a FAILED job's stored code back out translated to the customer-facing wire
-     * code the frontend's failure-UX contract is keyed by.
+     * code the frontend's failure-UX contract is keyed by, and (Sprint 4 item 20a) that the same
+     * stored code correctly drives {@code userStatus} to {@code ACTION_REQUIRED} rather than
+     * plain {@code FAILED} -- IMPORT_NO_HEADER_DETECTED is one of the five codes {@code
+     * ErrorCode}'s table names, chosen here specifically because it is not.
      */
     @Test
     void aFailedJobsTimelineCarriesTheTranslatedFailureCode() {
@@ -531,6 +592,33 @@ class ImportJobEndpointIT extends AbstractIntegrationTest {
         assertThat(data.get("failureCode").asText())
                 .as("translated to the wire code, not the raw stored ErrorCode enum name")
                 .isEqualTo("IMPORT_001");
+        assertThat(data.get("userStatus").asText())
+                .as("a user-actionable failure, not a plain dead end")
+                .isEqualTo("ACTION_REQUIRED");
+    }
+
+    /**
+     * The other half of the same wiring: a FAILED job whose code has no concrete user fix must
+     * stay plain {@code FAILED} in {@code userStatus}, not be guessed into {@code ACTION_REQUIRED}.
+     */
+    @Test
+    void aFailedJobsTimelineWithANonActionableCode_keepsUserStatusFailed() {
+        User user = user();
+        ResponseEntity<String> accepted = restTemplate.exchange(
+                "/api/v1/import/jobs", HttpMethod.POST, upload(user, "statement.csv", CSV), String.class);
+        UUID jobId = UUID.fromString(read(accepted).get("data").get("jobId").asText());
+
+        ImportJob job = jobRepository.findById(jobId).orElseThrow();
+        job.markClaimed("worker", Instant.now());
+        job.recordFailure("ApiException: corrupt PDF", "IMPORT_CORRUPT_PDF",
+                com.finora.exception.ErrorCode.RetryPolicy.FAIL_FAST, Instant.now());
+        jobRepository.save(job);
+
+        ResponseEntity<String> timeline = restTemplate.exchange(
+                "/api/v1/import/jobs/" + jobId + "/timeline", HttpMethod.GET,
+                new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(read(timeline).get("data").get("userStatus").asText()).isEqualTo("FAILED");
     }
 
     /**

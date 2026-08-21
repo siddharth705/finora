@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Search, Bell, HelpCircle, Sun, Moon, Monitor, Check,
-  Settings as SettingsIcon, Keyboard, LogOut, Mail, X, BellOff,
+  Settings as SettingsIcon, Keyboard, LogOut, Mail, X, BellOff, Plus,
 } from 'lucide-react';
 import { useTheme, type ThemeSetting } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { dashboardApi } from '../api/endpoints';
 import { safeStorage } from '../lib/safeStorage';
 import { SUPPORT_MAILTO } from '../lib/contact';
+import { AddTransactionModal } from './AddTransactionModal';
 
 // Notifications are recomputed fresh from the DB on every /dashboard/summary call (see
 // DashboardService.buildNotifications) rather than being persisted rows with stable IDs, so
@@ -50,11 +51,13 @@ type OpenMenu = 'theme' | 'notifications' | 'help' | null;
 
 export function TopBar() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { fullName, email, logout } = useAuth();
   const { theme, resolvedTheme, setTheme } = useTheme();
 
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
   const [readIds, setReadIds] = useState<Set<string>>(() => loadReadSet(email));
   const [searchValue, setSearchValue] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
@@ -134,6 +137,17 @@ export function TopBar() {
         </span>
       </div>
       <div className="flex items-center gap-3 flex-shrink-0">
+        {/* Global entry point for AddTransactionModal -- previously only reachable from
+            Dashboard's own empty-state cards, so anywhere else in the app had no way to add one
+            without navigating back to Dashboard first. */}
+        <button
+          type="button"
+          onClick={() => setShowAddModal(true)}
+          className="flex items-center gap-1.5 bg-primary text-white hover:bg-primary-dark rounded-lg px-4 py-2.5 text-sm font-semibold"
+        >
+          <Plus size={16} /> Add Transaction
+        </button>
+
         {/* Theme */}
         <div className="relative">
           <button
@@ -279,6 +293,23 @@ export function TopBar() {
       </div>
 
       {shortcutsOpen && <ShortcutsModal onClose={() => setShortcutsOpen(false)} />}
+
+      {showAddModal && (
+        <AddTransactionModal
+          onClose={() => setShowAddModal(false)}
+          onSaved={() => {
+            setShowAddModal(false);
+            // Broad, not scoped to Dashboard's own query keys -- this button is reachable from
+            // any /app/* page (Ledger, Reports, ...), each with its own view of transaction data
+            // under its own query key. ['transactions'] as a prefix catches Ledger's
+            // ['transactions', filters] regardless of which filters are active.
+            void queryClient.invalidateQueries({ queryKey: ['recent-transactions'] });
+            void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+            void queryClient.invalidateQueries({ queryKey: ['accounts'] });
+            void queryClient.invalidateQueries({ queryKey: ['transactions'] });
+          }}
+        />
+      )}
     </div>
   );
 }

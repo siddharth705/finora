@@ -43,6 +43,12 @@ public final class ImportJobDto {
      * <p>{@code error} carries the job's {@code last_error} only once the job has actually FAILED.
      * A job that failed once and is retrying is not something to alarm the user about -- it is the
      * system working -- so a transient error is deliberately not surfaced mid-flight.
+     *
+     * <p>{@code status} stays the raw {@link ImportJob.Status} name -- unchanged, since the import
+     * timeline UI needs that granularity. {@code userStatus} is additive: Sprint 4 item 20a's
+     * five-state mapping ({@link UserFacingImportStatus}), for a caller that wants "processing /
+     * completed / action required / failed / cancelled" without re-deriving it from the raw value
+     * and {@code ErrorCode} metadata itself.
      */
     public record Progress(
             UUID jobId,
@@ -55,7 +61,11 @@ public final class ImportJobDto {
             Instant finishedAt,
             UUID importSessionId,
             String error,
-            String correlationId
+            String correlationId,
+            // Appended, not inserted alongside `status` above -- records are positional, and a new
+            // field belongs at the end so a future positional construction (today there are none;
+            // everything goes through `of()`) can't silently shift every argument after it.
+            UserFacingImportStatus userStatus
     ) {
         public static Progress of(ImportJob job) {
             return new Progress(
@@ -71,7 +81,8 @@ public final class ImportJobDto {
                     job.getStatus() == ImportJob.Status.FAILED ? job.getLastError() : null,
                     // Given to the client so a support conversation can start from an id that ties
                     // together the worker's logs, its audit rows and any Sentry event.
-                    job.getCorrelationId());
+                    job.getCorrelationId(),
+                    UserFacingImportStatus.of(job.getStatus(), job.getFailureCode()));
         }
     }
 
@@ -101,14 +112,22 @@ public final class ImportJobDto {
      * the job has FAILED, same rule {@link Progress#error} already follows: a job that failed once
      * and is retrying should not alarm the user with a reason mid-flight for a problem the system
      * may still resolve on its own.
+     *
+     * <p>{@code status} stays the raw {@link ImportJob.Status} name, same reasoning as {@link
+     * Progress#status}; {@code userStatus} is the same additive Sprint 4 item 20a mapping.
      */
-    public record Timeline(UUID jobId, String status, String failureCode, List<TimelineStage> stages) {
+    public record Timeline(
+            UUID jobId, String status, String failureCode, List<TimelineStage> stages,
+            // Appended, same reasoning as Progress's own trailing userStatus field above.
+            UserFacingImportStatus userStatus
+    ) {
         public static Timeline of(ImportJob job, List<com.finora.imports.jobs.ImportJobStage> rows) {
             String failureCode = job.getStatus() == ImportJob.Status.FAILED
                     ? ErrorCode.wireCodeOrNull(job.getFailureCode())
                     : null;
-            return new Timeline(job.getId(), job.getStatus().name(), failureCode,
-                    rows.stream().map(TimelineStage::of).toList());
+            return new Timeline(job.getId(), job.getStatus().name(),
+                    failureCode, rows.stream().map(TimelineStage::of).toList(),
+                    UserFacingImportStatus.of(job.getStatus(), job.getFailureCode()));
         }
     }
 }

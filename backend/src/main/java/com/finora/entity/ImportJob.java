@@ -36,10 +36,20 @@ import java.util.UUID;
  * user-visible financial data exists, so a retry must be idempotent -- which is Phase 2 of the
  * design and is why {@link #isCancellable()} stops at that line rather than being a general
  * "not finished yet" check.
+ *
+ * <h2>{@link com.finora.imports.storage.StoredStatement}</h2>
+ *
+ * <p>BH-045: implemented so {@link com.finora.imports.storage.StatementContentService#read} can
+ * be the ONE path that reads a job's bytes back from storage, the same as every other statement
+ * reader -- {@link #getFileContent()} always returns {@code null} because a job never carries
+ * bytes at all (see {@link com.finora.imports.jobs.ImportJobWorker}'s own doc on why: "a job
+ * carries an address, never the bytes"), which is exactly what {@code StoredStatement}'s "legacy"
+ * fallback state means for a row with no database-held content: correctly forces every read
+ * through the addressed (content-hash-verified) path, never a silent no-op.
  */
 @Entity
 @Table(name = "import_jobs")
-public class ImportJob {
+public class ImportJob implements com.finora.imports.storage.StoredStatement {
 
     /**
      * The lifecycle, in order.
@@ -467,4 +477,23 @@ public class ImportJob {
     public Instant getCreatedAt() { return createdAt; }
     public Instant getStartedAt() { return startedAt; }
     public Instant getFinishedAt() { return finishedAt; }
+
+    /** {@link com.finora.imports.storage.StoredStatement}: always null, see this class's own doc
+     *  on why -- a job carries an address, never the bytes. */
+    @Override
+    public byte[] getFileContent() { return null; }
+
+    /** Always {@code NONE}. {@link com.finora.imports.jobs.ImportJobService#accept} writes to
+     *  {@code StatementStorage} directly -- not through {@code StatementContentService.store}, the
+     *  only place that compresses -- so a job's object is never gzipped. Returning anything else
+     *  here would make {@code StatementContentService.read} try to decompress bytes that were
+     *  never compressed. A deliberate, permanent exemption, not a gap -- see
+     *  docs/architecture/data/statement-storage-migration.md §0.2 for why (routing this path
+     *  through compression as it exists today would undo BH-018's streaming-upload fix), and
+     *  {@code ImportJobTest.compressionTypeIsAlwaysNone_regardlessOfJobState} /
+     *  {@code ImportJobEndpointIT.theStoredObjectIsUncompressed} for the tests that guard it. */
+    @Override
+    public com.finora.imports.storage.CompressionType getCompressionType() {
+        return com.finora.imports.storage.CompressionType.NONE;
+    }
 }

@@ -40,6 +40,7 @@ public class PasswordChangeService {
     private final UserRepository userRepository;
     private final PasswordChangeSessionRepository sessionRepository;
     private final PasswordEncoder passwordEncoder;
+    private final GoogleReauthVerifier googleReauthVerifier;
     private final PhoneVerificationProvider phoneVerificationProvider;
     private final RefreshTokenService refreshTokenService;
     private final AuditService auditService;
@@ -47,12 +48,14 @@ public class PasswordChangeService {
     private final PasswordHistoryService passwordHistoryService;
 
     public PasswordChangeService(UserRepository userRepository, PasswordChangeSessionRepository sessionRepository,
-                                  PasswordEncoder passwordEncoder, PhoneVerificationProvider phoneVerificationProvider,
+                                  PasswordEncoder passwordEncoder, GoogleReauthVerifier googleReauthVerifier,
+                                  PhoneVerificationProvider phoneVerificationProvider,
                                   RefreshTokenService refreshTokenService, AuditService auditService,
                                   EmailProvider emailProvider, PasswordHistoryService passwordHistoryService) {
         this.userRepository = userRepository;
         this.sessionRepository = sessionRepository;
         this.passwordEncoder = passwordEncoder;
+        this.googleReauthVerifier = googleReauthVerifier;
         this.phoneVerificationProvider = phoneVerificationProvider;
         this.refreshTokenService = refreshTokenService;
         this.auditService = auditService;
@@ -72,23 +75,21 @@ public class PasswordChangeService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
 
-        // Same check AuthService already applies at login and password reset -- a suspended
-        // account's own still-valid JWT (issued before suspension took effect; JWTs aren't
-        // revoked on suspension) must not be usable to change the password out from under an
-        // account an admin has deliberately locked out.
-        if (user.isSuspended()) {
-            throw new ApiException(HttpStatus.FORBIDDEN, "This account has been suspended.");
-        }
-        if (!passwordEncoder.matches(request.currentPassword(), user.getPasswordHash())) {
+        requireActiveAccount(user);
+        if (!googleReauthVerifier.verify(user, request.currentPassword(), request.googleIdToken())) {
             auditService.record(userId, "INVALID_CURRENT_PASSWORD", "User", userId);
-            throw new ApiException(HttpStatus.BAD_REQUEST, "Current password is incorrect.");
+            throw new ApiException(HttpStatus.BAD_REQUEST, user.isGoogleAccount()
+                    ? "We couldn't verify your Google account. Please try again."
+                    : "Current password is incorrect.");
         }
         if (user.getPhoneNumber() == null || user.getPhoneNumber().isBlank()) {
-            // Shouldn't be reachable in practice -- phone number is required at registration --
-            // but User.phoneNumber has no NOT NULL constraint at the DB level, same guard
-            // AuthService.resolveResetPasswordPhone already applies for the identical reason.
+            // Reachable today only for a Google Sign-In account that verified above but has not
+            // yet gone through VerifyPhone.tsx's own "Add your phone number" flow -- every other
+            // account has a phone number required at registration. See
+            // AuthService.resolveResetPasswordPhone for the identical guard on the reset-password
+            // path.
             throw new ApiException(HttpStatus.BAD_REQUEST,
-                    "This account has no phone number on file. Contact an administrator for help changing your password.");
+                    "Add a phone number to your account before changing your password or deleting your account.");
         }
 
         Instant now = Instant.now();
@@ -117,6 +118,13 @@ public class PasswordChangeService {
                 "This step has already been completed, or the session is no longer valid. Please start again.");
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
+        // Bug fix: only start() re-checked account status, so a session opened while ACTIVE could
+        // still run to completion after the account was suspended/deactivated mid-flow (by an
+        // admin, by the user on another device, or by a race with an attacker who has captured the
+        // access token -- see requireActiveAccount()'s own doc comment). Re-checked at every step
+        // for the same reason start() checks it at all: the access token already in the caller's
+        // hand keeps working for up to 15 minutes past the status change.
+        requireActiveAccount(user);
 
         String verifiedPhone = phoneVerificationProvider.verifyAndGetPhoneNumber(request.firebaseIdToken());
         if (!phoneNumbersMatch(verifiedPhone, user.getPhoneNumber())) {
@@ -170,6 +178,11 @@ public class PasswordChangeService {
 
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
+        // See verifyOtp()'s identical call for why every step re-checks this, not just start().
+        // Deliberately after the COMPLETED-session idempotency check above, not before: a session
+        // that already succeeded must keep returning its original outcome even if the account's
+        // status changed afterward -- this only gates a completion that hasn't happened yet.
+        requireActiveAccount(user);
 
         if (passwordEncoder.matches(request.newPassword(), user.getPasswordHash())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "New password must be different from your current password.");
@@ -178,6 +191,14 @@ public class PasswordChangeService {
 
         Instant now = Instant.now();
         user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+        // Review catch: a GOOGLE-method account can reach this step by verifying with a fresh
+        // Google credential instead of a current password (see GoogleReauthVerifier) -- if it
+        // does, it now has a real, user-chosen password for the first time. Without this, the
+        // account would be stuck as GOOGLE forever: every future re-auth (this same flow,
+        // deactivate, delete, export) would keep demanding a fresh Google Sign-In and ignore the
+        // password just set here. Unconditional, not just for Google accounts -- an already-
+        // PASSWORD account setting a new password is still, correctly, a PASSWORD account.
+        user.setSignInMethod(User.SIGN_IN_METHOD_PASSWORD);
         user.setUpdatedAt(now);
         user.setPasswordChangedAt(now);
         userRepository.save(user);
@@ -210,6 +231,52 @@ public class PasswordChangeService {
         });
 
         return new CompleteResponse(completeMessage(request.signOutOtherDevices()), request.signOutOtherDevices());
+    }
+
+    /** Shared by all three steps -- a suspended/deactivated account's own still-valid JWT (issued
+     *  before the status change; JWTs aren't revoked, only the refresh token that would renew
+     *  them) must not be usable to change the password out from under an account that is locked
+     *  out or that its own owner just stepped away from. Specific per status, not a generic
+     *  "inactive" message -- unlike login(), this endpoint is authenticated (the caller already
+     *  holds a valid JWT for this exact account), so naming which state applies isn't an
+     *  enumeration risk the way it would be on a public endpoint. */
+    private void requireActiveAccount(User user) {
+        if (user.isSuspended()) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "This account has been suspended.");
+        }
+        if (user.isDeactivated()) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "This account is deactivated.");
+        }
+        if (user.isPendingDeletion() || user.isDeleted()) {
+            // Without this, a PENDING_DELETION account's own still-valid JWT could open a real
+            // password-change flow in the brief window before its own purge actually runs (or,
+            // in the crash-recovery case, before the sweep retries a purge that failed) --
+            // irrelevant to the deletion itself (that's gated by consumeForAccountDeletion below,
+            // not this method), but a password change has no reason to be reachable for an
+            // account already leaving.
+            throw new ApiException(HttpStatus.FORBIDDEN, "This account is scheduled for deletion.");
+        }
+    }
+
+    /** The re-auth gate for UserAccountLifecycleService.requestDeletion -- proves current-password
+     *  + OTP were verified in THIS session (start() already checked the password to open it;
+     *  verifyOtp() already confirmed the phone), then consumes it into a distinct terminal state
+     *  so it can never be replayed into complete() and mistaken for a real password change. Does
+     *  NOT re-check currentPassword: the session itself is that proof, same as complete() never
+     *  re-asks for it either.
+     *
+     *  <p>No change needed to resolveSession()/loadActiveSession() for this to be safe: a stray
+     *  replay of a DELETION_CONFIRMED session into verifyOtp() or complete() is rejected by each
+     *  method's own required-status check (STARTED / OTP_VERIFIED respectively) exactly the same
+     *  way any other wrong-state session already is -- DELETION_CONFIRMED was never a state either
+     *  method's idempotency branches special-case, so there's nothing for it to be mistaken for. */
+    @Transactional(noRollbackFor = ApiException.class)
+    public void consumeForAccountDeletion(UUID userId, String rawSessionId) {
+        PasswordChangeSession session = loadActiveSession(userId, rawSessionId, PasswordChangeSession.Status.OTP_VERIFIED,
+                "Verify the code sent to your phone before continuing.");
+        session.setStatus(PasswordChangeSession.Status.DELETION_CONFIRMED);
+        session.setCompletedAt(Instant.now());
+        sessionRepository.save(session);
     }
 
     private String completeMessage(boolean signedOutOtherDevices) {

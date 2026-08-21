@@ -6,12 +6,69 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 public interface StatementImportRepository extends JpaRepository<StatementImport, UUID> {
+
+    /**
+     * Every column any caller of this repository actually needs for a list/summary view,
+     * deliberately excluding {@code fileContent}.
+     *
+     * <p>Bug fix (Phase C review, widened in a later pass): {@code @Basic(fetch = FetchType.LAZY)}
+     * on {@code fileContent} is a no-op without Hibernate bytecode enhancement, which this build
+     * does not configure -- confirmed by this same class's own {@code findLatestPeriodEndForAccount}
+     * comment above, documenting the identical eager-load behavior for this exact field. The plain
+     * entity-returning finder this projection replaces -- {@code findByUserIdOrderByImportedAtDesc}
+     * -- therefore pulled every legacy (database-stored) statement's full raw bytes into heap on
+     * every list/summary read that reached it: {@code DataExportService.buildBundle} (fixed
+     * first), then, once the same bug was found still live in five more callers in the same review
+     * pass, {@code AccountService.listForUser} (the hottest of the six -- every account-list page
+     * view), {@code StatementImportService.listGroupedByAccount}, {@code
+     * AnalyticsService.importStatistics}, and {@code AccountPurgeSweepService.purgeOne}.
+     * {@code CapabilityCoverageService.forUser} needed different columns entirely (see {@link
+     * CapabilityData}), and {@code WorkspaceDashboardService.summarize} needed no columns at all
+     * (see {@link #countByUserId}), so those two moved to their own query instead of this one.
+     *
+     * <p>The entity-returning finder was deleted once its last caller moved off it -- a
+     * fileContent-eager finder with zero remaining callers is exactly the kind of ready-made
+     * footgun this class's own removed {@code findByIdIncludingDeleted} note already warns about
+     * (see the bottom of this file). Restore it from git history if a genuine need for the full
+     * entity ever appears.
+     *
+     * <p>This projection selects only the columns {@code StatementImportDto.Summary}, export/
+     * statement-history ZIP-entry naming, and per-account statement/import-date/transaction-count
+     * rollups actually use, so the generated SQL never touches {@code file_content} at all -- the
+     * one reliable way to keep it out of memory here, since the annotation alone does not.
+     */
+    interface StatementMetadata {
+        UUID getId();
+        UUID getAccountId();
+        String getFileName();
+        LocalDate getStatementPeriodStart();
+        LocalDate getStatementPeriodEnd();
+        BigDecimal getOpeningBalance();
+        BigDecimal getClosingBalance();
+        int getTransactionsImported();
+        int getTransactionsSkipped();
+        Instant getImportedAt();
+    }
+
+    @Query("""
+           SELECT s.id AS id, s.accountId AS accountId, s.fileName AS fileName,
+                  s.statementPeriodStart AS statementPeriodStart, s.statementPeriodEnd AS statementPeriodEnd,
+                  s.openingBalance AS openingBalance, s.closingBalance AS closingBalance,
+                  s.transactionsImported AS transactionsImported, s.transactionsSkipped AS transactionsSkipped,
+                  s.importedAt AS importedAt
+             FROM StatementImport s
+            WHERE s.userId = :userId
+            ORDER BY s.importedAt DESC
+           """)
+    List<StatementMetadata> findMetadataByUserIdOrderByImportedAtDesc(@Param("userId") UUID userId);
 
     /**
      * The latest statement period end already on file for this account, ignoring one row.
@@ -37,7 +94,36 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
                                                                  @Param("accountId") UUID accountId,
                                                                  @Param("excludingId") UUID excludingId);
 
-    List<StatementImport> findByUserIdOrderByImportedAtDesc(UUID userId);
+    /** {@code WorkspaceDashboardService.summarize}'s "N statements imported" tile only ever called
+     *  {@code .size()} on the entity-returning finder's full result -- a database COUNT is
+     *  strictly better than fetching (and projecting) any columns at all for that, {@code
+     *  fileContent} included. See {@link StatementMetadata}'s own doc comment for the rest of that
+     *  finder's removal. */
+    long countByUserId(UUID userId);
+
+    /**
+     * The {@code id}/{@code activatedCapabilitiesJson}/{@code unparseableSummaryJson} columns
+     * {@code CapabilityCoverageService.forUser} actually reads, deliberately excluding {@code
+     * fileContent} -- same bug, same fix, as {@link StatementMetadata}, but a disjoint set of
+     * columns: coverage aggregation has no use for a statement's account, balances or file name,
+     * and {@link StatementMetadata} has no use for either JSON column here. {@code id} is kept
+     * (unlike {@link StatementMetadata}, which never needed it) purely so a malformed row can still
+     * be logged by which import produced it -- see {@code CapabilityCoverageService
+     * .capabilitiesOf}/{@code unparseableOf}.
+     */
+    interface CapabilityData {
+        UUID getId();
+        String getActivatedCapabilitiesJson();
+        String getUnparseableSummaryJson();
+    }
+
+    @Query("""
+           SELECT s.id AS id, s.activatedCapabilitiesJson AS activatedCapabilitiesJson,
+                  s.unparseableSummaryJson AS unparseableSummaryJson
+             FROM StatementImport s
+            WHERE s.userId = :userId
+           """)
+    List<CapabilityData> findCapabilityDataByUserId(@Param("userId") UUID userId);
 
     /**
      * The import an asynchronous job produced, if it produced one.
@@ -49,14 +135,22 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
      */
     Optional<StatementImport> findByImportJobId(UUID importJobId);
 
-    // Admin Portal, Operational Dashboard + Statement Import health provider -- imports.status
-    // never actually leaves "COMPLETED" anywhere in this codebase today (CsvImportService/
-    // StatementImportService both throw synchronously on a parse failure rather than persisting
-    // a FAILED row), so "failed imports" has no real signal to report yet. transactionsSkipped
-    // is the honest substitute: real evidence an import didn't cleanly account for every row,
-    // without claiming a "failure" this pipeline can't actually detect. See
+    // Admin Portal, Operational Dashboard + Statement Import health provider -- a statement_imports
+    // row can only ever represent a completed import (CsvImportService/StatementImportService both
+    // throw synchronously on a parse failure rather than persisting a row for it; V81 removed the
+    // status column this table briefly carried for exactly that reason -- it could never hold
+    // anything else), so "failed imports" has no real signal to report from this table.
+    // transactionsSkipped is the honest substitute: real evidence an import didn't cleanly account
+    // for every row, without claiming a "failure" this pipeline can't actually detect. See
     // StatementImportHealthProvider's class comment for how this feeds the health panel.
     long countByImportedAtAfter(Instant threshold);
+
+    /** D-27 PR3-D: the "first import" activation-funnel stage -- how many distinct users have
+     *  EVER completed a statement import. Native, bypassing {@code @SQLRestriction} the same way
+     *  as {@code BudgetRepository.countDistinctUsersEverActivated} -- see that method's own doc
+     *  comment for why a growth milestone must survive the import later being deleted. */
+    @Query(value = "SELECT COUNT(DISTINCT user_id) FROM statement_imports", nativeQuery = true)
+    long countDistinctUsersEverActivated();
 
     @Query("SELECT COUNT(s) FROM StatementImport s WHERE s.importedAt >= :threshold AND s.transactionsSkipped > 0")
     long countWithSkippedRowsAfter(@Param("threshold") Instant threshold);

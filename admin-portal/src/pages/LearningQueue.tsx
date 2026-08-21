@@ -5,6 +5,7 @@ import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
 import { DataTable, type DataTableColumn } from '../components/DataTable';
 import { adminLearningQueueApi } from '../api/endpoints';
+import { formatWhen } from '../lib/formatWhen';
 import type { LearningQueueEvent } from '../types';
 
 /**
@@ -38,13 +39,6 @@ function statusTone(status: LearningQueueEvent['status']) {
     default:
       return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
   }
-}
-
-/** Absolute timestamp, not "3 hours ago". An operator correlating a queue entry against a
- *  deploy or an incident timeline needs a value they can compare to a log line. */
-function formatWhen(value: string | null) {
-  if (!value) return '—';
-  return new Date(value).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 function LearningQueueContent() {

@@ -193,13 +193,16 @@ class WrappedHeaderOnAScoringLinePdfTableLocatorTest {
     private static Map<String, int[]> corpus() {
         Map<String, int[]> expected = new LinkedHashMap<>();
         expected.put("au-credit-card-statement", new int[]{3, 6});
-        expected.put("axis-credit-card-statement", new int[]{2, 113});
+        // {2, 113} before PdfTableLocator.looksLikePaymentSummaryPanel: the dropped section was a
+        // misdetected payment-summary panel (2 rows), not fine print -- 111 real rows survive.
+        expected.put("axis-credit-card-statement", new int[]{1, 111});
         expected.put("bob-repeated-account-banner", new int[]{1, 58});
         expected.put("bob-savings-ledger-validation", new int[]{1, 58});
         expected.put("canara-savings-ledger-validation", new int[]{1, 60});
         expected.put("central-bank-savings-ledger-validation", new int[]{1, 223}); // was {1, 224}
         expected.put("hdfc-composite-deposit-schedules", new int[]{4, 102});
-        expected.put("hdfc-credit-card-ledger-validation", new int[]{2, 6});
+        // {2, 6} before looksLikePaymentSummaryPanel: same panel shape, 2 rows dropped.
+        expected.put("hdfc-credit-card-ledger-validation", new int[]{1, 4});
         expected.put("hdfc-savings-ledger-validation", new int[]{1, 331});
         expected.put("hdfc-savings-multi-page-ledger", new int[]{1, 569});
         expected.put("hdfc-savings-single-page-ledger", new int[]{1, 9});
@@ -211,7 +214,9 @@ class WrappedHeaderOnAScoringLinePdfTableLocatorTest {
         expected.put("kotak-credit-card-ledger-validation", new int[]{0, 0});
         expected.put("kotak-savings-ledger-validation", new int[]{1, 2});
         expected.put("pnb-savings-ledger-validation", new int[]{1, 62});
-        expected.put("sbi-credit-card-statement", new int[]{4, 7});
+        // {4, 7} before looksLikePaymentSummaryPanel: one of the four sections was itself a
+        // payment-summary panel (2 rows) -- 3 sections, 5 rows survive.
+        expected.put("sbi-credit-card-statement", new int[]{3, 5});
         expected.put("union-bank-savings-ledger-validation", new int[]{1, 20});
         return expected;
     }

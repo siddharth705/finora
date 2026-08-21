@@ -16,9 +16,18 @@ public record DashboardSummaryDto(
         Double incomeDeltaPct,
         Double expenseDeltaPct,
         Double netDeltaPct,
-        int healthScore,
+        Integer healthScore,
         String healthLabel,
         Map<String, Double> healthBreakdown,
+        // D-25 PR3-A: a score computed from a handful of transactions is a harsh first impression
+        // that isn't actually wrong data, just too little of it. Below MIN_TRANSACTIONS_FOR_HEALTH_SCORE
+        // (DashboardService), healthScore/healthLabel are null and healthBreakdown is empty -- the
+        // client shows a "Getting Started X/N transactions" progress state instead of guessing what
+        // an incomplete score means. Deliberately a real transactionCount + minTransactions pair
+        // rather than a bare boolean, so the client can render "7 / 10" without hardcoding the floor.
+        boolean healthScoreAvailable,
+        int healthScoreTransactionCount,
+        int healthScoreMinTransactions,
         Map<String, BigDecimal> spendByCategory,
         List<String> notifications,
 

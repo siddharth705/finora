@@ -36,6 +36,10 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
     public static final String KIND_SINGLE_ACCOUNT = "SINGLE_ACCOUNT";
     public static final String KIND_MULTI_ACCOUNT = "MULTI_ACCOUNT";
 
+    /** The only non-null value today (C5-B). Null means CSV or PDF -- both currently confirm into
+     *  {@code Transaction.Source.CSV_IMPORT}, unchanged from before this field existed. */
+    public static final String SOURCE_GMAIL = "GMAIL";
+
     @Id
     @GeneratedValue
     private UUID id;
@@ -47,7 +51,13 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
     private String fileName;
 
     /**
-     * The staged file's original bytes.
+     * The staged file's original bytes -- ALWAYS populated. Staging deliberately keeps a file in
+     * temporary (database) storage only; nothing is written to object storage until the user
+     * confirms the import (see {@code ImportSessionService.storeContent} and
+     * {@code ImportService.persistSection}'s own doc comments). A session therefore never reaches
+     * the "addressed" state {@link com.finora.imports.storage.StoredStatement}'s class doc
+     * describes for a confirmed {@code StatementImport} -- {@link #objectKey} stays null for the
+     * whole life of every session.
      *
      * <p><b>LAZY, matching {@code StatementImport.fileContent}.</b> Without this, JPA's default for
      * a basic {@code byte[]} applies — EAGER — so every query that touched an {@code ImportSession}
@@ -59,26 +69,28 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
      * <p>Every read of these bytes goes through {@code StatementContentService.read} from inside a
      * transaction ({@code ImportService.confirmSession} / {@code confirmMultiSection}), which is
      * what makes lazy safe here — the same precondition {@code StatementImport} already relies on.
-     *
-     * <p>Nullable as of V76 (BH-025/BH-046): null exactly when contentHash/objectKey are set --
-     * {@code ImportSessionService.storeContent} writes bytes here only when
-     * {@code StatementContentService.store()} came back empty (no provider configured).
      */
     @Basic(fetch = FetchType.LAZY)
     @Column(name = "file_content")
     private byte[] fileContent;
 
-    /** Hex SHA-256 of the staged file -- the document's identity. Null when no storage provider is
-     *  configured, in which case the bytes stay in fileContent; see StoredStatement.
-     *
-     *  A session and the StatementImport it confirms into hold IDENTICAL bytes, so they resolve to
-     *  the same address and share one stored object. That is why expiring a session must never
-     *  delete its object directly -- BH-017's StatementStorageSweepService is the only caller of
-     *  StatementStorage.delete, and only after confirming no row in either statement_imports or
-     *  import_sessions references the object anymore. See StatementStorage's class doc. */
+    /** Hex SHA-256 of the staged file -- the document's identity, always computed regardless of
+     *  whether object storage is configured (see ImportSessionService.storeContent). Nullable only
+     *  for rows staged before V79 added idx_import_sessions_live_content; every row created since
+     *  carries one -- it is what that partial unique index and
+     *  ImportSessionService.findLiveSessionByContentHash deduplicate the synchronous stage path
+     *  (POST /csv/stage, /pdf/stage) on. A session's content_hash and the StatementImport it later
+     *  confirms into carry the SAME value (both hash the same original bytes), which is what lets a
+     *  duplicate-upload check compare across the two tables even though only the confirmed row ever
+     *  gets an object_key. */
     @Column(name = "content_hash", length = 64)
     private String contentHash;
 
+    /** Always null. Staging never writes to object storage -- see {@link #fileContent}'s own doc
+     *  comment. The column exists only because {@link com.finora.imports.storage.StoredStatement}
+     *  is one interface for two entities, and dropping it here would need its own migration for no
+     *  behavioural gain: nothing currently reads a session's object_key, and nothing should start
+     *  to. */
     @Column(name = "object_key", length = 512)
     private String objectKey;
 
@@ -119,6 +131,12 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
     @Column(name = "session_kind", nullable = false)
     private String sessionKind = KIND_SINGLE_ACCOUNT;
 
+    /** Null for CSV/PDF (unchanged behaviour), {@link #SOURCE_GMAIL} for a session
+     *  {@code GmailStagingBridge} created. See V84's migration comment for why this is a column
+     *  rather than something inferred at confirm time. */
+    @Column(name = "source", length = 20)
+    private String source;
+
     @Column(nullable = false)
     private String status = STATUS_STAGED;
 
@@ -142,6 +160,11 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
     public void setContentHash(String contentHash) { this.contentHash = contentHash; }
     @Override public String getObjectKey() { return objectKey; }
     public void setObjectKey(String objectKey) { this.objectKey = objectKey; }
+    // Always NONE: a session never has an objectKey to decode, and never persists a
+    // compression_type column of its own -- see fileContent's and objectKey's own doc comments.
+    @Override public com.finora.imports.storage.CompressionType getCompressionType() {
+        return com.finora.imports.storage.CompressionType.NONE;
+    }
     public String getStagedRowsJson() { return stagedRowsJson; }
     public void setStagedRowsJson(String stagedRowsJson) { this.stagedRowsJson = stagedRowsJson; }
     public String getDetectedAccountJson() { return detectedAccountJson; }
@@ -158,6 +181,8 @@ public class ImportSession implements com.finora.imports.storage.StoredStatement
     public void setActivatedCapabilitiesJson(String activatedCapabilitiesJson) { this.activatedCapabilitiesJson = activatedCapabilitiesJson; }
     public String getSessionKind() { return sessionKind; }
     public void setSessionKind(String sessionKind) { this.sessionKind = sessionKind; }
+    public String getSource() { return source; }
+    public void setSource(String source) { this.source = source; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public Instant getCreatedAt() { return createdAt; }

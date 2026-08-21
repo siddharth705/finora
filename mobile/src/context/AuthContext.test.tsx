@@ -8,7 +8,10 @@ import { authApi } from '../api/endpoints';
 jest.mock('../api/endpoints', () => ({
   authApi: {
     login: jest.fn(),
+    reactivate: jest.fn(),
     register: jest.fn(),
+    google: jest.fn(),
+    apple: jest.fn(),
     logout: jest.fn(async () => ({ message: 'ok' })),
   },
 }));
@@ -149,6 +152,96 @@ describe('AuthContext login', () => {
 
     expect(view.getByTestId('token')).toHaveTextContent('none');
     expect(await SecureStore.getItemAsync('finora_token')).toBeNull();
+  });
+});
+
+describe('AuthContext reactivate', () => {
+  it('persists the session and reports the verified flag, same as login', async () => {
+    mockedAuthApi.reactivate.mockResolvedValue({ data: SESSION } as never);
+    const view = renderAuth();
+    await settle(view);
+
+    let verified: boolean | undefined;
+    await act(async () => {
+      verified = await auth.reactivate('reactivation-token');
+    });
+
+    expect(mockedAuthApi.reactivate).toHaveBeenCalledWith('reactivation-token');
+    expect(verified).toBe(true);
+    expect(view.getByTestId('token')).toHaveTextContent('access-token');
+    expect(await SecureStore.getItemAsync('finora_token')).toBe('access-token');
+    expect(await SecureStore.getItemAsync('finora_refresh_token')).toBe('refresh-token');
+  });
+
+  it('leaves state and storage untouched when the token is stale or already used', async () => {
+    mockedAuthApi.reactivate.mockRejectedValue(new Error('expired token'));
+    const view = renderAuth();
+    await settle(view);
+
+    await act(async () => {
+      await expect(auth.reactivate('stale-token')).rejects.toThrow();
+    });
+
+    expect(view.getByTestId('token')).toHaveTextContent('none');
+    expect(await SecureStore.getItemAsync('finora_token')).toBeNull();
+  });
+});
+
+describe('AuthContext loginWithGoogle', () => {
+  it('persists the session and reports the verified flag, same as login()', async () => {
+    mockedAuthApi.google.mockResolvedValue({ data: SESSION } as never);
+    const view = renderAuth();
+    await settle(view);
+
+    let verified: boolean | undefined;
+    await act(async () => {
+      verified = await auth.loginWithGoogle('a-google-id-token');
+    });
+
+    expect(mockedAuthApi.google).toHaveBeenCalledWith('a-google-id-token');
+    expect(verified).toBe(true);
+    expect(view.getByTestId('token')).toHaveTextContent('access-token');
+    expect(await SecureStore.getItemAsync('finora_token')).toBe('access-token');
+  });
+
+  it('propagates a rejection (e.g. an invalid/expired credential) without touching state', async () => {
+    mockedAuthApi.google.mockRejectedValue(new Error('invalid token'));
+    const view = renderAuth();
+    await settle(view);
+
+    await act(async () => {
+      await expect(auth.loginWithGoogle('a-bad-id-token')).rejects.toThrow();
+    });
+
+    expect(view.getByTestId('token')).toHaveTextContent('none');
+  });
+});
+
+describe('AuthContext loginWithApple', () => {
+  it('forwards the client-captured fullName straight through to authApi.apple', async () => {
+    mockedAuthApi.apple.mockResolvedValue({ data: SESSION } as never);
+    const view = renderAuth();
+    await settle(view);
+
+    await act(async () => {
+      await auth.loginWithApple('an-apple-id-token', 'Amy Santiago');
+    });
+
+    expect(mockedAuthApi.apple).toHaveBeenCalledWith('an-apple-id-token', 'Amy Santiago');
+    expect(view.getByTestId('token')).toHaveTextContent('access-token');
+  });
+
+  it('works with no fullName -- every sign-in after the first, when Apple gives none', async () => {
+    mockedAuthApi.apple.mockResolvedValue({ data: SESSION } as never);
+    const view = renderAuth();
+    await settle(view);
+
+    await act(async () => {
+      await auth.loginWithApple('an-apple-id-token', undefined);
+    });
+
+    expect(mockedAuthApi.apple).toHaveBeenCalledWith('an-apple-id-token', undefined);
+    expect(view.getByTestId('token')).toHaveTextContent('access-token');
   });
 });
 

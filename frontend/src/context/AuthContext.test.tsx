@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AuthProvider, useAuth } from './AuthContext';
-import { authApi } from '../api/endpoints';
+import { authApi, userApi } from '../api/endpoints';
+import { getAccessToken, setAccessToken } from '../api/client';
 
 /**
  * AuthContext itself had no direct test -- every other test in this codebase mocks useAuth()
@@ -14,7 +15,8 @@ import { authApi } from '../api/endpoints';
  */
 
 vi.mock('../api/endpoints', () => ({
-  authApi: { login: vi.fn(), register: vi.fn(), logout: vi.fn() },
+  authApi: { login: vi.fn(), register: vi.fn(), logout: vi.fn(), google: vi.fn(), refresh: vi.fn() },
+  userApi: { get: vi.fn() },
 }));
 
 const AUTH_RESPONSE = {
@@ -29,7 +31,7 @@ const AUTH_RESPONSE = {
 /** Exercises the real hook through a small harness, same pattern other hook-focused tests in
  *  this codebase use when there's no dedicated page already wired up to the flow being tested. */
 function Harness() {
-  const { token, email, fullName, phoneVerified, login, register, logout } = useAuth();
+  const { token, email, fullName, phoneVerified, login, register, loginWithGoogle, logout } = useAuth();
   return (
     <div>
       <p data-testid="token">{token ?? 'none'}</p>
@@ -42,6 +44,7 @@ function Harness() {
       <button onClick={() => void register('jane@example.com', 'password123', 'Jane Doe', '+919876543705' /* synthetic-ok */)}>
         Register
       </button>
+      <button onClick={() => void loginWithGoogle('fake-google-id-token')}>Sign in with Google</button>
       <button onClick={logout}>Log out</button>
     </div>
   );
@@ -58,9 +61,22 @@ function renderHarness() {
 describe('AuthContext', () => {
   beforeEach(() => {
     localStorage.clear();
+    // SEC-01: the access token now lives in a module-level variable (client.ts), not storage, so
+    // localStorage.clear() above no longer resets it between tests -- without this, a token set by
+    // one test would leak into the next one's initial state.
+    setAccessToken(null);
     vi.mocked(authApi.login).mockReset();
     vi.mocked(authApi.register).mockReset();
     vi.mocked(authApi.logout).mockReset();
+    vi.mocked(authApi.google).mockReset();
+    // SEC-01: AuthProvider now attempts a silent refresh on every mount (recovering a session
+    // from the HttpOnly cookie after a reload -- see AuthContext.tsx's own bootstrap-effect
+    // comment). Every test in this file renders AuthProvider, so without a default here each one
+    // would hit this real network call. Rejecting by default models "no cookie, not logged in" --
+    // the ordinary starting state every test below already assumes; the one test that cares about
+    // a successful bootstrap overrides this explicitly.
+    vi.mocked(authApi.refresh).mockReset().mockRejectedValue(new Error('no session'));
+    vi.mocked(userApi.get).mockReset();
   });
 
   it('starts with no session when storage is empty', () => {
@@ -71,9 +87,24 @@ describe('AuthContext', () => {
     // redirects to /verify-phone on this flag alone, before any round-trip, so treating absence
     // as false traps an already-verified user on that screen with no client-side way out.
     // Reachable without an upgrade: safeStorage no-ops silently on write failure, and persist()
-    // writes five keys in sequence, so a quota failure partway leaves finora_token stored and
+    // writes its remaining storage keys (email/name/phoneVerified -- SEC-01 moved the token itself
+    // out of this sequence) in order, so a quota failure partway can leave some written and
     // finora_phone_verified absent. PhoneVerificationFilter remains the real gate either way.
     expect(screen.getByTestId('phoneVerified')).toHaveTextContent('true');
+  });
+
+  it('recovers an existing session on mount via a silent refresh against the HttpOnly cookie', async () => {
+    vi.mocked(authApi.refresh).mockReset().mockResolvedValue({ token: 'access-token-1', refreshToken: 'refresh-token-1' });
+    vi.mocked(userApi.get).mockResolvedValue({
+      email: 'jane@example.com', fullName: 'Jane Doe', phoneVerified: true,
+    } as any);
+
+    renderHarness();
+
+    await waitFor(() => expect(screen.getByTestId('token')).toHaveTextContent('access-token-1'));
+    expect(screen.getByTestId('email')).toHaveTextContent('jane@example.com');
+    expect(screen.getByTestId('fullName')).toHaveTextContent('Jane Doe');
+    expect(getAccessToken()).toBe('access-token-1');
   });
 
   it('treats an explicitly stored false as unverified', () => {
@@ -95,8 +126,9 @@ describe('AuthContext', () => {
     expect(screen.getByTestId('phoneVerified')).toHaveTextContent('true');
 
     // The actual persistence contract other code depends on (api/client.ts's request interceptor
-    // reads finora_token directly; clearSessionAndRedirect() clears exactly these same keys).
-    expect(localStorage.getItem('finora_token')).toBe('access-token-1');
+    // reads the in-memory accessToken via getAccessToken(), SEC-01; clearSessionAndRedirect()
+    // clears the same in-memory token plus these same storage keys).
+    expect(getAccessToken()).toBe('access-token-1');
     expect(localStorage.getItem('finora_email')).toBe('jane@example.com');
     expect(localStorage.getItem('finora_name')).toBe('Jane Doe');
     expect(localStorage.getItem('finora_phone_verified')).toBe('true');
@@ -124,6 +156,19 @@ describe('AuthContext', () => {
     expect(localStorage.getItem('finora_phone_verified')).toBe('false');
   });
 
+  it('loginWithGoogle() persists the session the same way login() does', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authApi.google).mockResolvedValue({ data: { ...AUTH_RESPONSE, phoneVerified: false } } as any);
+    renderHarness();
+
+    await user.click(screen.getByRole('button', { name: 'Sign in with Google' }));
+
+    await waitFor(() => expect(screen.getByTestId('token')).toHaveTextContent('access-token-1'));
+    expect(screen.getByTestId('phoneVerified')).toHaveTextContent('false');
+    expect(authApi.google).toHaveBeenCalledWith('fake-google-id-token');
+    expect(localStorage.getItem('finora_refresh_token')).toBeNull();
+  });
+
   it('logout() clears the local session even when the best-effort server revoke call fails', async () => {
     const user = userEvent.setup();
     vi.mocked(authApi.login).mockResolvedValue({ data: AUTH_RESPONSE } as any);
@@ -139,7 +184,7 @@ describe('AuthContext', () => {
     // clearing -- the whole point of it being "best-effort" (see AuthContext.tsx's own comment).
     await waitFor(() => expect(screen.getByTestId('token')).toHaveTextContent('none'));
     expect(screen.getByTestId('phoneVerified')).toHaveTextContent('false');
-    expect(localStorage.getItem('finora_token')).toBeNull();
+    expect(getAccessToken()).toBeNull();
     expect(localStorage.getItem('finora_email')).toBeNull();
     expect(localStorage.getItem('finora_name')).toBeNull();
     expect(localStorage.getItem('finora_phone_verified')).toBeNull();

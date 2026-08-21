@@ -47,11 +47,16 @@ public final class StatementSummaryExtractor {
 
     private StatementSummaryExtractor() {}
 
-    /** Runs within this many points of each other vertically are one visual row. */
-    private static final float ROW_TOLERANCE = 2.0f;
+    /** Runs within this many points of each other vertically are one visual row. Package-private:
+     *  shared with {@link CreditCardSummaryExtractor}, which reads the same label/value grid shape
+     *  for a different label vocabulary -- duplicating this position math would risk it drifting
+     *  from the page-boundary fix {@link #rowBelow} documents below. */
+    static final float ROW_TOLERANCE = 2.0f;
 
-    /** How far below a label row its values may sit. Generous enough for the ~18pt gap seen in
-     *  practice, tight enough not to reach across a blank region into unrelated content. */
+    /** How far below a label row its values may sit, for THIS extractor's grids. Generous enough
+     *  for the ~18pt gap seen in practice, tight enough not to reach across a blank region into
+     *  unrelated content. {@link CreditCardSummaryExtractor} passes its own gap to {@link #rowBelow}
+     *  rather than reusing this constant, since a credit-card summary grid is not the same shape. */
     private static final float MAX_VALUE_ROW_GAP = 40.0f;
 
     private static final List<String> DEBIT_TOTAL_LABELS = List.of(
@@ -113,7 +118,7 @@ public final class StatementSummaryExtractor {
             List<PositionedText> labelRow = rows.get(i);
             if (labelRow.stream().noneMatch(t -> keyFor(normalize(t.text())) != null)) continue;
 
-            List<PositionedText> valueRow = rowBelow(rows, i);
+            List<PositionedText> valueRow = rowBelow(rows, i, MAX_VALUE_ROW_GAP);
             if (valueRow == null) continue;
 
             // The discriminator that makes this safe without needing to know where the summary
@@ -154,7 +159,7 @@ public final class StatementSummaryExtractor {
     /** The value sitting under a label: the run in the value row whose horizontal span overlaps the
      *  label's most. Overlap rather than nearest-centre, so a narrow value under a wide label still
      *  wins over a closer-centred value belonging to the next column along. */
-    private static PositionedText valueUnder(PositionedText label, List<PositionedText> valueRow) {
+    static PositionedText valueUnder(PositionedText label, List<PositionedText> valueRow) {
         PositionedText best = null;
         float bestOverlap = 0f;
         for (PositionedText candidate : valueRow) {
@@ -182,15 +187,15 @@ public final class StatementSummaryExtractor {
      * reported as failing its totals check, or a wrong one could pass. "Below" cannot be
      * expressed as a distance alone once y is page-relative.
      */
-    private static List<PositionedText> rowBelow(List<List<PositionedText>> rows, int i) {
+    static List<PositionedText> rowBelow(List<List<PositionedText>> rows, int i, float maxGap) {
         if (i + 1 >= rows.size()) return null;
         List<PositionedText> current = rows.get(i);
         List<PositionedText> next = rows.get(i + 1);
         if (next.get(0).pageIndex() != current.get(0).pageIndex()) return null;
-        return (next.get(0).y() - current.get(0).y()) <= MAX_VALUE_ROW_GAP ? next : null;
+        return (next.get(0).y() - current.get(0).y()) <= maxGap ? next : null;
     }
 
-    private static List<List<PositionedText>> groupIntoRows(List<PositionedText> runs) {
+    static List<List<PositionedText>> groupIntoRows(List<PositionedText> runs) {
         List<PositionedText> sorted = new ArrayList<>(runs);
         sorted.sort(Comparator.comparingInt(PositionedText::pageIndex)
                 .thenComparing(PositionedText::y)
@@ -231,7 +236,7 @@ public final class StatementSummaryExtractor {
 
     /** Trims the punctuation a grid label collects -- a trailing colon, surrounding whitespace --
      *  without touching the words, so the label lists stay readable as the labels they match. */
-    private static String normalize(String raw) {
+    static String normalize(String raw) {
         return raw == null ? "" : raw.trim()
                 .replaceAll("[:\\s]+$", "")
                 .replaceAll("\\s+", " ")

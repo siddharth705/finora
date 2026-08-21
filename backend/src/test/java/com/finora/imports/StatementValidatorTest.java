@@ -49,6 +49,9 @@ class StatementValidatorTest {
 
         assertThat(info.openingBalance()).isEqualByComparingTo("10000.00");
         assertThat(info.closingBalance()).isEqualByComparingTo("11514.00");
+        // No payment-summary panel exists in a CSV export for a credit-card statement's total
+        // amount due to come from -- CreditCardSummaryEvidence is a PDF-only concept.
+        assertThat(info.totalAmountDue()).isNull();
     }
 
     /**

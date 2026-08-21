@@ -1,7 +1,6 @@
 package com.finora.accounts;
 
 import com.finora.entity.Account;
-import com.finora.entity.StatementImport;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
@@ -184,10 +183,10 @@ class AccountServiceTest {
         Account acct = existingAccount();
         when(accountRepository.findByUserId(userId)).thenReturn(List.of(acct));
 
-        StatementImport older = statementImport(accountId, Instant.parse("2026-06-01T00:00:00Z"));
-        StatementImport newer = statementImport(accountId, Instant.parse("2026-07-01T00:00:00Z"));
+        StatementImportRepository.StatementMetadata older = statementImportMetadata(accountId, Instant.parse("2026-06-01T00:00:00Z"));
+        StatementImportRepository.StatementMetadata newer = statementImportMetadata(accountId, Instant.parse("2026-07-01T00:00:00Z"));
         // Returned newest-first, matching the real repository method's contract.
-        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of(newer, older));
+        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of(newer, older));
 
         List<AccountDto> result = accountService.listForUser(userId);
 
@@ -200,7 +199,7 @@ class AccountServiceTest {
     @Test
     void listForUser_withNoStatementImportsAtAll_leavesLastImportedFieldsNull() {
         when(accountRepository.findByUserId(userId)).thenReturn(List.of(existingAccount()));
-        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of());
+        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of());
 
         List<AccountDto> result = accountService.listForUser(userId);
 
@@ -212,7 +211,7 @@ class AccountServiceTest {
     @Test
     void listForUser_attachesTheAccountsTransactionCount() {
         when(accountRepository.findByUserId(userId)).thenReturn(List.of(existingAccount()));
-        when(statementImportRepository.findByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of());
+        when(statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId)).thenReturn(List.of());
 
         TransactionRepository.AccountTransactionCount countRow = mock(TransactionRepository.AccountTransactionCount.class);
         when(countRow.getAccountId()).thenReturn(accountId);
@@ -224,11 +223,11 @@ class AccountServiceTest {
         assertThat(result.get(0).transactionsCount()).isEqualTo(42L);
     }
 
-    private StatementImport statementImport(UUID accountId, Instant importedAt) {
-        StatementImport si = new StatementImport();
-        ReflectionTestUtils.setField(si, "accountId", accountId);
-        ReflectionTestUtils.setField(si, "importedAt", importedAt);
-        return si;
+    private StatementImportRepository.StatementMetadata statementImportMetadata(UUID accountId, Instant importedAt) {
+        StatementImportRepository.StatementMetadata m = mock(StatementImportRepository.StatementMetadata.class);
+        when(m.getAccountId()).thenReturn(accountId);
+        when(m.getImportedAt()).thenReturn(importedAt);
+        return m;
     }
 
     // Bug fix: create()/update()/delete() each do the account write plus an AuditService.record()

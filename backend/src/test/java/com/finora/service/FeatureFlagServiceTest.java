@@ -1,11 +1,14 @@
 package com.finora.service;
 
+import com.finora.config.CacheConfig;
 import com.finora.dto.AdminDtos.FeatureFlagDto;
 import com.finora.entity.FeatureFlag;
 import com.finora.exception.ApiException;
 import com.finora.repository.FeatureFlagRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -24,6 +27,7 @@ class FeatureFlagServiceTest {
 
     private FeatureFlagRepository featureFlagRepository;
     private AuditService auditService;
+    private Cache flagsCache;
     private FeatureFlagService featureFlagService;
     private final UUID adminId = UUID.randomUUID();
 
@@ -31,7 +35,10 @@ class FeatureFlagServiceTest {
     void setUp() {
         featureFlagRepository = mock(FeatureFlagRepository.class);
         auditService = mock(AuditService.class);
-        featureFlagService = new FeatureFlagService(featureFlagRepository, auditService);
+        CacheManager cacheManager = mock(CacheManager.class);
+        flagsCache = mock(Cache.class);
+        when(cacheManager.getCache(CacheConfig.FEATURE_FLAGS_CACHE)).thenReturn(flagsCache);
+        featureFlagService = new FeatureFlagService(featureFlagRepository, auditService, cacheManager);
     }
 
     private FeatureFlag flag(String key, boolean enabled) {
@@ -77,6 +84,22 @@ class FeatureFlagServiceTest {
         featureFlagService.setEnabled(adminId, existing.getId(), true);
 
         verifyNoInteractions(auditService);
+    }
+
+    /** {@code isEnabled} is cached (CacheConfig.FEATURE_FLAGS_CACHE) -- without this eviction, a
+     *  flag flipped via setEnabled would keep answering with its pre-toggle value for up to the
+     *  cache's TTL, which is exactly the staleness {@code AfterCommit}-wrapped eviction exists to
+     *  bound tighter than that. No Spring transaction is active in this plain-Mockito test, so
+     *  AfterCommit.run's documented fallback (run immediately) is what makes this assertable
+     *  synchronously here at all. */
+    @Test
+    void setEnabled_evictsTheCachedValueForThatFlagsKey() {
+        FeatureFlag existing = flag("RECURRING_DETECTION_ENABLED", true);
+        when(featureFlagRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
+
+        featureFlagService.setEnabled(adminId, existing.getId(), false);
+
+        verify(flagsCache).evict("RECURRING_DETECTION_ENABLED");
     }
 
     @Test

@@ -5,6 +5,7 @@ import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
 import { DataTable, type DataTableColumn } from '../components/DataTable';
 import { adminMerchantReviewApi } from '../api/endpoints';
+import { formatWhen } from '../lib/formatWhen';
 import type { MerchantReviewItem } from '../types';
 
 /**
@@ -25,10 +26,6 @@ import type { MerchantReviewItem } from '../types';
  *    NULL, so discarding a merchant with history would silently strip the attribution from real
  *    ledger rows. Discard is therefore only offered at zero, and the row says why when it is not.
  */
-
-function formatWhen(value: string) {
-  return new Date(value).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
-}
 
 function MerchantReviewContent() {
   const [page, setPage] = useState(0);

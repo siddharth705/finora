@@ -14,10 +14,13 @@ const registerMock = vi.fn();
 function renderRegister() {
   vi.mocked(useAuth).mockReturnValue({
     token: null,
+    bootstrapping: false,
     email: null,
     fullName: null,
     phoneVerified: false,
     login: vi.fn(),
+    reactivate: vi.fn(),
+    loginWithGoogle: vi.fn(),
     register: registerMock,
     setPhoneVerified: vi.fn(),
     logout: vi.fn(),
@@ -112,6 +115,41 @@ describe('Register — mobile number field', () => {
     await user.tab(); // blur
 
     expect(await screen.findByText(/Enter a valid 10-digit mobile number/i)).toBeInTheDocument();
+  });
+});
+
+describe('Register — duplicate account (409)', () => {
+  beforeEach(() => {
+    registerMock.mockReset();
+  });
+
+  it('offers a Continue to login link when the email or phone already belongs to an account', async () => {
+    const user = userEvent.setup();
+    registerMock.mockRejectedValue({
+      response: { status: 409, data: { message: 'An account with this email already exists.' } },
+    });
+    renderRegister();
+
+    await fillValidFormExceptPhone(user);
+    await user.click(screen.getByRole('button', { name: /Create account/i }));
+
+    expect(await screen.findByText(/already exists/i)).toBeInTheDocument();
+    const continueLink = screen.getByRole('link', { name: /continue to login/i });
+    expect(continueLink).toHaveAttribute('href', '/login');
+  });
+
+  it('does not offer Continue to login for an unrelated registration failure', async () => {
+    const user = userEvent.setup();
+    registerMock.mockRejectedValue({
+      response: { status: 500, data: { message: 'Something went wrong.' } },
+    });
+    renderRegister();
+
+    await fillValidFormExceptPhone(user);
+    await user.click(screen.getByRole('button', { name: /Create account/i }));
+
+    expect(await screen.findByText(/something went wrong/i)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /continue to login/i })).not.toBeInTheDocument();
   });
 });
 

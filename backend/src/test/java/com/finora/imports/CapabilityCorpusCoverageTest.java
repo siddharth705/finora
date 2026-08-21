@@ -116,6 +116,18 @@ class CapabilityCorpusCoverageTest {
         DECLARED_WITHOUT_A_TRACE.put("GRID_METADATA_TRAILING_LABEL", "no trace");
         DECLARED_WITHOUT_A_TRACE.put("FINANCIAL_PRODUCT_CLASSIFICATION", "no trace");
         DECLARED_WITHOUT_A_TRACE.put("PRINTED_SUMMARY_TOTALS", "no trace; newly registered");
+        DECLARED_WITHOUT_A_TRACE.put("CREDIT_CARD_SUMMARY_TOTALS",
+                "no trace yet -- CreditCardSummaryExtractorTest exercises the GRID strategy on "
+                        + "synthetic fixtures reproducing real observed shapes (a clean stacked grid, "
+                        + "and the row-merge recovery motivated by a real Axis statement), but no "
+                        + "committed trace fixture exists for either yet. See the architecture doc's "
+                        + "Credit Card Direction Evidence Study addendum for the measured real-corpus "
+                        + "fire rate.");
+        DECLARED_WITHOUT_A_TRACE.put("CREDIT_CARD_SUMMARY_INLINE_LABEL_VALUE",
+                "no trace yet -- same situation as CREDIT_CARD_SUMMARY_TOTALS above, for the "
+                        + "INLINE_LABEL_VALUE strategy motivated by a real AU statement's label-left/value-right "
+                        + "layout. Covered by synthetic fixtures in CreditCardSummaryExtractorTest, "
+                        + "not yet by a committed real-document trace.");
         // RIGHT_ALIGNED_AMOUNTS was here, with the note "either the three traces genuinely avoid
         // right-aligned amount columns, or the recording sits on a path they do not take. Measure
         // before capturing." It was measured, and the answer was a third thing: the two HDFC
@@ -130,6 +142,47 @@ class CapabilityCorpusCoverageTest {
                         + "cover a capability nothing emits, so this one is blocked on that first.");
         DECLARED_WITHOUT_A_TRACE.put("LEADING_NAME_LINE",
                 "no trace, and nothing records it -- same as LEADING_PLUS_CREDIT.");
+        DECLARED_WITHOUT_A_TRACE.put("INFERRED_HEADERLESS_LAYOUT",
+                "no trace, and none is planned -- the one real document that motivates it is a "
+                        + "genuinely headerless statement, so a trace captured from it would need widths "
+                        + "recorded from real dates and amounts to reproduce the balance-chain scoring "
+                        + "this depends on, which the Synthetic Fixture Policy requires be synthesized, "
+                        + "not preserved, for exactly this kind of fixture. Covered instead by "
+                        + "HeaderlessLayoutInferenceTest's fully hand-synthesized fixtures.");
+        DECLARED_WITHOUT_A_TRACE.put("ILLUSTRATIVE_BLOCK_SUPPRESSED",
+                "no trace, and none is planned -- same reasoning as INFERRED_HEADERLESS_LAYOUT. "
+                        + "Covered instead by IllustrativeBlockSuppressionTest's fully hand-synthesized "
+                        + "fixtures.");
+        DECLARED_WITHOUT_A_TRACE.put("INFERRED_TWO_LINE_DATE_BLOCK",
+                "no trace, and none is planned -- same reasoning as INFERRED_HEADERLESS_LAYOUT. "
+                        + "Covered instead by TwoLineDateBlockInferenceTest's fully hand-synthesized "
+                        + "fixtures.");
+        DECLARED_WITHOUT_A_TRACE.put("PHYSICAL_ROW_DEDUP_EVIDENCE",
+                "no trace, and none is planned -- same reasoning as INFERRED_HEADERLESS_LAYOUT: the "
+                        + "one real document known to exercise the headerless path (a real SBI savings "
+                        + "statement) contains no repeated physical row for this to remove, so no real "
+                        + "trace has ever activated it, and a synthesized trace would need to reproduce "
+                        + "the same balance-chain-scoring geometry INFERRED_HEADERLESS_LAYOUT's own "
+                        + "entry explains. Covered instead by HeaderlessLayoutInferenceTest's fully "
+                        + "hand-synthesized reprinted-row fixture.");
+        DECLARED_WITHOUT_A_TRACE.put("CARD_ENDING_DIGITS_IDENTITY",
+                "no trace, and none is planned -- same reasoning as INFERRED_HEADERLESS_LAYOUT: the "
+                        + "one real document that motivates it (a real AU Small Finance Bank "
+                        + "credit-card statement) would need its actual card-ending sentence "
+                        + "preserved for a trace to exercise this, which the Synthetic Fixture Policy "
+                        + "requires be synthesized, not preserved. Covered instead by "
+                        + "PdfMetadataExtractorTest's fully hand-synthesized fixtures.");
+        // BLANK_COLUMN_NAME_QUALIFIED and RECOVERED_MISSING_DESCRIPTION_COLUMN are deliberately
+        // NOT listed here: the already-committed sbi-credit-card-statement trace turns out to
+        // exercise both for real (its own "( ` )" blank-currency cell, and a genuine missing-
+        // description recovery elsewhere in its composite structure) -- found by
+        // theCorpusShortfallOnlyEverShrinks the moment these were added, exactly the ratchet it
+        // exists to enforce. Motivated by a real ICICI savings e-statement either way; also
+        // covered by HeaderColumnRecoveryTest's fully hand-synthesized fixtures.
+        DECLARED_WITHOUT_A_TRACE.put("RECOVERED_MISSING_SERIAL_NUMBER_COLUMN",
+                "no trace, and none is planned -- same reasoning as BLANK_COLUMN_NAME_QUALIFIED, "
+                        + "same real document. Covered instead by HeaderColumnRecoveryTest's fully "
+                        + "hand-synthesized fixtures.");
     }
 
     /**

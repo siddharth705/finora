@@ -23,6 +23,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
@@ -863,6 +864,192 @@ class TransactionServiceTest {
         verify(transactionRepository, never()).save(any());
     }
 
+    // SEC-13 (docs/quality/bug-reports/2026-08-19-security-review-findings.md): amount had a floor
+    // (above) but no ceiling -- the NUMERIC(14,2) column was the only backstop, surfaced as a raw
+    // 409 rather than a message naming the field.
+    @Test
+    void create_rejectsAnAmountAboveTheSanityCeiling() {
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), "Dining", LocalDate.now(),
+                "Suspiciously large charge", new BigDecimal("1000000000.00"), "EXPENSE", List.of());
+
+        assertThatThrownBy(() -> transactionService.create(userId, req))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("can't exceed");
+
+        verify(transactionRepository, never()).save(any());
+    }
+
+    @Test
+    void create_acceptsAnAmountExactlyAtTheSanityCeiling() {
+        when(categorizationService.suggest(eq(userId), anyString(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Dining", "rule", UUID.randomUUID(), Transaction.DecisionSource.KEYWORD_MATCH, null));
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Dining"))).thenReturn(dummyCategory);
+
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), null, LocalDate.now(),
+                "Large but real charge", new BigDecimal("999999999.99"), "EXPENSE", List.of());
+
+        transactionService.create(userId, req);
+
+        verify(transactionRepository).save(any());
+    }
+
+    // SEC-06 (docs/quality/bug-reports/2026-08-19-security-review-findings.md): a double-click or a
+    // retried POST with no idempotency key created two rows and moved the account balance twice.
+    @Test
+    void create_withNoIdempotencyKey_behavesExactlyAsBefore_creatingANewTransactionEveryCall() {
+        when(categorizationService.suggest(eq(userId), anyString(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Dining", "rule", UUID.randomUUID(), Transaction.DecisionSource.KEYWORD_MATCH, null));
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Dining"))).thenReturn(dummyCategory);
+
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), null, LocalDate.now(),
+                "Swiggy order", BigDecimal.valueOf(486), "EXPENSE", List.of());
+
+        transactionService.create(userId, req);
+        transactionService.create(userId, req);
+
+        verify(transactionRepository, times(2)).save(any());
+        verify(transactionRepository, never()).findByUserIdAndIdempotencyKey(any(), any());
+    }
+
+    @Test
+    void create_withAnUnseenIdempotencyKey_createsANewTransactionAndStampsTheKey() {
+        when(categorizationService.suggest(eq(userId), anyString(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Dining", "rule", UUID.randomUUID(), Transaction.DecisionSource.KEYWORD_MATCH, null));
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Dining"))).thenReturn(dummyCategory);
+        when(transactionRepository.findByUserIdAndIdempotencyKey(userId, "client-key-1")).thenReturn(Optional.empty());
+
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), null, LocalDate.now(),
+                "Swiggy order", BigDecimal.valueOf(486), "EXPENSE", List.of(), "client-key-1");
+
+        transactionService.create(userId, req);
+
+        ArgumentCaptor<Transaction> captor = ArgumentCaptor.forClass(Transaction.class);
+        verify(transactionRepository).save(captor.capture());
+        assertThat(captor.getValue().getIdempotencyKey()).isEqualTo("client-key-1");
+    }
+
+    @Test
+    void create_withAPreviouslySeenIdempotencyKey_returnsTheOriginalTransaction_withoutInsertingOrMovingBalanceAgain() {
+        UUID existingId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
+        Transaction existing = new Transaction();
+        ReflectionTestUtils.setField(existing, "id", existingId);
+        existing.setUserId(userId);
+        existing.setAccountId(accountId);
+        existing.setDescription("Swiggy order");
+        existing.setAmount(BigDecimal.valueOf(486));
+        existing.setTxnType(Transaction.Type.EXPENSE);
+        existing.setTxnDate(LocalDate.now());
+        existing.setCategoryId(dummyCategory.getId());
+        existing.setIdempotencyKey("client-key-1");
+        when(transactionRepository.findByUserIdAndIdempotencyKey(userId, "client-key-1"))
+                .thenReturn(Optional.of(existing));
+        when(categoryRepository.findById(dummyCategory.getId())).thenReturn(Optional.of(dummyCategory));
+
+        var req = new TransactionDto.CreateRequest(accountId, null, existing.getTxnDate(),
+                "Swiggy order", BigDecimal.valueOf(486), "EXPENSE", List.of(), "client-key-1");
+
+        TransactionDto result = transactionService.create(userId, req);
+
+        assertThat(result.id()).isEqualTo(existingId);
+        verify(transactionRepository, never()).save(any());
+        verify(accountRepository, never()).save(any());
+        verify(reconciliationService, never()).reconcileForUser(any());
+    }
+
+    // --- Idempotency key reused with a different request (gap review of SEC-06: the replay check
+    // used to return the original transaction unconditionally once the key matched, with no check
+    // that the rest of the request -- amount, account, category -- actually matched what was
+    // recorded under that key the first time) ---
+
+    private Transaction seededIdempotentTransaction(UUID accountId) {
+        Transaction existing = new Transaction();
+        ReflectionTestUtils.setField(existing, "id", UUID.randomUUID());
+        existing.setUserId(userId);
+        existing.setAccountId(accountId);
+        existing.setDescription("Swiggy order");
+        existing.setAmount(BigDecimal.valueOf(486));
+        existing.setTxnType(Transaction.Type.EXPENSE);
+        existing.setTxnDate(LocalDate.now());
+        existing.setCategoryId(dummyCategory.getId());
+        existing.setIdempotencyKey("client-key-1");
+        return existing;
+    }
+
+    @Test
+    void create_withAReusedIdempotencyKey_butADifferentAmount_rejectsRatherThanReturningTheStaleOriginal() {
+        UUID accountId = UUID.randomUUID();
+        Transaction existing = seededIdempotentTransaction(accountId);
+        when(transactionRepository.findByUserIdAndIdempotencyKey(userId, "client-key-1"))
+                .thenReturn(Optional.of(existing));
+        when(categoryRepository.findById(dummyCategory.getId())).thenReturn(Optional.of(dummyCategory));
+
+        // Same key, same everything except the amount -- a client bug, not a legitimate retry.
+        var req = new TransactionDto.CreateRequest(accountId, null, existing.getTxnDate(),
+                "Swiggy order", BigDecimal.valueOf(999), "EXPENSE", List.of(), "client-key-1");
+
+        assertThatThrownBy(() -> transactionService.create(userId, req))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("already used for a different request");
+
+        verify(transactionRepository, never()).save(any());
+        verify(accountRepository, never()).save(any());
+    }
+
+    @Test
+    void create_withAReusedIdempotencyKey_butADifferentAccount_rejectsRatherThanReturningTheStaleOriginal() {
+        UUID accountId = UUID.randomUUID();
+        UUID otherAccountId = UUID.randomUUID();
+        Transaction existing = seededIdempotentTransaction(accountId);
+        when(transactionRepository.findByUserIdAndIdempotencyKey(userId, "client-key-1"))
+                .thenReturn(Optional.of(existing));
+        when(categoryRepository.findById(dummyCategory.getId())).thenReturn(Optional.of(dummyCategory));
+
+        var req = new TransactionDto.CreateRequest(otherAccountId, null, existing.getTxnDate(),
+                "Swiggy order", BigDecimal.valueOf(486), "EXPENSE", List.of(), "client-key-1");
+
+        assertThatThrownBy(() -> transactionService.create(userId, req))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("already used for a different request");
+
+        verify(transactionRepository, never()).save(any());
+    }
+
+    @Test
+    void create_withAReusedIdempotencyKey_butADifferentExplicitCategory_rejectsRatherThanReturningTheStaleOriginal() {
+        UUID accountId = UUID.randomUUID();
+        Transaction existing = seededIdempotentTransaction(accountId);
+        when(transactionRepository.findByUserIdAndIdempotencyKey(userId, "client-key-1"))
+                .thenReturn(Optional.of(existing));
+        when(categoryRepository.findById(dummyCategory.getId())).thenReturn(Optional.of(dummyCategory));
+
+        var req = new TransactionDto.CreateRequest(accountId, "Travel", existing.getTxnDate(),
+                "Swiggy order", BigDecimal.valueOf(486), "EXPENSE", List.of(), "client-key-1");
+
+        assertThatThrownBy(() -> transactionService.create(userId, req))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("already used for a different request");
+
+        verify(transactionRepository, never()).save(any());
+    }
+
+    @Test
+    void create_withABlankIdempotencyKey_isTreatedAsNoKeyAtAll() {
+        when(categorizationService.suggest(eq(userId), anyString(), any(), any()))
+                .thenReturn(new CategorizationService.Suggestion("Dining", "rule", UUID.randomUUID(), Transaction.DecisionSource.KEYWORD_MATCH, null));
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Dining"))).thenReturn(dummyCategory);
+
+        var req = new TransactionDto.CreateRequest(UUID.randomUUID(), null, LocalDate.now(),
+                "Swiggy order", BigDecimal.valueOf(486), "EXPENSE", List.of(), "   ");
+
+        transactionService.create(userId, req);
+
+        verify(transactionRepository, never()).findByUserIdAndIdempotencyKey(any(), any());
+        ArgumentCaptor<Transaction> captor = ArgumentCaptor.forClass(Transaction.class);
+        verify(transactionRepository).save(captor.capture());
+        assertThat(captor.getValue().getIdempotencyKey()).isNull();
+    }
+
     // --- Account ownership on create() (previously: req.accountId() went straight onto the
     // transaction with no check it belonged to the caller -- any authenticated user could POST
     // with another user's accountId and both plant a transaction against it AND silently move
@@ -1005,5 +1192,33 @@ class TransactionServiceTest {
         assertThat(result.totalPages()).isEqualTo(5);
         assertThat(result.page()).isEqualTo(0);
         assertThat(result.size()).isEqualTo(10);
+    }
+
+    /**
+     * BH-009. {@code sortDir} went straight into {@code Sort.Direction.fromString} unvalidated,
+     * so a bogus value threw {@code IllegalArgumentException} and 500'd -- in the same method
+     * whose own comment explains that {@code page} and {@code size} are clamped precisely so a
+     * malformed param stops doing that. Two of three unvalidated inputs were fixed and the third
+     * was missed; this is the one that closes it. Not merely "does not throw" -- captures the
+     * {@code Pageable} the repository actually received and asserts the fallback direction is
+     * DESC, the documented behaviour, not just the absence of a crash.
+     */
+    @Test
+    void search_withAnUnrecognisedSortDir_fallsBackToDescendingRatherThanThrowing() {
+        when(transactionRepository.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        var filter = new TransactionDto.FilterRequest(null, null, null, null, null, null, null, null, 0, 20, null, "bogus");
+        transactionService.search(userId, filter);
+
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(transactionRepository).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), pageableCaptor.capture());
+        Sort.Order order = pageableCaptor.getValue().getSort().getOrderFor("txnDate");
+        assertThat(order)
+                .as("an unrecognised sortDir must still produce a real sort, not fail the search")
+                .isNotNull();
+        assertThat(order.getDirection())
+                .as("and the fallback must be the documented default, not an arbitrary one")
+                .isEqualTo(Sort.Direction.DESC);
     }
 }

@@ -43,6 +43,63 @@ class ErrorCodeTest {
         assertThat(ErrorCode.IMPORT_CORRUPT_PDF.retryPolicy()).isEqualTo(ErrorCode.RetryPolicy.FAIL_FAST);
     }
 
+    // ---------------------------------------------------------------- userActionRequired (§1, Sprint 4 item 20a)
+
+    /**
+     * The five codes Premium Import Reliability v1 §1's table originally named, plus every code
+     * added since that also opted in, asserted exhaustively against the live enum (not a
+     * hand-picked subset) so a future code added to this set -- or silently dropped from it -- is
+     * caught here rather than only in a UI that happens to render the wrong copy for it.
+     *
+     * <p>Bug fix: SEC-02 (docs/quality/bug-reports/2026-08-19-security-review-findings.md) added
+     * {@code IMPORT_PDF_TOO_LARGE} with {@code userActionRequired = true} -- its own doc comment
+     * gives the same reasoning as {@code IMPORT_CORRUPT_PDF}'s sibling codes above ("split it up"
+     * is a real, followable instruction) -- but this exhaustive assertion was never updated to
+     * include it, so CI failed on every run past that commit until now.
+     */
+    @Test
+    void theCodesTheReliabilityPlanAndItsSuccessorsNameRequireUserAction() {
+        assertThat(Arrays.stream(ErrorCode.values()).filter(ErrorCode::userActionRequired).toList())
+                .containsExactlyInAnyOrder(
+                        ErrorCode.IMPORT_PDF_PASSWORD_REQUIRED,
+                        ErrorCode.IMPORT_PDF_PASSWORD_INVALID,
+                        ErrorCode.IMPORT_SCANNED_OCR_REQUIRED,
+                        ErrorCode.IMPORT_NO_HEADER_DETECTED,
+                        ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND,
+                        ErrorCode.IMPORT_PDF_TOO_LARGE);
+    }
+
+    @Test
+    void corruptPdfStaysPlainFailed() {
+        // The plan's own table draws this line explicitly: a corrupt/truncated PDF has no single
+        // thing to tell the user to check or change, unlike the five above -- named here since it's
+        // the one code most likely to be mistaken for ACTION_REQUIRED by a future edit (it IS a
+        // "try again" case, just not a user-actionable one).
+        assertThat(ErrorCode.IMPORT_CORRUPT_PDF.userActionRequired()).isFalse();
+    }
+
+    @Test
+    void userActionRequiredOrDefaultTranslatesAKnownActionableCode() {
+        assertThat(ErrorCode.userActionRequiredOrDefault("IMPORT_NO_HEADER_DETECTED")).isTrue();
+    }
+
+    @Test
+    void userActionRequiredOrDefaultIsFalseForAKnownNonActionableCode() {
+        assertThat(ErrorCode.userActionRequiredOrDefault("IMPORT_CORRUPT_PDF")).isFalse();
+    }
+
+    @Test
+    void userActionRequiredOrDefaultIsFalseForAnExceptionClassNameRatherThanThrowing() {
+        // Mirrors wireCodeOrNullReturnsNullForAnExceptionClassNameRatherThanThrowing -- the same
+        // stored-value ambiguity, the same safe fallback.
+        assertThat(ErrorCode.userActionRequiredOrDefault("NullPointerException")).isFalse();
+    }
+
+    @Test
+    void userActionRequiredOrDefaultIsFalseForANullInput() {
+        assertThat(ErrorCode.userActionRequiredOrDefault(null)).isFalse();
+    }
+
     // ---------------------------------------------------------------- wireCodeOrNull (§3.1)
 
     @Test

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.finora.entity.User;
 import com.finora.repository.UserRepository;
 import jakarta.servlet.FilterChain;
+import jakarta.servlet.http.HttpServletMapping;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.AfterEach;
@@ -66,6 +67,13 @@ class PhoneVerificationFilterTest {
         when(request.getRequestURI()).thenReturn(path);
         when(request.getServletPath()).thenReturn(path);
         when(request.getContextPath()).thenReturn("");
+        // PathPatternRequestMatcher resolves the request path via
+        // ServletRequestPathUtils, which reads request.getHttpServletMapping() -- populated by
+        // the servlet container on every real request, but not by a bare Mockito mock. A mapping
+        // whose getMappingMatch() is anything other than PATH (the unstubbed default here, null,
+        // qualifies) matches production too: DispatcherServlet is registered at "/", not a path
+        // prefix, so MappingMatch.PATH is never what a real request in this app reports either.
+        when(request.getHttpServletMapping()).thenReturn(mock(HttpServletMapping.class));
         return request;
     }
 
@@ -229,6 +237,51 @@ class PhoneVerificationFilterTest {
 
         HttpServletRequest request = requestFor("/api/v1/users/me");
         when(request.getMethod()).thenReturn("PUT");
+        filter.doFilter(request, response, filterChain);
+
+        verify(response).setStatus(HttpServletResponse.SC_FORBIDDEN);
+        verify(filterChain, never()).doFilter(any(), any());
+    }
+
+    /**
+     * The deliberate exception under /api/v1/users/me/**: unlike password-change (see the next
+     * test), phone-change is FOR unverified users -- it is the self-service recovery path reached
+     * from VerifyPhone.tsx's own OTP-failure screen, for someone who cannot verify at all. Blocking
+     * it here would make the feature unreachable by exactly the population it exists for.
+     */
+    @Test
+    void allowsAnUnverifiedUser_toReachEveryPhoneChangeStep() throws Exception {
+        authenticateAs("unverified@example.com");
+        when(userRepository.findPhoneVerifiedById(idFor("unverified@example.com")))
+                .thenReturn(Optional.of(false));
+
+        for (String path : new String[] {
+                "/api/v1/users/me/phone-change/start",
+                "/api/v1/users/me/phone-change/verify-otp",
+                "/api/v1/users/me/phone-change/complete",
+        }) {
+            HttpServletRequest request = requestFor(path);
+            when(request.getMethod()).thenReturn("POST");
+            filter.doFilter(request, response, filterChain);
+
+            verify(filterChain).doFilter(request, response);
+        }
+        verify(response, never()).setStatus(HttpServletResponse.SC_FORBIDDEN);
+    }
+
+    /**
+     * The GET-only allowlist for /api/v1/users/me must not widen so far that password-change --
+     * a flow that presumes an already-trusted, verified account -- becomes reachable too. Only
+     * phone-change is the deliberate exception; this locks in that the two are not conflated.
+     */
+    @Test
+    void stillBlocksAnUnverifiedUser_fromThePasswordChangeFlow() throws Exception {
+        authenticateAs("unverified@example.com");
+        when(userRepository.findPhoneVerifiedById(idFor("unverified@example.com")))
+                .thenReturn(Optional.of(false));
+
+        HttpServletRequest request = requestFor("/api/v1/users/me/password-change/start");
+        when(request.getMethod()).thenReturn("POST");
         filter.doFilter(request, response, filterChain);
 
         verify(response).setStatus(HttpServletResponse.SC_FORBIDDEN);

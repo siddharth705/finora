@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.Optional;
@@ -126,6 +127,69 @@ class GoalServiceTest {
         org.mockito.ArgumentCaptor<GoalContribution> captor = org.mockito.ArgumentCaptor.forClass(GoalContribution.class);
         verify(contributionRepository).save(captor.capture());
         assertThat(captor.getValue().getContributedAt()).isEqualTo(LocalDate.now(ZoneId.of("Pacific/Kiritimati")));
+    }
+
+    // D-25 PR3-B: GoalService.markCompletedIfReached, covering both call sites (create/
+    // addContribution), the never-overwrite rule, and the below-target no-op.
+    @Test
+    void addContribution_reachingTarget_stampsCompletedAt() {
+        when(goalRepository.findById(goalId)).thenReturn(Optional.of(goalWith(new BigDecimal("9500"))));
+
+        GoalDto result = service.addContribution(userId, goalId, new BigDecimal("500"));
+
+        assertThat(result.currentAmount()).isEqualByComparingTo("10000");
+        org.mockito.ArgumentCaptor<Goal> captor = org.mockito.ArgumentCaptor.forClass(Goal.class);
+        verify(goalRepository).save(captor.capture());
+        assertThat(captor.getValue().getCompletedAt()).isNotNull();
+    }
+
+    @Test
+    void addContribution_stillBelowTarget_leavesCompletedAtNull() {
+        when(goalRepository.findById(goalId)).thenReturn(Optional.of(goalWith(new BigDecimal("100"))));
+
+        service.addContribution(userId, goalId, new BigDecimal("50"));
+
+        org.mockito.ArgumentCaptor<Goal> captor = org.mockito.ArgumentCaptor.forClass(Goal.class);
+        verify(goalRepository).save(captor.capture());
+        assertThat(captor.getValue().getCompletedAt()).isNull();
+    }
+
+    @Test
+    void addContribution_alreadyCompleted_doesNotOverwriteTheOriginalCompletedAt() {
+        Goal g = goalWith(new BigDecimal("10000"));
+        Instant originallyCompletedAt = Instant.parse("2026-01-01T00:00:00Z");
+        g.setCompletedAt(originallyCompletedAt);
+        when(goalRepository.findById(goalId)).thenReturn(Optional.of(g));
+
+        // A further contribution to an already-achieved goal (over-saving past the target) must
+        // not make the milestone look like it just happened.
+        service.addContribution(userId, goalId, new BigDecimal("500"));
+
+        org.mockito.ArgumentCaptor<Goal> captor = org.mockito.ArgumentCaptor.forClass(Goal.class);
+        verify(goalRepository).save(captor.capture());
+        assertThat(captor.getValue().getCompletedAt()).isEqualTo(originallyCompletedAt);
+    }
+
+    @Test
+    void create_withStartingAmountAtOrAboveTarget_stampsCompletedAtImmediately() {
+        GoalDto.CreateRequest req = new GoalDto.CreateRequest("Emergency Fund", new BigDecimal("10000"), new BigDecimal("10000"), null);
+
+        service.create(userId, req);
+
+        org.mockito.ArgumentCaptor<Goal> captor = org.mockito.ArgumentCaptor.forClass(Goal.class);
+        verify(goalRepository).save(captor.capture());
+        assertThat(captor.getValue().getCompletedAt()).isNotNull();
+    }
+
+    @Test
+    void create_withStartingAmountBelowTarget_leavesCompletedAtNull() {
+        GoalDto.CreateRequest req = new GoalDto.CreateRequest("Emergency Fund", new BigDecimal("10000"), new BigDecimal("500"), null);
+
+        service.create(userId, req);
+
+        org.mockito.ArgumentCaptor<Goal> captor = org.mockito.ArgumentCaptor.forClass(Goal.class);
+        verify(goalRepository).save(captor.capture());
+        assertThat(captor.getValue().getCompletedAt()).isNull();
     }
 
     // Bug fix: create()/addContribution() each do two related writes (Goal + GoalContribution)

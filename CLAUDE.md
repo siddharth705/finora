@@ -1,0 +1,81 @@
+# Finora — Git Workflow
+
+## Core rule: the primary checkout is read-only for writes
+
+`/Users/sid/Downloads/finora` is a **shared primary checkout** — multiple Claude Code
+sessions run on this repo concurrently, in the same filesystem. Any write here — editing,
+creating, or deleting files; staging, committing, merging, rebasing, cherry-picking,
+stashing, resetting, or switching branches — is off limits. This has caused real collisions,
+repeatedly:
+
+- Duplicate Flyway migration version numbers merged from independent sessions on diverging
+  bases — three separate times (V75/V76, V81/V82, V84/85 → V87/88). Each one broke `main`'s
+  backend boot until fixed.
+- Staged-but-uncommitted work swept into a different session's commit, twice — correct
+  content, wrong attribution.
+- A live `git merge origin/main` left mid-conflict by one session (2026-08-16) while another
+  session was independently staging unrelated docs edits in the same working tree.
+
+None of these were caused by any single session doing something wrong in isolation — they're
+what happens when independent processes share one git working tree without a lock.
+
+## Before starting any new implementation track
+
+```bash
+git fetch origin
+git worktree add ../finora-<short-name> -b feature/<short-name> origin/main
+```
+
+Or use the `EnterWorktree` tool with a `name` — it creates an isolated worktree under
+`.claude/worktrees/`, branches fresh from `origin/main`, and switches the session into it
+automatically. Prefer this over the manual command when available.
+
+## After entering the worktree, verify before touching anything
+
+```bash
+pwd
+git branch --show-current
+git worktree list
+git status --short
+```
+
+Confirm you're inside the intended worktree, on the correct feature branch, and that you
+understand the working-tree state before making any change.
+
+**Use the worktree's full absolute path for every git/build command** — don't rely on a prior
+`cd` sticking, and re-confirm with `pwd` if there's been any earlier `cd` to "the repo"
+generically. A bare `cd /Users/sid/Downloads/finora` mid-session has previously landed a
+commit straight onto `main` in the primary checkout by accident.
+
+## Worktree ownership
+
+A session owns only the worktree and branch it created. Don't modify another session's
+worktree, checkout or commit to its branch, or clean up its uncommitted changes. If you find
+unexpected state in a worktree you're entering, stop and inspect — don't run
+`git reset --hard`, `git clean -fd`, `git restore .`, or `git stash` on it without asking.
+
+## Flyway migrations
+
+Before adding a migration: fetch `origin/main`, list
+`backend/src/main/resources/db/migration`, and confirm your version number isn't already
+taken by another in-flight session. Never modify, delete, or renumber an existing migration.
+
+## When finished
+
+```bash
+git add <files>
+git commit -m "..."
+git push -u origin feature/<short-name>
+gh pr create ...
+# after merge:
+git worktree remove ../finora-<short-name>
+```
+
+Or `ExitWorktree` with `action: "remove"` once the PR has merged (`action: "keep"` if the
+work isn't done yet and the session is just pausing).
+
+## Exception
+
+Read-only exploration — reading code, answering questions about the repo, reviewing docs —
+doesn't need a worktree. Create one before the first *write*: an edit, file creation, a
+configuration change, a test change, a commit, a merge, or any implementation modification.

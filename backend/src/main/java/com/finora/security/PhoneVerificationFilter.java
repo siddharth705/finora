@@ -8,12 +8,13 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.lang.NonNull;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -54,22 +55,38 @@ import java.util.Optional;
  * to GET only (not the whole /api/v1/users/me/** family): PUT /users/me (preference updates) and
  * the password-change endpoints under this same base path have no reason to be reachable before
  * verification and should stay blocked.
+ *
+ * One further, deliberate carve-out under that same base path: /api/v1/users/me/phone-change/**
+ * (see PHONE_CHANGE_ENDPOINTS below) stays open to unverified users, unlike every other sub-path
+ * there. It exists specifically as the self-service recovery path for a user who cannot verify at
+ * all -- a wrong number on file, a lost SIM, a Firebase config issue -- reached from
+ * VerifyPhone.tsx's own OTP-failure screen. Blocking it here would defeat its own purpose.
  */
 @Component
 public class PhoneVerificationFilter extends OncePerRequestFilter {
 
-    private static final AntPathRequestMatcher PHONE_ENDPOINTS = new AntPathRequestMatcher("/api/v1/phone/**");
-    private static final AntPathRequestMatcher AUTH_ENDPOINTS = new AntPathRequestMatcher("/api/v1/auth/**");
+    private static final PathPatternRequestMatcher.Builder REQUEST_MATCHERS = PathPatternRequestMatcher.withDefaults();
+
+    private static final PathPatternRequestMatcher PHONE_ENDPOINTS = REQUEST_MATCHERS.matcher("/api/v1/phone/**");
+    private static final PathPatternRequestMatcher AUTH_ENDPOINTS = REQUEST_MATCHERS.matcher("/api/v1/auth/**");
     // GET only, matching SecurityConfig's own scoping of this one endpoint -- POST /setup/complete
     // is deliberately NOT excluded here, since only the pre-verified BOOTSTRAP_ADMIN account
     // (see BootstrapService) can ever legitimately reach it.
-    private static final AntPathRequestMatcher SETUP_STATUS_ENDPOINT =
-            new AntPathRequestMatcher("/api/v1/setup/status", "GET");
+    private static final PathPatternRequestMatcher SETUP_STATUS_ENDPOINT =
+            REQUEST_MATCHERS.matcher(HttpMethod.GET, "/api/v1/setup/status");
     // GET only, and the exact base path (no /** wildcard) -- must NOT match PUT /api/v1/users/me
-    // (preference updates) or any /api/v1/users/me/** sub-path (password-change, /access), none
-    // of which an unverified user has any legitimate reason to reach.
-    private static final AntPathRequestMatcher USER_ME_ENDPOINT =
-            new AntPathRequestMatcher("/api/v1/users/me", "GET");
+    // (preference updates) or any other /api/v1/users/me/** sub-path (password-change, /access),
+    // none of which an unverified user has any legitimate reason to reach.
+    private static final PathPatternRequestMatcher USER_ME_ENDPOINT =
+            REQUEST_MATCHERS.matcher(HttpMethod.GET, "/api/v1/users/me");
+    // The one deliberate exception to "no /api/v1/users/me/** sub-path" above. Password-change
+    // stays blocked because it presumes a trusted, already-verified account; phone-change is the
+    // opposite case by construction -- it is the self-service recovery path for a user who CANNOT
+    // verify at all (wrong number on file, lost the old SIM, Firebase can't reach the number),
+    // reached from VerifyPhone.tsx's own OTP-failure screen. Blocking it here would make the
+    // feature unreachable by exactly the population it exists for.
+    private static final PathPatternRequestMatcher PHONE_CHANGE_ENDPOINTS =
+            REQUEST_MATCHERS.matcher("/api/v1/users/me/phone-change/**");
 
     private final UserRepository userRepository;
     private final ObjectMapper objectMapper;
@@ -87,7 +104,8 @@ public class PhoneVerificationFilter extends OncePerRequestFilter {
 
         if (auth != null && auth.isAuthenticated() && auth.getPrincipal() instanceof UserDetails userDetails
                 && !PHONE_ENDPOINTS.matches(request) && !AUTH_ENDPOINTS.matches(request)
-                && !SETUP_STATUS_ENDPOINT.matches(request) && !USER_ME_ENDPOINT.matches(request)) {
+                && !SETUP_STATUS_ENDPOINT.matches(request) && !USER_ME_ENDPOINT.matches(request)
+                && !PHONE_CHANGE_ENDPOINTS.matches(request)) {
             // The principal's username is the user id (see CurrentUserDetailsService) -- an email
             // would be ambiguous since V52, and could check phone verification against the wrong
             // one of the two accounts a person may hold under one address.

@@ -99,3 +99,87 @@ describe('401 handling', () => {
     expect(attemptedRefresh()).toBe(true);
   });
 });
+
+describe('error envelope details', () => {
+  /**
+   * Regression test, mirroring the web app's client.test.ts. The error-shape reduction below
+   * used to drop everything except message and errorCode -- AUTH_ACCOUNT_DEACTIVATED's
+   * reactivation token (carried in `details`, see ApiException/ApiResponse on the backend) would
+   * have reached this interceptor and then been silently discarded before LoginScreen ever saw
+   * it, making the reactivation flow unreachable from the app.
+   */
+  function rejectedHandler() {
+    const { api } = require('./client');
+    return (api.interceptors.response as unknown as {
+      handlers: { rejected: (e: unknown) => Promise<unknown> }[];
+    }).handlers[0].rejected;
+  }
+
+  beforeEach(() => {
+    jest.resetModules();
+  });
+
+  it('surfaces details from the error envelope, not just message and errorCode', async () => {
+    const caught = await rejectedHandler()({
+      response: {
+        status: 403,
+        data: {
+          message: 'Your account is deactivated.',
+          errorCode: 'AUTH_007',
+          details: { reactivationToken: 'reactivation-token' },
+        },
+      },
+      config: { url: '/auth/login', headers: {} },
+    }).catch((e: unknown) => e);
+
+    expect((caught as any).response.data).toEqual({
+      message: 'Your account is deactivated.',
+      errorCode: 'AUTH_007',
+      details: { reactivationToken: 'reactivation-token' },
+    });
+  });
+
+  /**
+   * Mirrors the web app's client.test.ts. Web's interceptor flattens `details.userActionRequired`
+   * onto the reduced object; mobile's didn't -- a comment claiming parity with web wasn't actually
+   * true, and a future mobile port of a web screen reading `err.response?.data?.userActionRequired`
+   * would have silently gotten `undefined` no matter what the backend sent.
+   */
+  it('surfaces userActionRequired from the error envelope details, not just message and errorCode', async () => {
+    const caught = await rejectedHandler()({
+      response: {
+        status: 422,
+        data: {
+          message: 'Could not find a transaction table in this file',
+          errorCode: 'IMPORT_001',
+          details: { userActionRequired: true },
+        },
+      },
+      config: { url: '/import/pdf/stage', headers: {} },
+    }).catch((e: unknown) => e);
+
+    expect((caught as any).response.data).toEqual({
+      message: 'Could not find a transaction table in this file',
+      errorCode: 'IMPORT_001',
+      details: { userActionRequired: true },
+      userActionRequired: true,
+    });
+  });
+
+  /**
+   * The other half: a codeless ApiException's `details` never gets the key added at all, and that
+   * must not be silently coerced to `false` here, which would claim a considered "not actionable"
+   * answer that was never actually given.
+   */
+  it('leaves userActionRequired undefined, not false, when the backend never sent it at all', async () => {
+    const caught = await rejectedHandler()({
+      response: {
+        status: 500,
+        data: { message: 'Unexpected error', errorCode: 'INTERNAL_ERROR', details: {} },
+      },
+      config: { url: '/import/pdf/stage', headers: {} },
+    }).catch((e: unknown) => e);
+
+    expect((caught as any).response.data.userActionRequired).toBeUndefined();
+  });
+});

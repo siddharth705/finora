@@ -56,6 +56,7 @@ const detectedAccount: DetectedAccountInfo = {
   statementPeriodEnd: null,
   accountNumberMasked: null,
   creditLimit: null,
+  totalAmountDue: null,
   paymentDueDate: null,
   accountHolderName: null,
   branchName: null,
@@ -282,8 +283,58 @@ describe('Import — file-type routing', () => {
 
     await pickAndUploadPdf(user);
 
-    expect(await screen.findByText(/unable to reach the import service/i)).toBeInTheDocument();
+    const banner = await screen.findByText(/unable to reach the import service/i);
     expect(screen.queryByText(/could not parse this pdf/i)).not.toBeInTheDocument();
+    // Sprint 4 item 22: a network failure is definitionally not something re-checking the file
+    // fixes, so this must render danger (red), never warning (amber) -- the one branch of the
+    // catch block that never computes an ErrorCode-derived actionRequired value at all.
+    expect(banner.closest('p')?.className).toContain('text-danger');
+    expect(banner.closest('p')?.className).not.toContain('text-warning');
+  });
+});
+
+/**
+ * Phase 1B: {@code totalAmountDue} was already correctly detected server-side but went no further
+ * than the verification report -- this is the review screen's half of the plumbing fix.
+ */
+describe('Import — total amount due on the review screen', () => {
+  beforeEach(() => {
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows the detected total amount due for a credit-card statement', async () => {
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'session-1', multiAccount: false, sections: null,
+      staging: {
+        rows: [], totalParsed: 0, flaggedDuplicates: 0, unparseableRows: [],
+        detectedAccount: { ...detectedAccount, suggestedAccountType: 'CREDIT_CARD', totalAmountDue: 27665.16 },
+      },
+    });
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+
+    expect(await screen.findByText(/total amount due \(detected\)/i)).toBeInTheDocument();
+    expect(screen.getByText('₹27,665')).toBeInTheDocument();
+  });
+
+  it('does not show a total amount due row for a savings statement', async () => {
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'session-1', multiAccount: false, sections: null,
+      staging: {
+        rows: [], totalParsed: 0, flaggedDuplicates: 0, unparseableRows: [],
+        detectedAccount: { ...detectedAccount, suggestedAccountType: 'SAVINGS', totalAmountDue: null },
+      },
+    });
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+
+    expect(await screen.findByText(/which account is this statement for/i)).toBeInTheDocument();
+    expect(screen.queryByText(/total amount due \(detected\)/i)).not.toBeInTheDocument();
   });
 });
 
@@ -294,11 +345,15 @@ describe('Import — file-type routing', () => {
  * behaviour, unchanged (covered by the two generic-fallback tests above, not repeated here).
  */
 describe('Import — failure UX contract', () => {
-  function rejectWithCode(errorCode: string) {
+  function rejectWithCode(errorCode: string, userActionRequired = false) {
     // The server message is deliberately different from the contract copy in every case below --
     // if a test passed while actually showing this string, it would mean the contract lookup was
-    // never consulted, not that the two happened to agree.
-    return { response: { data: { errorCode, message: 'server-only wording that must not appear' } } };
+    // never consulted, not that the two happened to agree. userActionRequired defaults to false
+    // (the safe default a codeless failure, or a test that doesn't care, would get) -- callers that
+    // assert on banner color pass the real value the backend would send for that specific code.
+    return {
+      response: { data: { errorCode, message: 'server-only wording that must not appear', userActionRequired } },
+    };
   }
 
   it.each([
@@ -315,6 +370,67 @@ describe('Import — failure UX contract', () => {
 
     expect(await screen.findByText(IMPORT_FAILURE_MESSAGES[code])).toBeInTheDocument();
     expect(screen.queryByText(/server-only wording/i)).not.toBeInTheDocument();
+  });
+
+  /**
+   * Sprint 4 item 22. The banner's color, not just its text, must track whether the code is one
+   * the user can fix themselves -- the async path (ImportTimeline) gets this straight from the
+   * wire as `userStatus`; the sync path has no ImportJob to compute one, so it derives the same
+   * answer from the identical per-code table the message itself came from.
+   */
+  it('colors the banner warning for an ACTION_REQUIRED code and danger for a plain FAILED one', async () => {
+    vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue(rejectWithCode(NO_HEADER_DETECTED, true));
+    const user = userEvent.setup();
+    renderImport();
+    await pickAndUploadPdf(user);
+
+    const actionRequiredBanner = (await screen.findByText(
+      IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED]
+    )).closest('p');
+    expect(actionRequiredBanner?.className).toContain('text-warning');
+    expect(actionRequiredBanner?.className).not.toContain('text-danger');
+  });
+
+  it('colors the banner danger, not warning, for CORRUPT_PDF', async () => {
+    vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue(rejectWithCode(CORRUPT_PDF, false));
+    const user = userEvent.setup();
+    renderImport();
+    await pickAndUploadPdf(user);
+
+    const failedBanner = (await screen.findByText(
+      IMPORT_FAILURE_MESSAGES[CORRUPT_PDF]
+    )).closest('p');
+    expect(failedBanner?.className).toContain('text-danger');
+    expect(failedBanner?.className).not.toContain('text-warning');
+  });
+
+  /**
+   * A stale errorActionRequired flag from a PREVIOUS ACTION_REQUIRED failure must not leak into a
+   * later, unrelated error -- the exact bug showError()/clearError() (routing every error-banner
+   * change through one pair of functions) exists to make structurally impossible. Reproduced by
+   * hitting an ACTION_REQUIRED failure, choosing a different file (the real, reachable path back
+   * to the plain dropzone), then hitting a plain validation error on the same mounted page.
+   */
+  it('does not carry a stale ACTION_REQUIRED color into a later, unrelated error', async () => {
+    vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue(rejectWithCode(NO_HEADER_DETECTED, true));
+    const user = userEvent.setup();
+    renderImport();
+    await pickAndUploadPdf(user);
+    await screen.findByText(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED]);
+
+    await user.click(screen.getByRole('button', { name: /choose a different file/i }));
+
+    // A plain client-side validation error, unrelated to any ErrorCode -- a fireEvent.drop, not
+    // userEvent.upload, since upload() respects the input's accept=".csv,.pdf" and silently won't
+    // apply a mismatched file; drop bypasses that, same as the dedicated test for this guard above.
+    const notAStatement = new File(['not a statement'], 'notes.txt', { type: 'text/plain' });
+    fireEvent.drop(screen.getByTestId('statement-dropzone'), { dataTransfer: { files: [notAStatement] } });
+
+    const validationBanner = (await screen.findByText(
+      /please upload a \.csv or \.pdf/i
+    )).closest('p');
+    expect(validationBanner?.className).toContain('text-danger');
+    expect(validationBanner?.className).not.toContain('text-warning');
   });
 
   it('falls back to the server message for a code the contract does not own', async () => {
@@ -370,6 +486,32 @@ describe('Import — password-protected PDFs', () => {
     // different export instead of the password they already have in their inbox.
     expect(screen.queryByText(/could not parse this pdf/i)).not.toBeInTheDocument();
   });
+
+  /**
+   * Sprint 4 item 22. The password prompt is its own dedicated panel with its own copy -- it must
+   * never ALSO trigger the generic page-level error banner (showError/errorActionRequired), which
+   * would duplicate the guidance or, worse, could start rendering an unintended color if a future
+   * edit moved this branch relative to clearError(). Checked via the raw server `message`
+   * ("server copy"), which the generic banner would show verbatim if it rendered at all -- the
+   * password panel's own copy is fixed UI text and never echoes that field, so its presence can
+   * only mean the generic banner leaked. (Not asserted via a CSS-class check: the panel
+   * legitimately uses text-danger itself, for PDF_PASSWORD_INVALID's own "wrong password" hint --
+   * a class-based check would false-positive on that unrelated, correct usage.) Both codes
+   * covered, since REQUIRED and INVALID are handled by separate branches in the same catch.
+   */
+  it.each([PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID])(
+    'never shows the generic error banner for %s -- only the password panel',
+    async (code) => {
+      vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue(rejectWith(code));
+      const user = userEvent.setup();
+      renderImport();
+
+      await pickAndUploadPdf(user);
+      await screen.findByTestId('pdf-password-panel');
+
+      expect(screen.queryByText('server copy')).not.toBeInTheDocument();
+    }
+  );
 
   it('retries the same file, without re-picking it, once a password is supplied', async () => {
     vi.mocked(importApi.stagePdf).mockReset()
@@ -995,6 +1137,7 @@ describe('Import — queued imports', () => {
     jobId: 'job-1',
     fileName: 'statement.csv',
     status: 'QUEUED',
+    userStatus: 'PROCESSING',
     rowsTotal: null,
     rowsProcessed: 0,
     createdAt: '2026-08-08T09:00:00Z',
@@ -1022,7 +1165,7 @@ describe('Import — queued imports', () => {
     // whatever the test doesn't care about keeps that loop harmless; tests about the timeline
     // itself override this.
     vi.mocked(importJobsApi.timeline).mockReset().mockResolvedValue({
-      jobId: 'job-1', status: 'QUEUED', failureCode: null, stages: [],
+      jobId: 'job-1', status: 'QUEUED', userStatus: 'PROCESSING', failureCode: null, stages: [],
     });
   });
 
@@ -1173,6 +1316,10 @@ describe('Import — queued imports', () => {
     vi.mocked(importJobsApi.timeline).mockResolvedValue({
       jobId: 'job-1',
       status: 'FAILED',
+      // IMPORT_001/NO_HEADER_DETECTED is one of the five ACTION_REQUIRED codes (ErrorCode's own
+      // table) -- matching that here, not plain FAILED, is what makes this fixture the real shape
+      // a FAILED job carrying this exact failureCode actually has.
+      userStatus: 'ACTION_REQUIRED',
       failureCode: 'IMPORT_001', // NO_HEADER_DETECTED
       stages: [
         { stage: 'PARSING', attempt: 1, outcome: 'FAILED', startedAt: '2026-08-08T09:00:00Z', endedAt: '2026-08-08T09:00:01Z', durationMs: 1000 },
@@ -1206,7 +1353,7 @@ describe('Import — queued imports', () => {
   it('still offers a way back when a failed job has no recorded stages', async () => {
     vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({ status: 'FAILED', error: 'boom' }));
     vi.mocked(importJobsApi.timeline).mockResolvedValue({
-      jobId: 'job-1', status: 'FAILED', failureCode: null, stages: [],
+      jobId: 'job-1', status: 'FAILED', userStatus: 'FAILED', failureCode: null, stages: [],
     });
     const user = userEvent.setup();
     renderImport();
@@ -1322,6 +1469,40 @@ describe('Import — continuing an unfinished import', () => {
 
     expect(importApi.discardSession).not.toHaveBeenCalled();
     expect(screen.getByText('hdfc-july.pdf')).toBeInTheDocument();
+  });
+
+  /**
+   * Bug fix, caught by review while scoping Sprint 4 item 22: discardStagedSession() never
+   * cleared the page-level error banner on success, unlike every other action here. Reproduced
+   * directly rather than inferred -- an unrelated ACTION_REQUIRED failure (amber) must not sit on
+   * screen, now misleadingly reading as still-relevant guidance, after a completely unrelated
+   * staged session is discarded.
+   */
+  it('clears a stale error banner once an unrelated staged session is successfully discarded', async () => {
+    vi.mocked(importApi.listSessions).mockReset()
+      .mockResolvedValueOnce([unfinishedSession()])
+      .mockResolvedValueOnce([]);
+    vi.mocked(importApi.discardSession).mockReset().mockResolvedValue(undefined as never);
+    // CSV, not PDF: a PDF failure leaves `pendingPdf` set, which hides the "Continue previous
+    // import" / Discard section entirely (showUploadPicker requires !pendingPdf) -- not the
+    // scenario this test needs. CSV uploads on selection with no intermediate panel, so the
+    // dropzone (and the resume section beside it) is what's still showing when the error lands.
+    vi.mocked(importApi.stageCsv).mockReset().mockRejectedValue({
+      response: { data: { errorCode: NO_HEADER_DETECTED, message: 'server-only wording' } },
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const user = userEvent.setup();
+    renderImport();
+
+    await screen.findByText('hdfc-july.pdf');
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+    await screen.findByText(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED]);
+
+    await user.click(screen.getByTitle('Discard Unfinished Import'));
+
+    await waitFor(() =>
+      expect(screen.queryByText(IMPORT_FAILURE_MESSAGES[NO_HEADER_DETECTED])).not.toBeInTheDocument()
+    );
   });
 
   it('fails closed when the sessions list itself cannot be loaded -- the rest of the page still works', async () => {
@@ -1487,6 +1668,7 @@ describe('Import — arriving to retry a failed sync import', () => {
       jobId: 'job-2',
       fileName: 'unrelated-second-file.csv',
       status: 'QUEUED',
+      userStatus: 'PROCESSING',
       rowsTotal: null,
       rowsProcessed: 0,
       createdAt: '2026-08-08T09:00:00Z',
@@ -1506,14 +1688,14 @@ describe('Import — arriving to retry a failed sync import', () => {
       vi.mocked(importJobsApi.progress).mockReset();
       vi.mocked(importJobsApi.cancel).mockReset();
       vi.mocked(importJobsApi.timeline).mockReset().mockResolvedValue({
-        jobId: 'job-2', status: 'QUEUED', failureCode: null, stages: [],
+        jobId: 'job-2', status: 'QUEUED', userStatus: 'PROCESSING', failureCode: null, stages: [],
       });
     });
 
     it('clears the retry banner once the second upload fails and is dismissed', async () => {
       vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({ status: 'FAILED', error: 'boom' }));
       vi.mocked(importJobsApi.timeline).mockResolvedValue({
-        jobId: 'job-2', status: 'FAILED', failureCode: null, stages: [],
+        jobId: 'job-2', status: 'FAILED', userStatus: 'FAILED', failureCode: null, stages: [],
       });
       const user = userEvent.setup();
       renderImportWithRetryState('bad-statement.pdf', NO_HEADER_DETECTED);
@@ -1524,8 +1706,15 @@ describe('Import — arriving to retry a failed sync import', () => {
       await user.click(await screen.findByRole('button', { name: 'Try a different file' }));
 
       await waitFor(() => expect(screen.queryByTestId('import-progress')).not.toBeInTheDocument());
-      expect(screen.queryByTestId('retry-import-banner')).not.toBeInTheDocument();
-      expect(screen.queryByText('bad-statement.pdf')).not.toBeInTheDocument();
+      // Bug fix (CI flake, same root cause as the sibling "cancelled" test below):
+      // clearArrivalState()'s navigate() call -- which actually clears retryState -- lands on a
+      // later render than the setJobId(null) that unmounts the timeline above, since router
+      // navigation and local useState updates commit on separate ticks. Wrapped in the same
+      // waitFor idiom as the line above so both are given a chance to actually settle.
+      await waitFor(() => {
+        expect(screen.queryByTestId('retry-import-banner')).not.toBeInTheDocument();
+        expect(screen.queryByText('bad-statement.pdf')).not.toBeInTheDocument();
+      });
     });
 
     it('clears the retry banner once the second upload is cancelled', async () => {
@@ -1540,8 +1729,16 @@ describe('Import — arriving to retry a failed sync import', () => {
       await user.click(await screen.findByRole('button', { name: 'Cancel' }));
 
       await waitFor(() => expect(screen.queryByTestId('import-progress')).not.toBeInTheDocument());
-      expect(screen.queryByTestId('retry-import-banner')).not.toBeInTheDocument();
-      expect(screen.queryByText('bad-statement.pdf')).not.toBeInTheDocument();
+      // Bug fix (CI flake): clearArrivalState()'s navigate() call -- which is what actually
+      // clears retryState -- lands on a later render than the setJobId(null) that unmounts
+      // ImportProgress above, since router navigation and local useState updates commit on
+      // separate ticks. A bare synchronous expect() here raced that second update and failed
+      // intermittently under CI's timing (passed locally, failed in CI); wrapping in the same
+      // waitFor idiom as the line above waits for both to actually settle.
+      await waitFor(() => {
+        expect(screen.queryByTestId('retry-import-banner')).not.toBeInTheDocument();
+        expect(screen.queryByText('bad-statement.pdf')).not.toBeInTheDocument();
+      });
     });
   });
 
@@ -1592,6 +1789,11 @@ describe('Import — arriving to retry a failed sync import', () => {
     await user.click(await screen.findByRole('button', { name: /import another/i }));
 
     await screen.findByTestId('statement-dropzone');
-    expect(screen.queryByTestId('retry-import-banner')).not.toBeInTheDocument();
+    // Bug fix (CI flake, same root cause as the "cancelled"/"dismissed" siblings above):
+    // startOver()'s own clearArrivalState() call -- what actually clears retryState -- lands on
+    // a later render than the setStep('upload') that makes the dropzone reappear, since router
+    // navigation and local useState updates commit on separate ticks. findByTestId resolving
+    // only proves the dropzone is back, not that retryState has cleared yet.
+    await waitFor(() => expect(screen.queryByTestId('retry-import-banner')).not.toBeInTheDocument());
   });
 });

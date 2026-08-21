@@ -61,10 +61,19 @@ class AuthServiceResetPasswordTest {
 
         authService = new AuthService(
                 userRepository, mock(CategoryRepository.class), resetTokenRepository,
+                mock(com.finora.repository.AccountReactivationTokenRepository.class),
+                mock(com.finora.repository.EmailVerificationTokenRepository.class),
                 passwordEncoder, mock(JwtService.class), mock(AuthenticationManager.class),
                 auditService, mock(RefreshTokenService.class), emailProvider,
                 new EmailProperties(), phoneVerificationProvider, mock(PlatformSettingsService.class),
-                mock(PasswordHistoryService.class), new IdentityLookup(userRepository)
+                mock(PasswordHistoryService.class), new IdentityLookup(userRepository),
+                mock(com.finora.config.RequestMetadata.class),
+                // SEC-07: same-thread executor -- runs the dispatched email/audit work
+                // synchronously so assertions against it don't race a real background thread.
+                Runnable::run,
+                // SEC-03: no MFA gate interference for tests unrelated to it -- an
+                // unstubbed mock's isEnabled() returns false by default.
+                mock(AdminMfaService.class)
         );
     }
 
@@ -225,18 +234,42 @@ class AuthServiceResetPasswordTest {
     }
 
     @Test
-    void resolveResetPasswordPhone_whenAccountHasNoPhoneNumberOnFile_throwsClearError() {
-        // phoneNumber has no NOT NULL constraint at the DB level (V8) -- a real, if unlikely,
-        // state worth guarding rather than returning null as if it were a real number.
+    void resolveResetPasswordPhone_onAGoogleAccountWithNoPhoneNumberOnFile_pointsToGoogleSignInInsteadOfAnAdministrator() {
+        // A null phoneNumber (no NOT NULL constraint at the DB level, V8) means a Google Sign-In
+        // account today -- AuthService.createGoogleUserRecord is the only writer that leaves it
+        // unset. Such an account also has no password of its own to reset, so the message should
+        // point at the login method that actually works, not at a nonexistent administrator fix.
         String rawToken = "valid-raw-token";
         PasswordResetToken prt = tokenRecord(rawToken, Instant.now().plusSeconds(900), null);
         when(resetTokenRepository.findByTokenHash(TokenHasher.sha256(rawToken))).thenReturn(Optional.of(prt));
         User user = new User();
         ReflectionTestUtils.setField(user, "id", userId);
+        user.setSignInMethod(User.SIGN_IN_METHOD_GOOGLE);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
         assertThatThrownBy(() -> authService.resolveResetPasswordPhone(new ResolveResetPasswordPhoneRequest(rawToken)))
                 .isInstanceOf(ApiException.class)
-                .hasMessageContaining("no phone number on file");
+                .hasMessageContaining("Sign in with Google");
+    }
+
+    @Test
+    void resolveResetPasswordPhone_onAPasswordAccountWithNoPhoneNumberOnFile_stillPointsAtAnAdministratorNotGoogle() {
+        // The "real, if unlikely" case this guard was originally written for: a PASSWORD-method
+        // account somehow missing its phone number (no DB-level NOT NULL). It has a real
+        // password and no Google identity to fall back to, so it must NOT get the Google-Sign-In
+        // message -- that would send a real password user chasing a login method that doesn't
+        // exist for their account.
+        String rawToken = "valid-raw-token";
+        PasswordResetToken prt = tokenRecord(rawToken, Instant.now().plusSeconds(900), null);
+        when(resetTokenRepository.findByTokenHash(TokenHasher.sha256(rawToken))).thenReturn(Optional.of(prt));
+        User user = new User();
+        ReflectionTestUtils.setField(user, "id", userId);
+        user.setSignInMethod(User.SIGN_IN_METHOD_PASSWORD);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> authService.resolveResetPasswordPhone(new ResolveResetPasswordPhoneRequest(rawToken)))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("Contact an administrator")
+                .hasMessageNotContaining("Sign in with Google");
     }
 }
