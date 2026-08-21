@@ -97,7 +97,7 @@ class StatementImportServiceReimportIntegrityTest {
                 eq((Integer) null), any()))
                 .thenReturn(new StagingResponse(List.of(rows), rows.length, 0,
                         new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null, null,
-                                null, null, null, 0.0, true, List.of(), null, null, null, null, null, null, null, null),
+                                null, null, null, null, 0.0, true, List.of(), null, null, null, null, null, null, null, null),
                         List.of()));
     }
 
@@ -188,7 +188,7 @@ class StatementImportServiceReimportIntegrityTest {
 
         StagingResponse staged = new StagingResponse(List.of(GENUINE_ROW), 1, 0,
                 new DetectedAccountInfo(null, null, null, null, null, null, null, null, null, null, null,
-                        null, null, null, 0.0, true, List.of(), null, null, null, null, null, null, null, null),
+                        null, null, null, null, 0.0, true, List.of(), null, null, null, null, null, null, null, null),
                 List.of());
         when(importService.parseAndStageAnyFormat(eq(userId), eq("PDF"), eq("sbi_statement.pdf"), any(),
                 eq((Integer) null), eq("AAAA1234")))

@@ -56,6 +56,7 @@ const detectedAccount: DetectedAccountInfo = {
   statementPeriodEnd: null,
   accountNumberMasked: null,
   creditLimit: null,
+  totalAmountDue: null,
   paymentDueDate: null,
   accountHolderName: null,
   branchName: null,
@@ -289,6 +290,51 @@ describe('Import — file-type routing', () => {
     // catch block that never computes an ErrorCode-derived actionRequired value at all.
     expect(banner.closest('p')?.className).toContain('text-danger');
     expect(banner.closest('p')?.className).not.toContain('text-warning');
+  });
+});
+
+/**
+ * Phase 1B: {@code totalAmountDue} was already correctly detected server-side but went no further
+ * than the verification report -- this is the review screen's half of the plumbing fix.
+ */
+describe('Import — total amount due on the review screen', () => {
+  beforeEach(() => {
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows the detected total amount due for a credit-card statement', async () => {
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'session-1', multiAccount: false, sections: null,
+      staging: {
+        rows: [], totalParsed: 0, flaggedDuplicates: 0, unparseableRows: [],
+        detectedAccount: { ...detectedAccount, suggestedAccountType: 'CREDIT_CARD', totalAmountDue: 27665.16 },
+      },
+    });
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+
+    expect(await screen.findByText(/total amount due \(detected\)/i)).toBeInTheDocument();
+    expect(screen.getByText('₹27,665')).toBeInTheDocument();
+  });
+
+  it('does not show a total amount due row for a savings statement', async () => {
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'session-1', multiAccount: false, sections: null,
+      staging: {
+        rows: [], totalParsed: 0, flaggedDuplicates: 0, unparseableRows: [],
+        detectedAccount: { ...detectedAccount, suggestedAccountType: 'SAVINGS', totalAmountDue: null },
+      },
+    });
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+
+    expect(await screen.findByText(/which account is this statement for/i)).toBeInTheDocument();
+    expect(screen.queryByText(/total amount due \(detected\)/i)).not.toBeInTheDocument();
   });
 });
 

@@ -147,7 +147,7 @@ public class GmailStagingBridge {
         return new DetectedAccountInfo(
                 "Gmail receipts", "SAVINGS",
                 null, null, null, null,
-                null, null, null,
+                null, null, null, null,
                 null, null, null,
                 AccountDto.BankDto.from(BankRegistry.get(BankRegistry.UNKNOWN_ID)),
                 "UNKNOWN", 0.0, true, List.of("Derived from a Gmail receipt, not a bank statement — no account context is available."),

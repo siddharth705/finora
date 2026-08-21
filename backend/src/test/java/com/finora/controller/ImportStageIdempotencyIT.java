@@ -171,7 +171,7 @@ class ImportStageIdempotencyIT extends AbstractIntegrationTest {
 
     private DetectedAccountInfo sampleDetected() {
         return new DetectedAccountInfo("Test Bank", "SAVINGS", new BigDecimal("1000"), new BigDecimal("900"),
-                LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31), null, null, null, null, null, null, null,
+                LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 31), null, null, null, null, null, null, null, null,
                 "SAVINGS", 0.85, false, List.of(), null,
                 null, null, null, null, null, null, null);
     }
