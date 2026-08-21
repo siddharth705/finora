@@ -381,6 +381,25 @@ fully closed. Also found: PR #97 (regression tests upgrading BH-008/009/010 from
 CLOSED–VERIFIED) has been open, green, and mergeable since 2026-08-14 with zero reviews — sitting idle,
 not blocked on anything.
 
+**`BH-061` — OPEN, ticketed 2026-08-16.** New finding from a PM-directed `ProductIdentityResolver`
+audit (three phases: core-logic read, an integration test proving the MATCHED path end-to-end, then
+real-corpus validation). The audit's original question — can a composite statement's sections
+(Savings/RD/FD sharing one relationship number) get silently merged into each other — came back
+clean: zero cross-section collisions across all 21 real statements / 32 sections in the corpus. What
+it found instead: 26 of those 32 sections (81%), and **100% of the corpus's credit-card sections (6
+files, 13 sections)**, never receive a usable account/card number at all, so `ProductIdentityResolver`
+can never recognise a re-import of them — every re-import silently creates a new duplicate account
+instead. Not a financial-correctness defect (no balance or transaction total is ever wrong; the
+failure mode is an extra, correct, duplicate account, never a wrong merge) and not a
+`ProductIdentityResolver`/`ProductIdentity` code defect — both were read line-by-line and confirmed
+to behave correctly on the inputs they receive. Root cause is upstream, in `PdfMetadataExtractor`'s
+account/card-number extraction — part of the PDF extraction subsystem this plan's own §4 already
+lists as never reviewed line-by-line. Full evidence, methodology and the 6/32 baseline a future fix
+should move:
+[`product-identity-coverage-gap-investigation.md`](../../architecture/system-design/product-identity-coverage-gap-investigation.md).
+Not scoped or started here, per explicit instruction to keep the audit at the identity-resolution
+boundary rather than expanding into extraction.
+
 ### P3 — v1.1 (label stale — pulled into v1.0 scope 2026-08-09, see §5)
 
 The 18 Low findings, the Layout Curation UI (M2 item 7), Merchant Intelligence Workbench (WI4A),
