@@ -93,9 +93,14 @@ public class PdfMetadataExtractor {
     // field actually uses -- verified against real HDFC and Kotak statements, neither of which
     // ever says "Account Number" at all (a card issuer speaks of a CARD number, even though it
     // plays the same identifying role ACCOUNT_NUMBER above already looks for). "Account Number"
-    // is included here too so it gets the same leading/trailing-text tolerance the two patterns
-    // below add -- this is purely additive: ACCOUNT_NUMBER/ACCOUNT_NUMBER_TRAILING_LABEL above
-    // are untouched and still run first, so no currently-passing document's behavior changes.
+    // is included here too so it gets the same leading/trailing-text tolerance the patterns below
+    // add -- this is purely additive: ACCOUNT_NUMBER/ACCOUNT_NUMBER_TRAILING_LABEL above are
+    // untouched and still run first, so no currently-passing document's behavior changes.
+    //
+    // Phase 1C.1: also the anchor for a genuine multi-line grid fallback (see this label's
+    // same-line-anywhere usage in extract() below) -- verified against a real SBI credit-card
+    // statement, whose "Credit Card Number" label sits alone on its own line, with the masked
+    // value on the very next one.
     private static final String CARD_NUMBER_LABEL_SRC =
             "(?:(?:Primary\\s+)?(?:Credit\\s+)?Card\\s*(?:No\\.?|Number)|Account\\s*Number)";
     private static final Pattern CARD_NUMBER_LABEL = Pattern.compile("(?i)" + CARD_NUMBER_LABEL_SRC);
@@ -106,7 +111,7 @@ public class PdfMetadataExtractor {
     // loose shape here (any 2+ run of digit/mask characters, optionally space/hyphen-grouped) --
     // the real filtering is looksLikeCardOrAccountNumber below, which checks total length and
     // digit count afterward. Keeping that check separate from the regex, rather than trying to
-    // express "6-20 characters, at least 4 real digits, ends in a digit" as one pattern, is what
+    // express "6-20 characters, at least 2 real digits, ends in a digit" as one pattern, is what
     // keeps this simple enough to verify by eye and to test.
     private static final String CARD_NUMBER_VALUE_SRC = "[\\dXx*]{2,}(?:[\\s-][\\dXx*]{2,})*";
     private static final Pattern CARD_NUMBER_VALUE = Pattern.compile(CARD_NUMBER_VALUE_SRC);
@@ -461,18 +466,19 @@ public class PdfMetadataExtractor {
                     continue;
                 }
             }
-            // CARD_NUMBER_LABEL, same-line-anywhere (see that constant's own doc comment -- the
-            // real Kotak shape this exists for: text like "(Principal Outstanding)" precedes the
-            // label on the same line, defeating a start-anchored match). Same same-line-value
-            // contract as the payment-due-date fallback above -- find the label anywhere in the
-            // line, then look for a value-shaped token right after it.
+            // CARD_NUMBER_LABEL, same-line-anywhere or a genuine multi-line grid (see that
+            // constant's own doc comment -- the real Kotak shape for the former: text like
+            // "(Principal Outstanding)" precedes the label on the same line, defeating a
+            // start-anchored match). Tried in that order, same-line first since it's the more
+            // specific match, once the label has actually been found on this line at all.
             //
-            // Known bound: firstMatchAfter returns its first candidate outright when passed no
-            // exclude pattern, so if a too-short non-identifying token sat between the label and
-            // the real value on the same line, looksLikeCardOrAccountNumber would reject it and
-            // this would give up rather than searching further right. Not worth a retry loop for a
-            // shape no real document in this session's corpus (25 real statements, credit-card and
-            // savings) exercises -- see the Phase 1C real-corpus verification.
+            // Known bound on the same-line search: firstMatchAfter returns its first candidate
+            // outright when passed no exclude pattern, so if a too-short non-identifying token sat
+            // between the label and the real value on the same line, looksLikeCardOrAccountNumber
+            // would reject it and this would fall through to the grid search below rather than
+            // retrying further right on the same line. Not worth a retry loop for a shape no real
+            // document in this session's corpus (25 real statements, credit-card and savings)
+            // exercises -- see the Phase 1C/1C.1 real-corpus verification.
             if (accountNumberMasked == null) {
                 Matcher cardLabel = CARD_NUMBER_LABEL.matcher(line);
                 if (cardLabel.find()) {
@@ -484,6 +490,42 @@ public class PdfMetadataExtractor {
                         if (ctx != null) ctx.record("GRID_METADATA_FALLBACK");
                         continue;
                     }
+                    // Genuine multi-line grid: the label's own line carries no value of its own --
+                    // verified against a real SBI credit-card statement, whose "Credit Card
+                    // Number"-labelled line has nothing else on it at all; the masked number is on
+                    // the very next line. Same findGridValue contract payment-due-date/credit-limit
+                    // already use, applied to this field for the first time.
+                    //
+                    // Bug fix: this used to try findGridValue whenever the same-line search simply
+                    // failed, with no check on WHY it failed -- CARD_NUMBER_LABEL's own unanchored
+                    // match (needed for Kotak's leading-text case) also fires on an incidental
+                    // mention of "account number"/"card number" buried mid-sentence in unrelated
+                    // prose, and a 3-line forward scan from THAT position can land on some unrelated
+                    // nearby digit-shaped token. Confirmed against a real corpus sweep: three
+                    // documents (a credit-card statement and two savings statements) produced a
+                    // spurious grid match this way, every one of them a label mid-sentence with
+                    // several more words of prose following it on the same line -- never digits.
+                    // SBI's own genuine line has ZERO characters after the label match; every false
+                    // positive found had well over a dozen. Requiring the label to be the last real
+                    // content on its line -- looser grid inference needs a stronger shape
+                    // requirement than same-line matching does, not the same one -- is what actually
+                    // distinguishes "this line IS the label" from "this line MENTIONS the label."
+                    // A trailing colon is tolerated -- the same optional-colon punctuation every
+                    // other label in this class already allows (see labelPattern) -- since a
+                    // "Label:" line with its value on the next line is an ordinary formatting
+                    // choice, not evidence the label was merely mentioned in passing.
+                    boolean labelIsLastContentOnLine =
+                            line.substring(cardLabel.end()).trim().replaceFirst("^:", "").trim().isEmpty();
+                    if (labelIsLastContentOnLine) {
+                        String gridValue = findGridValue(preTableLines, i, CARD_NUMBER_VALUE, null);
+                        if (gridValue != null && looksLikeCardOrAccountNumber(gridValue)) {
+                            String[] normalized = normalizeCardOrAccountNumberValue(gridValue);
+                            accountNumberMasked = normalized[0];
+                            accountNumberFull = normalized[1];
+                            if (ctx != null) ctx.record("GRID_METADATA_FALLBACK");
+                        }
+                    }
+                    continue;
                 }
             }
             if (accountNumberMasked == null) {
@@ -588,12 +630,24 @@ public class PdfMetadataExtractor {
      *  digit range for consistency. Requires the LAST character to be a real digit -- every masked
      *  shape observed on a real statement keeps its final group visible; a value ending in a mask
      *  character would mean nothing about the identity was ever actually shown, i.e. not a
-     *  genuine masked number at all. */
+     *  genuine masked number at all.
+     *
+     *  <p>Phase 1C.1: lowered from >= 4 to >= 2 visible digits -- a real SBI credit-card statement
+     *  masks all but its last 2 digits, which the original 4-digit floor rejected outright even
+     *  though findGridValue correctly located it. Verified safe across the full 25-document real
+     *  corpus (7 credit-card, 18 savings): the same-line/trailing-label paths produce zero new
+     *  matches at the lower threshold anywhere in the corpus (every candidate they'd ever accept is
+     *  tightly anchored immediately next to its label), and this method deliberately applies the
+     *  identical bound regardless of which caller found the candidate -- label proximity and
+     *  findGridValue's own narrow search window are what keep this safe, not an assumption about
+     *  how many digits a bank chooses to mask. A mask-character requirement was considered and
+     *  rejected: a real HSBC statement's own account-number field is fully unmasked, so requiring
+     *  one would have rejected a genuine match, not just noise. */
     private static boolean looksLikeCardOrAccountNumber(String candidate) {
         String stripped = candidate.replaceAll("[\\s-]", "");
         if (stripped.length() < 6 || stripped.length() > 20) return false;
         long digitCount = stripped.chars().filter(Character::isDigit).count();
-        return digitCount >= 4 && Character.isDigit(stripped.charAt(stripped.length() - 1));
+        return digitCount >= 2 && Character.isDigit(stripped.charAt(stripped.length() - 1));
     }
 
     /**

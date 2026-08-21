@@ -91,6 +91,88 @@ class PdfMetadataExtractorTest {
     }
 
     /**
+     * Phase 1C.1: the real SBI shape -- the label sits alone on its own line, and the masked
+     * value is on the very next line entirely (a genuine multi-line grid, the same "label row,
+     * then a value row" shape GRID_DUE_DATE_LABEL's own fallback already reads for payment due
+     * date). SBI's real card number also reveals only its last 2 digits, not the usual 4 -- the
+     * reason the digit-count floor was lowered from 4 to 2, verified safe across the full real
+     * corpus (see looksLikeCardOrAccountNumber's own doc comment).
+     */
+    @Test
+    void extract_recognizesACardNumber_onATrailingLineWhenTheLabelLineItselfHasNoValue() {
+        var metadata = extractor.extract(List.of(
+                "JOHN DOE Credit Card Number",
+                "XXXX XXXX XXXX XX56"));
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("XXXX XXXX XXXX XX56");
+    }
+
+    /** A trailing colon on the label's own line is ordinary formatting, not evidence the label
+     *  was merely mentioned in passing -- must not block the multi-line grid fallback the way
+     *  genuine trailing prose correctly does (see the mid-sentence negative test below). */
+    @Test
+    void extract_recognizesACardNumber_onATrailingLineWhenTheLabelLineEndsWithAColon() {
+        var metadata = extractor.extract(List.of(
+                "Credit Card Number:",
+                "XXXX XXXX XXXX XX78"));
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("XXXX XXXX XXXX XX78");
+    }
+
+    /**
+     * Phase 1C.1: a real HSBC statement's own account-number field is fully unmasked (a summary
+     * table column, not a masked card field) -- verified via direct visual confirmation against
+     * the rendered PDF. A mask-character requirement was considered for grid-derived candidates
+     * specifically and rejected because it would have rejected this genuine match, not just
+     * noise: label proximity and findGridValue's own narrow search window are what make the grid
+     * fallback safe, not an assumption about how a bank chooses to print the value.
+     */
+    @Test
+    void extract_recognizesAFullyUnmaskedCardNumber_onATrailingLineViaTheGridFallback() {
+        var metadata = extractor.extract(List.of(
+                "Account Number",
+                "123456789012")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isEqualTo("••••9012");
+    }
+
+    /**
+     * The grid fallback still applies looksLikeCardOrAccountNumber, the same as every other
+     * matching path -- a short, non-identifying token on the label's trailing line (too short to
+     * be a real card/account number, e.g. a page or note number) must not be picked up just
+     * because it happens to sit where the real value would.
+     */
+    @Test
+    void extract_doesNotMatchATooShortTokenOnTheGridsTrailingLine() {
+        var metadata = extractor.extract(List.of(
+                "Credit Card Number",
+                "12"));
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
+    /**
+     * Bug fix, caught by a real-corpus sweep before this shipped: the grid fallback used to fire
+     * whenever CARD_NUMBER_LABEL matched anywhere on a line with no same-line value, with no check
+     * on WHY the same-line search failed. That let an incidental mention of "account number" or
+     * "card number" buried mid-sentence in unrelated prose trigger a 3-line forward scan that could
+     * land on some unrelated nearby digit-shaped token -- confirmed against 3 real documents this
+     * way (a credit-card statement and two savings statements), every one of them the label
+     * mid-sentence with several more words following it on the same line. The real SBI line this
+     * fallback exists for has the label as the LAST thing on its line; requiring that -- not just
+     * "the label matched somewhere" -- is what closes this without touching the same-line-anywhere
+     * path (Kotak's shape) at all, since that path already requires a real value to follow.
+     */
+    @Test
+    void extract_doesNotMatchAnUnrelatedNumberOnTheNextLine_whenTheLabelIsMidSentenceNotItsOwnLine() {
+        var metadata = extractor.extract(List.of(
+                "Please update your account number if it has recently changed.",
+                "Reference: 1234567890")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isNull();
+    }
+
+    /**
      * The label identifies the field -- not the value's shape. A masked-looking number with no
      * recognized card/account-number label anywhere near it must never be picked up, however
      * identifier-shaped it looks; otherwise this would regress into exactly the "find any
