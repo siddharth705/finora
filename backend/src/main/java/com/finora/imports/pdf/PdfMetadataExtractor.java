@@ -88,6 +88,37 @@ public class PdfMetadataExtractor {
             Pattern.compile("([A-Z][A-Za-z]*(?:\\s+[A-Z][A-Za-z]*){0,2})\\s+(?i:Account\\s*Name)\\s*$");
     private static final Pattern ACCOUNT_NUMBER_TRAILING_LABEL =
             Pattern.compile("(?i)^(\\d{6,20})\\s+Account\\s*Number\\s*$");
+
+    // CARD_NUMBER_LABEL: the label vocabulary a real credit-card statement's own masked-number
+    // field actually uses -- verified against real HDFC and Kotak statements, neither of which
+    // ever says "Account Number" at all (a card issuer speaks of a CARD number, even though it
+    // plays the same identifying role ACCOUNT_NUMBER above already looks for). "Account Number"
+    // is included here too so it gets the same leading/trailing-text tolerance the two patterns
+    // below add -- this is purely additive: ACCOUNT_NUMBER/ACCOUNT_NUMBER_TRAILING_LABEL above
+    // are untouched and still run first, so no currently-passing document's behavior changes.
+    private static final String CARD_NUMBER_LABEL_SRC =
+            "(?:(?:Primary\\s+)?(?:Credit\\s+)?Card\\s*(?:No\\.?|Number)|Account\\s*Number)";
+    private static final Pattern CARD_NUMBER_LABEL = Pattern.compile("(?i)" + CARD_NUMBER_LABEL_SRC);
+
+    // CARD_NUMBER_VALUE: a card/account number exactly as a real statement prints it -- either the
+    // bank's own masked form (X/x/* mask characters interleaved with visible digit groups, e.g.
+    // "XXXX XXXX XXXX 1234", "1234********5678") or a genuine unmasked digit run. Deliberately a
+    // loose shape here (any 2+ run of digit/mask characters, optionally space/hyphen-grouped) --
+    // the real filtering is looksLikeCardOrAccountNumber below, which checks total length and
+    // digit count afterward. Keeping that check separate from the regex, rather than trying to
+    // express "6-20 characters, at least 4 real digits, ends in a digit" as one pattern, is what
+    // keeps this simple enough to verify by eye and to test.
+    private static final String CARD_NUMBER_VALUE_SRC = "[\\dXx*]{2,}(?:[\\s-][\\dXx*]{2,})*";
+    private static final Pattern CARD_NUMBER_VALUE = Pattern.compile(CARD_NUMBER_VALUE_SRC);
+
+    // CARD_NUMBER_TRAILING_LABEL: the same "value before its label" shape as
+    // ACCOUNT_NUMBER_TRAILING_LABEL, but tolerant of text AFTER the label too -- verified against
+    // a real HDFC credit-card statement, whose line reads "<value> Credit Card No. <HOLDER NAME>":
+    // the holder's name trails the label on the same line, so ACCOUNT_NUMBER_TRAILING_LABEL's own
+    // \s*$ end-anchor can never match here. Same class of fix as GRID_DUE_DATE_LABEL's "ends with"
+    // -> "contains" widening in Phase 1A -- a new pattern, not a change to the existing one.
+    private static final Pattern CARD_NUMBER_TRAILING_LABEL = Pattern.compile(
+            "(?i)^(" + CARD_NUMBER_VALUE_SRC + ")\\s+" + CARD_NUMBER_LABEL_SRC + "\\b");
     private static final Pattern STATEMENT_PERIOD_TRAILING_LABEL =
             Pattern.compile("(?i)^(.+?)\\s+Statement\\s*Period\\s*$");
     // IFSC codes have a fixed, distinctive shape (4 letters, a literal 0, 6 more alphanumerics) --
@@ -417,6 +448,44 @@ public class PdfMetadataExtractor {
                     continue;
                 }
             }
+            // CARD_NUMBER_TRAILING_LABEL (see that constant's own doc comment -- the real HDFC
+            // shape this exists for). Tried before the same-line-anywhere fallback below since a
+            // value-before-label match is more specific than a bare "label found somewhere" search.
+            if (accountNumberMasked == null) {
+                Matcher cardNoTrailing = CARD_NUMBER_TRAILING_LABEL.matcher(line);
+                if (cardNoTrailing.find() && looksLikeCardOrAccountNumber(cardNoTrailing.group(1))) {
+                    String[] normalized = normalizeCardOrAccountNumberValue(cardNoTrailing.group(1));
+                    accountNumberMasked = normalized[0];
+                    accountNumberFull = normalized[1];
+                    if (ctx != null) ctx.record("GRID_METADATA_TRAILING_LABEL");
+                    continue;
+                }
+            }
+            // CARD_NUMBER_LABEL, same-line-anywhere (see that constant's own doc comment -- the
+            // real Kotak shape this exists for: text like "(Principal Outstanding)" precedes the
+            // label on the same line, defeating a start-anchored match). Same same-line-value
+            // contract as the payment-due-date fallback above -- find the label anywhere in the
+            // line, then look for a value-shaped token right after it.
+            //
+            // Known bound: firstMatchAfter returns its first candidate outright when passed no
+            // exclude pattern, so if a too-short non-identifying token sat between the label and
+            // the real value on the same line, looksLikeCardOrAccountNumber would reject it and
+            // this would give up rather than searching further right. Not worth a retry loop for a
+            // shape no real document in this session's corpus (25 real statements, credit-card and
+            // savings) exercises -- see the Phase 1C real-corpus verification.
+            if (accountNumberMasked == null) {
+                Matcher cardLabel = CARD_NUMBER_LABEL.matcher(line);
+                if (cardLabel.find()) {
+                    String sameLineValue = firstMatchAfter(line, cardLabel.end(), CARD_NUMBER_VALUE, null);
+                    if (sameLineValue != null && looksLikeCardOrAccountNumber(sameLineValue)) {
+                        String[] normalized = normalizeCardOrAccountNumberValue(sameLineValue);
+                        accountNumberMasked = normalized[0];
+                        accountNumberFull = normalized[1];
+                        if (ctx != null) ctx.record("GRID_METADATA_FALLBACK");
+                        continue;
+                    }
+                }
+            }
             if (accountNumberMasked == null) {
                 Matcher cardEndingMatch = CARD_ENDING_DIGITS.matcher(line);
                 if (cardEndingMatch.find()) {
@@ -510,6 +579,39 @@ public class PdfMetadataExtractor {
             }
         }
         return null;
+    }
+
+    /** Whether a CARD_NUMBER_VALUE-shaped candidate is actually identifying, not noise picked up
+     *  because it happened to sit near a recognized label. Checked after the regex match, not
+     *  folded into it, so the length/digit-count/trailing-digit requirements stay easy to read and
+     *  to test independently. Bounds mirror ACCOUNT_NUMBER_TRAILING_LABEL's own existing 6-20
+     *  digit range for consistency. Requires the LAST character to be a real digit -- every masked
+     *  shape observed on a real statement keeps its final group visible; a value ending in a mask
+     *  character would mean nothing about the identity was ever actually shown, i.e. not a
+     *  genuine masked number at all. */
+    private static boolean looksLikeCardOrAccountNumber(String candidate) {
+        String stripped = candidate.replaceAll("[\\s-]", "");
+        if (stripped.length() < 6 || stripped.length() > 20) return false;
+        long digitCount = stripped.chars().filter(Character::isDigit).count();
+        return digitCount >= 4 && Character.isDigit(stripped.charAt(stripped.length() - 1));
+    }
+
+    /**
+     * Decides how to store a captured card/account-number value. An already-masked value
+     * (contains an X/x/* mask character) is stored EXACTLY as printed, trimmed only -- this
+     * codebase has no way to recover the digits a bank chose to hide and must never fabricate a
+     * different mask shape than the one actually printed. A genuine unmasked digit run is masked
+     * the same way ACCOUNT_NUMBER's own value already is, so the full number can still be hashed
+     * for product identity exactly as that existing path does.
+     *
+     * @return a two-element array: [0] the value for accountNumberMasked, [1] the unmasked full
+     *         number for accountNumberFullForHashingOnly, or null when the value was already masked
+     */
+    private static String[] normalizeCardOrAccountNumberValue(String captured) {
+        String trimmed = captured.trim();
+        boolean alreadyMasked = trimmed.chars().anyMatch(c -> c == 'X' || c == 'x' || c == '*');
+        if (alreadyMasked) return new String[]{trimmed, null};
+        return new String[]{com.finora.imports.CsvParser.maskAccountNumber(trimmed), trimmed};
     }
 
     private String firstGroup(Pattern pattern, String line) {
