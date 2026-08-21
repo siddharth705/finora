@@ -4,8 +4,11 @@ import com.finora.dto.ImportDto.DetectedAccountInfo;
 import com.finora.dto.ImportDto.StagedAccountSection;
 import com.finora.imports.BalanceChainValidator;
 import com.finora.imports.ColumnAmbiguityValidator;
+import com.finora.imports.CreditCardFlowReconciliationValidator;
+import com.finora.imports.CreditCardStatementTotalsValidator;
 import com.finora.imports.DuplicateDetector;
 import com.finora.imports.ImportVerifier;
+import com.finora.imports.RowAccountingValidator;
 import com.finora.imports.StatementTotalsValidator;
 import com.finora.imports.SummaryTotalsValidator;
 import com.finora.imports.TestRuleEngines;
@@ -87,7 +90,8 @@ public final class ProductIdentityCorpusProbe {
                 new PdfTextExtractor(), new PdfTableLocator(), new PdfMetadataExtractor(),
                 stubbedNormalizer(), ProductDiscovery.standard(), new ProductAttributeExtractor(),
                 new ImportVerifier(new BalanceChainValidator(), new StatementTotalsValidator(),
-                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator()),
+                        new SummaryTotalsValidator(), new ColumnAmbiguityValidator(), new RowAccountingValidator(),
+                        new CreditCardStatementTotalsValidator(), new CreditCardFlowReconciliationValidator()),
                 TestRuleEngines.empty());
 
         var generated = generator.generateSectionsWithContext(
