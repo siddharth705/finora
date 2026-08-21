@@ -99,7 +99,10 @@ export function AppLockGate({ children }: { children: ReactNode }) {
   // OFF wouldn't stop the next foreground prompt from firing anyway.
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next: AppStateStatus) => {
-      const cameToForeground = appState.current.match(/inactive|background/) && next === 'active';
+      // AppState.currentState (this ref's initial value) is genuinely nullable per its own
+      // type -- unset until the native module responds -- so a stricter TS lib can correctly
+      // flag a bare `.match()` here even though `next` below is never null.
+      const cameToForeground = !!appState.current?.match(/inactive|background/) && next === 'active';
       appState.current = next;
       if (cameToForeground && token !== null) {
         void appLock.isEnabled().then((enabled) => {

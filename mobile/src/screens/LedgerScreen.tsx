@@ -182,7 +182,7 @@ export function LedgerScreen() {
                   <Text style={[styles.retry, { color: c.primary }]}>Try again</Text>
                 </Pressable>
               </View>
-            ) : null
+            ) : undefined
           }
           renderItem={({ item: t }) => (
             <Pressable
