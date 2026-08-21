@@ -4,21 +4,21 @@
 
 **Mode:** bug hunt only. No code was modified, no fixes were applied, no refactors were made, no pull requests were opened. Every finding below cites the file, the symbol, and the code path that demonstrates it.
 
-**Result:** 58 findings, of which **47 are live in the current tree, 10 are closed, and 1 was overstated and has been corrected** (see Validation status below). **All three Criticals are fixed, and 4 of the 10 Highs.**
+**Result:** 58 findings, of which **46 are live in the current tree, 11 are closed, and 1 was overstated and has been corrected** (see Validation status below). **All three Criticals are fixed, and 5 of the 10 Highs.**
 
 | Severity | Total | Live | Fixed | Corrected |
 |---|---|---|---|---|
 | Critical | 3 | 0 | 3 | — |
-| High | 10 | 5 | 4 | 1 (Bug 11, → Medium) |
+| High | 10 | 4 | 5 | 1 (Bug 11, → Medium) |
 | Medium | 20 | 18 | 2 | — |
 | Low | 25 | 24 | 1 | — |
-| **Total** | **58** | **47** | **10** | **1** |
+| **Total** | **58** | **46** | **11** | **1** |
 
 ## Validation status
 
 The working tree moved underneath this review — concurrent work landed in `backend/` partway through, so the snapshot the findings were originally written against is not the snapshot that exists now. **Every one of the 58 findings was subsequently re-checked against the current tree**, by grepping for the specific code signature each finding cites.
 
-**Closed — do not action these ten:**
+**Closed — do not action these eleven:**
 
 | Bug | Title | What changed |
 |---|---|---|
@@ -27,6 +27,7 @@ The working tree moved underneath this review — concurrent work landed in `bac
 | 03 | UPI/NEFT/IMPS payees collapse into one merchant | **Fixed by this review.** New `util/PaymentRailTokens`; `MerchantNormalizationEngine` skips rails and tokenises both sides through `extractMerchant`. |
 | 05 | Dashboard "this month" is the newest month with data | **Fixed by this review.** New `util/ReportingPeriod`; the response now names the month its figures describe and the client labels it. |
 | 06 | Budget alerts fire against the wrong month | **Fixed by this review.** Budget notifications now use the calendar month, agreeing with `BudgetService`. |
+| 08 | Oversized file uploads return 500 instead of 413 | Fixed by later work. `GlobalExceptionHandler` now has a dedicated `@ExceptionHandler(MaxUploadSizeExceededException.class)` returning `413 PAYLOAD_TOO_LARGE` with an `UPLOAD_TOO_LARGE` error code. |
 | 12 | `ImportSession.fileContent` eagerly fetched | **Fixed by this review.** `@Basic(fetch = LAZY)` added; new Guardian rule **FG-030** fails the build on any persistent `byte[]` without it. |
 | 13 | Lockout re-locks on the next wrong password | Fixed by concurrent work. `AuthService` resets `failedLoginAttempts` once `lockedUntil` has elapsed. |
 | 17 | Imports never adjust the account balance | **Fixed by this review.** `AccountBalanceConvention.balanceDelta`/`netDelta` now own the rule; `ImportService.confirm` applies it and `StatementImportService.delete` reverses it. |
@@ -366,7 +367,13 @@ High
 
 ---
 
-# Bug 08
+# Bug 08 — [FIXED]
+
+> **Fixed by later work, not this review.** `GlobalExceptionHandler` now has a dedicated
+> `@ExceptionHandler(MaxUploadSizeExceededException.class)` (`handleUploadTooLarge`) that returns
+> `413 PAYLOAD_TOO_LARGE` with error code `UPLOAD_TOO_LARGE` and a message naming the configured
+> limit, instead of falling through to the `Exception.class` catch-all described below. Retained
+> for the record.
 
 ## Title
 Oversized file uploads return 500 INTERNAL_ERROR instead of 413
