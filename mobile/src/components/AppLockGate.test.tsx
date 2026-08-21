@@ -193,6 +193,66 @@ describe('AppLockGate', () => {
   });
 });
 
+// Regression coverage for a real on-device bug: presenting the native Face ID sheet drives
+// AppState through inactive/background and back to active on its own, as a side effect of the
+// prompt itself -- not the user backgrounding the app. Before authenticatingRef existed, the
+// foreground listener could not tell that transition apart from a genuine return, so it re-locked
+// and re-prompted, which blipped AppState again, on and on: Face ID asked again and again in a
+// loop, exactly as reported.
+describe('a self-induced AppState blip during authentication', () => {
+  it('does not re-prompt when the prompt itself causes a background/foreground blip mid-flight', async () => {
+    await signIn();
+    await enableAppLock();
+    let resolveAuth: ((result: LocalAuthentication.LocalAuthenticationResult) => void) | undefined;
+    mockedAuthenticateAsync.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveAuth = resolve; })
+    );
+    renderGate();
+
+    // The mount-time auto-prompt is now in flight, unresolved -- this is the window a real Face
+    // ID sheet occupies on-device.
+    await waitFor(() => expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(1));
+
+    // The sheet itself drives this same blip -- same listener, same event shapes the real
+    // AppLockGate.tsx doc comment describes, not a distinct user action.
+    await act(async () => {
+      goToBackground();
+      returnToForeground();
+    });
+
+    // The bug: this would have been 2 (or climbing forever on a real device, one more prompt per
+    // blip). A second concurrent authenticateAsync() call while the first is still unresolved is
+    // exactly the loop that was reported.
+    expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(LOCK_TEXT)).toBeTruthy();
+
+    // The original prompt still resolves normally afterward -- the guard only suppresses the
+    // self-induced blip, not real authentication.
+    await act(async () => resolveAuth?.({ success: true }));
+    await waitFor(() => expect(screen.queryByText(LOCK_TEXT)).toBeNull());
+    expect(screen.getByText('protected content')).toBeTruthy();
+  });
+
+  it('still re-locks on a genuine foreground return once authentication has finished', async () => {
+    await signIn();
+    const isEnabledSpy = jest.spyOn(appLock, 'isEnabled').mockResolvedValueOnce(true);
+    mockedAuthenticateAsync.mockResolvedValueOnce({ success: true });
+    renderGate();
+    await waitFor(() => expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByText(LOCK_TEXT)).toBeNull());
+
+    // A real return, well after the earlier prompt already settled -- authenticatingRef is back
+    // to false by now, so this must not be swallowed the way the self-induced blip above was.
+    isEnabledSpy.mockResolvedValueOnce(true);
+    mockedAuthenticateAsync.mockResolvedValueOnce({ success: false, error: 'authentication_failed' });
+    goToBackground();
+    await act(async () => returnToForeground());
+
+    await waitFor(() => expect(mockedAuthenticateAsync).toHaveBeenCalledTimes(2));
+    expect(screen.getByText(LOCK_TEXT)).toBeTruthy();
+  });
+});
+
 describe('the app actually mounts it', () => {
   it('locks the real App tree for a signed-in session with the setting on', async () => {
     await signIn();

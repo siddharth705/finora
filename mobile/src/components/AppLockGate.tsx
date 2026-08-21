@@ -32,6 +32,15 @@ export function AppLockGate({ children }: { children: ReactNode }) {
   const [locked, setLocked] = useState(false);
   const [authenticating, setAuthenticating] = useState(false);
   const appState = useRef(AppState.currentState);
+  // Mirrors `authenticating` above, but as a ref: presenting the native Face ID/Touch ID sheet
+  // itself drives AppState through inactive/background and back to active (confirmed on-device --
+  // not a hypothetical), and the foreground listener below runs in a closure that only sees
+  // whatever `token`/`lockAndPrompt` it captured at subscribe time, not a fresh render's state.
+  // Reading a ref here (always current, synchronous) is what lets that listener tell "the app
+  // generated this transition itself, mid-authenticate()" apart from "the user actually left and
+  // came back" -- without it, every prompt re-triggers the foreground handler, which re-locks and
+  // re-prompts, forever.
+  const authenticatingRef = useRef(false);
   // Which token the last completed appLock.isEnabled() check applies to -- compared against the
   // current `token` below (`checked`) rather than a separate true/false flag, so there's no
   // "reset to not-checked" to perform synchronously when a session ends: a stale value here simply
@@ -46,11 +55,13 @@ export function AppLockGate({ children }: { children: ReactNode }) {
 
   const tryUnlock = useCallback(async () => {
     setAuthenticating(true);
+    authenticatingRef.current = true;
     try {
       const success = await appLock.authenticate('Unlock Finora');
       if (success) setLocked(false);
     } finally {
       setAuthenticating(false);
+      authenticatingRef.current = false;
     }
   }, []);
 
@@ -104,7 +115,11 @@ export function AppLockGate({ children }: { children: ReactNode }) {
       // flag a bare `.match()` here even though `next` below is never null.
       const cameToForeground = !!appState.current?.match(/inactive|background/) && next === 'active';
       appState.current = next;
-      if (cameToForeground && token !== null) {
+      // Skips a foreground transition caused by this component's own prompt (see
+      // authenticatingRef's own comment above) -- otherwise this is indistinguishable from the
+      // user actually backgrounding and returning, and re-locking here just re-prompts, which
+      // blips AppState again, forever.
+      if (cameToForeground && token !== null && !authenticatingRef.current) {
         void appLock.isEnabled().then((enabled) => {
           if (enabled) lockAndPrompt();
         });
