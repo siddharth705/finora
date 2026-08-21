@@ -16,23 +16,18 @@ name: E2E (full suite)
 #
 # WHAT THIS SHARES WITH ci.yml'S smoke JOB, AND WHY THAT IS SAFE
 # ---------------------------------------------------------------
-# The same container name (finora-ci-postgres), the same host ports (5433, 18081, 18086) and the
-# same teardown. Two jobs contending for those would be the failure mode smoke's own comment
-# describes -- one job's teardown killing the other's backend mid-test, surfacing as assertion
-# failures in whichever run was unlucky.
-#
-# The `primary` label is what makes it safe, and it is the same mechanism smoke already relies on:
-# a self-hosted runner executes ONE job at a time, so pinning both to that runner means this and a
-# smoke job can never overlap. A scheduled run that fires while a pull request is building simply
-# queues. Anything added here that takes host-level state needs the same label for the same reason.
+# The same backend ports (18081) and the same shape of Postgres service. On the self-hosted runner
+# this repository used before going public, both jobs pinned to a `primary`-labelled runner so they
+# could never run concurrently on that one machine -- a container name, host ports and a teardown
+# that all reached machine-wide would otherwise let one job's teardown kill the other's backend
+# mid-test. GitHub-hosted runners give every job its own fresh, isolated VM, so that conflict is
+# structurally impossible now and the `primary` label is gone from both workflows.
 #
 # WHEN IT RUNS
 # ------------
-# 03:00 UTC daily. The runner is a developer's Mac rather than a datacentre VM, so two honest
-# caveats: a machine that is asleep or powered off will not pick the run up (GitHub queues it and
-# it starts whenever the runner next comes online), and a run that lands mid-morning competes with
-# whatever else that machine is doing. Neither breaks anything -- it means "nightly" is
-# best-effort, and workflow_dispatch exists so a release can force a real one on demand.
+# 03:00 UTC daily, on a GitHub-hosted runner that starts fresh for the scheduled run -- no runner
+# uptime or "is the machine awake" caveat to carry here anymore. workflow_dispatch still exists so
+# a release can force a run on demand rather than waiting for the schedule.
 on:
   schedule:
     - cron: '0 3 * * *'
@@ -54,39 +49,33 @@ permissions:
 jobs:
   full-suite:
     name: Full Playwright suite (Chromium)
-    # See the header: `primary` is what stops this and ci.yml's smoke job holding the same
-    # container, ports and teardown at the same time.
-    runs-on: [self-hosted, macOS, ARM64, primary]
+    # See the header: GitHub-hosted runners give every job its own isolated VM, so this and
+    # ci.yml's smoke job can never contend over a container, port or teardown -- the `primary`
+    # label that used to pin both to one self-hosted machine is gone.
+    runs-on: ubuntu-latest
     # Generous next to smoke's 25: this is the whole suite rather than nine specs, and a hang
     # detector is all this number is meant to be.
     timeout-minutes: 60
 
+    # A `services:` container, same as ci.yml's smoke job -- see that file for why this replaced
+    # the self-hosted period's hand-rolled `docker run` + readiness loop.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: finora
+          POSTGRES_USER: finora
+          POSTGRES_PASSWORD: finora
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd="pg_isready -U finora -d finora"
+          --health-interval=2s
+          --health-timeout=5s
+          --health-retries=30
+
     steps:
       - uses: actions/checkout@v7
-
-      # Started by hand rather than as a `services:` container -- service containers are a
-      # Linux-container feature and do not run on a macOS runner at all. Mirrors ci.yml exactly,
-      # including the force-remove first: a self-hosted workspace is reused, so a container from a
-      # crashed previous run may still be holding the port.
-      - name: Start Postgres
-        run: |
-          docker rm -f finora-ci-postgres >/dev/null 2>&1 || true
-          docker run -d --name finora-ci-postgres \
-            -e POSTGRES_DB=finora \
-            -e POSTGRES_USER=finora \
-            -e POSTGRES_PASSWORD=finora \
-            -p 5433:5432 \
-            postgres:16-alpine
-          for i in $(seq 1 30); do
-            if docker exec finora-ci-postgres pg_isready -U finora -d finora >/dev/null 2>&1; then
-              echo "postgres ready after ${i} attempt(s)"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "postgres did not become ready within 60s"
-          docker logs finora-ci-postgres
-          exit 1
 
       # Must track backend/pom.xml's java.version -- this job packages the backend itself.
       - uses: actions/setup-java@v5
@@ -122,18 +111,22 @@ jobs:
       # Chromium always. Firefox/Edge and the responsive projects are opt-in via the dispatch input
       # below, because engine-specific rendering changes far less often than business logic and
       # tripling the runtime nightly would not pay for itself.
+      #
+      # --with-deps installs the browsers' system libraries via apt-get, which a bare ubuntu-latest
+      # image needs and does not carry by default.
       - name: Install Chromium
         working-directory: e2e
-        run: npx playwright install chromium
+        run: npx playwright install --with-deps chromium
 
       - name: Install the other browsers
         if: ${{ inputs.browsers }}
         working-directory: e2e
-        run: npx playwright install firefox webkit
+        run: npx playwright install --with-deps firefox webkit
 
-      # PORT 18081, not 8081: 8081 is the React Native Metro bundler's default and this runner is a
-      # developer's own Mac, so whoever binds first wins. ci.yml records the day three unrelated
-      # pull requests failed here because an Expo dev server was running. Same reasoning, same port.
+      # PORT 18081, not 8081 (the React Native Metro bundler's default): kept from the self-hosted
+      # period, where this runner doubled as a developer's own Mac and whoever bound the port first
+      # won. A GitHub-hosted job has the VM to itself, so the collision this port was chosen to
+      # avoid can't happen here, but there's no reason to move it back either.
       #
       # The rate-limit ceilings are raised for the same reason ci.yml raises them: the suite
       # registers an account per test and stages a statement in most of them, so production per-IP
@@ -202,11 +195,10 @@ jobs:
           path: ${{ runner.temp }}/backend.log
           retention-days: 30
 
-      # always(), not !cancelled(): a cancelled run is exactly when a leftover Postgres container or
-      # a backgrounded jar most needs killing. The backend needs an explicit kill because it is
-      # started with `&` and outlives the step, the job and the workflow.
-      - name: Tear down Postgres and the backend
+      # Postgres is a `services:` container, so GitHub tears it down with the job. The backend
+      # still needs an explicit kill: it is started with `&`, which detaches it from the step's
+      # shell. `always()`, not `!cancelled()`, because a cancelled run is exactly when a
+      # backgrounded jar most needs killing.
+      - name: Tear down the backend
         if: always()
-        run: |
-          docker rm -f finora-ci-postgres >/dev/null 2>&1 || true
-          pkill -f 'finora-backend-.*\.jar' >/dev/null 2>&1 || true
+        run: pkill -f 'finora-backend-.*\.jar' >/dev/null 2>&1 || true

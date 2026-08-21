@@ -74,6 +74,26 @@ class AdminMerchantReviewControllerIT extends AbstractIntegrationTest {
         return merchantRepository.save(merchant);
     }
 
+    /** Pages through the WHOLE queue rather than trusting one page. The queue is global and shared
+     *  across every *IT class's Testcontainers Postgres for the life of the suite, oldest-first,
+     *  and the service clamps any requested size to {@code PageBounds.DEFAULT_MAX_SIZE} (100) --
+     *  so once other IT classes have left more than 100 merchants awaiting review, this test's own
+     *  (newest) row is never on page 0, regardless of what size the request asks for. */
+    private JsonNode fetchEntireQueue(User admin) throws Exception {
+        var all = mapper.createArrayNode();
+        int page = 0;
+        while (true) {
+            ResponseEntity<String> response = restTemplate.exchange(
+                    "/api/v1/admin/merchant-review?page=" + page + "&size=100", HttpMethod.GET,
+                    new HttpEntity<>(bearerFor(admin)), String.class);
+            JsonNode data = mapper.readTree(response.getBody()).get("data");
+            data.get("content").forEach(all::add);
+            if (page + 1 >= data.get("totalPages").asInt()) break;
+            page++;
+        }
+        return all;
+    }
+
     private Transaction transactionFor(User owner, Merchant merchant) {
         // transactions.account_id is NOT NULL -- a transaction always belongs to an account.
         com.finora.entity.Account account = new com.finora.entity.Account();
@@ -132,11 +152,7 @@ class AdminMerchantReviewControllerIT extends AbstractIntegrationTest {
         approved.setCanonicalName("ALREADY APPROVED " + UUID.randomUUID());
         merchantRepository.save(approved);
 
-        ResponseEntity<String> response = restTemplate.exchange(
-                "/api/v1/admin/merchant-review?size=200", HttpMethod.GET,
-                new HttpEntity<>(bearerFor(admin)), String.class);
-
-        JsonNode content = mapper.readTree(response.getBody()).get("data").get("content");
+        JsonNode content = fetchEntireQueue(admin);
         assertThat(content.toString()).contains(temporary.getId().toString());
         assertThat(content.toString()).doesNotContain(approved.getId().toString());
     }
@@ -150,12 +166,8 @@ class AdminMerchantReviewControllerIT extends AbstractIntegrationTest {
         Merchant merchant = temporaryMerchant(owner, "CORRELATED " + UUID.randomUUID());
         transactionFor(owner, merchant);
 
-        ResponseEntity<String> response = restTemplate.exchange(
-                "/api/v1/admin/merchant-review?size=200", HttpMethod.GET,
-                new HttpEntity<>(bearerFor(admin)), String.class);
-
         JsonNode row = null;
-        for (JsonNode candidate : mapper.readTree(response.getBody()).get("data").get("content")) {
+        for (JsonNode candidate : fetchEntireQueue(admin)) {
             if (candidate.get("id").asText().equals(merchant.getId().toString())) row = candidate;
         }
         assertThat(row).isNotNull();
