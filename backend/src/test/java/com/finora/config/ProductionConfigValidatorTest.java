@@ -270,6 +270,46 @@ class ProductionConfigValidatorTest {
     }
 
     /**
+     * SEC-11 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Same soft-warning
+     * treatment as TRUST_PROXY_HEADERS/TWO_FACTOR_API_KEY directly above -- a forgotten CORS_ORIGINS
+     * override fails CLOSED (CorsConfig rejects everything not explicitly listed), so this must
+     * only warn, never block startup, unlike JWT_SECRET/DB_PASSWORD which fail OPEN and correctly
+     * do block it.
+     *
+     * <p>Deliberately does not stub app.cors.allowed-origins at all -- a bare mock(Environment.class)
+     * returns null for an unstubbed getProperty(String) call, which is exactly the "operator never
+     * set CORS_ORIGINS" case in production and must be treated the same as the explicit localhost
+     * value below, not crash the validator with a NullPointerException.
+     */
+    @Test
+    void run_inProdProfile_withCorsOriginsUnset_warnsButDoesNotThrow() {
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class), realCrypto());
+
+        assertThat(catchNoThrow(validator)).isTrue();
+    }
+
+    @Test
+    void run_inProdProfile_withCorsOriginsStillOnTheLocalhostDefault_warnsButDoesNotThrow() {
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
+        when(environment.getProperty("app.cors.allowed-origins"))
+                .thenReturn("http://localhost:5173,http://localhost:5174");
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class), realCrypto());
+
+        assertThat(catchNoThrow(validator)).isTrue();
+    }
+
+    @Test
+    void run_inProdProfile_withARealCorsOrigin_doesNotThrow() {
+        Environment environment = envWithProfilesAndDbPassword(new String[]{"prod"}, "a-real-password");
+        when(environment.getProperty("app.cors.allowed-origins"))
+                .thenReturn("https://app.finoratech.info");
+        var validator = new ProductionConfigValidator(environment, realJwt(), realEmail(), configuredFirebase(), mock(SmsProvider.class), realCrypto());
+
+        assertThat(catchNoThrow(validator)).isTrue();
+    }
+
+    /**
      * BH-032. The check compared against the literal "finora" and nothing else, while the message
      * it printed claimed to catch "unset" too. It did not -- an unset password reads as null, null
      * does not equal "finora", and production started silently. The one case the message named was

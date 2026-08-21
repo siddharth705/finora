@@ -337,6 +337,15 @@ app:
     login:
       max: ${RATE_LIMIT_LOGIN_MAX:10}
       window-seconds: ${RATE_LIMIT_LOGIN_WINDOW_SECONDS:60}
+    # SEC-16 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). More generous than
+    # every other bucket here, deliberately: refresh is called far more often per user than login/
+    # register/reset ever are (every access-token expiry, from every open tab/device), and several
+    # Finora users sharing one IP (a household, an office NAT) refreshing around the same time is
+    # ordinary use, not abuse. See RateLimitFilter's own comment on refreshLimiter for why this
+    # isn't sharing reset-password's tighter bucket.
+    refresh:
+      max: ${RATE_LIMIT_REFRESH_MAX:15}
+      window-seconds: ${RATE_LIMIT_REFRESH_WINDOW_SECONDS:300}
     register:
       max: ${RATE_LIMIT_REGISTER_MAX:5}
       window-seconds: ${RATE_LIMIT_REGISTER_WINDOW_SECONDS:300}

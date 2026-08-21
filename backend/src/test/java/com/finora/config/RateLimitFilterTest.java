@@ -236,6 +236,7 @@ class RateLimitFilterTest {
     void everyEndpointWithARealPerCallCostIsLimited() throws Exception {
         String[] mustBeLimited = {
                 "/api/v1/auth/login",
+                "/api/v1/auth/refresh",
                 "/api/v1/auth/register",
                 "/api/v1/auth/google",
                 "/api/v1/auth/forgot-password",
@@ -383,7 +384,9 @@ class RateLimitFilterTest {
                 Map.entry("app.rate-limit.apple.max", DEFAULT_APPLE_MAX),
                 Map.entry("app.rate-limit.apple.window-seconds", DEFAULT_APPLE_WINDOW),
                 Map.entry("app.rate-limit.mfa-verify.max", DEFAULT_MFA_VERIFY_MAX),
-                Map.entry("app.rate-limit.mfa-verify.window-seconds", DEFAULT_MFA_VERIFY_WINDOW));
+                Map.entry("app.rate-limit.mfa-verify.window-seconds", DEFAULT_MFA_VERIFY_WINDOW),
+                Map.entry("app.rate-limit.refresh.max", DEFAULT_REFRESH_MAX),
+                Map.entry("app.rate-limit.refresh.window-seconds", DEFAULT_REFRESH_WINDOW));
 
         Constructor<?> springConstructor = Arrays.stream(RateLimitFilter.class.getDeclaredConstructors())
                 .filter(c -> c.getParameterCount() > 2)

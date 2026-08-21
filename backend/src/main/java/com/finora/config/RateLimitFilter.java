@@ -133,6 +133,20 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // work per call (JWKS-backed signature verification) and, for a first-time email, the full
     // account-creation path -- the cheapest way to spam account creation if left unguarded.
     private final RateLimiter appleLimiter;
+    // SEC-16 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Every other
+    // session-lifecycle endpoint that consumes a bearer credential is limited under this class's
+    // own "bounds a token holder retrying in a loop" reasoning (see resetPasswordLimiter above) --
+    // this one, arguably the most frequently hit of all of them, was simply missed. Not a raw
+    // brute-force concern (refresh tokens are 256-bit SecureRandom, RefreshTokenService.issue --
+    // infeasible to guess regardless of any limiter), but an unbounded retry ceiling on a
+    // stolen/leaked token is still worth closing for consistency.
+    //
+    // A dedicated, more generous limiter rather than sharing resetPasswordLimiter's bucket:
+    // refresh is legitimately called far more often per user (every access-token expiry, from
+    // every open tab/device), and several Finora users on one shared IP (a household, an office
+    // NAT) refreshing around the same time is ordinary use, not abuse -- resetPasswordLimiter's
+    // tighter ceiling is sized for a rare, single-shot flow and would false-positive here.
+    private final RateLimiter refreshLimiter;
     // Phase C (Download My Data). Far stricter than importStageLimiter -- 5/day, not 10/10min --
     // because a full export is strictly more expensive per call (every in-scope table plus every
     // original statement file, read and zipped) and legitimately needed far less often. Bug fix
@@ -211,6 +225,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
     static final int DEFAULT_GOOGLE_MAX = 5, DEFAULT_GOOGLE_WINDOW = 300;
     static final int DEFAULT_APPLE_MAX = 5, DEFAULT_APPLE_WINDOW = 300;
     static final int DEFAULT_MFA_VERIFY_MAX = 10, DEFAULT_MFA_VERIFY_WINDOW = 600;
+    // 15/300s (one every 20s sustained, or bursts) rather than an even larger ceiling: generous
+    // enough to absorb several Finora users on one shared IP refreshing around the same time
+    // without a false trip, while staying below tripsRateLimitAfterManyRequests' fixed 20-request
+    // probe (RateLimitFilterTest) -- every limiter this class defines needs a max under that
+    // probe's iteration count for the shared "does this endpoint actually trip" test to work.
+    static final int DEFAULT_REFRESH_MAX = 15, DEFAULT_REFRESH_WINDOW = 300;
 
     /**
      * The shipped configuration, for tests.
@@ -231,7 +251,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 DEFAULT_DATA_EXPORT_MAX, DEFAULT_DATA_EXPORT_WINDOW,
                 DEFAULT_GOOGLE_MAX, DEFAULT_GOOGLE_WINDOW,
                 DEFAULT_APPLE_MAX, DEFAULT_APPLE_WINDOW,
-                DEFAULT_MFA_VERIFY_MAX, DEFAULT_MFA_VERIFY_WINDOW);
+                DEFAULT_MFA_VERIFY_MAX, DEFAULT_MFA_VERIFY_WINDOW,
+                DEFAULT_REFRESH_MAX, DEFAULT_REFRESH_WINDOW);
     }
 
     /**
@@ -270,7 +291,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
             @Value("${app.rate-limit.apple.max:5}") int appleMax,
             @Value("${app.rate-limit.apple.window-seconds:300}") int appleWindow,
             @Value("${app.rate-limit.mfa-verify.max:10}") int mfaVerifyMax,
-            @Value("${app.rate-limit.mfa-verify.window-seconds:600}") int mfaVerifyWindow) {
+            @Value("${app.rate-limit.mfa-verify.window-seconds:600}") int mfaVerifyWindow,
+            @Value("${app.rate-limit.refresh.max:15}") int refreshMax,
+            @Value("${app.rate-limit.refresh.window-seconds:300}") int refreshWindow) {
         this.objectMapper = objectMapper;
         this.clientIpResolver = clientIpResolver;
         this.loginLimiter = new RateLimiter(loginMax, loginWindow);
@@ -284,8 +307,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
         this.googleLimiter = new RateLimiter(googleMax, googleWindow);
         this.appleLimiter = new RateLimiter(appleMax, appleWindow);
         this.mfaVerifyLimiter = new RateLimiter(mfaVerifyMax, mfaVerifyWindow);
+        this.refreshLimiter = new RateLimiter(refreshMax, refreshWindow);
         this.limitedEndpoints = List.of(
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/login"), loginLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/auth/refresh"), refreshLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/register"), registerLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/google"), googleLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/auth/apple"), appleLimiter),

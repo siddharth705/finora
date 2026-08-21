@@ -304,6 +304,32 @@ public class ProductionConfigValidator implements SmartInitializingSingleton {
                     + "ignored.");
         }
 
+        // SEC-11 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). A soft warning,
+        // not a hard failure like JWT_SECRET/DB_PASSWORD above -- the wrong default here fails
+        // CLOSED, not open: CorsConfig only ever allows the origins actually listed, so a forgotten
+        // CORS_ORIGINS override in production means the real frontend gets rejected with a CORS
+        // error (loud, immediate, breaks nothing security-relevant) rather than any origin being
+        // silently permitted. Still worth surfacing at boot rather than an operator discovering it
+        // from "the deployed site can't log in" -- every other config gap in this validator gets
+        // exactly that treatment.
+        // Read as the 1-arg form (null if absent) and defaulted explicitly here, rather than the
+        // 2-arg getProperty(key, default) overload: a bare mock(Environment.class) in tests doesn't
+        // run that overload's real default-substitution logic and would return null regardless (see
+        // envWithProfilesAndDbPasswordAndTrustProxyHeaders's own comment on the identical trap for
+        // the boolean trust-proxy-headers check above), so this guards against null explicitly
+        // instead of depending on a mock behaving like the real Environment.
+        String corsOrigins = environment.getProperty("app.cors.allowed-origins");
+        boolean corsStillOnLocalhostDefault = corsOrigins == null || corsOrigins.isBlank()
+                || Arrays.stream(corsOrigins.split(","))
+                        .map(String::trim)
+                        .filter(origin -> !origin.isEmpty())
+                        .allMatch(origin -> origin.startsWith("http://localhost:") || origin.startsWith("https://localhost:"));
+        if (corsStillOnLocalhostDefault) {
+            log.warn("CORS_ORIGINS is unset or still the local-dev default (localhost origins only). "
+                    + "The deployed frontend's real origin will be rejected by CORS until this is set -- "
+                    + "see CorsConfig and application.yml's own comment on app.cors.allowed-origins.");
+        }
+
         if (!problems.isEmpty()) {
             String message = "Refusing to start with the prod profile active and insecure default "
                     + "configuration still in place:\n" + problems

@@ -20,7 +20,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -76,7 +78,18 @@ public class AdminUserService {
     @Transactional
     public UserSummaryDto updateProfile(UUID actingAdminId, UUID userId, AdminUpdateUserRequest req) {
         User user = requireUser(userId);
-        if (req.fullName() != null && !req.fullName().isBlank()) user.setFullName(req.fullName());
+        // SEC-12 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). USER_PROFILE_UPDATED_BY_ADMIN
+        // used to record only who/when, unlike suspend()/reactivate() below which both include the
+        // meaningful state they changed -- an admin could prove they touched an account but not
+        // reconstruct WHAT changed without a DB backup or WAL. Field NAMES only, not before/after
+        // values: fullName/phoneNumber are the kind of PII this codebase otherwise takes care to
+        // keep out of logs (see AuditLog's own redaction pass), and "which fields changed" is
+        // enough to make the trail reconstructable without writing raw values into audit_logs.
+        List<String> changedFields = new ArrayList<>();
+        if (req.fullName() != null && !req.fullName().isBlank()) {
+            user.setFullName(req.fullName());
+            changedFields.add("fullName");
+        }
         if (req.phoneNumber() != null && !req.phoneNumber().isBlank()) {
             // Bug fix: this used to store req.phoneNumber() verbatim, while registration stored
             // PhoneNumbers.normalize()'s E.164 form -- two writers to one field, one normalized
@@ -96,6 +109,7 @@ public class AdminUserService {
                     throw new ApiException(HttpStatus.CONFLICT, "Another account already uses this phone number.");
                 }
                 user.setPhoneNumber(normalized);
+                changedFields.add("phoneNumber");
                 // A number nobody has proved control of is not a verified number. Changing the
                 // number without clearing this left phoneVerified asserting something that was
                 // never true of the new value -- and phoneVerified is not decoration, it is a
@@ -121,7 +135,10 @@ public class AdminUserService {
                         Map.of("reason", "phone_number_changed_by_admin", "changedBy", actingAdminId.toString()));
             }
         }
-        if (req.lowBalanceThreshold() != null) user.setLowBalanceThreshold(req.lowBalanceThreshold());
+        if (req.lowBalanceThreshold() != null) {
+            user.setLowBalanceThreshold(req.lowBalanceThreshold());
+            changedFields.add("lowBalanceThreshold");
+        }
         if (req.timezone() != null) {
             // Same check UserSettingsService.update() already applies on the user-facing path.
             // A zone id's validity is a runtime question no annotation can answer, so the DTO's
@@ -135,11 +152,12 @@ public class AdminUserService {
                 throw new ApiException(HttpStatus.BAD_REQUEST, "'" + req.timezone() + "' is not a recognized timezone.");
             }
             user.setTimezone(req.timezone());
+            changedFields.add("timezone");
         }
         user.setUpdatedAt(Instant.now());
         userRepository.save(user);
         auditService.record(userId, "USER_PROFILE_UPDATED_BY_ADMIN", "User", userId,
-                Map.of("updatedBy", actingAdminId.toString()));
+                Map.of("updatedBy", actingAdminId.toString(), "changedFields", changedFields));
         return toSummary(user);
     }
 
