@@ -128,6 +128,28 @@ class CapabilityCorpusCoverageTest {
                         + "INLINE_LABEL_VALUE strategy motivated by a real AU statement's label-left/value-right "
                         + "layout. Covered by synthetic fixtures in CreditCardSummaryExtractorTest, "
                         + "not yet by a committed real-document trace.");
+        DECLARED_WITHOUT_A_TRACE.put("TRANSACTION_TABLE_TOTAL_CLOSED",
+                "no trace yet -- motivated by a real Kotak Mahindra Bank credit-card statement's "
+                        + "own \"Total Purchase & Other Charges\" column-total row; real-corpus verified "
+                        + "directly against the unredacted document (CorpusProbe/PdfPipelineDiagnostic, "
+                        + "not just a synthetic reproduction) in the Phase 2A/2C investigation. Capturing "
+                        + "a redacted trace from this specific document was attempted and refused by "
+                        + "TraceValidator (zero sections survive redaction on this layout) -- an "
+                        + "unrelated pre-existing gap in trace capture for this document's shape, not "
+                        + "something this change is scoped to fix. Covered by a synthetic fixture in "
+                        + "StatementClosingMarkerPdfPreviewGeneratorTest instead, mutation-checked "
+                        + "against the pre-fix code.");
+        DECLARED_WITHOUT_A_TRACE.put("MITC_SECTION_CLOSED",
+                "no trace yet -- motivated by a real ICICI Bank credit-card statement's own all-caps "
+                        + "\"MOST IMPORTANT TERMS AND CONDITIONS (MITC)\" section heading; real-corpus "
+                        + "verified directly against the unredacted document in the Phase 2A/2C "
+                        + "investigation. A redacted trace WAS captured from this document, but the "
+                        + "heading sits on page 2 and the captured trace's own text does not reach that "
+                        + "far, so it exercises this document's other capabilities without exercising "
+                        + "this one -- not committed, since a trace that cannot exercise the capability "
+                        + "it would be cited for is not real coverage. Covered by a synthetic fixture in "
+                        + "StatementClosingMarkerPdfPreviewGeneratorTest instead, mutation-checked "
+                        + "against the pre-fix code.");
         // RIGHT_ALIGNED_AMOUNTS was here, with the note "either the three traces genuinely avoid
         // right-aligned amount columns, or the recording sits on a path they do not take. Measure
         // before capturing." It was measured, and the answer was a third thing: the two HDFC

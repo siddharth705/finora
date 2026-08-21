@@ -97,6 +97,19 @@ public class CapabilityCoverageService {
             // docs/architecture/system-design/transaction-boundary-phase2a-investigation.md for the
             // real-corpus evidence this closes. See PdfTableLocator.STATEMENT_CLOSING_MARKER.
             "TRANSACTION_TABLE_CLOSED",
+            // Phase 2C. A real Kotak Mahindra Bank credit-card statement prints its own
+            // "Total Purchase & Other Charges" column-total row directly beneath the last real
+            // transaction, before its MITC/fees-and-charges legal schedule begins -- the same
+            // failure shape as TRANSACTION_TABLE_CLOSED, evidenced from a different bank. See
+            // PdfTableLocator.TRANSACTION_TABLE_TOTAL_MARKER.
+            "TRANSACTION_TABLE_TOTAL_CLOSED",
+            // Phase 2C. A real ICICI Bank credit-card statement opens its MITC/legal appendix with
+            // an all-caps "MOST IMPORTANT TERMS AND CONDITIONS (MITC)" heading immediately after
+            // the last real transaction and its rewards summary -- same failure shape again,
+            // evidenced from a third bank. Deliberately case-sensitive; see
+            // PdfTableLocator.MITC_SECTION_MARKER for why (two other real documents mention the
+            // same phrase, mixed-case, mid-document, well before their own real content ends).
+            "MITC_SECTION_CLOSED",
             // A transaction printed as a two-physical-line visual block (day-of-month + narration
             // + amount, then month/year + a bare Cr/Dr marker) rather than a table row at all --
             // found on the same AU statement, once the illustrative sections above stopped
