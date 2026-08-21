@@ -37,6 +37,11 @@ public class FilesystemStatementStorage implements StatementStorage {
 
     public FilesystemStatementStorage(@Value("${app.statement-storage.filesystem.root}") String root) {
         this.root = Path.of(root).toAbsolutePath().normalize();
+        try {
+            Files.createDirectories(this.root);
+        } catch (IOException e) {
+            throw new StatementStorageException("Could not create statement storage root " + this.root, e);
+        }
     }
 
     /**
@@ -44,9 +49,10 @@ public class FilesystemStatementStorage implements StatementStorage {
      * {@link ContentAddress#copyAndAddress}), so this is necessarily two phases: spool first,
      * learn the address, then move into place. The scratch file is created directly under
      * {@link #root} -- not the system temp directory -- specifically so the {@code ATOMIC_MOVE}
-     * below is guaranteed to land on the same filesystem as the final target. {@code root} always
-     * exists by construction; the hash-prefixed subdirectory the target itself lives under may not
-     * yet, which is why the scratch file can't simply be created there instead.
+     * below is guaranteed to land on the same filesystem as the final target. {@code root} is
+     * created in the constructor, so it always exists by the time {@code store} runs; the
+     * hash-prefixed subdirectory the target itself lives under may not yet, which is why the
+     * scratch file can't simply be created there instead.
      */
     @Override
     public ContentAddress store(InputStream content, long contentLength) {
