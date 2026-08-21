@@ -252,7 +252,7 @@ public class MerchantLearningEventWorker {
                     + "-- a worker most likely died mid-apply.", stuck.size(), PROCESSING_TIMEOUT);
             // Evidence that a process died somewhere nobody saw. No throwable exists to attach.
             execution.recovered(stuck.size());
-            stuck.forEach(event -> event.recordFailure(
+            stuck.forEach(event -> event.recoverFromAbandonment(
                     "Abandoned in PROCESSING for longer than " + PROCESSING_TIMEOUT, now));
             repository.saveAll(stuck);
         });

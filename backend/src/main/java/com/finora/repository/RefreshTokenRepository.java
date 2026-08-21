@@ -1,6 +1,7 @@
 package com.finora.repository;
 
 import com.finora.entity.RefreshToken;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.time.Instant;
@@ -46,4 +47,22 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
     /** AccountPurgeSweepService -- every row already revoked by requestDeletion() by this point;
      *  this removes the residual device/IP labels too. Hard delete, no soft-delete concern. */
     void deleteByUserId(UUID userId);
+
+    /**
+     * Bug 14 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md) / RefreshTokenService.sweepExpiredTokens.
+     *
+     * <p>{@code expiresAt} ALONE, deliberately -- not {@code OR revokedAt IS NOT NULL}, which the
+     * bug report's own reproduction query used. {@code rotate()} never updates {@code expiresAt}
+     * when it revokes the presented row (see RefreshToken's own history), so a rotated row's
+     * {@code expiresAt} still marks the FULL lifetime the original token would have had. That
+     * matters because {@code rotate()}'s reuse-detection depends on a revoked row still existing
+     * when the STOLEN copy of it is replayed ({@code findByTokenHash} finding it with
+     * {@code revokedAt != null} is what triggers "revoke every session for this user" -- see that
+     * method's own doc comment). Deleting on revocation alone would let an attacker's replay of an
+     * already-cleaned-up stolen token fall through to a generic "invalid token" 401 instead of
+     * tripping that response, for however much of the token's original lifetime remained
+     * unexpired. Keying on {@code expiresAt} only preserves that detection window for a row's
+     * entire natural lifetime, whether it was rotated early or simply expired unused.
+     */
+    List<RefreshToken> findByExpiresAtBeforeOrderByExpiresAtAsc(Instant now, Pageable pageable);
 }
