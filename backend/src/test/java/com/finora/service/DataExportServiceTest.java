@@ -77,6 +77,7 @@ class DataExportServiceTest {
     private UserRepository userRepository;
     private PasswordEncoder passwordEncoder;
     private com.finora.integrations.google.login.GoogleIdTokenVerifierService googleIdTokenVerifierService;
+    private com.finora.integrations.apple.login.AppleIdTokenVerifierService appleIdTokenVerifierService;
     private AccountRepository accountRepository;
     private TransactionRepository transactionRepository;
     private BudgetService budgetService;
@@ -105,6 +106,7 @@ class DataExportServiceTest {
         userRepository = mock(UserRepository.class);
         passwordEncoder = mock(PasswordEncoder.class);
         googleIdTokenVerifierService = mock(com.finora.integrations.google.login.GoogleIdTokenVerifierService.class);
+        appleIdTokenVerifierService = mock(com.finora.integrations.apple.login.AppleIdTokenVerifierService.class);
         accountRepository = mock(AccountRepository.class);
         transactionRepository = mock(TransactionRepository.class);
         budgetService = mock(BudgetService.class);
@@ -155,7 +157,7 @@ class DataExportServiceTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(user()));
 
         service = new DataExportService(userRepository,
-                new GoogleReauthVerifier(passwordEncoder, googleIdTokenVerifierService), accountRepository, transactionRepository,
+                new GoogleReauthVerifier(passwordEncoder, googleIdTokenVerifierService, appleIdTokenVerifierService), accountRepository, transactionRepository,
                 budgetService, goalRepository, goalContributionRepository, categoryRepository, categoryRuleRepository, relationshipService,
                 netWorthSnapshotRepository, merchantRepository, importJobRepository, importSessionRepository,
                 importSessionService, statementImportRepository, statementImportService, gmailConnectionRepository,
@@ -179,7 +181,7 @@ class DataExportServiceTest {
     void buildBundle_wrongPassword_rejectsBeforeTouchingAnyRepository() {
         when(passwordEncoder.matches(any(), any())).thenReturn(false);
 
-        assertThatThrownBy(() -> service.buildBundle(userId, "wrong-password", null))
+        assertThatThrownBy(() -> service.buildBundle(userId, "wrong-password", null, null))
                 .isInstanceOf(ApiException.class)
                 .hasFieldOrPropertyWithValue("status", HttpStatus.BAD_REQUEST);
 
@@ -194,7 +196,7 @@ class DataExportServiceTest {
 
     @Test
     void buildBundle_correctPassword_proceeds() {
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
 
         assertThat(bundle.userId()).isEqualTo(userId);
         assertThat(bundle.email()).isEqualTo("jane@example.com");
@@ -209,7 +211,23 @@ class DataExportServiceTest {
         when(googleIdTokenVerifierService.verify("fresh-google-token"))
                 .thenReturn(new com.finora.integrations.google.login.GoogleIdentity(googleUser.getEmail(), "Jane"));
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, null, "fresh-google-token");
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, null, "fresh-google-token", null);
+
+        assertThat(bundle.userId()).isEqualTo(userId);
+        verify(passwordEncoder, never()).matches(any(), any());
+    }
+
+    // D-26 gap closed: an Apple-only account used to fall through to the password branch here
+    // and fail forever -- mirrors the Google test immediately above.
+    @Test
+    void buildBundle_onAnAppleAccount_verifiesAFreshAppleTokenInsteadOfAPassword() {
+        User appleUser = user();
+        appleUser.setSignInMethod(User.SIGN_IN_METHOD_APPLE);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(appleUser));
+        when(appleIdTokenVerifierService.verify("fresh-apple-token"))
+                .thenReturn(new com.finora.integrations.apple.login.AppleIdentity(appleUser.getEmail(), "apple-subject"));
+
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, null, null, "fresh-apple-token");
 
         assertThat(bundle.userId()).isEqualTo(userId);
         verify(passwordEncoder, never()).matches(any(), any());
@@ -236,7 +254,7 @@ class DataExportServiceTest {
 
         when(accountRepository.findByUserIdIncludingDeleted(userId)).thenReturn(List.of(active, deleted));
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
 
         assertThat(bundle.accounts()).hasSize(2);
         assertThat(bundle.accounts()).anySatisfy(e -> {
@@ -275,7 +293,7 @@ class DataExportServiceTest {
 
         when(goalRepository.findByUserIdIncludingDeleted(userId)).thenReturn(List.of(active, deleted));
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
 
         assertThat(bundle.goals()).hasSize(2);
         assertThat(bundle.goals()).anySatisfy(e -> {
@@ -321,7 +339,7 @@ class DataExportServiceTest {
         when(goalContributionRepository.findByGoalIdInOrderByContributedAtDesc(List.of(goalOneId, goalTwoId)))
                 .thenReturn(List.of(contribution));
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
 
         assertThat(bundle.goalContributions()).hasSize(1);
         var dto = bundle.goalContributions().get(0);
@@ -354,7 +372,7 @@ class DataExportServiceTest {
         when(goalContributionRepository.findByGoalIdInOrderByContributedAtDesc(List.of(deletedGoalId)))
                 .thenReturn(List.of(contribution));
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
 
         assertThat(bundle.goalContributions()).hasSize(1);
         assertThat(bundle.goalContributions().get(0).goalId()).isEqualTo(deletedGoalId);
@@ -385,7 +403,7 @@ class DataExportServiceTest {
         when(importSessionService.readSections(multi)).thenReturn(List.of(
                 section(2), section(3)));
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
 
         Map<UUID, ImportSessionSummaryDto> byId = bundle.importSessions().stream()
                 .collect(java.util.stream.Collectors.toMap(ImportSessionSummaryDto::id, s -> s));
@@ -415,7 +433,7 @@ class DataExportServiceTest {
         when(importSessionService.readStagedRows(corrupted))
                 .thenThrow(new IllegalStateException("failed to deserialize stagedRowsJson"));
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
 
         assertThat(bundle.importSessions()).hasSize(1);
         assertThat(bundle.importSessions().get(0).id()).isEqualTo(healthy.getId());
@@ -463,7 +481,7 @@ class DataExportServiceTest {
         when(statementImportService.getFile(userId, failingId))
                 .thenThrow(new RuntimeException("object storage unreachable"));
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
         Map<String, byte[]> entries = writeZipAndReadEntries(bundle);
 
         String okEntry = "statements/" + okId + "-ok.csv";
@@ -503,7 +521,7 @@ class DataExportServiceTest {
         when(statementImportService.getFile(userId, brokenId))
                 .thenReturn(new StatementImportService.FileDownload("broken.csv", largeIncompressibleContent, "text/csv"));
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
         OutputStream out = new FailAfterNBytesOutputStream(new ByteArrayOutputStream(), 4096);
 
         assertThatThrownBy(() -> service.writeZip(userId, bundle, out)).isInstanceOf(IOException.class);
@@ -570,7 +588,7 @@ class DataExportServiceTest {
         when(count.getCount()).thenReturn(42L);
         when(transactionRepository.countByAccountForUser(userId)).thenReturn(List.of(count));
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
 
         assertThat(bundle.accounts()).hasSize(1);
         var dto = bundle.accounts().get(0).account();
@@ -611,7 +629,7 @@ class DataExportServiceTest {
 
         when(transactionRepository.findByUserId(userId)).thenReturn(List.of(categorized, uncategorized));
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
 
         assertThat(bundle.transactions()).hasSize(2);
         assertThat(bundle.transactions()).anySatisfy(t -> {
@@ -637,7 +655,7 @@ class DataExportServiceTest {
         snapshot.setNetWorth(BigDecimal.valueOf(380000));
         when(netWorthSnapshotRepository.findByUserIdOrderBySnapshotDateAsc(userId)).thenReturn(List.of(snapshot));
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
 
         assertThat(bundle.netWorthSnapshots()).hasSize(1);
         var dto = bundle.netWorthSnapshots().get(0);
@@ -661,7 +679,7 @@ class DataExportServiceTest {
         merchant.setWebsite("https://amazon.in");
         when(merchantRepository.findByUserId(userId)).thenReturn(List.of(merchant));
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
 
         assertThat(bundle.merchants()).hasSize(1);
         var dto = bundle.merchants().get(0);
@@ -685,7 +703,7 @@ class DataExportServiceTest {
         rule.setActionType(CategoryRule.ActionType.ASSIGN_CATEGORY);
         when(categoryRuleRepository.findByUserId(userId)).thenReturn(List.of(rule));
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
 
         assertThat(bundle.categoryRules()).hasSize(1);
         var dto = bundle.categoryRules().get(0);
@@ -705,7 +723,7 @@ class DataExportServiceTest {
         connection.setGrantedScopes("https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/userinfo.email");
         when(gmailConnectionRepository.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(connection));
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
 
         assertThat(bundle.gmailConnections()).hasSize(1);
         var dto = bundle.gmailConnections().get(0);
@@ -716,7 +734,7 @@ class DataExportServiceTest {
 
     @Test
     void writeZip_manifestListsEveryOutOfScopeTableWithAReason() throws IOException {
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
         Map<String, byte[]> entries = writeZipAndReadEntries(bundle);
 
         ObjectMapper mapper = new ObjectMapper();

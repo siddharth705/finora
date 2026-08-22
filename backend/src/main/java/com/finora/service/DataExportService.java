@@ -173,10 +173,10 @@ public class DataExportService {
      * penalize a user whose purge is the one that's broken.
      */
     @Transactional(readOnly = true)
-    public ExportBundle buildBundle(UUID userId, String currentPassword, String googleIdToken) {
+    public ExportBundle buildBundle(UUID userId, String currentPassword, String googleIdToken, String appleIdToken) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
-        if (!googleReauthVerifier.verify(user, currentPassword, googleIdToken)) {
+        if (!googleReauthVerifier.verify(user, currentPassword, googleIdToken, appleIdToken)) {
             // recordEvenOnRollback, not record: this method is @Transactional(readOnly = true),
             // and throwing ApiException right after a plain record() call would roll the audit
             // write back along with the (nonexistent) rest of this transaction -- see that
@@ -184,7 +184,9 @@ public class DataExportService {
             auditService.recordEvenOnRollback(userId, "INVALID_CURRENT_PASSWORD", "User", userId);
             throw new ApiException(HttpStatus.BAD_REQUEST, user.isGoogleAccount()
                     ? "We couldn't verify your Google account. Please try again."
-                    : "Current password is incorrect.");
+                    : user.isAppleAccount()
+                            ? "We couldn't verify your Apple account. Please try again."
+                            : "Current password is incorrect.");
         }
 
         // Mirrors AccountPurgeSweepService.purgeOne()'s own table order.

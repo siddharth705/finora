@@ -163,6 +163,15 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // per-token: it does not stop an attacker who rotates IPs, only one retrying from the same
     // one. See resetPasswordLimiter's own comment for the same, more honestly-scoped claim.
     private final RateLimiter dataExportLimiter;
+    // /account/delete itself had no dedicated limiter at all -- the credential-proving steps that
+    // precede it (password-change/start, verify-otp) are covered, but a caller already holding a
+    // verified sessionId could call this endpoint directly in a loop, each call triggering
+    // AccountPurgeSweepService.purgeOne's full synchronous purge across every user table. 5/hour,
+    // not passwordChangeLimiter's shared bucket: the real per-call cost here (a full purge) is
+    // larger than a single bcrypt comparison, so this gets its own, stricter ceiling -- generous
+    // enough that a user re-reading the irreversible-action warning and confirming again doesn't
+    // trip it.
+    private final RateLimiter deleteAccountLimiter;
     // SEC-03 (docs/quality/bug-reports/2026-08-19-security-review-findings.md). Same reasoning as
     // resetPasswordLimiter/reactivate/verify-email directly above: an unguessable, short-TTL,
     // single-use challenge token (AdminMfaService.issueChallenge) already gates reaching this
@@ -222,6 +231,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     static final int DEFAULT_PHONE_CHANGE_MAX = 15, DEFAULT_PHONE_CHANGE_WINDOW = 600;
     static final int DEFAULT_RESET_PASSWORD_MAX = 10, DEFAULT_RESET_PASSWORD_WINDOW = 600;
     static final int DEFAULT_DATA_EXPORT_MAX = 5, DEFAULT_DATA_EXPORT_WINDOW = 86400;
+    static final int DEFAULT_DELETE_ACCOUNT_MAX = 5, DEFAULT_DELETE_ACCOUNT_WINDOW = 3600;
     static final int DEFAULT_GOOGLE_MAX = 5, DEFAULT_GOOGLE_WINDOW = 300;
     static final int DEFAULT_APPLE_MAX = 5, DEFAULT_APPLE_WINDOW = 300;
     static final int DEFAULT_MFA_VERIFY_MAX = 10, DEFAULT_MFA_VERIFY_WINDOW = 600;
@@ -249,6 +259,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 DEFAULT_PHONE_CHANGE_MAX, DEFAULT_PHONE_CHANGE_WINDOW,
                 DEFAULT_RESET_PASSWORD_MAX, DEFAULT_RESET_PASSWORD_WINDOW,
                 DEFAULT_DATA_EXPORT_MAX, DEFAULT_DATA_EXPORT_WINDOW,
+                DEFAULT_DELETE_ACCOUNT_MAX, DEFAULT_DELETE_ACCOUNT_WINDOW,
                 DEFAULT_GOOGLE_MAX, DEFAULT_GOOGLE_WINDOW,
                 DEFAULT_APPLE_MAX, DEFAULT_APPLE_WINDOW,
                 DEFAULT_MFA_VERIFY_MAX, DEFAULT_MFA_VERIFY_WINDOW,
@@ -286,6 +297,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
             @Value("${app.rate-limit.reset-password.window-seconds:600}") int resetPasswordWindow,
             @Value("${app.rate-limit.data-export.max:5}") int dataExportMax,
             @Value("${app.rate-limit.data-export.window-seconds:86400}") int dataExportWindow,
+            @Value("${app.rate-limit.delete-account.max:5}") int deleteAccountMax,
+            @Value("${app.rate-limit.delete-account.window-seconds:3600}") int deleteAccountWindow,
             @Value("${app.rate-limit.google.max:5}") int googleMax,
             @Value("${app.rate-limit.google.window-seconds:300}") int googleWindow,
             @Value("${app.rate-limit.apple.max:5}") int appleMax,
@@ -304,6 +317,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         this.phoneChangeLimiter = new RateLimiter(phoneChangeMax, phoneChangeWindow);
         this.resetPasswordLimiter = new RateLimiter(resetPasswordMax, resetPasswordWindow);
         this.dataExportLimiter = new RateLimiter(dataExportMax, dataExportWindow);
+        this.deleteAccountLimiter = new RateLimiter(deleteAccountMax, deleteAccountWindow);
         this.googleLimiter = new RateLimiter(googleMax, googleWindow);
         this.appleLimiter = new RateLimiter(appleMax, appleWindow);
         this.mfaVerifyLimiter = new RateLimiter(mfaVerifyMax, mfaVerifyWindow);
@@ -364,6 +378,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 // passwordChangeLimiter, not dataExportLimiter -- same cost shape as password
                 // change, not the much larger per-call cost a full data export carries.
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/account/deactivate"), passwordChangeLimiter),
+                new LimitedEndpoint(PARSER.parse("/api/v1/users/me/account/delete"), deleteAccountLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/phone-change/start"), phoneChangeLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/phone-change/verify-otp"), phoneChangeLimiter),
                 new LimitedEndpoint(PARSER.parse("/api/v1/users/me/phone-change/complete"), phoneChangeLimiter),

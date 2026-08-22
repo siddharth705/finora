@@ -76,11 +76,13 @@ public class PasswordChangeService {
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
 
         requireActiveAccount(user);
-        if (!googleReauthVerifier.verify(user, request.currentPassword(), request.googleIdToken())) {
+        if (!googleReauthVerifier.verify(user, request.currentPassword(), request.googleIdToken(), request.appleIdToken())) {
             auditService.record(userId, "INVALID_CURRENT_PASSWORD", "User", userId);
             throw new ApiException(HttpStatus.BAD_REQUEST, user.isGoogleAccount()
                     ? "We couldn't verify your Google account. Please try again."
-                    : "Current password is incorrect.");
+                    : user.isAppleAccount()
+                            ? "We couldn't verify your Apple account. Please try again."
+                            : "Current password is incorrect.");
         }
         if (user.getPhoneNumber() == null || user.getPhoneNumber().isBlank()) {
             // Reachable today only for a Google Sign-In account that verified above but has not
