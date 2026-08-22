@@ -157,7 +157,17 @@ public class CapabilityCoverageService {
             // not "how many documents took this code path". Distinct from INFERRED_HEADERLESS_LAYOUT
             // itself, which fires on every document that path accepts regardless of whether a
             // duplicate was present to remove.
-            "PHYSICAL_ROW_DEDUP_EVIDENCE");
+            "PHYSICAL_ROW_DEDUP_EVIDENCE",
+            // Phase 2E.2. The header quality gate judged the row this document was about to accept
+            // as its header too weak to explain its own upcoming rows (most of them carry more raw
+            // values than the header has columns for), and the reconstruction engine recovered a
+            // better one by composing it with the physical line immediately above -- a fragment
+            // wrappedHeaderAt never reaches, because it only ever looks forward. Motivated by a real
+            // SBI Credit Card statement's supplementary-cardholder section, whose header prints
+            // "Transaction Details" one line above "Date | Amount ( ` )", the row that gets accepted
+            // on its own. See PdfTableLocator.reconstructHeader and
+            // docs/architecture/system-design/header-reconstruction-design.md.
+            "HEADER_RECONSTRUCTED");
 
     /**
      * @param importsAnalysed    how many imports these counts are drawn from -- a coverage figure
