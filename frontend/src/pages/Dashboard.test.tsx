@@ -317,6 +317,24 @@ describe('Dashboard — per-section empty states', () => {
     expect(screen.queryByText('Financial Health Score')).not.toBeInTheDocument();
   });
 
+  /**
+   * Bug 44. The empty-state gate above only catches categoryEntries.length === 0 -- a completely
+   * empty spendByCategory. It doesn't catch categories that exist but all sum to zero, which skips
+   * the empty state, leaves totalSpend at 0, and divides val / totalSpend as 0/0 -- rendering the
+   * literal string "NaN%" per category instead of a sane 0%.
+   */
+  it('shows 0%, not NaN%, when every category in the breakdown has a zero amount', async () => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(
+      summary({ spendByCategory: { Groceries: 0, Rent: 0 } })
+    );
+
+    renderDashboard();
+
+    await screen.findByText('Groceries');
+    expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
+    expect(screen.getAllByText('0%')).toHaveLength(2);
+  });
+
   it('still shows AI Insights and Quick Actions -- generic tips, not hidden entirely', async () => {
     renderDashboard();
     await screen.findByText('No transactions yet');
