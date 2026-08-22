@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { AccessibilityInfo, Platform, StyleSheet, Text, View } from 'react-native';
 import { onlineManager } from '@tanstack/react-query';
 import { SafeAreaInsetsContext, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { spacing, useTheme } from '../theme';
@@ -10,6 +10,10 @@ export function useOnline(): boolean {
   useEffect(() => onlineManager.subscribe(setOnline), []);
   return online;
 }
+
+/** Single source of truth for the offline message -- spoken by iOS below, and rendered by the
+ *  banner's own <Text> further down, so the two can never drift apart. */
+const OFFLINE_MESSAGE = 'No connection — showing the last data loaded';
 
 /**
  * Wraps the app with a persistent offline strip.
@@ -33,6 +37,20 @@ export function OfflineBoundary({ children }: { children: ReactNode }) {
   const insets = useSafeAreaInsets();
   const online = useOnline();
 
+  // accessibilityLiveRegion below is Android-only -- React Native has no iOS equivalent, so a
+  // VoiceOver user gets no signal that the banner just appeared unless something explicitly
+  // speaks it. Tracked by ref rather than a second piece of render state: this only ever needs to
+  // fire a side effect, never to affect what's drawn, and skipping the initial mount keeps it
+  // symmetric with Android's live region (which also stays silent for content present at mount --
+  // both only announce a live *change*, not the app opening already offline).
+  const wasOnline = useRef(online);
+  useEffect(() => {
+    if (Platform.OS === 'ios' && wasOnline.current && !online) {
+      AccessibilityInfo.announceForAccessibility(OFFLINE_MESSAGE);
+    }
+    wasOnline.current = online;
+  }, [online]);
+
   if (online) return <>{children}</>;
 
   return (
@@ -46,9 +64,7 @@ export function OfflineBoundary({ children }: { children: ReactNode }) {
         accessibilityRole="alert"
         accessibilityLiveRegion="polite"
       >
-        <Text style={[styles.text, { color: c.warningInk }]}>
-          No connection — showing the last data loaded
-        </Text>
+        <Text style={[styles.text, { color: c.warningInk }]}>{OFFLINE_MESSAGE}</Text>
       </View>
       <SafeAreaInsetsContext.Provider value={{ ...insets, top: 0 }}>
         <View style={styles.flex}>{children}</View>

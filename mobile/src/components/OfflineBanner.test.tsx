@@ -1,5 +1,5 @@
 import { act, render, screen } from '@testing-library/react-native';
-import { Text } from 'react-native';
+import { AccessibilityInfo, Platform, Text } from 'react-native';
 import { onlineManager } from '@tanstack/react-query';
 import { OfflineBoundary } from './OfflineBanner';
 import { ThemeProvider } from '../theme';
@@ -82,6 +82,109 @@ describe('OfflineBoundary', () => {
     renderBoundary();
 
     expect(screen.getByRole('alert')).toBeTruthy();
+  });
+
+  // accessibilityLiveRegion (asserted above) only reaches Android -- React Native has no iOS
+  // equivalent, so VoiceOver needs an explicit announcement on the ONLINE -> OFFLINE transition.
+  describe('iOS VoiceOver announcement', () => {
+    const originalOS = Platform.OS;
+    let announceSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      Platform.OS = 'ios';
+      announceSpy = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      Platform.OS = originalOS;
+      announceSpy.mockRestore();
+    });
+
+    it('announces when connectivity drops', () => {
+      setOnline(true);
+      renderBoundary();
+
+      setOnline(false);
+
+      expect(announceSpy).toHaveBeenCalledTimes(1);
+      expect(announceSpy).toHaveBeenCalledWith('No connection — showing the last data loaded');
+    });
+
+    it('does not announce on mount, even if already offline', () => {
+      // Mirrors Android's live region, which also only speaks a change, not the app opening
+      // already offline -- this keeps the two platforms symmetric rather than iOS being chattier.
+      setOnline(false);
+      renderBoundary();
+
+      expect(announceSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not announce again on unrelated rerenders while still offline', () => {
+      setOnline(true);
+      const view = renderBoundary();
+
+      setOnline(false);
+      expect(announceSpy).toHaveBeenCalledTimes(1);
+
+      // Any rerender that doesn't change `online` (e.g. a theme or layout update) must not
+      // re-trigger the announcement -- it fires on the transition, not on every render.
+      view.rerender(
+        <ThemeProvider>
+          <OfflineBoundary>
+            <Text>protected content</Text>
+          </OfflineBoundary>
+        </ThemeProvider>
+      );
+
+      expect(announceSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('announces again on a second drop after recovering', () => {
+      setOnline(true);
+      renderBoundary();
+
+      setOnline(false);
+      setOnline(true);
+      setOnline(false);
+
+      expect(announceSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not announce on the reverse transition (coming back online)', () => {
+      setOnline(false);
+      renderBoundary();
+      announceSpy.mockClear();
+
+      setOnline(true);
+
+      expect(announceSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('on Android, unaffected by the iOS announcement path', () => {
+    const originalOS = Platform.OS;
+    let announceSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      Platform.OS = 'android';
+      announceSpy = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      Platform.OS = originalOS;
+      announceSpy.mockRestore();
+    });
+
+    it('still shows the visible banner and live region, but never calls the iOS announcement API', () => {
+      setOnline(true);
+      renderBoundary();
+
+      setOnline(false);
+
+      expect(screen.getByText(OFFLINE_TEXT)).toBeTruthy();
+      expect(screen.getByRole('alert')).toBeTruthy();
+      expect(announceSpy).not.toHaveBeenCalled();
+    });
   });
 });
 
