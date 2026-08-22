@@ -136,7 +136,7 @@ public class InsightsService {
                     return categoryId == null || !categoryIdsWithBudget.contains(categoryId);
                 })
                 .findFirst()
-                .ifPresent(m -> sentences.add(String.format(
+                .ifPresent(m -> sentences.add(String.format(Locale.ENGLISH,
                         "Consider setting a budget for %s — it's trending up and doesn't have one yet.", m.category())));
 
         movers.stream().filter(m -> m.pctChange() != null && Math.abs(m.pctChange()) >= 15).limit(3).forEach(m -> {
