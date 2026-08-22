@@ -513,7 +513,7 @@ public class PdfPreviewGenerator {
     }
 
     private record BalancePoint(LocalDate date, BigDecimal signedAmount, BigDecimal balance,
-                                 String description) implements com.finora.imports.BalanceChainUtil.ChainLink {
+                                 String description) implements com.finora.imports.BalanceSequenceResolver.DatedLink {
         @Override public BigDecimal balanceAfter() { return balance; }
     }
 
@@ -533,35 +533,26 @@ public class PdfPreviewGenerator {
         statementEnd = facts.metadata().statementPeriodEnd() != null ? facts.metadata().statementPeriodEnd()
                 : staged.stream().map(StagedRow::date).max(LocalDate::compareTo).orElse(null);
 
+        // Phase 2G: was independent BalanceChainUtil.first(minDateGroup)/last(maxDateGroup) calls,
+        // each only ever looking at its own boundary date in isolation -- exactly the same
+        // file-position-blind, but still boundary-only, gap StatementValidator's CSV path had.
+        // Silently wrong whenever a boundary day's transactions include a same-day reversal (a
+        // credit immediately offset by a debit of the same amount): the two candidates close a
+        // numeric loop no within-group heuristic can resolve, and the old fallback picked the day's
+        // peak balance as "last" instead of its true last transaction (confirmed on two real
+        // documents; see
+        // docs/architecture/system-design/same-day-reversal-closing-balance-investigation.md).
+        // BalanceSequenceResolver walks every day in order instead of just the two boundaries, using
+        // the statement's own explicit opening-balance declaration (when present) as its anchor --
+        // same shared resolver the CSV path now uses too, specifically so this cannot drift out of
+        // sync the way the two independent implementations silently did before BalanceChainUtil was
+        // first extracted. Returns no opening/closing balance at all -- rather than a guess -- when
+        // a day's ordering genuinely cannot be determined.
         if (!balancePoints.isEmpty()) {
-            LocalDate minDate = balancePoints.stream().map(BalancePoint::date).min(LocalDate::compareTo).orElseThrow();
-            LocalDate maxDate = balancePoints.stream().map(BalancePoint::date).max(LocalDate::compareTo).orElseThrow();
-            List<BalancePoint> minDateGroup = balancePoints.stream().filter(p -> p.date().equals(minDate)).toList();
-            List<BalancePoint> maxDateGroup = balancePoints.stream().filter(p -> p.date().equals(maxDate)).toList();
-
-            // Bug fix: this used to just take whichever balance point appeared first/last in
-            // table.rows() for the statement's boundary dates -- exactly the same file-position
-            // assumption StatementValidator's CSV path had, and just as wrong: verified against a
-            // real PNB ONE PDF statement (no CSV involved) with a multi-transaction same-day
-            // cluster on its earliest date, listed newest-first. Delegates to the same
-            // BalanceChainUtil the CSV path now uses, specifically so this doesn't drift out of
-            // sync with that fix again the way it silently did the first time.
-            BalancePoint trueFirstOfDay = com.finora.imports.BalanceChainUtil.first(minDateGroup);
-            BalancePoint trueLastOfDay = com.finora.imports.BalanceChainUtil.last(maxDateGroup);
-
-            // Bug fix, compounding the one above: this unconditionally used the earliest point's
-            // own reported balance as-is, on the assumption every PDF statement carries an
-            // explicit "OPENING BALANCE" row (true for the golden fixture, false for a real PNB
-            // ONE export, which has no such row at all -- just ordinary transactions against a
-            // running balance column). Only skip the signed-amount subtraction when the row
-            // actually IS that kind of explicit label row; otherwise back out its own transaction
-            // amount to recover the balance that existed BEFORE it, same as CSV's StatementValidator.
-            boolean isExplicitOpeningRow = trueFirstOfDay.description() != null
-                    && trueFirstOfDay.description().toLowerCase(Locale.ROOT).contains("opening balance");
-            openingBalance = isExplicitOpeningRow
-                    ? trueFirstOfDay.balance()
-                    : trueFirstOfDay.balance().subtract(trueFirstOfDay.signedAmount());
-            closingBalance = trueLastOfDay.balance();
+            com.finora.imports.BalanceSequenceResolver.Resolution resolution =
+                    com.finora.imports.BalanceSequenceResolver.resolve(balancePoints);
+            openingBalance = resolution.openingBalance();
+            closingBalance = resolution.closingBalance();
         }
 
         return facts.toDetectedAccountInfo(product, suggestedAccountTypeFor(product, facts.creditCardSignals()),
