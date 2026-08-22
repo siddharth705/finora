@@ -184,12 +184,18 @@ public class MerchantLearningEvent {
      * entire retry budget and mark an event permanently FAILED without it ever having actually
      * run. {@code note} still lands in {@code lastError} so the admin queue shows why a PENDING
      * row's {@code updatedAt} just moved, but {@code firstFailedAt} is untouched: nothing failed.
+     *
+     * <p>{@code lastRetryAt} is untouched for the same reason: it is surfaced directly to the
+     * admin queue ({@code LearningQueueDto.lastRetryAt}, sortable) as "when was this last
+     * retried" -- setting it here, in a method whose entire point is that nothing was actually
+     * retried, would show an admin a retry timestamp for a row {@code attemptCount}
+     * simultaneously says was never attempted. {@code updatedAt} already carries "when did this
+     * row last change" for anything that needs that instead.
      */
     public void recoverFromAbandonment(String note, Instant now) {
         this.status = Status.PENDING;
         this.lastError = truncate(note);
         this.nextAttemptAt = now;
-        this.lastRetryAt = now;
         this.updatedAt = now;
     }
 
