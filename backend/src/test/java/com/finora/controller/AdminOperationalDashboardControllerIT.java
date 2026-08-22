@@ -107,4 +107,35 @@ class AdminOperationalDashboardControllerIT extends AbstractIntegrationTest {
         assertThat(data.has("firstBudget")).isTrue();
         assertThat(data.has("firstGoal")).isTrue();
     }
+
+    @Test
+    void plainUser_isForbiddenFromViewingTheActivityTrend() {
+        User user = createUser("USER");
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/dashboard/activity-trend", HttpMethod.GET, new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void admin_seesTheActivityTrend_asSevenRealDailyPoints() throws Exception {
+        User admin = createUser("ADMIN");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/dashboard/activity-trend", HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode data = mapper.readTree(response.getBody()).get("data");
+        assertThat(data.isArray()).isTrue();
+        assertThat(data).hasSize(7);
+        data.forEach(point -> {
+            assertThat(point.has("date")).isTrue();
+            assertThat(point.has("signups")).isTrue();
+            assertThat(point.has("imports")).isTrue();
+            assertThat(point.has("transactions")).isTrue();
+        });
+        // The admin created just above this call is today's own signup -- proves the last point
+        // is a real live count against the database, not a fixed placeholder.
+        assertThat(data.get(6).get("signups").asLong()).isGreaterThanOrEqualTo(1L);
+    }
 }
