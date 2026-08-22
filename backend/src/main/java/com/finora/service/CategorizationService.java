@@ -5,9 +5,11 @@ import com.finora.entity.CategoryRule;
 import com.finora.entity.Merchant;
 import com.finora.entity.MerchantCategoryLearning;
 import com.finora.entity.Transaction;
+import com.finora.exception.ApiException;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.MerchantCategoryLearningRepository;
 import com.finora.util.CategoryRules;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -344,13 +346,39 @@ public class CategorizationService {
         return newCategory;
     }
 
+    /**
+     * Bug 16: trims and matches case-insensitively so "dining", "Dining" and "Dining " all
+     * resolve to one category instead of splitting into siblings that fragment a budget and
+     * double-count in reports -- see
+     * {@link CategoryRepository#findByUserIdAndNameIgnoreCaseOrderByIdAsc} for what this does
+     * and does not close, including why it returns a list rather than a single result.
+     *
+     * <p>The null/blank guard is a side effect of adding {@code .trim()} above, not incidental:
+     * {@code TransactionService.updateCategory} passes an unvalidated {@code Map<String, String>}
+     * value straight through with no upstream null check (unlike every other caller, which either
+     * validates via {@code @NotBlank} or checks {@code != null} before calling this at all -- see
+     * {@code TransactionController.updateCategory}'s own raw-map body). Before this method trimmed
+     * its input, a null name reached {@code categoryRepository.save(c)} with a null
+     * {@code NOT NULL} column and came back as a confusing 409 CONFLICT
+     * ({@code DataIntegrityViolationException}, per {@code RuleService.validateRule}'s own doc
+     * comment on this exact gap). Trimming a null would instead throw an unhandled
+     * {@code NullPointerException} straight into the generic 500 handler -- worse than the bug
+     * it replaced. This throws the correct 400 instead, closing both the confusing-409 case and
+     * the potential NPE at the same time.
+     */
     public Category resolveOrCreateCategory(UUID userId, String name) {
-        return categoryRepository.findByUserIdAndName(userId, name).orElseGet(() -> {
-            Category c = new Category();
-            c.setUserId(userId);
-            c.setName(name);
-            c.setSystem(false);
-            return categoryRepository.save(c);
-        });
+        if (name == null || name.isBlank()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Category name can't be blank.");
+        }
+        String trimmed = name.trim();
+        List<Category> matches = categoryRepository.findByUserIdAndNameIgnoreCaseOrderByIdAsc(userId, trimmed);
+        if (!matches.isEmpty()) {
+            return matches.get(0);
+        }
+        Category c = new Category();
+        c.setUserId(userId);
+        c.setName(trimmed);
+        c.setSystem(false);
+        return categoryRepository.save(c);
     }
 }
