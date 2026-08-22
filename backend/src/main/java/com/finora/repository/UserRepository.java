@@ -54,6 +54,46 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     // Powers the admin Dashboard's "new signups, last 7/30 days" stat tiles (AdminStatsService).
     long countByCreatedAtAfter(Instant threshold);
 
+    /**
+     * Admin Portal, Operational Dashboard Platform Activity chart -- one calendar day's signup
+     * count, mirroring TransactionRepository/StatementImportRepository's own Between siblings.
+     *
+     * <p>Filters by email, NOT role, unlike this file's countByRoleNot("BOOTSTRAP_ADMIN") used
+     * elsewhere for the same "exclude the system account" purpose. BootstrapService seeds that
+     * account with role=BOOTSTRAP_ADMIN, but SetupService.completeSetup() explicitly revokes that
+     * role once setup finishes -- RoleService.revokeRole resets the legacy User.role column to
+     * USER as part of that revocation (see its own doc comment). So countByRoleNot("BOOTSTRAP_ADMIN")
+     * only ever excludes the account DURING the setup wizard, and silently stops working the
+     * moment setup completes, which is every real deployment past its first few minutes -- a live
+     * check against a running local stack showed the platform's very first calendar day
+     * permanently reporting one extra "signup" that was actually the bootstrap account. Email is
+     * this account's one identifier that never changes (BootstrapService.BOOTSTRAP_IDENTIFIER),
+     * so this query filters on that instead.
+     */
+    long countByEmailNotAndCreatedAtBetween(String email, Instant start, Instant end);
+
+    /**
+     * Admin Portal, Operational Dashboard Insights row -- the inverse of AuditLogRepository
+     * .countDistinctUsersByActionSince: users with NO USER_LOGIN audit row since :since. A user
+     * who has never logged in at all also satisfies this (they never appear in the NOT IN
+     * subquery either), so "inactive" here naturally covers both "went quiet" and "never came
+     * back," without a separate query for the never-logged-in case. Excludes BOOTSTRAP_ADMIN by
+     * email, same as countByEmailNotAndCreatedAtBetween above -- NOT by role, which would silently
+     * stop excluding it once setup completes; see that method's own doc comment for why. The
+     * bootstrap account never logs in again after setup, so a role-based filter here would have
+     * had it permanently misreported as an "inactive user" -- exactly the kind of stale-forever
+     * figure this Insights row exists to avoid.
+     */
+    @Query("""
+        SELECT COUNT(u) FROM User u
+         WHERE u.email <> :bootstrapEmail
+           AND u.id NOT IN (
+               SELECT DISTINCT a.userId FROM AuditLog a WHERE a.action = :action AND a.createdAt >= :since
+           )
+        """)
+    long countWithNoAuditActionSince(@Param("action") String action, @Param("since") Instant since,
+                                      @Param("bootstrapEmail") String bootstrapEmail);
+
     // Excludes the BOOTSTRAP_ADMIN system account (BootstrapService) from "total users" stats --
     // AdminOperationalDashboardService and AdminStatsService both used a plain count() before,
     // which would overcount by exactly one forever once a platform has been set up (that account
