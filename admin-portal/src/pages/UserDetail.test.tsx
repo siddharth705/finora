@@ -22,6 +22,13 @@ import type { UserDetailDto } from '../types';
  * refactor; the gates are not.
  */
 
+// AdminLayout now renders ThemeToggle (dark-mode support), which calls useTheme() --
+// same reason adminSearchApi is stubbed below for GlobalSearch: a real ThemeProvider isn't
+// mounted in these tests, so without this mock every AdminLayout-wrapped page throws before
+// any assertion runs.
+vi.mock('../context/ThemeContext', () => ({
+  useTheme: () => ({ theme: 'system', resolvedTheme: 'light', setTheme: vi.fn() }),
+}));
 vi.mock('../context/AdminAuthContext', () => ({ useAdminAuth: vi.fn() }));
 vi.mock('../context/NotificationContext', () => ({
   useNotify: () => ({ success: vi.fn(), error: vi.fn() }),
