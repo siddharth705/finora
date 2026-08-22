@@ -118,7 +118,18 @@ public class PhoneVerificationFilter extends OncePerRequestFilter {
             // graph. One boolean does not need any of that.
             Optional<Boolean> phoneVerified = parseId(userDetails.getUsername())
                     .flatMap(userRepository::findPhoneVerifiedById);
-            if (phoneVerified.isPresent() && !phoneVerified.get()) {
+            // Bug 26 (docs/quality/bug-reports/BUG_REVIEW_REPORT.md). Was
+            // `phoneVerified.isPresent() && !phoneVerified.get()` -- an EMPTY Optional (no such
+            // user id, or a non-UUID principal) fell through this whole `if` and let the request
+            // proceed, a security gate failing open. JwtAuthFilter -> CurrentUserDetailsService
+            // resolves every legitimate principal through this exact same users table by the same
+            // id, so a principal that got this far but resolves to nothing here means either a
+            // genuine race (the user row was deleted between the two reads -- this class and
+            // JwtAuthFilter do not share a persistence context, see the field's own comment) or
+            // something worse. Neither case should ever be treated as "verified, let it through" --
+            // this class's own doc comment states the whole design intent as "the backend must be
+            // the source of truth," which a fail-open default directly contradicted.
+            if (phoneVerified.isEmpty() || !phoneVerified.get()) {
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                 response.setContentType(MediaType.APPLICATION_JSON_VALUE);
                 response.getWriter().write(objectMapper.writeValueAsString(
