@@ -116,7 +116,8 @@ public class GmailStagingBridge {
                 receipt.confidence());
 
         importSessionService.createSession(userId, fileNameFor(receipt), identity,
-                List.of(row), unknownAccount(), null, ImportSession.SOURCE_GMAIL);
+                List.of(row), unknownAccount(), null, ImportSession.SOURCE_GMAIL,
+                receipt.merchantDomain());
         return Result.STAGED;
     }
 
