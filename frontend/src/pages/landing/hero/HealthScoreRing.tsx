@@ -64,13 +64,13 @@ export function HealthScoreRing() {
           }}
         />
       </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
+      <div className="absolute inset-0 flex items-center justify-center">
         <span className="text-3xl font-bold text-white">
           <CountUp value={heroScore.value} />
         </span>
-        <span className="text-[10px] uppercase tracking-wide text-white/60">{heroScore.label}</span>
       </div>
-      <p className="mt-2 text-xs" style={{ color: 'var(--m-success)' }}>
+      <span className="mt-3 text-[10px] uppercase tracking-wide text-white/60">{heroScore.label}</span>
+      <p className="mt-1 text-xs" style={{ color: 'var(--m-success)' }}>
         ↑ {heroScore.delta}
       </p>
     </div>
