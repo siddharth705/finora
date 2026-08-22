@@ -299,6 +299,29 @@ class RecurringServiceTest {
         verify(transactionRepository).saveAll(List.of(changing));
     }
 
+    /**
+     * Bug 38. `active` only ever includes Type.EXPENSE, non-transfer, non-duplicate transactions,
+     * so a transaction that was flagged recurring under a prior run and then had its type changed
+     * away from EXPENSE never appears in `active` again -- the reset-then-recompute pass above only
+     * considers `active`, so its stale flag was never revisited and kept showing the badge forever.
+     */
+    @Test
+    void detectForUser_clearsTheRecurringFlag_whenATransactionsTypeChangedAwayFromExpense() {
+        Transaction noLongerAnExpense = expense("cancelled-subscription", LocalDate.of(2026, 7, 1),
+                BigDecimal.valueOf(499));
+        noLongerAnExpense.setRecurring(true);
+        noLongerAnExpense.setTxnType(Transaction.Type.INCOME);
+        when(transactionRepository.findByUserId(userId)).thenReturn(List.of(noLongerAnExpense));
+
+        var results = recurringService.detectForUser(userId);
+
+        assertThat(results).isEmpty();
+        assertThat(noLongerAnExpense.isRecurring())
+                .as("the stale badge must be cleared even though this transaction is no longer in `active`")
+                .isFalse();
+        verify(transactionRepository).saveAll(List.of(noLongerAnExpense));
+    }
+
     // --- Admin Portal Phase 8: RECURRING_DETECTION_ENABLED feature flag gate ---
 
     @Test
