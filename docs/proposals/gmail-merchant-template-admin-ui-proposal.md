@@ -5,6 +5,16 @@ the `gmail-intelligence-platform-proposal.md` C6 scope (that document's C6.2, "M
 Monitoring," was already built as `GmailMerchantStatsService`/`MerchantIntelligence.tsx` before
 this work started — see below).
 
+**2026-08-22 update — readiness seed.** V103 trusted 50 more merchant domains (ACTIVE) and
+scaffolded 50 matching `MerchantTemplate` rows, spanning food delivery, e-commerce, travel,
+payments, OTT, telecom, and insurance. Every pattern is a **best-guess based on common receipt
+conventions, not verified against a real sample email** — this is exactly the "explicitly out of
+scope" coverage-expansion follow-up this document called out below, done now that the admin
+tooling exists to do it safely. All 50 templates are seeded `enabled = false`; none can stage
+anything until an admin runs each one through the test panel and activates it individually. See
+`V103__merchant_readiness_seed.sql`'s own comment for the full reasoning, including why trusting
+the domain and enabling the template were deliberately kept as two separate decisions.
+
 ## Context
 
 Finora's Gmail receipt-sync pipeline supports 6 merchants: 4 hand-written Java parsers (Amazon,
