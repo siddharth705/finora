@@ -2,15 +2,15 @@ import type { ReactNode } from 'react';
 import { ErrorBoundary } from './ErrorBoundary';
 import { Sidebar } from './Sidebar';
 import { GlobalSearch } from './GlobalSearch';
+import { ThemeToggle } from './ThemeToggle';
 import { useAdminAuth } from '../context/AdminAuthContext';
 
 /**
  * Deliberately simpler than the user app's AppShell + TopBar (finora/frontend/src/App.tsx,
- * TopBar.tsx) -- no theme toggle, no notification bell. This app now has a header search box
- * (GlobalSearch, Admin Portal Phase 2) fanning out across Users/Merchants/Banks/Global Rules
- * server-side (AdminSearchController) -- everything else stays a title + the signed-in account's
- * email, which is enough context on every screen without pulling in ThemeContext/dashboard-query
- * dependencies this app's dependency footprint has deliberately kept separate from the user app's.
+ * TopBar.tsx) -- no notification bell. This app now has a header search box (GlobalSearch, Admin
+ * Portal Phase 2) fanning out across Users/Merchants/Banks/Global Rules server-side
+ * (AdminSearchController) plus a theme toggle (ThemeContext, local-only -- no dashboard-query
+ * dependencies this app's dependency footprint has deliberately kept separate from the user app's).
  */
 export function AdminLayout({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
   const { email } = useAdminAuth();
@@ -25,6 +25,7 @@ export function AdminLayout({ title, subtitle, children }: { title: string; subt
           </div>
           <div className="flex items-center gap-3 flex-shrink-0">
             <GlobalSearch />
+            <ThemeToggle />
             <span className="text-xs text-muted bg-card border border-border rounded-full px-3 py-1.5 shadow-card whitespace-nowrap">
               {email}
             </span>

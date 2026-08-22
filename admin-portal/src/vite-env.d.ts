@@ -13,6 +13,9 @@ interface ImportMetaEnv {
   /** Crash reporting DSN. Optional: unset disables Sentry entirely rather than being an error,
    *  which is what keeps local dev and the test suite free of network calls. See lib/monitoring.ts. */
   readonly VITE_SENTRY_DSN?: string;
+  /** Google Identity Services client id -- Admin MFA UI's re-auth-before-disable step only
+   *  (GoogleReauthPrompt.tsx). This app has no Google login button. See .env.example. */
+  readonly VITE_GOOGLE_LOGIN_CLIENT_ID?: string;
 }
 
 interface ImportMeta {

@@ -19,6 +19,25 @@ import { cleanup, configure } from '@testing-library/react';
 // well before vitest kills the whole test with a far less informative one.
 configure({ asyncUtilTimeout: 5_000 });
 
+// jsdom doesn't implement matchMedia -- ThemeContext calls it unconditionally (both to read the
+// initial OS preference and to subscribe to changes), so without this every test that mounts
+// ThemeProvider (App.test.tsx renders the real one) would throw "window.matchMedia is not a
+// function" before it even got to the assertion. Same fix as frontend/src/test/setup.ts, ported
+// verbatim -- addEventListener/removeEventListener are no-ops since no test here exercises a live
+// OS theme change.
+if (!window.matchMedia) {
+  window.matchMedia = (query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  }) as unknown as MediaQueryList;
+}
+
 // jsdom does not implement window.prompt: it logs "Not implemented" and returns undefined, which
 // is neither the "Cancel" `null` a real browser returns nor a string -- code written for a real
 // prompt() call (e.g. `if (reason !== null) mutate(reason.trim())`) crashes on `.trim()` instead of

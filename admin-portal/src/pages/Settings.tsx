@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Settings as SettingsIcon, Save, Flag } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
+import { MfaSection } from '../components/MfaSection';
 import { platformSettingsApi, adminFeatureFlagsApi } from '../api/endpoints';
 import { useNotify } from '../context/NotificationContext';
 import type { FeatureFlagDto } from '../types';
@@ -245,6 +246,12 @@ function SettingsContent() {
 export default function Settings() {
   return (
     <AdminLayout title="Settings" subtitle="Platform-wide configuration that takes effect immediately">
+      <div className="max-w-2xl space-y-6">
+        {/* Deliberately outside RequirePermission below: this is "manage your own account's
+            second factor," not a platform-wide setting, so it's available to every signed-in
+            admin regardless of which permissions they hold -- see MfaSection's own doc comment. */}
+        <MfaSection />
+      </div>
       <RequirePermission permission="SYSTEM_SETTINGS">
         <SettingsContent />
       </RequirePermission>
