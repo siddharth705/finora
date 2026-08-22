@@ -73,4 +73,42 @@ describe('useSavedViews', () => {
 
     expect(result.current.views).toEqual([]);
   });
+
+  /**
+   * Bug 46. save()/remove() used to compute their result from `views` as captured in the closure
+   * from the last render -- that closure does not update again until React actually re-renders, so
+   * two calls landing before a render could run (e.g. a fast Enter-then-click, or a double-click on
+   * the same save button) both read the SAME pre-update `views`. The second call's setViews(next)
+   * silently overwrote whatever the first call had just saved.
+   */
+  it('two saves issued back-to-back, before a re-render, both take effect -- not just the last one', () => {
+    const { result } = renderHook(() => useSavedViews<Filters>('test-key'));
+
+    // Both calls run inside ONE act(), so React has not re-rendered (and therefore not refreshed
+    // any render-time closure) between them -- exactly the window the bug lived in.
+    act(() => {
+      result.current.save('First', { q: 'a', status: '' });
+      result.current.save('Second', { q: 'b', status: '' });
+    });
+
+    expect(result.current.views.map((v) => v.name)).toEqual(['First', 'Second']);
+    const stored = JSON.parse(localStorage.getItem('test-key')!);
+    expect(stored.map((v: SavedViewLike) => v.name)).toEqual(['First', 'Second']);
+  });
+
+  it('a save immediately followed by a remove, before a re-render, applies both in order', () => {
+    const { result } = renderHook(() => useSavedViews<Filters>('test-key'));
+    act(() => result.current.save('Keep', { q: '', status: '' }));
+
+    act(() => {
+      result.current.save('Drop', { q: '', status: '' });
+      result.current.remove('Drop');
+    });
+
+    expect(result.current.views.map((v) => v.name)).toEqual(['Keep']);
+  });
 });
+
+interface SavedViewLike {
+  name: string;
+}
