@@ -282,6 +282,7 @@ class RateLimitFilterTest {
                 "/api/v1/users/me/phone-change/complete",
                 "/api/v1/users/me/data-export",
                 "/api/v1/users/me/account/deactivate",
+                "/api/v1/users/me/account/delete",
                 "/api/v1/auth/mfa/verify",
         };
 
@@ -407,6 +408,8 @@ class RateLimitFilterTest {
                 Map.entry("app.rate-limit.reset-password.window-seconds", DEFAULT_RESET_PASSWORD_WINDOW),
                 Map.entry("app.rate-limit.data-export.max", DEFAULT_DATA_EXPORT_MAX),
                 Map.entry("app.rate-limit.data-export.window-seconds", DEFAULT_DATA_EXPORT_WINDOW),
+                Map.entry("app.rate-limit.delete-account.max", DEFAULT_DELETE_ACCOUNT_MAX),
+                Map.entry("app.rate-limit.delete-account.window-seconds", DEFAULT_DELETE_ACCOUNT_WINDOW),
                 Map.entry("app.rate-limit.google.max", DEFAULT_GOOGLE_MAX),
                 Map.entry("app.rate-limit.google.window-seconds", DEFAULT_GOOGLE_WINDOW),
                 Map.entry("app.rate-limit.apple.max", DEFAULT_APPLE_MAX),
