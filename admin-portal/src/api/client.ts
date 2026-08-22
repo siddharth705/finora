@@ -226,10 +226,19 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    // Error responses use the same {success:false, message, errorCode} envelope as the user
-    // frontend's backend calls -- surface message/errorCode where callers expect them.
+    // Error responses use the same {success:false, message, errorCode, details} envelope as the
+    // user frontend's backend calls -- surface message/errorCode where callers expect them.
+    // `details` is carried through too (not just message/errorCode): AUTH_MFA_REQUIRED's
+    // mfaChallengeToken travels there (see AdminMfaService/AuthService.login()'s MFA branch), and
+    // this used to drop it silently, which would have made the login-time MFA step unreachable
+    // from the browser. Mirrors frontend/src/api/client.ts's identical fix for
+    // AUTH_ACCOUNT_DEACTIVATED's reactivationToken.
     if (error.response?.data?.message) {
-      error.response.data = { message: error.response.data.message, errorCode: error.response.data.errorCode };
+      error.response.data = {
+        message: error.response.data.message,
+        errorCode: error.response.data.errorCode,
+        details: error.response.data.details,
+      };
     }
     return Promise.reject(error);
   }
