@@ -1,6 +1,6 @@
-import { Link } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
 import { Nav } from './landing/Nav';
+import { MagneticLink } from './landing/MagneticLink';
 import { Hero } from './landing/Hero';
 import { Problem } from './landing/Problem';
 import { ImportSection } from './landing/ImportSection';
@@ -133,9 +133,9 @@ export default function Landing() {
       {/* Sticky mobile action bar. Phone-only: at md+ the hero CTAs and the nav button are both
           still in reach, so a permanent bar would only cover content. */}
       <div className="m-mobile-cta md:hidden">
-        <Link to="/register" className="m-btn m-btn-primary w-full">
+        <MagneticLink to="/register" className="m-btn m-btn-primary w-full">
           Import your first statement <ArrowRight size={16} />
-        </Link>
+        </MagneticLink>
       </div>
       {/* Reserves the space the fixed bar covers so the footer's last line stays reachable. */}
       <div className="h-20 md:hidden" aria-hidden="true" />
