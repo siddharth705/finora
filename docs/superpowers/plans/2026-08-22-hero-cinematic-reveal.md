@@ -32,7 +32,7 @@
 **Interfaces:**
 - Produces: `framer-motion`, `three`, `@react-three/fiber` as runtime deps; `@types/three` as a dev dep, available to every later task.
 
-- [ ] **Step 1: Install the packages**
+- [x] **Step 1: Install the packages**
 
 Run:
 ```bash
@@ -40,12 +40,12 @@ cd frontend && npm install framer-motion three @react-three/fiber --save
 npm install @types/three --save-dev
 ```
 
-- [ ] **Step 2: Verify they resolve and the project still type-checks**
+- [x] **Step 2: Verify they resolve and the project still type-checks**
 
 Run: `cd frontend && npx tsc -b`
 Expected: no output (clean exit).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd frontend && git add package.json package-lock.json
@@ -63,7 +63,7 @@ git commit -m "chore(frontend): add framer-motion, three, @react-three/fiber"
 **Interfaces:**
 - Produces: `heroScore: { label: string; value: number; delta: string }`, `heroIntelligence: { heading: string; steps: string[] }`, `heroBadges: { label: string }[]` — consumed by Tasks 7, 8, 9.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // frontend/src/pages/landing/landing-config.test.ts
@@ -98,12 +98,12 @@ describe('hero cinematic copy', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/pages/landing/landing-config.test.ts`
 Expected: FAIL — `heroScore`/`heroIntelligence`/`heroBadges` are not exported yet.
 
-- [ ] **Step 3: Add the copy to landing-config.ts**
+- [x] **Step 3: Add the copy to landing-config.ts**
 
 Add after the existing `hero` export in `frontend/src/pages/landing/landing-config.ts`:
 
@@ -139,12 +139,12 @@ export const heroBadges = [
 ];
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run src/pages/landing/landing-config.test.ts`
 Expected: PASS (4 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd frontend && git add src/pages/landing/landing-config.ts src/pages/landing/landing-config.test.ts
@@ -163,7 +163,7 @@ git commit -m "feat(landing): add hero cinematic copy (score, intelligence scan,
 
 No test file for this task: it's a test utility, not app code, and its only real behavior is exercised by every test that uses it starting with Task 4.
 
-- [ ] **Step 1: Write the helper**
+- [x] **Step 1: Write the helper**
 
 ```typescript
 // frontend/src/test/mockMatchMedia.ts
@@ -193,12 +193,12 @@ export function mockMatchMedia(queryToMatches: Record<string, boolean>): () => v
 }
 ```
 
-- [ ] **Step 2: Verify it type-checks**
+- [x] **Step 2: Verify it type-checks**
 
 Run: `cd frontend && npx tsc -b`
 Expected: no output (clean exit).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd frontend && git add src/test/mockMatchMedia.ts
@@ -216,7 +216,7 @@ git commit -m "test(frontend): add mockMatchMedia helper for per-test media quer
 **Interfaces:**
 - Produces: `isWebglAvailable(): boolean`. Consumed by Task 6 (`AmbientCanvas.tsx`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // frontend/src/pages/landing/hero/webglSupport.test.ts
@@ -244,12 +244,12 @@ describe('isWebglAvailable', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/pages/landing/hero/webglSupport.test.ts`
 Expected: FAIL — module `./webglSupport` doesn't exist yet.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```typescript
 // frontend/src/pages/landing/hero/webglSupport.ts
@@ -269,12 +269,12 @@ export function isWebglAvailable(): boolean {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run src/pages/landing/hero/webglSupport.test.ts`
 Expected: PASS (2 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd frontend && git add src/pages/landing/hero/webglSupport.ts src/pages/landing/hero/webglSupport.test.ts
@@ -292,7 +292,7 @@ git commit -m "feat(landing/hero): add WebGL feature detection"
 **Interfaces:**
 - Produces: `useIsDesktop(): boolean` (true at ≥768px). Consumed by Task 6 (`AmbientCanvas.tsx`) and Task 10 (`FloatingDashboardCard.tsx`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // frontend/src/pages/landing/hero/useIsDesktop.test.ts
@@ -323,12 +323,12 @@ describe('useIsDesktop', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/pages/landing/hero/useIsDesktop.test.ts`
 Expected: FAIL — module `./useIsDesktop` doesn't exist yet.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```typescript
 // frontend/src/pages/landing/hero/useIsDesktop.ts
@@ -353,12 +353,12 @@ export function useIsDesktop(): boolean {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run src/pages/landing/hero/useIsDesktop.test.ts`
 Expected: PASS (2 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd frontend && git add src/pages/landing/hero/useIsDesktop.ts src/pages/landing/hero/useIsDesktop.test.ts
@@ -377,7 +377,7 @@ git commit -m "feat(landing/hero): add useIsDesktop breakpoint hook"
 
 No dedicated unit test for this file: it renders a real `@react-three/fiber` `<Canvas>`, which requires an actual WebGL context to do anything meaningful — jsdom has none, so a unit test here would either test nothing real or need to mock away everything the file does. Per the spec's Testing section, this falls outside the "structural/a11y assertions" scope; it's verified visually (browser preview) once Task 8 wires it in.
 
-- [ ] **Step 1: Write the implementation**
+- [x] **Step 1: Write the implementation**
 
 ```typescript
 // frontend/src/pages/landing/hero/AmbientScene.tsx
@@ -433,12 +433,12 @@ export function AmbientScene() {
 }
 ```
 
-- [ ] **Step 2: Verify it type-checks**
+- [x] **Step 2: Verify it type-checks**
 
 Run: `cd frontend && npx tsc -b`
 Expected: no output (clean exit).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd frontend && git add src/pages/landing/hero/AmbientScene.tsx
@@ -465,7 +465,7 @@ Reassigning `window.matchMedia` per test via `mockMatchMedia`, as used elsewhere
 the current test worker. Every test below mocks `useReducedMotion` directly instead — this
 supersedes the plan's original approach and is the pattern later tasks (10, 11, 12) also use.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // frontend/src/pages/landing/hero/AmbientCanvas.test.tsx
@@ -531,12 +531,12 @@ describe('AmbientCanvas', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/pages/landing/hero/AmbientCanvas.test.tsx`
 Expected: FAIL — module `./AmbientCanvas` doesn't exist yet.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```typescript
 // frontend/src/pages/landing/hero/AmbientCanvas.tsx
@@ -591,12 +591,12 @@ export function AmbientCanvas() {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run src/pages/landing/hero/AmbientCanvas.test.tsx`
 Expected: PASS (4 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd frontend && git add src/pages/landing/hero/AmbientCanvas.tsx src/pages/landing/hero/AmbientCanvas.test.tsx
@@ -615,7 +615,7 @@ git commit -m "feat(landing/hero): add AmbientCanvas gating wrapper"
 - Consumes: `CountUp` from `../primitives` (existing); `heroScore` from `../landing-config` (Task 2).
 - Produces: `HealthScoreRing(): JSX.Element` (named export). Consumed by Task 12 (`Hero.tsx`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // frontend/src/pages/landing/hero/HealthScoreRing.test.tsx
@@ -643,12 +643,12 @@ describe('HealthScoreRing', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/pages/landing/hero/HealthScoreRing.test.tsx`
 Expected: FAIL — module `./HealthScoreRing` doesn't exist yet.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```typescript
 // frontend/src/pages/landing/hero/HealthScoreRing.tsx
@@ -732,12 +732,12 @@ export function HealthScoreRing() {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run src/pages/landing/hero/HealthScoreRing.test.tsx`
 Expected: PASS (2 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd frontend && git add src/pages/landing/hero/HealthScoreRing.tsx src/pages/landing/hero/HealthScoreRing.test.tsx
@@ -756,7 +756,7 @@ git commit -m "feat(landing/hero): add HealthScoreRing"
 - Consumes: `useStagedReveal` from `../primitives` (existing); `heroIntelligence` from `../landing-config` (Task 2).
 - Produces: `IntelligenceScan(): JSX.Element` (named export). Consumed by Task 12 (`Hero.tsx`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // frontend/src/pages/landing/hero/IntelligenceScan.test.tsx
@@ -779,12 +779,12 @@ describe('IntelligenceScan', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/pages/landing/hero/IntelligenceScan.test.tsx`
 Expected: FAIL — module `./IntelligenceScan` doesn't exist yet.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```typescript
 // frontend/src/pages/landing/hero/IntelligenceScan.tsx
@@ -839,12 +839,12 @@ export function IntelligenceScan() {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run src/pages/landing/hero/IntelligenceScan.test.tsx`
 Expected: PASS (1 test)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd frontend && git add src/pages/landing/hero/IntelligenceScan.tsx src/pages/landing/hero/IntelligenceScan.test.tsx
@@ -863,7 +863,7 @@ git commit -m "feat(landing/hero): add IntelligenceScan checklist"
 - Consumes: `heroBadges` from `../landing-config` (Task 2); `motion`, `useReducedMotion` from `framer-motion`.
 - Produces: `FloatingBadges(): JSX.Element` (named export). Consumed by Task 12 (`Hero.tsx`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Per Task 7's note: `useReducedMotion` is mocked directly, not via `mockMatchMedia`.
 
@@ -904,12 +904,12 @@ describe('FloatingBadges', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/pages/landing/hero/FloatingBadges.test.tsx`
 Expected: FAIL — module `./FloatingBadges` doesn't exist yet.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```typescript
 // frontend/src/pages/landing/hero/FloatingBadges.tsx
@@ -965,12 +965,12 @@ export function FloatingBadges() {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run src/pages/landing/hero/FloatingBadges.test.tsx`
 Expected: PASS (2 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd frontend && git add src/pages/landing/hero/FloatingBadges.tsx src/pages/landing/hero/FloatingBadges.test.tsx
@@ -989,7 +989,7 @@ git commit -m "feat(landing/hero): add FloatingBadges"
 - Consumes: `DashboardMock` from `../DashboardMock` (existing); `useIsDesktop` from `./useIsDesktop` (Task 5); `motion`, `useReducedMotion`, `useSpring` from `framer-motion`.
 - Produces: `FloatingDashboardCard(): JSX.Element` (named export). Consumed by Task 12 (`Hero.tsx`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Per Task 7's note: `useReducedMotion` is mocked directly, not via `mockMatchMedia`. The mobile
 case still uses `mockMatchMedia` because `useIsDesktop` reads `window.matchMedia` directly on
@@ -1053,12 +1053,12 @@ describe('FloatingDashboardCard', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/pages/landing/hero/FloatingDashboardCard.test.tsx`
 Expected: FAIL — module `./FloatingDashboardCard` doesn't exist yet.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```typescript
 // frontend/src/pages/landing/hero/FloatingDashboardCard.tsx
@@ -1138,12 +1138,12 @@ export function FloatingDashboardCard() {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run src/pages/landing/hero/FloatingDashboardCard.test.tsx`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd frontend && git add src/pages/landing/hero/FloatingDashboardCard.tsx src/pages/landing/hero/FloatingDashboardCard.test.tsx
@@ -1164,7 +1164,7 @@ git commit -m "feat(landing/hero): add FloatingDashboardCard with CSS-3D tilt"
 
 Per Task 7's note: `useReducedMotion` is mocked directly, not via `mockMatchMedia`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // frontend/src/pages/landing/Hero.test.tsx
@@ -1227,12 +1227,12 @@ describe('Hero', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/pages/landing/Hero.test.tsx`
 Expected: FAIL — current `Hero.tsx` doesn't render `heroScore`/`heroIntelligence` content yet.
 
-- [ ] **Step 3: Rewrite Hero.tsx**
+- [x] **Step 3: Rewrite Hero.tsx**
 
 **Critical discovery made implementing this step, verified in a real browser (not just jsdom):**
 the original draft below used a shared `container`/`item` Framer Motion `Variants` pair, with the
@@ -1365,17 +1365,17 @@ export function Hero() {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run src/pages/landing/Hero.test.tsx`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Run the full frontend test suite to check for regressions**
+- [x] **Step 5: Run the full frontend test suite to check for regressions**
 
 Run: `cd frontend && npx vitest run`
 Expected: all tests pass, including `landing-claims.test.tsx` (copy is unchanged) and the rest of the `src/pages/landing/` suite.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd frontend && git add src/pages/landing/Hero.tsx src/pages/landing/Hero.test.tsx
@@ -1396,7 +1396,7 @@ This task has no isolated unit test of its own: `<Transition>` is a pure present
 
 **Design note — transition ownership stays centralized in `<Transition>`, not Hero:** an earlier draft of this plan had `Hero.tsx` render its own bottom-edge fade div and reduced this band to a `WHITE`-to-`WHITE` no-op. That split ownership across two files for one visual seam and broke the pattern every other section boundary on this page already follows — Landing.tsx's own comment calls the `<Transition>` bands "why this reads as one page rather than fourteen." The fix is simpler than the original draft: `<Transition>` already renders a CSS gradient (`from`/`to`), so pointing `from` at Hero's own terminal background color does the identical visual fade without Hero needing to own any of it.
 
-- [ ] **Step 1: Update the Transition band after Hero**
+- [x] **Step 1: Update the Transition band after Hero**
 
 In `frontend/src/pages/Landing.tsx`, change:
 
@@ -1416,7 +1416,7 @@ to:
         <Transition from="#05070C" to={WHITE} height={80} />
 ```
 
-- [ ] **Step 2: Update the index.css dark-band comment**
+- [x] **Step 2: Update the index.css dark-band comment**
 
 In `frontend/src/index.css`, change:
 
@@ -1438,12 +1438,12 @@ to:
    purpose. The app's own light/dark toggle is untouched -- this scope simply doesn't participate.
 ```
 
-- [ ] **Step 3: Run the full frontend test suite**
+- [x] **Step 3: Run the full frontend test suite**
 
 Run: `cd frontend && npx vitest run`
 Expected: all tests pass (no test asserts on the removed `#FBFCFE` string or the old comment text).
 
-- [ ] **Step 4: Visual verification in the browser**
+- [x] **Step 4: Visual verification in the browser**
 
 Start the dev server for this worktree's `frontend` (see the note on launch.json below — the shared `.claude/launch.json` `--prefix frontend` resolves against the primary checkout, not this worktree; either add a worktree-local `.claude/launch.json` pointing `--prefix` at this worktree's `frontend` directory, or run `npx vite --port <free-port> --strictPort` directly from this worktree's `frontend/` and open that port).
 
@@ -1453,7 +1453,7 @@ Check, at both desktop and mobile (375px) viewport widths:
 - No console errors (particularly none from `@react-three/fiber`/`three`).
 - With the OS/browser "reduce motion" setting on (or via `prefers-reduced-motion` emulation in devtools), the hero renders its final state immediately with no ambient canvas and no floating-badge loops.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd frontend && git add src/pages/Landing.tsx src/index.css
@@ -1468,18 +1468,18 @@ git commit -m "docs(landing): update dark-band rationale and hero transition ban
 
 **Interfaces:** none.
 
-- [ ] **Step 1: Build the frontend**
+- [x] **Step 1: Build the frontend**
 
 Run: `cd frontend && npm run build`
 Expected: build succeeds.
 
-- [ ] **Step 2: Inspect the chunk output**
+- [x] **Step 2: Inspect the chunk output**
 
 Run: `ls -la frontend/dist/assets/*.js` (or read Vite's own build summary printed to stdout, which lists each output chunk with its size).
 
 Expected: a separate JS chunk exists containing `three`/`@react-three/fiber` (its name will include a hash, e.g. `AmbientScene-<hash>.js` or similar, depending on Vite's chunk naming) — distinct from the main landing-page/index chunk. If `three`/`@react-three/fiber` show up inside the main entry chunk instead of their own chunk, the `React.lazy(() => import('./AmbientScene'))` boundary in `AmbientCanvas.tsx` (Task 7) isn't being respected — check that the import is a dynamic `import()` call, not a static top-level import, and that nothing else in the app imports `AmbientScene.tsx` statically.
 
-- [ ] **Step 3: Confirm the main chunk doesn't reference three.js symbols**
+- [x] **Step 3: Confirm the main chunk doesn't reference three.js symbols**
 
 Run: `grep -l "THREE\." frontend/dist/assets/*.js | grep -v -i ambient`
 Expected: no output (empty) — if the main chunk shows up in this grep, three.js leaked into it.
