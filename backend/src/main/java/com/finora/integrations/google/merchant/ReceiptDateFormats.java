@@ -21,6 +21,7 @@ final class ReceiptDateFormats {
 
     private static final List<DateTimeFormatter> FORMATS = List.of(
             DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.ENGLISH),
+            DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.ENGLISH),
             DateTimeFormatter.ISO_LOCAL_DATE,
             DateTimeFormatter.ofPattern("d MMMM yyyy", Locale.ENGLISH),
             DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.ENGLISH),
