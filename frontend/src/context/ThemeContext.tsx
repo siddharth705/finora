@@ -66,7 +66,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // localStorage read here would silently skip this sync forever, on every login, not just once.
   useEffect(() => {
     function syncFromServer() {
-      if (!getAccessToken()) return;
+      if (!getAccessToken()) {
+        // Bug 43. Logging out must not leave the previous user's theme active for whatever
+        // renders next -- the login screen, or a different user's session on a shared device.
+        // AuthContext.logout() now dispatches AUTH_CHANGED_EVENT specifically so this branch runs;
+        // before that fix there was nowhere this could even be reached from a logout.
+        setThemeState('system');
+        safeStorage.removeItem(STORAGE_KEY);
+        return;
+      }
       userApi
         .get()
         .then((u) => {

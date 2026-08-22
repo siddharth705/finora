@@ -67,7 +67,20 @@ export function csvCell(value: string | number): string {
   return `"${guarded.replace(/"/g, '""')}"`;
 }
 
-/** Joins rows into CSV text with every cell escaped by {@link csvCell}. */
+/**
+ * Joins rows into CSV text with every cell escaped by {@link csvCell}, prefixed with a UTF-8 byte
+ * order mark.
+ *
+ * Bug 45. Without it, Excel (particularly on Windows) guesses the file's encoding from its bytes
+ * alone and defaults to the system codepage rather than UTF-8 -- every non-ASCII character
+ * (₹, and any accented or non-Latin merchant/category name, both of which are genuinely
+ * user-controlled here, same as csvCell's own formula-injection concern above) renders as mojibake
+ * the moment the file is opened. The BOM is invisible everywhere else that reads this CSV: Node,
+ * Python, and every spreadsheet application either skip it automatically or treat it as UTF-8's own
+ * explicit self-identification.
+ */
+const UTF8_BOM = '\uFEFF';
+
 export function toCsv(rows: (string | number)[][]): string {
-  return rows.map((row) => row.map(csvCell).join(',')).join('\n');
+  return UTF8_BOM + rows.map((row) => row.map(csvCell).join(',')).join('\n');
 }

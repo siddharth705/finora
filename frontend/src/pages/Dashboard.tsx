@@ -401,7 +401,10 @@ export default function Dashboard() {
                       <span className="w-2 h-2 rounded-full" style={{ background: donutColors[i % donutColors.length] }} />
                       {name}
                     </span>
-                    <span className="text-muted">{((val / totalSpend) * 100).toFixed(0)}%</span>
+                    {/* Bug 44. categoryEntries can be non-empty with every amount at zero, which
+                        the length check above doesn't catch -- totalSpend is then 0 and val /
+                        totalSpend is 0/0, rendering the literal string "NaN%". */}
+                    <span className="text-muted">{totalSpend > 0 ? ((val / totalSpend) * 100).toFixed(0) : '0'}%</span>
                     <span className="font-medium text-ink">{fmt(val)}</span>
                   </div>
                 ))}
