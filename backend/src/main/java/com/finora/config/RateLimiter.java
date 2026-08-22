@@ -81,14 +81,22 @@ public class RateLimiter {
                 && lastSweepEpochSeconds.compareAndSet(lastSweep, now)) {
             evictExpired(now);
         }
-        Window window = windows.compute(key, (k, existing) -> {
+        // The count this call's request landed on must be captured inside compute()'s lambda, not
+        // read back afterward -- compute() only holds the per-key lock for the duration of the
+        // lambda, so a concurrent caller for the same key can run its own compute() (and its own
+        // increment) in the gap between this call's compute() returning and a separate get() below.
+        // That gap previously let a request that was actually within limit at the moment it was
+        // counted see a stale, higher count and get spuriously rejected.
+        int[] countForThisRequest = new int[1];
+        windows.compute(key, (k, existing) -> {
             if (existing == null || now - existing.windowStartEpochSeconds() >= windowSeconds) {
+                countForThisRequest[0] = 1;
                 return new Window(now, new AtomicInteger(1));
             }
-            existing.count().incrementAndGet();
+            countForThisRequest[0] = existing.count().incrementAndGet();
             return existing;
         });
-        return window.count().get() <= maxRequests;
+        return countForThisRequest[0] <= maxRequests;
     }
 
     /** Safe to run concurrently with allow() -- ConcurrentHashMap's entrySet().removeIf() uses a
