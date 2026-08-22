@@ -57,7 +57,7 @@ class GmailReceiptToTransactionIT extends AbstractIntegrationTest {
     void aReceiptBecomesATransactionOnConfirm() {
         User user = user();
         Account account = account(user);
-        ParsedReceipt receipt = new ParsedReceipt("18ab39xyz", "amazon.in",
+        ParsedReceipt receipt = new ParsedReceipt("18ab39xyz", "amazon.in", null,
                 Money.of(new BigDecimal("1299.00")), LocalDate.of(2026, 8, 10), 0.9);
 
         bridge.stage(user.getId(), receipt);
@@ -93,7 +93,7 @@ class GmailReceiptToTransactionIT extends AbstractIntegrationTest {
     @DisplayName("staging the same receipt twice creates only one session")
     void stagingTheSameReceiptTwiceIsIdempotent() {
         User user = user();
-        ParsedReceipt receipt = new ParsedReceipt("18ab39xyz", "amazon.in",
+        ParsedReceipt receipt = new ParsedReceipt("18ab39xyz", "amazon.in", null,
                 Money.of(new BigDecimal("500.00")), LocalDate.of(2026, 8, 10), 0.9);
 
         GmailStagingBridge.Result first = bridge.stage(user.getId(), receipt);
@@ -108,9 +108,9 @@ class GmailReceiptToTransactionIT extends AbstractIntegrationTest {
     @Test
     void differentReceiptsForTheSameUserBothStage() {
         User user = user();
-        ParsedReceipt first = new ParsedReceipt("msg-1", "amazon.in",
+        ParsedReceipt first = new ParsedReceipt("msg-1", "amazon.in", null,
                 Money.of(new BigDecimal("500.00")), LocalDate.of(2026, 8, 10), 0.9);
-        ParsedReceipt second = new ParsedReceipt("msg-2", "amazon.in",
+        ParsedReceipt second = new ParsedReceipt("msg-2", "amazon.in", null,
                 Money.of(new BigDecimal("750.00")), LocalDate.of(2026, 8, 11), 0.9);
 
         assertThat(bridge.stage(user.getId(), first)).isEqualTo(GmailStagingBridge.Result.STAGED);

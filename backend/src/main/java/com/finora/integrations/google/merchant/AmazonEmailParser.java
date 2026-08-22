@@ -116,7 +116,7 @@ public class AmazonEmailParser implements MerchantEmailParser {
         }
 
         return ParserResult.parsed(new ParsedReceipt(
-                message.gmailMessageId(), DOMAIN, amount, date, FIXED_CONFIDENCE));
+                message.gmailMessageId(), DOMAIN, null, amount, date, FIXED_CONFIDENCE));
     }
 
     private static LocalDate extractDate(String text) {
