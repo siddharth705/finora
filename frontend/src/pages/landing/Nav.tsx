@@ -62,7 +62,7 @@ export function Nav({ overHero }: { overHero: boolean }) {
             <a
               key={href}
               href={href}
-              className="transition-colors"
+              className="hover:text-[#0F172A] transition-colors"
               style={{ color: overHero ? 'rgba(248,250,252,0.85)' : undefined }}
               onMouseEnter={(e) => { if (overHero) e.currentTarget.style.color = '#F8FAFC'; }}
               onMouseLeave={(e) => { if (overHero) e.currentTarget.style.color = 'rgba(248,250,252,0.85)'; }}
@@ -76,6 +76,8 @@ export function Nav({ overHero }: { overHero: boolean }) {
             to="/login"
             className="hidden sm:block text-sm transition-colors"
             style={{ color: overHero ? 'rgba(248,250,252,0.85)' : 'var(--m-ink-2)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = overHero ? '#F8FAFC' : '#0F172A'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = overHero ? 'rgba(248,250,252,0.85)' : 'var(--m-ink-2)'; }}
           >
             Log in
           </Link>

@@ -27,6 +27,56 @@ describe('Nav', () => {
     expect(screen.getByText('Finora')).toHaveStyle({ color: '#0F172A' });
   });
 
+  it('carries a hover class for desktop nav links, with no inline color to shadow it in the glass state', () => {
+    // jsdom doesn't apply real stylesheets, so :hover can't be asserted by computed style here --
+    // this instead pins the two facts that make the class actually take effect: it's present, and
+    // (in the non-overHero state) there's no inline `color` to out-rank it in the cascade. Inline
+    // styles always beat class-based :hover rules regardless of specificity, which is exactly the
+    // regression this covers -- a hover:text-[#0F172A] class silently made inert by a leftover
+    // inline color.
+    render(
+      <MemoryRouter>
+        <Nav overHero={false} />
+      </MemoryRouter>
+    );
+    const link = screen.getByText('How it works');
+    expect(link.className).toContain('hover:text-[#0F172A]');
+    expect(link.style.color).toBe('');
+  });
+
+  it('gives desktop nav links hover feedback in the transparent (overHero) state', () => {
+    render(
+      <MemoryRouter>
+        <Nav overHero={true} />
+      </MemoryRouter>
+    );
+    const link = screen.getByText('How it works');
+    fireEvent.mouseEnter(link);
+    expect(link).toHaveStyle({ color: '#F8FAFC' });
+    fireEvent.mouseLeave(link);
+    expect(link).toHaveStyle({ color: 'rgba(248,250,252,0.85)' });
+  });
+
+  it('gives the Log in link hover feedback in both overHero states', () => {
+    const { rerender } = render(
+      <MemoryRouter>
+        <Nav overHero={false} />
+      </MemoryRouter>
+    );
+    const loginFalse = screen.getByText('Log in', { selector: 'a' });
+    fireEvent.mouseEnter(loginFalse);
+    expect(loginFalse).toHaveStyle({ color: '#0F172A' });
+
+    rerender(
+      <MemoryRouter>
+        <Nav overHero={true} />
+      </MemoryRouter>
+    );
+    const loginTrue = screen.getByText('Log in', { selector: 'a' });
+    fireEvent.mouseEnter(loginTrue);
+    expect(loginTrue).toHaveStyle({ color: '#F8FAFC' });
+  });
+
   it('gives the open mobile menu panel an explicit dark background while overHero', () => {
     render(
       <MemoryRouter>
