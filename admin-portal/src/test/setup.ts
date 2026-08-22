@@ -38,6 +38,30 @@ if (!window.matchMedia) {
   }) as unknown as MediaQueryList;
 }
 
+// jsdom has no ResizeObserver, and recharts' <ResponsiveContainer> (the first charting library
+// this repo has needed -- PlatformActivityChart, dashboard redesign PR4) renders nothing at all
+// without one: its own effect bails out entirely when `typeof ResizeObserver === 'undefined'`,
+// leaving its initial {width: -1, height: -1} in place, which fails its own "acceptable size"
+// check and returns null forever. A synchronous stub that reports one fixed size is enough --
+// nothing here exercises a real browser resize, only a chart mounting and rendering its data.
+if (!window.ResizeObserver) {
+  class StubResizeObserver {
+    private readonly callback: ResizeObserverCallback;
+    constructor(callback: ResizeObserverCallback) {
+      this.callback = callback;
+    }
+    observe(target: Element) {
+      this.callback(
+        [{ target, contentRect: { width: 400, height: 220 } } as unknown as ResizeObserverEntry],
+        this as unknown as ResizeObserver
+      );
+    }
+    unobserve() {}
+    disconnect() {}
+  }
+  window.ResizeObserver = StubResizeObserver as unknown as typeof ResizeObserver;
+}
+
 // jsdom does not implement window.prompt: it logs "Not implemented" and returns undefined, which
 // is neither the "Cancel" `null` a real browser returns nor a string -- code written for a real
 // prompt() call (e.g. `if (reason !== null) mutate(reason.trim())`) crashes on `.trim()` instead of

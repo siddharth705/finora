@@ -56,6 +56,7 @@ function overview(overrides: Partial<OperationalDashboardDto> = {}): Operational
     transactionsToday: 300,
     importsToday: 12,
     importsWithSkippedRowsToday: 0,
+    inactiveUsersLast7Days: 0,
     previousDay: { activeUsers: 80, transactions: 300, imports: 12, importsWithSkippedRows: 0 },
     needsAttention: { importsWithSkippedRowsToday: 0, lockedAccounts: 0, transactionsNeedingCategoryReview: 0, transactionsFlaggedAsDuplicates: 0 },
     health: { overallStatus: 'UP', providers: [] },

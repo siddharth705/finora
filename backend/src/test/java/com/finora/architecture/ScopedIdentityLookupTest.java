@@ -47,7 +47,13 @@ class ScopedIdentityLookupTest {
             // Free-text admin search across name/email/phone. Not an identity resolution -- it
             // returns a page of partial matches for a human to pick from, and is already
             // permission-gated.
-            "search");
+            "search",
+            // Platform-wide count excluding the one BOOTSTRAP_ADMIN system account by its fixed
+            // email. Not an identity resolution either -- it never resolves "which user is this,"
+            // it counts everyone else. Account scope is meaningless here: the bootstrap account
+            // is the same single row regardless of portal, so there is no second account under
+            // this email to disambiguate between.
+            "countByEmailNotAndCreatedAtBetween");
 
     @GuardianRule(
             id = "FG-027",
