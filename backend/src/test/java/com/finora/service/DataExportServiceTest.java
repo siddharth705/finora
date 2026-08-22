@@ -416,7 +416,7 @@ class DataExportServiceTest {
         when(subscriptionRepository.findByUserIdIncludingDeletedOrderByCreatedAtDesc(userId)).thenReturn(List.of(subscription));
         when(planRepository.findAllById(List.of(planId))).thenReturn(List.of(plan));
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
 
         assertThat(bundle.subscriptions()).hasSize(1);
         var dto = bundle.subscriptions().get(0);
@@ -443,7 +443,7 @@ class DataExportServiceTest {
         when(subscriptionRepository.findByUserIdIncludingDeletedOrderByCreatedAtDesc(userId)).thenReturn(List.of(subscription));
         when(planRepository.findAllById(List.of(planId))).thenReturn(List.of());
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
 
         assertThat(bundle.subscriptions()).hasSize(1);
         var dto = bundle.subscriptions().get(0);
@@ -475,7 +475,7 @@ class DataExportServiceTest {
         when(subscriptionRepository.findByUserIdIncludingDeletedOrderByCreatedAtDesc(userId)).thenReturn(List.of(deleted));
         when(planRepository.findAllById(List.of(planId))).thenReturn(List.of(plan));
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
 
         assertThat(bundle.subscriptions()).hasSize(1);
         var dto = bundle.subscriptions().get(0);
@@ -522,7 +522,7 @@ class DataExportServiceTest {
         when(planChangeRepository.findBySubscriptionIdInOrderByCreatedAtDesc(List.of(subscriptionId)))
                 .thenReturn(List.of(change));
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
 
         assertThat(bundle.planChanges()).hasSize(1);
         var dto = bundle.planChanges().get(0);
@@ -567,7 +567,7 @@ class DataExportServiceTest {
         when(planChangeRepository.findBySubscriptionIdInOrderByCreatedAtDesc(List.of(subscriptionId)))
                 .thenReturn(List.of(change));
 
-        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null);
+        DataExportService.ExportBundle bundle = service.buildBundle(userId, "correct-password", null, null);
 
         assertThat(bundle.planChanges()).hasSize(1);
         assertThat(bundle.planChanges().get(0).fromPlanCode()).isNull();
