@@ -20,6 +20,15 @@ on:
     branches: [main]
   workflow_dispatch: {}
 
+# Two pushes to main close together must not race each other into creating two sync PRs (the
+# second run's "does a PR already exist" check can pass before the first run's gh pr create has
+# actually landed). cancel-in-progress: false, not true -- the queued second run should still
+# execute once the first finishes, so it can correctly find "nothing left to sync" via the
+# merge-base check below, same reasoning ci.yml/e2e-nightly.yml already apply to their own jobs.
+concurrency:
+  group: sync-dev-branch
+  cancel-in-progress: false
+
 permissions:
   contents: write
   pull-requests: write
@@ -57,4 +66,13 @@ jobs:
             echo "Opened sync PR #$pr"
           fi
 
-          gh pr merge "$pr" --auto --merge
+          # Idempotent: a queued re-run of this workflow (see concurrency: above) can land here
+          # against the SAME PR a previous run already enabled auto-merge on. Re-running
+          # `gh pr merge --auto` on a PR that already has it enabled is untested territory in gh's
+          # own docs, so this checks first rather than relying on that call being a safe no-op.
+          alreadyEnabled=$(gh pr view "$pr" --json autoMergeRequest --jq '.autoMergeRequest != null')
+          if [ "$alreadyEnabled" = "true" ]; then
+            echo "Auto-merge already enabled on #$pr -- nothing more to do."
+          else
+            gh pr merge "$pr" --auto --merge
+          fi
