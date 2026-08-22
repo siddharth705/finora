@@ -4,6 +4,7 @@ import { ShieldCheck, Plus, Pencil, Trash2 } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
 import { FormPanel } from '../components/FormPanel';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { adminRolesApi } from '../api/endpoints';
 import type { PermissionDto, RoleDto } from '../types';
@@ -82,6 +83,8 @@ function RoleCard({
   const [description, setDescription] = useState(role.description);
   const [selectedPermission, setSelectedPermission] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [confirmDeleteRole, setConfirmDeleteRole] = useState(false);
+  const [confirmRevokePermission, setConfirmRevokePermission] = useState<PermissionDto | null>(null);
 
   function invalidate() {
     void queryClient.invalidateQueries({ queryKey: ['admin-roles'] });
@@ -138,11 +141,7 @@ function RoleCard({
               type="button"
               title="Delete role"
               disabled={deleteMutation.isPending}
-              onClick={() => {
-                if (confirm(`Delete role ${role.name}? This only works if no account currently holds it.`)) {
-                  deleteMutation.mutate();
-                }
-              }}
+              onClick={() => setConfirmDeleteRole(true)}
               className="w-7 h-7 rounded-lg hover:bg-danger-bg text-muted hover:text-danger inline-flex items-center justify-center"
             >
               <Trash2 size={13} />
@@ -192,11 +191,7 @@ function RoleCard({
                 // still grants it. Revoking one from a role did not -- and that succeeds
                 // immediately and changes what every user holding this role can do. The more
                 // consequential action was the unguarded one, behind a 3.5-unit "x".
-                onClick={() => {
-                  if (confirm(`Revoke "${p.name}" from ${role.name}? Every user with this role loses it immediately.`)) {
-                    revokeMutation.mutate(p.id);
-                  }
-                }}
+                onClick={() => setConfirmRevokePermission(p)}
                 className="w-3.5 h-3.5 rounded-full bg-border hover:bg-danger hover:text-white text-[9px] flex items-center justify-center"
               >
                 ×
@@ -229,6 +224,34 @@ function RoleCard({
           </button>
         </div>
       )}
+
+      {confirmDeleteRole && (
+        <ConfirmDialog
+          title={`Delete role ${role.name}?`}
+          message="This only works if no account currently holds it."
+          confirmLabel="Delete"
+          danger
+          busy={deleteMutation.isPending}
+          onConfirm={() => { setConfirmDeleteRole(false); deleteMutation.mutate(); }}
+          onCancel={() => setConfirmDeleteRole(false)}
+        />
+      )}
+
+      {confirmRevokePermission && (
+        <ConfirmDialog
+          title={`Revoke "${confirmRevokePermission.name}" from ${role.name}?`}
+          message="Every user with this role loses it immediately."
+          confirmLabel="Revoke"
+          danger
+          busy={revokeMutation.isPending}
+          onConfirm={() => {
+            const permissionId = confirmRevokePermission.id;
+            setConfirmRevokePermission(null);
+            revokeMutation.mutate(permissionId);
+          }}
+          onCancel={() => setConfirmRevokePermission(null)}
+        />
+      )}
     </div>
   );
 }
@@ -243,6 +266,7 @@ function RolesContent() {
   const [showCreatePermission, setShowCreatePermission] = useState(false);
   const [createRoleError, setCreateRoleError] = useState<string | null>(null);
   const [createPermissionError, setCreatePermissionError] = useState<string | null>(null);
+  const [confirmDeletePermission, setConfirmDeletePermission] = useState<PermissionDto | null>(null);
 
   const { data: roles, isLoading: rolesLoading } = useQuery({
     queryKey: ['admin-roles'],
@@ -374,11 +398,7 @@ function RolesContent() {
                   type="button"
                   title="Delete permission"
                   disabled={deletePermissionMutation.isPending}
-                  onClick={() => {
-                    if (confirm(`Delete permission ${p.name}? This only works if no role currently grants it.`)) {
-                      deletePermissionMutation.mutate(p.id);
-                    }
-                  }}
+                  onClick={() => setConfirmDeletePermission(p)}
                   className="w-6 h-6 rounded-lg hover:bg-danger-bg text-muted hover:text-danger inline-flex items-center justify-center flex-shrink-0"
                 >
                   <Trash2 size={12} />
@@ -392,6 +412,22 @@ function RolesContent() {
             </p>
           )}
         </div>
+      )}
+
+      {confirmDeletePermission && (
+        <ConfirmDialog
+          title={`Delete permission ${confirmDeletePermission.name}?`}
+          message="This only works if no role currently grants it."
+          confirmLabel="Delete"
+          danger
+          busy={deletePermissionMutation.isPending}
+          onConfirm={() => {
+            const id = confirmDeletePermission.id;
+            setConfirmDeletePermission(null);
+            deletePermissionMutation.mutate(id);
+          }}
+          onCancel={() => setConfirmDeletePermission(null)}
+        />
       )}
     </div>
   );

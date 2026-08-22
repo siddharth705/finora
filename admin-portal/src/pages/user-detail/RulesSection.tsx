@@ -4,6 +4,7 @@ import { Pencil, Plus, Trash2, ListFilter } from 'lucide-react';
 import { adminUserRulesApi } from '../../api/endpoints';
 import type { CreateRelationshipRequest, CreateRuleRequest, RuleDto, UpdateRuleRequest } from '../../types';
 import { errorMessage } from './errorMessage';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 
 const RULE_FIELDS = ['DESCRIPTION', 'AMOUNT', 'MERCHANT', 'ACCOUNT_TYPE'];
 const RULE_OPERATORS = ['CONTAINS', 'EQUALS', 'STARTS_WITH', 'GT', 'LT', 'BETWEEN'];
@@ -108,6 +109,7 @@ export function RuleRow({ userId, rule }: { userId: string; rule: RuleDto }) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   function invalidate() {
     void queryClient.invalidateQueries({ queryKey: ['admin-user-rules', userId] });
@@ -189,14 +191,24 @@ export function RuleRow({ userId, rule }: { userId: string; rule: RuleDto }) {
           type="button"
           title="Delete"
           disabled={deleteMutation.isPending}
-          onClick={() => {
-            if (confirm('Delete this rule?')) deleteMutation.mutate();
-          }}
+          onClick={() => setConfirmDelete(true)}
           className="w-7 h-7 rounded-lg hover:bg-danger-bg text-muted hover:text-danger inline-flex items-center justify-center"
         >
           <Trash2 size={13} />
         </button>
       </div>
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete this rule?"
+          message="This can't be undone."
+          confirmLabel="Delete"
+          danger
+          busy={deleteMutation.isPending}
+          onConfirm={() => { setConfirmDelete(false); deleteMutation.mutate(); }}
+          onCancel={() => setConfirmDelete(false)}
+        />
+      )}
     </div>
   );
 }

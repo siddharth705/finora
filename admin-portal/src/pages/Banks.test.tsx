@@ -51,7 +51,6 @@ describe('Banks', () => {
     vi.mocked(adminBanksApi.update).mockReset();
     vi.mocked(adminBanksApi.delete).mockReset();
     vi.mocked(adminBanksApi.audit).mockReset();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
 
   it('shows an access-denied message when the account lacks BANK_MANAGE', () => {
@@ -194,7 +193,11 @@ describe('Banks', () => {
     await waitFor(() => expect(screen.getByText('HDFC Custom')).toBeInTheDocument());
     await user.click(screen.getByTitle('Delete'));
 
-    expect(window.confirm).toHaveBeenCalled();
+    // Custom in-app confirmation (ConfirmDialog), not the browser's own confirm() -- see this
+    // page's own doc comment on confirmDeleteBank for why.
+    expect(await screen.findByText('Remove HDFC Custom?')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Remove' }));
+
     await waitFor(() => expect(adminBanksApi.delete).toHaveBeenCalledWith('hdfc-custom'));
   });
 

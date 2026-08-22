@@ -5,6 +5,7 @@ import { useNotify } from '../../context/NotificationContext';
 import { adminUserRelationshipsApi } from '../../api/endpoints';
 import type { CreateRelationshipRequest, RelationshipDto, UpdateRelationshipRequest } from '../../types';
 import { errorMessage } from './errorMessage';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 
 const RELATIONSHIP_TYPES = ['FAMILY', 'FRIEND', 'OWN_ACCOUNT', 'OTHER'];
 const IDENTIFIER_TYPES = ['UPI_ID', 'ACCOUNT_LAST4', 'NAME_PATTERN'];
@@ -95,6 +96,8 @@ export function RelationshipRow({ userId, relationship, allRelationships }: {
   const [editing, setEditing] = useState(false);
   const [mergeFrom, setMergeFrom] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [confirmMerge, setConfirmMerge] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   function invalidate() {
     void queryClient.invalidateQueries({ queryKey: ['admin-user-relationships', userId] });
@@ -195,12 +198,7 @@ export function RelationshipRow({ userId, relationship, allRelationships }: {
             <button
               type="button"
               disabled={!mergeFrom || mergeMutation.isPending}
-              onClick={() => {
-                const fromLabel = otherRelationships.find((r) => r.id === mergeFrom)?.label;
-                if (confirm(`Merge "${fromLabel}" into "${relationship.label}"? This can't be undone.`)) {
-                  mergeMutation.mutate(mergeFrom);
-                }
-              }}
+              onClick={() => setConfirmMerge(true)}
               className="text-xs font-semibold text-primary px-2 py-1.5 disabled:opacity-50"
             >
               Merge
@@ -219,14 +217,36 @@ export function RelationshipRow({ userId, relationship, allRelationships }: {
           type="button"
           title="Delete"
           disabled={deleteMutation.isPending}
-          onClick={() => {
-            if (confirm('Delete this relationship?')) deleteMutation.mutate();
-          }}
+          onClick={() => setConfirmDelete(true)}
           className="w-7 h-7 rounded-lg hover:bg-danger-bg text-muted hover:text-danger inline-flex items-center justify-center"
         >
           <Trash2 size={13} />
         </button>
       </div>
+
+      {confirmMerge && (
+        <ConfirmDialog
+          title={`Merge "${otherRelationships.find((r) => r.id === mergeFrom)?.label}" into "${relationship.label}"?`}
+          message="This can't be undone."
+          confirmLabel="Merge"
+          danger
+          busy={mergeMutation.isPending}
+          onConfirm={() => { setConfirmMerge(false); mergeMutation.mutate(mergeFrom); }}
+          onCancel={() => setConfirmMerge(false)}
+        />
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete this relationship?"
+          message="This can't be undone."
+          confirmLabel="Delete"
+          danger
+          busy={deleteMutation.isPending}
+          onConfirm={() => { setConfirmDelete(false); deleteMutation.mutate(); }}
+          onCancel={() => setConfirmDelete(false)}
+        />
+      )}
     </div>
   );
 }

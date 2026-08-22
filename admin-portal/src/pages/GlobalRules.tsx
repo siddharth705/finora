@@ -5,6 +5,7 @@ import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
 import { FormPanel } from '../components/FormPanel';
 import { DataTable, type DataTableColumn } from '../components/DataTable';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useNotify } from '../context/NotificationContext';
 import { adminRulesApi } from '../api/endpoints';
 import type { CreateRuleRequest, RuleDto } from '../types';
@@ -211,6 +212,7 @@ function GlobalRulesContent() {
   const notify = useNotify();
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<RuleDto | null>(null);
+  const [confirmDeleteRule, setConfirmDeleteRule] = useState<RuleDto | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
   const { data: rules, isLoading } = useQuery({
@@ -318,11 +320,7 @@ function GlobalRulesContent() {
             type="button"
             title="Delete"
             disabled={deleteMutation.isPending}
-            onClick={() => {
-              if (confirm('Delete this global rule? It stops applying to every user immediately.')) {
-                deleteMutation.mutate(rule.id);
-              }
-            }}
+            onClick={() => setConfirmDeleteRule(rule)}
             className="w-8 h-8 rounded-lg hover:bg-danger-bg text-muted hover:text-danger inline-flex items-center justify-center"
           >
             <Trash2 size={14} />
@@ -395,6 +393,22 @@ function GlobalRulesContent() {
         loading={isLoading}
         emptyMessage="No global rules yet."
       />
+
+      {confirmDeleteRule && (
+        <ConfirmDialog
+          title="Delete this global rule?"
+          message="It stops applying to every user immediately."
+          confirmLabel="Delete"
+          danger
+          busy={deleteMutation.isPending}
+          onConfirm={() => {
+            const id = confirmDeleteRule.id;
+            setConfirmDeleteRule(null);
+            deleteMutation.mutate(id);
+          }}
+          onCancel={() => setConfirmDeleteRule(null)}
+        />
+      )}
     </div>
   );
 }

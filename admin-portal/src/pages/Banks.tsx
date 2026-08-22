@@ -6,6 +6,7 @@ import { RequirePermission } from '../components/ProtectedRoute';
 import { FormPanel } from '../components/FormPanel';
 import { DataTable, type DataTableColumn } from '../components/DataTable';
 import { EntityDrawer, type EntityDrawerTab } from '../components/EntityDrawer';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { adminBanksApi } from '../api/endpoints';
 import { isSafeHttpUrl } from '../lib/safeUrl';
 import type { BankDto, CreateBankRequest, UpdateBankRequest } from '../types';
@@ -373,6 +374,7 @@ function BanksContent() {
   const [selected, setSelected] = useState<BankDto | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [drawerError, setDrawerError] = useState<string | null>(null);
+  const [confirmDeleteBank, setConfirmDeleteBank] = useState<BankDto | null>(null);
   // Bumped on every successful save so BankSummaryTab (keyed on selected.id + this) remounts and
   // its internal `editing` state resets to false -- otherwise a save would leave the tab sitting
   // in edit mode even though the drawer is now showing the freshly-updated read view underneath.
@@ -452,11 +454,7 @@ function BanksContent() {
             type="button"
             title="Delete"
             disabled={deleteMutation.isPending}
-            onClick={() => {
-              if (confirm(`Remove ${bank.shortName}? This only works if no account uses it.`)) {
-                deleteMutation.mutate(bank.id);
-              }
-            }}
+            onClick={() => setConfirmDeleteBank(bank)}
             className="w-8 h-8 rounded-lg hover:bg-danger-bg text-muted hover:text-danger inline-flex items-center justify-center"
           >
             <Trash2 size={14} />
@@ -538,6 +536,22 @@ function BanksContent() {
         subtitle={selected?.officialName}
         tabs={tabs}
       />
+
+      {confirmDeleteBank && (
+        <ConfirmDialog
+          title={`Remove ${confirmDeleteBank.shortName}?`}
+          message="This only works if no account uses it."
+          confirmLabel="Remove"
+          danger
+          busy={deleteMutation.isPending}
+          onConfirm={() => {
+            const id = confirmDeleteBank.id;
+            setConfirmDeleteBank(null);
+            deleteMutation.mutate(id);
+          }}
+          onCancel={() => setConfirmDeleteBank(null)}
+        />
+      )}
     </div>
   );
 }

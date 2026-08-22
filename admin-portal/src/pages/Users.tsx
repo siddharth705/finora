@@ -8,6 +8,7 @@ import { FormPanel } from '../components/FormPanel';
 import { DataTable, type DataTableColumn } from '../components/DataTable';
 import { Pagination } from '../components/Pagination';
 import { FilterBar } from '../components/FilterBar';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useSavedViews } from '../hooks/useSavedViews';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { useNotify } from '../context/NotificationContext';
@@ -180,6 +181,7 @@ function UsersTable() {
   const [page, setPage] = useState(0);
   const [showCreate, setShowCreate] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [confirmSuspend, setConfirmSuspend] = useState<UserSummaryDto | null>(null);
   // Admin Portal Phase 5 -- FilterBar reference implementation #2 (see AuditLog.tsx for #1).
   // Users.tsx already had search+status filtering before this phase; this only moves it onto the
   // shared component and adds a saved-views dropdown, it doesn't change what's filterable.
@@ -280,11 +282,7 @@ function UsersTable() {
             <button
               type="button"
               disabled={suspendMutation.isPending}
-              onClick={() => {
-                if (confirm(`Suspend ${u.fullName}? They will be signed out and unable to log in until reactivated.`)) {
-                  suspendMutation.mutate(u.id);
-                }
-              }}
+              onClick={() => setConfirmSuspend(u)}
               className="inline-flex items-center gap-1.5 text-xs font-medium text-danger hover:bg-danger-bg rounded-lg px-2.5 py-1.5"
             >
               <ShieldBan size={14} /> Suspend
@@ -387,6 +385,22 @@ function UsersTable() {
           totalElements={data.totalElements}
           pageSize={PAGE_SIZE}
           onPageChange={setPage}
+        />
+      )}
+
+      {confirmSuspend && (
+        <ConfirmDialog
+          title={`Suspend ${confirmSuspend.fullName}?`}
+          message="They will be signed out and unable to log in until reactivated."
+          confirmLabel="Suspend"
+          danger
+          busy={suspendMutation.isPending}
+          onConfirm={() => {
+            const id = confirmSuspend.id;
+            setConfirmSuspend(null);
+            suspendMutation.mutate(id);
+          }}
+          onCancel={() => setConfirmSuspend(null)}
         />
       )}
     </div>
