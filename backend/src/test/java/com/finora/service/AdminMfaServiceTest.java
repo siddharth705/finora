@@ -183,9 +183,9 @@ class AdminMfaServiceTest {
 
     @Test
     void disable_withAVerifiedCredential_deletesEverything() {
-        when(googleReauthVerifier.verify(any(), any(), any())).thenReturn(true);
+        when(googleReauthVerifier.verify(any(), any(), any(), any())).thenReturn(true);
 
-        service.disable(userId, "correct-password", null, userId);
+        service.disable(userId, "correct-password", null, null, userId);
 
         verify(credentialRepository).deleteByUserId(userId);
         verify(recoveryCodeRepository).deleteByUserId(userId);
@@ -195,9 +195,9 @@ class AdminMfaServiceTest {
 
     @Test
     void disable_withAnUnverifiedCredential_throwsAndDeletesNothing() {
-        when(googleReauthVerifier.verify(any(), any(), any())).thenReturn(false);
+        when(googleReauthVerifier.verify(any(), any(), any(), any())).thenReturn(false);
 
-        assertThatThrownBy(() -> service.disable(userId, "wrong-password", null, userId))
+        assertThatThrownBy(() -> service.disable(userId, "wrong-password", null, null, userId))
                 .isInstanceOf(ApiException.class);
         verify(credentialRepository, never()).deleteByUserId(any());
         verify(recoveryCodeRepository, never()).deleteByUserId(any());
@@ -361,7 +361,7 @@ class AdminMfaServiceTest {
     void disable_whenFeatureDisabled_throwsNotAvailable_andDeletesNothing() {
         ReflectionTestUtils.setField(service, "featureEnabled", false);
 
-        assertThatThrownBy(() -> service.disable(userId, "correct-password", null, userId))
+        assertThatThrownBy(() -> service.disable(userId, "correct-password", null, null, userId))
                 .isInstanceOfSatisfying(ApiException.class,
                         e -> assertThat(e.getCode()).isEqualTo(ErrorCode.AUTH_MFA_NOT_AVAILABLE));
         verify(credentialRepository, never()).deleteByUserId(any());

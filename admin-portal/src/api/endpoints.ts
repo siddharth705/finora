@@ -1,10 +1,11 @@
 import { api, rawApi, type ApiEnvelope } from './client';
 import type {
 
-  AccountDto, ActivationFunnelDto, AdminReferralSummaryDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
+  AccountDto, ActivationFunnelDto, ActivityTrendPointDto, AdminReferralSummaryDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
   CreateAccountRequest, CreateBankRequest, CreateMerchantTemplateRequest, CreateRelationshipRequest,
   CreateRuleRequest, CreateUserRequest, FeatureFlagDto, GmailMerchantParserStatDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
   LearningTimelineEntry,
+  IntegrationsOverviewDto,
   MeAccessDto, MerchantDto, MerchantMergeRequest, MerchantStatDto, MerchantTemplateDto,
   MerchantUpdateRequest, OperationalDashboardDto, PagedResponse, PermissionDto, PlatformAnalyticsDto,
   PlatformDiagnosticsDto, PlatformSettingsDto, PlatformStatsDto, ReconciliationStatsDto, RecentImportDto,
@@ -262,6 +263,7 @@ export const adminStatsApi = {
 export const adminDashboardApi = {
   overview: () => api.get<OperationalDashboardDto>('/admin/dashboard/overview').then((r) => r.data),
   activationFunnel: () => api.get<ActivationFunnelDto>('/admin/dashboard/activation-funnel').then((r) => r.data),
+  activityTrend: () => api.get<ActivityTrendPointDto[]>('/admin/dashboard/activity-trend').then((r) => r.data),
 };
 
 // D-28 PR4-A. SUBSCRIPTION_MANAGEMENT_VIEW/_MANAGE-gated (V99) -- its own permission, not folded
@@ -291,6 +293,13 @@ export const adminSystemApi = {
 // backend doc comment. Shares the SYSTEM_SETTINGS gate with adminSystemApi above.
 export const adminDiagnosticsApi = {
   overview: () => api.get<PlatformDiagnosticsDto>('/admin/diagnostics').then((r) => r.data),
+};
+
+// Integrations page -- which third-party services Finora talks to, their live status (reusing
+// the same health registry adminDashboardApi's overview.health draws from), and what's planned
+// but not yet built. Shares PLATFORM_DIAGNOSTICS_VIEW with adminSystemApi/adminDiagnosticsApi.
+export const adminIntegrationsApi = {
+  overview: () => api.get<IntegrationsOverviewDto>('/admin/integrations').then((r) => r.data),
 };
 
 /** The merchant learning queue (WI2). Every list row already carries the correlation an operator

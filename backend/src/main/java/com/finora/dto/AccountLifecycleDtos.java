@@ -7,12 +7,12 @@ import jakarta.validation.constraints.Size;
  *  delete-request/purge. */
 public class AccountLifecycleDtos {
 
-    /** currentPassword/googleIdToken is the re-auth gate -- deactivation is reversible and the
-     *  caller already holds a valid session, so this is the same bar as any other "re-enter your
-     *  credential" confirmation, not the OTP-gated PasswordChangeService flow (that's reserved
-     *  for the irreversible delete request in Phase B). Exactly one of the two is required,
-     *  neither @NotBlank -- see PasswordChangeDtos.StartRequest's identical shape and
-     *  GoogleReauthVerifier, which is what actually enforces that.
+    /** currentPassword/googleIdToken/appleIdToken is the re-auth gate -- deactivation is
+     *  reversible and the caller already holds a valid session, so this is the same bar as any
+     *  other "re-enter your credential" confirmation, not the OTP-gated PasswordChangeService
+     *  flow (that's reserved for the irreversible delete request in Phase B). Exactly one of the
+     *  three is required, none @NotBlank -- see PasswordChangeDtos.StartRequest's identical
+     *  shape and GoogleReauthVerifier, which is what actually enforces that.
      *
      *  reason is required (product decision: churn-analysis data is worth the small extra step on
      *  an otherwise-reversible action) and validated against User.DEACTIVATION_REASONS by
@@ -23,6 +23,7 @@ public class AccountLifecycleDtos {
     public record DeactivateRequest(
             String currentPassword,
             String googleIdToken,
+            String appleIdToken,
             @NotBlank String reason,
             @Size(max = 500) String note
     ) {}
@@ -39,12 +40,12 @@ public class AccountLifecycleDtos {
 
     public record DeleteAccountResponse(String message) {}
 
-    /** currentPassword/googleIdToken is the re-auth gate for Phase C's data export -- same bar as
-     *  DeactivateRequest's, not the OTP tier: the export is a pure read (reversible, changes
-     *  nothing), but it bundles unmasked original bank statement files into one downloadable
-     *  artifact, so a plain re-auth step is worth the friction even though every table in it is
-     *  already individually readable through existing endpoints with just a JWT. See
-     *  DataExportService's own doc comment. Exactly one of the two fields is required, same as
-     *  DeactivateRequest above. */
-    public record ExportDataRequest(String currentPassword, String googleIdToken) {}
+    /** currentPassword/googleIdToken/appleIdToken is the re-auth gate for Phase C's data export --
+     *  same bar as DeactivateRequest's, not the OTP tier: the export is a pure read (reversible,
+     *  changes nothing), but it bundles unmasked original bank statement files into one
+     *  downloadable artifact, so a plain re-auth step is worth the friction even though every
+     *  table in it is already individually readable through existing endpoints with just a JWT.
+     *  See DataExportService's own doc comment. Exactly one of the three fields is required, same
+     *  as DeactivateRequest above. */
+    public record ExportDataRequest(String currentPassword, String googleIdToken, String appleIdToken) {}
 }
