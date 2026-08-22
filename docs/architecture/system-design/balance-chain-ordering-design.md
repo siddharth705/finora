@@ -410,6 +410,52 @@ since an unresolved middle day would otherwise break the anchor chain for every 
   and the header-reconstruction regression corpus already favor real traces over invented ones where
   a real example exists.
 
+### 7.2 Post-implementation corpus verification
+
+`BalanceSequenceResolver` merged 2026-08-22 (PR #259, commit `176681c`). Sid's own follow-up
+question — now that ordering no longer contaminates results, does `STATEMENT_TOTALS` still fail
+anywhere in the real corpus? — was run as a separate, explicit audit against the same tooling as
+§7.1, re-pointed at the full real corpus as it exists today (25 PDFs, 29 sections; the corpus's one
+CSV file is again not covered by this pass — flagged, not silently skipped, same discipline as
+§7.1). No amount, date, or narration value is reproduced here, only structural outcomes and
+filenames (bank/product labels, not customer data).
+
+| Question | Result |
+|---|---|
+| Sections with `STATEMENT_TOTALS: FAILED` | **0** |
+| Sections with `STATEMENT_TOTALS: WARNING` | **0** |
+| Sections with `STATEMENT_TOTALS: VERIFIED` | 16 / 29 |
+| Sections with `STATEMENT_TOTALS: NOT_APPLICABLE` | 13 / 29 (matches §7.1 Q3's no-stated-opening-balance count) |
+
+**What this confirms:**
+
+- **Both live-bug documents §7.1 found now reconcile.** The ICICI savings document that originally
+  surfaced this defect, and the second, independently-found document with a closed loop on its own
+  boundary date, both now report `STATEMENT_TOTALS: VERIFIED` with correct closing balances —
+  checked directly against the real files, not only via the unit suite.
+- **Zero occurrences of the `BALANCE_ORDER_AMBIGUOUS` suppression path (§4.3, §7 decision 4) firing
+  in the real corpus.** Every `NOT_APPLICABLE` outcome traces to a section with no stated opening
+  balance to begin with (§7.1 Q3's pre-existing 13/29), not to the resolver declining to resolve a
+  sequence it was actually given. Consistent with §7.1 Q4's zero-ambiguity prediction holding true
+  post-implementation, not just pre-implementation.
+
+**Two unrelated findings surfaced by the same sweep, neither a `STATEMENT_TOTALS` regression and
+both out of this audit's scope:**
+
+- `Axis credit.pdf` — `CREDIT_CARD_STATEMENT_TOTALS: WARNING`. A distinct, credit-card-specific
+  validator; this document's `STATEMENT_TOTALS` outcome is correctly `NOT_APPLICABLE` (credit-card
+  sections were never in scope for the savings/current-account reconciliation this design covers).
+- `Shivani_HDFC.pdf` section 2 — an empty verification map. The section is a `RECURRING_DEPOSIT`
+  product with 0 transaction rows, so no findings are generated for it at all; this is the
+  already-known, already-parked "Shivani RD scope" gap, unrelated to balance ordering.
+
+**Tooling note:** the real corpus (`~/Downloads/Bank statement/`) was reorganized into
+`Savings accounts/`/`Credit cards/` subdirectories after §7.1's sweep was run (which used a flat
+directory). `scripts/corpus-run.py` filters its target directory's immediate children only — it does
+not descend into subdirectories — so this pass ran it once per subdirectory and concatenated the
+output rather than modifying the script's discovery behavior, which was out of scope for a
+read-only audit.
+
 ## 8. Non-goals
 
 - **2E.3 (narration correctness) and 2E.4 (CBI opening-balance claim).** Unrelated; 2E.3 is already
