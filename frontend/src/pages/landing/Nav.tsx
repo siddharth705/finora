@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Menu, X } from 'lucide-react';
 import { BrandMark } from '../../components/BrandMark';
+import { MagneticLink } from './MagneticLink';
 
 const LINKS: [string, string][] = [
   ['How it works', '#how'],
@@ -25,40 +26,67 @@ export function Logo({ invert = false }: { invert?: boolean }) {
   );
 }
 
-export function Nav() {
-  const [scrolled, setScrolled] = useState(false);
+/**
+ * `overHero` -- owned by Landing.tsx, driven by an IntersectionObserver watching the Hero
+ * section (see the global chrome design spec) -- replaces the old scroll-position-based
+ * `scrolled` state entirely. While over Hero the header is transparent with light/inverted
+ * text so it reads against Hero's dark background; once the user scrolls past Hero it becomes
+ * today's translucent-glass look. The crossfade is CSS-only (`transition-all`), deliberately not
+ * Framer Motion -- the navbar is infrastructure, not a decorative element.
+ *
+ * `-mb-16` (negative margin equal to the header's own h-16) is what actually makes "transparent
+ * over Hero" read correctly: a plain `sticky` header still reserves its own box in normal flow at
+ * scrollY 0, so Hero would start BELOW that box, not behind it -- a transparent header would then
+ * reveal the page's own white background through that gap, not Hero's dark gradient. The negative
+ * margin collapses the reserved space so Hero (and every later section once scrolled) renders
+ * starting at y=0, with the header overlapping its top 64px -- Hero's own top padding (pt-28/
+ * pt-36, well over 64px) already keeps the headline clear of that overlap.
+ */
+export function Nav({ overHero }: { overHero: boolean }) {
   const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    function onScroll() { setScrolled(window.scrollY > 8); }
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
-  }, []);
 
   return (
     <header
-      className={`sticky top-0 z-30 transition-shadow duration-300 ${scrolled ? 'shadow-[0_1px_0_rgba(15,23,42,.06),0_8px_24px_-16px_rgba(15,23,42,.25)]' : ''}`}
-      style={{ background: 'rgb(255 255 255 / .88)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--m-line)' }}
+      className="sticky top-0 z-30 -mb-16 transition-all duration-300"
+      style={{
+        background: overHero ? 'transparent' : 'rgb(255 255 255 / .88)',
+        backdropFilter: overHero ? 'none' : 'blur(12px)',
+        borderBottom: overHero ? '1px solid transparent' : '1px solid var(--m-line)',
+        boxShadow: overHero ? 'none' : '0 1px 0 rgba(15,23,42,.06), 0 8px 24px -16px rgba(15,23,42,.25)',
+      }}
     >
       <div className="max-w-6xl mx-auto px-5 sm:px-6 h-16 flex items-center justify-between">
-        <Logo />
-        <nav className="hidden md:flex items-center gap-8 text-sm" style={{ color: 'var(--m-ink-2)' }}>
+        <Logo invert={overHero} />
+        <nav className="hidden md:flex items-center gap-8 text-sm" style={{ color: overHero ? '#F8FAFC' : 'var(--m-ink-2)' }}>
           {LINKS.map(([label, href]) => (
-            <a key={href} href={href} className="hover:text-[#0F172A] transition-colors">{label}</a>
+            <a
+              key={href}
+              href={href}
+              className="transition-colors"
+              style={{ color: overHero ? 'rgba(248,250,252,0.85)' : undefined }}
+              onMouseEnter={(e) => { if (overHero) e.currentTarget.style.color = '#F8FAFC'; }}
+              onMouseLeave={(e) => { if (overHero) e.currentTarget.style.color = 'rgba(248,250,252,0.85)'; }}
+            >
+              {label}
+            </a>
           ))}
         </nav>
         <div className="flex items-center gap-3">
-          <Link to="/login" className="hidden sm:block text-sm hover:text-[#0F172A] transition-colors" style={{ color: 'var(--m-ink-2)' }}>
+          <Link
+            to="/login"
+            className="hidden sm:block text-sm transition-colors"
+            style={{ color: overHero ? 'rgba(248,250,252,0.85)' : 'var(--m-ink-2)' }}
+          >
             Log in
           </Link>
-          <Link to="/register" className="m-btn m-btn-primary !min-h-[44px] !px-4 !text-sm">
+          <MagneticLink to="/register" className="m-btn m-btn-primary !min-h-[44px] !px-4 !text-sm">
             Get started <ArrowRight size={14} />
-          </Link>
+          </MagneticLink>
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
             className="md:hidden w-11 h-11 grid place-items-center rounded-lg border"
-            style={{ borderColor: 'var(--m-line)' }}
+            style={{ borderColor: overHero ? 'rgba(255,255,255,0.35)' : 'var(--m-line)', color: overHero ? '#F8FAFC' : undefined }}
             aria-label={open ? 'Close menu' : 'Open menu'}
             aria-expanded={open}
           >
@@ -67,13 +95,31 @@ export function Nav() {
         </div>
       </div>
       {open ? (
-        <div className="md:hidden border-t px-5 py-2" style={{ borderColor: 'var(--m-line)' }}>
+        <div
+          className="md:hidden border-t px-5 py-2"
+          style={{
+            borderColor: overHero ? 'rgba(255,255,255,0.15)' : 'var(--m-line)',
+            background: overHero ? 'rgba(5,7,12,0.96)' : undefined,
+          }}
+        >
           {LINKS.map(([label, href]) => (
-            <a key={href} href={href} onClick={() => setOpen(false)} className="m-tap block text-sm" style={{ color: 'var(--m-ink-2)' }}>
+            <a
+              key={href}
+              href={href}
+              onClick={() => setOpen(false)}
+              className="m-tap block text-sm"
+              style={{ color: overHero ? '#F8FAFC' : 'var(--m-ink-2)' }}
+            >
               {label}
             </a>
           ))}
-          <Link to="/login" className="m-tap block text-sm" style={{ color: 'var(--m-ink-2)' }}>Log in</Link>
+          <Link
+            to="/login"
+            className="m-tap block text-sm"
+            style={{ color: overHero ? '#F8FAFC' : 'var(--m-ink-2)' }}
+          >
+            Log in
+          </Link>
         </div>
       ) : null}
     </header>
