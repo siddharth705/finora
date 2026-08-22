@@ -121,4 +121,60 @@ class MerchantLearningEventTest {
         assertThat(event.getStatus()).isEqualTo(MerchantLearningEvent.Status.COMPLETED);
         assertThat(event.getLastError()).isNull();
     }
+
+    /**
+     * Bug 18. A worker dying mid-apply is not evidence the event itself is broken, so recovery
+     * must not spend a retry attempt the way {@link #recordFailure} does -- five stranded claims
+     * (five deploys, say) would otherwise exhaust the whole budget and mark an event permanently
+     * FAILED without it ever once having actually run.
+     */
+    @Test
+    void recoveringFromAbandonmentReturnsToQueueWithoutSpendingAnAttempt() {
+        MerchantLearningEvent event = anEvent();
+        Instant now = Instant.parse("2026-08-06T10:00:00Z");
+
+        event.recoverFromAbandonment("Abandoned in PROCESSING for longer than 15m", now);
+
+        assertThat(event.getStatus()).isEqualTo(MerchantLearningEvent.Status.PENDING);
+        assertThat(event.getAttemptCount()).isZero();
+        assertThat(event.getFirstFailedAt()).as("nothing failed -- a worker died").isNull();
+        assertThat(event.getNextAttemptAt())
+                .as("immediately retryable -- the stranded claim already burned real time")
+                .isEqualTo(now);
+        assertThat(event.getLastError()).contains("Abandoned in PROCESSING");
+    }
+
+    /** {@code recoverFromAbandonment} must not reset an attempt budget already spent on genuine
+     *  failures -- it is not {@link #requeueForRetry}, which is an admin's deliberate reset. */
+    @Test
+    void recoveringFromAbandonmentDoesNotResetAttemptsAlreadySpentOnRealFailures() {
+        MerchantLearningEvent event = anEvent();
+        event.recordFailure("a genuine failure", Instant.parse("2026-08-06T09:00:00Z"));
+
+        event.recoverFromAbandonment("Abandoned in PROCESSING", Instant.parse("2026-08-06T10:00:00Z"));
+
+        assertThat(event.getAttemptCount())
+                .as("the earlier real failure still counts -- only the abandonment itself is free")
+                .isEqualTo(1);
+    }
+
+    /**
+     * Self-review catch: the first version of this fix set {@code lastRetryAt} here too, which
+     * contradicts the method's own doc comment -- {@code lastRetryAt} is surfaced directly to the
+     * admin queue (LearningQueueDto, sortable) as "when was this last retried," and showing a
+     * retry timestamp for a row {@code attemptCount} simultaneously says was never attempted would
+     * mislead an operator into thinking a stranded-and-recovered row was actively retried.
+     */
+    @Test
+    void recoveringFromAbandonmentDoesNotSetLastRetryAt() {
+        MerchantLearningEvent event = anEvent();
+        event.recordFailure("a genuine failure", Instant.parse("2026-08-06T09:00:00Z"));
+        Instant realRetryTime = event.getLastRetryAt();
+
+        event.recoverFromAbandonment("Abandoned in PROCESSING", Instant.parse("2026-08-06T10:00:00Z"));
+
+        assertThat(event.getLastRetryAt())
+                .as("nothing was retried -- only a genuine recordFailure should move this")
+                .isEqualTo(realRetryTime);
+    }
 }

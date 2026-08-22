@@ -347,7 +347,7 @@ class TransactionServiceTest {
         when(transactionRepository.findById(txn2Id)).thenReturn(Optional.of(t2));
         when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Groceries"))).thenReturn(dummyCategory);
 
-        transactionService.bulkRecategorize(userId, List.of(txn1Id, txn2Id), "Groceries");
+        transactionService.bulkRecategorize(userId, List.of(txn1Id, txn2Id), "Groceries", userId);
 
         assertThat(t1.isNeedsCategoryReview()).isFalse();
         assertThat(t2.isNeedsCategoryReview()).isFalse();
@@ -420,9 +420,36 @@ class TransactionServiceTest {
         when(transactionRepository.findById(id1)).thenReturn(Optional.of(ownedTransaction(id1, userId)));
         when(transactionRepository.findById(id2)).thenReturn(Optional.of(ownedTransaction(id2, userId)));
 
-        transactionService.bulkDelete(userId, List.of(id1, id2));
+        transactionService.bulkDelete(userId, List.of(id1, id2), userId);
 
         verify(recurringService, times(1)).detectForUser(userId);
+    }
+
+    // Bug 36: bulkDelete/bulkRecategorize recorded no actorId at all, unlike delete() above --
+    // the higher-impact operation of the pair had weaker attribution than the lower-impact one.
+    @Test
+    void bulkDelete_recordsActingAdminIdInAuditMetadata() {
+        UUID id1 = UUID.randomUUID();
+        UUID actingAdminId = UUID.randomUUID();
+        when(transactionRepository.findById(id1)).thenReturn(Optional.of(ownedTransaction(id1, userId)));
+
+        transactionService.bulkDelete(userId, List.of(id1), actingAdminId);
+
+        verify(auditService).record(eq(userId), eq("TRANSACTION_BULK_DELETED"), eq("Transaction"), eq(null),
+                argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
+    }
+
+    @Test
+    void bulkRecategorize_recordsActingAdminIdInAuditMetadata() {
+        UUID txnId = UUID.randomUUID();
+        UUID actingAdminId = UUID.randomUUID();
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(ownedTransaction(txnId, userId)));
+        when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Groceries"))).thenReturn(dummyCategory);
+
+        transactionService.bulkRecategorize(userId, List.of(txnId), "Groceries", actingAdminId);
+
+        verify(auditService).record(eq(userId), eq("TRANSACTION_BULK_RECATEGORIZED"), eq("Transaction"), eq(null),
+                argThat(metadata -> actingAdminId.toString().equals(metadata.get("actorId"))));
     }
 
     @Test
@@ -449,7 +476,7 @@ class TransactionServiceTest {
         // as 404, for a row that exists and belongs to someone else. Asserting the class alone
         // cannot tell the two apart, and "not found" for another user's transaction is both the
         // wrong answer and a worse one.
-        assertThatThrownBy(() -> transactionService.bulkDelete(userId, List.of(ownedId, notOwnedId)))
+        assertThatThrownBy(() -> transactionService.bulkDelete(userId, List.of(ownedId, notOwnedId), userId))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).getStatus())
                         .isEqualTo(org.springframework.http.HttpStatus.FORBIDDEN));
@@ -701,7 +728,7 @@ class TransactionServiceTest {
         when(transactionRepository.findById(txn1Id)).thenReturn(Optional.of(t1));
         when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Groceries"))).thenReturn(dummyCategory);
 
-        transactionService.bulkRecategorize(userId, List.of(txn1Id), "Groceries");
+        transactionService.bulkRecategorize(userId, List.of(txn1Id), "Groceries", userId);
 
         assertThat(t1.isCategoryManuallySet()).isTrue();
     }
@@ -723,7 +750,7 @@ class TransactionServiceTest {
         when(transactionRepository.findById(txn2Id)).thenReturn(Optional.of(t2));
         when(categorizationService.resolveOrCreateCategory(eq(userId), eq("Groceries"))).thenReturn(dummyCategory);
 
-        transactionService.bulkRecategorize(userId, List.of(txn1Id, txn2Id), "Groceries");
+        transactionService.bulkRecategorize(userId, List.of(txn1Id, txn2Id), "Groceries", userId);
 
         verify(categorizationService).queueLearning(userId, "SWIGGY*ORDR9182 BLR", dummyCategory.getId());
         verify(categorizationService).queueLearning(userId, "SWIGGY*ORDR7710 BLR", dummyCategory.getId());
