@@ -74,19 +74,28 @@ public interface UserRepository extends JpaRepository<User, UUID> {
 
     /**
      * Admin Portal, Operational Dashboard Insights row -- the inverse of AuditLogRepository
-     * .countDistinctUsersByActionSince: users with NO USER_LOGIN audit row since :since. A user
-     * who has never logged in at all also satisfies this (they never appear in the NOT IN
-     * subquery either), so "inactive" here naturally covers both "went quiet" and "never came
-     * back," without a separate query for the never-logged-in case. Excludes BOOTSTRAP_ADMIN by
-     * email, same as countByEmailNotAndCreatedAtBetween above -- NOT by role, which would silently
-     * stop excluding it once setup completes; see that method's own doc comment for why. The
-     * bootstrap account never logs in again after setup, so a role-based filter here would have
-     * had it permanently misreported as an "inactive user" -- exactly the kind of stale-forever
-     * figure this Insights row exists to avoid.
+     * .countDistinctUsersByActionSince: users who existed for the entire [since, now) window with
+     * NO USER_LOGIN audit row in it. A user who never logged in at all also satisfies the "no
+     * login row" half, so "inactive" naturally covers both "went quiet" and "never came back,"
+     * without a separate query for the never-logged-in case.
+     *
+     * <p>{@code u.createdAt < :since} is not an optional refinement -- without it this query
+     * counts brand-new signups as "inactive," not just genuinely quiet ones. Registration
+     * (AuthService.register()) writes USER_REGISTERED, never USER_LOGIN, so a user who signed up
+     * minutes ago has zero USER_LOGIN rows exactly like someone who has been gone seven days, and
+     * satisfies "no login row since :since" immediately. Requiring the account to predate the
+     * cutoff means only users who had the full window to log in and didn't are counted.
+     *
+     * <p>Excludes BOOTSTRAP_ADMIN by email, same as countByEmailNotAndCreatedAtBetween above --
+     * NOT by role, which would silently stop excluding it once setup completes; see that method's
+     * own doc comment for why. The bootstrap account never logs in again after setup, so a
+     * role-based filter here would have had it permanently misreported as an "inactive user" --
+     * exactly the kind of stale-forever figure this Insights row exists to avoid.
      */
     @Query("""
         SELECT COUNT(u) FROM User u
          WHERE u.email <> :bootstrapEmail
+           AND u.createdAt < :since
            AND u.id NOT IN (
                SELECT DISTINCT a.userId FROM AuditLog a WHERE a.action = :action AND a.createdAt >= :since
            )

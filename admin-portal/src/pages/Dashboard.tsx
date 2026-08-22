@@ -219,7 +219,11 @@ const QUICK_ACTIONS = [
  * today -- there is no rate to report, not a perfect or a failing one.
  */
 function ImportSuccessRateCard({ importsToday, importsWithSkippedRowsToday }: { importsToday: number; importsWithSkippedRowsToday: number }) {
-  const cleanImports = importsToday - importsWithSkippedRowsToday;
+  // Clamped defensively: the two backend counts use slightly different boundary comparisons at
+  // the exact-instant edge (see StatementImportRepository.countByImportedAtAfter vs
+  // .countWithSkippedRowsAfter), so a negative value is theoretically possible even though
+  // "with skipped rows" is meant to be a subset of "all imports."
+  const cleanImports = Math.max(0, importsToday - importsWithSkippedRowsToday);
   const rate = importsToday > 0 ? Math.round((cleanImports / importsToday) * 100) : null;
   return (
     <div className="flex items-center gap-3 bg-card border border-border rounded-xl2 shadow-card px-4 py-3.5">
