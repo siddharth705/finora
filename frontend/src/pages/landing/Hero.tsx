@@ -60,7 +60,7 @@ export function Hero() {
       <AmbientCanvas />
 
       <div className="relative z-10 max-w-6xl mx-auto px-5 sm:px-6 pt-28 pb-24 lg:pt-36 lg:pb-32">
-        <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] gap-14 items-center">
+        <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] gap-14 items-start lg:items-center">
           <motion.div {...reveal(0)}>
             <h1 className="m-display mb-5" style={{ color: '#F8FAFC' }}>
               {hero.headline}
@@ -90,17 +90,22 @@ export function Hero() {
                 </li>
               ))}
             </ul>
+          </motion.div>
+
+          {/* Health score + intelligence scan live under the dashboard, not the text column --
+              they're a claim ABOUT the product in the image above them, so they read as
+              disconnected filler when stacked under the CTA/checklist instead. */}
+          <div>
+            <motion.div {...reveal(0.25)} className="relative">
+              <FloatingDashboardCard />
+              <FloatingBadges />
+            </motion.div>
 
             <motion.div {...reveal(0.5)} className="mt-10 flex flex-wrap items-center gap-6">
               <HealthScoreRing />
               <IntelligenceScan />
             </motion.div>
-          </motion.div>
-
-          <motion.div {...reveal(0.25)} className="relative">
-            <FloatingDashboardCard />
-            <FloatingBadges />
-          </motion.div>
+          </div>
         </div>
       </div>
     </section>
