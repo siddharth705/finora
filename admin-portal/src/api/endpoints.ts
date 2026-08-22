@@ -5,6 +5,7 @@ import type {
   CreateAccountRequest, CreateBankRequest, CreateMerchantTemplateRequest, CreateRelationshipRequest,
   CreateRuleRequest, CreateUserRequest, FeatureFlagDto, GmailMerchantParserStatDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
   LearningTimelineEntry,
+  IntegrationsOverviewDto,
   MeAccessDto, MerchantDto, MerchantMergeRequest, MerchantStatDto, MerchantTemplateDto,
   MerchantUpdateRequest, OperationalDashboardDto, PagedResponse, PermissionDto, PlatformAnalyticsDto,
   PlatformDiagnosticsDto, PlatformSettingsDto, PlatformStatsDto, ReconciliationStatsDto, RecentImportDto,
@@ -292,6 +293,13 @@ export const adminSystemApi = {
 // backend doc comment. Shares the SYSTEM_SETTINGS gate with adminSystemApi above.
 export const adminDiagnosticsApi = {
   overview: () => api.get<PlatformDiagnosticsDto>('/admin/diagnostics').then((r) => r.data),
+};
+
+// Integrations page -- which third-party services Finora talks to, their live status (reusing
+// the same health registry adminDashboardApi's overview.health draws from), and what's planned
+// but not yet built. Shares PLATFORM_DIAGNOSTICS_VIEW with adminSystemApi/adminDiagnosticsApi.
+export const adminIntegrationsApi = {
+  overview: () => api.get<IntegrationsOverviewDto>('/admin/integrations').then((r) => r.data),
 };
 
 /** The merchant learning queue (WI2). Every list row already carries the correlation an operator
