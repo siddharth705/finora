@@ -66,11 +66,14 @@ Remaining decomposition, for context:
 | `landing/import-story/useImportScrollTimeline.ts` (new) | The only file that imports `gsap`/`gsap/ScrollTrigger`. Builds one `gsap.timeline({ scrollTrigger: { trigger, pin: true, scrub: true, start, end } })` scrubbing tweens against the three refs it's given, so all three beats stay driven by one source of truth (no per-component independent triggers that could drift out of sync). Built inside a `gsap.context()` (or equivalent scoping) whose `.revert()` runs in the effect's cleanup — required for React 18 `StrictMode`'s mount→unmount→remount double-invoke in dev (the exact class of bug the Hero sub-project hit with Framer Motion variants — see that spec's implementation notes) and for route navigation away from `/`. Does nothing (no `ScrollTrigger` created at all) when reduced-motion is on or `useIsDesktop()` is false — callers branch on those before invoking it. |
 | `landing/import-story/DocumentStack.tsx` (new) | Beat 1 (0–35% of the timeline): tilted statement/PDF/CSV cards and floating transaction-row chips, scattered. Presentational only — forwards a ref to its root, no scroll/GSAP knowledge. |
 | `landing/import-story/ProcessingCore.tsx` (new) | Beat 2 (35–70%): the Finora mark as a financial-pipeline visual (document → extraction → categorization → insights labels), with the beat-1 elements converging toward it. Not a generic glowing orb. Presentational, ref-forwarding only. |
-| `landing/import-story/IntelligencePanel.tsx` (new) | Beat 3 (70–100%): a small dashboard mock assembling into place — same card radius, typography, and green accent as the Hero dashboard card (`FloatingDashboardCard`/`DashboardMock`), so the page reads as one product, not two dashboard designs. Presentational, ref-forwarding only; also the static final-state render used directly (no timeline) under reduced-motion and as the end frame of the mobile reveal-once sequence. |
+| `landing/import-story/IntelligencePanel.tsx` (new) | Beat 3 (70–100%, assembling through 90% then settling to rest): a small dashboard mock — same card radius, typography, and green accent as the Hero dashboard card (`FloatingDashboardCard`/`DashboardMock`), so the page reads as one product, not two dashboard designs. Its content must be a fully realized mock (a figure, a couple of category rows, an "Insights ready" line — matching the level of detail `DashboardMock`/`FloatingDashboardCard` already show), not a placeholder — this same static markup is also the reduced-motion final state and the end frame of the mobile reveal-once sequence, so it has to stand on its own as a complete, finished-looking component in every one of those contexts, not just as the last frame of a scroll animation. Presentational, ref-forwarding only. |
 | `landing/import-story/ImportRevealSequence.tsx` (new) | Mobile / reduced-motion fallback: the same three components in a single `IntersectionObserver`-driven reveal-once sequence (same "safe default, animate only if allowed" pattern as `useStagedReveal` in `primitives.tsx`), no `ScrollTrigger`, no pinning. |
 
 Pinned scroll distance starts at **250vh**, tuned visually during implementation, mapped as:
-`0–35%` scattered → `35–70%` converging/processing → `70–100%` assembled dashboard.
+`0–35%` scattered → `35–70%` converging/processing → `70–90%` dashboard assembles →
+`90–100%` settle (glow/motion reduces to rest, a calm hold rather than an abrupt stop) before
+unpinning and continuing the page. Without this last beat the sequence reads as cut off mid-motion
+rather than completed — the release needs to feel as deliberate as the entrance.
 
 ## Fallbacks & accessibility
 
@@ -87,6 +90,8 @@ Pinned scroll distance starts at **250vh**, tuned visually during implementation
 - **`prefers-reduced-motion`:** no `ScrollTrigger` is created at all (checked before
   `useImportScrollTimeline` is ever invoked, not inside it) — `ImportScrollStory` renders
   `IntelligencePanel` alone, in its final assembled state, no pin, no scrub, no decorative movement.
+  Because `IntelligencePanel` is a fully realized mock rather than a placeholder (see Architecture),
+  this reads as a complete, deliberately designed component — not a skipped or truncated animation.
 - **Mobile (`!useIsDesktop`):** `ImportRevealSequence` renders instead of `ImportScrollStory` — no
   pinning, no `ScrollTrigger`, same reveal-once pattern as the rest of the page.
 - **Cleanup:** `useImportScrollTimeline`'s effect must revert/kill its GSAP context on unmount.
