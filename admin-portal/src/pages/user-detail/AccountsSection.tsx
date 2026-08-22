@@ -5,6 +5,7 @@ import { Pencil, Plus, Trash2, X } from 'lucide-react';
 import { adminAccountsApi, banksApi } from '../../api/endpoints';
 import type { AccountDto, CreateAccountRequest } from '../../types';
 import { errorMessage } from './errorMessage';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 
 const BLANK_ACCOUNT: CreateAccountRequest = {
   name: '', accountType: 'SAVINGS', balance: 0, bankId: '', accountHolderName: '', accountNumberMasked: '',
@@ -134,6 +135,7 @@ export function AccountsSection({ userId }: { userId: string }) {
   const [showCreate, setShowCreate] = useState(false);
   const [editingAccount, setEditingAccount] = useState<AccountDto | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDeleteAccount, setConfirmDeleteAccount] = useState<AccountDto | null>(null);
 
   const { data: accounts, isLoading } = useQuery({
     queryKey: ['admin-user-accounts', userId],
@@ -272,11 +274,7 @@ export function AccountsSection({ userId }: { userId: string }) {
                     type="button"
                     title="Delete"
                     disabled={deleteMutation.isPending}
-                    onClick={() => {
-                      if (confirm(`Delete account "${account.name}"? This also removes its transactions.`)) {
-                        deleteMutation.mutate(account.id);
-                      }
-                    }}
+                    onClick={() => setConfirmDeleteAccount(account)}
                     className="w-7 h-7 rounded-lg hover:bg-danger-bg text-muted hover:text-danger inline-flex items-center justify-center"
                   >
                     <Trash2 size={13} />
@@ -287,6 +285,21 @@ export function AccountsSection({ userId }: { userId: string }) {
           )
         )}
       </div>
+
+      {confirmDeleteAccount && (
+        <ConfirmDialog
+          title={`Delete account "${confirmDeleteAccount.name}"?`}
+          message="This also removes its transactions."
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => {
+            const id = confirmDeleteAccount.id;
+            setConfirmDeleteAccount(null);
+            deleteMutation.mutate(id);
+          }}
+          onCancel={() => setConfirmDeleteAccount(null)}
+        />
+      )}
     </div>
   );
 }
