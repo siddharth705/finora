@@ -54,9 +54,13 @@ class AdminOperationalDashboardServiceTest {
 
         when(userRepository.countByRoleNot("BOOTSTRAP_ADMIN")).thenReturn(0L);
         when(auditLogRepository.countDistinctUsersByActionSince(any(), any())).thenReturn(0L);
+        when(auditLogRepository.countDistinctUsersByActionBetween(any(), any(), any())).thenReturn(0L);
         when(transactionRepository.countByCreatedAtAfter(any())).thenReturn(0L);
+        when(transactionRepository.countByCreatedAtBetween(any(), any())).thenReturn(0L);
         when(statementImportRepository.countByImportedAtAfter(any())).thenReturn(0L);
+        when(statementImportRepository.countByImportedAtBetween(any(), any())).thenReturn(0L);
         when(statementImportRepository.countWithSkippedRowsAfter(any())).thenReturn(0L);
+        when(statementImportRepository.countWithSkippedRowsBetween(any(), any())).thenReturn(0L);
         when(statementImportRepository.countDistinctUsersEverActivated()).thenReturn(0L);
         when(budgetRepository.countDistinctUsersEverActivated()).thenReturn(0L);
         when(goalRepository.countDistinctUsersEverActivated()).thenReturn(0L);
@@ -80,6 +84,29 @@ class AdminOperationalDashboardServiceTest {
         assertThat(dto.needsAttention().lockedAccounts()).isEqualTo(2L);
         assertThat(dto.needsAttention().transactionsNeedingCategoryReview()).isEqualTo(14L);
         assertThat(dto.needsAttention().transactionsFlaggedAsDuplicates()).isEqualTo(5L);
+    }
+
+    @Test
+    void overview_populatesPreviousDayFromTheBetweenVariantQueries_notTheSinceVariantQueries() {
+        when(healthRegistryService.platformHealth()).thenReturn(new PlatformHealthDto("UP", List.of()));
+        when(auditLogRepository.countDistinctUsersByActionBetween(any(), any(), any())).thenReturn(7L);
+        when(transactionRepository.countByCreatedAtBetween(any(), any())).thenReturn(41L);
+        when(statementImportRepository.countByImportedAtBetween(any(), any())).thenReturn(9L);
+        when(statementImportRepository.countWithSkippedRowsBetween(any(), any())).thenReturn(2L);
+        // Today's own ("since") counts differ from yesterday's, proving previousDay isn't
+        // accidentally re-reporting today's figures under a new name.
+        when(auditLogRepository.countDistinctUsersByActionSince(any(), any())).thenReturn(99L);
+        when(transactionRepository.countByCreatedAtAfter(any())).thenReturn(99L);
+        when(statementImportRepository.countByImportedAtAfter(any())).thenReturn(99L);
+        when(statementImportRepository.countWithSkippedRowsAfter(any())).thenReturn(99L);
+
+        OperationalDashboardDto dto = service.overview();
+
+        assertThat(dto.previousDay().activeUsers()).isEqualTo(7L);
+        assertThat(dto.previousDay().transactions()).isEqualTo(41L);
+        assertThat(dto.previousDay().imports()).isEqualTo(9L);
+        assertThat(dto.previousDay().importsWithSkippedRows()).isEqualTo(2L);
+        assertThat(dto.activeUsersToday()).isEqualTo(99L);
     }
 
     @Test

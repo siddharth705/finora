@@ -82,7 +82,8 @@ public class MerchantTemplateAdminService {
      */
     @Transactional
     public MerchantTemplate create(UUID actingAdminId, String rawDomain, String merchantName,
-                                    String receiptMarker, String amountPattern, String datePattern) {
+                                    String receiptMarker, String nonReceiptMarker,
+                                    String amountPattern, String datePattern) {
         String domain = requireValidDomain(rawDomain);
         requireNonBlank(merchantName, "A merchant name is required.");
         requireNonBlank(receiptMarker, "A receipt marker is required.");
@@ -101,6 +102,9 @@ public class MerchantTemplateAdminService {
         entry.setMerchantDomain(domain);
         entry.setMerchantName(merchantName.trim());
         entry.setReceiptMarker(receiptMarker);
+        // Optional -- unlike the four fields above, a blank/null value is a legitimate "this
+        // template has no exclusion" choice, not a misauthored template.
+        entry.setNonReceiptMarker(nonReceiptMarker);
         entry.setAmountPattern(amountPattern);
         entry.setDatePattern(datePattern);
         requireCompilablePatterns(entry);
@@ -118,8 +122,8 @@ public class MerchantTemplateAdminService {
         auditService.record(actingAdminId, "GMAIL_MERCHANT_TEMPLATE_CREATED",
                 "MerchantTemplate", saved.getId(),
                 Map.of("merchantDomain", domain, "merchantName", saved.getMerchantName(),
-                        "receiptMarker", receiptMarker, "amountPattern", amountPattern,
-                        "datePattern", datePattern));
+                        "receiptMarker", receiptMarker, "nonReceiptMarker", String.valueOf(nonReceiptMarker),
+                        "amountPattern", amountPattern, "datePattern", datePattern));
         log.info("Merchant template for {} created by admin {}, disabled pending test.", domain, actingAdminId);
         return saved;
     }
@@ -138,7 +142,8 @@ public class MerchantTemplateAdminService {
      */
     @Transactional
     public MerchantTemplate update(UUID actingAdminId, UUID id, String merchantName,
-                                    String receiptMarker, String amountPattern, String datePattern) {
+                                    String receiptMarker, String nonReceiptMarker,
+                                    String amountPattern, String datePattern) {
         requireNonBlank(merchantName, "A merchant name is required.");
         requireNonBlank(receiptMarker, "A receipt marker is required.");
         requireNonBlank(amountPattern, "An amount pattern is required.");
@@ -146,15 +151,18 @@ public class MerchantTemplateAdminService {
 
         MerchantTemplate entry = get(id);
         String previousReceiptMarker = entry.getReceiptMarker();
+        String previousNonReceiptMarker = entry.getNonReceiptMarker();
         String previousAmountPattern = entry.getAmountPattern();
         String previousDatePattern = entry.getDatePattern();
         boolean matchingFieldsChanged = !Objects.equals(previousReceiptMarker, receiptMarker)
+                || !Objects.equals(previousNonReceiptMarker, nonReceiptMarker)
                 || !Objects.equals(previousAmountPattern, amountPattern)
                 || !Objects.equals(previousDatePattern, datePattern);
         boolean autoDisabled = matchingFieldsChanged && entry.isEnabled();
 
         entry.setMerchantName(merchantName.trim());
         entry.setReceiptMarker(receiptMarker);
+        entry.setNonReceiptMarker(nonReceiptMarker);
         entry.setAmountPattern(amountPattern);
         entry.setDatePattern(datePattern);
         requireCompilablePatterns(entry);
@@ -167,17 +175,22 @@ public class MerchantTemplateAdminService {
         // reasoning as create()'s own audit call: reconstructing "what did this say before the
         // edit that caused three hours of wrong amounts" needs to be possible from this entry
         // alone, since there is no separate version-history table.
+        // Map.of tops out at 10 key-value pairs; this call needs 11, so Map.ofEntries here, same
+        // fix GmailReviewService.DISPLAY_NAMES already needed when it outgrew Map.of.
         auditService.record(actingAdminId, "GMAIL_MERCHANT_TEMPLATE_UPDATED",
                 "MerchantTemplate", saved.getId(),
-                Map.of("merchantDomain", saved.getMerchantDomain(),
-                        "matchingFieldsChanged", matchingFieldsChanged,
-                        "autoDisabled", autoDisabled,
-                        "previousReceiptMarker", previousReceiptMarker,
-                        "receiptMarker", receiptMarker,
-                        "previousAmountPattern", previousAmountPattern,
-                        "amountPattern", amountPattern,
-                        "previousDatePattern", previousDatePattern,
-                        "datePattern", datePattern));
+                Map.ofEntries(
+                        Map.entry("merchantDomain", saved.getMerchantDomain()),
+                        Map.entry("matchingFieldsChanged", matchingFieldsChanged),
+                        Map.entry("autoDisabled", autoDisabled),
+                        Map.entry("previousReceiptMarker", previousReceiptMarker),
+                        Map.entry("receiptMarker", receiptMarker),
+                        Map.entry("previousNonReceiptMarker", String.valueOf(previousNonReceiptMarker)),
+                        Map.entry("nonReceiptMarker", String.valueOf(nonReceiptMarker)),
+                        Map.entry("previousAmountPattern", previousAmountPattern),
+                        Map.entry("amountPattern", amountPattern),
+                        Map.entry("previousDatePattern", previousDatePattern),
+                        Map.entry("datePattern", datePattern)));
         if (autoDisabled) {
             log.info("Merchant template for {} edited by admin {}; auto-disabled pending re-test "
                     + "(matching fields changed on a previously active template).",

@@ -109,6 +109,25 @@ class TemplateEmailParserTest {
         assertThat(result.status()).isEqualTo(ParserResult.Status.NOT_A_RECEIPT);
     }
 
+    /** The exclusion marker wins even when the receipt marker and a plausible amount are also
+     *  present -- proven here by setting nonReceiptMarker to the exact same phrase the real receipt
+     *  marker uses, so a genuine trip receipt fixture (which would otherwise parse cleanly) is
+     *  correctly reported as not-a-receipt instead. */
+    @Test
+    @DisplayName("a non-receipt marker match wins even over an otherwise-valid receipt")
+    void nonReceiptMarkerTakesPriorityOverAValidReceipt() {
+        MerchantTemplate excluded = uberTemplate();
+        excluded.setNonReceiptMarker("Trip Fare");
+        when(templates.findByMerchantDomainAndEnabledTrue("uber.com")).thenReturn(Optional.of(excluded));
+        SanitizedGmailMessage message = load("trip-receipt-1.html", "msg-1");
+
+        ParserResult result = parser.parse(message);
+
+        assertThat(result.status()).isEqualTo(ParserResult.Status.NOT_A_RECEIPT);
+        assertThat(result.receipt()).isNull();
+        assertThat(result.reason()).contains("non-receipt marker").contains("Trip Fare");
+    }
+
     /** A misauthored template (e.g. the {amount} placeholder typo'd away) must fail loudly and
      *  identically for every message, not silently match nothing forever. */
     @Test

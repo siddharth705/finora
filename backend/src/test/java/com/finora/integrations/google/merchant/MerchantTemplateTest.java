@@ -42,6 +42,29 @@ class MerchantTemplateTest {
     }
 
     @Test
+    void matchesNonReceiptMarkerFindsAnyPipeSeparatedPhrase() {
+        MerchantTemplate t = template("Total: {amount}", "Date: {date}");
+        t.setNonReceiptMarker("Refund Processed|Return Initiated|Exchange Confirmed");
+
+        assertThat(t.matchesNonReceiptMarker("Your Refund Processed for order #123")).isTrue();
+        assertThat(t.matchesNonReceiptMarker("Return Initiated for your recent order")).isTrue();
+        assertThat(t.matchesNonReceiptMarker("Here is your Trip Fare summary")).isFalse();
+    }
+
+    @Test
+    void matchesNonReceiptMarkerIsFalseWhenBlankOrNull() {
+        MerchantTemplate t = template("Total: {amount}", "Date: {date}");
+
+        assertThat(t.matchesNonReceiptMarker("Refund Processed")).isFalse();
+
+        t.setNonReceiptMarker("");
+        assertThat(t.matchesNonReceiptMarker("Refund Processed")).isFalse();
+
+        t.setNonReceiptMarker("Refund Processed");
+        assertThat(t.matchesNonReceiptMarker(null)).isFalse();
+    }
+
+    @Test
     @DisplayName("literal text around the placeholder is matched verbatim, not as regex")
     void literalTextIsRegexEscaped() {
         // Parentheses and a dot are both regex-significant -- a naive compiler would treat "(incl.

@@ -79,10 +79,21 @@ export interface OperationalDashboardDto {
   transactionsToday: number;
   importsToday: number;
   importsWithSkippedRowsToday: number;
+  previousDay: PreviousDayDto;
   needsAttention: NeedsAttentionDto;
   health: PlatformHealthDto;
   alerts: AlertDto[];
   recentActivity: AuditLogDto[];
+}
+
+/** Mirrors backend PreviousDayDto exactly -- yesterday's counts for the four stat tiles that
+ *  reset daily, backing each tile's "vs yesterday" delta. No totalUsers sibling: see that
+ *  record's own doc comment for why a running total has no "vs yesterday" comparison. */
+export interface PreviousDayDto {
+  activeUsers: number;
+  transactions: number;
+  imports: number;
+  importsWithSkippedRows: number;
 }
 
 /** D-27 PR3-D. Mirrors backend ActivationFunnelDto exactly -- see that record's own doc comment
@@ -401,6 +412,10 @@ export interface MerchantTemplateDto {
   merchantDomain: string;
   merchantName: string;
   receiptMarker: string;
+  /** Optional. Pipe-separated literal phrases that mean a message is NOT a receipt for this
+   *  template (a refund, return, exchange, or cancellation notice), checked before receiptMarker
+   *  -- see MerchantTemplate.matchesNonReceiptMarker's own doc comment. */
+  nonReceiptMarker: string | null;
   amountPattern: string;
   datePattern: string;
   enabled: boolean;
@@ -414,6 +429,7 @@ export interface CreateMerchantTemplateRequest {
   merchantDomain: string;
   merchantName: string;
   receiptMarker: string;
+  nonReceiptMarker: string;
   amountPattern: string;
   datePattern: string;
 }
@@ -423,6 +439,7 @@ export interface CreateMerchantTemplateRequest {
 export interface UpdateMerchantTemplateRequest {
   merchantName: string;
   receiptMarker: string;
+  nonReceiptMarker: string;
   amountPattern: string;
   datePattern: string;
 }
@@ -433,6 +450,7 @@ export interface UpdateMerchantTemplateRequest {
 export interface TestMerchantTemplateRequest {
   merchantDomain: string;
   receiptMarker: string;
+  nonReceiptMarker: string;
   amountPattern: string;
   datePattern: string;
   sampleHtml: string;

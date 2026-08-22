@@ -10,7 +10,7 @@ import { adminMerchantTemplatesApi } from '../api/endpoints';
 import type { CreateMerchantTemplateRequest, MerchantTemplateDto, TestMerchantTemplateResult } from '../types';
 
 const BLANK_FORM: CreateMerchantTemplateRequest = {
-  merchantDomain: '', merchantName: '', receiptMarker: '', amountPattern: '', datePattern: '',
+  merchantDomain: '', merchantName: '', receiptMarker: '', nonReceiptMarker: '', amountPattern: '', datePattern: '',
 };
 
 function errorMessage(err: any, fallback: string) {
@@ -21,7 +21,7 @@ function errorMessage(err: any, fallback: string) {
  *  "this WAS tested, before the admin changed something since." merchantDomain is deliberately
  *  excluded: it doesn't affect matching (see TestMerchantTemplateRequest's own doc comment) and,
  *  on the create form, is the one field a test can legitimately run before it's finalized. */
-type TestedFields = { receiptMarker: string; amountPattern: string; datePattern: string };
+type TestedFields = { receiptMarker: string; nonReceiptMarker: string; amountPattern: string; datePattern: string };
 
 /**
  * Lets an admin check "would this template match?" against a pasted sample email before it can go
@@ -35,7 +35,7 @@ type TestedFields = { receiptMarker: string; amountPattern: string; datePattern:
  * the CURRENT fields, not just any test that happened to run at some point during editing.
  */
 function TestTemplatePanel({
-  merchantDomain, receiptMarker, amountPattern, datePattern, onResult,
+  merchantDomain, receiptMarker, nonReceiptMarker, amountPattern, datePattern, onResult,
 }: TestedFields & { merchantDomain: string; onResult: (result: TestMerchantTemplateResult, testedFor: TestedFields) => void }) {
   const [sampleHtml, setSampleHtml] = useState('');
 
@@ -52,7 +52,8 @@ function TestTemplatePanel({
     mutationFn: (vars: TestedFields & { merchantDomain: string; sampleHtml: string }) =>
       adminMerchantTemplatesApi.test(vars),
     onSuccess: (result, vars) => onResult(result, {
-      receiptMarker: vars.receiptMarker, amountPattern: vars.amountPattern, datePattern: vars.datePattern,
+      receiptMarker: vars.receiptMarker, nonReceiptMarker: vars.nonReceiptMarker,
+      amountPattern: vars.amountPattern, datePattern: vars.datePattern,
     }),
   });
 
@@ -81,7 +82,7 @@ function TestTemplatePanel({
         <button
           type="button"
           disabled={!canTest || testMutation.isPending}
-          onClick={() => testMutation.mutate({ merchantDomain, receiptMarker, amountPattern, datePattern, sampleHtml })}
+          onClick={() => testMutation.mutate({ merchantDomain, receiptMarker, nonReceiptMarker, amountPattern, datePattern, sampleHtml })}
           className="text-xs font-semibold text-primary bg-card border border-border hover:bg-white rounded-lg px-3 py-1.5 disabled:opacity-50"
         >
           {testMutation.isPending ? 'Testing…' : 'Test template'}
@@ -143,10 +144,12 @@ function TemplateForm({
   const id = useId();
 
   const currentFields: TestedFields = {
-    receiptMarker: form.receiptMarker, amountPattern: form.amountPattern, datePattern: form.datePattern,
+    receiptMarker: form.receiptMarker, nonReceiptMarker: form.nonReceiptMarker,
+    amountPattern: form.amountPattern, datePattern: form.datePattern,
   };
   const canActivate = lastPassedTest !== null
       && lastPassedTest.receiptMarker === currentFields.receiptMarker
+      && lastPassedTest.nonReceiptMarker === currentFields.nonReceiptMarker
       && lastPassedTest.amountPattern === currentFields.amountPattern
       && lastPassedTest.datePattern === currentFields.datePattern;
 
@@ -204,6 +207,18 @@ function TemplateForm({
             className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm"
           />
         </div>
+        <div className="md:col-span-2">
+          <label htmlFor={`${id}-non-receipt-marker`} className="text-xs font-medium text-muted mb-1 block">
+            Non-receipt marker (optional)
+          </label>
+          <input
+            id={`${id}-non-receipt-marker`}
+            placeholder="Phrases (separated by |) that mean this isn't a purchase, e.g. Refund Processed|Return Initiated"
+            value={form.nonReceiptMarker}
+            onChange={(e) => setForm({ ...form, nonReceiptMarker: e.target.value })}
+            className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm"
+          />
+        </div>
         <div>
           <label htmlFor={`${id}-amount`} className="text-xs font-medium text-muted mb-1 block">Amount pattern</label>
           <input
@@ -235,6 +250,7 @@ function TemplateForm({
       <TestTemplatePanel
         merchantDomain={editingTemplate?.merchantDomain ?? form.merchantDomain}
         receiptMarker={form.receiptMarker}
+        nonReceiptMarker={form.nonReceiptMarker}
         amountPattern={form.amountPattern}
         datePattern={form.datePattern}
         onResult={(result, testedFor) => setLastPassedTest(result.status === 'PARSED' ? testedFor : null)}
@@ -395,8 +411,10 @@ function MerchantTemplatesContent() {
         <p className="text-sm text-muted max-w-2xl">
           Declarative Gmail receipt parsers -- for merchants with a single amount, single date, and
           a stable email format. A new template goes live only after it's tested against a real
-          sample here. Merchants needing conditional logic (refunds, multiple amounts) still need a
-          hand-written parser and an engineering release.
+          sample here. A template can exclude refund/return/cancellation emails via its
+          non-receipt marker, but merchants needing other conditional logic (multiple amounts,
+          capturing a refund as its own transaction) still need a hand-written parser and an
+          engineering release.
         </p>
         {!showCreate && (
           <button
@@ -435,6 +453,7 @@ function MerchantTemplatesContent() {
             merchantDomain: editing.merchantDomain,
             merchantName: editing.merchantName,
             receiptMarker: editing.receiptMarker,
+            nonReceiptMarker: editing.nonReceiptMarker ?? '',
             amountPattern: editing.amountPattern,
             datePattern: editing.datePattern,
           }}

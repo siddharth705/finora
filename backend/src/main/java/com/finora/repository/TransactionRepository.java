@@ -37,6 +37,11 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
     // countByCreatedAtAfter convention UserRepository already uses for "new users last N days."
     long countByCreatedAtAfter(Instant threshold);
 
+    // Admin Portal, Operational Dashboard "vs yesterday" delta -- yesterday's count for the same
+    // tile, using the platform reporting zone's calendar-day boundaries (see
+    // AdminOperationalDashboardService.overview()).
+    long countByCreatedAtBetween(Instant start, Instant end);
+
     /** Projection backing {@link #countByAccountForUser} -- one row per account, never per
      *  transaction, so this scales with account count rather than transaction count. */
     interface AccountTransactionCount {
