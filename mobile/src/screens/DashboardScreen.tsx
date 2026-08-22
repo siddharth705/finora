@@ -13,6 +13,7 @@ import {
 } from '../api/endpoints';
 import { useAuth } from '../context/AuthContext';
 import { fmtCurrency, greeting, monthLabel } from '../lib/format';
+import { useLargeFontScale } from '../lib/useLargeFontScale';
 import { radius, spacing, useTheme } from '../theme';
 
 type CashFlowRange = '3M' | '6M' | '12M';
@@ -36,6 +37,7 @@ export function DashboardScreen() {
   // nothing rather than erroring, which is an acceptable degrade, not a broken state.
   usePreventScreenCapture();
   const c = useTheme();
+  const largeText = useLargeFontScale();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const { fullName } = useAuth();
@@ -275,10 +277,10 @@ export function DashboardScreen() {
           recentTxns.map((t) => (
             <View key={t.id} style={[styles.txnRow, { borderBottomColor: c.border }]}>
               <View style={styles.txnMain}>
-                <Text style={[styles.txnDesc, { color: c.ink }]} numberOfLines={1}>
+                <Text style={[styles.txnDesc, { color: c.ink }]} numberOfLines={largeText ? 2 : 1}>
                   {t.description || t.merchant || 'Transaction'}
                 </Text>
-                <Text style={[styles.txnMeta, { color: c.muted }]} numberOfLines={1}>
+                <Text style={[styles.txnMeta, { color: c.mutedInk }]} numberOfLines={1}>
                   {t.categoryName} · {t.date}
                 </Text>
               </View>
@@ -299,13 +301,13 @@ export function DashboardScreen() {
             return (
               <View key={g.id} style={styles.goalRow}>
                 <View style={styles.goalHeader}>
-                  <Text style={[styles.goalName, { color: c.ink }]} numberOfLines={1}>{g.name}</Text>
-                  <Text style={[styles.goalPct, { color: c.muted }]}>{pct.toFixed(0)}%</Text>
+                  <Text style={[styles.goalName, { color: c.ink }]} numberOfLines={largeText ? 2 : 1}>{g.name}</Text>
+                  <Text style={[styles.goalPct, { color: c.mutedInk }]}>{pct.toFixed(0)}%</Text>
                 </View>
                 <View style={[styles.progressTrack, { backgroundColor: c.border }]}>
                   <View style={[styles.progressFill, { width: `${pct}%`, backgroundColor: c.primary }]} />
                 </View>
-                <Text style={[styles.goalMeta, { color: c.muted }]}>
+                <Text style={[styles.goalMeta, { color: c.mutedInk }]}>
                   {fmtCurrency(g.currentAmount)} of {fmtCurrency(g.targetAmount)}
                 </Text>
               </View>

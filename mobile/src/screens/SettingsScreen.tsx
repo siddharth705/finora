@@ -226,7 +226,7 @@ export function SettingsScreen() {
             );
           })}
         </View>
-        <Text style={[styles.hint, { color: c.muted }]}>
+        <Text style={[styles.hint, { color: c.mutedInk }]}>
           Theme applies instantly. The alert amount and timezone save when you tap Save.
         </Text>
 
@@ -246,7 +246,7 @@ export function SettingsScreen() {
         <View style={[styles.row, { borderBottomColor: c.border }]}>
           <View style={styles.rowMain}>
             <Text style={[styles.rowTitle, { color: c.ink }]}>Password</Text>
-            <Text style={[styles.rowMeta, { color: c.muted }]}>
+            <Text style={[styles.rowMeta, { color: c.mutedInk }]}>
               {passwordChanged ? `Last changed ${passwordChanged}` : 'Never changed'}
             </Text>
           </View>
@@ -258,14 +258,14 @@ export function SettingsScreen() {
         <View style={[styles.row, { borderBottomColor: c.border }]}>
           <View style={styles.rowMain}>
             <Text style={[styles.rowTitle, { color: c.ink }]}>Phone verification</Text>
-            <Text style={[styles.rowMeta, { color: c.muted }]}>
+            <Text style={[styles.rowMeta, { color: c.mutedInk }]}>
               {user.phoneNumber ? maskPhone(user.phoneNumber) : 'No phone number on file'}
             </Text>
           </View>
           {user.phoneVerified ? (
             <VerifiedBadge />
           ) : (
-            <Text style={[styles.rowMeta, { color: c.muted }]}>Not verified</Text>
+            <Text style={[styles.rowMeta, { color: c.mutedInk }]}>Not verified</Text>
           )}
         </View>
 
@@ -316,7 +316,7 @@ export function SettingsScreen() {
                 <Text style={[styles.stepButtonText, { color: c.ink }]}>+</Text>
               </Pressable>
             </View>
-            <Text style={[styles.hint, { color: c.muted }]}>
+            <Text style={[styles.hint, { color: c.mutedInk }]}>
               Suggestions at or above this confidence are applied automatically. Anything below it
               is left for you to confirm.
             </Text>
