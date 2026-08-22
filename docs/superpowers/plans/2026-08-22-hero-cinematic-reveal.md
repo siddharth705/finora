@@ -410,7 +410,7 @@ function ParticleField() {
   return (
     <points ref={pointsRef}>
       <bufferGeometry>
-        <bufferAttribute attach="attributes-position" count={PARTICLE_COUNT} array={positions} itemSize={3} />
+        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
       </bufferGeometry>
       {/* #16A34A matches --m-success in index.css -- three.js can't consume a CSS custom
           property, so this hex has to be kept in sync with that token by hand. */}
