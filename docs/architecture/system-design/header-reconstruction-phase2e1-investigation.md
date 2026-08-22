@@ -7,12 +7,24 @@ collapses" description already on record, but why `mergeHeaderLines` specificall
 
 ## Method
 
-Temporary, uncommitted trace instrumentation (`System.err.println` at the two decision points —
-`wrapsOnto` and the `mergeHeaderLines` call site inside `wrappedHeaderAt`) run against the real,
-unredacted document, then reverted before this doc was written. No code changes ship from this
-investigation.
+Two temporary, uncommitted instrumentation techniques, both run against real, unredacted
+documents and both fully removed before this doc was written:
 
-## SBI Credit Card.PDF, Section 1 — root cause fully diagnosed
+1. `System.err.println` at the two decision points in `PdfTableLocator` — `wrapsOnto` and the
+   `mergeHeaderLines` call site inside `wrappedHeaderAt` — reverted via `git checkout --`.
+2. `-DdumpPage0Positions=true`, an existing flag on `PdfPipelineDiagnostic` that prints every raw
+   positioned text run with exact coordinates — no code change needed, since the flag already
+   exists for this purpose.
+3. For SBI's and IOB's headers, `PdfPipelineDiagnostic`/`CorpusProbe` were sufficient (native PDF
+   text, no OCR involved). For HSBC DB.pdf, neither tool exercises the real OCR-routing pipeline,
+   so a small throwaway test (`TempHsbcOcrRepro.java`, never committed, deleted immediately after
+   use) constructed the real `RoutingTextAcquirer` + `TesseractRecogniser` + `PdfTableLocator`
+   exactly as production wires them and called `locateAll` directly, to get real
+   `HeaderReconstructionFinding` evidence instead of guessing from raw text.
+
+No code changes ship from this investigation.
+
+## 2E.1 (background) — SBI Credit Card.PDF, Section 1 — root cause fully diagnosed
 
 **The real header spans two physical lines, but not the way any currently-handled case does.**
 
@@ -57,70 +69,201 @@ follows has no column for its description, debit/credit direction, or running ba
 section reports zero staged rows with only an internal, evidence-only `HeaderReconstructionFinding`
 marking that anything went wrong.
 
-## Statement.pdf (Indian Overseas Bank) — confirmed still live, structurally different, not root-caused this pass
+```
+Document:
+SBI Credit Card.PDF, Section 1
+
+Header shape:
+2 physical rows, columns PARTITIONED (not refined) across them
+
+Failure class:
+HEADER_PARTITION
+
+Existing algorithm limitation:
+mergeHeaderLines seeds columns from row 1 only ("Transaction Details",
+1 column) and folds later cells into the NEAREST existing column within
+40pt. Row 2's "Date" and "Amount" are both >40pt from that single
+anchor -- on opposite sides of it -- so neither joins, the merge
+returns null, and the header falls back to the 2-column row alone.
+
+Potential general fix:
+see "candidate direction" below -- a composition mode that recognizes
+a later line filling an EMPTY slot between columns, not just refining
+an existing one.
+```
+
+## 2E.1.1 — Statement.pdf (Indian Overseas Bank) — root-caused precisely
 
 Re-verified: `Detected table columns: [Date), Type]`, 2 raw bucketed rows, both dropped at Stage 4.
-Genuinely live, matching the reliability matrix's prior description. But the real header's shape is
-different from SBI's, and more complex — it spans up to **three** physical lines with **uneven
-per-column wrap depth**, not a clean two-line split:
+Genuinely live, matching the reliability matrix's prior description. Exact coordinates (via
+`-DdumpPage0Positions=true`) show the real header spans three physical rows:
+
+- **Row 1** (y=284.1): two runs — one wide run reading "Date(Value ... Ref No." (x=49.7 to
+  endX=314.6, a single ~265pt-wide cell), and "Transaction" (x=333.3).
+- **Row 2** (y=287.3, 3.2pt below row 1): four runs — "Particulars" (x=167.7), "Debit(Rs)"
+  (x=398.4), "Credit(Rs)" (x=455.6), "Balance(Rs)" (x=507.3).
+- **Row 3** (y=292.8, 5.5pt below row 2): three runs — "Date)" (x=62.7), "/Cheque No" (x=274.6),
+  "Type" (x=346.4).
+
+Traced precisely: `wrappedHeaderAt` seeds from row 1 (2 cells: the wide "Date(Value...Ref No."
+blob, and "Transaction"). `wrapsOnto(row1, row2)` returns true (gap 3.2pt, no data value, no
+structural marker), so `mergeHeaderLines([row1, row2])` runs — and refuses immediately: row 2's
+"Particulars" (x=167.7) is 118pt from the nearest seeded column ("Date(Value...Ref No." at
+x=49.7) and 165.6pt from the other ("Transaction" at x=333.3), both far outside
+`HEADER_WRAP_MAX_COLUMN_JOIN` (40.0pt) — it sits in the gap *between* the two seeded columns, not
+near either. The merge returns `null` on this very first two-line attempt, which breaks
+`wrappedHeaderAt`'s loop outright — row 3 is never even reached, so whatever "Type"/"/Cheque No"
+continuation it carries is moot; the header never survives past row 2.
+
+**Same failure family as SBI, with one compounding difference.** The surface mechanism is
+identical to SBI's: a later line supplies a column at an x-position with no seeded anchor within
+40pt, because `mergeHeaderLines` can only refine/extend columns the seed line already established,
+never recognize that a later line fills a genuinely new slot between two existing ones. But IOB
+adds a second, distinct problem sitting one layer BELOW `PdfTableLocator`: row 1's "Date(Value" and
+"Ref No." — two logically separate column names — arrive from `PdfTextExtractor` already fused
+into a **single** `PositionedText` run, because PDFBox's own `PDFTextStripper.writeString` callback
+(which this codebase does not override the line/word-grouping heuristics of, beyond overriding
+`writeString` itself to capture position) decided not to split them despite the large visible gap
+between them — while the very same document's row 2, with visually smaller inter-column gaps,
+*does* split into four separate runs. That split decision is emergent from PDFBox's own internal
+spacing heuristics, not something `PdfTableLocator` controls. Even a `mergeHeaderLines` rewritten to
+compose non-overlapping columns from different lines could not recover "Ref No." as its own column
+here, because by the time it ever sees row 1, "Date(Value" and "Ref No." are already one opaque
+cell with a single x/width.
 
 ```
- Date(Value                                                Ref No.     Transaction
-                              Particulars                                               Debit(Rs)     Credit(Rs) Balance(Rs)
-   Date)                                                 /Cheque No       Type
+Document:
+Statement.pdf (IOB)
+
+Header shape:
+3 physical rows
+
+Failure class:
+HEADER_PARTITION (same family as SBI's mergeHeaderLines limitation),
+compounded by a TEXT_EXTRACTION_FUSION artifact upstream of it (PDFBox's
+own writeString grouping fuses two column names into one run on row 1
+specifically, independent of the header-merge logic)
+
+Existing algorithm limitation:
+mergeHeaderLines seeds columns from row 1 only, and can only fold a later
+cell into the NEAREST existing column within 40pt -- it has no path for
+"this cell fills a new slot between two seeded columns." The merge is
+refused on the very first (row1+row2) attempt, so the loop breaks before
+row 3 is ever tried.
+
+Potential general fix:
+The composition-mode change sketched for SBI below would also be
+necessary (not sufficient) here -- IOB additionally needs row 1's fused
+"Date(Value...Ref No." run to be split back into two cells before
+mergeHeaderLines ever runs, which is a PdfTextExtractor-level concern,
+not a PdfTableLocator one. Two separate fixes, not one.
 ```
 
-"Date(Value" / "Date)" wraps across two lines (the outer pair); "Ref No." / "/Cheque No" wraps
-across the same two lines; "Transaction" / "Type" too — but "Particulars", "Debit(Rs)",
-"Credit(Rs)", and "Balance(Rs)" each appear on only one line, vertically positioned *between* the
-other columns' two wrapped lines rather than aligned with either one. This is not the same failure
-as SBI's (columns split across lines with zero positional overlap) — several of IOB's columns
-plausibly DO wrap in the "same column, multiple lines" shape `mergeHeaderLines` already handles, but
-apparently not consistently enough across the whole row for the merge to complete, or the header
-scan window (`HEADER_WRAP_MAX_LINES`) doesn't accommodate a column that needs 2 lines sitting beside
-one that needs only 1 at a different vertical offset. **Not traced to a precise root cause in this
-pass** — flagged for a dedicated follow-up rather than guessed at from the text layout alone the way
-SBI's was confirmed.
+## 2E.1.2 — HSBC DB.pdf — OCR acquisition re-verified and reproduced; header failure confirmed live, real cause is different from the 08-18 description
 
-## HSBC DB.pdf — not re-verified this pass (tool limitation, not new evidence)
+Prior state: `CorpusProbe`/`PdfPipelineDiagnostic` report 0 positioned runs for this document,
+because neither exercises the real OCR-routing pipeline (`RoutingTextAcquirer`) — a diagnostic-tool
+gap flagged at the end of the previous investigation session, not evidence of a regression. That
+gap is now closed for this document: a throwaway test wired the real
+`RoutingTextAcquirer(NativePdfAcquirer, List.of(TesseractRecogniser))` exactly as production does,
+and called `PdfTableLocator.locateAll` directly on the result.
 
-Neither `CorpusProbe` nor `PdfPipelineDiagnostic` invoke the OCR-routing path production actually
-uses (`RoutingTextAcquirer`) — both report 0 positioned runs for this document, which reflects a
-diagnostic-tool gap, not the document's real current state. The last real evidence on this document
-is the 08-18 reliability-matrix entry, gathered via direct reflection testing against the true OCR
-output: `groupIntoRows` is confirmed correct (7 clean physical rows, no cross-row merge), and the
-cause is the same `HeaderReconstructionFinding` mechanism — a 3-line wrapped header
-(`Date`/`Details`/`Withdrawals`/`Deposits`/`Balance`) where `looksLikeHeaderRow` scores the first
-line alone (`Date`+`Balance` only) as a complete 2-column header before the 3-line merge ever gets a
-chance. That is a different specific shape again (an EARLY line satisfies the header bar on its own
-and short-circuits before wrapping is even attempted) — a third distinct failure mode under the same
-`HeaderReconstructionFinding` umbrella. Re-verifying this document properly needs a probe that goes
-through the real OCR-routing pipeline, not attempted in this pass.
+```
+HSBC DB.pdf
 
-## Summary: three real documents, three different structural shapes, one shared symptom
+Acquisition:
+PASS
 
-| Document | Collapsed header | Real shape of the failure |
-|---|---|---|
-| SBI CC Section 1 | `[Date, Amount]` | Upper line supplies only ONE column's name; lower line supplies the OTHER TWO, with zero X-position overlap. `mergeHeaderLines` only knows how to refine the SAME column across lines, never to compose DIFFERENT columns from different lines. **Root-caused precisely.** |
-| Statement.pdf (IOB) | `[Date), Type]` | Up to 3 physical lines, uneven per-column wrap depth — some columns need 2 lines, others sit on just 1 at an intermediate vertical offset. **Not root-caused this pass.** |
-| HSBC DB.pdf (OCR) | 2-column fallback (per 08-18 evidence) | An early line satisfies `looksLikeHeaderRow` alone and is accepted before the 3-line wrap is attempted. **Not re-verified this pass** (diagnostic-tool OCR gap). |
+Text source:
+OCR (244 runs)
 
-All three lose an entire section's real transactions to zero staged rows, with the only trace being
-an internal, evidence-only finding never surfaced to a user. None of the three share a single root
-cause — this is not "one bug, three symptoms." `HeaderReconstructionFinding` is correctly firing as
-a *detector* for the general class in all three; the actual reconstruction logic needed to *recover*
-from each is genuinely different per document.
+Header detection:
+FAIL -- HeaderReconstructionFinding fires
+  reason: TRANSACTION_HEADER_RECONSTRUCTION_UNCERTAIN
+  vocabularySignals: [withdrawals, deposits]
+  acceptedHeaderColumnCount: 2
 
-## A candidate direction for SBI's case specifically — not implemented, not coding yet
+Header reconstruction:
+FAIL -- accepted header is [Date, Balance] only
 
-Named because it's the one shape precisely understood, not because it's simple. `mergeHeaderLines`
-would need a genuinely different composition mode: instead of "seed one column set from line 1, fold
-every later cell into the nearest existing column," a version that can also ask "does this
-line's cell fill an EMPTY gap between two already-known columns, rather than refining one of them?"
-— i.e., recognize that a header can be partitioned column-by-column across physical lines, not just
-refined line-by-line. This is a materially different algorithm shape from the current one, not a
-threshold or gate adjustment, and risks exactly the false-positive class `HEADER_WRAP_MAX_COLUMN_JOIN`
-and the four `refinesRatherThanRedefines` gates already exist to prevent (a caption or an unrelated
-line getting folded in as if it were a header column). Any implementation would need the same
-real-corpus-measured-gate discipline every other rule in this class already carries — evaluated
-against the full committed trace corpus, not just SBI, before being trusted. Not attempted here.
+Rows:
+7 physical rows detected; every row buckets only a Date and a Balance
+cell, so Details/Withdrawals/Deposits are lost from all 7
+```
+
+This confirms the OCR acquisition side of the 08-18 finding was and is correct (244 runs, not a
+regression) — the earlier "0 runs" reading in this investigation was purely a probe artifact. But
+the *header* mechanism, traced against the real OCR text this time rather than reconstructed from
+memory, does not match the 08-18 description ("first line scores as 2-column header before a
+3-line merge is attempted"). The real header's five labels arrive at very close but NOT identical
+y-coordinates: `Details`/`Withdrawals`/`Deposits` all at y=169.7, `Date` at y=166.6 (3.1pt above),
+`Balance` at y=164.4 (5.3pt above that same trio). Native PDF text from one printed line lands
+within a fraction of a point of a shared baseline; Tesseract's per-word bounding boxes do not —
+5.3pt of y-jitter across five words that are visually one line is normal OCR noise. The accepted
+2-column header being exactly `[Date, Balance]` — the two labels sitting closest to each other in y
+— combined with `vocabularySignals: [withdrawals, deposits]` being recorded (meaning the
+reconstruction logic saw those words nearby and recognized them as header vocabulary, but never
+folded them in) is consistent with row-grouping splitting this one visual header line into more
+than one physical row along OCR's y-jitter, then failing to compose them back into one header — the
+same class of "compose columns across rows" gap SBI and IOB both hit, but triggered by OCR
+measurement noise rather than a genuinely multi-row-printed header. **Not confirmed to the same
+precision as SBI or IOB** — this pass did not dump `groupIntoRows`' actual row-bucket assignment
+(a private method), so exactly which rows `Date`/`Balance` vs. `Details`/`Withdrawals`/`Deposits`
+landed in is inferred from the y-coordinates above, not directly observed. Flagged as a strong,
+evidence-backed hypothesis distinct from the SBI/IOB mechanism, not yet a confirmed root cause.
+
+## 2E.1.a taxonomy — three real documents, related but distinct failure classes
+
+| Document | Collapsed header | Failure class | Confidence |
+|---|---|---|---|
+| SBI CC Section 1 | `[Date, Amount]` | `HEADER_PARTITION` — a later line supplies a column with no x-overlap to any seeded anchor | **Root-caused, precisely traced.** |
+| Statement.pdf (IOB) | `[Date), Type]` | `HEADER_PARTITION` (same mechanism as SBI) **+** `TEXT_EXTRACTION_FUSION` (PDFBox fuses 2 column names into 1 run on the seed line, upstream of the merge logic) | **Root-caused, precisely traced.** |
+| HSBC DB.pdf (OCR) | `[Date, Balance]` | Likely `HEADER_PARTITION` again, triggered by OCR y-jitter splitting one visual header line into multiple physical rows, rather than a genuinely multi-row-printed header | **Reproduced and confirmed live; exact row-bucket split not directly observed — a strong hypothesis, not a confirmed mechanism.** |
+
+Revises the prior (pre-this-pass) framing: this is not three unrelated bugs. SBI and IOB are the
+*same* algorithmic gap in `mergeHeaderLines` — no path to compose non-overlapping columns supplied
+by different lines — with IOB carrying a second, independent problem on top (an extraction-layer
+fusion artifact). HSBC's evidence is consistent with that same gap, just reached through a
+different door (OCR coordinate noise rather than a printed multi-row layout). All three lose an
+entire section's real transactions to zero-or-near-zero usable staged rows, with the only trace
+being an internal, evidence-only `HeaderReconstructionFinding` never surfaced to a user.
+`HeaderReconstructionFinding` is correctly firing as a *detector* in all three; what's missing is
+the *recovery* logic, and — per the taxonomy above — that recovery logic is closer to ONE shared
+fix (composing partitioned columns) plus one document-specific extra (IOB's fusion) than to three
+unrelated designs.
+
+## A candidate direction — not implemented, not coding yet
+
+Named for SBI because it's the shape now understood most precisely, but per the taxonomy above the
+same gap is implicated in IOB and plausibly HSBC too, so a fix here is not a one-document patch.
+`mergeHeaderLines` would need a genuinely different composition mode: instead of "seed one column
+set from line 1, fold every later cell into the nearest existing column," a version that can also
+ask "does this line's cell fill an EMPTY gap between two already-known columns, rather than
+refining one of them?" — i.e., recognize that a header can be partitioned column-by-column across
+physical lines, not just refined line-by-line.
+
+This is a materially different algorithm shape from the current one, not a threshold or gate
+adjustment, and it risks exactly the false-positive class `HEADER_WRAP_MAX_COLUMN_JOIN` and the four
+`refinesRatherThanRedefines` gates already exist to prevent (a caption or an unrelated line getting
+folded in as if it were a header column). The validation idea worth taking seriously for that gate:
+a candidate header should be judged not by whether it looks like a header in isolation, but by
+whether the real transaction rows beneath it fit — bucket a sample of the section's own rows under
+each candidate composition and prefer the one more of the row's real values resolve against, the
+same principle `refinesRatherThanRedefines`'s gate 4 already applies narrowly (whole-cell hint
+matches before vs. after a merge). Generalizing that from "does this merge increase nameable
+columns" to "do real rows fit this header" is a bigger change than gate 4's current scope, and
+would need the same real-corpus-measured-gate discipline every rule in this class already carries —
+evaluated against the full committed trace corpus (not just SBI, IOB, or HSBC) before being
+trusted.
+
+IOB additionally needs a second, independent fix at the `PdfTextExtractor` layer (splitting a fused
+multi-column run back apart), which a `mergeHeaderLines` change alone cannot address. HSBC's
+hypothesis (OCR y-jitter defeating row-grouping) would need its own confirmation and, if confirmed,
+likely its own fix at the row-formation stage rather than the header-merge stage — composing
+columns correctly doesn't help if the columns were already split into the wrong rows before
+`wrappedHeaderAt` ever runs.
+
+None of this is implemented. Consistent with the explicit instruction for this phase, the next step
+is a header-reconstruction model design document (2E.1.3) that reasons about all three fixes
+together as one coherent architecture, not three bank-specific patches — attempted only after that
+design is reviewed, not as a side effect of this investigation.
