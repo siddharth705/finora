@@ -455,7 +455,15 @@ git commit -m "feat(landing/hero): add ambient R3F particle scene"
 
 **Interfaces:**
 - Consumes: `isWebglAvailable` from `./webglSupport` (Task 4); `useIsDesktop` from `./useIsDesktop` (Task 5); `AmbientScene` from `./AmbientScene` (Task 6, via lazy import); `useReducedMotion` from `framer-motion`.
-- Produces: `AmbientCanvas(): JSX.Element` (named export). Consumed by Task 11 (`Hero.tsx`).
+- Produces: `AmbientCanvas(): JSX.Element` (named export). Consumed by Task 12 (`Hero.tsx`).
+
+**Environment note discovered during implementation:** framer-motion's real `useReducedMotion`
+caches its result in a module-level singleton (`motion-dom`'s `prefersReducedMotion.current`,
+resolved once via a `matchMedia` listener registered on first use per worker process).
+Reassigning `window.matchMedia` per test via `mockMatchMedia`, as used elsewhere in this plan for
+`useIsDesktop`, does **not** reliably control it once that singleton has already resolved once in
+the current test worker. Every test below mocks `useReducedMotion` directly instead — this
+supersedes the plan's original approach and is the pattern later tasks (10, 11, 12) also use.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -463,29 +471,29 @@ git commit -m "feat(landing/hero): add ambient R3F particle scene"
 // frontend/src/pages/landing/hero/AmbientCanvas.test.tsx
 import { render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mockMatchMedia } from '../../../test/mockMatchMedia';
 
 vi.mock('./webglSupport', () => ({ isWebglAvailable: vi.fn() }));
 vi.mock('./useIsDesktop', () => ({ useIsDesktop: vi.fn() }));
 vi.mock('./AmbientScene', () => ({
   AmbientScene: () => <div data-testid="ambient-scene-stub" />,
 }));
+vi.mock('framer-motion', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('framer-motion')>();
+  return { ...actual, useReducedMotion: vi.fn() };
+});
 
+import { useReducedMotion } from 'framer-motion';
 import { isWebglAvailable } from './webglSupport';
 import { useIsDesktop } from './useIsDesktop';
 import { AmbientCanvas } from './AmbientCanvas';
 
 describe('AmbientCanvas', () => {
-  let restoreMatchMedia: (() => void) | undefined;
-
   afterEach(() => {
-    restoreMatchMedia?.();
-    restoreMatchMedia = undefined;
     vi.clearAllMocks();
   });
 
   it('renders the ambient scene when desktop + WebGL + motion are all available', async () => {
-    restoreMatchMedia = mockMatchMedia({ '(prefers-reduced-motion: reduce)': false });
+    vi.mocked(useReducedMotion).mockReturnValue(false);
     vi.mocked(isWebglAvailable).mockReturnValue(true);
     vi.mocked(useIsDesktop).mockReturnValue(true);
 
@@ -494,7 +502,7 @@ describe('AmbientCanvas', () => {
   });
 
   it('renders a static gradient fallback, not the scene, when WebGL is unavailable', () => {
-    restoreMatchMedia = mockMatchMedia({ '(prefers-reduced-motion: reduce)': false });
+    vi.mocked(useReducedMotion).mockReturnValue(false);
     vi.mocked(isWebglAvailable).mockReturnValue(false);
     vi.mocked(useIsDesktop).mockReturnValue(true);
 
@@ -504,7 +512,7 @@ describe('AmbientCanvas', () => {
   });
 
   it('renders nothing on mobile, even with WebGL and motion available', () => {
-    restoreMatchMedia = mockMatchMedia({ '(prefers-reduced-motion: reduce)': false });
+    vi.mocked(useReducedMotion).mockReturnValue(false);
     vi.mocked(isWebglAvailable).mockReturnValue(true);
     vi.mocked(useIsDesktop).mockReturnValue(false);
 
@@ -513,7 +521,7 @@ describe('AmbientCanvas', () => {
   });
 
   it('renders nothing when the user prefers reduced motion, even with WebGL and desktop available', () => {
-    restoreMatchMedia = mockMatchMedia({ '(prefers-reduced-motion: reduce)': true });
+    vi.mocked(useReducedMotion).mockReturnValue(true);
     vi.mocked(isWebglAvailable).mockReturnValue(true);
     vi.mocked(useIsDesktop).mockReturnValue(true);
 
@@ -605,7 +613,7 @@ git commit -m "feat(landing/hero): add AmbientCanvas gating wrapper"
 
 **Interfaces:**
 - Consumes: `CountUp` from `../primitives` (existing); `heroScore` from `../landing-config` (Task 2).
-- Produces: `HealthScoreRing(): JSX.Element` (named export). Consumed by Task 11 (`Hero.tsx`).
+- Produces: `HealthScoreRing(): JSX.Element` (named export). Consumed by Task 12 (`Hero.tsx`).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -744,7 +752,7 @@ git commit -m "feat(landing/hero): add HealthScoreRing"
 
 **Interfaces:**
 - Consumes: `useStagedReveal` from `../primitives` (existing); `heroIntelligence` from `../landing-config` (Task 2).
-- Produces: `IntelligenceScan(): JSX.Element` (named export). Consumed by Task 11 (`Hero.tsx`).
+- Produces: `IntelligenceScan(): JSX.Element` (named export). Consumed by Task 12 (`Hero.tsx`).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -851,27 +859,33 @@ git commit -m "feat(landing/hero): add IntelligenceScan checklist"
 
 **Interfaces:**
 - Consumes: `heroBadges` from `../landing-config` (Task 2); `motion`, `useReducedMotion` from `framer-motion`.
-- Produces: `FloatingBadges(): JSX.Element` (named export). Consumed by Task 11 (`Hero.tsx`).
+- Produces: `FloatingBadges(): JSX.Element` (named export). Consumed by Task 12 (`Hero.tsx`).
 
 - [ ] **Step 1: Write the failing test**
+
+Per Task 7's note: `useReducedMotion` is mocked directly, not via `mockMatchMedia`.
 
 ```typescript
 // frontend/src/pages/landing/hero/FloatingBadges.test.tsx
 import { render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
-import { mockMatchMedia } from '../../../test/mockMatchMedia';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('framer-motion', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('framer-motion')>();
+  return { ...actual, useReducedMotion: vi.fn() };
+});
+
+import { useReducedMotion } from 'framer-motion';
 import { heroBadges } from '../landing-config';
 import { FloatingBadges } from './FloatingBadges';
 
 describe('FloatingBadges', () => {
-  let restore: (() => void) | undefined;
-
   afterEach(() => {
-    restore?.();
-    restore = undefined;
+    vi.clearAllMocks();
   });
 
   it('renders every badge label from landing-config', () => {
+    vi.mocked(useReducedMotion).mockReturnValue(false);
     render(<FloatingBadges />);
     heroBadges.forEach((badge) => {
       expect(screen.getByText(badge.label)).toBeInTheDocument();
@@ -879,7 +893,7 @@ describe('FloatingBadges', () => {
   });
 
   it('still renders every badge label under prefers-reduced-motion', () => {
-    restore = mockMatchMedia({ '(prefers-reduced-motion: reduce)': true });
+    vi.mocked(useReducedMotion).mockReturnValue(true);
     render(<FloatingBadges />);
     heroBadges.forEach((badge) => {
       expect(screen.getByText(badge.label)).toBeInTheDocument();
@@ -971,15 +985,27 @@ git commit -m "feat(landing/hero): add FloatingBadges"
 
 **Interfaces:**
 - Consumes: `DashboardMock` from `../DashboardMock` (existing); `useIsDesktop` from `./useIsDesktop` (Task 5); `motion`, `useReducedMotion`, `useSpring` from `framer-motion`.
-- Produces: `FloatingDashboardCard(): JSX.Element` (named export). Consumed by Task 11 (`Hero.tsx`).
+- Produces: `FloatingDashboardCard(): JSX.Element` (named export). Consumed by Task 12 (`Hero.tsx`).
 
 - [ ] **Step 1: Write the failing test**
+
+Per Task 7's note: `useReducedMotion` is mocked directly, not via `mockMatchMedia`. The mobile
+case still uses `mockMatchMedia` because `useIsDesktop` reads `window.matchMedia` directly on
+every call, with no framer-motion singleton involved — that one is unaffected by the Task 7
+discovery.
 
 ```typescript
 // frontend/src/pages/landing/hero/FloatingDashboardCard.test.tsx
 import { render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mockMatchMedia } from '../../../test/mockMatchMedia';
+
+vi.mock('framer-motion', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('framer-motion')>();
+  return { ...actual, useReducedMotion: vi.fn() };
+});
+
+import { useReducedMotion } from 'framer-motion';
 import { FloatingDashboardCard } from './FloatingDashboardCard';
 
 describe('FloatingDashboardCard', () => {
@@ -988,9 +1014,11 @@ describe('FloatingDashboardCard', () => {
   afterEach(() => {
     restore?.();
     restore = undefined;
+    vi.clearAllMocks();
   });
 
   it('renders the real DashboardMock content, not a placeholder', () => {
+    vi.mocked(useReducedMotion).mockReturnValue(false);
     render(<FloatingDashboardCard />);
     // DashboardMock's own aria-label for level="simple" -- see DashboardMock.tsx's LEVEL_LABEL.
     expect(
@@ -1001,7 +1029,7 @@ describe('FloatingDashboardCard', () => {
   });
 
   it('renders the same dashboard content under prefers-reduced-motion', () => {
-    restore = mockMatchMedia({ '(prefers-reduced-motion: reduce)': true });
+    vi.mocked(useReducedMotion).mockReturnValue(true);
     render(<FloatingDashboardCard />);
     expect(
       screen.getByRole('img', {
@@ -1011,6 +1039,7 @@ describe('FloatingDashboardCard', () => {
   });
 
   it('renders the same dashboard content below the desktop breakpoint (mobile fallback path)', () => {
+    vi.mocked(useReducedMotion).mockReturnValue(false);
     restore = mockMatchMedia({ '(min-width: 768px)': false });
     render(<FloatingDashboardCard />);
     expect(
@@ -1131,14 +1160,22 @@ git commit -m "feat(landing/hero): add FloatingDashboardCard with CSS-3D tilt"
 - Consumes: `hero` from `./landing-config` (existing); `AmbientCanvas` (Task 7), `HealthScoreRing` (Task 8), `IntelligenceScan` (Task 9), `FloatingBadges` (Task 10), `FloatingDashboardCard` (Task 11); `motion`, `useReducedMotion` from `framer-motion`.
 - Produces: `Hero(): JSX.Element` (named export, same signature as before). Consumed by `Landing.tsx` (Task 13) — no signature change, so that file needs no import changes, only the Transition band adjustment.
 
+Per Task 7's note: `useReducedMotion` is mocked directly, not via `mockMatchMedia`.
+
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
 // frontend/src/pages/landing/Hero.test.tsx
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it } from 'vitest';
-import { mockMatchMedia } from '../../test/mockMatchMedia';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('framer-motion', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('framer-motion')>();
+  return { ...actual, useReducedMotion: vi.fn() };
+});
+
+import { useReducedMotion } from 'framer-motion';
 import { hero, heroScore, heroIntelligence } from './landing-config';
 import { Hero } from './Hero';
 
@@ -1151,14 +1188,12 @@ function renderHero() {
 }
 
 describe('Hero', () => {
-  let restore: (() => void) | undefined;
-
   afterEach(() => {
-    restore?.();
-    restore = undefined;
+    vi.clearAllMocks();
   });
 
   it('renders the existing headline, blurb and CTAs unchanged', () => {
+    vi.mocked(useReducedMotion).mockReturnValue(false);
     renderHero();
     expect(screen.getByText(hero.headline)).toBeInTheDocument();
     expect(screen.getByText(hero.headlineAccent)).toBeInTheDocument();
@@ -1167,13 +1202,14 @@ describe('Hero', () => {
   });
 
   it('renders the score ring and intelligence scan', () => {
+    vi.mocked(useReducedMotion).mockReturnValue(false);
     renderHero();
     expect(screen.getByText(String(heroScore.value))).toBeInTheDocument();
     expect(screen.getByText(heroIntelligence.heading)).toBeInTheDocument();
   });
 
   it('under prefers-reduced-motion, renders the same final content and never mounts AmbientCanvas', () => {
-    restore = mockMatchMedia({ '(prefers-reduced-motion: reduce)': true });
+    vi.mocked(useReducedMotion).mockReturnValue(true);
     const { container } = renderHero();
 
     // Content is still all there -- reduced motion changes HOW it appears, never WHAT appears.
