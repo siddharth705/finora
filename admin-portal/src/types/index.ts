@@ -73,8 +73,8 @@ export interface NeedsAttentionDto {
 /** Mirrors backend OperationalDashboardDto exactly. importsWithSkippedRowsToday is the honest
  *  substitute for "failed imports" -- see that record's own doc comment for why this pipeline
  *  has no real FAILED signal to report today. inactiveUsersLast7Days is the inverse of
- *  activeUsersToday's own query -- an Insights figure, not a daily-reset tile, so it has no
- *  previousDay sibling. */
+ *  activeUsersToday's own query -- a user who predates the 7-day window with no login in it, or
+ *  none ever -- an Insights figure, not a daily-reset tile, so it has no previousDay sibling. */
 export interface OperationalDashboardDto {
   totalUsers: number;
   activeUsersToday: number;
