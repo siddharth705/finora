@@ -6,7 +6,7 @@ import {
   ScrollText, SlidersHorizontal, Lock, Tag, Copy, CheckCircle2,
 } from 'lucide-react';
 import { AdminLayout } from '../components/AdminLayout';
-import { StatCard } from '../components/StatCard';
+import { StatCard, type StatDelta } from '../components/StatCard';
 import { RecentImportsPanel } from '../components/RecentImportsPanel';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { adminDashboardApi, adminStatsApi, adminSystemApi } from '../api/endpoints';
@@ -63,6 +63,28 @@ function formatUptime(seconds: number) {
   const minutes = Math.floor((seconds % 3600) / 60);
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
+}
+
+/**
+ * Turns today's count and yesterday's count into a StatCard delta. `goodDirection` is per-metric,
+ * not inferred from the sign -- "Imports w/ skipped rows" going down is the good outcome, the
+ * opposite of every other daily tile, so the caller must say which way is good rather than this
+ * function guessing from whether the number rose or fell.
+ *
+ * Two edge cases besides the plain percentage: both days at zero has nothing to compare (shown as
+ * "No change" rather than a 0% that implies a real, measured non-change), and yesterday at zero
+ * with a nonzero today has no finite percentage to report (shown as "New today" rather than a
+ * fabricated "+100%" or a divide-by-zero).
+ */
+function computeDelta(today: number, yesterday: number, goodDirection: 'up' | 'down'): StatDelta {
+  if (yesterday === 0) {
+    if (today === 0) return { direction: 'flat', label: 'No change', isGood: true };
+    return { direction: 'up', label: 'New today', isGood: goodDirection === 'up' };
+  }
+  const pct = Math.round(((today - yesterday) / yesterday) * 100);
+  if (pct === 0) return { direction: 'flat', label: 'No change', isGood: true };
+  const direction = pct > 0 ? 'up' : 'down';
+  return { direction, label: `${pct > 0 ? '+' : ''}${pct}% vs yesterday`, isGood: direction === goodDirection };
 }
 
 /**
@@ -326,14 +348,30 @@ function DashboardContent() {
 
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
           <StatCard icon={Users} label="Total users" value={isLoading ? '…' : data?.totalUsers ?? 0} />
-          <StatCard icon={UserCheck} label="Active today" value={isLoading ? '…' : data?.activeUsersToday ?? 0} />
-          <StatCard icon={ArrowLeftRight} label="Transactions today" value={isLoading ? '…' : data?.transactionsToday ?? 0} />
-          <StatCard icon={FileStack} label="Imports today" value={isLoading ? '…' : data?.importsToday ?? 0} />
+          <StatCard
+            icon={UserCheck}
+            label="Active today"
+            value={isLoading ? '…' : data?.activeUsersToday ?? 0}
+            delta={data && computeDelta(data.activeUsersToday, data.previousDay.activeUsers, 'up')}
+          />
+          <StatCard
+            icon={ArrowLeftRight}
+            label="Transactions today"
+            value={isLoading ? '…' : data?.transactionsToday ?? 0}
+            delta={data && computeDelta(data.transactionsToday, data.previousDay.transactions, 'up')}
+          />
+          <StatCard
+            icon={FileStack}
+            label="Imports today"
+            value={isLoading ? '…' : data?.importsToday ?? 0}
+            delta={data && computeDelta(data.importsToday, data.previousDay.imports, 'up')}
+          />
           <StatCard
             icon={AlertTriangle}
             label="Imports w/ skipped rows"
             value={isLoading ? '…' : data?.importsWithSkippedRowsToday ?? 0}
             tone={(data?.importsWithSkippedRowsToday ?? 0) > 0 ? 'warning' : 'default'}
+            delta={data && computeDelta(data.importsWithSkippedRowsToday, data.previousDay.importsWithSkippedRows, 'down')}
           />
         </div>
 
