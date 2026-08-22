@@ -64,7 +64,8 @@ public class MerchantTemplate {
             "([A-Za-z]+ \\d{1,2}, \\d{4}"          // "August 12, 2026"      -- MMMM d, yyyy
             + "|\\d{4}-\\d{2}-\\d{2}"               // "2026-08-12"           -- ISO_LOCAL_DATE
             + "|\\d{1,2} [A-Za-z]+ \\d{4}"          // "12 August 2026"       -- d MMMM yyyy
-            + "|\\d{1,2}/\\d{1,2}/\\d{4})";         // "12/08/2026"           -- dd/MM/yyyy
+            + "|\\d{1,2}/\\d{1,2}/\\d{4}"           // "12/08/2026"           -- dd/MM/yyyy
+            + "|\\d{1,2}-\\d{1,2}-\\d{4})";         // "12-08-2026"           -- dd-MM-yyyy
 
     @Id
     @GeneratedValue
