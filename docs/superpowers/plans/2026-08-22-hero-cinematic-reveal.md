@@ -629,7 +629,9 @@ describe('HealthScoreRing', () => {
     render(<HealthScoreRing />);
     expect(screen.getByText(String(heroScore.value))).toBeInTheDocument();
     expect(screen.getByText(heroScore.label)).toBeInTheDocument();
-    expect(screen.getByText(new RegExp(heroScore.delta))).toBeInTheDocument();
+    // heroScore.delta ("+6 this month") starts with a regex-special "+" -- match the literal
+    // rendered text ("↑ +6 this month") instead of building a RegExp from it.
+    expect(screen.getByText(`↑ ${heroScore.delta}`)).toBeInTheDocument();
   });
 
   it('exposes the score as an accessible label on the ring itself', () => {
