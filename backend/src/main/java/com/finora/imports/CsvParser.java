@@ -330,6 +330,7 @@ public class CsvParser {
             java.util.regex.Pattern.compile("(?i)(\\d{1,2})(?:st|nd|rd|th)\\b");
 
     public static LocalDate parseDate(String raw) {
+        if (raw == null) return null;
         String withoutTime = TRAILING_TIME.matcher(raw).replaceFirst("");
         LocalDate parsed = tryEveryFormat(withoutTime);
         if (parsed != null) return parsed;
@@ -480,6 +481,7 @@ public class CsvParser {
     }
 
     public static String maskAccountNumber(String raw) {
+        if (raw == null) return null;
         String digits = raw.replaceAll("[^0-9]", "");
         if (digits.length() <= 4) return digits;
         return "••••" + digits.substring(digits.length() - 4);
